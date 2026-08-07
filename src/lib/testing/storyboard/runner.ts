@@ -90,6 +90,7 @@ import type {
   AssertionResult,
   BranchSetSpec,
   ContextProvenanceEntry,
+  FixtureResolutionCoverageGap,
   FixtureResolutionRecord,
   HttpProbeResult,
   RunnerDetailedSkipReason,
@@ -2473,6 +2474,7 @@ async function executeStoryboardPass(
   let fixtureUnsatisfied = false;
   let fixtureBindings: FixtureBindingRegistry | undefined;
   let fixtureResolutionRecords: FixtureResolutionRecord[] | undefined;
+  let fixtureCoverageGap: FixtureResolutionCoverageGap | undefined;
   {
     let fixtureSeedClient = clients[0]!;
     let fixtureDiscoveryClient = clients[0]!;
@@ -2507,6 +2509,27 @@ async function executeStoryboardPass(
       fixtureBindings = seeding.bindings;
       fixtureResolutionRecords = seeding.resolutionRecords;
       fixtureUnsatisfied = seeding.fixtureUnsatisfied === true && seeding.failedCount === 0;
+      const hasUnsatisfiedFixtures = fixtureResolutionRecords?.some(record => record.status === 'unsatisfied') === true;
+      if (hasUnsatisfiedFixtures && fixtureResolutionRecords) {
+        const fixtures = fixtureResolutionRecords
+          .filter(record => record.status === 'unsatisfied')
+          .map(record => ({
+            fixture_type: record.fixture_type,
+            handle: record.handle,
+            ...(record.parent_product_handle && { parent_product_handle: record.parent_product_handle }),
+            requirements: record.requirements,
+          }));
+        const names = fixtures.map(fixture =>
+          fixture.fixture_type === 'pricing_option'
+            ? `pricing_option "${fixture.parent_product_handle}/${fixture.handle}"`
+            : `product "${fixture.handle}"`
+        );
+        fixtureCoverageGap = {
+          reason: 'fixture_unsatisfied',
+          detail: `fixture_unsatisfied: no seller fixture satisfied ${names.join(', ')}`,
+          fixtures,
+        };
+      }
       if (seeding.missingController) {
         seedingMissingController = true;
       } else if (seeding.seedUnsupported) {
@@ -2678,10 +2701,10 @@ async function executeStoryboardPass(
               }
             : fixtureUnsatisfied
               ? {
-                  skip_reason: 'fixture_unsatisfied',
+                  skip_reason: 'prerequisite_failed',
                   skip: {
-                    reason: 'not_applicable',
-                    detail: 'Skipped: a declared fixture strategy ladder was exhausted (`fixture_unsatisfied`).',
+                    reason: 'prerequisite_failed',
+                    detail: 'Blocked by the storyboard-level fixture_unsatisfied coverage gap.',
                   },
                 }
               : {
@@ -3332,6 +3355,7 @@ async function executeStoryboardPass(
     strict_validation_summary: strictSummary,
     notices,
     ...(fixtureResolutionRecords && { fixture_resolution: fixtureResolutionRecords }),
+    ...(fixtureCoverageGap && { coverage_gaps: [fixtureCoverageGap] }),
     ...(routingContext && routingContext.discoveryFailures.length > 0
       ? {
           discovery_failures: routingContext.discoveryFailures.map(f => ({
@@ -3479,6 +3503,7 @@ async function runMultiPass(
     ...(schemasDedup.length > 0 ? { schemas_used: schemasDedup } : {}),
     ...(assertionsAgg.length > 0 ? { assertions: assertionsAgg } : {}),
     ...(first.fixture_resolution ? { fixture_resolution: first.fixture_resolution } : {}),
+    ...(first.coverage_gaps ? { coverage_gaps: first.coverage_gaps } : {}),
     notices: noticesDedup,
   };
 }
@@ -4024,12 +4049,35 @@ async function executeStep(
   // Fixture handles are replaced only at request-schema fields carrying the
   // matching x-entity annotation. This applies equally to ordinary AdCP calls
   // and comply_test_controller force/simulate requests.
-  request = applyFixtureBindingsToRequest(
-    request,
-    effectiveStep.task,
-    runState.fixtureBindings,
-    options.adcpVersion ?? ADCP_VERSION
-  );
+  const fixtureBinding = applyFixtureBindingsSafely(request, effectiveStep.task, options, runState);
+  if (!fixtureBinding.ok) {
+    const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: effectiveStep.task,
+      passed: false,
+      duration_ms: 0,
+      validations: [
+        {
+          check: 'unresolved_substitution',
+          passed: false,
+          description: `Fixture handle substitution failed: ${fixtureBinding.error}`,
+          json_pointer: null,
+          expected: 'an unambiguous fixture handle binding',
+          actual: fixtureBinding.error,
+          schema_id: null,
+          schema_url: null,
+        },
+      ],
+      context,
+      error: fixtureBinding.error,
+      next,
+      extraction: { path: 'none' },
+    };
+  }
+  request = fixtureBinding.request;
 
   // Detect unresolved $context placeholders — a prior step likely failed
   // and didn't produce the expected output. Skip rather than sending garbage.
@@ -5047,7 +5095,35 @@ async function executeProbeStep(
         sample_request: rateLimitTrip.trip_target_sample_request,
         omit_idempotency_key: true,
       };
-      const resolvedTargetRequest = buildEffectiveStepRequest(targetStep, context, options, runState);
+      const targetRequestResult = buildEffectiveStepRequest(targetStep, context, options, runState);
+      if (!targetRequestResult.ok) {
+        const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+        return {
+          step_id: step.id,
+          phase_id: phaseId,
+          title: step.title,
+          task: step.task,
+          passed: false,
+          duration_ms: Date.now() - start,
+          validations: [
+            {
+              check: 'unresolved_substitution',
+              passed: false,
+              description: `Fixture handle substitution failed: ${targetRequestResult.error}`,
+              json_pointer: null,
+              expected: 'an unambiguous fixture handle binding',
+              actual: targetRequestResult.error,
+              schema_id: null,
+              schema_url: null,
+            },
+          ],
+          context,
+          next,
+          extraction: { path: 'none' },
+          error: targetRequestResult.error,
+        };
+      }
+      const resolvedTargetRequest = targetRequestResult.request;
       const unresolvedVars = findUnresolvedContextVars(resolvedTargetRequest);
       if (unresolvedVars.length > 0 && !targetStep.expect_error) {
         const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
@@ -5241,12 +5317,35 @@ async function executeProbeStep(
   };
 }
 
+type FixtureBindingApplicationResult = { ok: true; request: Record<string, unknown> } | { ok: false; error: string };
+
+function applyFixtureBindingsSafely(
+  request: Record<string, unknown>,
+  task: string,
+  options: StoryboardRunOptions,
+  runState: ExecutionState
+): FixtureBindingApplicationResult {
+  try {
+    return {
+      ok: true,
+      request: applyFixtureBindingsToRequest(
+        request,
+        task,
+        runState.fixtureBindings,
+        options.adcpVersion ?? ADCP_VERSION
+      ),
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 function buildEffectiveStepRequest(
   step: StoryboardStep,
   context: StoryboardContext,
   options: StoryboardRunOptions,
   runState: ExecutionState
-): Record<string, unknown> {
+): FixtureBindingApplicationResult {
   let request: Record<string, unknown>;
   if (options.request) {
     request = injectContext({ ...options.request }, context, runState.runnerVars);
@@ -5267,12 +5366,7 @@ function buildEffectiveStepRequest(
     request = applyDisableSandboxHint(request, step.task);
   }
   request = applyIdempotencyInvariant(request, step.task, step);
-  return applyFixtureBindingsToRequest(
-    request,
-    step.task,
-    runState.fixtureBindings,
-    options.adcpVersion ?? ADCP_VERSION
-  );
+  return applyFixtureBindingsSafely(request, step.task, options, runState);
 }
 
 interface ResolvedWebhookReplayVector {

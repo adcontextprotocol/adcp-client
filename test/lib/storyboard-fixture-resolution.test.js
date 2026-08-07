@@ -10,6 +10,7 @@ const {
 } = require('../../dist/lib/testing/storyboard/fixture-resolution');
 const { runControllerSeeding } = require('../../dist/lib/testing/storyboard/seeding');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner');
+const { parseStoryboard } = require('../../dist/lib/testing/storyboard/loader');
 const { getRequestSchemaEntityPaths } = require('../../dist/lib/validation/schema-loader');
 const { createTestProduct } = require('./test-fixtures');
 
@@ -45,48 +46,135 @@ function discoveryClient(products) {
 }
 
 describe('fixture resolution declarations and matching', () => {
-  test('validates and normalizes the closed matcher DSL', () => {
+  test('accepts the 3.2 pilot array declarations and RFC 6901 where predicates', () => {
+    const parsed = parseStoryboard(`
+id: fixture-resolution-pilot
+version: 3.2.0
+title: Fixture resolution pilot
+category: sales_non_guaranteed
+summary: Resolve seller-owned identifiers
+narrative: Resolve authored handles before running the storyboard.
+agent:
+  interaction_model: transactional
+  capabilities: []
+caller:
+  role: buyer_agent
+prerequisites:
+  description: Seller catalog is discoverable.
+  controller_seeding: false
+fixtures:
+  products:
+    - product_id: usd-display
+  pricing_options:
+    - product_id: usd-display
+      pricing_option_id: usd-cpm
+fixture_resolution:
+  products:
+    - handle: usd-display
+      strategies: [discover]
+      where:
+        - path: /delivery_type
+          operator: equals
+          value: non_guaranteed
+  pricing_options:
+    - handle: usd-cpm
+      product_handle: usd-display
+      strategies: [discover]
+      where:
+        - path: /currency
+          operator: equals
+          value: USD
+phases: []
+`);
+    assert.equal(parsed.fixture_resolution.products[0].handle, 'usd-display');
+    assert.equal(parsed.fixture_resolution.products[0].where[0].path, '/delivery_type');
+    assert.equal(parsed.fixture_resolution.pricing_options[0].where[0].path, '/currency');
+
     const clauses = normalizeFixtureMatchExpression(
-      {
-        delivery_type: { equals: 'non_guaranteed' },
-        channels: { contains_all: ['display'] },
-        pricing_options: { any_match: { currency: { equals: 'USD' } } },
-      },
-      'match'
+      [
+        { path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' },
+        { path: '/channels', operator: 'contains_all', value: ['display'] },
+        {
+          path: '/pricing_options',
+          operator: 'any_match',
+          where: [{ path: '/currency', operator: 'equals', value: 'USD' }],
+        },
+        { path: '/escaped~1key/~0value', operator: 'equals', value: 42 },
+        { path: '/items/0/id', operator: 'equals', value: 'first' },
+      ],
+      'where'
     );
-    assert.equal(clauses.length, 3);
+    assert.equal(clauses.length, 5);
     assert.equal(
       matchesFixtureRequirements(
         {
           delivery_type: 'non_guaranteed',
           channels: ['video', 'display'],
           pricing_options: [{ currency: 'EUR' }, { currency: 'USD' }],
+          'escaped/key': { '~value': 42 },
+          items: [{ id: 'first' }],
         },
         clauses
       ),
       true
     );
     assert.throws(
-      () => normalizeFixtureMatchExpression([{ path: 'currency', regex: 'USD' }], 'match'),
-      /match DSL is closed/
+      () => normalizeFixtureMatchExpression([{ path: 'currency', operator: 'equals', value: 'USD' }], 'where'),
+      /RFC 6901/
     );
+    assert.throws(
+      () => normalizeFixtureMatchExpression([{ path: '/currency', operator: 'regex', value: 'USD' }], 'where'),
+      /operator: must be one of/
+    );
+    for (const path of ['/bad~2escape', '/trailing~']) {
+      assert.throws(
+        () => normalizeFixtureMatchExpression([{ path, operator: 'equals', value: true }], 'where'),
+        /invalid RFC 6901 escape/
+      );
+    }
   });
 
   test('rejects malformed or orphaned declarations as authoring errors', () => {
     const value = storyboard([{ product_id: 'handle' }], [], {
-      products: { missing: { strategies: ['discover'], match: { currency: { equals: 'USD' } } } },
+      products: [
+        {
+          handle: 'missing',
+          strategies: ['discover'],
+          where: [{ path: '/currency', operator: 'equals', value: 'USD' }],
+        },
+      ],
     });
     assert.throws(() => validateFixtureResolutionDeclarations(value), /no matching fixtures\.products handle/);
   });
 
+  test('rejects duplicate product and same-parent pricing declarations', () => {
+    const value = storyboard([{ product_id: 'product' }], [{ product_id: 'product', pricing_option_id: 'price' }], {
+      products: [
+        { handle: 'product', strategies: ['seed'] },
+        { handle: 'product', strategies: ['seed'] },
+      ],
+      pricing_options: [
+        { handle: 'price', product_handle: 'product', strategies: ['seed'] },
+        { handle: 'price', product_handle: 'product', strategies: ['seed'] },
+      ],
+    });
+    assert.throws(() => validateFixtureResolutionDeclarations(value), /duplicate product handle/);
+    value.fixture_resolution.products.pop();
+    assert.throws(() => validateFixtureResolutionDeclarations(value), /duplicate pricing-option handle/);
+  });
+
   test('rejects malformed canonical-format selectors and does not fall back from an explicit missing path', () => {
     assert.throws(
-      () => normalizeFixtureMatchExpression([{ canonical_format_satisfies: { params: { width: 300 } } }], 'match'),
+      () =>
+        normalizeFixtureMatchExpression(
+          [{ path: '', operator: 'canonical_format_satisfies', value: { params: { width: 300 } } }],
+          'where'
+        ),
       /format_kind/
     );
     const clauses = normalizeFixtureMatchExpression(
-      [{ path: 'missing', canonical_format_satisfies: { format_kind: 'display' } }],
-      'match'
+      [{ path: '/missing', operator: 'canonical_format_satisfies', value: { format_kind: 'display' } }],
+      'where'
     );
     assert.equal(matchesFixtureRequirements({ format_kind: 'display' }, clauses), false);
   });
@@ -161,6 +249,84 @@ describe('schema-annotated handle substitution', () => {
     assert.equal(result.params.product_id, 'seller-product');
     assert.equal(result.params.unrelated_product_id, 'authored-product');
   });
+
+  test('grades an ambiguous unscoped pricing handle without aborting the storyboard run', async () => {
+    const products = ['left', 'right'].map(handle =>
+      createTestProduct({
+        product_id: `seller-${handle}`,
+        delivery_type: 'non_guaranteed',
+        pricing_options: [
+          {
+            pricing_option_id: `${handle}-cpm`,
+            pricing_model: 'cpm',
+            floor_price: 2,
+            currency: 'USD',
+            is_fixed: false,
+          },
+        ],
+      })
+    );
+    const sb = storyboard(
+      [{ product_id: 'left' }, { product_id: 'right' }],
+      [
+        { product_id: 'left', pricing_option_id: 'shared' },
+        { product_id: 'right', pricing_option_id: 'shared' },
+      ],
+      {
+        products: ['left', 'right'].map(handle => ({
+          handle,
+          strategies: ['discover'],
+          where: [{ path: '/product_id', operator: 'equals', value: `seller-${handle}` }],
+        })),
+        pricing_options: ['left', 'right'].map(handle => ({
+          handle: 'shared',
+          product_handle: handle,
+          strategies: ['discover'],
+          where: [{ path: '/currency', operator: 'equals', value: 'USD' }],
+        })),
+      }
+    );
+    sb.phases = [
+      {
+        id: 'ambiguous',
+        title: 'Ambiguous request',
+        steps: [
+          {
+            id: 'create',
+            title: 'Create without product scope',
+            task: 'create_media_buy',
+            expect_error: true,
+            sample_request: {
+              account: { brand: { domain: 'buyer.example' }, operator: 'operator.example' },
+              brand: { domain: 'buyer.example' },
+              start_time: 'asap',
+              end_time: '2099-01-01T00:00:00Z',
+              packages: [{ pricing_option_id: 'shared', budget: 100 }],
+            },
+            validations: [],
+          },
+        ],
+      },
+    ];
+    const calls = [];
+    const result = await runStoryboard('https://example.invalid/mcp', sb, {
+      protocol: 'mcp',
+      agentTools: ['get_products', 'create_media_buy'],
+      _profile: { name: 'Derived seller', tools: ['get_products', 'create_media_buy'] },
+      _client: {
+        async executeTask(name) {
+          calls.push(name);
+          if (name === 'get_products') return { success: true, data: { products, cache_scope: 'public' } };
+          throw new Error(`unexpected dispatch: ${name}`);
+        },
+      },
+    });
+    const step = result.phases.find(phase => phase.phase_id === 'ambiguous').steps[0];
+    assert.equal(step.passed, false);
+    assert.equal(step.validations[0].check, 'unresolved_substitution');
+    assert.match(step.error, /ambiguous unscoped pricing-option fixture handle/);
+    assert.equal(calls.includes('create_media_buy'), false);
+  });
 });
 
 describe('discover strategy state machine', () => {
@@ -172,12 +338,11 @@ describe('discover strategy state machine', () => {
     });
 
   const discoverRoot = handles => ({
-    products: Object.fromEntries(
-      handles.map(handle => [
-        handle,
-        { strategies: ['discover'], match: { delivery_type: { equals: 'non_guaranteed' } } },
-      ])
-    ),
+    products: handles.map(handle => ({
+      handle,
+      strategies: ['discover'],
+      where: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
+    })),
   });
 
   test('selects deterministically by UTF-8 bytes independent of response order', async () => {
@@ -186,7 +351,7 @@ describe('discover strategy state machine', () => {
     const second = discoveryClient([product('a-product'), product('z-product')]);
     const a = await runControllerSeeding(first.client, sb, { agentTools: ['get_products'] }, {});
     const b = await runControllerSeeding(second.client, sb, { agentTools: ['get_products'] }, {});
-    assert.equal(a.resolutionRecords[0].bound_seller_ids.product_id, 'a-product');
+    assert.equal(a.resolutionRecords[0].seller_ids.product_id, 'a-product');
     assert.deepEqual(a.resolutionRecords, b.resolutionRecords);
   });
 
@@ -196,14 +361,14 @@ describe('discover strategy state machine', () => {
     const first = discoveryClient([product('only')]);
     const result = await runControllerSeeding(first.client, noReuse, { agentTools: ['get_products'] }, {});
     assert.deepEqual(
-      result.resolutionRecords.map(record => record.disposition),
-      ['bound', 'unsatisfied']
+      result.resolutionRecords.map(record => record.status),
+      ['resolved', 'unsatisfied']
     );
     assert.equal(result.fixtureUnsatisfied, true);
 
     const reuseRoot = discoverRoot(['one', 'two']);
-    reuseRoot.products.one.allow_reuse = true;
-    reuseRoot.products.two.allow_reuse = true;
+    reuseRoot.products[0].allow_reuse = true;
+    reuseRoot.products[1].allow_reuse = true;
     const reuse = discoveryClient([product('only')]);
     const reused = await runControllerSeeding(
       reuse.client,
@@ -212,7 +377,7 @@ describe('discover strategy state machine', () => {
       {}
     );
     assert.deepEqual(
-      reused.resolutionRecords.map(record => record.bound_seller_ids.product_id),
+      reused.resolutionRecords.map(record => record.seller_ids.product_id),
       ['only', 'only']
     );
 
@@ -221,8 +386,8 @@ describe('discover strategy state machine', () => {
       [false, true],
     ]) {
       const asymmetricRoot = discoverRoot(['one', 'two']);
-      asymmetricRoot.products.one.allow_reuse = flags[0];
-      asymmetricRoot.products.two.allow_reuse = flags[1];
+      asymmetricRoot.products[0].allow_reuse = flags[0];
+      asymmetricRoot.products[1].allow_reuse = flags[1];
       const asymmetric = discoveryClient([product('only')]);
       const asymmetricResult = await runControllerSeeding(
         asymmetric.client,
@@ -231,10 +396,37 @@ describe('discover strategy state machine', () => {
         {}
       );
       assert.deepEqual(
-        asymmetricResult.resolutionRecords.map(record => record.disposition),
-        ['bound', 'unsatisfied']
+        asymmetricResult.resolutionRecords.map(record => record.status),
+        ['resolved', 'unsatisfied']
       );
     }
+  });
+
+  test('authored declaration order controls selection when fixture row order differs', async () => {
+    const root = discoverRoot(['second', 'first']);
+    const sb = storyboard([{ product_id: 'first' }, { product_id: 'second' }], [], root);
+    const discovered = discoveryClient([product('only')]);
+    const result = await runControllerSeeding(discovered.client, sb, { agentTools: ['get_products'] }, {});
+    assert.deepEqual(
+      result.resolutionRecords.map(record => [record.handle, record.status]),
+      [
+        ['second', 'resolved'],
+        ['first', 'unsatisfied'],
+      ]
+    );
+  });
+
+  test('reused seller products resolve a shared scoped pricing binding only when it is unambiguous', () => {
+    const bindings = new FixtureBindingRegistry();
+    bindings.bindProduct('left', 'seller-shared');
+    bindings.bindProduct('right', 'seller-shared');
+    bindings.bindPricingOption('left', 'cpm', 'seller-cpm');
+    bindings.bindPricingOption('right', 'cpm', 'seller-cpm');
+    assert.equal(bindings.pricingOptionId('cpm', 'seller-shared'), 'seller-cpm');
+
+    bindings.bindPricingOption('right', 'other', 'right-other');
+    bindings.bindPricingOption('left', 'other', 'left-other');
+    assert.throws(() => bindings.pricingOptionId('other', 'seller-shared'), /ambiguous pricing-option fixture handle/);
   });
 
   test('runs a declared discovery ladder without the legacy controller_seeding prerequisite', async () => {
@@ -242,7 +434,36 @@ describe('discover strategy state machine', () => {
     sb.prerequisites.controller_seeding = false;
     const discovered = discoveryClient([product('seller-product')]);
     const result = await runControllerSeeding(discovered.client, sb, { agentTools: ['get_products'] }, {});
-    assert.equal(result.resolutionRecords[0].bound_seller_ids.product_id, 'seller-product');
+    assert.equal(result.resolutionRecords[0].seller_ids.product_id, 'seller-product');
+  });
+
+  test('preserves legacy fixture_seed_unsupported grading in a hybrid storyboard', async () => {
+    const sb = storyboard([{ product_id: 'handle' }], [], discoverRoot(['handle']));
+    sb.fixtures.accounts = [{ account_id: 'legacy-account' }];
+    const client = {
+      async executeTask(name, params) {
+        if (name === 'get_products') {
+          return { success: true, data: { products: [product('seller-product')], cache_scope: 'public' } };
+        }
+        if (name === 'comply_test_controller' && params.scenario === 'list_scenarios') {
+          return { success: true, data: { success: false, error: 'UNKNOWN_SCENARIO' } };
+        }
+        if (name === 'comply_test_controller' && params.scenario === 'seed_account') {
+          return { success: true, data: { success: false, error: 'UNKNOWN_SCENARIO' } };
+        }
+        throw new Error(`unexpected ${name}/${params.scenario}`);
+      },
+    };
+    const result = await runControllerSeeding(
+      client,
+      sb,
+      { agentTools: ['comply_test_controller', 'get_products'] },
+      {},
+      client
+    );
+    assert.equal(result.seedUnsupported, true);
+    assert.equal(result.fixtureUnsatisfied, undefined);
+    assert.equal(result.phase.steps[0].skip_reason, 'fixture_seed_unsupported');
   });
 
   test('uses the run account for discovery and defaults its natural-key scope to sandbox', async () => {
@@ -268,13 +489,13 @@ describe('discover strategy state machine', () => {
     const unavailable = await runControllerSeeding(empty.client, sb, { agentTools: ['get_products'] }, {});
     assert.equal(unavailable.fixtureUnsatisfied, true);
     assert.equal(unavailable.failedCount, 0);
-    assert.equal(unavailable.resolutionRecords[0].disposition, 'unsatisfied');
+    assert.equal(unavailable.resolutionRecords[0].status, 'unsatisfied');
 
     const malformed = discoveryClient([{ product_id: 'broken' }]);
     const failed = await runControllerSeeding(malformed.client, sb, { agentTools: ['get_products'] }, {});
     assert.equal(failed.fixtureUnsatisfied, false);
     assert.equal(failed.failedCount, 1);
-    assert.equal(failed.resolutionRecords[0].disposition, 'failed');
+    assert.equal(failed.resolutionRecords[0].status, 'failed');
   });
 
   test('marks dependent pricing unavailable when its parent product is unsatisfied', async () => {
@@ -282,15 +503,21 @@ describe('discover strategy state machine', () => {
       [{ product_id: 'product-handle' }],
       [{ product_id: 'product-handle', pricing_option_id: 'price-handle' }],
       {
-        products: {
-          'product-handle': {
+        products: [
+          {
+            handle: 'product-handle',
             strategies: ['discover'],
-            match: { delivery_type: { equals: 'non_guaranteed' } },
-            pricing_options: {
-              'price-handle': { strategies: ['discover'], match: { currency: { equals: 'USD' } } },
-            },
+            where: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
           },
-        },
+        ],
+        pricing_options: [
+          {
+            handle: 'price-handle',
+            product_handle: 'product-handle',
+            strategies: ['discover'],
+            where: [{ path: '/currency', operator: 'equals', value: 'USD' }],
+          },
+        ],
       }
     );
     const empty = discoveryClient([]);
@@ -298,7 +525,7 @@ describe('discover strategy state machine', () => {
     assert.equal(result.failedCount, 0);
     assert.equal(result.fixtureUnsatisfied, true);
     assert.deepEqual(
-      result.resolutionRecords.map(record => record.disposition),
+      result.resolutionRecords.map(record => record.status),
       ['unsatisfied', 'unsatisfied']
     );
     assert.match(result.resolutionRecords[1].evidence[0].detail, /parent product handle/);
@@ -312,29 +539,39 @@ describe('discover strategy state machine', () => {
         { product_id: 'right', pricing_option_id: 'shared-price' },
       ],
       {
-        products: {
-          left: {
+        products: [
+          {
+            handle: 'left',
             strategies: ['discover'],
-            match: { product_id: { equals: 'seller-left' } },
-            pricing_options: {
-              'shared-price': { strategies: ['discover'], match: { currency: { equals: 'USD' } } },
-            },
+            where: [{ path: '/product_id', operator: 'equals', value: 'seller-left' }],
           },
-          right: {
+          {
+            handle: 'right',
             strategies: ['discover'],
-            match: { product_id: { equals: 'seller-right' } },
-            pricing_options: {
-              'shared-price': { strategies: ['discover'], match: { currency: { equals: 'USD' } } },
-            },
+            where: [{ path: '/product_id', operator: 'equals', value: 'seller-right' }],
           },
-        },
+        ],
+        pricing_options: [
+          {
+            handle: 'shared-price',
+            product_handle: 'left',
+            strategies: ['discover'],
+            where: [{ path: '/currency', operator: 'equals', value: 'USD' }],
+          },
+          {
+            handle: 'shared-price',
+            product_handle: 'right',
+            strategies: ['discover'],
+            where: [{ path: '/currency', operator: 'equals', value: 'USD' }],
+          },
+        ],
       }
     );
     const discovered = discoveryClient([product('seller-right'), product('seller-left')]);
     const result = await runControllerSeeding(discovered.client, sb, { agentTools: ['get_products'] }, {});
     assert.equal(result.failedCount, 0);
     assert.deepEqual(
-      result.resolutionRecords.map(record => record.bound_seller_ids),
+      result.resolutionRecords.map(record => record.seller_ids),
       [
         { product_id: 'seller-left' },
         { product_id: 'seller-right' },
@@ -390,7 +627,7 @@ describe('discover strategy state machine', () => {
     const result = await runControllerSeeding(pagedClient, sb, { agentTools: ['get_products'] }, {});
     assert.equal(requests.length, 2);
     assert.equal(requests[1].pagination.cursor, 'next');
-    assert.equal(result.resolutionRecords[0].bound_seller_ids.product_id, 'a-product');
+    assert.equal(result.resolutionRecords[0].seller_ids.product_id, 'a-product');
 
     const brokenClient = {
       async executeTask() {
@@ -407,12 +644,13 @@ describe('discover strategy state machine', () => {
 
   test('an advertised seed failure is terminal and does not fall back to discovery', async () => {
     const sb = storyboard([{ product_id: 'handle' }], [], {
-      products: {
-        handle: {
+      products: [
+        {
+          handle: 'handle',
           strategies: ['seed', 'discover'],
-          match: { delivery_type: { equals: 'non_guaranteed' } },
+          where: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
         },
-      },
+      ],
     });
     const calls = [];
     const client = {
@@ -437,7 +675,7 @@ describe('discover strategy state machine', () => {
       },
       {}
     );
-    assert.equal(result.resolutionRecords[0].disposition, 'failed');
+    assert.equal(result.resolutionRecords[0].status, 'failed');
     assert.deepEqual(result.resolutionRecords[0].strategies_attempted, ['seed']);
     assert.equal(
       calls.some(call => call.name === 'get_products'),
@@ -447,12 +685,13 @@ describe('discover strategy state machine', () => {
 
   test('an unadvertised seed is unavailable and advances to discovery', async () => {
     const sb = storyboard([{ product_id: 'handle' }], [], {
-      products: {
-        handle: {
+      products: [
+        {
+          handle: 'handle',
           strategies: ['seed', 'discover'],
-          match: { delivery_type: { equals: 'non_guaranteed' } },
+          where: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
         },
-      },
+      ],
     });
     const discovered = discoveryClient([product('derived')]);
     const result = await runControllerSeeding(
@@ -469,7 +708,7 @@ describe('discover strategy state machine', () => {
       result.resolutionRecords[0].evidence.map(item => item.outcome),
       ['unavailable', 'bound']
     );
-    assert.equal(result.resolutionRecords[0].bound_seller_ids.product_id, 'derived');
+    assert.equal(result.resolutionRecords[0].seller_ids.product_id, 'derived');
     assert.equal(
       discovered.calls.some(call => call.name === 'comply_test_controller'),
       false
@@ -481,15 +720,21 @@ describe('discover strategy state machine', () => {
       [{ product_id: 'product-handle' }],
       [{ product_id: 'product-handle', pricing_option_id: 'price-handle' }],
       {
-        products: {
-          'product-handle': {
+        products: [
+          {
+            handle: 'product-handle',
             strategies: ['discover'],
-            match: { delivery_type: { equals: 'non_guaranteed' } },
-            pricing_options: {
-              'price-handle': { strategies: ['discover'], match: { currency: { equals: 'USD' } } },
-            },
+            where: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
           },
-        },
+        ],
+        pricing_options: [
+          {
+            handle: 'price-handle',
+            product_handle: 'product-handle',
+            strategies: ['discover'],
+            where: [{ path: '/currency', operator: 'equals', value: 'USD' }],
+          },
+        ],
       }
     );
     sb.phases = [
@@ -535,22 +780,75 @@ describe('discover strategy state machine', () => {
     assert.equal(create.params.packages[0].product_id, 'derived-product');
     assert.equal(create.params.packages[0].pricing_option_id, 'cpm');
     assert.deepEqual(
-      result.fixture_resolution.map(record => record.disposition),
-      ['bound', 'bound']
+      result.fixture_resolution.map(record => record.status),
+      ['resolved', 'resolved']
     );
+    assert.deepEqual(
+      {
+        fixture_type: result.fixture_resolution[0].fixture_type,
+        handle: result.fixture_resolution[0].handle,
+        status: result.fixture_resolution[0].status,
+        strategy: result.fixture_resolution[0].strategy,
+        seller_ids: result.fixture_resolution[0].seller_ids,
+      },
+      {
+        fixture_type: 'product',
+        handle: 'product-handle',
+        status: 'resolved',
+        strategy: 'discover',
+        seller_ids: { product_id: 'derived-product' },
+      }
+    );
+    assert.deepEqual(
+      {
+        fixture_type: result.fixture_resolution[1].fixture_type,
+        handle: result.fixture_resolution[1].handle,
+        parent_product_handle: result.fixture_resolution[1].parent_product_handle,
+        status: result.fixture_resolution[1].status,
+        strategy: result.fixture_resolution[1].strategy,
+        seller_ids: result.fixture_resolution[1].seller_ids,
+      },
+      {
+        fixture_type: 'pricing_option',
+        handle: 'price-handle',
+        parent_product_handle: 'product-handle',
+        status: 'resolved',
+        strategy: 'discover',
+        seller_ids: { product_id: 'derived-product', pricing_option_id: 'cpm' },
+      }
+    );
+    for (const record of result.fixture_resolution) {
+      assert.equal(Object.hasOwn(record, 'entity_type'), false);
+      assert.equal(Object.hasOwn(record, 'disposition'), false);
+      assert.equal(Object.hasOwn(record, 'chosen_strategy'), false);
+      assert.equal(Object.hasOwn(record, 'bound_seller_ids'), false);
+    }
   });
 
-  test('fixture_unsatisfied stops ordinary phases without failing the storyboard', async () => {
-    const sb = storyboard([{ product_id: 'usd-product' }], [], {
-      products: {
-        'usd-product': { strategies: ['discover'], match: { currency: { equals: 'USD' } } },
-      },
+  test('reports one storyboard-level fixture_unsatisfied gap naming every unresolved handle', async () => {
+    const sb = storyboard([{ product_id: 'usd-product' }, { product_id: 'eur-product' }], [], {
+      products: [
+        {
+          handle: 'usd-product',
+          strategies: ['discover'],
+          where: [{ path: '/currency', operator: 'equals', value: 'USD' }],
+        },
+        {
+          handle: 'eur-product',
+          strategies: ['discover'],
+          where: [{ path: '/currency', operator: 'equals', value: 'EUR' }],
+        },
+      ],
     });
     sb.phases = [
       {
         id: 'ordinary',
         title: 'Ordinary',
-        steps: [{ id: 'buy', title: 'Buy', task: 'create_media_buy', sample_request: {}, validations: [] }],
+        steps: [
+          { id: 'buy-1', title: 'Buy one', task: 'create_media_buy', sample_request: {}, validations: [] },
+          { id: 'buy-2', title: 'Buy two', task: 'create_media_buy', sample_request: {}, validations: [] },
+          { id: 'buy-3', title: 'Buy three', task: 'create_media_buy', sample_request: {}, validations: [] },
+        ],
       },
     ];
     const calls = [];
@@ -573,25 +871,44 @@ describe('discover strategy state machine', () => {
       calls.some(call => call.name === 'create_media_buy'),
       false
     );
-    assert.equal(
-      result.phases.find(phase => phase.phase_id === 'ordinary').steps[0].skip_reason,
-      'fixture_unsatisfied'
+    const gaps = result.coverage_gaps.filter(gap => gap.reason === 'fixture_unsatisfied');
+    assert.equal(gaps.length, 1);
+    assert.deepEqual(
+      gaps[0].fixtures.map(fixture => fixture.handle),
+      ['usd-product', 'eur-product']
     );
-    assert.deepEqual(result.fixture_resolution[0].requirements, [{ path: 'currency', equals: 'USD' }]);
+    assert.match(gaps[0].detail, /usd-product/);
+    assert.match(gaps[0].detail, /eur-product/);
+    const ordinarySteps = result.phases.find(phase => phase.phase_id === 'ordinary').steps;
+    assert.equal(ordinarySteps.length, 3);
+    assert.equal(
+      ordinarySteps.some(step => step.skip_reason === 'fixture_unsatisfied'),
+      false
+    );
+    assert.equal(
+      ordinarySteps.every(step => step.skip_reason === 'prerequisite_failed'),
+      true
+    );
+    assert.equal(result.skipped_count, 3);
+    assert.deepEqual(result.fixture_resolution[0].requirements, [
+      { path: '/currency', operator: 'equals', value: 'USD' },
+    ]);
   });
 
   test('a terminal resolution failure wins over another handle exhausting its ladder', async () => {
     const sb = storyboard([{ product_id: 'unavailable' }, { product_id: 'broken' }], [], {
-      products: {
-        unavailable: {
+      products: [
+        {
+          handle: 'unavailable',
           strategies: ['discover'],
-          match: { delivery_type: { equals: 'non_guaranteed' } },
+          where: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
         },
-        broken: {
+        {
+          handle: 'broken',
           strategies: ['seed'],
-          match: { delivery_type: { equals: 'non_guaranteed' } },
+          where: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
         },
-      },
+      ],
     });
     sb.phases = [
       {
@@ -633,6 +950,23 @@ describe('discover strategy state machine', () => {
     });
     assert.equal(result.overall_passed, false);
     assert.equal(result.failed_count, 1);
+    assert.deepEqual(
+      result.fixture_resolution.map(record => record.status),
+      ['unsatisfied', 'failed']
+    );
+    const gaps = result.coverage_gaps.filter(gap => gap.reason === 'fixture_unsatisfied');
+    assert.equal(gaps.length, 1);
+    assert.deepEqual(
+      gaps[0].fixtures.map(fixture => fixture.handle),
+      ['unavailable']
+    );
+    for (const record of result.fixture_resolution) {
+      for (const legacyKey of ['entity_type', 'disposition', 'chosen_strategy', 'bound_seller_ids']) {
+        assert.equal(Object.hasOwn(record, legacyKey), false);
+      }
+      assert.equal(Object.hasOwn(record, 'seller_ids'), false);
+      assert.equal(Object.hasOwn(record, 'strategy'), false);
+    }
     assert.equal(
       result.phases.find(phase => phase.phase_id === 'ordinary').steps[0].skip_reason,
       'controller_seeding_failed'

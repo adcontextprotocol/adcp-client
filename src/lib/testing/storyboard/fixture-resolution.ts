@@ -3,18 +3,17 @@ import { ADCP_VERSION } from '../../version';
 import { getRequestSchemaEntityPaths, type SchemaEntityPath } from '../../validation/schema-loader';
 import { productCanonicalFormatSatisfies } from './canonical-format-satisfaction';
 import type {
+  FixtureCanonicalFormatSelector,
   FixtureMatchClause,
   FixtureResolutionDeclaration,
   FixtureResolutionStrategy,
   PricingOptionFixtureResolutionDeclaration,
-  ProductFixtureResolutionDeclaration,
   Storyboard,
 } from './types';
 
-const MATCHERS = ['equals', 'present', 'contains_all', 'any_match', 'canonical_format_satisfies'] as const;
-const DECLARATION_KEYS = new Set(['strategies', 'match', 'allow_reuse']);
-const PRODUCT_DECLARATION_KEYS = new Set([...DECLARATION_KEYS, 'pricing_options']);
-const PRICING_DECLARATION_KEYS = new Set([...DECLARATION_KEYS, 'product_handle', 'product_id']);
+const OPERATORS = ['equals', 'present', 'contains_all', 'any_match', 'canonical_format_satisfies'] as const;
+const DECLARATION_KEYS = new Set(['handle', 'strategies', 'where', 'allow_reuse']);
+const PRICING_DECLARATION_KEYS = new Set([...DECLARATION_KEYS, 'product_handle']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -24,84 +23,95 @@ function assertPlainObject(value: unknown, location: string): asserts value is R
   if (!isRecord(value)) throw new Error(`${location}: must be an object`);
 }
 
+function assertArray(value: unknown, location: string): asserts value is unknown[] {
+  if (!Array.isArray(value)) throw new Error(`${location}: must be an array`);
+}
+
+function decodeJsonPointer(path: string, location: string): string[] {
+  if (path !== '' && !path.startsWith('/')) {
+    throw new Error(`${location}: must be an RFC 6901 JSON Pointer`);
+  }
+  if (path === '') return [];
+  return path
+    .slice(1)
+    .split('/')
+    .map(segment => {
+      for (let i = 0; i < segment.length; i++) {
+        if (segment[i] === '~' && segment[i + 1] !== '0' && segment[i + 1] !== '1') {
+          throw new Error(`${location}: contains an invalid RFC 6901 escape`);
+        }
+        if (segment[i] === '~') i++;
+      }
+      return segment.replace(/~1/g, '/').replace(/~0/g, '~');
+    });
+}
+
 /** Normalize and validate the closed fixture matching DSL. */
 export function normalizeFixtureMatchExpression(expression: unknown, location: string): FixtureMatchClause[] {
   if (expression === undefined) return [];
-  if (Array.isArray(expression)) {
-    if (expression.length === 0) throw new Error(`${location}: must contain at least one match clause`);
-    return expression.map((clause, index) => normalizeClause(clause, `${location}[${index}]`));
-  }
-  assertPlainObject(expression, location);
-  const entries = Object.entries(expression);
-  if (entries.length === 0) throw new Error(`${location}: must contain at least one field matcher`);
-  return entries.map(([path, matcher]) => {
-    if (path.length === 0) throw new Error(`${location}: field paths must be non-empty strings`);
-    assertPlainObject(matcher, `${location}.${path}`);
-    return normalizeClause({ path, ...matcher }, `${location}.${path}`);
-  });
+  assertArray(expression, location);
+  if (expression.length === 0) throw new Error(`${location}: must contain at least one predicate`);
+  return expression.map((clause, index) => normalizeClause(clause, `${location}[${index}]`));
 }
 
 function normalizeClause(value: unknown, location: string): FixtureMatchClause {
   assertPlainObject(value, location);
-  const unknownKeys = Object.keys(value).filter(
-    key => key !== 'path' && !(MATCHERS as readonly string[]).includes(key)
-  );
+  const unknownKeys = Object.keys(value).filter(key => !['path', 'operator', 'value', 'where'].includes(key));
   if (unknownKeys.length > 0) {
     throw new Error(`${location}: unknown key(s): ${unknownKeys.join(', ')}; the match DSL is closed`);
   }
-  const matcherKeys = MATCHERS.filter(key => Object.hasOwn(value, key));
-  if (matcherKeys.length !== 1) {
-    throw new Error(`${location}: must declare exactly one of ${MATCHERS.join(', ')}`);
+  if (typeof value.path !== 'string') {
+    throw new Error(`${location}.path: must be an RFC 6901 JSON Pointer string`);
   }
-  const matcher = matcherKeys[0]!;
-  const path = value.path;
-  if (matcher !== 'canonical_format_satisfies' && (typeof path !== 'string' || path.length === 0)) {
-    throw new Error(`${location}.path: must be a non-empty string`);
+  decodeJsonPointer(value.path, `${location}.path`);
+  if (typeof value.operator !== 'string' || !(OPERATORS as readonly string[]).includes(value.operator)) {
+    throw new Error(`${location}.operator: must be one of ${OPERATORS.join(', ')}`);
   }
-  if (path !== undefined && (typeof path !== 'string' || path.length === 0)) {
-    throw new Error(`${location}.path: must be a non-empty string when present`);
+  const operator = value.operator as (typeof OPERATORS)[number];
+  const hasValue = Object.hasOwn(value, 'value');
+  const hasWhere = Object.hasOwn(value, 'where');
+  if (operator === 'any_match') {
+    if (hasValue) throw new Error(`${location}.value: is not allowed for any_match; use where`);
+    if (!hasWhere) throw new Error(`${location}.where: is required for any_match`);
+  } else {
+    if (!hasValue) throw new Error(`${location}.value: is required for ${operator}`);
+    if (hasWhere) throw new Error(`${location}.where: is only allowed for any_match`);
   }
 
-  switch (matcher) {
+  switch (operator) {
     case 'equals':
-      return { path: path as string, equals: value.equals };
+      return { path: value.path, operator, value: value.value };
     case 'present':
-      if (typeof value.present !== 'boolean') throw new Error(`${location}.present: must be boolean`);
-      return { path: path as string, present: value.present };
+      if (typeof value.value !== 'boolean') throw new Error(`${location}.value: must be boolean for present`);
+      return { path: value.path, operator, value: value.value };
     case 'contains_all':
-      if (!Array.isArray(value.contains_all)) throw new Error(`${location}.contains_all: must be an array`);
-      return { path: path as string, contains_all: value.contains_all };
+      if (!Array.isArray(value.value)) throw new Error(`${location}.value: must be an array for contains_all`);
+      return { path: value.path, operator, value: value.value };
     case 'any_match':
       return {
-        path: path as string,
-        any_match: normalizeFixtureMatchExpression(value.any_match, `${location}.any_match`),
+        path: value.path,
+        operator,
+        where: normalizeFixtureMatchExpression(value.where, `${location}.where`),
       };
     case 'canonical_format_satisfies':
-      assertPlainObject(value.canonical_format_satisfies, `${location}.canonical_format_satisfies`);
-      if (
-        typeof value.canonical_format_satisfies.format_kind !== 'string' ||
-        value.canonical_format_satisfies.format_kind.length === 0
-      ) {
-        throw new Error(`${location}.canonical_format_satisfies.format_kind: must be a non-empty string`);
+      assertPlainObject(value.value, `${location}.value`);
+      if (typeof value.value.format_kind !== 'string' || value.value.format_kind.length === 0) {
+        throw new Error(`${location}.value.format_kind: must be a non-empty string`);
       }
-      if (value.canonical_format_satisfies.params !== undefined && !isRecord(value.canonical_format_satisfies.params)) {
-        throw new Error(`${location}.canonical_format_satisfies.params: must be an object when present`);
+      if (value.value.params !== undefined && !isRecord(value.value.params)) {
+        throw new Error(`${location}.value.params: must be an object when present`);
       }
-      return {
-        ...(typeof path === 'string' && { path }),
-        canonical_format_satisfies: value.canonical_format_satisfies,
-      };
+      return { path: value.path, operator, value: value.value as FixtureCanonicalFormatSelector };
   }
 }
 
-function validateDeclaration(
-  declaration: unknown,
-  location: string,
-  allowedKeys: ReadonlySet<string>
-): asserts declaration is FixtureResolutionDeclaration {
+function validateDeclaration(declaration: unknown, location: string, allowedKeys: ReadonlySet<string>): void {
   assertPlainObject(declaration, location);
   const unknown = Object.keys(declaration).filter(key => !allowedKeys.has(key));
   if (unknown.length > 0) throw new Error(`${location}: unknown key(s): ${unknown.join(', ')}`);
+  if (typeof declaration.handle !== 'string' || declaration.handle.length === 0) {
+    throw new Error(`${location}.handle: must be a non-empty string`);
+  }
   if (declaration.strategies !== undefined) {
     if (!Array.isArray(declaration.strategies) || declaration.strategies.length === 0) {
       throw new Error(`${location}.strategies: must be a non-empty array`);
@@ -119,9 +129,9 @@ function validateDeclaration(
   if (declaration.allow_reuse !== undefined && typeof declaration.allow_reuse !== 'boolean') {
     throw new Error(`${location}.allow_reuse: must be boolean`);
   }
-  const clauses = normalizeFixtureMatchExpression(declaration.match, `${location}.match`);
+  const clauses = normalizeFixtureMatchExpression(declaration.where, `${location}.where`);
   if (Array.isArray(declaration.strategies) && declaration.strategies.includes('discover') && clauses.length === 0) {
-    throw new Error(`${location}.match: discover strategy requires at least one authored requirement clause`);
+    throw new Error(`${location}.where: discover strategy requires at least one authored predicate`);
   }
 }
 
@@ -164,56 +174,51 @@ export function validateFixtureResolutionDeclarations(storyboard: Storyboard): v
   }
 
   if (root.products !== undefined) {
-    assertPlainObject(root.products, `[${storyboard.id}] fixture_resolution.products`);
-    for (const [handle, declaration] of Object.entries(root.products)) {
+    assertArray(root.products, `[${storyboard.id}] fixture_resolution.products`);
+    const seen = new Set<string>();
+    for (let index = 0; index < root.products.length; index++) {
+      const declaration = root.products[index];
+      const location = `[${storyboard.id}] fixture_resolution.products[${index}]`;
+      validateDeclaration(declaration, location, DECLARATION_KEYS);
+      const typedDeclaration = declaration as FixtureResolutionDeclaration;
+      const handle = typedDeclaration.handle;
+      if (seen.has(handle)) throw new Error(`${location}.handle: duplicate product handle "${handle}"`);
+      seen.add(handle);
       if (!productFixtures.has(handle)) {
-        throw new Error(
-          `[${storyboard.id}] fixture_resolution.products.${handle}: no matching fixtures.products handle`
-        );
-      }
-      const location = `[${storyboard.id}] fixture_resolution.products.${handle}`;
-      validateDeclaration(declaration, location, PRODUCT_DECLARATION_KEYS);
-      const productDeclaration = declaration as unknown as ProductFixtureResolutionDeclaration;
-      if (productDeclaration.pricing_options !== undefined) {
-        assertPlainObject(productDeclaration.pricing_options, `${location}.pricing_options`);
-        for (const [pricingHandle, pricingDeclaration] of Object.entries(productDeclaration.pricing_options)) {
-          if (!pricingFixtures.has(`${handle}\0${pricingHandle}`)) {
-            throw new Error(
-              `${location}.pricing_options.${pricingHandle}: no matching fixtures.pricing_options handle`
-            );
-          }
-          validateDeclaration(
-            pricingDeclaration,
-            `${location}.pricing_options.${pricingHandle}`,
-            PRICING_DECLARATION_KEYS
-          );
-        }
+        throw new Error(`${location}.handle: no matching fixtures.products handle "${handle}"`);
       }
     }
   }
 
   if (root.pricing_options !== undefined) {
-    assertPlainObject(root.pricing_options, `[${storyboard.id}] fixture_resolution.pricing_options`);
-    for (const [key, declaration] of Object.entries(root.pricing_options)) {
-      const location = `[${storyboard.id}] fixture_resolution.pricing_options.${key}`;
+    assertArray(root.pricing_options, `[${storyboard.id}] fixture_resolution.pricing_options`);
+    const seen = new Set<string>();
+    for (let index = 0; index < root.pricing_options.length; index++) {
+      const declaration = root.pricing_options[index];
+      const location = `[${storyboard.id}] fixture_resolution.pricing_options[${index}]`;
       validateDeclaration(declaration, location, PRICING_DECLARATION_KEYS);
-      const pricing = declaration as unknown as PricingOptionFixtureResolutionDeclaration;
-      const parent = pricing.product_handle ?? pricing.product_id;
-      if (typeof parent !== 'string' || parent.length === 0) {
-        throw new Error(`${location}: requires product_handle (or product_id compatibility spelling)`);
+      const typedDeclaration = declaration as PricingOptionFixtureResolutionDeclaration;
+      if (typeof typedDeclaration.product_handle !== 'string' || typedDeclaration.product_handle.length === 0) {
+        throw new Error(`${location}.product_handle: must be a non-empty string`);
       }
-      if (!pricingFixtures.has(`${parent}\0${key}`)) {
-        throw new Error(`${location}: no matching fixtures.pricing_options entry for product handle "${parent}"`);
+      const key = `${typedDeclaration.product_handle}\0${typedDeclaration.handle}`;
+      if (seen.has(key)) {
+        throw new Error(`${location}.handle: duplicate pricing-option handle "${typedDeclaration.handle}"`);
+      }
+      seen.add(key);
+      if (!pricingFixtures.has(key)) {
+        throw new Error(
+          `${location}.handle: no matching fixtures.pricing_options entry for product handle "${typedDeclaration.product_handle}"`
+        );
       }
     }
   }
 }
 
-function resolveCandidatePath(candidate: unknown, dottedPath: string | undefined): unknown {
-  if (!dottedPath) return candidate;
+function resolveCandidatePath(candidate: unknown, pointer: string): unknown {
   let current = candidate;
-  for (const segment of dottedPath.split('.')) {
-    if (!current || typeof current !== 'object') return undefined;
+  for (const segment of decodeJsonPointer(pointer, 'fixture predicate path')) {
+    if (!current || typeof current !== 'object' || !Object.hasOwn(current, segment)) return undefined;
     current = (current as Record<string, unknown>)[segment];
   }
   return current;
@@ -223,23 +228,23 @@ function resolveCandidatePath(candidate: unknown, dottedPath: string | undefined
 export function matchesFixtureRequirements(candidate: unknown, clauses: readonly FixtureMatchClause[]): boolean {
   return clauses.every(clause => {
     const actual = resolveCandidatePath(candidate, clause.path);
-    if ('equals' in clause) return isDeepStrictEqual(actual, clause.equals);
-    if ('present' in clause)
-      return clause.present ? actual !== undefined && actual !== null : actual === undefined || actual === null;
-    if ('contains_all' in clause) {
-      return (
-        Array.isArray(actual) &&
-        clause.contains_all.every(expected => actual.some(value => isDeepStrictEqual(value, expected)))
-      );
+    switch (clause.operator) {
+      case 'equals':
+        return isDeepStrictEqual(actual, clause.value);
+      case 'present':
+        return clause.value === true
+          ? actual !== undefined && actual !== null
+          : actual === undefined || actual === null;
+      case 'contains_all':
+        return (
+          Array.isArray(actual) &&
+          (clause.value as unknown[]).every(expected => actual.some(value => isDeepStrictEqual(value, expected)))
+        );
+      case 'any_match':
+        return Array.isArray(actual) && actual.some(value => matchesFixtureRequirements(value, clause.where ?? []));
+      case 'canonical_format_satisfies':
+        return productCanonicalFormatSatisfies(actual, clause.value as Record<string, unknown>);
     }
-    if ('any_match' in clause) {
-      return (
-        Array.isArray(actual) &&
-        actual.some(value => matchesFixtureRequirements(value, clause.any_match as FixtureMatchClause[]))
-      );
-    }
-    const formatCandidate = clause.path === undefined ? candidate : actual;
-    return productCanonicalFormatSatisfies(formatCandidate, clause.canonical_format_satisfies);
   });
 }
 
@@ -256,26 +261,73 @@ export interface FixtureResolutionSpec {
 /** Normalize fixture rows + optional metadata into the ordered handle list. */
 export function buildFixtureResolutionSpecs(storyboard: Storyboard): FixtureResolutionSpec[] {
   const specs: FixtureResolutionSpec[] = [];
-  for (const fixture of storyboard.fixtures?.products ?? []) {
+  const productFixtures = new Map(
+    (storyboard.fixtures?.products ?? [])
+      .filter(fixture => typeof fixture.product_id === 'string' && fixture.product_id.length > 0)
+      .map(fixture => [fixture.product_id!, fixture])
+  );
+  const pricingFixtures = new Map(
+    (storyboard.fixtures?.pricing_options ?? [])
+      .filter(
+        fixture =>
+          typeof fixture.product_id === 'string' &&
+          fixture.product_id.length > 0 &&
+          typeof fixture.pricing_option_id === 'string' &&
+          fixture.pricing_option_id.length > 0
+      )
+      .map(fixture => [`${fixture.product_id}\0${fixture.pricing_option_id}`, fixture])
+  );
+  const declaredProducts = storyboard.fixture_resolution?.products ?? [];
+  const declaredProductHandles = new Set(declaredProducts.map(declaration => declaration.handle));
+  const orderedProducts = [
+    ...declaredProducts.map(declaration => ({ fixture: productFixtures.get(declaration.handle), declaration })),
+    ...(storyboard.fixtures?.products ?? [])
+      .filter(
+        fixture =>
+          typeof fixture.product_id === 'string' &&
+          fixture.product_id.length > 0 &&
+          !declaredProductHandles.has(fixture.product_id)
+      )
+      .map(fixture => ({ fixture, declaration: undefined })),
+  ];
+  for (const { fixture, declaration } of orderedProducts) {
+    if (!fixture) continue;
     if (typeof fixture.product_id !== 'string' || fixture.product_id.length === 0) continue;
-    const declaration = storyboard.fixture_resolution?.products?.[fixture.product_id];
     const { product_id: handle, ...requirementFixture } = fixture;
     specs.push({
       entityType: 'product',
       handle,
       fixture: requirementFixture,
       strategies: [...(declaration?.strategies ?? ['seed'])],
-      clauses: normalizeFixtureMatchExpression(declaration?.match, `fixture_resolution.products.${handle}.match`),
+      clauses: normalizeFixtureMatchExpression(declaration?.where, `fixture_resolution.products.${handle}.where`),
       allowReuse: declaration?.allow_reuse === true,
     });
   }
-  for (const fixture of storyboard.fixtures?.pricing_options ?? []) {
+  const declaredPricing = storyboard.fixture_resolution?.pricing_options ?? [];
+  const declaredPricingHandles = new Set(
+    declaredPricing.map(declaration => `${declaration.product_handle}\0${declaration.handle}`)
+  );
+  const orderedPricing = [
+    ...declaredPricing.map(declaration => ({
+      fixture: pricingFixtures.get(`${declaration.product_handle}\0${declaration.handle}`),
+      declaration,
+    })),
+    ...(storyboard.fixtures?.pricing_options ?? [])
+      .filter(
+        fixture =>
+          typeof fixture.product_id === 'string' &&
+          fixture.product_id.length > 0 &&
+          typeof fixture.pricing_option_id === 'string' &&
+          fixture.pricing_option_id.length > 0 &&
+          !declaredPricingHandles.has(`${fixture.product_id}\0${fixture.pricing_option_id}`)
+      )
+      .map(fixture => ({ fixture, declaration: undefined })),
+  ];
+  for (const { fixture, declaration } of orderedPricing) {
+    if (!fixture) continue;
     const parent = fixture.product_id;
     const handle = fixture.pricing_option_id;
     if (typeof parent !== 'string' || !parent || typeof handle !== 'string' || !handle) continue;
-    const nested = storyboard.fixture_resolution?.products?.[parent]?.pricing_options?.[handle];
-    const root = storyboard.fixture_resolution?.pricing_options?.[handle];
-    const declaration = nested ?? ((root?.product_handle ?? root?.product_id) === parent ? root : undefined);
     const { product_id: _parent, pricing_option_id: _handle, ...requirementFixture } = fixture;
     specs.push({
       entityType: 'product_pricing_option',
@@ -284,8 +336,8 @@ export function buildFixtureResolutionSpecs(storyboard: Storyboard): FixtureReso
       fixture: requirementFixture,
       strategies: [...(declaration?.strategies ?? ['seed'])],
       clauses: normalizeFixtureMatchExpression(
-        declaration?.match,
-        `fixture_resolution.products.${parent}.pricing_options.${handle}.match`
+        declaration?.where,
+        `fixture_resolution.pricing_options.${parent}/${handle}.where`
       ),
       allowReuse: declaration?.allow_reuse === true,
     });
@@ -296,7 +348,7 @@ export function buildFixtureResolutionSpecs(storyboard: Storyboard): FixtureReso
 /** Run-scoped, pinned handle bindings. */
 export class FixtureBindingRegistry {
   private readonly products = new Map<string, string>();
-  private readonly productHandlesBySellerId = new Map<string, string>();
+  private readonly productHandlesBySellerId = new Map<string, Set<string>>();
   private readonly pricingOptions = new Map<string, string>();
   private readonly pricingScopesByHandle = new Map<string, Set<string>>();
 
@@ -306,7 +358,9 @@ export class FixtureBindingRegistry {
       throw new Error(`fixture product handle "${handle}" is already pinned to "${existing}"`);
     }
     this.products.set(handle, sellerProductId);
-    this.productHandlesBySellerId.set(sellerProductId, handle);
+    const handles = this.productHandlesBySellerId.get(sellerProductId) ?? new Set<string>();
+    handles.add(handle);
+    this.productHandlesBySellerId.set(sellerProductId, handles);
   }
 
   bindPricingOption(parentHandle: string, handle: string, sellerPricingOptionId: string): void {
@@ -326,12 +380,33 @@ export class FixtureBindingRegistry {
   }
 
   productHandle(value: string): string | undefined {
-    return this.products.has(value) ? value : this.productHandlesBySellerId.get(value);
+    if (this.products.has(value)) return value;
+    const handles = this.productHandlesBySellerId.get(value);
+    if (!handles || handles.size === 0) return undefined;
+    if (handles.size > 1) {
+      throw new Error(`ambiguous seller product_id "${value}" maps to fixture handles: ${[...handles].join(', ')}`);
+    }
+    return [...handles][0];
   }
 
   pricingOptionId(handle: string, parentValue?: string): string | undefined {
-    const parentHandle = parentValue === undefined ? undefined : this.productHandle(parentValue);
-    if (parentHandle) return this.pricingOptions.get(`${parentHandle}\0${handle}`);
+    if (parentValue !== undefined) {
+      const directParent = this.products.has(parentValue)
+        ? new Set([parentValue])
+        : this.productHandlesBySellerId.get(parentValue);
+      if (directParent) {
+        const sellerIds = new Set(
+          [...directParent]
+            .map(parentHandle => this.pricingOptions.get(`${parentHandle}\0${handle}`))
+            .filter((value): value is string => value !== undefined)
+        );
+        if (sellerIds.size === 1) return [...sellerIds][0];
+        if (sellerIds.size > 1) {
+          throw new Error(`ambiguous pricing-option fixture handle "${handle}" for seller product_id "${parentValue}"`);
+        }
+        return undefined;
+      }
+    }
     const scopes = this.pricingScopesByHandle.get(handle);
     if (!scopes || scopes.size === 0) return undefined;
     if (scopes.size > 1) {

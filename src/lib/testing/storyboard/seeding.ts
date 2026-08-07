@@ -454,13 +454,25 @@ async function runDeclaredFixtureResolution(
       spec
     );
   }
+  const declaredCalls = new Map<string, SeedCall>();
+  for (const call of calls) {
+    const spec = resolutionSpecForCall(call, specByKey);
+    if (spec) declaredCalls.set(resolutionSpecKey(spec), call);
+  }
+  const orderedDeclaredCalls = specs
+    .map(spec => declaredCalls.get(resolutionSpecKey(spec)))
+    .filter((call): call is SeedCall => call !== undefined);
+  let declaredCallIndex = 0;
+  const orderedCalls = calls.map(call =>
+    resolutionSpecForCall(call, specByKey) ? orderedDeclaredCalls[declaredCallIndex++]! : call
+  );
 
   const bindings = new FixtureBindingRegistry();
   const records: FixtureResolutionRecord[] = [];
   const steps: StoryboardStepResult[] = [];
   const claimedProducts = new Map<string, boolean>();
   const claimedPricingOptions = new Map<string, boolean>();
-  const productDispositions = new Map<string, FixtureResolutionRecord['disposition']>();
+  const productStatuses = new Map<string, FixtureResolutionRecord['status']>();
   const seedContext = { correlation_id: `${storyboardCorrelationPrefix(storyboard)}--__seeding__` };
   const controllerMissing = options.agentTools?.includes('comply_test_controller') === false;
   let advertisedScenarios = controllerMissing ? new Set<string>() : controllerScenarioSetFromOptions(options);
@@ -485,7 +497,7 @@ async function runDeclaredFixtureResolution(
       }
     }
   }
-  const needsSeedStrategy = calls.some(call => {
+  const needsSeedStrategy = orderedCalls.some(call => {
     const spec = resolutionSpecForCall(call, specByKey);
     return !spec || spec.strategies.includes('seed');
   });
@@ -499,36 +511,38 @@ async function runDeclaredFixtureResolution(
   let failedCount = 0;
   let fixtureUnsatisfied = false;
 
-  for (const call of calls) {
+  for (const call of orderedCalls) {
     const spec = resolutionSpecForCall(call, specByKey);
     // The first production slice only changes product and product-pricing
     // handles. Every other entity keeps the legacy seed-only behavior.
     if (!spec) {
       const legacy = await executeLegacySeedCall(seedClient, storyboard, call, options, context, seedContext);
+      if (legacy.step.skip_reason === 'fixture_unsatisfied') {
+        return buildUnsupportedSeedResult(storyboard, legacyCalls, context, call.scenario, legacy.step.skip?.detail);
+      }
       steps.push(legacy.step);
-      if (legacy.step.skipped) fixtureUnsatisfied = true;
-      else if (legacy.step.passed) passedCount++;
+      if (legacy.step.passed) passedCount++;
       else failedCount++;
       continue;
     }
 
     const evidence: FixtureResolutionEvidence[] = [];
     const attempted: FixtureResolutionRecord['strategies_attempted'] = [];
-    let boundIds: FixtureResolutionRecord['bound_seller_ids'];
-    let chosenStrategy: FixtureResolutionRecord['chosen_strategy'];
+    let boundIds: FixtureResolutionRecord['seller_ids'];
+    let chosenStrategy: FixtureResolutionRecord['strategy'];
     let failure: string | undefined;
     const stepStart = Date.now();
-    const parentDisposition = spec.parentProductHandle ? productDispositions.get(spec.parentProductHandle) : undefined;
-    const parentUnavailable = spec.entityType === 'product_pricing_option' && parentDisposition !== 'bound';
+    const parentStatus = spec.parentProductHandle ? productStatuses.get(spec.parentProductHandle) : undefined;
+    const parentUnavailable = spec.entityType === 'product_pricing_option' && parentStatus !== 'resolved';
     if (parentUnavailable) {
       const strategy = spec.strategies[0]!;
       attempted.push(strategy);
       const detail =
-        parentDisposition === 'failed'
+        parentStatus === 'failed'
           ? `parent product handle "${spec.parentProductHandle}" failed resolution`
           : `parent product handle "${spec.parentProductHandle}" is unavailable`;
-      evidence.push({ strategy, outcome: parentDisposition === 'failed' ? 'failed' : 'unavailable', detail });
-      if (parentDisposition === 'failed') failure = detail;
+      evidence.push({ strategy, outcome: parentStatus === 'failed' ? 'failed' : 'unavailable', detail });
+      if (parentStatus === 'failed') failure = detail;
     }
 
     for (const strategy of parentUnavailable ? [] : spec.strategies) {
@@ -648,48 +662,38 @@ async function runDeclaredFixtureResolution(
       }
     }
 
-    const disposition: FixtureResolutionRecord['disposition'] = boundIds ? 'bound' : failure ? 'failed' : 'unsatisfied';
-    if (spec.entityType === 'product') productDispositions.set(spec.handle, disposition);
+    const status: FixtureResolutionRecord['status'] = boundIds ? 'resolved' : failure ? 'failed' : 'unsatisfied';
+    if (spec.entityType === 'product') productStatuses.set(spec.handle, status);
     const record: FixtureResolutionRecord = {
-      entity_type: spec.entityType,
+      fixture_type: spec.entityType === 'product' ? 'product' : 'pricing_option',
       handle: spec.handle,
       ...(spec.parentProductHandle && { parent_product_handle: spec.parentProductHandle }),
       requirements: spec.clauses,
       strategies_attempted: attempted,
-      disposition,
-      ...(chosenStrategy && { chosen_strategy: chosenStrategy }),
-      ...(boundIds && { bound_seller_ids: boundIds }),
+      status,
+      ...(chosenStrategy && { strategy: chosenStrategy }),
+      ...(boundIds && { seller_ids: boundIds }),
       evidence,
     };
     records.push(record);
 
-    const passed = disposition !== 'failed';
-    const skipped = disposition === 'unsatisfied';
-    const detail =
-      failure ??
-      (skipped
-        ? `fixture_unsatisfied: exhausted strategies [${attempted.join(', ')}] for ${spec.entityType} handle "${spec.handle}"`
-        : undefined);
-    steps.push({
-      storyboard_id: storyboard.id,
-      step_id: call.step_id,
-      phase_id: CONTROLLER_SEEDING_PHASE_ID,
-      title: call.title,
-      task: chosenStrategy === 'discover' ? 'get_products' : 'comply_test_controller',
-      passed,
-      ...(skipped && {
-        skipped: true,
-        skip_reason: 'fixture_unsatisfied' as const,
-        skip: { reason: 'not_applicable', detail: detail! },
-      }),
-      duration_ms: Date.now() - stepStart,
-      validations: [],
-      context,
-      extraction: { path: 'none' },
-      ...(detail && !skipped && { error: detail }),
-    });
-    if (disposition === 'failed') failedCount++;
-    else if (disposition === 'unsatisfied') fixtureUnsatisfied = true;
+    if (status !== 'unsatisfied') {
+      steps.push({
+        storyboard_id: storyboard.id,
+        step_id: call.step_id,
+        phase_id: CONTROLLER_SEEDING_PHASE_ID,
+        title: call.title,
+        task: chosenStrategy === 'discover' ? 'get_products' : 'comply_test_controller',
+        passed: status !== 'failed',
+        duration_ms: Date.now() - stepStart,
+        validations: [],
+        context,
+        extraction: { path: 'none' },
+        ...(failure && { error: failure }),
+      });
+    }
+    if (status === 'failed') failedCount++;
+    else if (status === 'unsatisfied') fixtureUnsatisfied = true;
     else passedCount++;
   }
 
@@ -711,6 +715,12 @@ async function runDeclaredFixtureResolution(
   };
 }
 
+function resolutionSpecKey(spec: FixtureResolutionSpec): string {
+  return spec.entityType === 'product'
+    ? `seed_product\0${spec.handle}`
+    : `seed_pricing_option\0${spec.parentProductHandle}\0${spec.handle}`;
+}
+
 function resolutionSpecForCall(
   call: SeedCall,
   specs: ReadonlyMap<string, FixtureResolutionSpec>
@@ -729,7 +739,7 @@ function resolutionSpecForCall(
 function bindSeededFixture(
   spec: FixtureResolutionSpec,
   bindings: FixtureBindingRegistry
-): NonNullable<FixtureResolutionRecord['bound_seller_ids']> {
+): NonNullable<FixtureResolutionRecord['seller_ids']> {
   if (spec.entityType === 'product') {
     bindings.bindProduct(spec.handle, spec.handle);
     return { product_id: spec.handle };
@@ -955,7 +965,7 @@ function utf8Compare(a: string, b: string): number {
 }
 
 type SelectedFixture =
-  | { ok: true; boundIds: NonNullable<FixtureResolutionRecord['bound_seller_ids']>; detail: string }
+  | { ok: true; boundIds: NonNullable<FixtureResolutionRecord['seller_ids']>; detail: string }
   | { ok: false; failed: boolean; detail: string };
 
 function selectDiscoveredFixture(
