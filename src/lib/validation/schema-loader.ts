@@ -331,6 +331,8 @@ interface LoaderState {
   fileIndex: Map<string, string>;
   validators: Map<string, ValidateFunction>;
   rawSchemas: Map<string, Record<string, unknown>>;
+  entityPaths: Map<string, SchemaEntityPath[]>;
+  schemaIdFiles?: Map<string, string>;
   root: string;
   coreLoaded: boolean;
   version: string;
@@ -660,6 +662,7 @@ function ensureInit(version: string): LoaderState {
     fileIndex: buildFileIndex(root),
     validators: new Map(),
     rawSchemas: new Map(),
+    entityPaths: new Map(),
     root,
     coreLoaded: false,
     version: key,
@@ -971,6 +974,162 @@ export function schemaAllowsTopLevelField(toolName: string, field: string, versi
     return props !== undefined && field in props;
   } catch {
     return true;
+  }
+}
+
+export interface SchemaEntityPath {
+  /** Property path from the tool request root. `*` addresses every array item. */
+  path: string[];
+  /** AdCP `x-entity` annotation found on the identity-bearing leaf. */
+  xEntity: string;
+}
+
+/**
+ * Return every request field carrying an `x-entity` annotation. Unlike the
+ * server hydration map this walks nested arrays/objects, because storyboard
+ * fixture handles commonly live at `packages[*].product_id` and
+ * `packages[*].pricing_option_id`.
+ *
+ * Missing schemas fail closed with an empty list: handle substitution must
+ * never guess from a field name alone.
+ */
+export function getRequestSchemaEntityPaths(
+  toolName: string,
+  version: string = ADCP_VERSION
+): readonly SchemaEntityPath[] {
+  try {
+    const s = ensureInit(version);
+    const cacheKey = `${toolName}::request`;
+    const cached = s.entityPaths.get(cacheKey);
+    if (cached) return cached;
+    const file = s.fileIndex.get(cacheKey);
+    if (!file) return [];
+
+    const root = loadJson(file) as Record<string, unknown>;
+    const found = new Map<string, SchemaEntityPath>();
+    const stack = new Set<string>();
+
+    const resolvePointer = (document: unknown, fragment: string): unknown => {
+      if (!fragment || fragment === '#') return document;
+      if (!fragment.startsWith('#/')) return undefined;
+      let current = document;
+      for (const encoded of fragment.slice(2).split('/')) {
+        if (!current || typeof current !== 'object') return undefined;
+        const key = encoded.replace(/~1/g, '/').replace(/~0/g, '~');
+        current = (current as Record<string, unknown>)[key];
+      }
+      return current;
+    };
+
+    const resolveRef = (
+      ref: string,
+      currentFile: string,
+      currentDocument: Record<string, unknown>
+    ): { node: unknown; file: string; document: Record<string, unknown>; key: string } | undefined => {
+      const hash = ref.indexOf('#');
+      const refPath = hash >= 0 ? ref.slice(0, hash) : ref;
+      const fragment = hash >= 0 ? ref.slice(hash) : '';
+      if (!refPath) {
+        return {
+          node: resolvePointer(currentDocument, fragment),
+          file: currentFile,
+          document: currentDocument,
+          key: `${currentFile}${fragment}`,
+        };
+      }
+
+      const schemaRelative = refPath.match(/\/schemas\/[^/]+\/(.+)$/)?.[1];
+      const candidates = [
+        schemaRelative ? path.join(s.root, schemaRelative) : undefined,
+        path.resolve(path.dirname(currentFile), refPath),
+      ].filter((candidate): candidate is string => candidate !== undefined);
+      let targetFile = candidates.find(candidate => existsSync(candidate));
+      // Standard AdCP refs encode their schema-root-relative file path, so
+      // they resolve without parsing every JSON file in the bundle. Build the
+      // expensive $id index only for an unusual ref that cannot be resolved
+      // by path.
+      if (!targetFile) {
+        if (!s.schemaIdFiles) {
+          const idToFile = new Map<string, string>();
+          for (const schemaFile of walkJsonFiles(s.root)) {
+            try {
+              const schema = loadJson(schemaFile);
+              if (typeof schema.$id === 'string') idToFile.set(schema.$id, schemaFile);
+            } catch {
+              // A malformed unrelated schema is not a usable ref target.
+            }
+          }
+          s.schemaIdFiles = idToFile;
+        }
+        targetFile = s.schemaIdFiles.get(refPath);
+      }
+      if (!targetFile) return undefined;
+      const document = loadJson(targetFile) as Record<string, unknown>;
+      return {
+        node: resolvePointer(document, fragment),
+        file: targetFile,
+        document,
+        key: `${targetFile}${fragment}`,
+      };
+    };
+
+    const walk = (
+      node: unknown,
+      propertyPath: string[],
+      currentFile: string,
+      currentDocument: Record<string, unknown>,
+      depth: number
+    ): void => {
+      if (!node || typeof node !== 'object' || depth > 48) return;
+      const obj = node as Record<string, unknown>;
+      if (typeof obj['x-entity'] === 'string' && propertyPath.length > 0) {
+        const entityPath = { path: [...propertyPath], xEntity: obj['x-entity'] as string };
+        found.set(`${entityPath.path.join('.')}\0${entityPath.xEntity}`, entityPath);
+      }
+
+      if (typeof obj.$ref === 'string') {
+        const target = resolveRef(obj.$ref, currentFile, currentDocument);
+        if (target && target.node !== undefined) {
+          const guard = `${target.key}\0${propertyPath.join('.')}`;
+          if (!stack.has(guard)) {
+            stack.add(guard);
+            walk(target.node, propertyPath, target.file, target.document, depth + 1);
+            stack.delete(guard);
+          }
+        }
+      }
+
+      const properties = obj.properties;
+      if (properties && typeof properties === 'object' && !Array.isArray(properties)) {
+        for (const [key, child] of Object.entries(properties as Record<string, unknown>)) {
+          walk(child, [...propertyPath, key], currentFile, currentDocument, depth + 1);
+        }
+      }
+      if (obj.items !== undefined) {
+        walk(obj.items, [...propertyPath, '*'], currentFile, currentDocument, depth + 1);
+      }
+      for (const keyword of ['allOf', 'anyOf', 'oneOf'] as const) {
+        const branches = obj[keyword];
+        if (Array.isArray(branches)) {
+          for (const branch of branches) walk(branch, propertyPath, currentFile, currentDocument, depth + 1);
+        }
+      }
+      for (const keyword of ['if', 'then', 'else', 'not'] as const) {
+        if (obj[keyword] !== undefined) {
+          walk(obj[keyword], propertyPath, currentFile, currentDocument, depth + 1);
+        }
+      }
+    };
+
+    walk(root, [], file, root, 0);
+    const result = [...found.values()].sort((a, b) => {
+      const byPath = a.path.join('.').localeCompare(b.path.join('.'));
+      return byPath || a.xEntity.localeCompare(b.xEntity);
+    });
+    s.entityPaths.set(cacheKey, result);
+    return result;
+  } catch {
+    return [];
   }
 }
 

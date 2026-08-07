@@ -50,7 +50,7 @@ import {
   schemaAllowsTopLevelField,
   withExternalSchemaRoot,
 } from '../../validation/schema-loader';
-import { parseAdcpMajorVersion } from '../../version';
+import { ADCP_VERSION, parseAdcpMajorVersion } from '../../version';
 import {
   PROBE_TASKS,
   probeProtectedResourceMetadata,
@@ -66,7 +66,8 @@ import { validateStoryboardShape } from './loader';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
 import { createWebhookReceiver, type WebhookReceiver, type WebhookWaitResult } from './webhook-receiver';
 import { WEBHOOK_ASSERTION_TASKS, armWebhookAssertions, executeWebhookAssertionStep } from './webhook-assertions';
-import { CONTROLLER_SEEDING_PHASE_ID, runControllerSeeding, type ControllerSeedingResult } from './seeding';
+import { runControllerSeeding, type ControllerSeedingResult } from './seeding';
+import { applyFixtureBindingsToRequest, type FixtureBindingRegistry } from './fixture-resolution';
 import { getComplianceCacheDir } from './compliance';
 import { signWebhook, type RequestLike } from '../../signing/client';
 
@@ -89,6 +90,7 @@ import type {
   AssertionResult,
   BranchSetSpec,
   ContextProvenanceEntry,
+  FixtureResolutionRecord,
   HttpProbeResult,
   RunnerDetailedSkipReason,
   RunnerExtractionRecord,
@@ -2468,20 +2470,43 @@ async function executeStoryboardPass(
   let seedingFailed = false;
   let seedingMissingController = false;
   let seedingUnsupported = false;
+  let fixtureUnsatisfied = false;
+  let fixtureBindings: FixtureBindingRegistry | undefined;
+  let fixtureResolutionRecords: FixtureResolutionRecord[] | undefined;
   {
+    let fixtureSeedClient = clients[0]!;
+    let fixtureDiscoveryClient = clients[0]!;
+    if (routingContext && options.agents) {
+      const fixtureStep = (task: string): StoryboardStep => ({
+        id: `__fixture_resolution_${task}__`,
+        title: `Fixture resolution via ${task}`,
+        task,
+      });
+      if (options.agentTools?.includes('comply_test_controller')) {
+        fixtureSeedClient = dispatch.nextFor(fixtureStep('comply_test_controller')).client;
+      }
+      if (options.agentTools?.includes('get_products')) {
+        fixtureDiscoveryClient = dispatch.nextFor(fixtureStep('get_products')).client;
+      }
+    }
     const seeding = skipControllerSeedingForPhaseGates
       ? null
       : preSeeded !== undefined
         ? preSeeded.result
-        : await runControllerSeeding(clients[0]!, storyboard, options, context);
+        : await runControllerSeeding(fixtureSeedClient, storyboard, options, context, fixtureDiscoveryClient);
     if (seeding) {
       const attach = preSeeded === undefined || preSeeded.attach;
       if (attach) {
         seedingPhaseResult = seeding.phase;
         passedCount += seeding.passedCount;
         failedCount += seeding.failedCount;
-        if (seeding.missingController || seeding.seedUnsupported) skippedCount += seeding.phase.steps.length;
+        if (seeding.missingController || seeding.seedUnsupported || seeding.fixtureUnsatisfied) {
+          skippedCount += seeding.phase.steps.filter(step => step.skipped).length;
+        }
       }
+      fixtureBindings = seeding.bindings;
+      fixtureResolutionRecords = seeding.resolutionRecords;
+      fixtureUnsatisfied = seeding.fixtureUnsatisfied === true && seeding.failedCount === 0;
       if (seeding.missingController) {
         seedingMissingController = true;
       } else if (seeding.seedUnsupported) {
@@ -2635,7 +2660,7 @@ async function executeStoryboardPass(
     // lacks either the controller tool or a required seed_* scenario. Emit
     // full step rows (not an empty phase) so implementors see exactly which
     // buyer-side operations were elided.
-    if (seedingMissingController || seedingUnsupported || seedingFailed) {
+    if (seedingMissingController || seedingUnsupported || seedingFailed || fixtureUnsatisfied) {
       const cascadeSkip: Pick<StoryboardStepResult, 'skip_reason' | 'skip'> = seedingMissingController
         ? {
             skip_reason: 'missing_test_controller',
@@ -2646,10 +2671,23 @@ async function executeStoryboardPass(
               skip_reason: 'fixture_seed_unsupported',
               skip: { reason: 'not_applicable', detail: FIXTURE_SEED_UNSUPPORTED_DETAIL },
             }
-          : {
-              skip_reason: 'controller_seeding_failed',
-              skip: { reason: 'prerequisite_failed', detail: CONTROLLER_SEEDING_FAILED_DETAIL },
-            };
+          : seedingFailed
+            ? {
+                skip_reason: 'controller_seeding_failed',
+                skip: { reason: 'prerequisite_failed', detail: CONTROLLER_SEEDING_FAILED_DETAIL },
+              }
+            : fixtureUnsatisfied
+              ? {
+                  skip_reason: 'fixture_unsatisfied',
+                  skip: {
+                    reason: 'not_applicable',
+                    detail: 'Skipped: a declared fixture strategy ladder was exhausted (`fixture_unsatisfied`).',
+                  },
+                }
+              : {
+                  skip_reason: 'controller_seeding_failed',
+                  skip: { reason: 'prerequisite_failed', detail: CONTROLLER_SEEDING_FAILED_DETAIL },
+                };
       const cascadeSteps: StoryboardStepResult[] = phase.steps.map(step => ({
         storyboard_id: storyboard.id,
         step_id: step.id,
@@ -2826,6 +2864,7 @@ async function executeStoryboardPass(
           agentProfile: assignment.profile,
           agentLibraryVersion: assignment.profile?.library_version,
           storyboardRequiresRequestSigner: allRequires.includes('request_signer'),
+          fixtureBindings,
         }
       );
       const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
@@ -3253,11 +3292,7 @@ async function executeStoryboardPass(
     !hasExecutableSteps ||
     requiredPhaseHasExecutedPass ||
     (failedCount === 0 && requiredPhasesCoveredByCapabilityGates);
-  const storyboardWideFixtureSeedUnsupported =
-    seedingUnsupported &&
-    failedCount === 0 &&
-    phaseResults.some(p => p.steps.some(s => s.skipped && s.skip?.reason === 'not_applicable')) &&
-    phaseResults.every(p => p.steps.every(s => s.skipped && s.skip?.reason === 'not_applicable'));
+  const storyboardWideFixtureUnavailable = (seedingUnsupported || fixtureUnsatisfied) && failedCount === 0;
   // Prepend the pre-flight seeding phase now that every consumer that
   // index-aligns `phaseResults` with `storyboard.phases` has run. Reader
   // order matches execution order.
@@ -3283,7 +3318,7 @@ async function executeStoryboardPass(
     ...(isMultiInstance && { multi_instance_strategy: 'round-robin' as const }),
     ...(routingContext && { agent_map: { ...routingContext.agentMap } }),
     overall_passed:
-      failedCount === 0 && (requiredPhasesPassed || storyboardWideFixtureSeedUnsupported) && !assertionsFailed,
+      failedCount === 0 && (requiredPhasesPassed || storyboardWideFixtureUnavailable) && !assertionsFailed,
     phases: phaseResults,
     context,
     total_duration_ms: Date.now() - start,
@@ -3296,6 +3331,7 @@ async function executeStoryboardPass(
     ...(assertionResults.length > 0 ? { assertions: assertionResults } : {}),
     strict_validation_summary: strictSummary,
     notices,
+    ...(fixtureResolutionRecords && { fixture_resolution: fixtureResolutionRecords }),
     ...(routingContext && routingContext.discoveryFailures.length > 0
       ? {
           discovery_failures: routingContext.discoveryFailures.map(f => ({
@@ -3442,6 +3478,7 @@ async function runMultiPass(
     tested_at: new Date().toISOString(),
     ...(schemasDedup.length > 0 ? { schemas_used: schemasDedup } : {}),
     ...(assertionsAgg.length > 0 ? { assertions: assertionsAgg } : {}),
+    ...(first.fixture_resolution ? { fixture_resolution: first.fixture_resolution } : {}),
     notices: noticesDedup,
   };
 }
@@ -3718,6 +3755,8 @@ interface ExecutionState {
   priorStepResults: Map<string, StoryboardStepResult>;
   priorProbes: Map<string, HttpProbeResult>;
   agentUrl: string;
+  /** Run-scoped seller ids selected for authored fixture handles. */
+  fixtureBindings?: FixtureBindingRegistry;
   /**
    * ISO timestamps captured immediately before each step's AdCP request
    * dispatch. Threaded into `upstream_traffic` validations as the
@@ -3981,6 +4020,16 @@ async function executeStep(
   // error (see `testsMissingIdempotencyKey` below) so that compliance
   // surfaces can still exercise the server's required-field check.
   request = applyIdempotencyInvariant(request, effectiveStep.task, step);
+
+  // Fixture handles are replaced only at request-schema fields carrying the
+  // matching x-entity annotation. This applies equally to ordinary AdCP calls
+  // and comply_test_controller force/simulate requests.
+  request = applyFixtureBindingsToRequest(
+    request,
+    effectiveStep.task,
+    runState.fixtureBindings,
+    options.adcpVersion ?? ADCP_VERSION
+  );
 
   // Detect unresolved $context placeholders — a prior step likely failed
   // and didn't produce the expected output. Skip rather than sending garbage.
@@ -5217,7 +5266,13 @@ function buildEffectiveStepRequest(
   if (options.disable_sandbox === true) {
     request = applyDisableSandboxHint(request, step.task);
   }
-  return applyIdempotencyInvariant(request, step.task, step);
+  request = applyIdempotencyInvariant(request, step.task, step);
+  return applyFixtureBindingsToRequest(
+    request,
+    step.task,
+    runState.fixtureBindings,
+    options.adcpVersion ?? ADCP_VERSION
+  );
 }
 
 interface ResolvedWebhookReplayVector {
