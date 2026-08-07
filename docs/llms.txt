@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-08-05
-> Library: @adcp/sdk v13.0.0-rc.6
+> Generated at: 2026-08-07
+> Library: @adcp/sdk v13.0.0-rc.7
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -1069,7 +1069,7 @@ Flow: `sync_accounts → get_products → create_media_buy → comply_test_contr
 Flow: `comply_test_controller → create_media_buy`
 
 **Creative lifecycle is decoupled from media buy lifecycle** — Validates that canceling a media buy releases package-creative assignments but leaves the underlying creatives in the library with their review state intact, and that buyers can reuse released creatives on a new buy.
-Flow: `get_products → create_media_buy → sync_creatives → list_creatives → update_media_buy → list_creatives → create_media_buy → sync_creatives`
+Flow: `get_products → list_creative_formats → create_media_buy → sync_creatives → list_creatives → update_media_buy → list_creatives → create_media_buy → sync_creatives`
 
 **Dependency impairment end-to-end — resource transition propagates to media buy health** — Forces a creative from approved → rejected on a non-terminal media buy, verifies the buy reflects health: impaired with a matching impairments[] entry, and recovers via assignment swap to a different creative (canonical recovery vector — re-approval of the same creative_id is uncommon in production).
 Flow: `get_products → create_media_buy → sync_creatives → update_media_buy → comply_test_controller → get_media_buys → comply_test_controller → list_creatives → get_media_buys → sync_creatives → comply_test_controller → update_media_buy → get_media_buys`
