@@ -3595,6 +3595,16 @@ function rejectHandRolledSubmitted(result: unknown): void {
   }
 }
 
+const RETURNED_ERROR_ARM_KEYS = new Set(['errors', 'context', 'ext', 'success', 'conflicting_standards_id']);
+
+/** Match only a pure generated Error arm, never a success payload carrying advisory errors. */
+function isReturnedErrorArm(value: unknown): value is { errors: unknown[]; context?: unknown; ext?: unknown } {
+  if (value == null || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.errors) || 'status' in record) return false;
+  return Object.keys(record).every(key => RETURNED_ERROR_ARM_KEYS.has(key));
+}
+
 /**
  * Route a unified-shape return value: if it's a `TaskHandoff` marker,
  * dispatch through `dispatchHitl`; otherwise pass through the sync
@@ -5041,6 +5051,25 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 });
               }
               throw err;
+            }
+            if (isReturnedErrorArm(result)) {
+              // A returned domain Error arm is a failed create, not a
+              // successful proposal consumption or sync-completion webhook.
+              // Restore the proposal so the corrected request can retry.
+              if (reservation && proposalStore) {
+                await releaseProposalReservation({
+                  store: proposalStore,
+                  record: reservation,
+                  logger,
+                });
+              }
+              return asSemanticServerResponseForWire(
+                result,
+                'create_media_buy',
+                legacyFormatConverter,
+                canonicalFormatLegacyResolver,
+                responseWireMode
+              );
             }
             // Inline-success path: promote CONSUMING → CONSUMED with the
             // adapter's media_buy_id. HITL handoff: the proposal stays

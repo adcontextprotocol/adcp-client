@@ -67,6 +67,7 @@ import type { RequireCacheScopeWhenProducts, ServerPayload } from '../../../type
 import type {
   GetProductsRequest,
   GetProductsResponse,
+  CreateMediaBuyError,
   CreateMediaBuySuccess,
   UpdateMediaBuySuccess,
   GetMediaBuysRequest,
@@ -101,12 +102,17 @@ import type {
 
 type Creative = CanonicalCreativeAsset;
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
+type ExclusivePayload<TLeft, TRight> =
+  | (TLeft & { [K in Exclude<keyof TRight, keyof TLeft>]?: never })
+  | (TRight & { [K in Exclude<keyof TLeft, keyof TRight>]?: never });
 
 type CanonicalGetProductsPayload = Omit<ServerPayload<CanonicalCreativeResponse<GetProductsResponse>>, 'products'> & {
   products?: CanonicalProduct[];
 };
 export type GetProductsPayload = RequireCacheScopeWhenProducts<CanonicalGetProductsPayload>;
-export type CreateMediaBuyPayload = ServerPayload<CanonicalCreativeResponse<CreateMediaBuySuccess>>;
+type CreateMediaBuySuccessPayload = ServerPayload<CanonicalCreativeResponse<CreateMediaBuySuccess>>;
+type CreateMediaBuyErrorPayload = ServerPayload<CanonicalCreativeResponse<CreateMediaBuyError>>;
+export type CreateMediaBuyPayload = ExclusivePayload<CreateMediaBuySuccessPayload, CreateMediaBuyErrorPayload>;
 export type UpdateMediaBuyPayload = ServerPayload<CanonicalCreativeResponse<UpdateMediaBuySuccess>>;
 export type GetMediaBuyDeliveryPayload = ServerPayload<CanonicalCreativeResponse<GetMediaBuyDeliveryResponse>>;
 export type GetMediaBuysPayload = ServerPayload<CanonicalCreativeResponse<GetMediaBuysResponse>>;
@@ -114,7 +120,10 @@ export type ProvidePerformanceFeedbackPayload = ServerPayload<ProvidePerformance
 export type LegacyListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsResponse>;
 export type ListCreativesPayload = ServerPayload<CanonicalListCreativesResponse>;
 export type LegacyGetProductsPayload = RequireCacheScopeWhenProducts<ServerPayload<GetProductsResponse>>;
-export type LegacyCreateMediaBuyPayload = ServerPayload<CreateMediaBuySuccess>;
+export type LegacyCreateMediaBuyPayload = ExclusivePayload<
+  ServerPayload<CreateMediaBuySuccess>,
+  ServerPayload<CreateMediaBuyError>
+>;
 export type LegacyUpdateMediaBuyPayload = ServerPayload<UpdateMediaBuySuccess>;
 export type LegacyGetMediaBuyDeliveryPayload = ServerPayload<GetMediaBuyDeliveryResponse>;
 export type LegacyGetMediaBuysPayload = ServerPayload<GetMediaBuysResponse>;
@@ -133,7 +142,7 @@ export type SyncEventSourcesPayload = ServerPayload<SyncEventSourcesSuccess>;
  */
 export type SyncCreativesRow = SyncCreativesSuccess['creatives'][number];
 export type GetProductsHandlerResult = GetProductsPayload | TaskHandoff<GetProductsPayload>;
-export type CreateMediaBuyHandlerResult = CreateMediaBuyPayload | TaskHandoff<CreateMediaBuyPayload>;
+export type CreateMediaBuyHandlerResult = CreateMediaBuyPayload | TaskHandoff<CreateMediaBuySuccessPayload>;
 export type UpdateMediaBuyHandlerResult = UpdateMediaBuyPayload | TaskHandoff<UpdateMediaBuyPayload>;
 export type SyncCreativesHandlerResult = SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>;
 
@@ -186,6 +195,11 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
    *
    * Status changes flow via `publishStatusChange(...)` regardless of
    * which path was taken.
+   *
+   * For synchronous domain validation that produces multiple failures,
+   * return the pure Error arm (`{ errors: [...] }`) with no success-only
+   * fields. Handoff callbacks remain success-only; throw `AdcpError` inside
+   * a handoff to transition the task to `failed`.
    *
    * The handoff function's return value is persisted as JSONB in the
    * task registry. Postgres-backed registries cap row size at 4MB —

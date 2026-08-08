@@ -15,6 +15,7 @@ import type {
   CheckGovernanceResponse,
   CreateCollectionListResponse,
   CreateContentStandardsResponse,
+  CreateMediaBuyError,
   CreateMediaBuySuccess,
   CreatePropertyListResponse,
   DeleteCollectionListResponse,
@@ -78,6 +79,10 @@ import type {
 } from './core.generated';
 import type { RequireCacheScopeWhenProducts, ServerPayload } from './server-payload';
 
+type ExclusivePayload<TLeft, TRight> =
+  | (TLeft & { [K in Exclude<keyof TRight, keyof TLeft>]?: never })
+  | (TRight & { [K in Exclude<keyof TLeft, keyof TRight>]?: never });
+
 export type GetAdCPCapabilitiesPayload = ServerPayload<GetAdCPCapabilitiesResponse>;
 
 export type ListAccountsPayload = ServerPayload<ListAccountsResponse>;
@@ -90,7 +95,10 @@ export type GetAccountFinancialsPayload = ServerPayload<GetAccountFinancialsResp
 export type GetAccountFinancialsSuccessPayload = ServerPayload<GetAccountFinancialsSuccess>;
 
 export type GetProductsPayload = RequireCacheScopeWhenProducts<ServerPayload<GetProductsResponse>>;
-export type CreateMediaBuyPayload = ServerPayload<CreateMediaBuySuccess>;
+export type CreateMediaBuyPayload = ExclusivePayload<
+  ServerPayload<CreateMediaBuySuccess>,
+  ServerPayload<CreateMediaBuyError>
+>;
 export type UpdateMediaBuyPayload = ServerPayload<UpdateMediaBuySuccess>;
 export type GetMediaBuysPayload = ServerPayload<GetMediaBuysResponse>;
 export type GetMediaBuyDeliveryPayload = ServerPayload<GetMediaBuyDeliveryResponse>;

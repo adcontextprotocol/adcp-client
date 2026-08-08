@@ -14,24 +14,66 @@ import type {
   GetProductsPayload as TypesGetProductsPayload,
   PreviewCreativePayload as TypesPreviewCreativePayload,
 } from '../lib/types';
-import type { CreateMediaBuySuccess } from '../lib/types';
-import type { GetProductsPayload as DecisioningGetProductsPayload } from '../lib/server/decisioning/specialisms/sales';
+import type { CreateMediaBuyError, CreateMediaBuySuccess } from '../lib/types';
+import type { AdcpToolMap } from '../lib/server/create-adcp-server';
+import type { TaskHandoff } from '../lib/server/decisioning/async-outcome';
+import type {
+  CreateMediaBuyHandlerResult,
+  GetProductsPayload as DecisioningGetProductsPayload,
+} from '../lib/server/decisioning/specialisms/sales';
 import { legacyProductsResponse } from '../lib/server';
 
-const rootCreateMediaBuyPayload: RootCreateMediaBuyPayload = {
+const rootCreateMediaBuyPayload = {
   media_buy_id: 'mb_1',
   confirmed_at: '2026-01-01T00:00:00Z',
   revision: 1,
   packages: [],
   status: 'active',
-};
+} satisfies RootCreateMediaBuyPayload;
 const serverCreateMediaBuyPayload: ServerCreateMediaBuyPayload = rootCreateMediaBuyPayload;
 const typesCreateMediaBuyPayload: TypesCreateMediaBuyPayload = serverCreateMediaBuyPayload;
 const genericPayload: ServerPayload<CreateMediaBuySuccess> = typesCreateMediaBuyPayload;
 void genericPayload;
+
+const rootCreateMediaBuyErrorPayload: RootCreateMediaBuyPayload = {
+  errors: [
+    { code: 'INVALID_REQUEST', message: 'packages array is required' },
+    { code: 'VALIDATION_ERROR', message: 'package budget is invalid', field: 'packages[0].budget' },
+  ],
+};
+const serverCreateMediaBuyErrorPayload: ServerCreateMediaBuyPayload = rootCreateMediaBuyErrorPayload;
+const typesCreateMediaBuyErrorPayload: TypesCreateMediaBuyPayload = serverCreateMediaBuyErrorPayload;
+const genericErrorPayload: ServerPayload<CreateMediaBuyError> = typesCreateMediaBuyErrorPayload;
+const handlerErrorPayload: CreateMediaBuyHandlerResult = rootCreateMediaBuyErrorPayload;
+const toolMapErrorPayload: AdcpToolMap['create_media_buy']['result'] = typesCreateMediaBuyErrorPayload;
+const legacyCreateMediaBuyErrorPayload: ServerLegacyCreateMediaBuyPayload = typesCreateMediaBuyErrorPayload;
+void genericErrorPayload;
+void handlerErrorPayload;
+void toolMapErrorPayload;
+void legacyCreateMediaBuyErrorPayload;
+
+// @ts-expect-error Error arms must not carry success-only media-buy fields.
+const hybridCreateMediaBuyPayload: TypesCreateMediaBuyPayload = {
+  media_buy_id: 'mb_invalid',
+  confirmed_at: null,
+  revision: 1,
+  packages: [],
+  errors: [{ code: 'INVALID_REQUEST', message: 'hybrid payload' }],
+};
+void hybridCreateMediaBuyPayload;
+
+declare const createMediaBuyErrorHandoff: TaskHandoff<ServerPayload<CreateMediaBuyError>>;
+// @ts-expect-error Handoff callbacks must return success; throw AdcpError to fail an async task.
+const handlerErrorHandoff: CreateMediaBuyHandlerResult = createMediaBuyErrorHandoff;
+void handlerErrorHandoff;
+
+declare const createMediaBuyPayload: TypesCreateMediaBuyPayload;
+// @ts-expect-error Error-arm payloads are not assignable to the success-only subtype.
+const successOnlyPayload: ServerPayload<CreateMediaBuySuccess> = createMediaBuyPayload;
+void successOnlyPayload;
 // @ts-expect-error Primary server payload packages never expose legacy format_ids.
 void rootCreateMediaBuyPayload.packages[0]?.format_ids;
-declare const legacyCreateMediaBuyPayload: ServerLegacyCreateMediaBuyPayload;
+declare const legacyCreateMediaBuyPayload: Extract<ServerLegacyCreateMediaBuyPayload, { packages: unknown }>;
 void legacyCreateMediaBuyPayload.packages[0]?.format_ids;
 
 const rootGetProductsPayload: RootGetProductsPayload = {

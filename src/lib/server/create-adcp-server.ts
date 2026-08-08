@@ -260,7 +260,6 @@ import type {
 } from '../types/core.generated';
 import type {
   GetProductsResponse,
-  CreateMediaBuySuccess,
   CreateMediaBuyResponse,
   UpdateMediaBuySuccess,
   UpdateMediaBuyResponse,
@@ -338,6 +337,7 @@ import type {
 import type { AdcpProtocol, MediaBuyFeatures, AccountCapabilities, CreativeCapabilities } from '../utils/capabilities';
 import type { MediaChannel } from '../types/tools.generated';
 import type { RequireCacheScopeWhenProducts, ServerPayload } from '../types/server-payload';
+import type { CreateMediaBuyPayload as CreateMediaBuyServerPayload } from '../types/server-payload-aliases';
 import { STANDARD_ERROR_CODES, isStandardErrorCode } from '../types/error-codes';
 import {
   MEDIA_BUY_TOOLS,
@@ -535,8 +535,10 @@ export function requireSessionKey<TAccount = unknown>(ctx: HandlerContext<TAccou
 /**
  * Per-tool param / result / response types.
  *
- * `result` is the narrow success arm — what the framework's response
- * builders (`mediaBuyResponse`, `syncCreativesResponse`, ...) expect.
+ * `result` is the server-handler payload — normally the narrow success arm
+ * consumed by the framework's response builders (`mediaBuyResponse`,
+ * `syncCreativesResponse`, ...), plus a structured Error arm when the tool
+ * supports returning one directly.
  * `response` is the full AdCP response union (Success | Error | Submitted).
  * Handlers can return either shape: adapter patterns that produce
  * `Result<FooResponse, ...>` now type-check without `as any`, and the
@@ -551,7 +553,7 @@ export interface AdcpToolMap {
   };
   create_media_buy: {
     params: z.input<typeof CreateMediaBuyRequestSchema>;
-    result: ServerPayload<CreateMediaBuySuccess>;
+    result: CreateMediaBuyServerPayload;
     response: CreateMediaBuyResponse;
   };
   update_media_buy: {
