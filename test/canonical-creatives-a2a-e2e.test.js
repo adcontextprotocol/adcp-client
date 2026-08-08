@@ -76,6 +76,10 @@ test('A2A client discovers canonical capability and sends only canonical creativ
   const app = express();
   app.use(express.json());
   const server = app.listen(0);
+  // The official A2A client reuses its HTTP connection. Under a loaded test
+  // shard, more than Node's default five-second keep-alive timeout can pass
+  // between calls, racing the server's idle-socket close with the next POST.
+  server.keepAliveTimeout = 60_000;
   await new Promise(resolve => server.once('listening', resolve));
   const url = `http://127.0.0.1:${server.address().port}/a2a`;
   createA2AAdapter({
@@ -157,12 +161,15 @@ test('A2A client discovers canonical capability and sends only canonical creativ
       creatives: [creative],
       assignments: [{ creative_id: creative.creative_id, package_id: 'pkg-a2a' }],
     });
-    assert.strictEqual(sync.success, true);
+    assert.strictEqual(sync.success, true, `sync_creatives failed: ${JSON.stringify(sync)}`);
     assert.ok(observedSync, 'platform sync handler was called through A2A');
     assert.strictEqual(observedSync[0].format_kind, 'image');
     assert.strictEqual(observedSync[0].format_id, undefined);
     assert.doesNotMatch(JSON.stringify({ observedUpdate, observedSync }), /agent_url|format_id/);
   } finally {
-    await new Promise(resolve => server.close(resolve));
+    await new Promise((resolve, reject) => {
+      server.close(error => (error ? reject(error) : resolve()));
+      server.closeIdleConnections();
+    });
   }
 });
