@@ -101,6 +101,12 @@ describe('isPrivateIp', () => {
     assert.strictEqual(isPrivateIp('100.128.0.0'), false);
   });
 
+  it('flags documentation and benchmarking ranges used by SSRF test vectors', () => {
+    for (const addr of ['192.0.2.1', '198.18.0.1', '198.51.100.1', '203.0.113.1']) {
+      assert.strictEqual(isPrivateIp(addr), true, `${addr} should be flagged`);
+    }
+  });
+
   it('unwraps IPv4-mapped IPv6 (::ffff:a.b.c.d) and flags if v4 is private', () => {
     assert.strictEqual(isPrivateIp('::ffff:10.0.0.1'), true);
     assert.strictEqual(isPrivateIp('::ffff:169.254.169.254'), true);
@@ -111,6 +117,12 @@ describe('isPrivateIp', () => {
   it('flags IPv6 multicast', () => {
     for (const addr of ['ff02::1', 'ff05::1:3']) {
       assert.strictEqual(isPrivateIp(addr), true, `${addr} should be multicast`);
+    }
+  });
+
+  it('flags IPv6 documentation and discard-only ranges', () => {
+    for (const addr of ['2001:db8::1', '100::1']) {
+      assert.strictEqual(isPrivateIp(addr), true, `${addr} should be special-use`);
     }
   });
 });
@@ -275,17 +287,54 @@ describe('resource_equals_agent_url', () => {
     assert.strictEqual(r.passed, true);
   });
 
-  it('passes after normalization (trailing slash, case)', () => {
+  it('normalizes scheme/host case and the default port', () => {
     const [r] = runOne([{ check: 'resource_equals_agent_url', description: 'RFC 9728 resource' }], {
       agentUrl,
       httpResult: {
         url: '',
         status: 200,
         headers: {},
-        body: { resource: 'HTTPS://Agent.Example.com/mcp/' },
+        body: { resource: 'HTTPS://Agent.Example.com:443/mcp' },
       },
     });
     assert.strictEqual(r.passed, true);
+  });
+
+  it('keeps a trailing slash significant', () => {
+    const [r] = runOne([{ check: 'resource_equals_agent_url', description: 'RFC 9728 resource' }], {
+      agentUrl,
+      httpResult: {
+        url: '',
+        status: 200,
+        headers: {},
+        body: { resource: 'https://agent.example.com/mcp/' },
+      },
+    });
+    assert.strictEqual(r.passed, false);
+  });
+
+  it('does not normalize dot segments or an empty path', () => {
+    const [dotSegment] = runOne([{ check: 'resource_equals_agent_url', description: 'RFC 9728 resource' }], {
+      agentUrl,
+      httpResult: {
+        url: '',
+        status: 200,
+        headers: {},
+        body: { resource: 'https://agent.example.com/other/../mcp' },
+      },
+    });
+    assert.strictEqual(dotSegment.passed, false);
+
+    const [emptyPath] = runOne([{ check: 'resource_equals_agent_url', description: 'RFC 9728 resource' }], {
+      agentUrl: 'https://agent.example.com',
+      httpResult: {
+        url: '',
+        status: 200,
+        headers: {},
+        body: { resource: 'https://agent.example.com/' },
+      },
+    });
+    assert.strictEqual(emptyPath.passed, false);
   });
 
   it('fails on mismatch and does NOT echo the advertised value verbatim', () => {
@@ -304,6 +353,27 @@ describe('resource_equals_agent_url', () => {
     // But it SHOULD surface the agent's own URL + the actionable fix.
     assert.match(r.error ?? '', /agent\.example\.com\/mcp/);
     assert.match(r.error ?? '', /Fix:/);
+  });
+
+  it('redacts credentials, query values, and fragments from mismatch diagnostics', () => {
+    const [r] = runOne([{ check: 'resource_equals_agent_url', description: 'RFC 9728 resource' }], {
+      agentUrl: 'https://runner:agent-secret@agent.example.com/mcp?access_token=runner-secret#runner-fragment',
+      httpResult: {
+        url: '',
+        status: 200,
+        headers: {},
+        body: {
+          resource:
+            'https://attacker:resource-secret@auth.example.com/mcp?access_token=resource-secret#resource-fragment',
+        },
+      },
+    });
+    assert.strictEqual(r.passed, false);
+    const serialized = JSON.stringify(r);
+    for (const secret of ['agent-secret', 'runner-secret', 'runner-fragment', 'resource-secret', 'resource-fragment']) {
+      assert.doesNotMatch(serialized, new RegExp(secret));
+    }
+    assert.match(serialized, /REDACTED/);
   });
 
   it('fails when resource field missing', () => {
@@ -1694,7 +1764,9 @@ describe('comply() degraded-profile path (security_baseline against 401-on-disco
     });
     await new Promise(r => server.listen(0, r));
     try {
-      const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+      const agentUrl =
+        `http://127.0.0.1:${server.address().port}/mcp` +
+        '?access_token=FAKE_COMPLY_QUERY_SECRET#FAKE_COMPLY_FRAGMENT_SECRET';
       const result = await comply(agentUrl, {
         storyboards: ['security_baseline'],
         allow_http: true,
@@ -1713,6 +1785,12 @@ describe('comply() degraded-profile path (security_baseline against 401-on-disco
       assert.notStrictEqual(result.overall_status, 'unreachable');
       const authObs = result.observations.find(o => o.category === 'auth' && /401|OAuth/.test(o.message));
       assert.ok(authObs, `expected an auth observation noting the 401, got ${JSON.stringify(result.observations)}`);
+      const serialized = JSON.stringify(result);
+      assert.doesNotMatch(serialized, /FAKE_COMPLY_QUERY_SECRET|FAKE_COMPLY_FRAGMENT_SECRET/);
+      assert.match(result.agent_url, /access_token=REDACTED/);
+      for (const failure of result.failures ?? []) {
+        assert.doesNotMatch(failure.fix_command, /FAKE_COMPLY_QUERY_SECRET|FAKE_COMPLY_FRAGMENT_SECRET/);
+      }
     } finally {
       server.close();
     }

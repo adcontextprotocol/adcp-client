@@ -784,11 +784,11 @@ describe('runStoryboardStep — capture-failure → consumer-skip cascade', () =
 });
 
 // ────────────────────────────────────────────────────────────
-// validations_not_applicable counter aggregation
+// Unknown validation checks fail closed
 // ────────────────────────────────────────────────────────────
 
-describe('runStoryboard — validations_not_applicable counter aggregation', () => {
-  test('storyboard result aggregates not_applicable validations across steps', async () => {
+describe('runStoryboard — unknown validations fail closed', () => {
+  test('storyboard result fails rather than counting unknown checks as not_applicable', async () => {
     const sb = {
       id: 'fwd_compat_sb',
       version: '1.0',
@@ -826,6 +826,8 @@ describe('runStoryboard — validations_not_applicable counter aggregation', () 
       _profile: stubProfile,
       agentTools: stubProfile.tools,
     });
-    assert.equal(result.validations_not_applicable, 2, 'two unknown checks → counter == 2');
+    assert.equal(result.overall_passed, false);
+    assert.equal(result.failed_count, 1);
+    assert.equal(result.validations_not_applicable, undefined);
   });
 });

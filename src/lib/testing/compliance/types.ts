@@ -27,7 +27,8 @@ export type ComplianceTrack =
   | 'si' // Sponsored intelligence sessions
   | 'audiences' // CRM audience sync
   | 'error_handling' // Error response structure and transport compliance
-  | 'brand'; // Brand identity, rights licensing, creative approval
+  | 'brand' // Brand identity, rights licensing, creative approval
+  | 'security_transport'; // OAuth/signing transport security
 
 /**
  * Per-track compliance verdict.

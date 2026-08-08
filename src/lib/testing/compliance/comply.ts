@@ -59,6 +59,7 @@ import type { ControllerDetection } from '../test-controller';
 import { randomBytes } from 'crypto';
 import { isPre31AdcpVersion } from '../../utils/adcp-version-config';
 import { withExternalSchemaRoot } from '../../validation/schema-loader';
+import { redactOAuthUrlForOutput, redactOAuthUrlsInText } from '../storyboard/oauth-metadata-graph';
 
 /**
  * All compliance tracks in display order.
@@ -76,6 +77,7 @@ const TRACK_ORDER: ComplianceTrack[] = [
   'audiences',
   'error_handling',
   'brand',
+  'security_transport',
 ];
 
 /**
@@ -904,7 +906,7 @@ function buildNotApplicableStoryboardResult(agentUrl: string, na: NotApplicableS
   return {
     storyboard_id: na.storyboard_id,
     storyboard_title: na.storyboard_title,
-    agent_url: agentUrl,
+    agent_url: redactOAuthUrlForOutput(agentUrl),
     overall_passed: true,
     phases: [
       {
@@ -1404,7 +1406,8 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
 
     const overallStatus: OverallStatus = stoppedForTimeoutBudget ? 'partial' : computeOverallStatus(summary);
 
-    const agentRef = options.agent_alias || agentUrl;
+    const safeAgentUrl = redactOAuthUrlForOutput(agentUrl);
+    const agentRef = options.agent_alias || safeAgentUrl;
     const failures = extractFailures(storyboardResults, runnableStoryboards, agentRef, {
       complianceVersion: complianceIndex.adcp_version,
       ...(complianceDir !== undefined && { complianceDir }),
@@ -1436,7 +1439,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     const noticesDedup = [...aggregatedNotices.values()];
 
     return {
-      agent_url: agentUrl,
+      agent_url: safeAgentUrl,
       adcp_version: complianceIndex.adcp_version,
       agent_profile: profile,
       overall_status: overallStatus,
@@ -1561,15 +1564,16 @@ export async function detectAuthRejection(
     if (looksOAuth) {
       // `oauthMeta.issuer` comes from the agent's well-known document — agent-
       // controlled, same fencing as capabilities_probe_error.
-      const issuer = oauthMeta?.issuer ? fenceAgentText(oauthMeta.issuer, 200) : '(unknown)';
+      const issuer = oauthMeta?.issuer ? fenceAgentText(redactOAuthUrlForOutput(oauthMeta.issuer), 200) : '(unknown)';
+      const safeAgentUrl = redactOAuthUrlForOutput(agentUrl);
       observations.push({
         category: 'auth',
         severity: 'error',
         message:
           `Agent requires OAuth (issuer: ${issuer}). ` +
-          `Inline: adcp storyboard run ${agentUrl} --oauth (requires a saved alias). ` +
-          `Save once: adcp --save-auth <alias> ${agentUrl} --oauth.`,
-        ...(oauthMeta?.issuer && { evidence: { oauth_issuer: oauthMeta.issuer } }),
+          `Inline: adcp storyboard run ${safeAgentUrl} --oauth (requires a saved alias). ` +
+          `Save once: adcp --save-auth <alias> ${safeAgentUrl} --oauth.`,
+        ...(oauthMeta?.issuer && { evidence: { oauth_issuer: redactOAuthUrlForOutput(oauthMeta.issuer) } }),
         source: { kind: 'probe', code: 'auth-oauth-required' },
       });
     } else {
@@ -1668,7 +1672,8 @@ async function runWithDegradedProfile(
 
   const summary = buildSummary(trackResults, storyboardResults);
   const overallStatus: OverallStatus = stoppedForTimeoutBudget ? 'partial' : computeOverallStatus(summary);
-  const agentRef = options.agent_alias || agentUrl;
+  const safeAgentUrl = redactOAuthUrlForOutput(agentUrl);
+  const agentRef = options.agent_alias || safeAgentUrl;
   const failures = extractFailures(storyboardResults, storyboards, agentRef, {
     complianceVersion: adcpVersion,
     ...(options.complianceDir !== undefined && { complianceDir: options.complianceDir }),
@@ -1689,7 +1694,7 @@ async function runWithDegradedProfile(
     }));
 
   return {
-    agent_url: agentUrl,
+    agent_url: safeAgentUrl,
     adcp_version: adcpVersion,
     agent_profile: profile,
     overall_status: overallStatus,
@@ -1731,10 +1736,10 @@ async function buildUnreachableResult(
     signal,
     effectiveOptions.transport?.fetchFn
   );
-  const err = errorMsg || 'Unknown error';
+  const err = redactOAuthUrlsInText(errorMsg || 'Unknown error');
   const headline = isAuth ? `Authentication required` : `Agent unreachable — ${err}`;
   return {
-    agent_url: agentUrl,
+    agent_url: redactOAuthUrlForOutput(agentUrl),
     adcp_version: adcpVersion,
     agent_profile: profile,
     overall_status: (isAuth ? 'auth_required' : 'unreachable') as OverallStatus,

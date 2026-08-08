@@ -191,6 +191,26 @@ export { buildRequest, hasRequestBuilder } from './request-builder';
 // Validations
 export { runValidations } from './validations';
 export {
+  gradeOAuthMetadataGraph,
+  gradeOAuthMetadataGraphVector,
+  loadOAuthMetadataGraphVectors,
+  buildAuthorizationServerMetadataUrl,
+  buildProtectedResourceMetadataUrl,
+  normalizeOAuthResourceForComparison,
+  redactOAuthUrlForOutput,
+} from './oauth-metadata-graph';
+export type {
+  GradeOAuthMetadataGraphOptions,
+  OAuthMetadataFetchResponse,
+  OAuthMetadataFetchTransport,
+  OAuthMetadataGraphErrorCode,
+  OAuthMetadataGraphFinding,
+  OAuthMetadataGraphGrade,
+  OAuthMetadataGraphObservation,
+  OAuthMetadataGraphVector,
+  OAuthMetadataGraphVectorCorpus,
+} from './oauth-metadata-graph';
+export {
   RateLimitTripObserver,
   RATE_LIMIT_TRIP_CONTRACT,
   RATE_LIMIT_TRIP_DEFAULT_REPLAY_MAX_WAIT_SECONDS,

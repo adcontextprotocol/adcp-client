@@ -24,6 +24,7 @@ export const TRACK_LABELS: Record<ComplianceTrack, string> = {
   audiences: 'Audience Management',
   error_handling: 'Error Handling',
   brand: 'Brand Rights',
+  security_transport: 'Transport Security',
 };
 
 /**

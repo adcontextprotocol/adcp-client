@@ -185,79 +185,86 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
     });
   }
 
-  let addresses: { address: string; family: number }[];
-  try {
-    addresses = await dnsLookupAsync(hostname, { all: true });
-  } catch (err) {
-    throwIfSignalAborted(options.signal);
-    throw new SsrfRefusedError(
-      'dns_lookup_failed',
-      `DNS lookup failed for ${hostname}: ${err instanceof Error ? err.message : String(err)}`,
-      { url, hostname }
-    );
-  }
-  throwIfSignalAborted(options.signal);
-  if (addresses.length === 0) {
-    throw new SsrfRefusedError('dns_empty', `DNS returned no addresses for ${hostname}`, {
-      url,
-      hostname,
-    });
-  }
-  // Error messages intentionally do NOT include the resolved IP — a
-  // counterparty-supplied hostname that resolves into the caller's internal
-  // address space would otherwise leak network topology into compliance
-  // reports and log aggregators. The address is still available on the
-  // thrown error's `.address` field for programmatic debugging.
-  for (const a of addresses) {
-    if (isAlwaysBlocked(a.address)) {
-      throw new SsrfRefusedError(
-        'always_blocked_address',
-        `Refusing to fetch: ${hostname} resolves to an always-blocked address (link-local or cloud metadata)`,
-        { url, hostname, address: a.address }
-      );
-    }
-  }
-  if (!allowPrivateIp) {
-    for (const a of addresses) {
-      if (isPrivateIp(a.address)) {
-        throw new SsrfRefusedError(
-          'private_address',
-          `Refusing to fetch: ${hostname} resolves to a private/loopback address`,
-          { url, hostname, address: a.address }
-        );
-      }
-    }
-  }
-
-  const pinned = addresses[0]!;
-  const pinnedFamily = pinned.family === 6 ? 6 : 4;
-  const dispatcher = new Agent({
-    connect: {
-      // All addresses were validated above; pin the connect to the first. The
-      // custom lookup also means undici won't re-resolve and pick up a rebind.
-      // undici's Agent may call lookup with `{ all: true }` (it does for HTTPS
-      // targets under Node 22+), which expects the array form of the callback.
-      lookup: (
-        _h: string,
-        opts: LookupOptions | undefined,
-        cb: (err: NodeJS.ErrnoException | null, address: string | LookupAddress[], family?: number) => void
-      ) => {
-        if (opts?.all) {
-          cb(null, [{ address: pinned.address, family: pinnedFamily }]);
-        } else {
-          cb(null, pinned.address, pinnedFamily);
-        }
-      },
-    },
-  });
-
+  // Start the request deadline before DNS. `dns.lookup()` does not accept an
+  // AbortSignal, so race it against the same controller used for connect and
+  // body reads. The lookup may continue inside libuv after an abort, but its
+  // eventual settlement is observed by `raceWithAbort` and cannot keep this
+  // caller pending or produce an unhandled rejection.
   const ac = new AbortController();
   const onExternalAbort = () => ac.abort(options.signal?.reason);
   options.signal?.addEventListener('abort', onExternalAbort, { once: true });
   if (options.signal?.aborted) onExternalAbort();
   const timer = setTimeout(() => ac.abort(new Error('ssrf-fetch: timeout')), timeoutMs);
+  let dispatcher: Agent | undefined;
 
   try {
+    let addresses: { address: string; family: number }[];
+    try {
+      addresses = await raceWithAbort(dnsLookupAsync(hostname, { all: true }), ac.signal);
+    } catch (err) {
+      throwIfSignalAborted(ac.signal);
+      throw new SsrfRefusedError(
+        'dns_lookup_failed',
+        `DNS lookup failed for ${hostname}: ${err instanceof Error ? err.message : String(err)}`,
+        { url, hostname }
+      );
+    }
+    throwIfSignalAborted(ac.signal);
+    if (addresses.length === 0) {
+      throw new SsrfRefusedError('dns_empty', `DNS returned no addresses for ${hostname}`, {
+        url,
+        hostname,
+      });
+    }
+    // Error messages intentionally do NOT include the resolved IP — a
+    // counterparty-supplied hostname that resolves into the caller's internal
+    // address space would otherwise leak network topology into compliance
+    // reports and log aggregators. The address is still available on the
+    // thrown error's `.address` field for programmatic debugging.
+    for (const a of addresses) {
+      if (isAlwaysBlocked(a.address)) {
+        throw new SsrfRefusedError(
+          'always_blocked_address',
+          `Refusing to fetch: ${hostname} resolves to an always-blocked address (link-local or cloud metadata)`,
+          { url, hostname, address: a.address }
+        );
+      }
+    }
+    if (!allowPrivateIp) {
+      for (const a of addresses) {
+        if (isPrivateIp(a.address)) {
+          throw new SsrfRefusedError(
+            'private_address',
+            `Refusing to fetch: ${hostname} resolves to a private/loopback address`,
+            { url, hostname, address: a.address }
+          );
+        }
+      }
+    }
+
+    const pinned = addresses[0]!;
+    const pinnedFamily = pinned.family === 6 ? 6 : 4;
+    dispatcher = new Agent({
+      connect: {
+        timeout: Math.min(5_000, timeoutMs),
+        // All addresses were validated above; pin the connect to the first. The
+        // custom lookup also means undici won't re-resolve and pick up a rebind.
+        // undici's Agent may call lookup with `{ all: true }` (it does for HTTPS
+        // targets under Node 22+), which expects the array form of the callback.
+        lookup: (
+          _h: string,
+          opts: LookupOptions | undefined,
+          cb: (err: NodeJS.ErrnoException | null, address: string | LookupAddress[], family?: number) => void
+        ) => {
+          if (opts?.all) {
+            cb(null, [{ address: pinned.address, family: pinnedFamily }]);
+          } else {
+            cb(null, pinned.address, pinnedFamily);
+          }
+        },
+      },
+    });
+
     const res = options.trustedFetchFn
       ? await options.trustedFetchFn(url, {
           method: options.method ?? 'GET',
@@ -329,16 +336,35 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener('abort', onExternalAbort);
-    await dispatcher.close().catch(() => {});
+    await dispatcher?.close().catch(() => {});
   }
+}
+
+/**
+ * Await an operation that has no native AbortSignal support without allowing
+ * it to retain the caller after cancellation. Attaching both fulfillment and
+ * rejection handlers also observes a late operation failure after the abort
+ * branch has already won the race.
+ */
+function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  throwIfSignalAborted(signal);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signalAbortError(signal));
+    signal.addEventListener('abort', onAbort, { once: true });
+    operation.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
+function signalAbortError(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) return signal.reason;
+  const error = new Error(signal.reason == null ? 'The operation was aborted' : String(signal.reason));
+  error.name = 'AbortError';
+  return error;
 }
 
 function throwIfSignalAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) return;
-  if (signal.reason instanceof Error) throw signal.reason;
-  const error = new Error(signal.reason == null ? 'The operation was aborted' : String(signal.reason));
-  error.name = 'AbortError';
-  throw error;
+  throw signalAbortError(signal);
 }
 
 /**
