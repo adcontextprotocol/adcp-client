@@ -1000,13 +1000,74 @@ describe('runStoryboard: replay_webhook_vector', () => {
     assert.ok(step.validations.some(v => v.check === 'webhook_replay_payload_schema' && v.passed === true));
   });
 
-  test('grades not_applicable when no replay receiver URL is configured', async () => {
+  test('grades the storyboard not applicable when no replay receiver URL is configured', async () => {
+    const steps = [
+      {
+        id: 'post_delivery_report_envelope',
+        title: 'POST delivery report inside MCP webhook envelope',
+        task: 'replay_webhook_vector',
+        vector_ref: 'static/test-vectors/webhook-receiver-envelope.json#positive/mcp-delivery-report-envelope',
+      },
+      {
+        id: 'post_same_event_retry',
+        title: 'POST retry with same idempotency_key',
+        task: 'replay_webhook_vector',
+        vector_ref:
+          'static/test-vectors/webhook-receiver-envelope.json#positive/mcp-delivery-report-retry-same-idempotency-key',
+      },
+      {
+        id: 'reject_bare_delivery_result',
+        title: 'Reject top-level notification_type result',
+        task: 'replay_webhook_vector',
+        vector_ref: 'static/test-vectors/webhook-receiver-envelope.json#negative/bare-delivery-result',
+      },
+      {
+        id: 'reject_missing_idempotency_key',
+        title: 'Reject envelope without idempotency_key',
+        task: 'replay_webhook_vector',
+        vector_ref: 'static/test-vectors/webhook-receiver-envelope.json#negative/missing-idempotency-key',
+      },
+      {
+        id: 'reject_unsupported_status',
+        title: 'Reject media buy status used as webhook status',
+        task: 'replay_webhook_vector',
+        vector_ref: 'static/test-vectors/webhook-receiver-envelope.json#negative/unsupported-top-level-status',
+      },
+    ];
+    const storyboard = storyboardWith(steps);
+    storyboard.phases = [
+      { id: 'positive_envelope_replay', title: 'Accept canonical webhook envelopes', steps: steps.slice(0, 2) },
+      { id: 'negative_envelope_rejections', title: 'Reject invalid webhook envelopes', steps: steps.slice(2) },
+    ];
+
+    const result = await runStoryboard('http://127.0.0.1:9/mcp', storyboard, {
+      ...RUN_OPTIONS_BASE,
+      agentTools: [],
+    });
+
+    assert.strictEqual(result.overall_passed, true);
+    assert.strictEqual(result.failed_count, 0);
+    assert.strictEqual(result.skipped_count, 5);
+    assert.strictEqual(result.phases.length, 2);
+    for (const step of result.phases.flatMap(phase => phase.steps)) {
+      assert.strictEqual(step.skipped, true);
+      assert.strictEqual(step.skip.reason, 'not_applicable');
+      assert.match(step.skip.detail, /webhook_replay_receiver\.url/);
+    }
+  });
+
+  test('does not pass vacuously when another required step has a non-applicable skip reason', async () => {
     const storyboard = storyboardWith([
       {
         id: 'post_delivery_report_envelope',
         title: 'POST delivery report inside MCP webhook envelope',
         task: 'replay_webhook_vector',
         vector_ref: 'static/test-vectors/webhook-receiver-envelope.json#positive/mcp-delivery-report-envelope',
+      },
+      {
+        id: 'missing_agent_tool',
+        title: 'Missing agent tool',
+        task: 'missing_agent_tool',
       },
     ]);
 
@@ -1015,9 +1076,12 @@ describe('runStoryboard: replay_webhook_vector', () => {
       agentTools: [],
     });
 
-    const step = result.phases[0].steps[0];
-    assert.strictEqual(step.skipped, true);
-    assert.strictEqual(step.skip.reason, 'not_applicable');
-    assert.match(step.skip.detail, /webhook_replay_receiver\.url/);
+    assert.strictEqual(result.overall_passed, false);
+    assert.strictEqual(result.failed_count, 0);
+    assert.strictEqual(result.skipped_count, 2);
+    assert.deepStrictEqual(
+      result.phases[0].steps.map(step => step.skip.reason),
+      ['not_applicable', 'missing_tool']
+    );
   });
 });
