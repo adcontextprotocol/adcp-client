@@ -505,10 +505,11 @@ export type {
 // `createAdcpServerFromPlatform` wraps `createAdcpServer` (the lower-level
 // handler-bag entry above) with compile-time specialism enforcement
 // (`RequiredPlatformsFor<S>`), capability projection, idempotency wiring,
-// async tasks, status normalization, multi-tenant routing, and webhook
-// auto-emit. Adopters declare a typed `DecisioningPlatform` per-specialism
-// and the framework wires the rest. See `docs/migration-5.x-to-6.x.md`
-// and `skills/build-decisioning-platform/` for the full walkthrough.
+// async tasks, status normalization, multi-tenant routing, and async task
+// completion webhooks. Synchronous terminal responses remain inline by
+// default. Adopters declare a typed `DecisioningPlatform` per-specialism
+// and the framework wires the rest. See `docs/migration-5.x-to-6.x.md` and
+// `skills/build-decisioning-platform/` for the full walkthrough.
 //
 // Both `createAdcpServer` and `createAdcpServerFromPlatform` live on the
 // same import path so adopters discover them as siblings; pick the

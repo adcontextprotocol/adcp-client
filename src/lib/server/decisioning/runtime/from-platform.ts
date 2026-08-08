@@ -1402,19 +1402,23 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
   strictSpecialismValidation?: boolean;
 
   /**
-   * Auto-fire a completion webhook on the sync-success arm of mutating
-   * tools when the request supplied `push_notification_config.url`.
-   * Default is `true` — buyers passing the URL expect notification
-   * regardless of whether the seller routed the call sync vs HITL, and
-   * v5 adopters routinely wired this manually inside every handler.
-   * The framework now does it for them.
+   * Auto-fire a completion webhook on the sync-success arm of task-capable
+   * tools when the request supplied `push_notification_config.url`. This
+   * includes discovery (`get_products`, `get_signals`) as well as mutations
+   * such as `create_media_buy`, `update_media_buy`, and `sync_creatives`.
+   * Default is `false`: AdCP completion webhooks describe status changes
+   * after the initial response, so a terminal response delivered inline
+   * must not also emit a webhook.
    *
-   * Webhook payload mirrors the HITL completion shape: top-level
+   * Setting this to `true` preserves the legacy compatibility behavior,
+   * but is a non-conformant extension. The webhook payload mirrors the
+   * HITL completion shape: top-level
    * `task_type` (the wire tool name), `status: 'completed'`, and
    * `result` carrying the projected sync response. `task_id` is
    * synthesized per call (sync responses don't allocate a registry
-   * task); buyers correlate via the resource IDs (`media_buy_id`,
-   * `creative_id`, etc.) on `result`.
+   * task), cannot be used with `get_task_status`, and exists only to
+   * satisfy the webhook payload shape. Buyers must correlate via the
+   * resource IDs (`media_buy_id`, `creative_id`, etc.) on `result`.
    *
    * Same `SPEC_WEBHOOK_TASK_TYPES` gate as the HITL path: tools outside
    * the closed wire enum don't emit (adopters use `publishStatusChange`
@@ -1422,10 +1426,12 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * `emitWebhook` plumbing — host-wired signing, redelivery, and
    * observability hooks all apply uniformly.
    *
-   * Set `false` to suppress the auto-emit for adopters who emit
-   * webhooks manually inside their handlers (idempotency duplication
-   * concern) or for transitional deployments that don't yet have the
-   * webhook receiver path stood up.
+   * Use this opt-in only while migrating an existing integration that
+   * relies on duplicate inline + webhook delivery. New integrations
+   * should handle the terminal inline response instead. Compatibility
+   * delivery is detached and best-effort: use durable request idempotency,
+   * ingress rate limits, and bounded emitter timeouts to avoid duplicate
+   * deliveries or unbounded work from replayed or slow requests.
    */
   autoEmitCompletionWebhooks?: boolean;
 
@@ -2178,7 +2184,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         fwLogger,
         {
           allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
-          autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks !== false,
+          autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks === true,
         },
         ctxFor,
         effectiveCtxMetadata,
@@ -2201,7 +2207,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         fwLogger,
         {
           allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
-          autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks !== false,
+          autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks === true,
         },
         ctxFor,
         opts.legacyCreativeFormatConverter,
@@ -2227,7 +2233,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         fwLogger,
         {
           allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
-          autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks !== false,
+          autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks === true,
         },
         ctxFor,
         effectiveCtxMetadata

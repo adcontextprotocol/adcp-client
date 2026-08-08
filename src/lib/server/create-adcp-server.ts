@@ -3659,8 +3659,9 @@ function selectServedAdcpRelease(
  * auto-hydration of `req.packages[i].product` on createMediaBuy,
  * default `resolveIdempotencyPrincipal` synthesis, capability projection,
  * async-task envelopes, status normalization via `StatusMappers`,
- * multi-tenant routing via `TenantRegistry`, and webhook auto-emit on
- * sync responses with `push_notification_config.url`.
+ * multi-tenant routing via `TenantRegistry`, and async task completion
+ * webhook delivery. Synchronous terminal responses remain inline unless
+ * an adopter explicitly enables the non-conformant compatibility option.
  *
  * Reach for `createAdcpServer` directly only when you need fine control
  * over individual handlers, are mid-migration from a v5 codebase, or

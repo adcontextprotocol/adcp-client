@@ -21,7 +21,9 @@ interfaces: `SalesCorePlatform` + `SalesIngestionPlatform`,
 `CampaignGovernancePlatform`, `BrandRightsPlatform`, etc.) and the
 framework wires capability projection, idempotency, RFC 9421 signing,
 async tasks, status normalization, lifecycle state, multi-tenant
-routing, and webhook auto-emit on sync mutations. Compile-time
+routing, and async task completion webhooks. Synchronous terminal
+responses stay inline unless an adopter explicitly enables the
+non-conformant `autoEmitCompletionWebhooks` compatibility option. Compile-time
 enforcement via `RequiredPlatformsFor<S>` catches missing methods
 before runtime. The `definePlatform` / `defineSalesCorePlatform` /
 sibling helpers let you write inline platform literals without
@@ -161,7 +163,7 @@ serve(() => createAdcpServerFromPlatform(platform, { name: 'My Publisher', versi
 - **Auto-generates `get_adcp_capabilities`** from registered platform methods — no manual capability declaration.
 - **Auto-applies response builders** — return raw data, the framework wraps them in MCP `CallToolResult` with `structuredContent`.
 - **Resolves accounts** — `accounts.resolve(ref, ctx)` runs before your platform method, the resolved account lands at `ctx.account`. Returns `ACCOUNT_NOT_FOUND` envelope if resolution returns null. `accounts.resolution: 'implicit'` enforces inline-`{account_id}` refusal at the framework boundary (post-6.7 — pre-6.7 the docstring was aspirational).
-- **Idempotency, signing, async tasks, status normalization, lifecycle state** are framework-owned. Adopters write the business decisions.
+- **Idempotency, signing, async tasks, status normalization, lifecycle state** are framework-owned. Synchronous terminal responses do not emit completion webhooks by default; the inline result is authoritative. Adopters write the business decisions.
 - **Catches handler errors** — unhandled exceptions return `SERVICE_UNAVAILABLE` instead of crashing. Throw a typed error class (see § "Returning errors from handlers") to surface a structured envelope.
 
 ### Identity, multi-tenant, and lifecycle helpers (6.7)

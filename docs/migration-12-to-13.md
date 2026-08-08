@@ -30,6 +30,22 @@ CI consumers that need a stable, compact artifact should continue using
 used `_view: 'reference'` on a `TrackResult` should use `TestedTrackEntry` instead;
 `TrackResult._view` now accepts only `'canonical'`.
 
+## Synchronous completion webhooks
+
+`createAdcpServerFromPlatform()` no longer emits a completion webhook by
+default when a request returns a terminal result inline. AdCP completion
+webhooks describe status changes after the initial response; buyers already
+have a synchronous result and should consume it directly.
+
+Existing integrations that temporarily depend on duplicate inline + webhook
+delivery can pass `autoEmitCompletionWebhooks: true`. This is a non-conformant
+compatibility extension covering synchronous discovery (`get_products`,
+`get_signals`) and mutation responses. Its synthesized `sync-*` task ID is not
+registered and cannot be polled with `get_task_status`. Delivery is detached
+and best-effort, so use durable request idempotency, ingress rate limits, and
+bounded emitter timeouts while migrating. Remove the option once buyers handle
+the inline terminal response.
+
 ## Root type imports are canonical
 
 The unqualified root exports `Product`, `Format`, `CreativeAsset`, `Package`, `PackageRequest`, `PackageUpdate`, `Placement`, `CreateMediaBuyRequest`, `UpdateMediaBuyRequest`, `SyncCreativesRequest`, and their creative-bearing response and server-payload types now mean their canonical shapes. Legacy wire shapes have `Legacy*` names. The old format-reference types are available only as `LegacyFormatID` / `LegacyFormatReferenceStructuredObject` from the root; the explicit `@adcp/sdk/types` protocol subpath remains raw for wire tooling.
