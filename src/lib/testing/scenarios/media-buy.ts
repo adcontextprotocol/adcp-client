@@ -8,6 +8,8 @@
  * - sync_creatives
  */
 
+import { randomUUID } from 'crypto';
+
 import type {
   AccountReference,
   SyncCreativesSuccess,
@@ -784,7 +786,7 @@ export async function testCreativeSync(
       const firstFormat = formatIds?.[0] || formats?.[0];
       if (firstFormat) {
         if (typeof firstFormat === 'string') {
-          formatId = { ...formatId, id: firstFormat };
+          formatId = { agent_url: agentUrl, id: firstFormat };
         } else {
           const formatObj = firstFormat as Record<string, unknown>;
           formatId = (formatObj.format_id as Record<string, unknown>) || formatObj;
@@ -797,7 +799,7 @@ export async function testCreativeSync(
   // Assets must be an object keyed by asset_role, not an array
   const syncKey = generateIdempotencyKey();
   const testCreative = {
-    creative_id: `test-creative-${syncKey}`,
+    creative_id: `test-creative-${randomUUID()}`,
     name: 'E2E Test Creative',
     format_id: formatId,
     assets: {

@@ -10,6 +10,9 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
 const { validateRequest } = require('../../dist/lib/validation');
+const { testCreativeSync } = require('../../dist/lib/testing');
+
+const SELLER_URL = 'https://seller.example/mcp';
 
 // Mirrors the default formatId initialised in testCreativeSync()
 const DEFAULT_FORMAT_ID = {
@@ -50,13 +53,41 @@ describe('creative scenario fixture schema validity (issue #2460)', () => {
     assert.strictEqual(BASE_CREATIVE.assets.primary.asset_type, 'image');
   });
 
-  test('string-format fallback preserves agent_url', () => {
-    const initialFormatId = { ...DEFAULT_FORMAT_ID };
+  test('testCreativeSync sends its schema-valid fixture with a seller-owned string format ID', async () => {
     const stringFormatFromAgent = 'video_1920x1080';
-    // Simulates: formatId = { ...formatId, id: firstFormat }
-    const result = { ...initialFormatId, id: stringFormatFromAgent };
-    assert.strictEqual(result.agent_url, DEFAULT_FORMAT_ID.agent_url, 'agent_url must be preserved');
-    assert.strictEqual(result.id, stringFormatFromAgent, 'id must be updated');
+    let syncRequest;
+    const client = {
+      listCreativeFormatsLegacy: async () => ({
+        success: true,
+        data: { format_ids: [stringFormatFromAgent], formats: [] },
+      }),
+      syncCreatives: async request => {
+        syncRequest = request;
+        return { success: true, data: { creatives: [] } };
+      },
+    };
+
+    await testCreativeSync(SELLER_URL, {
+      sandbox: true,
+      _client: client,
+      _profile: { tools: ['list_creative_formats', 'sync_creatives'] },
+    });
+
+    assert.ok(syncRequest, 'testCreativeSync must dispatch sync_creatives');
+    assert.deepStrictEqual(syncRequest.creatives[0].format_id, {
+      agent_url: SELLER_URL,
+      id: stringFormatFromAgent,
+    });
+    assert.strictEqual(syncRequest.creatives[0].assets.primary.asset_type, 'image');
+    assert.match(syncRequest.creatives[0].creative_id, /^test-creative-[0-9a-f-]{36}$/);
+    assert.notStrictEqual(syncRequest.creatives[0].creative_id, `test-creative-${syncRequest.idempotency_key}`);
+
+    const outcome = validateRequest('sync_creatives', syncRequest);
+    assert.strictEqual(
+      outcome.valid,
+      true,
+      `Expected actual scenario request to be schema-valid, got: ${JSON.stringify(outcome.issues, null, 2)}`
+    );
   });
 
   test('sync_creatives envelope with fixture validates against published schema', () => {
