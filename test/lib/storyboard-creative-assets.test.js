@@ -8,7 +8,6 @@ const {
 const { expandCreativeAssetDirectives, findUnresolvedCreativeAssetDirectives } = require('../../dist/lib/testing');
 const { injectContext } = require('../../dist/lib/testing/storyboard/context');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner');
-const { DETAILED_SKIP_TO_CANONICAL } = require('../../dist/lib/testing/storyboard/types');
 
 const TEST_KIT = {
   assets: {
@@ -85,10 +84,6 @@ function runnerOptions(calls) {
 }
 
 describe('$build_assets_from_format', () => {
-  test('maps fixture-unavailable diagnostics to canonical not_applicable', () => {
-    assert.strictEqual(DETAILED_SKIP_TO_CANONICAL.creative_asset_fixture_unavailable, 'not_applicable');
-  });
-
   test('uses canonical required slots and selects the exact declared dimensions', () => {
     const request = {
       creatives: [
@@ -180,9 +175,15 @@ describe('$build_assets_from_format', () => {
             slots: [
               { asset_group_id: 'image_main', asset_type: 'image', required: true },
               { asset_group_id: 'landing_url', asset_type: 'url', required: true },
-              { asset_group_id: 'marketing_headline', asset_type: 'text', required: true },
-              { asset_group_id: 'body_copy', asset_type: 'text', required: true },
-              { asset_group_id: 'primary_cta', asset_type: 'text', required: true },
+              { asset_group_id: 'headline', asset_type: 'text', required: true },
+              { asset_group_id: 'title', asset_type: 'text', required: true },
+              { asset_group_id: 'description', asset_type: 'text', required: true },
+              { asset_group_id: 'body', asset_type: 'text', required: true },
+              { asset_group_id: 'body_text', asset_type: 'text', required: true },
+              { asset_group_id: 'primary_text', asset_type: 'text', required: true },
+              { asset_group_id: 'cta', asset_type: 'text', required: true },
+              { asset_group_id: 'cta_text', asset_type: 'text', required: true },
+              { asset_group_id: 'call_to_action', asset_type: 'text', required: true },
             ],
           },
         },
@@ -196,15 +197,21 @@ describe('$build_assets_from_format', () => {
       asset_type: 'url',
       url: 'https://acmeoutdoor.example/summer-sale',
     });
-    assert.deepStrictEqual(expanded.assets.marketing_headline, {
-      asset_type: 'text',
-      content: 'Built for the Trail',
-    });
-    assert.deepStrictEqual(expanded.assets.body_copy, {
-      asset_type: 'text',
-      content: 'Adventure starts here',
-    });
-    assert.deepStrictEqual(expanded.assets.primary_cta, { asset_type: 'text', content: 'Shop Now' });
+    for (const slotId of ['headline', 'title']) {
+      assert.deepStrictEqual(expanded.assets[slotId], {
+        asset_type: 'text',
+        content: 'Built for the Trail',
+      });
+    }
+    for (const slotId of ['description', 'body', 'body_text', 'primary_text']) {
+      assert.deepStrictEqual(expanded.assets[slotId], {
+        asset_type: 'text',
+        content: 'Adventure starts here',
+      });
+    }
+    for (const slotId of ['cta', 'cta_text', 'call_to_action']) {
+      assert.deepStrictEqual(expanded.assets[slotId], { asset_type: 'text', content: 'Shop Now' });
+    }
   });
 
   test('reports unsupported asset types with a slot-level fixture diagnostic', () => {
@@ -222,7 +229,7 @@ describe('$build_assets_from_format', () => {
       );
 
       assert.strictEqual(result.ok, false);
-      assert.strictEqual(result.failure.reason, 'creative_asset_fixture_unavailable');
+      assert.strictEqual(result.failure.reason, 'fixture_unavailable');
       assert.strictEqual(result.failure.slotId, `${assetType}_main`);
       assert.strictEqual(result.failure.assetType, assetType);
       assert.match(result.failure.constraint, new RegExp(`asset type "${assetType}"`));
@@ -245,18 +252,40 @@ describe('$build_assets_from_format', () => {
     );
 
     assert.strictEqual(result.ok, false);
-    assert.strictEqual(result.failure.reason, 'creative_asset_fixture_unavailable');
+    assert.strictEqual(result.failure.reason, 'fixture_unavailable');
     assert.strictEqual(result.failure.slotId, 'billboard');
     assert.strictEqual(result.failure.assetType, 'image');
     assert.match(result.failure.constraint, /exact 970x250/);
   });
 
-  test('does not substitute marketing copy for an unknown text semantic', () => {
+  test('does not infer text semantics from unknown or substring-lookalike slot ids', () => {
+    for (const slotId of ['legal_disclaimer', 'marketing_headline']) {
+      const result = expandCreativeAssetDirectivesWithDiagnostics(
+        {
+          assets: {
+            [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+              slots: [{ asset_group_id: slotId, asset_type: 'text', required: true }],
+            },
+          },
+        },
+        {},
+        TEST_KIT
+      );
+
+      assert.strictEqual(result.ok, false);
+      assert.strictEqual(result.failure.reason, 'fixture_unavailable');
+      assert.strictEqual(result.failure.slotId, slotId);
+      assert.strictEqual(result.failure.assetType, 'text');
+      assert.match(result.failure.constraint, /no exact runner mapping/);
+    }
+  });
+
+  test('expands a valid format with no required slots to an empty asset map', () => {
     const result = expandCreativeAssetDirectivesWithDiagnostics(
       {
         assets: {
           [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
-            slots: [{ asset_group_id: 'legal_disclaimer', asset_type: 'text', required: true }],
+            slots: [{ asset_group_id: 'optional_image', asset_type: 'image', required: false }],
           },
         },
       },
@@ -264,11 +293,8 @@ describe('$build_assets_from_format', () => {
       TEST_KIT
     );
 
-    assert.strictEqual(result.ok, false);
-    assert.strictEqual(result.failure.reason, 'creative_asset_fixture_unavailable');
-    assert.strictEqual(result.failure.slotId, 'legal_disclaimer');
-    assert.strictEqual(result.failure.assetType, 'text');
-    assert.match(result.failure.constraint, /does not identify a supported headline/);
+    assert.strictEqual(result.ok, true);
+    assert.deepStrictEqual(result.value.assets, {});
   });
 
   test('distinguishes missing format context and malformed directives from fixture gaps', () => {
@@ -462,8 +488,8 @@ describe('$build_assets_from_format', () => {
     const step = result.phases[0].steps[0];
     assert.strictEqual(step.skipped, true);
     assert.strictEqual(step.passed, true);
-    assert.strictEqual(step.skip_reason, 'creative_asset_fixture_unavailable');
-    assert.strictEqual(step.skip.reason, 'not_applicable');
+    assert.strictEqual(step.skip_reason, 'fixture_unavailable');
+    assert.strictEqual(step.skip.reason, 'fixture_unavailable');
     assert.match(step.skip.detail, /^creative_asset_fixture_unavailable:/);
     assert.match(step.skip.detail, /slot "video_main"/);
     assert.match(step.skip.detail, /asset type "video"/);
@@ -562,6 +588,120 @@ describe('$build_assets_from_format', () => {
     assert.strictEqual(consumer.skip.reason, 'prerequisite_failed');
   });
 
+  test('preflights a captured format before intervening side effects and terminates without cascades', async () => {
+    const calls = [];
+    const storyboard = {
+      id: 'creative_asset_early_preflight',
+      version: '1.0.0',
+      title: 'Creative asset early preflight',
+      category: 'compliance',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      phases: [
+        {
+          id: 'setup',
+          title: 'Setup',
+          steps: [
+            {
+              id: 'formats',
+              title: 'Discover a format',
+              task: 'get_products',
+              sample_request: {},
+              context_outputs: [{ key: 'format_params', path: 'products[0].format_options[0].params' }],
+              validations: [],
+            },
+            {
+              id: 'create_buy',
+              title: 'Create buy',
+              task: 'create_media_buy',
+              stateful: true,
+              sample_request: {},
+              validations: [],
+            },
+            {
+              id: 'sync',
+              title: 'Sync creative',
+              task: 'sync_creatives',
+              stateful: true,
+              sample_request: {
+                creatives: [
+                  {
+                    creative_id: 'creative-1',
+                    format_kind: 'video',
+                    assets: { [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: '$context.format_params' },
+                  },
+                ],
+              },
+              validations: [],
+            },
+          ],
+        },
+        {
+          id: 'cleanup',
+          title: 'Cleanup',
+          steps: [
+            {
+              id: 'cancel_buy',
+              title: 'Cancel buy',
+              task: 'update_media_buy',
+              stateful: true,
+              sample_request: {},
+              validations: [],
+            },
+          ],
+        },
+      ],
+    };
+    const options = runnerOptions(calls);
+    options.agentTools = ['get_products', 'create_media_buy', 'sync_creatives', 'update_media_buy'];
+    options._profile.tools = options.agentTools;
+    options._client.executeTask = async (name, params) => {
+      calls.push({ name, params });
+      if (name === 'get_products') {
+        return {
+          success: true,
+          data: {
+            products: [
+              {
+                format_options: [
+                  {
+                    params: {
+                      slots: [{ asset_group_id: 'video_main', asset_type: 'video', required: true }],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }
+      return { success: true, data: {} };
+    };
+
+    const result = await runStoryboard('https://seller.example/mcp', storyboard, options);
+
+    assert.deepStrictEqual(
+      calls.map(call => call.name),
+      ['get_products']
+    );
+    assert.deepStrictEqual(
+      result.phases[0].steps.map(step => step.step_id),
+      ['formats', 'sync']
+    );
+    assert.strictEqual(result.phases[0].steps[1].skip.reason, 'fixture_unavailable');
+    assert.deepStrictEqual(result.phases[1].steps, []);
+    assert.strictEqual(
+      result.phases.flatMap(phase => phase.steps).some(step => step.skip_reason === 'prerequisite_failed'),
+      false
+    );
+    assert.strictEqual(result.passed_count, 1);
+    assert.strictEqual(result.failed_count, 0);
+    assert.strictEqual(result.skipped_count, 1);
+    assert.strictEqual(result.overall_passed, true);
+  });
+
   test('rate-limit trip target also grades an unavailable fixture pre-wire', async () => {
     const calls = [];
     const storyboard = {
@@ -615,8 +755,8 @@ describe('$build_assets_from_format', () => {
     const step = result.phases[0].steps[0];
     assert.strictEqual(step.passed, true);
     assert.strictEqual(step.skipped, true);
-    assert.strictEqual(step.skip_reason, 'creative_asset_fixture_unavailable');
-    assert.strictEqual(step.skip.reason, 'not_applicable');
+    assert.strictEqual(step.skip_reason, 'fixture_unavailable');
+    assert.strictEqual(step.skip.reason, 'fixture_unavailable');
     assert.match(step.skip.detail, /slot "vast_main"/);
     assert.match(step.skip.detail, /asset type "vast_tag"/);
     assert.strictEqual(result.failed_count, 0);

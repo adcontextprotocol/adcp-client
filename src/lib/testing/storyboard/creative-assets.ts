@@ -20,7 +20,7 @@ type AssetsBuildFailure =
       constraint: string;
     }
   | {
-      reason: 'creative_asset_fixture_unavailable';
+      reason: 'fixture_unavailable';
       slotId: string;
       assetType: string;
       constraint: string;
@@ -180,25 +180,26 @@ function firstString(value: unknown): string | undefined {
 function buildText(slot: RequiredSlot, assets: JsonObject): AssetBuildResult {
   const text = isObject(assets.text) ? assets.text : {};
   const id = slot.id.toLowerCase();
-  let content: string | undefined;
-  let semantic: string;
-  if (id.includes('headline')) {
-    content = firstString(text.headlines);
-    semantic = 'headline';
-  } else if (id.includes('description') || id.includes('body')) {
-    content = firstString(text.descriptions);
-    semantic = 'description/body';
-  } else if (id.includes('cta') || id.includes('call_to_action')) {
-    content = firstString(text.cta);
-    semantic = 'CTA/call_to_action';
-  } else {
+  const fixtureCategory = {
+    headline: 'headlines',
+    title: 'headlines',
+    description: 'descriptions',
+    body: 'descriptions',
+    body_text: 'descriptions',
+    primary_text: 'descriptions',
+    cta: 'cta',
+    cta_text: 'cta',
+    call_to_action: 'cta',
+  }[id];
+  if (fixtureCategory === undefined) {
     return {
       ok: false,
-      constraint: 'slot id does not identify a supported headline, description/body, or CTA/call_to_action semantic',
+      constraint: 'slot id has no exact runner mapping to a headlines, descriptions, or CTA fixture category',
     };
   }
+  const content = firstString(text[fixtureCategory]);
   return content === undefined
-    ? { ok: false, constraint: `requires a ${semantic} text fixture` }
+    ? { ok: false, constraint: `requires a ${fixtureCategory} text fixture` }
     : { ok: true, asset: { asset_type: 'text', content } };
 }
 
@@ -222,15 +223,6 @@ function buildAssets(value: unknown, context: StoryboardContext, testKit: unknow
     return { ok: false, failure: { reason: resolved.reason, constraint: resolved.constraint } };
   }
   const slots = requiredSlots(resolved.format);
-  if (slots.length === 0) {
-    return {
-      ok: false,
-      failure: {
-        reason: 'malformed_directive',
-        constraint: 'format does not declare any recognizable required asset slots',
-      },
-    };
-  }
 
   const built: JsonObject = {};
   for (const slot of slots) {
@@ -239,7 +231,7 @@ function buildAssets(value: unknown, context: StoryboardContext, testKit: unknow
       return {
         ok: false,
         failure: {
-          reason: 'creative_asset_fixture_unavailable',
+          reason: 'fixture_unavailable',
           slotId: slot.id,
           assetType: slot.assetType,
           constraint: result.constraint,

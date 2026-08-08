@@ -1804,6 +1804,12 @@ export type RunnerSkipReason =
   | 'prerequisite_failed'
   | 'missing_tool'
   | 'missing_test_controller'
+  /**
+   * The runner selected the pathway but its test kit cannot synthesize a
+   * valid input for the seller-declared contract. This is a runner-owned
+   * coverage gap: it never fails validations or cascades prerequisites.
+   */
+  | 'fixture_unavailable'
   | 'unsatisfied_contract'
   /**
    * A storyboard-level `requires:` tag named a requirement that is not
@@ -1837,7 +1843,7 @@ export type RunnerSkipReason =
   | 'peer_substituted';
 
 /**
- * Grader-specific skip reasons. These are narrower than the six canonical
+ * Grader-specific skip reasons. These are narrower than the canonical
  * `RunnerSkipReason` values — they carry runner-local context (which probe,
  * which operator opt-out) that the contract neither requires nor forbids.
  * The runner records them on `skip_reason` for legacy consumers, and also
@@ -1881,8 +1887,6 @@ export type RunnerDetailedSkipReason =
   | 'fixture_seed_unsupported'
   /** A valid fixture strategy ladder exhausted without finding a binding. */
   | 'fixture_unsatisfied'
-  /** A valid seller format requires an asset slot the selected test kit cannot synthesize. */
-  | 'creative_asset_fixture_unavailable'
   /**
    * A `requires_capability` predicate on the storyboard evaluated to false —
    * the agent explicitly declared it does not support the capability this
@@ -1907,7 +1911,7 @@ export type RunnerDetailedSkipReason =
   | 'force_scenario_unsupported';
 
 /**
- * Map detailed grader skip reasons onto the six canonical spec values so
+ * Map detailed grader skip reasons onto the canonical spec values so
  * consumers reading `skip.reason` get a stable enum regardless of which
  * subsystem produced the skip.
  */
@@ -1923,7 +1927,6 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   force_scenario_unsupported: 'not_applicable',
   fixture_seed_unsupported: 'not_applicable',
   fixture_unsatisfied: 'not_applicable',
-  creative_asset_fixture_unavailable: 'not_applicable',
   capability_unsupported: 'unsatisfied_contract',
   rate_abuse_opt_out: 'unsatisfied_contract',
   missing_test_kit_contract: 'unsatisfied_contract',
@@ -2227,8 +2230,8 @@ export interface StoryboardStepResult {
   /** True when the step was not executed */
   skipped?: boolean;
   /**
-   * Skip reason. Accepts either a canonical `RunnerSkipReason` (the six
-   * spec-required values) or one of the grader-specific variants introduced
+   * Skip reason. Accepts either a canonical `RunnerSkipReason` or one of the
+   * grader-specific variants introduced
    * by the RFC 9421 request-signing grader (#585, #617). The structured
    * `skip` field below always carries the canonical spec reason so consumers
    * of the runner-output contract don't need to know the grader vocabulary.
