@@ -1975,7 +1975,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       specialisms: [...platformSpecialisms] as NonNullable<GetAdCPCapabilitiesResponse['specialisms']>,
     }),
     ...(claimsSignedSpecialism && { request_signing: { supported: true as const } }),
-    features: adopterFeatures,
+    ...((hasMediaBuyProjection || Object.keys(adopterFeatureBase).length > 0) && {
+      features: adopterFeatures,
+    }),
     ...(adopterCreative !== undefined && { creative: adopterCreative }),
     ...(adopterAccount !== undefined && { account: adopterAccount }),
     ...(adopterSupportedVersions !== undefined && {
@@ -1984,7 +1986,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     ...(hasOverridesObject && {
       overrides: {
         ...(adopterOverrides ?? {}),
-        media_buy: mergeCapabilityOverride(adopterOverrides?.media_buy, mediaBuyOverrides),
+        ...(hasMediaBuyProjection
+          ? { media_buy: mergeCapabilityOverride(adopterOverrides?.media_buy, mediaBuyOverrides) }
+          : adopterOverrides?.media_buy !== undefined && { media_buy: adopterOverrides.media_buy }),
         ...(hasBrandProjection && {
           brand: mergeCapabilityOverride(adopterOverrides?.brand, brandOverrides),
         }),
