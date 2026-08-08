@@ -222,6 +222,14 @@ describe('comply() timeout_ms option', () => {
       assert.strictEqual(result.overall_status, 'partial');
       assert.deepStrictEqual(result.storyboards_executed, ['slow_timeout_one']);
       assert.strictEqual(agent.requests.filter(r => r.tool === '__test_probe').length, 1);
+      assert.ok(result.tested_tracks.length > 0, 'expected the completed storyboard to produce a tested track');
+      for (const track of result.tested_tracks) {
+        assert.strictEqual('scenarios' in track, false, 'tested_tracks entries must omit scenarios');
+        assert.strictEqual('skipped_scenarios' in track, false, 'tested_tracks entries must omit skipped scenarios');
+      }
+      const canonicalScenarioCount = result.tracks.reduce((count, track) => count + track.scenarios.length, 0);
+      const serializedScenarioCount = (JSON.stringify(result).match(/"scenario":/g) ?? []).length;
+      assert.strictEqual(serializedScenarioCount, canonicalScenarioCount);
       assert.ok(
         result.observations.some(o => o.source?.code === 'timeout-budget-exceeded'),
         `expected timeout-budget-exceeded observation, got ${JSON.stringify(result.observations)}`

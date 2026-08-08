@@ -2,6 +2,34 @@
 
 Version 13 makes canonical creatives the contract of the primary TypeScript SDK. Installing the modern SDK means application code uses `format_kind`, `format_options`, and `format_option_refs`; `{ agent_url, id }` creative format identity is confined to wire adapters and explicitly named migration APIs.
 
+## Compliance results serialize scenario detail once
+
+`ComplianceResult.tested_tracks` is now `TestedTrackEntry[]` rather than
+`TrackResult[]`. These filtered reference entries retain track identity, status,
+label, observations, duration, mode, and `_view: 'reference'`, but omit
+`scenarios` and `skipped_scenarios`. The canonical scenario arrays live under
+`ComplianceResult.tracks`, preventing `--json` reports from serializing every
+scenario twice.
+
+Consumers that previously read `result.tested_tracks[n].scenarios` should
+iterate `result.tracks` instead:
+
+```ts
+for (const track of result.tracks) {
+  for (const scenario of track.scenarios) {
+    consumeScenario(scenario);
+  }
+}
+```
+
+CI consumers that need a stable, compact artifact should continue using
+`buildComplianceSummary()` from `@adcp/sdk/testing` (also re-exported by
+`@adcp/sdk/compliance`) or `--summary-output`.
+`TestedTrackEntry` is exported from `@adcp/sdk/testing` and
+`@adcp/sdk/compliance` for status-only consumers. Custom fixtures that formerly
+used `_view: 'reference'` on a `TrackResult` should use `TestedTrackEntry` instead;
+`TrackResult._view` now accepts only `'canonical'`.
+
 ## Root type imports are canonical
 
 The unqualified root exports `Product`, `Format`, `CreativeAsset`, `Package`, `PackageRequest`, `PackageUpdate`, `Placement`, `CreateMediaBuyRequest`, `UpdateMediaBuyRequest`, `SyncCreativesRequest`, and their creative-bearing response and server-payload types now mean their canonical shapes. Legacy wire shapes have `Legacy*` names. The old format-reference types are available only as `LegacyFormatID` / `LegacyFormatReferenceStructuredObject` from the root; the explicit `@adcp/sdk/types` protocol subpath remains raw for wire tooling.
