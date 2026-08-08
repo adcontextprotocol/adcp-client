@@ -4030,6 +4030,7 @@ describe('Custom-handler merge seam (incremental migration)', () => {
             },
           ],
           nextCursor: 'cursor_page_2',
+          totalCount: 37,
         }),
       },
     });
@@ -4053,6 +4054,11 @@ describe('Custom-handler merge seam (incremental migration)', () => {
       page1.structuredContent.pagination.cursor,
       'cursor_page_2',
       'pagination.cursor MUST echo adopter nextCursor'
+    );
+    assert.strictEqual(
+      page1.structuredContent.pagination.total_count,
+      37,
+      'pagination.total_count MUST project adopter totalCount when present'
     );
     assert.strictEqual(
       page1.structuredContent.next_cursor,
@@ -4081,6 +4087,11 @@ describe('Custom-handler merge seam (incremental migration)', () => {
       terminal.structuredContent.pagination.cursor,
       undefined,
       'pagination.cursor MUST be absent when has_more is false (per pagination-response schema)'
+    );
+    assert.strictEqual(
+      terminal.structuredContent.pagination.total_count,
+      undefined,
+      'pagination.total_count MUST remain optional when the adopter cannot compute it'
     );
   });
 

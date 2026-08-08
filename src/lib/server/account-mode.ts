@@ -16,6 +16,7 @@
  */
 
 import { AdcpError } from './decisioning/async-outcome';
+import type { Account } from './decisioning/account';
 
 /**
  * Three operationally distinct account modes:
@@ -54,7 +55,7 @@ export type AccountMode = 'live' | 'sandbox' | 'mock';
  * downgrade every account's gate to a no-op. The own-property check makes
  * the gate immune to that class of attack regardless of upstream hardening.
  */
-export function getAccountMode(account: unknown): AccountMode {
+export function getAccountMode(account: Account<unknown>): AccountMode {
   if (account == null || typeof account !== 'object') return 'live';
   if (Object.hasOwn(account, 'mode')) {
     const mode = (account as { mode?: unknown }).mode;
@@ -76,7 +77,8 @@ export function getAccountMode(account: unknown): AccountMode {
  * shape that doesn't carry the field.
  */
 export function isSandboxOrMockAccount(account: unknown): boolean {
-  const mode = getAccountMode(account);
+  if (account == null || typeof account !== 'object') return false;
+  const mode = getAccountMode(account as Account<unknown>);
   return mode === 'sandbox' || mode === 'mock';
 }
 

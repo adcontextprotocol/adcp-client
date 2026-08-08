@@ -244,15 +244,17 @@ describe('createRosterAccountStore', () => {
             { id: 'a2', name: 'A2' },
           ],
           nextCursor: 'cur-2',
+          totalCount: 12,
         }),
       });
 
-      const page = await store.list({ limit: 2 });
+      const page = await store.list({ pagination: { max_results: 2 } });
       assert.equal(page.items.length, 2);
       assert.equal(page.items[0].id, 'a1');
       assert.equal(page.items[0].name, 'A1');
       assert.deepEqual(page.items[0].ctx_metadata, { upstream: 'a1' });
       assert.equal(page.nextCursor, 'cur-2');
+      assert.equal(page.totalCount, 12);
     });
 
     it('omits nextCursor when adopter does not return one (last page)', async () => {
@@ -268,23 +270,28 @@ describe('createRosterAccountStore', () => {
       assert.equal('nextCursor' in page, false, 'nextCursor key must not be present');
     });
 
-    it('passes filter and ctx through to adopter list', async () => {
-      let seenFilter;
+    it('passes the wire request and ctx through to adopter list', async () => {
+      let seenRequest;
       let seenCtx;
       const ctx = { authInfo: { kind: 'public' } };
       const store = createRosterAccountStore({
         lookup: () => undefined,
         toAccount: row => ({ id: row.id, name: row.id, status: 'active', ctx_metadata: {} }),
-        list: (filter, c) => {
-          seenFilter = filter;
+        list: (request, c) => {
+          seenRequest = request;
           seenCtx = c;
           return { items: [] };
         },
       });
 
-      const filter = { brand_domain: 'acme.com', limit: 50, cursor: 'c1' };
-      await store.list(filter, ctx);
-      assert.deepEqual(seenFilter, filter);
+      const request = {
+        account: { account_id: 'acct_1' },
+        status: 'active',
+        sandbox: true,
+        pagination: { max_results: 50, cursor: 'c1' },
+      };
+      await store.list(request, ctx);
+      assert.deepEqual(seenRequest, request);
       assert.equal(seenCtx, ctx);
     });
 

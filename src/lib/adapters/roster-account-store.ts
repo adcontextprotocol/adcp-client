@@ -41,10 +41,10 @@
  * @public
  */
 
-import type { AccountReference } from '../types/tools.generated';
-import type { Account, AccountFilter, AccountStore, ResolveContext } from '../server/decisioning/account';
+import type { AccountReference, ListAccountsRequest } from '../types/tools.generated';
+import type { Account, AccountStore, ResolveContext } from '../server/decisioning/account';
 import { refAccountId } from '../server/decisioning/account';
-import type { CursorPage, CursorRequest } from '../server/decisioning/pagination';
+import type { CursorPage } from '../server/decisioning/pagination';
 
 /**
  * Options for {@link createRosterAccountStore}.
@@ -98,17 +98,17 @@ export interface RosterAccountStoreOptions<TRosterEntry, TCtxMeta = Record<strin
    * **Push filter + pagination down.** The naive shape — fetch the full
    * roster, filter+slice in memory — works for tens of accounts per tenant
    * but does not scale. Adopters with a Postgres-backed roster should map
-   * `filter.brand_domain` / `filter.operator` / `filter.status[]` /
-   * `cursor` / `limit` to a SQL query. The helper does NOT post-filter;
-   * the adopter is the source of truth.
+   * `request.account` / `request.status` / `request.sandbox` and
+   * `request.pagination.{cursor,max_results}` to a SQL query. The helper
+   * does NOT post-filter; the adopter is the source of truth.
    *
-   * **No default status filter.** `filter.status` is `undefined` unless the
+   * **No default status filter.** `request.status` is `undefined` unless the
    * buyer passed it. If you want production callers to see only `active` +
    * `pending_approval` by default, apply that fallback inside your query —
-   * the helper passes `filter` through verbatim.
+   * the helper passes `request` through verbatim.
    */
   list?: (
-    filter: AccountFilter & CursorRequest,
+    request: ListAccountsRequest,
     ctx: ResolveContext | undefined
   ) => CursorPage<TRosterEntry> | Promise<CursorPage<TRosterEntry>>;
 
@@ -330,6 +330,7 @@ export function createRosterAccountStore<TRosterEntry, TCtxMeta = Record<string,
       return {
         items: page.items.map(entry => options.toAccount(entry, ctx)),
         ...(page.nextCursor !== undefined && { nextCursor: page.nextCursor }),
+        ...(page.totalCount !== undefined && { totalCount: page.totalCount }),
       };
     };
   }

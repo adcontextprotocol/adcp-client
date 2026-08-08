@@ -12,6 +12,8 @@ export interface CursorPage<T> {
   items: T[];
   /** Opaque continuation token; absent on the last page. */
   nextCursor?: string;
+  /** Total items matching the request across all pages, when known. */
+  totalCount?: number;
 }
 
 export interface CursorRequest {
