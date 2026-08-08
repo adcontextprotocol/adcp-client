@@ -144,6 +144,7 @@ function skipReasonLabel(reason: string | undefined): string | undefined {
     prerequisite_failed: 'Skipped: a prerequisite did not pass',
     missing_tool: 'Skipped: agent did not advertise the required tool',
     missing_test_controller: 'Not testable: requires comply_test_controller',
+    fixture_unavailable: 'Not testable: the runner fixture cannot satisfy the seller-declared contract',
     unsatisfied_contract: 'Skipped: test-kit contract is out of scope',
     peer_branch_taken: 'Skipped: a peer branch in the same any_of branch set already contributed the aggregation flag',
   };
@@ -168,6 +169,12 @@ function computeTrackStatus(results: StoryboardResult[]): TrackStatus {
   if (totalSteps === 0) return 'skip';
   if (totalSteps === totalSkipped) return 'skip';
   if (totalFailed > 0) return totalPassed === 0 ? 'fail' : 'partial';
+  const hasFixtureUnavailable = results.some(result =>
+    (result.passes?.flatMap(pass => pass.phases) ?? result.phases).some(phase =>
+      phase.steps.some(step => step.skip?.reason === 'fixture_unavailable')
+    )
+  );
+  if (hasFixtureUnavailable) return 'partial';
 
   // No failures. Demote to `silent` when every observation-bearing
   // invariant record reports zero observations. Step-level passes alone

@@ -160,6 +160,7 @@ const SKIP_DETAILS: Record<RunnerSkipReason, string> = {
   missing_tool: 'Skipped: agent did not advertise the required tool.',
   missing_test_controller:
     'Skipped: deterministic_testing phase requires comply_test_controller, which the agent did not advertise.',
+  fixture_unavailable: 'Skipped: the runner test kit cannot synthesize a valid input for the seller-declared contract.',
   unsatisfied_contract: 'Skipped: test-kit contract is out of scope for this grading run.',
   requirement_unmet:
     'Skipped: a requires: tag named a runtime requirement that is not available on this run (see RunnerSkipResult.requirement).',
@@ -452,10 +453,7 @@ function buildSkip(reason: RunnerSkipReason, detail?: string): { reason: RunnerS
   return { reason, detail: detail ?? SKIP_DETAILS[reason] };
 }
 
-type CreativeAssetFixtureUnavailableFailure = Extract<
-  CreativeAssetExpansionFailure,
-  { reason: 'creative_asset_fixture_unavailable' }
->;
+type CreativeAssetFixtureUnavailableFailure = Extract<CreativeAssetExpansionFailure, { reason: 'fixture_unavailable' }>;
 
 function buildCreativeAssetFixtureUnavailableStep(
   step: StoryboardStep,
@@ -476,8 +474,8 @@ function buildCreativeAssetFixtureUnavailableStep(
     task,
     passed: true,
     skipped: true,
-    skip_reason: 'creative_asset_fixture_unavailable',
-    skip: buildSkip('not_applicable', detail),
+    skip_reason: 'fixture_unavailable',
+    skip: buildSkip('fixture_unavailable', detail),
     duration_ms: 0,
     validations: [],
     context,
@@ -2495,6 +2493,33 @@ async function executeStoryboardPass(
     storyboard,
     phaseCapabilitySkipDetails
   );
+  const capabilitySkippedPhaseIds = new Set([
+    ...phaseCapabilitySkipDetails.keys(),
+    ...storyboard.phases.filter(phase => shouldSkipPhase(phase, options)).map(phase => phase.id),
+  ]);
+  let creativeAssetFixtureGap = preflightRemainingCreativeAssetDirectives(
+    allSteps,
+    -1,
+    context,
+    options,
+    {
+      contributions,
+      priorStepResults,
+      priorProbes,
+      agentUrl: agentUrls[0]!,
+      webhookReceiver,
+      runnerVars,
+      contextProvenance,
+      priorA2aEnvelopes,
+      stepRequestStarts,
+      responseDerivedNotApplicableContextKeys,
+      agentProfile: profile,
+      agentLibraryVersion: profile?.library_version,
+      storyboardRequiresRequestSigner: allRequires.includes('request_signer'),
+    },
+    capabilitySkippedPhaseIds
+  );
+  let creativeAssetFixtureGapRecorded = false;
   if (!hasExecutableSteps) {
     const isScenarioComposed = (storyboard.requires_scenarios?.length ?? 0) > 0;
     const detail = isScenarioComposed
@@ -2578,11 +2603,13 @@ async function executeStoryboardPass(
         fixtureDiscoveryClient = dispatch.nextFor(fixtureStep('get_products')).client;
       }
     }
-    const seeding = skipControllerSeedingForPhaseGates
+    const seeding = creativeAssetFixtureGap
       ? null
-      : preSeeded !== undefined
-        ? preSeeded.result
-        : await runControllerSeeding(fixtureSeedClient, storyboard, options, context, fixtureDiscoveryClient);
+      : skipControllerSeedingForPhaseGates
+        ? null
+        : preSeeded !== undefined
+          ? preSeeded.result
+          : await runControllerSeeding(fixtureSeedClient, storyboard, options, context, fixtureDiscoveryClient);
     if (seeding) {
       const attach = preSeeded === undefined || preSeeded.attach;
       if (attach) {
@@ -2640,6 +2667,42 @@ async function executeStoryboardPass(
     }
   }
 
+  const buildExecutionState = (
+    agentUrl = agentUrls[0]!,
+    agentProfile: AgentProfile | undefined = profile
+  ): ExecutionState => ({
+    contributions,
+    priorStepResults,
+    priorProbes,
+    agentUrl,
+    webhookReceiver,
+    runnerVars,
+    contextProvenance,
+    priorA2aEnvelopes,
+    stepRequestStarts,
+    responseDerivedNotApplicableContextKeys,
+    agentProfile,
+    agentLibraryVersion: agentProfile?.library_version,
+    storyboardRequiresRequestSigner: allRequires.includes('request_signer'),
+    fixtureBindings,
+  });
+  if (
+    !creativeAssetFixtureGap &&
+    !seedingMissingController &&
+    !seedingUnsupported &&
+    !seedingFailed &&
+    !fixtureUnsatisfied
+  ) {
+    creativeAssetFixtureGap = preflightRemainingCreativeAssetDirectives(
+      allSteps,
+      -1,
+      context,
+      options,
+      buildExecutionState(),
+      capabilitySkippedPhaseIds
+    );
+  }
+
   for (const phase of storyboard.phases) {
     // adcp-client#1612: bail at phase boundaries when comply()'s combined
     // timeout/external signal has aborted. Without this the phase loop runs
@@ -2658,6 +2721,38 @@ async function executeStoryboardPass(
         steps: [],
         duration_ms: 0,
       });
+      continue;
+    }
+
+    // A captured seller format proved that a future creative directive cannot
+    // be synthesized. Preserve earlier observations, record the directive
+    // step once, and leave every other remaining phase empty: no side effect
+    // or prerequisite cascade may occur after this runner-owned coverage gap.
+    if (creativeAssetFixtureGap) {
+      const gapSteps: StoryboardStepResult[] = [];
+      if (!creativeAssetFixtureGapRecorded && creativeAssetFixtureGap.target.phaseId === phase.id) {
+        const gapStep = buildCreativeAssetFixtureUnavailableStep(
+          creativeAssetFixtureGap.target.step,
+          phase.id,
+          context,
+          allSteps,
+          buildExecutionState(),
+          creativeAssetFixtureGap.failure
+        );
+        gapStep.storyboard_id = storyboard.id;
+        gapSteps.push(gapStep);
+        priorStepResults.set(gapStep.step_id, gapStep);
+        skippedCount++;
+        creativeAssetFixtureGapRecorded = true;
+      }
+      phaseResults.push({
+        phase_id: phase.id,
+        phase_title: phase.title,
+        passed: true,
+        steps: gapSteps,
+        duration_ms: 0,
+      });
+      priorPhaseIds.push(phase.id);
       continue;
     }
 
@@ -2972,6 +3067,7 @@ async function executeStoryboardPass(
         phasePassed = false;
         continue;
       }
+      const stepExecutionState = buildExecutionState(assignment.agentUrl, assignment.profile);
       const rawResult = await executeStep(
         assignment.client,
         step,
@@ -2980,22 +3076,7 @@ async function executeStoryboardPass(
         context,
         allSteps,
         options,
-        {
-          contributions,
-          priorStepResults,
-          priorProbes,
-          agentUrl: assignment.agentUrl,
-          webhookReceiver,
-          runnerVars,
-          contextProvenance,
-          priorA2aEnvelopes,
-          stepRequestStarts,
-          responseDerivedNotApplicableContextKeys,
-          agentProfile: assignment.profile,
-          agentLibraryVersion: assignment.profile?.library_version,
-          storyboardRequiresRequestSigner: allRequires.includes('request_signer'),
-          fixtureBindings,
-        }
+        stepExecutionState
       );
       const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
       if (isMultiInstance || useRouting) {
@@ -3256,6 +3337,40 @@ async function executeStoryboardPass(
           annotateMultiInstanceFailure(result, storyboard, stepResults);
         }
       }
+
+      if (!result.skipped && result.passed) {
+        const currentGlobalIndex = allSteps.find(
+          flat => flat.phaseId === phase.id && flat.step.id === step.id
+        )?.globalIndex;
+        if (currentGlobalIndex !== undefined) {
+          creativeAssetFixtureGap = preflightRemainingCreativeAssetDirectives(
+            allSteps,
+            currentGlobalIndex,
+            context,
+            options,
+            stepExecutionState,
+            capabilitySkippedPhaseIds
+          );
+        }
+        if (creativeAssetFixtureGap) {
+          if (creativeAssetFixtureGap.target.phaseId === phase.id) {
+            const gapStep = buildCreativeAssetFixtureUnavailableStep(
+              creativeAssetFixtureGap.target.step,
+              phase.id,
+              context,
+              allSteps,
+              stepExecutionState,
+              creativeAssetFixtureGap.failure
+            );
+            gapStep.storyboard_id = storyboard.id;
+            stepResults.push(gapStep);
+            priorStepResults.set(gapStep.step_id, gapStep);
+            skippedCount++;
+            creativeAssetFixtureGapRecorded = true;
+          }
+          break;
+        }
+      }
     }
 
     // Phase-end cascade resolution for deferred `not_applicable` triggers.
@@ -3368,26 +3483,30 @@ async function executeStoryboardPass(
   // invariant). `branchSetsByPhaseId` was resolved before the phase loop so
   // the stateful cascade could consult it (branch-set peers don't cascade
   // onto each other); reuse it here.
-  const branchSetDelta = applyBranchSetGrading(
-    storyboard.phases,
-    phaseResults,
-    branchSetsByPhaseId,
-    contributions,
-    contributionSources,
-    countedAsFailed
-  );
+  const branchSetDelta = creativeAssetFixtureGap
+    ? { skippedDelta: 0 }
+    : applyBranchSetGrading(
+        storyboard.phases,
+        phaseResults,
+        branchSetsByPhaseId,
+        contributions,
+        contributionSources,
+        countedAsFailed
+      );
   skippedCount += branchSetDelta.skippedDelta;
 
   // Fire storyboard-scoped assertions. These observe the full run and can
   // emit `scope: "storyboard"` findings that flip `overall_passed` without
   // being attributable to a single step (e.g. "saw >1 acquire for the same
   // replayed idempotency_key across the run").
-  for (const spec of assertions) {
-    if (!spec.onEnd) continue;
-    const raw = await spec.onEnd(assertionContexts.get(spec.id)!);
-    for (const r of raw) {
-      assertionResults.push({ ...r, assertion_id: spec.id, scope: 'storyboard' });
-      if (!r.passed) assertionsFailed = true;
+  if (!creativeAssetFixtureGap) {
+    for (const spec of assertions) {
+      if (!spec.onEnd) continue;
+      const raw = await spec.onEnd(assertionContexts.get(spec.id)!);
+      for (const r of raw) {
+        assertionResults.push({ ...r, assertion_id: spec.id, scope: 'storyboard' });
+        if (!r.passed) assertionsFailed = true;
+      }
     }
   }
 
@@ -3434,7 +3553,8 @@ async function executeStoryboardPass(
     requiredPhaseHasExecutedPass ||
     requiredPhasesNotApplicable ||
     (failedCount === 0 && requiredPhasesCoveredByCapabilityGates);
-  const storyboardWideFixtureUnavailable = (seedingUnsupported || fixtureUnsatisfied) && failedCount === 0;
+  const storyboardWideFixtureUnavailable =
+    (seedingUnsupported || fixtureUnsatisfied || creativeAssetFixtureGap !== undefined) && failedCount === 0;
   // Prepend the pre-flight seeding phase now that every consumer that
   // index-aligns `phaseResults` with `storyboard.phases` has run. Reader
   // order matches execution order.
@@ -3564,9 +3684,27 @@ async function runMultiPass(
     options.agentTools,
     options.adcpVersion
   );
-  const preSeededResult = allExecutablePhasesCapabilitySkipped(storyboard, phaseCapabilitySkipDetails)
-    ? null
-    : await runControllerSeeding(preSeedClients[0]!, storyboard, options, preSeedContext);
+  const preSeedExcludedPhaseIds = new Set([
+    ...phaseCapabilitySkipDetails.keys(),
+    ...storyboard.phases.filter(phase => shouldSkipPhase(phase, options)).map(phase => phase.id),
+  ]);
+  const preSeedFixtureGap = preflightRemainingCreativeAssetDirectives(
+    flattenSteps(storyboard),
+    -1,
+    preSeedContext,
+    options,
+    {
+      contributions: new Set(),
+      priorStepResults: new Map(),
+      priorProbes: new Map(),
+      agentUrl: agentUrls[0]!,
+    },
+    preSeedExcludedPhaseIds
+  );
+  const preSeededResult =
+    preSeedFixtureGap || allExecutablePhasesCapabilitySkipped(storyboard, phaseCapabilitySkipDetails)
+      ? null
+      : await runControllerSeeding(preSeedClients[0]!, storyboard, options, preSeedContext);
 
   const passes: StoryboardPassResult[] = [];
   const passResults: StoryboardResult[] = [];
@@ -4202,7 +4340,7 @@ async function executeStep(
   // active test kit after all other nested request construction is complete.
   const creativeAssetExpansion = expandCreativeAssetDirectivesWithDiagnostics(request, context, options.test_kit);
   request = creativeAssetExpansion.value as Record<string, unknown>;
-  if (!creativeAssetExpansion.ok && creativeAssetExpansion.failure.reason === 'creative_asset_fixture_unavailable') {
+  if (!creativeAssetExpansion.ok && creativeAssetExpansion.failure.reason === 'fixture_unavailable') {
     return buildCreativeAssetFixtureUnavailableStep(
       step,
       phaseId,
@@ -5553,13 +5691,67 @@ function buildEffectiveStepRequest(
     context,
     options.test_kit
   );
-  if (!creativeAssetExpansion.ok && creativeAssetExpansion.failure.reason === 'creative_asset_fixture_unavailable') {
+  if (!creativeAssetExpansion.ok && creativeAssetExpansion.failure.reason === 'fixture_unavailable') {
     return { ok: false, creativeAssetFailure: creativeAssetExpansion.failure };
   }
   return {
     ok: true,
     request: creativeAssetExpansion.value as Record<string, unknown>,
   };
+}
+
+interface CreativeAssetPreflightGap {
+  target: FlatStep;
+  failure: CreativeAssetFixtureUnavailableFailure;
+}
+
+/**
+ * Preflight future creative directives as soon as their seller format enters
+ * context. Missing context and malformed directives stay on their ordinary
+ * execution paths; only a proven test-kit coverage gap terminates the run.
+ */
+function preflightRemainingCreativeAssetDirectives(
+  allSteps: FlatStep[],
+  afterGlobalIndex: number,
+  context: StoryboardContext,
+  options: StoryboardRunOptions,
+  runState: ExecutionState,
+  excludedPhaseIds: ReadonlySet<string> = new Set()
+): CreativeAssetPreflightGap | undefined {
+  for (const target of allSteps) {
+    if (target.globalIndex <= afterGlobalIndex) continue;
+    if (excludedPhaseIds.has(target.phaseId)) continue;
+
+    const resolvedTask = resolveTaskName(target.step, options);
+    if (!resolvedTask) continue;
+    if (target.step.requires_tool && options.agentTools && !options.agentTools.includes(target.step.requires_tool)) {
+      continue;
+    }
+    if (target.step.requires_contract && !new Set(options.contracts ?? []).has(target.step.requires_contract)) {
+      continue;
+    }
+    if (!PROBE_TASKS.has(target.step.task) && options.agentTools && !options.agentTools.includes(resolvedTask)) {
+      continue;
+    }
+    let requestStep = resolvedTask === target.step.task ? target.step : { ...target.step, task: resolvedTask };
+
+    if (target.step.task === 'expect_rate_limit_not_replayed') {
+      const rateLimitTrip = target.step.rate_limit_trip;
+      if (validateRateLimitTripSpec(rateLimitTrip) || !rateLimitTrip) continue;
+      requestStep = {
+        ...target.step,
+        task: rateLimitTrip.trip_target_task,
+        sample_request: rateLimitTrip.trip_target_sample_request,
+        omit_idempotency_key: true,
+      };
+    }
+
+    const request = buildEffectiveStepRequest(requestStep, context, options, runState);
+    if (!request.ok && 'creativeAssetFailure' in request) {
+      return { target, failure: request.creativeAssetFailure };
+    }
+  }
+  return undefined;
 }
 
 interface ResolvedWebhookReplayVector {
