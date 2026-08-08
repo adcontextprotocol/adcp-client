@@ -258,6 +258,58 @@ describe('$build_assets_from_format', () => {
     assert.match(result.failure.constraint, /exact 970x250/);
   });
 
+  test('reports text fixtures that violate declared slot constraints', () => {
+    const result = expandCreativeAssetDirectivesWithDiagnostics(
+      {
+        assets: {
+          [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+            slots: [
+              {
+                asset_group_id: 'headline',
+                asset_type: 'text',
+                required: true,
+                requirements: { max_length: 5 },
+              },
+            ],
+          },
+        },
+      },
+      {},
+      TEST_KIT
+    );
+
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.failure.reason, 'fixture_unavailable');
+    assert.match(result.failure.constraint, /maximum length 5/);
+  });
+
+  test('reports image requirements the fixture metadata cannot prove', () => {
+    const result = expandCreativeAssetDirectivesWithDiagnostics(
+      {
+        assets: {
+          [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+            width: 300,
+            height: 250,
+            slots: [
+              {
+                asset_group_id: 'image_main',
+                asset_type: 'image',
+                required: true,
+                requirements: { max_file_size_kb: 25 },
+              },
+            ],
+          },
+        },
+      },
+      {},
+      TEST_KIT
+    );
+
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.failure.reason, 'fixture_unavailable');
+    assert.match(result.failure.constraint, /max_file_size_kb/);
+  });
+
   test('does not infer text semantics from unknown or substring-lookalike slot ids', () => {
     for (const slotId of ['legal_disclaimer', 'marketing_headline']) {
       const result = expandCreativeAssetDirectivesWithDiagnostics(
@@ -700,6 +752,144 @@ describe('$build_assets_from_format', () => {
     assert.strictEqual(result.failed_count, 0);
     assert.strictEqual(result.skipped_count, 1);
     assert.strictEqual(result.overall_passed, true);
+  });
+
+  test('does not preflight directives in skip_if phases or steps gated by requires_tool', async () => {
+    const calls = [];
+    const unavailableRequest = {
+      creatives: [
+        {
+          creative_id: 'creative-1',
+          assets: {
+            [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+              slots: [{ asset_group_id: 'video_main', asset_type: 'video', required: true }],
+            },
+          },
+        },
+      ],
+    };
+    const storyboard = {
+      id: 'creative_asset_ineligible_preflight',
+      version: '1.0.0',
+      title: 'Creative asset ineligible preflight',
+      category: 'compliance',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      phases: [
+        {
+          id: 'test_kit_skipped',
+          title: 'Test-kit skipped',
+          skip_if: 'test_kit.skip_creative',
+          steps: [
+            {
+              id: 'skipped_sync',
+              title: 'Skipped sync',
+              task: 'sync_creatives',
+              sample_request: unavailableRequest,
+              validations: [],
+            },
+          ],
+        },
+        {
+          id: 'tool_gated',
+          title: 'Tool gated',
+          steps: [
+            {
+              id: 'gated_sync',
+              title: 'Gated sync',
+              task: 'sync_creatives',
+              requires_tool: 'creative_video_transformer',
+              sample_request: unavailableRequest,
+              validations: [],
+            },
+          ],
+        },
+        {
+          id: 'runnable',
+          title: 'Runnable',
+          steps: [
+            {
+              id: 'list',
+              title: 'List creatives',
+              task: 'list_creatives',
+              sample_request: {},
+              validations: [],
+            },
+          ],
+        },
+      ],
+    };
+    const options = runnerOptions(calls);
+    options.test_kit = { ...TEST_KIT, skip_creative: true };
+    options.agentTools = ['sync_creatives', 'list_creatives'];
+    options._profile.tools = options.agentTools;
+
+    const result = await runStoryboard('https://seller.example/mcp', storyboard, options);
+
+    assert.deepStrictEqual(
+      calls.map(call => call.name),
+      ['list_creatives']
+    );
+    assert.deepStrictEqual(result.phases[0].steps, []);
+    assert.strictEqual(result.phases[1].steps[0].skip_reason, 'missing_tool');
+    assert.strictEqual(
+      result.phases.flatMap(phase => phase.steps).some(step => step.skip_reason === 'fixture_unavailable'),
+      false
+    );
+  });
+
+  test('does not let a missing requires_contract probe become fixture_unavailable', async () => {
+    const calls = [];
+    const storyboard = {
+      id: 'creative_asset_contract_gate',
+      version: '1.0.0',
+      title: 'Creative asset contract gate',
+      category: 'compliance',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      phases: [
+        {
+          id: 'rate_limit',
+          title: 'Rate limit',
+          steps: [
+            {
+              id: 'trip',
+              title: 'Trip rate limit',
+              task: 'expect_rate_limit_not_replayed',
+              requires_contract: 'rate-abuse',
+              rate_limit_trip: {
+                trip_target_task: 'sync_creatives',
+                trip_target_sample_request: {
+                  creatives: [
+                    {
+                      creative_id: 'creative-1',
+                      assets: {
+                        [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+                          slots: [{ asset_group_id: 'video_main', asset_type: 'video', required: true }],
+                        },
+                      },
+                    },
+                  ],
+                },
+                max_attempts: 2,
+                replay_max_wait_seconds: 1,
+              },
+              validations: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = await runStoryboard('https://seller.example/mcp', storyboard, runnerOptions(calls));
+
+    assert.strictEqual(calls.length, 0);
+    assert.strictEqual(result.phases[0].steps[0].skip_reason, 'missing_test_kit_contract');
+    assert.strictEqual(result.phases[0].steps[0].skip.reason, 'unsatisfied_contract');
   });
 
   test('rate-limit trip target also grades an unavailable fixture pre-wire', async () => {

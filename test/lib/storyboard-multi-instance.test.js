@@ -528,6 +528,71 @@ describe('runStoryboard: multi-instance multi-pass', () => {
     );
   });
 
+  test('preflights an initial creative fixture gap before multi-pass controller seeding', async () => {
+    const shared = new Map();
+    const tools = ['get_adcp_capabilities', 'comply_test_controller', 'sync_creatives'];
+    agentA = await startFakeAgent({ state: shared, label: 'A', tools });
+    agentB = await startFakeAgent({ state: shared, label: 'B', tools });
+    const storyboard = {
+      id: 'multi_pass_creative_fixture_gap',
+      version: '1.0.0',
+      title: 'Multi-pass creative fixture gap',
+      category: 'testing',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      prerequisites: { description: 'needs seeds', controller_seeding: true },
+      fixtures: { products: [{ product_id: 'p-1' }] },
+      context: {
+        format_params: {
+          slots: [{ asset_group_id: 'video_main', asset_type: 'video', required: true }],
+        },
+      },
+      phases: [
+        {
+          id: 'creative',
+          title: 'Creative',
+          steps: [
+            {
+              id: 'sync',
+              title: 'Sync',
+              task: 'sync_creatives',
+              sample_request: {
+                creatives: [
+                  {
+                    creative_id: 'creative-1',
+                    assets: { $build_assets_from_format: '$context.format_params' },
+                  },
+                ],
+              },
+              validations: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = await runStoryboard([agentA.url, agentB.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: tools,
+      _profile: { name: 'fake', tools: tools.map(name => ({ name })) },
+      multi_instance_strategy: 'multi-pass',
+      test_kit: { assets: {} },
+    });
+
+    assert.strictEqual(result.overall_passed, true);
+    assert.strictEqual(result.passes.length, 2);
+    assert.ok(result.passes.every(pass => pass.phases[0].steps[0].skip_reason === 'fixture_unavailable'));
+    const allRequests = [...agentA.requests, ...agentB.requests];
+    assert.deepStrictEqual(
+      allRequests.filter(request => request.tool === 'comply_test_controller' || request.tool === 'sync_creatives'),
+      [],
+      'fixture preflight must run before seeding or creative transport'
+    );
+  });
+
   test('surfaces discovery_failed when pre-seed discovery fails before multi-pass execution', async () => {
     const shared = new Map();
     agentA = await startFakeAgent({ state: shared, label: 'A', failToolsList: true });

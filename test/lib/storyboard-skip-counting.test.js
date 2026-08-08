@@ -96,6 +96,39 @@ describe('storyboard skip counting', () => {
       assert.strictEqual(trackResult.status, 'pass', 'track with some passed steps should have pass status');
     });
 
+    test('fixture_unavailable keeps a mixed track coverage-incomplete', () => {
+      const result = storyboardResult({
+        passed_count: 1,
+        failed_count: 0,
+        skipped_count: 1,
+        phases: [
+          {
+            phase_id: 'flow',
+            phase_title: 'Flow',
+            passed: true,
+            steps: [
+              stepResult({ duration_ms: 50 }),
+              stepResult({
+                step_id: 'creative',
+                skipped: true,
+                skip_reason: 'fixture_unavailable',
+                skip: {
+                  reason: 'fixture_unavailable',
+                  detail:
+                    'creative_asset_fixture_unavailable: slot "video", asset type "video", constraint: fixture missing',
+                },
+                duration_ms: 0,
+              }),
+            ],
+            duration_ms: 50,
+          },
+        ],
+      });
+
+      const trackResult = mapStoryboardResultsToTrackResult('creative', [result], dummyProfile);
+      assert.strictEqual(trackResult.status, 'partial');
+    });
+
     test('track with no storyboards reports skip status', () => {
       const trackResult = mapStoryboardResultsToTrackResult('signals', [], dummyProfile);
       assert.strictEqual(trackResult.status, 'skip');

@@ -2493,7 +2493,10 @@ async function executeStoryboardPass(
     storyboard,
     phaseCapabilitySkipDetails
   );
-  const capabilitySkippedPhaseIds = new Set(phaseCapabilitySkipDetails.keys());
+  const capabilitySkippedPhaseIds = new Set([
+    ...phaseCapabilitySkipDetails.keys(),
+    ...storyboard.phases.filter(phase => shouldSkipPhase(phase, options)).map(phase => phase.id),
+  ]);
   let creativeAssetFixtureGap = preflightRemainingCreativeAssetDirectives(
     allSteps,
     -1,
@@ -3681,9 +3684,27 @@ async function runMultiPass(
     options.agentTools,
     options.adcpVersion
   );
-  const preSeededResult = allExecutablePhasesCapabilitySkipped(storyboard, phaseCapabilitySkipDetails)
-    ? null
-    : await runControllerSeeding(preSeedClients[0]!, storyboard, options, preSeedContext);
+  const preSeedExcludedPhaseIds = new Set([
+    ...phaseCapabilitySkipDetails.keys(),
+    ...storyboard.phases.filter(phase => shouldSkipPhase(phase, options)).map(phase => phase.id),
+  ]);
+  const preSeedFixtureGap = preflightRemainingCreativeAssetDirectives(
+    flattenSteps(storyboard),
+    -1,
+    preSeedContext,
+    options,
+    {
+      contributions: new Set(),
+      priorStepResults: new Map(),
+      priorProbes: new Map(),
+      agentUrl: agentUrls[0]!,
+    },
+    preSeedExcludedPhaseIds
+  );
+  const preSeededResult =
+    preSeedFixtureGap || allExecutablePhasesCapabilitySkipped(storyboard, phaseCapabilitySkipDetails)
+      ? null
+      : await runControllerSeeding(preSeedClients[0]!, storyboard, options, preSeedContext);
 
   const passes: StoryboardPassResult[] = [];
   const passResults: StoryboardResult[] = [];
@@ -5703,6 +5724,12 @@ function preflightRemainingCreativeAssetDirectives(
 
     const resolvedTask = resolveTaskName(target.step, options);
     if (!resolvedTask) continue;
+    if (target.step.requires_tool && options.agentTools && !options.agentTools.includes(target.step.requires_tool)) {
+      continue;
+    }
+    if (target.step.requires_contract && !new Set(options.contracts ?? []).has(target.step.requires_contract)) {
+      continue;
+    }
     if (!PROBE_TASKS.has(target.step.task) && options.agentTools && !options.agentTools.includes(resolvedTask)) {
       continue;
     }
