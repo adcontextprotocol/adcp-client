@@ -32,6 +32,7 @@ export { SAMPLE_BRIEFS, getBriefById, getBriefsByVertical } from './briefs';
 export type {
   ComplianceTrack,
   TrackResult,
+  TestedTrackEntry,
   TrackStatus,
   OverallStatus,
   ComplianceFailure,

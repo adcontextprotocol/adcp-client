@@ -47,6 +47,7 @@ import type {
   ComplianceTrack,
   ComplianceFailure,
   TrackResult,
+  TestedTrackEntry,
   ComplianceResult,
   ComplianceSummary,
   AdvisoryObservation,
@@ -77,6 +78,19 @@ const TRACK_ORDER: ComplianceTrack[] = [
   'error_handling',
   'brand',
 ];
+
+/** Build the reference-only `tested_tracks` projection without scenario payloads. */
+function toTestedTrackEntry(track: TrackResult | TestedTrackEntry): TestedTrackEntry {
+  return {
+    track: track.track,
+    status: track.status,
+    label: track.label,
+    observations: track.observations,
+    duration_ms: track.duration_ms,
+    ...(track.mode !== undefined && { mode: track.mode }),
+    _view: 'reference',
+  };
+}
 
 /**
  * Collect advisory observations from test results.
@@ -1385,15 +1399,12 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     }
 
     const summary = buildSummary(trackResults, storyboardResults);
-    // Tag `_view` so grep-style triage can distinguish the canonical
-    // `tracks` entry from its appearance under the `tested_tracks` filter
-    // (adcp-client#1674). Shallow-copy on the `tested_tracks` side keeps
-    // the shared nested `scenarios` references intact while preventing
-    // the marker from colliding on the same object.
+    // Scenario detail is canonical under `tracks`; `tested_tracks` is a
+    // reference-only projection so full JSON output contains each scenario once.
     for (const t of trackResults) t._view = 'canonical';
-    const testedTracks: TrackResult[] = trackResults
+    const testedTracks: TestedTrackEntry[] = trackResults
       .filter(t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial' || t.status === 'silent')
-      .map(t => ({ ...t, _view: 'reference' as const }));
+      .map(toTestedTrackEntry);
     const skippedTracks = trackResults
       .filter(t => t.status === 'skip')
       .map(t => ({
@@ -1676,9 +1687,8 @@ async function runWithDegradedProfile(
     ...(options.hostedStableLineAlias !== undefined && { hostedStableLineAlias: options.hostedStableLineAlias }),
   });
 
-  // Tag canonical vs reference views to disambiguate the same
-  // TrackResult appearing in both `tracks` and `tested_tracks`
-  // (adcp-client#1674).
+  // Scenario detail is canonical under `tracks`; `tested_tracks` is a
+  // reference-only projection so full JSON output contains each scenario once.
   for (const t of trackResults) t._view = 'canonical';
   const skippedTracks = trackResults
     .filter(t => t.status === 'skip')
@@ -1696,7 +1706,7 @@ async function runWithDegradedProfile(
     tracks: trackResults,
     tested_tracks: trackResults
       .filter(t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial' || t.status === 'silent')
-      .map(t => ({ ...t, _view: 'reference' as const })),
+      .map(toTestedTrackEntry),
     skipped_tracks: skippedTracks,
     summary,
     observations: allObservations,
@@ -1970,7 +1980,8 @@ export function formatComplianceResults(result: ComplianceResult): string {
     if (notSelectedReasons || skippedReasons) output += '\n';
   }
 
-  // Track results
+  // Scenario detail is canonical under `tracks`; `tested_tracks` deliberately
+  // contains no scenario arrays and is not used by the text formatter.
   output += `Capability Tracks\n`;
   output += `${'─'.repeat(50)}\n`;
 
@@ -2104,7 +2115,18 @@ function formatReasonCounts(counts: Partial<Record<string, number>> | undefined)
  * Format compliance results as JSON.
  */
 export function formatComplianceResultsJSON(result: ComplianceResult): string {
-  return JSON.stringify(result, null, 2);
+  // Normalize the reference projection at the serialization boundary too. This
+  // keeps output deduplicated when JavaScript callers pass a pre-v13 result
+  // object whose tested_tracks entries still carry scenario arrays.
+  const testedTracks = (result as Partial<ComplianceResult>).tested_tracks?.map(toTestedTrackEntry);
+  return JSON.stringify(
+    {
+      ...result,
+      ...(testedTracks !== undefined && { tested_tracks: testedTracks }),
+    },
+    null,
+    2
+  );
 }
 
 /**

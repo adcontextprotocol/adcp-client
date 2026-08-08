@@ -1,27 +1,10 @@
 /**
- * Regression test for adcp-client#1674.
+ * Regression test for adcp-client#1791 (follow-up to #1674).
  *
- * `ComplianceResult.tested_tracks` is a `.filter()` of
- * `ComplianceResult.tracks` — the same `TrackResult` object reference
- * appears in both arrays. JSON.stringify(result) therefore serializes
- * every passing/failing scenario twice, which is structurally correct
- * but visually identical to "the runner ran the scenario twice".
- * Triagers grepping a `--json` output wasted multi-hour debug cycles
- * assuming duplicate execution (cf. #1658, salesagent#331).
- *
- * Conservative fix: tag every `TrackResult` with `_view` so consumers
- * can distinguish the canonical entry (in `tracks`) from its reference
- * appearance (in `tested_tracks`). The duplication remains for
- * back-compat; the breaking type-split that fully removes it is
- * tracked separately.
- *
- * This file asserts the type contract on a hand-built fixture and
- * verifies both `formatComplianceResults` (text) and
- * `formatComplianceResultsJSON` survive a result whose tracks carry
- * the new optional `_view` field. The production tagging lives in
- * `src/lib/testing/compliance/comply.ts` at both `tested_tracks`
- * construction sites; a `grep -n '_view'` keeps the assertions and
- * the construction sites discoverable from each other.
+ * `tested_tracks` is now a reference-only projection. Scenario arrays live
+ * exclusively on canonical `tracks`, so JSON output contains one serialized
+ * copy of every scenario while status-oriented consumers retain the filtered
+ * track list.
  */
 
 const { describe, test } = require('node:test');
@@ -59,6 +42,8 @@ function makeResult() {
     agent_profile: { name: 'Test Agent', tools: ['get_products'] },
     overall_status: 'failing',
     tracks,
+    // Deliberately use the pre-v13 runtime shape here. The JSON formatter must
+    // normalize legacy JavaScript inputs as well as newly constructed results.
     tested_tracks: tracks.map(t => ({ ...t, _view: 'reference' })),
     skipped_tracks: [],
     summary: {
@@ -75,14 +60,14 @@ function makeResult() {
   };
 }
 
-describe('ComplianceResult._view marker (#1674)', () => {
+describe('ComplianceResult tested_tracks projection (#1791)', () => {
   test('formatComplianceResults survives _view-tagged tracks', () => {
     const out = formatComplianceResults(makeResult());
     assert.ok(out.includes('https://example.com/mcp'));
     assert.ok(out.includes('Test Agent'));
   });
 
-  test('formatComplianceResultsJSON serializes _view on both tracks and tested_tracks', () => {
+  test('formatComplianceResultsJSON emits reference-only tested_tracks entries', () => {
     const result = makeResult();
     const json = formatComplianceResultsJSON(result);
     const parsed = JSON.parse(json);
@@ -94,40 +79,16 @@ describe('ComplianceResult._view marker (#1674)', () => {
     }
     for (const t of parsed.tested_tracks) {
       assert.equal(t._view, 'reference', `tested_tracks[*] must be reference, got ${t._view}`);
+      assert.equal('scenarios' in t, false, 'tested_tracks[*] must omit scenarios');
+      assert.equal('skipped_scenarios' in t, false, 'tested_tracks[*] must omit skipped_scenarios');
     }
   });
 
-  test('canonical view is the deduplicated source of truth', () => {
-    // A consumer that wants every scenario exactly once filters on
-    // _view === 'canonical' across `tracks` (or simply iterates
-    // `tracks` and ignores `tested_tracks`). Asserting the
-    // documented dedup recipe works end-to-end.
+  test('JSON serializes every scenario exactly once', () => {
     const result = makeResult();
-    const allScenarios = [
-      ...result.tracks.flatMap(t => t.scenarios),
-      ...result.tested_tracks.flatMap(t => t.scenarios),
-    ];
-    assert.equal(allScenarios.length, 4, 'duplication is preserved (conservative fix)');
-
-    const canonicalScenarios = [...result.tracks, ...result.tested_tracks]
-      .filter(t => t._view === 'canonical')
-      .flatMap(t => t.scenarios);
-    assert.equal(canonicalScenarios.length, 2, 'canonical view dedupes to N scenarios');
-  });
-
-  test('shallow-copy preserves nested scenarios reference identity', () => {
-    // The production code path uses `{...t, _view: 'reference'}` which
-    // is a shallow copy — `tracks[i].scenarios` and
-    // `tested_tracks[i].scenarios` are the same array reference.
-    // Documenting and pinning this so a future refactor that
-    // deep-clones (and silently doubles memory cost) gets caught.
-    const result = makeResult();
-    for (let i = 0; i < result.tracks.length; i++) {
-      assert.strictEqual(
-        result.tracks[i].scenarios,
-        result.tested_tracks[i].scenarios,
-        'tested_tracks must share scenarios reference with tracks'
-      );
-    }
+    const parsed = JSON.parse(formatComplianceResultsJSON(result));
+    const scenarioCount = parsed.tracks.reduce((count, track) => count + track.scenarios.length, 0);
+    const serializedScenarioKeys = (formatComplianceResultsJSON(result).match(/"scenario":/g) ?? []).length;
+    assert.equal(serializedScenarioKeys, scenarioCount);
   });
 });

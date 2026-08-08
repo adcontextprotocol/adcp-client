@@ -1718,6 +1718,37 @@ describe('comply() degraded-profile path (security_baseline against 401-on-disco
     }
   });
 
+  it('emits reference-only tested_tracks from the degraded-profile constructor', async () => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(401, {
+        'content-type': 'application/json',
+        'www-authenticate': 'Bearer realm="test", error="invalid_token"',
+      });
+      res.end(JSON.stringify({ error: 'unauthorized' }));
+    });
+    await new Promise(r => server.listen(0, r));
+    try {
+      const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+      const result = await comply(agentUrl, {
+        storyboards: ['read_tool_idempotency'],
+        allow_http: true,
+        timeout_ms: 30000,
+      });
+
+      assert.ok(result.storyboards_executed?.includes('read_tool_idempotency'));
+      assert.ok(result.tested_tracks.length > 0, 'expected the failed read probe to produce a tested track');
+      for (const track of result.tested_tracks) {
+        assert.strictEqual('scenarios' in track, false, 'tested_tracks entries must omit scenarios');
+        assert.strictEqual('skipped_scenarios' in track, false, 'tested_tracks entries must omit skipped scenarios');
+      }
+      const canonicalScenarioCount = result.tracks.reduce((count, track) => count + track.scenarios.length, 0);
+      const serializedScenarioCount = (JSON.stringify(result).match(/"scenario":/g) ?? []).length;
+      assert.strictEqual(serializedScenarioCount, canonicalScenarioCount);
+    } finally {
+      server.close();
+    }
+  });
+
   it('detectAuthRejection classifies NeedsAuthorizationError-style messages as auth', async () => {
     // Regression: `NeedsAuthorizationError.defaultMessage()` phrases the
     // error as "Agent <url> requires OAuth authorization. ... Provide an
