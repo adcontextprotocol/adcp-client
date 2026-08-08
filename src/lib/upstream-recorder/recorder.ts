@@ -5,6 +5,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
+import { isRegExp } from 'node:util/types';
 import {
   normalizeSecretKeyPattern,
   redactSecrets,
@@ -551,14 +552,13 @@ function sha256Hex(value: string): string {
  * - `createUpstreamRecorder({ redactPattern })` → `computePayloadDigestSha256(..., { redactPattern })`
  * - `createUpstreamRecorder({ maxPayloadBytes })` → `computePayloadDigestSha256(..., { maxPayloadBytes })`
  *
- * Prefer `{ prenormalized: true }` only when the payload has already been
- * normalized/redacted exactly as the recorder would store it; legacy `false`
- * remains accepted as the same prenormalized sentinel. The prenormalized path
- * skips redaction, so the helper rejects secret-shaped keys whose values are
- * not already the literal `"[redacted]"` marker or an explicit null
- * placeholder. For form-encoded bodies, duplicate secret-shaped keys are also
- * rejected because last-wins maps cannot prove that every original value was
- * inspected before hashing.
+ * Use `{ prenormalized: true }` only when the payload has already been
+ * normalized/redacted exactly as the recorder would store it. The
+ * prenormalized path skips redaction, so the helper rejects secret-shaped keys
+ * whose values are not already the literal `"[redacted]"` marker or an
+ * explicit null placeholder. For form-encoded bodies, duplicate secret-shaped
+ * keys are also rejected because last-wins maps cannot prove that every
+ * original value was inspected before hashing.
  *
  * JSON content is serialized with RFC 8785 JCS before hashing. When
  * `contentType` is JSON-shaped and `payload` is a string, the helper parses
@@ -575,53 +575,21 @@ function sha256Hex(value: string): string {
  */
 export function computePayloadDigestSha256(
   payload: unknown,
-  contentType?: string,
-  options?: PayloadDigestOptions
-): string;
-/**
- * @deprecated Pass `{ redactPattern: /.../ }` instead of the bare `RegExp`
- * form. The legacy form remains accepted for this major.
- */
-export function computePayloadDigestSha256(payload: unknown, contentType: string | undefined, options: RegExp): string;
-/**
- * @deprecated Pass `{ prenormalized: true }` instead of `false`. The legacy
- * form remains accepted for this major.
- */
-export function computePayloadDigestSha256(payload: unknown, contentType: string | undefined, options: false): string;
-export function computePayloadDigestSha256(
-  payload: unknown,
   contentType = 'application/json',
-  options: RegExp | false | PayloadDigestOptions = SECRET_KEY_PATTERN
+  options: PayloadDigestOptions = {}
 ): string {
-  const redactPattern =
-    options instanceof RegExp || options === false
-      ? options === false
+  try {
+    assertPayloadDigestOptions(options);
+    const redactPattern = options.prenormalized
+      ? false
+      : options.redactPattern === false
         ? false
-        : normalizeSecretKeyPattern(options)
-      : options?.prenormalized
-        ? false
-        : options?.redactPattern === false
-          ? false
-          : normalizeSecretKeyPattern(options?.redactPattern ?? SECRET_KEY_PATTERN);
-  const prenormalizedSafetyPattern =
-    typeof options === 'object' &&
-    options !== null &&
-    !(options instanceof RegExp) &&
-    options.redactPattern instanceof RegExp
+        : normalizeSecretKeyPattern(options.redactPattern ?? SECRET_KEY_PATTERN);
+    const prenormalizedSafetyPattern = isRegExp(options.redactPattern)
       ? normalizeSecretKeyPattern(options.redactPattern)
       : SECRET_KEY_PATTERN;
-  const maxPayloadBytes =
-    typeof options === 'object' && options !== null && !(options instanceof RegExp)
-      ? clamp(options.maxPayloadBytes, 0, 16 * 1024 * 1024, DEFAULT_MAX_PAYLOAD_BYTES)
-      : DEFAULT_MAX_PAYLOAD_BYTES;
-  try {
-    if (
-      typeof options === 'object' &&
-      options !== null &&
-      !(options instanceof RegExp) &&
-      options.redactPattern === false &&
-      options.prenormalized !== true
-    ) {
+    const maxPayloadBytes = clamp(options.maxPayloadBytes, 0, 16 * 1024 * 1024, DEFAULT_MAX_PAYLOAD_BYTES);
+    if (options.redactPattern === false && options.prenormalized !== true) {
       throw new PayloadDigestError('PayloadDigestOptions.redactPattern=false requires prenormalized=true');
     }
     const payloadForDigest =
@@ -637,6 +605,12 @@ export function computePayloadDigestSha256(
   } catch (err) {
     if (err instanceof PayloadDigestError) throw err;
     throw new PayloadDigestError(err instanceof Error ? err.message : 'Payload digest canonicalization failed', err);
+  }
+}
+
+function assertPayloadDigestOptions(options: unknown): asserts options is PayloadDigestOptions {
+  if (typeof options !== 'object' || options === null || isRegExp(options) || Array.isArray(options)) {
+    throw new PayloadDigestError('computePayloadDigestSha256 options must be a PayloadDigestOptions object');
   }
 }
 

@@ -13,6 +13,7 @@ const path = require('node:path');
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
+const { runInNewContext } = require('node:vm');
 const Ajv = require('ajv').default;
 const addFormats = require('ajv-formats').default;
 
@@ -334,7 +335,10 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     );
 
     assert.throws(
-      () => computePayloadDigestSha256('access_token=fake_test_fixture', 'application/x-www-form-urlencoded', false),
+      () =>
+        computePayloadDigestSha256('access_token=fake_test_fixture', 'application/x-www-form-urlencoded', {
+          prenormalized: true,
+        }),
       {
         name: 'PayloadDigestError',
         message: /access_token/,
@@ -346,7 +350,7 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
         computePayloadDigestSha256(
           'authorization=fake_test_fixture&authorization=%5Bredacted%5D',
           'application/x-www-form-urlencoded',
-          false
+          { prenormalized: true }
         ),
       {
         name: 'PayloadDigestError',
@@ -378,7 +382,10 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     );
 
     assert.throws(
-      () => computePayloadDigestSha256({ authorization: { nested: 'fake_test_fixture' } }, 'application/json', false),
+      () =>
+        computePayloadDigestSha256({ authorization: { nested: 'fake_test_fixture' } }, 'application/json', {
+          prenormalized: true,
+        }),
       {
         name: 'PayloadDigestError',
         message: /authorization/,
@@ -389,7 +396,7 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
       computePayloadDigestSha256(
         { authorization: null, token: '[redacted]', password: '[redacted]' },
         'application/json',
-        false
+        { prenormalized: true }
       )
     );
   });
@@ -397,7 +404,7 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
   test('computePayloadDigestSha256 scans deep prenormalized payloads without recursive stack overflow', () => {
     let payload = { authorization: '[redacted]' };
     for (let i = 0; i < 10_000; i++) payload = { wrapper: payload };
-    assert.throws(() => computePayloadDigestSha256(payload, 'application/json', false), {
+    assert.throws(() => computePayloadDigestSha256(payload, 'application/json', { prenormalized: true }), {
       name: 'PayloadDigestError',
       message: /JSON payload exceeds max canonicalization depth/,
     });
@@ -441,13 +448,33 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     };
     assert.equal(computePayloadDigestSha256(raw), sha256Hex(canonicalize(defaultRedacted)));
     assert.equal(
-      computePayloadDigestSha256(raw, 'application/json', /^(authorization|vendor_secret)$/i),
+      computePayloadDigestSha256(raw, 'application/json', {
+        redactPattern: /^(authorization|vendor_secret)$/i,
+      }),
       sha256Hex(canonicalize(customRedacted))
     );
     assert.equal(
       computePayloadDigestSha256(defaultRedacted, 'application/json', { prenormalized: true }),
-      computePayloadDigestSha256(defaultRedacted, 'application/json', false)
+      sha256Hex(canonicalize(defaultRedacted))
     );
+  });
+
+  test('computePayloadDigestSha256 rejects legacy third-argument forms', () => {
+    assert.throws(() => computePayloadDigestSha256({ ok: true }, 'application/json', /authorization/i), {
+      name: 'PayloadDigestError',
+      message: /options must be a PayloadDigestOptions object/,
+    });
+    assert.throws(
+      () => computePayloadDigestSha256({ ok: true }, 'application/json', runInNewContext('/authorization/i')),
+      {
+        name: 'PayloadDigestError',
+        message: /options must be a PayloadDigestOptions object/,
+      }
+    );
+    assert.throws(() => computePayloadDigestSha256({ ok: true }, 'application/json', false), {
+      name: 'PayloadDigestError',
+      message: /options must be a PayloadDigestOptions object/,
+    });
   });
 
   test('custom global redaction patterns do not skip repeated secret keys', async () => {
