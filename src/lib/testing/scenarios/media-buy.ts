@@ -1363,14 +1363,18 @@ export async function resolveAccountForMediaBuy(
   return { accountRef: resolveAccount(options), steps };
 }
 
-function getMediaBuyAccountResolutionHints(profile: AgentProfile): MediaBuyAccountResolutionHints {
+export function getMediaBuyAccountResolutionHints(profile: AgentProfile): MediaBuyAccountResolutionHints {
   const capabilities = profile.raw_capabilities;
   if (!isRecord(capabilities) || !isRecord(capabilities.account)) {
     return {};
   }
 
   const requireOperatorAuth = capabilities.account.require_operator_auth;
-  return typeof requireOperatorAuth === 'boolean' ? { requireOperatorAuth } : {};
+  // `false` is the schema default. Once the account capability block exists,
+  // omission must not silently switch the runner into explicit discovery
+  // mode merely because list_accounts is also advertised. Preserve the
+  // legacy list_accounts heuristic only when no account block was available.
+  return { requireOperatorAuth: typeof requireOperatorAuth === 'boolean' ? requireOperatorAuth : false };
 }
 
 function selectMediaBuyAccount(
@@ -1420,7 +1424,11 @@ function accountMatchesBrand(
     return false;
   }
 
-  return typeof account.operator !== 'string' || account.operator === brand.domain;
+  // The operator is a separate natural-key dimension, not an alias for the
+  // brand domain. Agency-operated accounts routinely have
+  // `operator !== brand.domain`; the requested test brand is the only brand
+  // signal available to this selector.
+  return true;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

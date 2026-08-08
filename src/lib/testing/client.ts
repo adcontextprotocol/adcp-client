@@ -23,6 +23,7 @@ import { classifyProbeUrl } from '../utils/probe-policy';
 import { SsrfRefusedError } from '../net/ssrf-fetch';
 import { ADCP_VERSION } from '../version';
 import type { VersionEnvelopeMode } from '../protocols';
+import { validateIncomingResponse } from '../validation/client-hooks';
 
 const TEST_CLIENT_VERSION_OPTIONS = Symbol('adcp.testClientVersionOptions');
 
@@ -473,8 +474,26 @@ export async function discoverAgentProfile(
   if (profile.tools.includes('get_adcp_capabilities')) {
     try {
       const caps = (await raceWithSignal(client.getAdcpCapabilities({}, undefined, { signal }), signal)) as TaskResult;
-      if (caps?.success && caps?.data) {
+      if (caps?.data) {
         profile.raw_capabilities = caps.data;
+        const validation = validateIncomingResponse(
+          'get_adcp_capabilities',
+          caps.data,
+          'strict',
+          undefined,
+          client.getAdcpVersion()
+        );
+        if (!validation.valid) {
+          profile.capabilities_schema_issues = validation.issues.map(issue => ({
+            pointer: issue.pointer,
+            message: issue.message,
+          }));
+        }
+
+        // Even a schema-invalid response can contain enough trustworthy
+        // discriminators to select the storyboards the seller claimed. Keep
+        // parsing best-effort so the preflight notice augments downstream
+        // failures instead of suppressing them.
         const parsed = parseCapabilitiesResponse(caps.data);
         profile.adcp_version = parsed.version;
         profile.adcp_major_versions = parsed.majorVersions;
@@ -489,7 +508,8 @@ export async function discoverAgentProfile(
         }
         const libVersion = (caps.data as Record<string, unknown>).library_version;
         if (typeof libVersion === 'string') profile.library_version = libVersion;
-      } else {
+      }
+      if (!caps?.success && !profile.capabilities_schema_issues?.length) {
         profile.capabilities_probe_error = caps?.error || 'get_adcp_capabilities returned no data';
       }
     } catch (err) {

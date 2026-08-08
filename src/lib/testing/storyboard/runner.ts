@@ -10,7 +10,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { getOrCreateClientResolution, getOrDiscoverProfile, runStep, type TestClient } from '../client';
-import { closeConnections, type VersionEnvelopeMode } from '../../protocols';
+import { closeScopedConnections, withMCPConnectionScope, type VersionEnvelopeMode } from '../../protocols';
 import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
 import { executeStoryboardTask } from './task-map';
 import {
@@ -1094,14 +1094,19 @@ export async function runStoryboard(
   storyboard: Storyboard,
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardResult> {
-  options = applyStoryboardVersionOptions(storyboard, options);
-  const schemaRoot = getRunSchemaRoot(options);
-  if (schemaRoot) {
-    return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, () =>
-      runStoryboardBody(agentUrlOrUrls, storyboard, options)
-    );
-  }
-  return await runStoryboardBody(agentUrlOrUrls, storyboard, options);
+  return withMCPConnectionScope(
+    async () => {
+      options = applyStoryboardVersionOptions(storyboard, options);
+      const schemaRoot = getRunSchemaRoot(options);
+      if (schemaRoot) {
+        return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, () =>
+          runStoryboardBody(agentUrlOrUrls, storyboard, options)
+        );
+      }
+      return await runStoryboardBody(agentUrlOrUrls, storyboard, options);
+    },
+    { isolate: true }
+  );
 }
 
 async function runStoryboardBody(
@@ -1149,7 +1154,7 @@ async function runStoryboardBody(
       const resultAgentUrls = options.agents ? Object.values(options.agents).map(e => e.url) : agentUrls;
       return {
         ...buildRequirementUnmetResult(resultAgentUrls, storyboard, unmet.requirement, unmet.detail),
-        notices: collectCapabilityNotices(storyboard, options._profile?.raw_capabilities),
+        notices: collectCapabilityNotices(storyboard, options._profile),
       };
     }
   }
@@ -1968,7 +1973,10 @@ function buildRequiredToolsMissingResult(
  * agent's declared capabilities. Returns an empty array when rawCaps is
  * absent (standalone runner without pre-fetched profile).
  *
- * Currently emits three spec-grounded notices (adcp-client#1704, #2082):
+ * Currently emits four spec-grounded notices (adcp-client#1704, #2082, #2461):
+ *
+ * - `capabilities_response_schema_invalid`: one informational notice per
+ *   schema issue, identified by its RFC 6901 `capability_pointer`.
  *
  * - `signed_requests_specialism_deprecated`: agent claims deprecated
  *   `specialisms: ['signed-requests']` alongside `request_signing.supported:
@@ -1983,8 +1991,18 @@ function buildRequiredToolsMissingResult(
  *   `webhook_signing.legacy_hmac_fallback: true`, which is removed in
  *   `effective_version: '4.0'`.
  */
-function collectCapabilityNotices(storyboard: Storyboard, rawCaps: unknown): RunnerNotice[] {
-  const notices: RunnerNotice[] = [];
+function collectCapabilityNotices(storyboard: Storyboard, profile: AgentProfile | undefined): RunnerNotice[] {
+  const notices: RunnerNotice[] = (profile?.capabilities_schema_issues ?? []).map(issue => ({
+    severity: 'info',
+    code: 'capabilities_response_schema_invalid',
+    message:
+      `The agent's get_adcp_capabilities response failed schema validation at ${issue.pointer || '/'}: ` +
+      `${issue.message}. Track results may share this root cause; fix it first, then re-read the failures.`,
+    capability_pointer: issue.pointer,
+    docs_url: 'https://github.com/adcontextprotocol/adcp/issues/6254',
+    storyboard_ids: [storyboard.id],
+  }));
+  const rawCaps = profile?.raw_capabilities;
   if (!rawCaps || typeof rawCaps !== 'object') return notices;
   const caps = rawCaps as Record<string, unknown>;
 
@@ -2102,16 +2120,21 @@ function collectInputSchemaFieldStripNotices(debugLogs: unknown, storyboardId: s
 function mergeRunnerNotices(notices: RunnerNotice[]): RunnerNotice[] {
   const byCode = new Map<string, RunnerNotice>();
   for (const notice of notices) {
-    const existing = byCode.get(notice.code);
+    const key = runnerNoticeKey(notice);
+    const existing = byCode.get(key);
     if (existing) {
       for (const sid of notice.storyboard_ids) {
         if (!existing.storyboard_ids.includes(sid)) existing.storyboard_ids.push(sid);
       }
     } else {
-      byCode.set(notice.code, { ...notice, storyboard_ids: [...notice.storyboard_ids] });
+      byCode.set(key, { ...notice, storyboard_ids: [...notice.storyboard_ids] });
     }
   }
   return [...byCode.values()];
+}
+
+function runnerNoticeKey(notice: RunnerNotice): string {
+  return notice.capability_pointer === undefined ? notice.code : `${notice.code}\u0000${notice.capability_pointer}`;
 }
 
 function collectStepNotices(phases: StoryboardPhaseResult[]): RunnerNotice[] {
@@ -2157,7 +2180,7 @@ async function executeStoryboardPass(
         duration_ms: 0,
         error: detail,
       };
-      await closeConnections(options.protocol);
+      await closeScopedConnections(options.protocol);
       return buildDiscoveryFailedResult(agentUrls, storyboard, failedStep);
     }
     clients = [...routingContext.clients.values()];
@@ -2214,7 +2237,7 @@ async function executeStoryboardPass(
       // (auth misconfig, MCP transport-fallback bugs, network policy, etc.).
       // See: https://github.com/adcontextprotocol/adcp-client/issues/...
       if (discovered.step.passed === false) {
-        await closeConnections(options.protocol);
+        await closeScopedConnections(options.protocol);
         return buildDiscoveryFailedResult(agentUrls, storyboard, discovered.step);
       }
       profile = discovered.profile;
@@ -2272,13 +2295,13 @@ async function executeStoryboardPass(
   // early-return results (requirement-unmet, capability-unsupported). In the
   // standalone runner path options._profile may be undefined; notices will be
   // collected again from the fully-fetched profile at result-build time.
-  const preflightNotices = collectCapabilityNotices(storyboard, options._profile?.raw_capabilities);
+  const preflightNotices = collectCapabilityNotices(storyboard, options._profile);
 
   const allRequires = resolveStoryboardRequires(storyboard, options);
   if (allRequires.length) {
     const unmet = checkRequires(allRequires, storyboard, options, profile);
     if (unmet) {
-      if (!callerOwnsClients) await closeConnections(options.protocol);
+      if (!callerOwnsClients) await closeScopedConnections(options.protocol);
       return {
         ...buildRequirementUnmetResult(agentUrls, storyboard, unmet.requirement, unmet.detail),
         notices: preflightNotices,
@@ -2293,7 +2316,7 @@ async function executeStoryboardPass(
       const detail =
         `missing_required_tool_family: needs ${missing.tools.join(' or ')}` +
         (missing.rationale ? ` (${missing.rationale})` : '');
-      if (!callerOwnsClients) await closeConnections(options.protocol);
+      if (!callerOwnsClients) await closeScopedConnections(options.protocol);
       return {
         ...buildRequiredAnyOfToolsMissingResult(agentUrls, storyboard, detail),
         notices: preflightNotices,
@@ -2313,7 +2336,7 @@ async function executeStoryboardPass(
       options.adcpVersion
     );
     if (unmetDetail !== null) {
-      if (!callerOwnsClients) await closeConnections(options.protocol);
+      if (!callerOwnsClients) await closeScopedConnections(options.protocol);
       return {
         ...buildCapabilityUnsupportedResult(agentUrls, storyboard, unmetDetail),
         notices: preflightNotices,
@@ -2334,7 +2357,7 @@ async function executeStoryboardPass(
   if (storyboard.required_tools?.length && options.agentTools) {
     const hasAnyRequired = storyboard.required_tools.some(t => options.agentTools!.includes(t));
     if (!hasAnyRequired) {
-      if (!callerOwnsClients) await closeConnections(options.protocol);
+      if (!callerOwnsClients) await closeScopedConnections(options.protocol);
       return {
         ...buildRequiredToolsMissingResult(
           agentUrls,
@@ -3598,7 +3621,7 @@ async function executeStoryboardPass(
   // notices (which used options._profile) when profile was not re-fetched in
   // this pass (standalone runner with options._profile pre-set skips the fetch).
   const notices = mergeRunnerNotices([
-    ...collectCapabilityNotices(storyboard, profile?.raw_capabilities ?? options._profile?.raw_capabilities),
+    ...collectCapabilityNotices(storyboard, profile ?? options._profile),
     ...collectStepNotices(phaseResults),
   ]);
   const result: StoryboardResult = {
@@ -3643,10 +3666,10 @@ async function executeStoryboardPass(
   };
 
   // Close protocol connections when the runner created its own client. The
-  // connection pool is keyed by URL+auth, so a single closeConnections() call
-  // evicts every instance's transport regardless of how many URLs we used.
+  // The runner scope tracks every URL used by this storyboard, so one scoped
+  // close releases all of its transports without disrupting concurrent runs.
   if (!callerOwnsClients) {
-    await closeConnections(options.protocol);
+    await closeScopedConnections(options.protocol);
   }
 
   if (webhookReceiver) await webhookReceiver.close();
@@ -3698,7 +3721,7 @@ async function runMultiPass(
   if (!preSeedProfile) {
     const discovered = await getOrDiscoverProfile(preSeedClients[0]!, options);
     if (discovered.step.passed === false) {
-      await closeConnections(options.protocol);
+      await closeScopedConnections(options.protocol);
       return buildDiscoveryFailedResult(agentUrls, storyboard, discovered.step);
     }
     preSeedProfile = discovered.profile;
@@ -3770,8 +3793,9 @@ async function runMultiPass(
   // readers see a per-pass timeline; de-duplicating would hide a real
   // "passed on pass 1, failed on pass 2" divergence.
   const assertionsAgg = passResults.flatMap(r => r.assertions ?? []);
-  // Notices are identical across passes (same agent, same capabilities); deduplicate by code.
-  const noticesDedup = [...new Map(passResults.flatMap(r => r.notices).map(n => [n.code, n])).values()];
+  // Notices are identical across passes (same agent, same capabilities).
+  // Schema-invalid capabilities notices retain one row per RFC 6901 pointer.
+  const noticesDedup = [...new Map(passResults.flatMap(r => r.notices).map(n => [runnerNoticeKey(n), n])).values()];
 
   return {
     storyboard_id: storyboard.id,
@@ -3948,15 +3972,20 @@ export async function runStoryboardStep(
   stepId: string,
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardStepResult> {
-  validateStoryboardShape(storyboard);
-  options = applyStoryboardVersionOptions(storyboard, options);
-  const schemaRoot = getRunSchemaRoot(options);
-  if (schemaRoot) {
-    return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, () =>
-      runStoryboardStepBody(agentUrl, storyboard, stepId, options)
-    );
-  }
-  return await runStoryboardStepBody(agentUrl, storyboard, stepId, options);
+  return withMCPConnectionScope(
+    async () => {
+      validateStoryboardShape(storyboard);
+      options = applyStoryboardVersionOptions(storyboard, options);
+      const schemaRoot = getRunSchemaRoot(options);
+      if (schemaRoot) {
+        return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, () =>
+          runStoryboardStepBody(agentUrl, storyboard, stepId, options)
+        );
+      }
+      return await runStoryboardStepBody(agentUrl, storyboard, stepId, options);
+    },
+    { isolate: true }
+  );
 }
 
 async function runStoryboardStepBody(
@@ -4052,7 +4081,7 @@ async function runStoryboardStepBody(
   }
 
   if (!clientResolution.reusedShared) {
-    await closeConnections(options.protocol);
+    await closeScopedConnections(options.protocol);
   }
 
   if (ownsWebhookReceiver && webhookReceiver) await webhookReceiver.close();

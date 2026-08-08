@@ -173,7 +173,8 @@ export interface ComplianceResult {
   total_duration_ms: number;
   /**
    * Protocol-compliance advisories aggregated across all storyboard runs,
-   * deduplicated by `code`. Always present (default `[]`) — mirrors the
+   * deduplicated by `code`, or (`code`, `capability_pointer`) when present.
+   * Always present (default `[]`) — mirrors the
    * always-present invariant on `StoryboardResult.notices` so adopters
    * can iterate `for (const n of result.notices)` at either level without
    * a defensive `?.`. For per-storyboard notices see `StoryboardResult.notices`.

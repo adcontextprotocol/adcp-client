@@ -21,6 +21,13 @@ import { createHmac } from 'node:crypto';
 import { createMCPAuthHeaders } from '../auth';
 import { is401Error } from '../errors';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
+import {
+  currentMCPConnectionScopeKey,
+  isMCPConnectionScopeCacheKeyActive,
+  registerMCPConnectionScopeCleanup,
+  registerMCPConnectionScopePending,
+} from './mcp-scope';
+import { terminateSessionBestEffort } from './session-termination';
 import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext } from '../signing/client';
 import type { DebugLogEntry } from '../types/adcp';
 import {
@@ -68,6 +75,7 @@ interface ModernConnectionOptions {
 const modernConnections = new Map<string, Client>();
 const legacyConnectionExpiresAt = new Map<string, number>();
 const pendingModernConnections = new Map<string, Promise<Client>>();
+const modernTransports = new WeakMap<Client, StreamableHTTPClientTransport>();
 const knownLegacyConnections = new Map<string, number>();
 const modernDiscoveries = new Map<string, { discover: DiscoverResult; expiresAt: number }>();
 const clientsUsingCachedDiscovery = new WeakSet<Client>();
@@ -76,9 +84,20 @@ const LEGACY_CLASSIFICATION_TTL_MS = 5 * 60 * 1000;
 const MODERN_DISCOVERY_TTL_MS = 5 * 60 * 1000;
 const modernOAuthProviderIds = new WeakMap<object, string>();
 const modernFetchFnIds = new WeakMap<typeof fetch, string>();
+const modernSignalIds = new WeakMap<AbortSignal, string>();
 let nextModernOAuthProviderId = 0;
 let nextModernFetchFnId = 0;
+let nextModernSignalId = 0;
 let connectionGeneration = 0;
+
+async function closeModernClient(client: Client, terminateSession = true): Promise<void> {
+  const transport = modernTransports.get(client);
+  modernTransports.delete(client);
+  if (terminateSession && transport?.sessionId) {
+    await terminateSessionBestEffort(transport);
+  }
+  await client.close();
+}
 
 function cacheDisambiguator(value: string): string {
   return createHmac('sha256', '').update(value).digest('hex');
@@ -124,12 +143,25 @@ function fetchFnCacheKey(fetchFn: typeof fetch | undefined): string | undefined 
   return key;
 }
 
+function signalCacheKey(signal: AbortSignal | undefined): string | undefined {
+  if (!signal) return undefined;
+  let key = modernSignalIds.get(signal);
+  if (!key) {
+    key = `signal:${++nextModernSignalId}`;
+    modernSignalIds.set(signal, key);
+  }
+  return key;
+}
+
 function connectionCacheKey(
   agentUrl: string,
   headers: Record<string, string>,
   signingCacheKey?: string,
   authProvider?: object,
-  fetchFn?: typeof fetch
+  fetchFn?: typeof fetch,
+  signal?: AbortSignal,
+  requestTimeoutMs?: number,
+  handleLegacy?: boolean
 ): string {
   const normalizedHeaders = Object.entries(headers)
     .map(([key, value]) => [key.toLowerCase(), value] as const)
@@ -140,6 +172,12 @@ function connectionCacheKey(
   if (providerKey) parts.push(providerKey);
   const fetchKey = fetchFnCacheKey(fetchFn);
   if (fetchKey) parts.push(fetchKey);
+  const signalKey = signalCacheKey(signal);
+  if (signalKey) parts.push(signalKey);
+  if (requestTimeoutMs !== undefined) parts.push(`timeout:${requestTimeoutMs}`);
+  if (handleLegacy !== undefined) parts.push(`handle-legacy:${handleLegacy}`);
+  const scopeKey = currentMCPConnectionScopeKey();
+  if (scopeKey) parts.push(scopeKey);
   return parts.join('::');
 }
 
@@ -224,7 +262,7 @@ function getCachedConnection(cacheKey: string): Client | undefined {
     if (legacyExpiry !== undefined && legacyExpiry <= Date.now()) {
       modernConnections.delete(cacheKey);
       legacyConnectionExpiresAt.delete(cacheKey);
-      void client.close().catch(() => {});
+      void closeModernClient(client).catch(() => {});
       return undefined;
     }
     modernConnections.delete(cacheKey);
@@ -235,12 +273,12 @@ function getCachedConnection(cacheKey: string): Client | undefined {
 
 function evictLeastRecentlyUsed(): void {
   if (modernConnections.size <= MAX_CACHED_CONNECTIONS) return;
-  const oldestKey = modernConnections.keys().next().value;
+  const oldestKey = [...modernConnections.keys()].find(key => !isMCPConnectionScopeCacheKeyActive(key));
   if (!oldestKey) return;
   const client = modernConnections.get(oldestKey);
   modernConnections.delete(oldestKey);
   legacyConnectionExpiresAt.delete(oldestKey);
-  void client?.close().catch(() => {});
+  if (client) void closeModernClient(client).catch(() => {});
 }
 
 /**
@@ -289,9 +327,7 @@ async function createNegotiatedClient(
   const clientRequestTimeoutMs = resolveClientRequestTimeoutMs(options.requestTimeoutMs);
   const rawNetworkFetch: typeof fetch = options.fetchFn ?? ((input, init) => fetch(input, init));
   const networkFetch: typeof fetch = (input, init) =>
-    withAbortSignal<Response>([options.signal, init?.signal], requestTimeoutMs, signal =>
-      rawNetworkFetch(input, { ...init, signal })
-    );
+    withAbortSignal<Response>([init?.signal], requestTimeoutMs, signal => rawNetworkFetch(input, { ...init, signal }));
   const diagnosticFetch = wrapFetchWithTransportDiagnostics(wrapFetchWithSizeLimit(networkFetch));
   const signedFetch: typeof fetch = options.signingContext
     ? (buildAgentSigningFetch({
@@ -328,6 +364,7 @@ async function createNegotiatedClient(
       ...(clientRequestTimeoutMs !== undefined && { timeout: clientRequestTimeoutMs }),
       ...(prior && { prior }),
     });
+    modernTransports.set(client, transport);
     if (prior && !skipProbe) clientsUsingCachedDiscovery.add(client);
     if (!prior) {
       const discover = client.getDiscoverResult();
@@ -340,7 +377,7 @@ async function createNegotiatedClient(
   } catch (error) {
     if (prior && !skipProbe) modernDiscoveries.delete(cacheKey);
     try {
-      await client.close();
+      await closeModernClient(client, false);
     } catch {
       /* ignore close errors */
     }
@@ -396,12 +433,19 @@ async function getOrCreateModernConnection(
 
   const generation = connectionGeneration;
   const promise = createNegotiatedClient(cacheKey, options, authHeaders)
-    .then(client => {
+    .then(async client => {
       if (
         (client.getProtocolEra() === 'modern' || options.handleLegacy === true) &&
         generation === connectionGeneration
       ) {
         modernConnections.set(cacheKey, client);
+        registerMCPConnectionScopeCleanup('modern', cacheKey, async () => {
+          if (modernConnections.get(cacheKey) !== client) return;
+          modernConnections.delete(cacheKey);
+          legacyConnectionExpiresAt.delete(cacheKey);
+          modernDiscoveries.delete(cacheKey);
+          await closeModernClient(client);
+        });
         if (client.getProtocolEra() === 'legacy') {
           legacyConnectionExpiresAt.set(cacheKey, Date.now() + LEGACY_CLASSIFICATION_TTL_MS);
         } else {
@@ -409,7 +453,8 @@ async function getOrCreateModernConnection(
         }
         evictLeastRecentlyUsed();
       } else if (generation !== connectionGeneration) {
-        void client.close().catch(() => {});
+        await closeModernClient(client).catch(() => {});
+        throw new Error('MCP connection completed after connection teardown');
       }
       return client;
     })
@@ -417,6 +462,7 @@ async function getOrCreateModernConnection(
       if (pendingModernConnections.get(cacheKey) === promise) pendingModernConnections.delete(cacheKey);
     });
   pendingModernConnections.set(cacheKey, promise);
+  registerMCPConnectionScopePending(promise);
   return promise;
 }
 
@@ -448,15 +494,20 @@ async function attemptModernCall(
     authHeaders,
     options.signingContext?.cacheKey,
     options.authProvider,
-    options.fetchFn
+    options.fetchFn,
+    options.signal,
+    options.requestTimeoutMs,
+    options.handleLegacy
   );
   if (isKnownLegacy(cacheKey)) return { handled: false };
 
   const guardedConnection =
     options.signal !== undefined || options.requestTimeoutMs !== undefined || options.fetchFn !== undefined;
+  const oneShot = guardedConnection && currentMCPConnectionScopeKey() === undefined;
   let client: Client;
+  let callSucceeded = false;
   try {
-    client = guardedConnection
+    client = oneShot
       ? await createNegotiatedClient(cacheKey, options, authHeaders)
       : await getOrCreateModernConnection(cacheKey, options, authHeaders);
   } catch (error) {
@@ -492,7 +543,7 @@ async function attemptModernCall(
     } else {
       markKnownLegacy(cacheKey);
       try {
-        await client.close();
+        await closeModernClient(client);
       } catch {
         /* ignore close errors */
       }
@@ -513,6 +564,7 @@ async function attemptModernCall(
 
   try {
     const response = await callOnModernClient(client, toolName, args, options.signal, options.requestTimeoutMs);
+    callSucceeded = true;
     return { handled: true, response };
   } catch (error) {
     // A tool request may have reached the server even when its response was
@@ -522,19 +574,13 @@ async function attemptModernCall(
     legacyConnectionExpiresAt.delete(cacheKey);
     modernDiscoveries.delete(cacheKey);
     try {
-      await client.close();
+      await closeModernClient(client, !isAbortOrTimeoutError(error));
     } catch {
       /* ignore close errors */
     }
     throw error;
   } finally {
-    if (guardedConnection) {
-      try {
-        await client.close();
-      } catch {
-        /* ignore close errors */
-      }
-    }
+    if (oneShot && client && callSucceeded) await closeModernClient(client).catch(() => {});
   }
 }
 
@@ -604,7 +650,10 @@ export async function probeModernMCPConnection(
     authHeaders,
     options.signingContext?.cacheKey,
     options.authProvider,
-    options.fetchFn
+    options.fetchFn,
+    options.signal,
+    options.requestTimeoutMs,
+    options.handleLegacy
   );
   let client: Client | undefined;
   try {
@@ -618,7 +667,7 @@ export async function probeModernMCPConnection(
     if (isLegacyEraNegotiationFailure(error, status)) return { connected: false };
     throw error;
   } finally {
-    await client?.close().catch(() => {});
+    if (client) await closeModernClient(client).catch(() => {});
   }
 }
 
@@ -646,7 +695,10 @@ export async function tryListModernMCPTools(
     authHeaders,
     options.signingContext?.cacheKey,
     options.authProvider,
-    options.fetchFn
+    options.fetchFn,
+    options.signal,
+    options.requestTimeoutMs,
+    options.handleLegacy
   );
   let client: Client | undefined;
   const listTools = async (connectedClient: Client): Promise<ModernMCPListAttempt> => {
@@ -665,7 +717,7 @@ export async function tryListModernMCPTools(
     let failure = error;
     modernDiscoveries.delete(cacheKey);
     if (!is401Error(failure) && !isAbortOrTimeoutError(failure) && client && clientsUsingCachedDiscovery.has(client)) {
-      await client.close().catch(() => {});
+      await closeModernClient(client, false).catch(() => {});
       try {
         client = await createNegotiatedClient(cacheKey, connectionOptions, authHeaders, false);
         return await listTools(client);
@@ -680,7 +732,7 @@ export async function tryListModernMCPTools(
     if (isLegacyEraNegotiationFailure(failure, status)) return { handled: false };
     throw failure;
   } finally {
-    await client?.close().catch(() => {});
+    if (client) await closeModernClient(client).catch(() => {});
   }
 }
 
@@ -699,7 +751,7 @@ export async function closeModernMCPConnections(): Promise<void> {
   modernDiscoveries.clear();
   for (const client of clients) {
     try {
-      await client.close();
+      await closeModernClient(client);
     } catch {
       /* ignore close errors */
     }

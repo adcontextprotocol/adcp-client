@@ -153,6 +153,16 @@ const profileNoRawCaps = {
   // raw_capabilities absent — standalone runner before profile fetch
 };
 
+const profileWithInvalidCapabilities = {
+  name: 'Test Agent (invalid capabilities)',
+  tools: ['get_adcp_capabilities', 'get_products'],
+  raw_capabilities: { account: {} },
+  capabilities_schema_issues: [
+    { pointer: '/account/supported_billing', message: "must have required property 'supported_billing'" },
+    { pointer: '/account/sandbox', message: 'must be boolean' },
+  ],
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -188,6 +198,20 @@ describe('RunnerNotice — notices field always present (#1704)', () => {
     assert.ok(result.overall_passed, 'capability-unsupported is a skip, not a failure');
     assert.ok(Array.isArray(result.notices), 'notices must be an array on early-return paths');
     assert.equal(result.notices.length, 0, 'no notices on a non-webhook, non-signing storyboard');
+  });
+});
+
+describe('RunnerNotice: capabilities_response_schema_invalid (#2461)', () => {
+  test('emits one notice per validation pointer and preserves both through deduplication', async () => {
+    const result = await runWith(buildMinimalStoryboard(), profileWithInvalidCapabilities);
+    const notices = result.notices.filter(n => n.code === 'capabilities_response_schema_invalid');
+
+    assert.equal(notices.length, 2);
+    assert.deepStrictEqual(notices.map(n => n.capability_pointer).sort(), [
+      '/account/sandbox',
+      '/account/supported_billing',
+    ]);
+    assert.ok(notices.every(n => n.severity === 'info'));
   });
 });
 

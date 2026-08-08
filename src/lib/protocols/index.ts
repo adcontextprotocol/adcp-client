@@ -9,6 +9,7 @@ export {
 } from './mcp';
 
 import { closeMCPConnections } from './mcp';
+import { closeCurrentMCPConnectionScope, withMCPConnectionScope } from './mcp-scope';
 import { closeA2AConnections } from './a2a';
 
 /**
@@ -22,6 +23,17 @@ export async function closeConnections(protocol: 'mcp' | 'a2a' = 'mcp'): Promise
     closeA2AConnections();
   }
 }
+
+/** Close only the current runner's MCP scope; fall back to legacy global cleanup. */
+export async function closeScopedConnections(protocol: 'mcp' | 'a2a' = 'mcp'): Promise<void> {
+  if (protocol === 'mcp') {
+    if (!(await closeCurrentMCPConnectionScope())) await closeMCPConnections();
+  } else {
+    closeA2AConnections();
+  }
+}
+
+export { withMCPConnectionScope };
 export type { MCPCallOptions, MCPConnectionResult } from './mcp';
 export { callA2ATool } from './a2a';
 export { DEFAULT_REQUEST_TIMEOUT_MS } from './abort';
