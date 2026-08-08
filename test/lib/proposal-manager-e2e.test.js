@@ -255,6 +255,54 @@ test('e2e: createMediaBuy adapter throw → reservation rolled back to COMMITTED
   assert.strictEqual(store.get('p1', { expectedAccountId: 'acct_1' }).state, 'committed');
 });
 
+test('e2e: createMediaBuy Error arm → errors preserved and reservation rolled back to COMMITTED', async () => {
+  const store = new InMemoryProposalStore();
+  store.putDraft({
+    proposalId: 'p1',
+    accountId: 'acct_1',
+    recipes: new Map(),
+    proposalPayload: { proposal_id: 'p1' },
+  });
+  store.commit('p1', { expiresAt: new Date(Date.now() + 60_000), proposalPayload: { proposal_id: 'p1' } });
+
+  const errors = [
+    { code: 'INVALID_REQUEST', message: 'package targeting is required', field: 'packages[0].targeting' },
+    { code: 'BUDGET_TOO_LOW', message: 'package budget is below the product minimum', field: 'packages[0].budget' },
+  ];
+  const sales = {
+    getProducts: async () => ({ products: [] }),
+    createMediaBuy: async () => ({ errors }),
+    updateMediaBuy: async () => ({ media_buy_id: 'mb', buyer_ref: 'br', packages: [], status: 'active' }),
+    getMediaBuyDelivery: async () => ({
+      media_buy_deliveries: [],
+      reporting_period: { start_date: '2026-01-01', end_date: '2026-01-02' },
+    }),
+  };
+  const server = createAdcpServerFromPlatform(buildPlatform({ proposalManager: undefined, sales }), {
+    name: 'e2e',
+    version: '1.0',
+    proposalStore: store,
+    validation: { requests: 'off', responses: 'off' },
+  });
+  const response = await server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: { proposal_id: 'p1', idempotency_key: 'idem-key-error-arm-0001' },
+      },
+    },
+    { authInfo }
+  );
+
+  assert.strictEqual(response.isError, true);
+  assert.deepStrictEqual(
+    response.structuredContent.errors,
+    errors.map(error => ({ ...error, recovery: 'correctable' }))
+  );
+  assert.strictEqual(store.get('p1', { expectedAccountId: 'acct_1' }).state, 'committed');
+});
+
 test('e2e: v1 path unchanged when no proposalStore wired', async () => {
   const calls = [];
   const sales = {
