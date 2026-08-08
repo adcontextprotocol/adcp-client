@@ -170,7 +170,9 @@ function computeTrackStatus(results: StoryboardResult[]): TrackStatus {
   if (totalSteps === totalSkipped) return 'skip';
   if (totalFailed > 0) return totalPassed === 0 ? 'fail' : 'partial';
   const hasFixtureUnavailable = results.some(result =>
-    result.phases.some(phase => phase.steps.some(step => step.skip?.reason === 'fixture_unavailable'))
+    (result.passes?.flatMap(pass => pass.phases) ?? result.phases).some(phase =>
+      phase.steps.some(step => step.skip?.reason === 'fixture_unavailable')
+    )
   );
   if (hasFixtureUnavailable) return 'partial';
 

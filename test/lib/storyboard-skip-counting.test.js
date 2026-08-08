@@ -129,6 +129,66 @@ describe('storyboard skip counting', () => {
       assert.strictEqual(trackResult.status, 'partial');
     });
 
+    test('fixture_unavailable in a later multi-pass result keeps the track coverage-incomplete', () => {
+      const passingPhase = {
+        phase_id: 'flow',
+        phase_title: 'Flow',
+        passed: true,
+        steps: [stepResult({ duration_ms: 50 })],
+        duration_ms: 50,
+      };
+      const fixturePhase = {
+        phase_id: 'flow',
+        phase_title: 'Flow',
+        passed: true,
+        steps: [
+          stepResult({
+            step_id: 'creative',
+            skipped: true,
+            skip_reason: 'fixture_unavailable',
+            skip: {
+              reason: 'fixture_unavailable',
+              detail:
+                'creative_asset_fixture_unavailable: slot "video", asset type "video", constraint: fixture missing',
+            },
+            duration_ms: 0,
+          }),
+        ],
+        duration_ms: 0,
+      };
+      const result = storyboardResult({
+        passed_count: 1,
+        failed_count: 0,
+        skipped_count: 1,
+        phases: [passingPhase],
+        passes: [
+          {
+            pass_index: 1,
+            dispatch_offset: 0,
+            overall_passed: true,
+            phases: [passingPhase],
+            passed_count: 1,
+            failed_count: 0,
+            skipped_count: 0,
+            duration_ms: 50,
+          },
+          {
+            pass_index: 2,
+            dispatch_offset: 1,
+            overall_passed: true,
+            phases: [fixturePhase],
+            passed_count: 0,
+            failed_count: 0,
+            skipped_count: 1,
+            duration_ms: 0,
+          },
+        ],
+      });
+
+      const trackResult = mapStoryboardResultsToTrackResult('creative', [result], dummyProfile);
+      assert.strictEqual(trackResult.status, 'partial');
+    });
+
     test('track with no storyboards reports skip status', () => {
       const trackResult = mapStoryboardResultsToTrackResult('signals', [], dummyProfile);
       assert.strictEqual(trackResult.status, 'skip');

@@ -90,7 +90,16 @@ function resolveFormat(
       constraint: `format "${value.id}"${agent} is absent from storyboard context.formats`,
     };
   }
-  return { ok: true, format };
+  const catalogFormatId = isObject(format.format_id) ? format.format_id : {};
+  return {
+    ok: true,
+    format: {
+      ...format,
+      ...(asNumber(value.width) !== undefined ? { width: value.width } : {}),
+      ...(asNumber(value.height) !== undefined ? { height: value.height } : {}),
+      format_id: { ...catalogFormatId, ...value },
+    },
+  };
 }
 
 function dimensionsFromId(format: JsonObject): Dimensions {
@@ -100,7 +109,11 @@ function dimensionsFromId(format: JsonObject): Dimensions {
 }
 
 function formatDimensions(format: JsonObject): Dimensions {
-  const direct = { width: asNumber(format.width), height: asNumber(format.height) };
+  const nestedFormatId = isObject(format.format_id) ? format.format_id : {};
+  const direct = {
+    width: asNumber(format.width) ?? asNumber(nestedFormatId.width),
+    height: asNumber(format.height) ?? asNumber(nestedFormatId.height),
+  };
   if (direct.width !== undefined || direct.height !== undefined) return direct;
 
   const renders = Array.isArray(format.renders) ? format.renders : [];
@@ -145,7 +158,8 @@ function requiredSlots(format: JsonObject): RequiredSlot[] {
           : undefined;
     if (typeof id !== 'string' || assetType === undefined) return [];
     const requirements = isObject(slotValue.requirements) ? slotValue.requirements : {};
-    return [{ id, assetType, requirements, ...slotDimensions(slotValue, fallback) }];
+    const dimensions = slotDimensions(slotValue, fallback);
+    return [{ id, assetType, requirements, ...dimensions }];
   });
 }
 

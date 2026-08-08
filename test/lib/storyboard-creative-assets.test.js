@@ -143,6 +143,69 @@ describe('$build_assets_from_format', () => {
     });
   });
 
+  test('preserves parameterized FormatId dimensions when resolving a template format', () => {
+    const formatRef = {
+      agent_url: 'https://creative.example',
+      id: 'display_template',
+      width: 970,
+      height: 250,
+    };
+    const result = expandCreativeAssetDirectivesWithDiagnostics(
+      { assets: { [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: formatRef } },
+      {
+        formats: [
+          {
+            format_id: { agent_url: 'https://creative.example', id: 'display_template' },
+            assets: [
+              {
+                asset_id: 'banner_image',
+                asset_type: 'image',
+                required: true,
+                requirements: { parameters_from_format_id: true },
+              },
+            ],
+          },
+        ],
+      },
+      TEST_KIT
+    );
+
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.failure.reason, 'fixture_unavailable');
+    assert.match(result.failure.constraint, /exact 970x250/);
+  });
+
+  test('reads parameterized dimensions from an inline format_id', () => {
+    const result = expandCreativeAssetDirectivesWithDiagnostics(
+      {
+        assets: {
+          [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+            format_id: {
+              agent_url: 'https://creative.example',
+              id: 'display_template',
+              width: 970,
+              height: 250,
+            },
+            assets: [
+              {
+                asset_id: 'banner_image',
+                asset_type: 'image',
+                required: true,
+                requirements: { parameters_from_format_id: true },
+              },
+            ],
+          },
+        },
+      },
+      {},
+      TEST_KIT
+    );
+
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.failure.reason, 'fixture_unavailable');
+    assert.match(result.failure.constraint, /exact 970x250/);
+  });
+
   test('preserves sibling assets when expanding the directive', () => {
     const trackingPixel = { asset_type: 'url', url: 'https://metrics.example/pixel' };
     const expanded = expandCreativeAssetDirectives(
