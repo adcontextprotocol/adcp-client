@@ -3309,11 +3309,11 @@ async function executeStoryboardPass(
     }
   }
 
-  // Overall pass requires (a) no required-phase failures AND (b) at least one
-  // required phase actually passed with at least one non-skipped step AND
-  // (c) no assertion failures. Without (b) a storyboard where every phase is
-  // marked optional and every required phase's steps are individually skipped
-  // (e.g. all steps have requires_tool and none matched) would pass vacuously.
+  // Overall pass requires (a) no required-phase failures, (b) either an
+  // executed pass or every required phase grading canonically not_applicable,
+  // and (c) no assertion failures. Without (b), a storyboard where every phase
+  // is optional or every required step is skipped for another reason (for
+  // example, missing_tool) would pass vacuously.
   // (c) makes assertions gating — a run with all validations green but a
   // cross-step invariant broken is not conformant.
   // When no phases had executable steps the storyboard result is a skip, not a
@@ -3328,6 +3328,17 @@ async function executeStoryboardPass(
     return p.steps.some(s => !s.skipped && s.passed);
   });
   const requiredPhaseDefs = storyboard.phases.filter(phaseDef => !phaseDef.optional);
+  const requiredPhasesNotApplicable =
+    requiredPhaseDefs.length > 0 &&
+    requiredPhaseDefs.every(phaseDef => {
+      const phaseResult = phaseResults.find(p => p.phase_id === phaseDef.id);
+      return (
+        !!phaseResult &&
+        phaseResult.passed &&
+        phaseResult.steps.length > 0 &&
+        phaseResult.steps.every(step => step.skipped && step.skip?.reason === 'not_applicable')
+      );
+    });
   const requiredPhasesCoveredByCapabilityGates =
     phaseCapabilitySkippedIds.size > 0 &&
     requiredPhaseDefs.length > 0 &&
@@ -3339,6 +3350,7 @@ async function executeStoryboardPass(
   const requiredPhasesPassed =
     !hasExecutableSteps ||
     requiredPhaseHasExecutedPass ||
+    requiredPhasesNotApplicable ||
     (failedCount === 0 && requiredPhasesCoveredByCapabilityGates);
   const storyboardWideFixtureUnavailable = (seedingUnsupported || fixtureUnsatisfied) && failedCount === 0;
   // Prepend the pre-flight seeding phase now that every consumer that
