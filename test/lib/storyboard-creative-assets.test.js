@@ -1,10 +1,14 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert');
 
-const { BUILD_ASSETS_FROM_FORMAT_DIRECTIVE } = require('../../dist/lib/testing/storyboard/creative-assets');
+const {
+  BUILD_ASSETS_FROM_FORMAT_DIRECTIVE,
+  expandCreativeAssetDirectivesWithDiagnostics,
+} = require('../../dist/lib/testing/storyboard/creative-assets');
 const { expandCreativeAssetDirectives, findUnresolvedCreativeAssetDirectives } = require('../../dist/lib/testing');
 const { injectContext } = require('../../dist/lib/testing/storyboard/context');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner');
+const { DETAILED_SKIP_TO_CANONICAL } = require('../../dist/lib/testing/storyboard/types');
 
 const TEST_KIT = {
   assets: {
@@ -23,7 +27,68 @@ const TEST_KIT = {
   },
 };
 
+function buildCreativeSyncStoryboard({ context, directive, formatKind = 'image' }) {
+  return {
+    id: 'creative_asset_preflight',
+    version: '1.0.0',
+    title: 'Creative asset preflight',
+    category: 'compliance',
+    summary: '',
+    narrative: '',
+    agent: { interaction_model: '*', capabilities: [] },
+    caller: { role: 'buyer_agent' },
+    context,
+    phases: [
+      {
+        id: 'creative',
+        title: 'Creative',
+        steps: [
+          {
+            id: 'sync',
+            title: 'Sync creative',
+            task: 'sync_creatives',
+            expect_error: true,
+            sample_request: {
+              account: { operator: 'seller.example' },
+              creatives: [
+                {
+                  creative_id: 'creative-1',
+                  format_kind: formatKind,
+                  assets: { [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: directive },
+                },
+              ],
+            },
+            validations: [],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function runnerOptions(calls) {
+  return {
+    protocol: 'mcp',
+    agentTools: ['sync_creatives'],
+    _profile: { name: 'Test', tools: ['sync_creatives'] },
+    _client: {
+      async executeTask(name, params) {
+        calls.push({ name, params });
+        return { success: true, data: {} };
+      },
+      async getAgentInfo() {
+        return { name: 'Test', tools: [{ name: 'sync_creatives' }] };
+      },
+    },
+    test_kit: TEST_KIT,
+  };
+}
+
 describe('$build_assets_from_format', () => {
+  test('maps fixture-unavailable diagnostics to canonical not_applicable', () => {
+    assert.strictEqual(DETAILED_SKIP_TO_CANONICAL.creative_asset_fixture_unavailable, 'not_applicable');
+  });
+
   test('uses canonical required slots and selects the exact declared dimensions', () => {
     const request = {
       creatives: [
@@ -103,6 +168,151 @@ describe('$build_assets_from_format', () => {
     assert.deepStrictEqual(expanded.assets.tracking_pixel, trackingPixel);
     assert.strictEqual(expanded.assets.image_main.url, 'https://assets.example/320x50.jpg');
     assert.strictEqual(BUILD_ASSETS_FROM_FORMAT_DIRECTIVE in expanded.assets, false);
+  });
+
+  test('builds recognized image, URL, headline, description, and CTA slots', () => {
+    const expanded = expandCreativeAssetDirectives(
+      {
+        assets: {
+          [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+            width: 300,
+            height: 250,
+            slots: [
+              { asset_group_id: 'image_main', asset_type: 'image', required: true },
+              { asset_group_id: 'landing_url', asset_type: 'url', required: true },
+              { asset_group_id: 'marketing_headline', asset_type: 'text', required: true },
+              { asset_group_id: 'body_copy', asset_type: 'text', required: true },
+              { asset_group_id: 'primary_cta', asset_type: 'text', required: true },
+            ],
+          },
+        },
+      },
+      {},
+      TEST_KIT
+    );
+
+    assert.strictEqual(expanded.assets.image_main.url, 'https://assets.example/300x250.jpg');
+    assert.deepStrictEqual(expanded.assets.landing_url, {
+      asset_type: 'url',
+      url: 'https://acmeoutdoor.example/summer-sale',
+    });
+    assert.deepStrictEqual(expanded.assets.marketing_headline, {
+      asset_type: 'text',
+      content: 'Built for the Trail',
+    });
+    assert.deepStrictEqual(expanded.assets.body_copy, {
+      asset_type: 'text',
+      content: 'Adventure starts here',
+    });
+    assert.deepStrictEqual(expanded.assets.primary_cta, { asset_type: 'text', content: 'Shop Now' });
+  });
+
+  test('reports unsupported asset types with a slot-level fixture diagnostic', () => {
+    for (const assetType of ['video', 'audio', 'html', 'javascript', 'vast_tag']) {
+      const result = expandCreativeAssetDirectivesWithDiagnostics(
+        {
+          assets: {
+            [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+              slots: [{ asset_group_id: `${assetType}_main`, asset_type: assetType, required: true }],
+            },
+          },
+        },
+        {},
+        TEST_KIT
+      );
+
+      assert.strictEqual(result.ok, false);
+      assert.strictEqual(result.failure.reason, 'creative_asset_fixture_unavailable');
+      assert.strictEqual(result.failure.slotId, `${assetType}_main`);
+      assert.strictEqual(result.failure.assetType, assetType);
+      assert.match(result.failure.constraint, new RegExp(`asset type "${assetType}"`));
+    }
+  });
+
+  test('reports an unavailable exact image dimension', () => {
+    const result = expandCreativeAssetDirectivesWithDiagnostics(
+      {
+        assets: {
+          [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+            width: 970,
+            height: 250,
+            slots: [{ asset_group_id: 'billboard', asset_type: 'image', required: true }],
+          },
+        },
+      },
+      {},
+      TEST_KIT
+    );
+
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.failure.reason, 'creative_asset_fixture_unavailable');
+    assert.strictEqual(result.failure.slotId, 'billboard');
+    assert.strictEqual(result.failure.assetType, 'image');
+    assert.match(result.failure.constraint, /exact 970x250/);
+  });
+
+  test('does not substitute marketing copy for an unknown text semantic', () => {
+    const result = expandCreativeAssetDirectivesWithDiagnostics(
+      {
+        assets: {
+          [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+            slots: [{ asset_group_id: 'legal_disclaimer', asset_type: 'text', required: true }],
+          },
+        },
+      },
+      {},
+      TEST_KIT
+    );
+
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.failure.reason, 'creative_asset_fixture_unavailable');
+    assert.strictEqual(result.failure.slotId, 'legal_disclaimer');
+    assert.strictEqual(result.failure.assetType, 'text');
+    assert.match(result.failure.constraint, /does not identify a supported headline/);
+  });
+
+  test('distinguishes missing format context and malformed directives from fixture gaps', () => {
+    const missingFormat = expandCreativeAssetDirectivesWithDiagnostics(
+      { assets: { [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: { id: 'missing_format' } } },
+      {},
+      TEST_KIT
+    );
+    assert.strictEqual(missingFormat.ok, false);
+    assert.strictEqual(missingFormat.failure.reason, 'format_not_found');
+
+    const malformed = expandCreativeAssetDirectivesWithDiagnostics(
+      { assets: { [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: 'not-a-format' } },
+      {},
+      TEST_KIT
+    );
+    assert.strictEqual(malformed.ok, false);
+    assert.strictEqual(malformed.failure.reason, 'malformed_directive');
+  });
+
+  test('preserves unvisited sibling data when a nested directive cannot expand', () => {
+    const result = expandCreativeAssetDirectivesWithDiagnostics(
+      {
+        assets: {
+          [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+            width: 300,
+            height: 250,
+            slots: [{ asset_group_id: 'image_main', asset_type: 'image', required: true }],
+          },
+          nested: {
+            [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+              slots: [{ asset_group_id: 'video_main', asset_type: 'video', required: true }],
+            },
+          },
+          metadata: { authored: true },
+        },
+      },
+      {},
+      TEST_KIT
+    );
+
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(result.value.assets.metadata, { authored: true });
+    assert.strictEqual(result.value.assets.image_main.url, 'https://assets.example/300x250.jpg');
   });
 
   test('leaves an unfulfillable directive detectable so it cannot reach transport', () => {
@@ -190,7 +400,7 @@ describe('$build_assets_from_format', () => {
     assert.strictEqual(BUILD_ASSETS_FROM_FORMAT_DIRECTIVE in calls[0].params.creatives[0].assets, false);
   });
 
-  test('runner fails pre-wire when a required seller asset cannot be populated', async () => {
+  test('runner grades an unavailable seller asset not_applicable before transport', async () => {
     const calls = [];
     const storyboard = {
       id: 'creative_asset_preflight_failure',
@@ -251,8 +461,167 @@ describe('$build_assets_from_format', () => {
     assert.strictEqual(calls.length, 0);
     const step = result.phases[0].steps[0];
     assert.strictEqual(step.skipped, true);
+    assert.strictEqual(step.passed, true);
+    assert.strictEqual(step.skip_reason, 'creative_asset_fixture_unavailable');
+    assert.strictEqual(step.skip.reason, 'not_applicable');
+    assert.match(step.skip.detail, /^creative_asset_fixture_unavailable:/);
+    assert.match(step.skip.detail, /slot "video_main"/);
+    assert.match(step.skip.detail, /asset type "video"/);
+    assert.match(step.skip.detail, /constraint:/);
+    assert.deepStrictEqual(step.validations, []);
+    assert.strictEqual(result.failed_count, 0);
+    assert.strictEqual(result.skipped_count, 1);
+    assert.strictEqual(result.overall_passed, true);
+  });
+
+  test('missing format context remains a prerequisite failure', async () => {
+    const calls = [];
+    const storyboard = buildCreativeSyncStoryboard({
+      context: {},
+      directive: { agent_url: 'https://seller.example', id: 'missing_format' },
+    });
+
+    const result = await runStoryboard('https://seller.example/mcp', storyboard, runnerOptions(calls));
+
+    assert.strictEqual(calls.length, 0);
+    const step = result.phases[0].steps[0];
+    assert.strictEqual(step.skipped, true);
+    assert.strictEqual(step.passed, false);
+    assert.strictEqual(step.skip_reason, 'prerequisite_failed');
+    assert.strictEqual(step.skip.reason, 'prerequisite_failed');
     assert.strictEqual(step.validations[0].check, 'unresolved_substitution');
-    assert.strictEqual(step.validations[0].expected, BUILD_ASSETS_FROM_FORMAT_DIRECTIVE);
+  });
+
+  test('failed format producer leaves its consumer on the prerequisite-failure cascade', async () => {
+    const calls = [];
+    const storyboard = {
+      id: 'creative_asset_failed_producer',
+      version: '1.0.0',
+      title: 'Creative asset failed producer',
+      category: 'compliance',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      phases: [
+        {
+          id: 'discovery',
+          title: 'Discovery',
+          steps: [
+            {
+              id: 'formats',
+              title: 'Discover formats',
+              task: 'list_creative_formats',
+              sample_request: {},
+              context_outputs: [{ key: 'format_params', path: '$.formats[0]' }],
+              validations: [],
+            },
+          ],
+        },
+        {
+          id: 'creative',
+          title: 'Creative',
+          steps: [
+            {
+              id: 'sync',
+              title: 'Sync creative',
+              task: 'sync_creatives',
+              sample_request: {
+                account: { operator: 'seller.example' },
+                creatives: [
+                  {
+                    creative_id: 'creative-1',
+                    format_kind: 'image',
+                    assets: { [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: '$context.format_params' },
+                  },
+                ],
+              },
+              validations: [],
+            },
+          ],
+        },
+      ],
+    };
+    const options = runnerOptions(calls);
+    options.agentTools = ['list_creative_formats', 'sync_creatives'];
+    options._profile.tools = options.agentTools;
+    options._client.executeTask = async name => {
+      calls.push({ name });
+      return { success: false, error: 'producer failed', data: {} };
+    };
+
+    const result = await runStoryboard('https://seller.example/mcp', storyboard, options);
+
+    assert.deepStrictEqual(
+      calls.map(call => call.name),
+      ['list_creative_formats']
+    );
+    const consumer = result.phases[1].steps[0];
+    assert.strictEqual(consumer.skipped, true);
+    assert.strictEqual(consumer.skip_reason, 'prerequisite_failed');
+    assert.strictEqual(consumer.skip.reason, 'prerequisite_failed');
+  });
+
+  test('rate-limit trip target also grades an unavailable fixture pre-wire', async () => {
+    const calls = [];
+    const storyboard = {
+      id: 'creative_asset_rate_limit_preflight',
+      version: '1.0.0',
+      title: 'Creative asset rate-limit preflight',
+      category: 'compliance',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      context: {
+        format_params: {
+          slots: [{ asset_group_id: 'vast_main', asset_type: 'vast_tag', required: true }],
+        },
+      },
+      phases: [
+        {
+          id: 'creative',
+          title: 'Creative',
+          steps: [
+            {
+              id: 'trip',
+              title: 'Trip sync creatives rate limit',
+              task: 'expect_rate_limit_not_replayed',
+              rate_limit_trip: {
+                trip_target_task: 'sync_creatives',
+                trip_target_sample_request: {
+                  account: { operator: 'seller.example' },
+                  creatives: [
+                    {
+                      creative_id: 'creative-1',
+                      format_kind: 'video',
+                      assets: { [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: '$context.format_params' },
+                    },
+                  ],
+                },
+                max_attempts: 50,
+                replay_max_wait_seconds: 1,
+              },
+              validations: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = await runStoryboard('https://seller.example/mcp', storyboard, runnerOptions(calls));
+
+    assert.strictEqual(calls.length, 0);
+    const step = result.phases[0].steps[0];
+    assert.strictEqual(step.passed, true);
+    assert.strictEqual(step.skipped, true);
+    assert.strictEqual(step.skip_reason, 'creative_asset_fixture_unavailable');
+    assert.strictEqual(step.skip.reason, 'not_applicable');
+    assert.match(step.skip.detail, /slot "vast_main"/);
+    assert.match(step.skip.detail, /asset type "vast_tag"/);
+    assert.strictEqual(result.failed_count, 0);
+    assert.strictEqual(result.skipped_count, 1);
+    assert.strictEqual(result.overall_passed, true);
   });
 });
 
