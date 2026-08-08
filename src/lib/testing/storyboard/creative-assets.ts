@@ -276,7 +276,6 @@ function textFixtureMismatch(content: string, requirements: JsonObject): string 
     'max_length',
     'min_lines',
     'max_lines',
-    'character_pattern',
     'prohibited_terms',
     'allowed_values',
   ]);
@@ -294,15 +293,6 @@ function textFixtureMismatch(content: string, requirements: JsonObject): string 
   if (minLines !== undefined && lines < minLines) return `requires minimum line count ${minLines}`;
   if (maxLines !== undefined && lines > maxLines) return `requires maximum line count ${maxLines}`;
 
-  if (typeof requirements.character_pattern === 'string') {
-    try {
-      if (!new RegExp(requirements.character_pattern).test(content)) {
-        return `requires character pattern ${requirements.character_pattern}`;
-      }
-    } catch {
-      return `declares invalid character pattern ${requirements.character_pattern}`;
-    }
-  }
   if (Array.isArray(requirements.prohibited_terms)) {
     const prohibited = requirements.prohibited_terms.find(
       (term): term is string => typeof term === 'string' && content.toLowerCase().includes(term.toLowerCase())
@@ -358,6 +348,28 @@ function buildText(slot: RequiredSlot, assets: JsonObject): AssetBuildResult {
     : { ok: true, asset: { asset_type: 'text', content } };
 }
 
+function containsUrlMacro(value: string): boolean {
+  let inMacro = false;
+  let hasContent = false;
+  for (let index = 0; index < value.length; index += 1) {
+    if (!inMacro) {
+      if (value[index] === '$' && value[index + 1] === '{') {
+        inMacro = true;
+        hasContent = false;
+        index += 1;
+      }
+      continue;
+    }
+    if (value[index] === '}') {
+      if (hasContent) return true;
+      inMacro = false;
+      continue;
+    }
+    hasContent = true;
+  }
+  return false;
+}
+
 function buildUrl(slot: RequiredSlot, assets: JsonObject): AssetBuildResult {
   if (typeof assets.click_url !== 'string') return { ok: false, constraint: 'requires a click_url fixture' };
   const url = assets.click_url;
@@ -386,7 +398,7 @@ function buildUrl(slot: RequiredSlot, assets: JsonObject): AssetBuildResult {
   ) {
     return { ok: false, constraint: 'click_url fixture uses a disallowed domain' };
   }
-  if (slot.requirements.macro_support === true && !/\$\{[^}]+\}/.test(url)) {
+  if (slot.requirements.macro_support === true && !containsUrlMacro(url)) {
     return { ok: false, constraint: 'requires a URL fixture with macro support' };
   }
   return { ok: true, asset: { asset_type: 'url', url } };

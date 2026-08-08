@@ -381,6 +381,60 @@ describe('$build_assets_from_format', () => {
     assert.match(result.failure.constraint, /maximum length 5/);
   });
 
+  test('does not execute seller-supplied character patterns', () => {
+    for (const characterPattern of ['^[A-Z ]+$', '(a|a?)+$', '(\\w*\\s*)*$']) {
+      const result = expandCreativeAssetDirectivesWithDiagnostics(
+        {
+          assets: {
+            [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+              slots: [
+                {
+                  asset_group_id: 'headline',
+                  asset_type: 'text',
+                  required: true,
+                  requirements: { character_pattern: characterPattern },
+                },
+              ],
+            },
+          },
+        },
+        {},
+        TEST_KIT
+      );
+
+      assert.strictEqual(result.ok, false);
+      assert.strictEqual(result.failure.reason, 'fixture_unavailable');
+      assert.match(result.failure.constraint, /character_pattern/);
+    }
+  });
+
+  test('requires a complete URL macro without regex backtracking', () => {
+    const format = {
+      slots: [
+        {
+          asset_group_id: 'landing_url',
+          asset_type: 'url',
+          required: true,
+          requirements: { macro_support: true },
+        },
+      ],
+    };
+    const incomplete = expandCreativeAssetDirectivesWithDiagnostics(
+      { assets: { [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: format } },
+      {},
+      { assets: { ...TEST_KIT.assets, click_url: `https://example.com/${'${{'.repeat(2_000)}` } }
+    );
+    const complete = expandCreativeAssetDirectivesWithDiagnostics(
+      { assets: { [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: format } },
+      {},
+      { assets: { ...TEST_KIT.assets, click_url: 'https://example.com/${campaign_id}' } }
+    );
+
+    assert.strictEqual(incomplete.ok, false);
+    assert.match(incomplete.failure.constraint, /macro support/);
+    assert.strictEqual(complete.ok, true);
+  });
+
   test('reports image requirements the fixture metadata cannot prove', () => {
     const result = expandCreativeAssetDirectivesWithDiagnostics(
       {
