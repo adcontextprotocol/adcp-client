@@ -6452,6 +6452,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
           pagination: {
             has_more: page.nextCursor != null,
             ...(page.nextCursor != null && { cursor: page.nextCursor }),
+            ...(page.totalCount !== undefined && { total_count: page.totalCount }),
           },
         })
       );

@@ -72,6 +72,7 @@ import {
 } from './index';
 import type { ComplyControllerConfig } from '../../testing/comply-controller';
 import type { CanonicalListCreativesResponse } from '../../v2/projection/creative-delivery';
+import { getAccountMode } from '../account-mode';
 
 // ── AdcpError construction ────────────────────────────────────────────
 
@@ -556,9 +557,42 @@ function _account_handler_result_aliases_are_exported() {
     SyncGovernanceHandlerResult,
     _Result<ReportUsageHandlerResult, Error>,
     _Result<GetAccountFinancialsHandlerResult, Error>,
-  ] = [{ items: [] }, [], [], _ok({ accepted: 0 }), _ok({} as GetAccountFinancialsHandlerResult)];
+  ] = [{ items: [], totalCount: 0 }, [], [], _ok({ accepted: 0 }), _ok({} as GetAccountFinancialsHandlerResult)];
   return results;
 }
+
+const _list_accounts_handler_receives_wire_request: NonNullable<AccountStore['list']> = async request => {
+  const status: string | undefined = request.status;
+  const account = request.account;
+  const sandbox: boolean | undefined = request.sandbox;
+  const maxResults: number | undefined = request.pagination?.max_results;
+  const cursor: string | undefined = request.pagination?.cursor;
+  // @ts-expect-error — list_accounts has nested pagination, not legacy top-level `limit`.
+  const limit = request.limit;
+  // @ts-expect-error — the wire request carries one status, not a status array.
+  const invalidStatusArray: typeof request.status = ['active'];
+  void status;
+  void account;
+  void sandbox;
+  void maxResults;
+  void cursor;
+  void limit;
+  void invalidStatusArray;
+  return { items: [], totalCount: 0 };
+};
+
+const _account_mode_is_typed: Account = {
+  id: 'acct_1',
+  name: 'Acme',
+  status: 'active',
+  mode: 'sandbox',
+  ctx_metadata: {},
+};
+getAccountMode(_account_mode_is_typed);
+const _unknown_account_mode_input: unknown = _account_mode_is_typed;
+// @ts-expect-error — callers must narrow unknown values to a resolved Account first.
+getAccountMode(_unknown_account_mode_input);
+void _account_mode_is_typed;
 
 function _server_payload_preserves_domain_status_fields(): void {
   type CreateMediaBuySuccess = import('../../types/tools.generated').CreateMediaBuySuccess;
