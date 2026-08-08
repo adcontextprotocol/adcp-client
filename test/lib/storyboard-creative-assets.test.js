@@ -300,36 +300,38 @@ describe('$build_assets_from_format', () => {
   });
 
   test('reports a required repeatable group instead of silently dropping it', () => {
-    const result = expandCreativeAssetDirectivesWithDiagnostics(
-      {
-        assets: {
-          [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
-            slots: [
-              {
-                asset_group_id: 'carousel',
-                item_type: 'repeatable_group',
-                required: true,
-                min_count: 2,
-                assets: [
-                  {
-                    asset_id: 'card_image',
-                    asset_type: 'image',
-                    required: true,
-                  },
-                ],
-              },
-            ],
+    for (const container of ['slots', 'assets']) {
+      const result = expandCreativeAssetDirectivesWithDiagnostics(
+        {
+          assets: {
+            [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+              [container]: [
+                {
+                  asset_group_id: 'carousel',
+                  item_type: 'repeatable_group',
+                  required: true,
+                  min_count: 2,
+                  assets: [
+                    {
+                      asset_id: 'card_image',
+                      asset_type: 'image',
+                      required: true,
+                    },
+                  ],
+                },
+              ],
+            },
           },
         },
-      },
-      {},
-      TEST_KIT
-    );
+        {},
+        TEST_KIT
+      );
 
-    assert.strictEqual(result.ok, false);
-    assert.strictEqual(result.failure.reason, 'fixture_unavailable');
-    assert.strictEqual(result.failure.slotId, 'carousel');
-    assert.strictEqual(result.failure.assetType, 'repeatable_group');
+      assert.strictEqual(result.ok, false, container);
+      assert.strictEqual(result.failure.reason, 'fixture_unavailable', container);
+      assert.strictEqual(result.failure.slotId, 'carousel', container);
+      assert.strictEqual(result.failure.assetType, 'repeatable_group', container);
+    }
   });
 
   test('reports an unavailable exact image dimension', () => {

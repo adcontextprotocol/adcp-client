@@ -149,11 +149,12 @@ function requiredSlots(format: JsonObject): RequiredSlot[] {
 
   return slots.flatMap(slotValue => {
     if (!isObject(slotValue) || slotValue.required !== true) return [];
-    const id = canonicalSlots ? slotValue.asset_group_id : slotValue.asset_id;
+    const isRepeatableGroup = slotValue.item_type === 'repeatable_group';
+    const id = canonicalSlots || isRepeatableGroup ? slotValue.asset_group_id : slotValue.asset_id;
     const assetType =
       typeof slotValue.asset_type === 'string'
         ? slotValue.asset_type
-        : slotValue.item_type === 'repeatable_group'
+        : isRepeatableGroup
           ? 'repeatable_group'
           : undefined;
     if (typeof id !== 'string' || assetType === undefined) return [];
