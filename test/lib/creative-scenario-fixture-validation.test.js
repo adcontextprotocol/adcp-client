@@ -10,7 +10,7 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
 const { validateRequest } = require('../../dist/lib/validation');
-const { testCreativeSync } = require('../../dist/lib/testing');
+const { testCreativeInline, testCreativeSync } = require('../../dist/lib/testing');
 
 const SELLER_URL = 'https://seller.example/mcp';
 
@@ -129,5 +129,100 @@ describe('creative scenario fixture schema validity (issue #2460)', () => {
     };
     const outcome = validateRequest('sync_creatives', { ...BASE_ENVELOPE, creatives: [brokenCreative] });
     assert.strictEqual(outcome.valid, false, 'Expected schema validation to fail without agent_url in format_id');
+  });
+});
+
+describe('creative scenario residual paths (issue #2443)', () => {
+  test('testCreativeSync keeps the AAO default when format discovery is unavailable', async () => {
+    let syncRequest;
+    const client = {
+      syncCreatives: async request => {
+        syncRequest = request;
+        return { success: true, data: { creatives: [] } };
+      },
+    };
+
+    await testCreativeSync(SELLER_URL, {
+      sandbox: true,
+      _client: client,
+      _profile: { tools: ['sync_creatives'] },
+    });
+
+    assert.deepStrictEqual(syncRequest.creatives[0].format_id, DEFAULT_FORMAT_ID);
+  });
+
+  for (const [label, formatsData, expectedFormatId] of [
+    ['direct format object', { formats: [{ id: 'display_direct' }] }, { agent_url: SELLER_URL, id: 'display_direct' }],
+    [
+      'nested format object',
+      { formats: [{ format_id: { id: 'display_nested' } }] },
+      { agent_url: SELLER_URL, id: 'display_nested' },
+    ],
+    [
+      'nested format object with an explicit owner',
+      { formats: [{ format_id: { agent_url: 'https://creative.example/mcp', id: 'display_owned' } }] },
+      { agent_url: 'https://creative.example/mcp', id: 'display_owned' },
+    ],
+  ]) {
+    test(`testCreativeSync binds ${label} to the seller agent`, async () => {
+      let syncRequest;
+      const client = {
+        listCreativeFormatsLegacy: async () => ({ success: true, data: formatsData }),
+        syncCreatives: async request => {
+          syncRequest = request;
+          return { success: true, data: { creatives: [] } };
+        },
+      };
+
+      await testCreativeSync(SELLER_URL, {
+        sandbox: true,
+        _client: client,
+        _profile: { tools: ['list_creative_formats', 'sync_creatives'] },
+      });
+
+      assert.deepStrictEqual(syncRequest.creatives[0].format_id, expectedFormatId);
+    });
+  }
+
+  test('testCreativeInline includes the image asset discriminator', async () => {
+    let createRequest;
+    const product = {
+      product_id: 'display-product',
+      name: 'Display product',
+      description: 'Regression fixture',
+      channels: ['display'],
+      format_ids: [{ agent_url: SELLER_URL, id: 'display_300x250' }],
+      pricing_options: [
+        {
+          pricing_option_id: 'display-cpm',
+          pricing_model: 'cpm',
+          currency: 'USD',
+          fixed_price: 10,
+        },
+      ],
+    };
+    const client = {
+      getProducts: async () => ({ success: true, data: { products: [product] } }),
+      createMediaBuy: async request => {
+        createRequest = request;
+        return { success: false, error: 'Captured request' };
+      },
+    };
+
+    await testCreativeInline(SELLER_URL, {
+      sandbox: true,
+      _client: client,
+      _profile: { tools: ['create_media_buy'] },
+    });
+
+    const creative = createRequest.packages[0].creatives[0];
+    assert.strictEqual(creative.assets.primary.asset_type, 'image');
+    assert.strictEqual(
+      validateRequest('create_media_buy', {
+        ...createRequest,
+        idempotency_key: 'test-inline-creative-regression-001',
+      }).valid,
+      true
+    );
   });
 });

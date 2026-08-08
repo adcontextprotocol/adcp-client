@@ -132,6 +132,20 @@ function getDefaultFormatId(): FormatID {
   return { agent_url: 'https://creative.adcontextprotocol.org', id: 'display_300x250' };
 }
 
+function resolveSellerFormatId(value: unknown, agentUrl: string): FormatID | undefined {
+  const candidate = isRecord(value) && value.format_id !== undefined ? value.format_id : value;
+
+  if (typeof candidate === 'string') {
+    return { agent_url: agentUrl, id: candidate };
+  }
+
+  if (isRecord(candidate) && typeof candidate.id === 'string') {
+    return { agent_url: agentUrl, ...candidate, id: candidate.id } as FormatID;
+  }
+
+  return undefined;
+}
+
 function formatIdToString(formatId: FormatID): string {
   return formatId.id;
 }
@@ -167,6 +181,7 @@ function buildStaticInlineCreative(formatId: FormatID) {
     format_id: formatId,
     assets: {
       primary: {
+        asset_type: 'image' as const,
         url: 'https://via.placeholder.com/300x250?text=Inline+Creative',
         width: 300,
         height: 250,
@@ -768,10 +783,7 @@ export async function testCreativeSync(
   }
 
   // Get format info first
-  let formatId: Record<string, unknown> = {
-    agent_url: 'https://creative.adcontextprotocol.org',
-    id: 'display_300x250',
-  };
+  let formatId: FormatID = getDefaultFormatId();
   if (profile.tools.includes('list_creative_formats')) {
     const { result: formatsResult } = await runStep<TaskResult>(
       'Get formats for creative',
@@ -785,12 +797,7 @@ export async function testCreativeSync(
       const formats = data.formats as Record<string, unknown>[] | undefined;
       const firstFormat = formatIds?.[0] || formats?.[0];
       if (firstFormat) {
-        if (typeof firstFormat === 'string') {
-          formatId = { agent_url: agentUrl, id: firstFormat };
-        } else {
-          const formatObj = firstFormat as Record<string, unknown>;
-          formatId = (formatObj.format_id as Record<string, unknown>) || formatObj;
-        }
+        formatId = resolveSellerFormatId(firstFormat, agentUrl) ?? formatId;
       }
     }
   }
