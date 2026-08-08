@@ -116,6 +116,20 @@ describe('discoverAgentProfile: AbortSignal honored (#1612)', () => {
     );
   });
 
+  test('records a probe diagnostic when capabilities succeeds without data', async () => {
+    const client = {
+      getAgentInfo: async () => ({
+        name: 'Empty capabilities seller',
+        tools: [{ name: 'get_adcp_capabilities' }],
+      }),
+      getAdcpCapabilities: async () => ({ success: true }),
+    };
+
+    const { profile } = await discoverAgentProfile(client);
+    assert.strictEqual(profile.raw_capabilities, undefined);
+    assert.strictEqual(profile.capabilities_probe_error, 'get_adcp_capabilities returned no data');
+  });
+
   // code-reviewer follow-up on #1612: the wrapper covers the second
   // `getAdcpCapabilities()` call, not just the first `getAgentInfo()`.
   // Cover that path explicitly so a future refactor that bypasses

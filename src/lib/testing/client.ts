@@ -509,7 +509,7 @@ export async function discoverAgentProfile(
         const libVersion = (caps.data as Record<string, unknown>).library_version;
         if (typeof libVersion === 'string') profile.library_version = libVersion;
       }
-      if (!caps?.success && !profile.capabilities_schema_issues?.length) {
+      if ((!caps?.success || !caps?.data) && !profile.capabilities_schema_issues?.length) {
         profile.capabilities_probe_error = caps?.error || 'get_adcp_capabilities returned no data';
       }
     } catch (err) {
