@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': minor
+'@adcp/sdk': major
 ---
 
 Allow `create_media_buy` server handlers to return the protocol's structured multi-error payload arm without unsafe casts.
