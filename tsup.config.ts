@@ -97,10 +97,9 @@ function fixDynamicImportExtensions() {
 //
 // `fixImportsPlugin` (see tsup#1240) supplies what `bundle: false` leaves out:
 // it appends the correct extension to relative imports, rewrites directory
-// imports to `/index`, and resolves tsconfig path aliases. Its alias step is
-// neutralised by pointing the build at a paths-free tsconfig (below), because
-// the only `paths` entry (`structured-headers`) is a typecheck-only pin to the
-// package's CJS type file and must stay a bare external import at runtime.
+// imports to `/index`, and resolves tsconfig path aliases. Pointing the build
+// at a paths-free tsconfig keeps its alias step neutral so external package
+// imports remain bare at runtime.
 // Declarations are emitted separately by `tsc --emitDeclarationOnly`.
 export default defineConfig({
   entry: ['src/lib/**/*.ts', '!src/lib/**/*.test.ts', '!src/lib/**/*.d.ts', '!src/lib/**/*.type-checks.ts'],
@@ -110,8 +109,6 @@ export default defineConfig({
   platform: 'node',
   bundle: false,
   // A paths-free tsconfig so the import-fixer's alias resolution is a no-op.
-  // The only `paths` entry (`structured-headers`) is a typecheck-only pin;
-  // at runtime it must stay a bare external import, not a rewritten path.
   tsconfig: 'tsconfig.build.json',
   sourcemap: true,
   clean: true,

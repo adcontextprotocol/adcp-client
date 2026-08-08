@@ -5,7 +5,6 @@
     "rootDir": ".",
     "baseUrl": ".",
     "paths": {
-      "structured-headers": ["./node_modules/structured-headers/cjs/index.d.cts"],
       "@adcp/sdk": ["./dist/lib/index.d.ts"],
       "@adcp/sdk/testing": ["./dist/lib/testing/index.d.ts"],
       "@adcp/sdk/server": ["./dist/lib/server/index.d.ts"],
