@@ -106,9 +106,7 @@ describe('executeStoryboardTask creative wire selection', () => {
       {}
     );
 
-    assert.deepEqual(calls, [
-      { method: 'legacy', request: { ext: { adcp: { creative_wire: 'legacy' } } } },
-    ]);
+    assert.deepEqual(calls, [{ method: 'legacy', request: { ext: { adcp: { creative_wire: 'legacy' } } } }]);
     assert.equal(result.data.wire, 'legacy');
   });
 });
