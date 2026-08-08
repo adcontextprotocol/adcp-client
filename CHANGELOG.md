@@ -1,5 +1,16 @@
 # Changelog
 
+## 13.0.0-rc.10
+
+### Patch Changes
+
+- 6090920: Fix storyboard account selection for default implicit-account capabilities and agency-operated brands; reuse and gracefully close caller-owned MCP workflow sessions while treating session 404s as terminal and never implicitly replaying ambiguous tool-call failures; and surface schema-invalid `get_adcp_capabilities` responses as structured preflight notices.
+- 6e09fd1: Include migration guides in the published package so README links work for installed consumers.
+
+  Add `mergeSeedProductLegacy` to `@adcp/sdk/testing` as an explicit typed entry point for raw legacy product fixtures. It delegates to the existing product seed merge behavior and preserves the input subtype.
+
+- 6e09fd1: Refresh the bundled registry OpenAPI document and generated registry types with the latest additive brand provenance, diagnostics, probing, and organization-selection fields.
+
 ## 13.0.0-rc.9
 
 ### Major Changes
