@@ -20,6 +20,7 @@
     "fix-era-negotiation-legacy-fallback",
     "fix-hoisted-structured-headers",
     "fix-mcp-beta-pins",
+    "fix-runner-session-capability-notices",
     "fix-storyboard-canonical-wire-selection",
     "fix-storyboard-creative-assets",
     "fix-sync-completion-webhook-default",
