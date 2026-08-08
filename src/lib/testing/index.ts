@@ -267,6 +267,9 @@ export {
   // Task mapping
   TASK_TO_METHOD,
   executeStoryboardTask,
+  // Storyboard-only creative asset directives
+  expandCreativeAssetDirectives,
+  findUnresolvedCreativeAssetDirectives,
   // Context
   extractContext,
   injectContext,
