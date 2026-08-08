@@ -167,6 +167,9 @@ export type {
 // Task mapping
 export { TASK_TO_METHOD, executeStoryboardTask } from './task-map';
 
+// Storyboard-only creative asset directives
+export { expandCreativeAssetDirectives, findUnresolvedCreativeAssetDirectives } from './creative-assets';
+
 // Path utilities
 export { parsePath, resolvePath, setPath } from './path';
 

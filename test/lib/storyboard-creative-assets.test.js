@@ -1,11 +1,8 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert');
 
-const {
-  BUILD_ASSETS_FROM_FORMAT_DIRECTIVE,
-  expandCreativeAssetDirectives,
-  findUnresolvedCreativeAssetDirectives,
-} = require('../../dist/lib/testing/storyboard/creative-assets');
+const { BUILD_ASSETS_FROM_FORMAT_DIRECTIVE } = require('../../dist/lib/testing/storyboard/creative-assets');
+const { expandCreativeAssetDirectives, findUnresolvedCreativeAssetDirectives } = require('../../dist/lib/testing');
 const { injectContext } = require('../../dist/lib/testing/storyboard/context');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner');
 

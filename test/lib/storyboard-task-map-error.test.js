@@ -110,3 +110,36 @@ describe('executeStoryboardTask creative wire selection', () => {
     assert.equal(result.data.wire, 'legacy');
   });
 });
+
+describe('executeStoryboardTask creative asset directives', () => {
+  test('rejects unexpanded directives before client validation or dispatch', async () => {
+    let callCount = 0;
+    const result = await executeStoryboardTask(
+      {
+        syncCreatives: async () => {
+          callCount += 1;
+          return { data: { creatives: [] } };
+        },
+      },
+      'sync_creatives',
+      {
+        creatives: [
+          {
+            assets: {
+              $build_assets_from_format: { agent_url: 'https://creative.example', id: 'display_300x250' },
+            },
+          },
+        ],
+      }
+    );
+
+    assert.equal(callCount, 0);
+    assert.deepEqual(result, {
+      success: false,
+      error:
+        "Request contains unexpanded storyboard directive '$build_assets_from_format' at " +
+        '$.creatives[0].assets.$build_assets_from_format. ' +
+        'Call expandCreativeAssetDirectives(params, context, testKit) before passing params to executeStoryboardTask.',
+    });
+  });
+});

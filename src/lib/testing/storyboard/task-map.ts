@@ -10,6 +10,7 @@
 import type { TaskResult } from '../types';
 import type { AdcpErrorInfo } from '../../core/ConversationTypes';
 import { isTerminalAdcpError, readExtractionPath } from '../../utils/response-unwrapper';
+import { BUILD_ASSETS_FROM_FORMAT_DIRECTIVE, findUnresolvedCreativeAssetDirectives } from './creative-assets';
 
 /**
  * Map of AdCP task names to SingleAgentClient method names.
@@ -177,6 +178,17 @@ export async function executeStoryboardTask(
   params: Record<string, unknown>,
   opts: { skipIdempotencyAutoInject?: boolean; skipAccountValidation?: boolean; signal?: AbortSignal } = {}
 ): Promise<TaskResult> {
+  const unresolvedAssetDirectives = findUnresolvedCreativeAssetDirectives(params);
+  if (unresolvedAssetDirectives.length > 0) {
+    return {
+      success: false,
+      error:
+        `Request contains unexpanded storyboard directive '${BUILD_ASSETS_FROM_FORMAT_DIRECTIVE}' at ` +
+        `${unresolvedAssetDirectives.join(', ')}. ` +
+        'Call expandCreativeAssetDirectives(params, context, testKit) before passing params to executeStoryboardTask.',
+    };
+  }
+
   // AdCP 3.1 transition storyboards default to the legacy creative wire, but
   // canonical-specific storyboards must be able to opt into the canonical API.
   const useLegacyCreativeMethod = gradesLegacyCreativeWire(client) && readCreativeWireHint(params) !== 'canonical';
