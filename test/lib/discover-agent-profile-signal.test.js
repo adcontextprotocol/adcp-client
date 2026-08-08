@@ -89,6 +89,47 @@ describe('discoverAgentProfile: AbortSignal honored (#1612)', () => {
     client.cleanup();
   });
 
+  test('captures schema-invalid capabilities pointers without suppressing best-effort profile parsing', async () => {
+    const client = {
+      getAgentInfo: async () => ({
+        name: 'Invalid capabilities seller',
+        tools: [{ name: 'get_adcp_capabilities' }],
+      }),
+      getAdcpVersion: () => '3.1.11',
+      getAdcpCapabilities: async () => ({
+        success: true,
+        data: {
+          adcp: { major_versions: [3], idempotency: { supported: true, replay_ttl_seconds: 86400 } },
+          supported_protocols: ['media_buy'],
+          account: { sandbox: { supported: true } },
+        },
+      }),
+    };
+
+    const { profile } = await discoverAgentProfile(client);
+    assert.deepStrictEqual(profile.supported_protocols, ['media_buy']);
+    assert.ok(profile.raw_capabilities, 'invalid response remains available for downstream selection');
+    assert.ok(profile.capabilities_schema_issues?.length >= 1);
+    assert.ok(
+      profile.capabilities_schema_issues.some(issue => issue.pointer === '/account/supported_billing'),
+      JSON.stringify(profile.capabilities_schema_issues)
+    );
+  });
+
+  test('records a probe diagnostic when capabilities succeeds without data', async () => {
+    const client = {
+      getAgentInfo: async () => ({
+        name: 'Empty capabilities seller',
+        tools: [{ name: 'get_adcp_capabilities' }],
+      }),
+      getAdcpCapabilities: async () => ({ success: true }),
+    };
+
+    const { profile } = await discoverAgentProfile(client);
+    assert.strictEqual(profile.raw_capabilities, undefined);
+    assert.strictEqual(profile.capabilities_probe_error, 'get_adcp_capabilities returned no data');
+  });
+
   // code-reviewer follow-up on #1612: the wrapper covers the second
   // `getAdcpCapabilities()` call, not just the first `getAgentInfo()`.
   // Cover that path explicitly so a future refactor that bypasses

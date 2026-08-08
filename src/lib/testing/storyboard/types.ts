@@ -2111,7 +2111,9 @@ export type NoticeCode =
    *  AdCP 4.0 per `effective_version`. */
   | 'webhook_signing.legacy_hmac_fallback.removed'
   /** Runner stripped request fields missing from the agent's advertised tool input schema. */
-  | 'input_schema_field_stripped';
+  | 'input_schema_field_stripped'
+  /** The preflight get_adcp_capabilities response failed schema validation. */
+  | 'capabilities_response_schema_invalid';
 
 /**
  * Severity of a runner notice. Deliberately separate from `ObservationSeverity`
@@ -2119,7 +2121,7 @@ export type NoticeCode =
  * compliance trajectory_ — a different axis: something is fine today but the
  * spec already signals a future state change.
  *
- * - `info` — purely informational; no action required now.
+ * - `info` — non-grading context; it may still identify an actionable defect.
  * - `deprecation` — SHOULD migrate; the field/claim is deprecated in the current
  *   spec version.
  * - `future_required` — behavior is optional today but will be mandatory in a
@@ -2135,7 +2137,8 @@ export type NoticeSeverity = 'info' | 'deprecation' | 'future_required';
  * like "DEPRECATION" or "FUTURE-REQUIRED" without parsing prose strings.
  *
  * `ComplianceResult.notices` aggregates these across all storyboard runs,
- * deduplicated by `code`.
+ * deduplicated by `code`, or by (`code`, `capability_pointer`) when a pointer
+ * is present. This preserves one schema-invalid notice per response location.
  *
  * Spec: adcp-client#1704.
  */
@@ -2159,6 +2162,12 @@ export interface RunnerNotice {
    */
   capability_path?: string;
   /**
+   * RFC 6901 pointer into the agent's `get_adcp_capabilities` response.
+   * Distinct from `capability_path`, which is a human-readable dotted flag
+   * path. Notices may carry both when they identify the same location.
+   */
+  capability_pointer?: string;
+  /**
    * Click-through URL for adopters to read the underlying spec section,
    * migration guide, or AdCP issue. Optional; consumers that surface
    * notices in dashboards or CI output use this to deep-link the
@@ -2169,10 +2178,10 @@ export interface RunnerNotice {
    * Storyboard ids that triggered this notice. On `StoryboardResult.notices`
    * this is always a single-element array (the storyboard the notice came
    * from). On `ComplianceResult.notices` (the deduplicated cross-storyboard
-   * rollup) this aggregates every storyboard that emitted the same `code`,
-   * so auditors can see "how widespread" a deprecation or future-required
-   * signal is without re-walking the per-storyboard arrays. Order is stable
-   * across runs (insertion order across the storyboard execution order).
+   * rollup) this aggregates every storyboard that emitted the same dedupe key
+   * (`code`, or `code` + `capability_pointer` when present), so auditors can
+   * see "how widespread" a signal is without re-walking the per-storyboard
+   * arrays. Order is stable across runs (storyboard execution order).
    */
   storyboard_ids: string[];
 }
@@ -2896,11 +2905,13 @@ export interface StoryboardResult {
   /**
    * Structured protocol-compliance advisories produced for this storyboard
    * run. Each notice carries a stable `code` (machine-readable, suitable for
-   * CI badge routing) and a `severity` (`deprecation` | `future_required`).
+   * CI badge routing) and a non-grading `severity` (`info` | `deprecation` |
+   * `future_required`).
    * Always present; empty array when no notices were triggered.
    *
    * `ComplianceResult.notices` aggregates across all storyboard runs,
-   * deduplicated by `code`. Spec: adcp-client#1704.
+   * deduplicated by `code`, or by (`code`, `capability_pointer`) when a
+   * capability pointer is present. Spec: adcp-client#1704 and adcp#6256.
    */
   notices: RunnerNotice[];
   /**

@@ -367,6 +367,18 @@ export interface AgentProfile {
    */
   capabilities_probe_error?: string;
   /**
+   * Schema violations found during the preflight `get_adcp_capabilities`
+   * call. Kept separately from `capabilities_probe_error`: an invalid
+   * response is still available for best-effort storyboard selection, while
+   * the runner surfaces each violation as a structured notice.
+   */
+  capabilities_schema_issues?: Array<{
+    /** RFC 6901 pointer into the capabilities response. */
+    pointer: string;
+    /** Validator-authored explanation of the violation. */
+    message: string;
+  }>;
+  /**
    * Raw `get_adcp_capabilities` response body. Used by the storyboard runner to
    * evaluate `requires_capability` predicates (e.g. `adcp.idempotency.supported`)
    * that reference fields not extracted into the normalised profile shape above.

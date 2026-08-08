@@ -14,7 +14,7 @@ import type { DebugLogEntry } from '../types/adcp';
 import type { TaskInfo } from '../core/ConversationTypes';
 import { withCachedConnection } from './mcp';
 import { createMCPAuthHeaders } from '../auth';
-import { withSpan, injectTraceHeaders } from '../observability/tracing';
+import { withSpan } from '../observability/tracing';
 import { signingContextStorage, type AgentSigningContext } from '../signing/client';
 import { redactArgsForLog as sharedRedactArgsForLog } from '../utils/redact-args';
 import { withResponseSizeLimit } from './responseSizeLimit';
@@ -130,10 +130,8 @@ function mapMCPTaskToTaskInfo(
  * Build auth headers for MCP connections.
  */
 function buildAuthHeaders(authToken?: string, customHeaders?: Record<string, string>): Record<string, string> {
-  const traceHeaders = injectTraceHeaders();
   return {
     ...customHeaders,
-    ...traceHeaders,
     ...(authToken ? createMCPAuthHeaders(authToken) : {}),
   };
 }

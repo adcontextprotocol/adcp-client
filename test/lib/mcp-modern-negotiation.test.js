@@ -12,6 +12,7 @@ const { createServer } = require('node:http');
 const { callMCPTool, closeMCPConnections } = require('../../dist/lib/protocols/mcp.js');
 const { callMCPToolWithOAuth } = require('../../dist/lib/protocols/mcp.js');
 const { callMCPToolWithTasks } = require('../../dist/lib/protocols/mcp-tasks.js');
+const { withMCPConnectionScope } = require('../../dist/lib/protocols/index.js');
 const {
   probeModernMCPConnection,
   tryCallModernMCPTool,
@@ -176,6 +177,7 @@ test('modern discovery is reused within the same authorization context', async t
   const httpServer = createServer(toNodeHandler(handler));
   const url = await listen(httpServer);
   let discoverRequests = 0;
+  let initializeRequests = 0;
   const countingFetch = async (input, init) => {
     const request = input instanceof Request ? input.clone() : new Request(input, init);
     if (request.method === 'POST') {
@@ -184,9 +186,12 @@ test('modern discovery is reused within the same authorization context', async t
         .json()
         .catch(() => undefined);
       if (body?.method === 'server/discover') discoverRequests++;
+      if (body?.method === 'initialize') initializeRequests++;
     }
     return fetch(input, init);
   };
+  const controller = new AbortController();
+  const scopedOptions = { fetchFn: countingFetch, signal: controller.signal, requestTimeoutMs: 2_000 };
 
   t.after(async () => {
     await closeMCPConnections();
@@ -194,23 +199,32 @@ test('modern discovery is reused within the same authorization context', async t
     await closeServer(httpServer);
   });
 
-  const probe = await probeModernMCPConnection(url, 'tenant-a-token', undefined, {
-    fetchFn: countingFetch,
-  });
+  const probe = await probeModernMCPConnection(url, 'tenant-a-token', undefined, scopedOptions);
   assert.deepEqual(probe, { connected: true, era: 'modern' });
   assert.equal(discoverRequests, 1);
 
-  const cachedAttempt = await tryCallModernMCPTool(url, 'echo', {}, 'tenant-a-token', [], undefined, {
-    fetchFn: countingFetch,
-  });
-  assert.equal(cachedAttempt.handled, true);
-  assert.equal(discoverRequests, 1, 'the first tool connection should adopt the cached discovery result');
+  await withMCPConnectionScope(async () => {
+    const cachedAttempt = await tryCallModernMCPTool(url, 'echo', {}, 'tenant-a-token', [], undefined, scopedOptions);
+    assert.equal(cachedAttempt.handled, true);
+    assert.equal(discoverRequests, 2, 'the workflow should establish its own caller-owned discovery scope');
+    const initializesAfterFirstToolCall = initializeRequests;
 
-  const otherTenantAttempt = await tryCallModernMCPTool(url, 'echo', {}, 'tenant-b-token', [], undefined, {
-    fetchFn: countingFetch,
+    const reusedAttempt = await tryCallModernMCPTool(url, 'echo', {}, 'tenant-a-token', [], undefined, scopedOptions);
+    assert.equal(reusedAttempt.handled, true);
+    assert.equal(initializeRequests, initializesAfterFirstToolCall, 'scoped modern calls should reuse one session');
   });
+
+  const otherTenantAttempt = await tryCallModernMCPTool(
+    url,
+    'echo',
+    {},
+    'tenant-b-token',
+    [],
+    undefined,
+    scopedOptions
+  );
   assert.equal(otherTenantAttempt.handled, true);
-  assert.equal(discoverRequests, 2, 'discovery results must not cross authorization contexts');
+  assert.equal(discoverRequests, 3, 'discovery results must not cross authorization contexts');
 
   const { AgentClient } = require('../../dist/lib/core/AgentClient.js');
   const oauthClient = new AgentClient(
@@ -353,6 +367,50 @@ test('remote MCP client preserves the v1 path for a legacy server', async t => {
     debugLogs.some(entry => entry.message.includes('preserving the v1 Tasks path')),
     'legacy servers should retain the v1 client and Tasks compatibility path'
   );
+});
+
+test('handleLegacy policy is isolated from the cached legacy classification', async t => {
+  const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+  const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
+
+  const httpServer = createServer(async (req, res) => {
+    const server = new McpServer({ name: 'legacy-policy-test', version: '1.0.0' });
+    server.registerTool('echo', { description: 'Echo through the negotiated legacy era' }, async () => ({
+      content: [{ type: 'text', text: 'legacy-policy' }],
+    }));
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    try {
+      await server.connect(transport);
+      await transport.handleRequest(req, res);
+    } finally {
+      await server.close();
+    }
+  });
+  const url = await listen(httpServer);
+  const scopedFetch = (input, init) => fetch(input, init);
+  const controller = new AbortController();
+
+  t.after(async () => {
+    await closeMCPConnections();
+    httpServer.closeAllConnections?.();
+    await closeServer(httpServer);
+  });
+
+  const fallbackAttempt = await tryCallModernMCPTool(url, 'echo', {}, undefined, [], undefined, {
+    fetchFn: scopedFetch,
+    signal: controller.signal,
+    requestTimeoutMs: 2_000,
+  });
+  assert.deepEqual(fallbackAttempt, { handled: false });
+
+  const handledAttempt = await tryCallModernMCPTool(url, 'echo', {}, undefined, [], undefined, {
+    fetchFn: scopedFetch,
+    signal: controller.signal,
+    requestTimeoutMs: 2_000,
+    handleLegacy: true,
+  });
+  assert.equal(handledAttempt.handled, true);
+  assert.equal(handledAttempt.response.content[0].text, 'legacy-policy');
 });
 
 test('modern discovery 5xx fails closed without dispatching through the v1 client', async t => {

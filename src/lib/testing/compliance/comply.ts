@@ -53,7 +53,7 @@ import type {
   AdvisoryObservation,
   OverallStatus,
 } from './types';
-import { closeConnections } from '../../protocols';
+import { closeScopedConnections, withMCPConnectionScope } from '../../protocols';
 import type { VersionEnvelopeMode } from '../../protocols';
 import { detectController, hasTestController } from '../test-controller';
 import type { ControllerDetection } from '../test-controller';
@@ -609,11 +609,13 @@ export async function comply(agentUrl: string, options: ComplyOptions = {}): Pro
         `Production agents MUST terminate TLS. Pass { allow_http: true } (or --allow-http) for local development.`
     );
   }
-  try {
-    return await complyImpl(agentUrl, options);
-  } finally {
-    await closeConnections(options.protocol);
-  }
+  return withMCPConnectionScope(async () => {
+    try {
+      return await complyImpl(agentUrl, options);
+    } finally {
+      await closeScopedConnections(options.protocol);
+    }
+  });
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1435,8 +1437,8 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       ...(hostedStableLineAlias !== undefined && { hostedStableLineAlias }),
     });
 
-    // Aggregate notices from all storyboard runs. Dedup is by `code` (each
-    // notice type appears once in the rollup), but the per-occurrence
+    // Aggregate notices from all storyboard runs. Dedup is by `code`, or by
+    // (`code`, `capability_pointer`) for schema-validation notices, while the per-occurrence
     // `storyboard_ids` arrays are merged so auditors can see how widespread
     // a deprecation or future-required signal is without re-walking the
     // per-storyboard arrays. Order is stable: first occurrence wins for
@@ -1445,14 +1447,16 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     const aggregatedNotices = new Map<string, RunnerNotice>();
     for (const sbResult of storyboardResults) {
       for (const notice of sbResult.notices) {
-        const existing = aggregatedNotices.get(notice.code);
+        const noticeKey =
+          notice.capability_pointer === undefined ? notice.code : `${notice.code}\u0000${notice.capability_pointer}`;
+        const existing = aggregatedNotices.get(noticeKey);
         if (existing) {
           for (const sid of notice.storyboard_ids) {
             if (!existing.storyboard_ids.includes(sid)) existing.storyboard_ids.push(sid);
           }
         } else {
           // Clone so subsequent merges don't mutate the per-storyboard array.
-          aggregatedNotices.set(notice.code, { ...notice, storyboard_ids: [...notice.storyboard_ids] });
+          aggregatedNotices.set(noticeKey, { ...notice, storyboard_ids: [...notice.storyboard_ids] });
         }
       }
     }
