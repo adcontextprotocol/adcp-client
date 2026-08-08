@@ -1880,6 +1880,8 @@ export type RunnerDetailedSkipReason =
   | 'fixture_seed_unsupported'
   /** A valid fixture strategy ladder exhausted without finding a binding. */
   | 'fixture_unsatisfied'
+  /** A valid seller format requires an asset slot the selected test kit cannot synthesize. */
+  | 'creative_asset_fixture_unavailable'
   /**
    * A `requires_capability` predicate on the storyboard evaluated to false —
    * the agent explicitly declared it does not support the capability this
@@ -1920,6 +1922,7 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   force_scenario_unsupported: 'not_applicable',
   fixture_seed_unsupported: 'not_applicable',
   fixture_unsatisfied: 'not_applicable',
+  creative_asset_fixture_unavailable: 'not_applicable',
   capability_unsupported: 'unsatisfied_contract',
   rate_abuse_opt_out: 'unsatisfied_contract',
   missing_test_kit_contract: 'unsatisfied_contract',

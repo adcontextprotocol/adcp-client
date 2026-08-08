@@ -43,8 +43,9 @@ import { IDENTIFIER_DIGEST_LIMIT } from '../../upstream-recorder/constants';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import {
   BUILD_ASSETS_FROM_FORMAT_DIRECTIVE,
-  expandCreativeAssetDirectives,
+  expandCreativeAssetDirectivesWithDiagnostics,
   findUnresolvedCreativeAssetDirectives,
+  type CreativeAssetExpansionFailure,
 } from './creative-assets';
 import { resolveAccount, resolveBrand } from '../client';
 import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
@@ -437,6 +438,40 @@ function allExecutablePhasesCapabilitySkipped(
 
 function buildSkip(reason: RunnerSkipReason, detail?: string): { reason: RunnerSkipReason; detail: string } {
   return { reason, detail: detail ?? SKIP_DETAILS[reason] };
+}
+
+type CreativeAssetFixtureUnavailableFailure = Extract<
+  CreativeAssetExpansionFailure,
+  { reason: 'creative_asset_fixture_unavailable' }
+>;
+
+function buildCreativeAssetFixtureUnavailableStep(
+  step: StoryboardStep,
+  phaseId: string,
+  context: StoryboardContext,
+  allSteps: FlatStep[],
+  runState: ExecutionState,
+  failure: CreativeAssetFixtureUnavailableFailure,
+  task = step.task
+): StoryboardStepResult {
+  const detail =
+    `creative_asset_fixture_unavailable: slot "${failure.slotId}", asset type "${failure.assetType}", ` +
+    `constraint: ${failure.constraint} (${failure.path})`;
+  return {
+    step_id: step.id,
+    phase_id: phaseId,
+    title: step.title,
+    task,
+    passed: true,
+    skipped: true,
+    skip_reason: 'creative_asset_fixture_unavailable',
+    skip: buildSkip('not_applicable', detail),
+    duration_ms: 0,
+    validations: [],
+    context,
+    next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
+    extraction: { path: 'none' },
+  };
 }
 
 interface ResponseDerivedSkip {
@@ -4150,7 +4185,19 @@ async function executeStep(
 
   // Assemble seller-required creative slots from the selected format and
   // active test kit after all other nested request construction is complete.
-  request = expandCreativeAssetDirectives(request, context, options.test_kit) as Record<string, unknown>;
+  const creativeAssetExpansion = expandCreativeAssetDirectivesWithDiagnostics(request, context, options.test_kit);
+  request = creativeAssetExpansion.value as Record<string, unknown>;
+  if (!creativeAssetExpansion.ok && creativeAssetExpansion.failure.reason === 'creative_asset_fixture_unavailable') {
+    return buildCreativeAssetFixtureUnavailableStep(
+      step,
+      phaseId,
+      context,
+      allSteps,
+      runState,
+      creativeAssetExpansion.failure,
+      effectiveStep.task
+    );
+  }
 
   // Detect unresolved $context placeholders — a prior step likely failed
   // and didn't produce the expected output. Skip rather than sending garbage.
@@ -5180,6 +5227,16 @@ async function executeProbeStep(
       };
       const targetRequestResult = buildEffectiveStepRequest(targetStep, context, options, runState);
       if (!targetRequestResult.ok) {
+        if ('creativeAssetFailure' in targetRequestResult) {
+          return buildCreativeAssetFixtureUnavailableStep(
+            step,
+            phaseId,
+            context,
+            allSteps,
+            runState,
+            targetRequestResult.creativeAssetFailure
+          );
+        }
         const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
         return {
           step_id: step.id,
@@ -5407,6 +5464,10 @@ async function executeProbeStep(
 
 type FixtureBindingApplicationResult = { ok: true; request: Record<string, unknown> } | { ok: false; error: string };
 
+type EffectiveStepRequestResult =
+  | FixtureBindingApplicationResult
+  | { ok: false; creativeAssetFailure: CreativeAssetFixtureUnavailableFailure };
+
 function applyFixtureBindingsSafely(
   request: Record<string, unknown>,
   task: string,
@@ -5433,7 +5494,7 @@ function buildEffectiveStepRequest(
   context: StoryboardContext,
   options: StoryboardRunOptions,
   runState: ExecutionState
-): FixtureBindingApplicationResult {
+): EffectiveStepRequestResult {
   let request: Record<string, unknown>;
   if (options.request) {
     request = injectContext({ ...options.request }, context, runState.runnerVars);
@@ -5456,12 +5517,17 @@ function buildEffectiveStepRequest(
   request = applyIdempotencyInvariant(request, step.task, step);
   const fixtureBinding = applyFixtureBindingsSafely(request, step.task, options, runState);
   if (!fixtureBinding.ok) return fixtureBinding;
+  const creativeAssetExpansion = expandCreativeAssetDirectivesWithDiagnostics(
+    fixtureBinding.request,
+    context,
+    options.test_kit
+  );
+  if (!creativeAssetExpansion.ok && creativeAssetExpansion.failure.reason === 'creative_asset_fixture_unavailable') {
+    return { ok: false, creativeAssetFailure: creativeAssetExpansion.failure };
+  }
   return {
     ok: true,
-    request: expandCreativeAssetDirectives(fixtureBinding.request, context, options.test_kit) as Record<
-      string,
-      unknown
-    >,
+    request: creativeAssetExpansion.value as Record<string, unknown>,
   };
 }
 
