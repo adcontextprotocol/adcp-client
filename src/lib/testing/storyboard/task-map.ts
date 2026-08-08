@@ -102,10 +102,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function readCreativeWireHint(params: Record<string, unknown>): 'legacy' | 'canonical' | undefined {
+  if (!isRecord(params.ext) || !isRecord(params.ext.adcp)) return undefined;
+  const wire = params.ext.adcp.creative_wire;
+  return wire === 'legacy' || wire === 'canonical' ? wire : undefined;
+}
+
 function withLegacyCreativeWireHint(params: Record<string, unknown>): Record<string, unknown> {
+  if (readCreativeWireHint(params)) return params;
   const ext = isRecord(params.ext) ? params.ext : {};
   const adcp = isRecord(ext.adcp) ? ext.adcp : {};
-  if (adcp.creative_wire === 'legacy' || adcp.creative_wire === 'canonical') return params;
   return {
     ...params,
     ext: {
@@ -171,7 +177,10 @@ export async function executeStoryboardTask(
   params: Record<string, unknown>,
   opts: { skipIdempotencyAutoInject?: boolean; skipAccountValidation?: boolean; signal?: AbortSignal } = {}
 ): Promise<TaskResult> {
-  const legacyMethodName = gradesLegacyCreativeWire(client) ? LEGACY_CREATIVE_TASK_TO_METHOD[taskName] : undefined;
+  // AdCP 3.1 transition storyboards default to the legacy creative wire, but
+  // canonical-specific storyboards must be able to opt into the canonical API.
+  const useLegacyCreativeMethod = gradesLegacyCreativeWire(client) && readCreativeWireHint(params) !== 'canonical';
+  const legacyMethodName = useLegacyCreativeMethod ? LEGACY_CREATIVE_TASK_TO_METHOD[taskName] : undefined;
   const methodName =
     legacyMethodName ?? (Object.hasOwn(TASK_TO_METHOD, taskName) ? TASK_TO_METHOD[taskName] : undefined);
   const callParams = legacyMethodName ? withLegacyCreativeWireHint(params) : params;

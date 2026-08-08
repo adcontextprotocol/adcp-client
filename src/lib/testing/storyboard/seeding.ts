@@ -853,6 +853,8 @@ async function discoverProductCatalog(
       brand,
       account,
       pagination: { max_results: 100, ...(cursor && { cursor }) },
+      // Fixture match declarations target the canonical product shape.
+      ext: { adcp: { creative_wire: 'canonical' } },
     };
     let result;
     try {
