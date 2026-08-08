@@ -588,6 +588,21 @@ describe('createAdcpServer', () => {
       const caps = await callTool(server, 'get_adcp_capabilities', {});
       assert.strictEqual(caps.media_buy.features.inline_creative_management, true);
     });
+
+    it('does not emit media_buy capabilities for an empty features object (#2438)', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        creative: {
+          buildCreative: async () => ({ creative_manifest: { manifest_id: 'mf_1', assets: [] } }),
+        },
+        capabilities: { features: {} },
+      });
+      const caps = await callTool(server, 'get_adcp_capabilities', {});
+
+      assert.deepStrictEqual(caps.supported_protocols, ['creative']);
+      assert.strictEqual(caps.media_buy, undefined);
+    });
   });
 
   describe('response builder wiring', () => {

@@ -1806,6 +1806,64 @@ describe('SalesPlatform — full surface dispatch', () => {
 });
 
 describe('CreativeBuilderPlatform + AudiencePlatform wiring', () => {
+  function buildCreativeOnlyPlatform(capabilityOverrides = {}) {
+    return {
+      capabilities: {
+        specialisms: [],
+        config: {},
+        ...capabilityOverrides,
+      },
+      accounts: {
+        resolve: async () => ({ id: 'acc_1', metadata: {}, authInfo: { kind: 'api_key' } }),
+      },
+    };
+  }
+
+  async function getCapabilities(platform) {
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'creative-only',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'off' },
+      legacyHandlers: {
+        creative: {
+          buildCreative: async () => ({ creative_manifest: { manifest_id: 'mf_1', assets: [] } }),
+        },
+      },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_adcp_capabilities', arguments: {} },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    return result.structuredContent;
+  }
+
+  it('omits media_buy capabilities for a creative-only platform (#2438)', async () => {
+    const caps = await getCapabilities(buildCreativeOnlyPlatform());
+
+    assert.deepStrictEqual(caps.supported_protocols, ['creative']);
+    assert.strictEqual(caps.media_buy, undefined);
+  });
+
+  it('preserves a media_buy null override for a creative-only platform (#2438)', async () => {
+    const caps = await getCapabilities(
+      buildCreativeOnlyPlatform({
+        features: { inlineCreativeManagement: true },
+        overrides: { media_buy: null },
+      })
+    );
+
+    assert.deepStrictEqual(caps.supported_protocols, ['creative']);
+    assert.strictEqual(caps.media_buy, undefined);
+  });
+
+  it('emits media_buy capabilities when a creative-only platform explicitly declares features (#2438)', async () => {
+    const caps = await getCapabilities(buildCreativeOnlyPlatform({ features: { inlineCreativeManagement: false } }));
+
+    assert.deepStrictEqual(caps.supported_protocols, ['creative']);
+    assert.strictEqual(caps.media_buy.features.inline_creative_management, false);
+  });
+
   it('build_creative dispatches through platform.creative.buildCreative', async () => {
     let sawReq;
     const platform = {

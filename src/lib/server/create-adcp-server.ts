@@ -6470,7 +6470,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     supported_protocols: protocols as GetAdCPCapabilitiesResponse['supported_protocols'],
   };
 
-  if (protocols.includes('media_buy') || capConfig?.features) {
+  const hasExplicitMediaBuyFeatures = Object.keys(capConfig?.features ?? {}).length > 0;
+  if (protocols.includes('media_buy') || hasExplicitMediaBuyFeatures) {
     capabilitiesData.media_buy = {
       features: {
         ...(capConfig?.features?.canonicalCreatives !== undefined && {
