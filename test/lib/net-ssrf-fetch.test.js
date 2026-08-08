@@ -1,6 +1,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
+const dnsPromises = require('dns/promises');
 
 const {
   ssrfSafeFetch,
@@ -56,6 +57,45 @@ describe('ssrfSafeFetch — address guard', () => {
       () => ssrfSafeFetch('not a url'),
       err => err instanceof SsrfRefusedError && err.code === 'invalid_url'
     );
+  });
+});
+
+describe('ssrfSafeFetch — DNS deadline and cancellation', () => {
+  it('applies the per-request timeout while DNS lookup is pending', async t => {
+    t.mock.method(dnsPromises, 'lookup', () => new Promise(() => {}));
+    const startedAt = Date.now();
+
+    await assert.rejects(
+      () => ssrfSafeFetch('https://slow-dns.example/', { timeoutMs: 30 }),
+      err => {
+        assert.match(err.message, /ssrf-fetch: timeout/);
+        return true;
+      }
+    );
+
+    assert.ok(Date.now() - startedAt < 1000, 'DNS timeout should release the caller promptly');
+  });
+
+  it('propagates caller abort while DNS lookup is pending', async t => {
+    t.mock.method(dnsPromises, 'lookup', () => new Promise(() => {}));
+    const controller = new AbortController();
+    const reason = new Error('caller-aborted-dns');
+    const startedAt = Date.now();
+    setTimeout(() => controller.abort(reason), 30);
+
+    await assert.rejects(
+      () =>
+        ssrfSafeFetch('https://slow-dns.example/', {
+          signal: controller.signal,
+          timeoutMs: 2000,
+        }),
+      err => {
+        assert.strictEqual(err, reason);
+        return true;
+      }
+    );
+
+    assert.ok(Date.now() - startedAt < 1000, 'caller abort should release a pending DNS lookup promptly');
   });
 });
 

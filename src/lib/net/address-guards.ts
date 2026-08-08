@@ -63,6 +63,10 @@ privateIp.addSubnet('192.168.0.0', 16, 'ipv4');
 privateIp.addSubnet('224.0.0.0', 4, 'ipv4'); // multicast
 privateIp.addSubnet('192.0.0.0', 24, 'ipv4'); // RFC 6890 IETF protocol assignments (incl. Oracle IMDS)
 privateIp.addSubnet('192.88.99.0', 24, 'ipv4'); // 6to4 relay anycast (RFC 7526, deprecated)
+privateIp.addSubnet('192.0.2.0', 24, 'ipv4'); // documentation (TEST-NET-1)
+privateIp.addSubnet('198.18.0.0', 15, 'ipv4'); // benchmarking
+privateIp.addSubnet('198.51.100.0', 24, 'ipv4'); // documentation (TEST-NET-2)
+privateIp.addSubnet('203.0.113.0', 24, 'ipv4'); // documentation (TEST-NET-3)
 privateIp.addSubnet('240.0.0.0', 4, 'ipv4'); // reserved for future use
 privateIp.addAddress('255.255.255.255', 'ipv4'); // limited broadcast
 // v6
@@ -71,6 +75,8 @@ privateIp.addAddress('::1', 'ipv6'); // loopback
 privateIp.addSubnet('fe80::', 10, 'ipv6'); // link-local
 privateIp.addSubnet('fc00::', 7, 'ipv6'); // ULA
 privateIp.addSubnet('ff00::', 8, 'ipv6'); // multicast
+privateIp.addSubnet('100::', 64, 'ipv6'); // discard-only (RFC 6666)
+privateIp.addSubnet('2001:db8::', 32, 'ipv6'); // documentation
 // Wrapper prefixes — refuse unconditionally. Tunnels at the caller's edge can
 // translate these into private targets we can't see; safer to refuse than to
 // hope the gateway is configured the way we expect.

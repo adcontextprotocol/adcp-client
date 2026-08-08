@@ -21,6 +21,7 @@ const {
   RoutingError,
   DiscoveryFailure,
 } = require('../../dist/lib/testing/storyboard/agent-routing.js');
+const { runStoryboard } = require('../../dist/lib/testing/index.js');
 const { closeConnections } = require('../../dist/lib/protocols/index.js');
 
 // Pre-existing tests in agent-routing.test.js use `buildRoutingContextFromProfiles`
@@ -166,5 +167,21 @@ describe('agent-routing: discovery_resilient (#1367)', () => {
     // No protocols are claimed (every agent failed), so the step falls
     // through to default_agent rather than failing at routing time.
     assert.strictEqual(resolveAgentForStep(storyboard.phases[0].steps[0], options, ctx), 'broken');
+  });
+
+  test('runner redacts routed agent URL secrets from every result surface', async () => {
+    const url = `${STUB_FAILING_URL_1}?access_token=FAKE_ROUTED_QUERY_SECRET` + '#FAKE_ROUTED_FRAGMENT_SECRET';
+    const result = await runStoryboard('', makeStoryboard([{ id: 's1', title: 'probe', task: 'get_signals' }]), {
+      agents: { broken: { url } },
+      default_agent: 'broken',
+      discovery_resilient: true,
+      allow_http: true,
+    });
+
+    const serialized = JSON.stringify(result);
+    assert.doesNotMatch(serialized, /FAKE_ROUTED_QUERY_SECRET|FAKE_ROUTED_FRAGMENT_SECRET/);
+    assert.match(result.agent_map.broken, /access_token=REDACTED/);
+    assert.match(result.phases[0].steps[0].agent_url, /access_token=REDACTED/);
+    assert.match(result.discovery_failures[0].url, /access_token=REDACTED/);
   });
 });

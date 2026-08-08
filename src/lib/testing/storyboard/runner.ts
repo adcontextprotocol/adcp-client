@@ -76,6 +76,12 @@ import { runControllerSeeding, type ControllerSeedingResult } from './seeding';
 import { applyFixtureBindingsToRequest, type FixtureBindingRegistry } from './fixture-resolution';
 import { getComplianceCacheDir } from './compliance';
 import { signWebhook, type RequestLike } from '../../signing/client';
+import {
+  gradeOAuthMetadataGraph,
+  redactOAuthUrlForOutput,
+  redactOAuthUrlsInText,
+  type OAuthMetadataGraphGrade,
+} from './oauth-metadata-graph';
 
 /**
  * Pre-computed controller-seeding outcome passed into `executeStoryboardPass`.
@@ -403,6 +409,12 @@ function evaluateRequiresCapabilityGate(
   if (rawCaps !== undefined) {
     const actual = resolveCapabilityPathForGate(rawCaps, predicate, adcpVersion);
     return evaluateCapabilityPredicate(predicate, actual);
+  }
+  // OAuth 3.2 grading is opt-in on the raw wire declaration. A normalized
+  // profile or advertised get_adcp_capabilities tool is not evidence that the
+  // agent asserted oauth.supported: true.
+  if ('equals' in predicate && predicate.path === 'oauth.supported' && predicate.equals === true) {
+    return evaluateCapabilityPredicate(predicate, undefined);
   }
   const tools = agentTools ?? profile?.tools;
   if ('equals' in predicate && tools !== undefined && !tools.includes('get_adcp_capabilities')) {
@@ -1054,7 +1066,10 @@ function filterResponseHeaders(headers: Record<string, string> | undefined): Rec
   if (!headers) return undefined;
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(headers)) {
-    if (RESPONSE_HEADER_ALLOWLIST.has(k.toLowerCase())) out[k] = v;
+    const lower = k.toLowerCase();
+    if (RESPONSE_HEADER_ALLOWLIST.has(lower)) {
+      out[lower] = lower === 'location' ? redactOAuthUrlForOutput(v) : v;
+    }
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }
@@ -1302,7 +1317,7 @@ function buildCapabilityUnsupportedResult(
   return {
     storyboard_id: storyboard.id,
     storyboard_title: storyboard.title,
-    agent_url: agentUrls[0]!,
+    agent_url: redactOAuthUrlForOutput(agentUrls[0]!),
     overall_passed: true,
     phases: [
       {
@@ -1420,7 +1435,7 @@ function buildRequirementUnmetResult(
   return {
     storyboard_id: storyboard.id,
     storyboard_title: storyboard.title,
-    agent_url: agentUrls[0]!,
+    agent_url: redactOAuthUrlForOutput(agentUrls[0]!),
     overall_passed: true,
     phases: [
       {
@@ -1475,7 +1490,7 @@ function buildRequiredAnyOfToolsMissingResult(
   return {
     storyboard_id: storyboard.id,
     storyboard_title: storyboard.title,
-    agent_url: agentUrls[0]!,
+    agent_url: redactOAuthUrlForOutput(agentUrls[0]!),
     overall_passed: true,
     phases: [
       {
@@ -1826,7 +1841,7 @@ export function buildDiscoveryFailedResult(
   return {
     storyboard_id: storyboard.id,
     storyboard_title: storyboard.title,
-    agent_url: agentUrls[0]!,
+    agent_url: redactOAuthUrlForOutput(agentUrls[0]!),
     overall_passed: false,
     phases: [
       {
@@ -1873,7 +1888,7 @@ function buildRequiredToolsMissingResult(
   return {
     storyboard_id: storyboard.id,
     storyboard_title: storyboard.title,
-    agent_url: agentUrls[0]!,
+    agent_url: redactOAuthUrlForOutput(agentUrls[0]!),
     overall_passed: true,
     phases: [
       {
@@ -2988,7 +3003,7 @@ async function executeStoryboardPass(
         // bug reports show which agent served which tool. In routed mode
         // every step gets the field; in replica round-robin only when
         // there are 2+ URLs.
-        result.agent_url = assignment.agentUrl;
+        result.agent_url = redactOAuthUrlForOutput(assignment.agentUrl);
         result.agent_index = assignment.instanceIndex + 1;
       }
       stepResults.push(result);
@@ -3437,13 +3452,17 @@ async function executeStoryboardPass(
   const result: StoryboardResult = {
     storyboard_id: storyboard.id,
     storyboard_title: storyboard.title,
-    agent_url: agentUrls[0]!,
-    ...(isMultiInstance && { agent_urls: [...agentUrls] }),
+    agent_url: redactOAuthUrlForOutput(agentUrls[0]!),
+    ...(isMultiInstance && { agent_urls: agentUrls.map(redactOAuthUrlForOutput) }),
     // Inner multi-pass passes surface as `round-robin` (that's what they are
     // individually); the aggregating wrapper relabels the top-level result
     // `multi-pass`.
     ...(isMultiInstance && { multi_instance_strategy: 'round-robin' as const }),
-    ...(routingContext && { agent_map: { ...routingContext.agentMap } }),
+    ...(routingContext && {
+      agent_map: Object.fromEntries(
+        Object.entries(routingContext.agentMap).map(([specialism, url]) => [specialism, redactOAuthUrlForOutput(url)])
+      ),
+    }),
     overall_passed:
       failedCount === 0 && (requiredPhasesPassed || storyboardWideFixtureUnavailable) && !assertionsFailed,
     phases: phaseResults,
@@ -3464,12 +3483,8 @@ async function executeStoryboardPass(
       ? {
           discovery_failures: routingContext.discoveryFailures.map(f => ({
             agent_key: f.agentKey,
-            // Scrub URL userinfo (`https://user:pass@host/`) before
-            // echoing onto the result — an operator may legitimately
-            // encode credentials in the URL, and the leaderboard /
-            // dashboard surface mustn't carry them.
-            url: f.url.replace(/\/\/[^/@\s]+@/, '//[REDACTED]@'),
-            error: f.underlying,
+            url: redactOAuthUrlForOutput(f.url),
+            error: redactOAuthUrlsInText(f.underlying),
           })),
         }
       : {}),
@@ -3591,8 +3606,8 @@ async function runMultiPass(
   return {
     storyboard_id: storyboard.id,
     storyboard_title: storyboard.title,
-    agent_url: agentUrls[0]!,
-    agent_urls: [...agentUrls],
+    agent_url: redactOAuthUrlForOutput(agentUrls[0]!),
+    agent_urls: agentUrls.map(redactOAuthUrlForOutput),
     multi_instance_strategy: 'multi-pass',
     overall_passed: overallPassed,
     phases: first.phases,
@@ -4289,7 +4304,7 @@ async function executeStep(
         transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
         operation: effectiveStep.task,
         payload: redactSecrets(request),
-        ...(runState.agentUrl ? { url: runState.agentUrl } : {}),
+        ...(runState.agentUrl ? { url: redactOAuthUrlForOutput(runState.agentUrl) } : {}),
       },
       extraction: { path: 'none' },
     };
@@ -4575,7 +4590,7 @@ async function executeStep(
     transport: useRawProbe ? 'mcp' : options.protocol === 'a2a' ? 'a2a' : 'mcp',
     operation: effectiveStep.task,
     payload: redactSecrets(request),
-    ...(runState.agentUrl ? { url: runState.agentUrl } : {}),
+    ...(runState.agentUrl ? { url: redactOAuthUrlForOutput(runState.agentUrl) } : {}),
   };
   const inputSchemaStripNotices = collectInputSchemaFieldStripNotices(
     (taskResult as { debug_logs?: unknown } | undefined)?.debug_logs,
@@ -5153,6 +5168,7 @@ async function executeProbeStep(
 ): Promise<StoryboardStepResult> {
   const start = Date.now();
   let httpResult: HttpProbeResult | undefined;
+  let oauthMetadataGraph: OAuthMetadataGraphGrade | undefined;
   const probeOpts = {
     allowPrivateIp: options.allow_http === true,
     fetchFn: options.transport?.fetchFn,
@@ -5177,7 +5193,16 @@ async function executeProbeStep(
   if (httpResult) {
     // Contract-gated synthetic probes self-skip before doing any network work.
   } else if (step.task === 'protected_resource_metadata') {
-    httpResult = await probeProtectedResourceMetadata(runState.agentUrl, probeOpts);
+    if (step.validations?.some(validation => validation.check === 'oauth_metadata_graph')) {
+      oauthMetadataGraph = await gradeOAuthMetadataGraph(runState.agentUrl, {
+        allowHttp: options.allow_http === true,
+        signal: options.signal,
+        trustedFetchFn: options.transport?.fetchFn,
+      });
+      httpResult = oauthMetadataGraph.protected_resource_result;
+    } else {
+      httpResult = await probeProtectedResourceMetadata(runState.agentUrl, probeOpts);
+    }
     // RFC 9728 presence semantics (adcp-client#677): a 404 means the agent is
     // honestly not advertising OAuth. Convert to a clean step skip so the
     // phase loop can cascade-skip the rest of oauth_discovery instead of
@@ -5186,7 +5211,7 @@ async function executeProbeStep(
     // it correctly, regardless of whether the test kit also declared an
     // API key. Fetch errors (status 0) fall through to the normal failure
     // path since we can't distinguish "agent down" from "misconfigured".
-    if (!httpResult.error && httpResult.status === 404) {
+    if (!oauthMetadataGraph && !httpResult.error && httpResult.status === 404) {
       httpResult.skipped = true;
       httpResult.skip_reason = 'oauth_not_advertised';
     }
@@ -5354,7 +5379,7 @@ async function executeProbeStep(
         transport: targetTransport,
         operation: rateLimitTrip.trip_target_task,
         payload: redactSecrets(observedRequest),
-        ...(runState.agentUrl ? { url: runState.agentUrl } : {}),
+        ...(runState.agentUrl ? { url: redactOAuthUrlForOutput(runState.agentUrl) } : {}),
       };
     }
   }
@@ -5366,7 +5391,11 @@ async function executeProbeStep(
     transport: 'http',
     operation: step.task,
     payload: null,
-    ...(httpResult?.url ? { url: httpResult.url } : runState.agentUrl ? { url: runState.agentUrl } : {}),
+    ...(httpResult?.url
+      ? { url: redactOAuthUrlForOutput(httpResult.url) }
+      : runState.agentUrl
+        ? { url: redactOAuthUrlForOutput(runState.agentUrl) }
+        : {}),
   };
   const filteredProbeHeaders = filterResponseHeaders(httpResult?.headers);
   const responseTransport = requestRecordOverride?.transport ?? 'http';
@@ -5382,6 +5411,7 @@ async function executeProbeStep(
   const redactedHttpResult = httpResult
     ? {
         ...httpResult,
+        headers: filteredProbeHeaders ?? {},
         body: redactSecrets(httpResult.body),
         ...(responseTransport !== 'http' && { status: undefined }),
       }
@@ -5428,6 +5458,7 @@ async function executeProbeStep(
     request: requestRecord,
     ...(responseRecord && { response: responseRecord }),
     storyboardContext: context,
+    ...(oauthMetadataGraph && { oauthMetadataGraph }),
   };
   const validations = step.validations?.length ? runValidations(step.validations, vctx) : [];
   const allValidationsPassed = validations.every(v => v.passed);
@@ -6335,6 +6366,9 @@ function phaseContainsOauthMetadataProbe(phase: StoryboardPhase): boolean {
 function agentAdvertisesOauth(profile: AgentProfile | undefined): boolean {
   const rawCaps = profile?.raw_capabilities;
   if (rawCaps === undefined) return true;
+  const oauthSupported = resolveCapabilityPath(rawCaps, 'oauth.supported');
+  if (oauthSupported === true) return true;
+  if (oauthSupported === false) return false;
   const endpoint = resolveCapabilityPath(rawCaps, 'account.authorization_endpoint');
   return typeof endpoint === 'string' && endpoint.length > 0;
 }
@@ -6836,7 +6870,7 @@ async function prefetchUpstreamTraffic(
       transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
       operation: 'comply_test_controller',
       payload: redactSecrets({ scenario: 'query_upstream_traffic', params }),
-      ...(runState.agentUrl ? { url: runState.agentUrl } : {}),
+      ...(runState.agentUrl ? { url: redactOAuthUrlForOutput(runState.agentUrl) } : {}),
     };
     const startMs = Date.now();
     let payload: UpstreamTrafficSuccess | { error: string; error_kind?: string };

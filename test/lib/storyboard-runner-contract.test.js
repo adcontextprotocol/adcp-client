@@ -387,7 +387,7 @@ describe('runner-output contract: validation_result', () => {
     assert.strictEqual(result.response, undefined);
   });
 
-  test('authored validation id echoes on pass, fail, and not_applicable results', () => {
+  test('authored validation id echoes on pass and failure results, including unknown checks', () => {
     const results = runValidations(
       [
         {
@@ -407,7 +407,7 @@ describe('runner-output contract: validation_result', () => {
         {
           id: 'check_future_rule',
           check: 'future_check_kind',
-          description: 'Future check grades not_applicable',
+          description: 'Unknown check fails closed',
         },
       ],
       {
@@ -422,8 +422,8 @@ describe('runner-output contract: validation_result', () => {
     assert.strictEqual(results[0].id, 'check_health_impaired');
     assert.strictEqual(results[1].passed, false);
     assert.strictEqual(results[1].id, 'check_status_active');
-    assert.strictEqual(results[2].passed, true);
-    assert.strictEqual(results[2].not_applicable, true);
+    assert.strictEqual(results[2].passed, false);
+    assert.strictEqual(results[2].not_applicable, undefined);
     assert.strictEqual(results[2].id, 'check_future_rule');
   });
 

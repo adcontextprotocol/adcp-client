@@ -43,6 +43,8 @@ import { detectShapeDriftHints } from './shape-drift-hints';
 import { PROBE_TASK_ALLOWLIST } from './test-kit';
 import { validateCanonicalFormatSatisfaction } from './canonical-format-satisfaction';
 import { extractTaskAdcpError } from './rate-limit-trip';
+import type { OAuthMetadataGraphGrade } from './oauth-metadata-graph';
+import { normalizeOAuthResourceForComparison, redactOAuthUrlForOutput } from './oauth-metadata-graph';
 
 /**
  * Broader validation context that carries the run-level state a single
@@ -129,6 +131,8 @@ export interface ValidationContext {
    * two checks grade `not_applicable`.
    */
   crossResponses?: CrossResponseSet;
+  /** Async-prefetched result consumed by the oauth_metadata_graph check. */
+  oauthMetadataGraph?: OAuthMetadataGraphGrade;
 }
 
 /**
@@ -296,6 +300,8 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return requireHttpResult(ctx, validation, hr => validateOn401RequireHeader(validation, hr));
     case 'resource_equals_agent_url':
       return requireHttpResult(ctx, validation, hr => validateResourceEqualsAgentUrl(validation, hr, ctx.agentUrl));
+    case 'oauth_metadata_graph':
+      return validateOAuthMetadataGraph(validation, ctx.oauthMetadataGraph);
     case 'any_of':
       return validateAnyOf(validation, ctx.contributions);
     case 'a2a_submitted_artifact':
@@ -340,22 +346,18 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
     case 'array_length':
       return validateArrayLength(validation, resolveTarget(ctx));
     default:
-      // Forward-compat default per runner-output-contract.yaml v2.0.0:
-      // when the runner does not implement an authored check kind (e.g. a
-      // storyboard declares a check added in a later spec minor version),
-      // grade `not_applicable` rather than failing the step. Additive
-      // check-type extensions are explicitly part of the spec evolution
-      // model — failing on unknown values would brick older runners every
-      // time the spec adds a check.
+      // Fail closed. A published storyboard check that this runner does not
+      // implement is a coverage failure, not evidence that the agent passed.
+      // This is especially important for security grades: silently turning a
+      // new auth check into not_applicable can mint a false green report.
       return {
         check: validation.check,
-        passed: true,
-        not_applicable: true,
+        passed: false,
         description: validation.description,
-        note:
-          `runner does not implement check type '${validation.check}' — ` +
-          `graded as not_applicable to preserve forward compatibility`,
+        error: `runner does not implement authored check type '${validation.check}'`,
         json_pointer: null,
+        expected: 'a validation check implemented by this runner',
+        actual: validation.check,
       };
   }
 }
@@ -1762,23 +1764,6 @@ function validateOn401RequireHeader(validation: StoryboardValidation, hr: HttpPr
  * significant here — use `canonicalizeAgentUrlForScope` for `refs_resolve`
  * scope comparisons where paths must be dropped.
  */
-function normalizeAgentUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    u.hash = '';
-    u.search = '';
-    u.username = '';
-    u.password = '';
-    // Drop trailing slash but keep the root "/".
-    if (u.pathname.length > 1 && u.pathname.endsWith('/')) {
-      u.pathname = u.pathname.slice(0, -1);
-    }
-    return `${u.protocol.toLowerCase()}//${u.host.toLowerCase()}${u.pathname}`;
-  } catch {
-    return url;
-  }
-}
-
 /**
  * Canonical form of an agent URL for `refs_resolve` scope comparisons.
  *
@@ -1834,12 +1819,14 @@ function validateResourceEqualsAgentUrl(
       description: validation.description,
       error: 'Response body missing string `resource` field.',
       json_pointer: '/resource',
-      expected: normalizeAgentUrl(agentUrl),
+      expected: redactOAuthUrlForOutput(normalizeOAuthResourceForComparison(agentUrl)),
       actual: null,
     };
   }
-  const expected = normalizeAgentUrl(agentUrl);
-  const actual = normalizeAgentUrl(resource);
+  const expected = normalizeOAuthResourceForComparison(agentUrl);
+  const actual = normalizeOAuthResourceForComparison(resource);
+  const displayExpected = redactOAuthUrlForOutput(expected);
+  const displayActual = redactOAuthUrlForOutput(actual);
   const passed = actual === expected;
   // Don't echo the advertised value verbatim in the human-readable message —
   // compliance reports may be shared publicly and the raw diff helps attackers
@@ -1856,7 +1843,7 @@ function validateResourceEqualsAgentUrl(
     const expectedHost = new URL(expected).host;
     const hostDiffers = actualHost !== expectedHost;
     redactedError =
-      `RFC 9728 \`resource\` does not equal the URL clients call (${expected}). ` +
+      `RFC 9728 \`resource\` does not equal the URL clients call (${displayExpected}). ` +
       (hostDiffers
         ? `Advertised host differs from the agent host — the most common cause is copying your authorization server origin into \`resource\`. `
         : `Advertised path differs from the agent path. `) +
@@ -1876,9 +1863,63 @@ function validateResourceEqualsAgentUrl(
     description: validation.description,
     error: redactedError,
     json_pointer: '/resource',
-    expected,
-    actual,
+    expected: displayExpected,
+    actual: displayActual,
   };
+}
+
+function validateOAuthMetadataGraph(
+  validation: StoryboardValidation,
+  grade: OAuthMetadataGraphGrade | undefined
+): ValidationResult {
+  const expected = {
+    profile: 'adcp/oauth-metadata-graph/v1',
+    require_authorization_servers: true,
+    follow_all_authorization_servers: true,
+    probe_advertised_endpoints: true,
+  };
+  if (!grade) {
+    return {
+      check: validation.check,
+      passed: false,
+      description: validation.description,
+      error: 'oauth_metadata_graph was not prefetched by the storyboard runner',
+      json_pointer: null,
+      expected,
+      actual: null,
+    };
+  }
+  if (grade.success) {
+    return {
+      check: validation.check,
+      passed: true,
+      description: validation.description,
+      json_pointer: null,
+      expected,
+      observations: grade.observations,
+    };
+  }
+  const primary = grade.findings[0];
+  return {
+    check: validation.check,
+    passed: false,
+    description: validation.description,
+    error: `${grade.error_code}: ${grade.error}`,
+    json_pointer: primary?.field ? findingFieldToJsonPointer(primary.field) : null,
+    expected,
+    actual: {
+      code: grade.error_code,
+      ...(primary?.url && { url: primary.url }),
+      ...(primary?.field && { field: primary.field }),
+      ...(primary?.message && { detail: primary.message }),
+    },
+    observations: grade.observations,
+  };
+}
+
+function findingFieldToJsonPointer(field: string): string {
+  const segments = field.replace(/\[(\d+)\]/g, '.$1').split('.');
+  return `/${segments.map(segment => segment.replace(/~/g, '~0').replace(/\//g, '~1')).join('/')}`;
 }
 
 // ────────────────────────────────────────────────────────────

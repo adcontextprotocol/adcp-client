@@ -908,6 +908,7 @@ export type StoryboardValidationCheck =
   | 'on_401_require_header'
   // Cross-cutting
   | 'resource_equals_agent_url'
+  | 'oauth_metadata_graph'
   | 'any_of'
   // A2A wire-shape checks (transport-specific; skipped on non-A2A runs)
   | 'a2a_submitted_artifact'
@@ -2137,13 +2138,11 @@ export interface ValidationResult {
   /** Optional remediation hint. */
   remediation?: string;
   /**
-   * Forward-compat marker: set when the runner did not implement the
-   * authored check kind and graded it as `not_applicable` (passed: true)
-   * to preserve forward compatibility with future spec additions. The
-   * companion `note` describes the coverage gap. Per
-   * runner-output-contract.yaml v2.0.0 these contribute to the run
-   * summary's `validations_not_applicable` counter so consumers can
-   * distinguish "runner is older than the storyboard" from clean passes.
+   * Marker for an implemented check whose declared applicability conditions
+   * were not met. Unknown authored check kinds fail closed; they never set
+   * this flag or contribute a false green result. Entries carrying this flag
+   * contribute to `validations_not_applicable` so consumers can distinguish
+   * inapplicable coverage from clean passes.
    */
   not_applicable?: boolean;
   /**
