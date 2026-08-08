@@ -4,6 +4,7 @@ const {
   mergeSeed,
   overlayById,
   mergeSeedProduct,
+  mergeSeedProductLegacy,
   mergeSeedPricingOption,
   mergeSeedCreative,
   mergeSeedPlan,
@@ -253,6 +254,23 @@ describe('mergeSeedProduct', () => {
     // Singular sibling untouched.
     const singularEntry = merged.publisher_properties.find(p => p.publisher_domain === 'c.example');
     assert.strictEqual(singularEntry.selection_type, 'all');
+  });
+});
+
+describe('mergeSeedProductLegacy', () => {
+  it('delegates to the product merge semantics while preserving legacy fields', () => {
+    const base = {
+      product_id: 'legacy-product',
+      format_ids: [{ agent_url: 'https://seller.example', id: 'display_300x250' }],
+      pricing_options: [{ pricing_option_id: 'default', pricing_model: 'cpm', currency: 'USD', rate: 10 }],
+    };
+    const merged = mergeSeedProductLegacy(base, {
+      pricing_options: [{ pricing_option_id: 'default', rate: 25 }],
+    });
+
+    assert.deepStrictEqual(merged.format_ids, base.format_ids);
+    assert.strictEqual(merged.pricing_options[0].rate, 25);
+    assert.strictEqual(merged.pricing_options[0].pricing_model, 'cpm');
   });
 });
 

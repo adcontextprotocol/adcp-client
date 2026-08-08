@@ -194,6 +194,7 @@ export {
   mergeSeed,
   overlayById,
   mergeSeedProduct,
+  mergeSeedProductLegacy,
   mergeSeedPricingOption,
   mergeSeedCreative,
   mergeSeedPlan,

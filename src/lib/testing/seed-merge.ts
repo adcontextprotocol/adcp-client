@@ -265,6 +265,23 @@ export function mergeSeedProduct<TBase extends Partial<Product> = Partial<Produc
 }
 
 /**
+ * Legacy-wire counterpart to {@link mergeSeedProduct}.
+ *
+ * The testing seed helpers intentionally operate on the raw generated product
+ * shape used by legacy and conformance fixtures. This explicit v13 migration
+ * name makes that supported boundary discoverable without requiring consumers
+ * to cast the canonical `Product` API through `unknown`.
+ *
+ * Runtime merge semantics are identical to {@link mergeSeedProduct}.
+ */
+export function mergeSeedProductLegacy<TBase extends Partial<Product> = Partial<Product>>(
+  base: TBase,
+  seed: Partial<Product> | null | undefined
+): TBase {
+  return mergeSeedProduct(base, seed);
+}
+
+/**
  * Merge a `seed_pricing_option` fixture onto a baseline pricing option. The
  * spec's `PricingOption` is a discriminated union; the generic signature
  * preserves whichever variant the base declares. No nested id-keyed arrays
