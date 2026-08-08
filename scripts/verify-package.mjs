@@ -81,6 +81,13 @@ try {
   const tarballPath = path.join(tmpDir, tgz);
   console.log(`   → ${tgz}`);
 
+  const packedPaths = new Set(run('tar', ['-tf', tarballPath]).trim().split('\n'));
+  const requiredGuides = ['package/docs/migration-12-to-13.md', 'package/MIGRATION-v8.md'];
+  for (const guide of requiredGuides) {
+    if (!packedPaths.has(guide)) throw new Error(`packed migration guide is missing: ${guide}`);
+  }
+  console.log('   migration guides referenced by README are present');
+
   console.log(`📥 Installing tarball + peer floors:\n   ${peerFloors.join('\n   ')}`);
   run('npm', ['install', '--no-audit', '--no-fund', '--loglevel=error', tarballPath, ...peerFloors], {
     cwd: tmpDir,
@@ -94,6 +101,7 @@ try {
     { specifier: '@adcp/sdk', symbol: 'EventTypeValues' },
     { specifier: '@adcp/sdk/enums', symbol: 'EventTypeValues' },
     { specifier: '@adcp/sdk/server', symbol: 'A2AInvocationError' },
+    { specifier: '@adcp/sdk/testing', symbol: 'mergeSeedProductLegacy' },
   ];
 
   // Shared by both generated smoke modules. A function declaration (not an

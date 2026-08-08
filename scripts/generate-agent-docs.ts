@@ -1042,7 +1042,7 @@ function generateLlmsTxt(
   );
   ln();
   ln(
-    `- **\`mergeSeedProduct\`** (plus \`mergeSeedPricingOption\`, \`mergeSeedCreative\`, \`mergeSeedPlan\`, \`mergeSeedMediaBuy\`): permissive merge of a sparse storyboard fixture onto the seller's baseline defaults. \`undefined\`/\`null\` keep base; arrays replace by default; well-known id-keyed lists (\`pricing_options\`, \`publisher_properties\`, \`packages\`, \`assets\`, plan \`findings\`) overlay by id so seeding one entry doesn't drop the rest.`
+    `- **\`mergeSeedProduct\`** (plus the raw-wire \`mergeSeedProductLegacy\` migration counterpart, \`mergeSeedPricingOption\`, \`mergeSeedCreative\`, \`mergeSeedPlan\`, \`mergeSeedMediaBuy\`): permissive merge of a sparse storyboard fixture onto the seller's baseline defaults. \`undefined\`/\`null\` keep base; arrays replace by default; well-known id-keyed lists (\`pricing_options\`, \`publisher_properties\`, \`packages\`, \`assets\`, plan \`findings\`) overlay by id so seeding one entry doesn't drop the rest.`
   );
   ln(
     `- **\`bridgeFromTestControllerStore(store, productDefaults)\`**: wires a \`Map<string, unknown>\` seed store into \`get_products\` responses automatically. Sandbox requests merge seeded + handler products (seeded wins collisions); production traffic (no sandbox marker, or a resolved non-sandbox account) skips the bridge.`

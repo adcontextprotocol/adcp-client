@@ -61,6 +61,19 @@ import type {
 
 Do not fix an upgrade error by adding `format_id` or `agent_url` to a canonical object. Select a `format_option_id`, send `format_option_refs`, and give each creative a canonical `format_kind`.
 
+Conformance code that merges sparse product fixtures onto raw legacy defaults
+can use the explicitly named testing helper without a cast:
+
+```ts
+import type { LegacyProduct } from '@adcp/sdk';
+import { mergeSeedProductLegacy } from '@adcp/sdk/testing';
+
+const merged: Partial<LegacyProduct> = mergeSeedProductLegacy(defaults, fixture);
+```
+
+`mergeSeedProductLegacy` has the same runtime behavior as
+`mergeSeedProduct` and preserves the subtype of the baseline object.
+
 ## Client methods
 
 The primary `getProducts`, `createMediaBuy`, `updateMediaBuy`, `syncCreatives`, `listCreatives`, `getMediaBuys`, `getMediaBuyDelivery`, and `getCreativeDelivery` methods accept and return canonical creative shapes. Their generic `executeTask()` equivalents enforce the same boundary.
