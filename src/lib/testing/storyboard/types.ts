@@ -84,6 +84,11 @@ export interface Storyboard {
    *     declares this requirement implicitly. Authors do not need to
    *     write `requires: [webhook_receiver]` — the tokens are
    *     self-describing.
+   *   - `webhook_replay_receiver` — the runner must be configured with an
+   *     inbound buyer/orchestrator receiver URL
+   *     (`StoryboardRunOptions.webhook_replay_receiver.url`). Autodetected
+   *     from any `replay_webhook_vector` step and graded not applicable when
+   *     absent. Spec: adcp-client#2356.
    *   - `request_signer` — the agent under test MUST advertise
    *     `request_signing.supported: true` in `get_adcp_capabilities`.
    *     Autodetected: any storyboard whose `id === 'signed_requests'`
@@ -1956,13 +1961,14 @@ export interface RunnerSelectionResult {
  * surface change; coordinate with the upstream spec proposal before
  * extending.
  *
- * Spec: adcp-client#1626, adcp-client#2281.
+ * Spec: adcp-client#1626, adcp-client#2281, adcp-client#2356.
  */
 export type RequirementName =
   | 'controller'
   | 'seeded_state'
   | 'real_wire'
   | 'webhook_receiver'
+  | 'webhook_replay_receiver'
   | 'request_signer'
   | 'multi_agent';
 
@@ -1978,6 +1984,7 @@ export const KNOWN_REQUIREMENTS: ReadonlySet<RequirementName> = new Set([
   'seeded_state',
   'real_wire',
   'webhook_receiver',
+  'webhook_replay_receiver',
   'request_signer',
   'multi_agent',
 ] as const satisfies readonly RequirementName[]);

@@ -1089,6 +1089,21 @@ async function runStoryboardBody(
     );
   }
 
+  // Applicability gates must run before either multi-instance strategy.
+  // In particular, multi-pass performs discovery and aggregates per-replica
+  // counts, while a missing runtime requirement is one whole-storyboard skip.
+  const allRequires = resolveStoryboardRequires(storyboard, options);
+  if (allRequires.length) {
+    const unmet = checkRequires(allRequires, storyboard, options, options._profile);
+    if (unmet) {
+      const resultAgentUrls = options.agents ? Object.values(options.agents).map(e => e.url) : agentUrls;
+      return {
+        ...buildRequirementUnmetResult(resultAgentUrls, storyboard, unmet.requirement, unmet.detail),
+        notices: collectCapabilityNotices(storyboard, options._profile?.raw_capabilities),
+      };
+    }
+  }
+
   const requestedStrategy = options.multi_instance_strategy ?? 'round-robin';
   if (requestedStrategy === 'multi-pass' && isMultiInstance) {
     // Webhook receivers bind a fresh ephemeral port per pass. Each pass would
@@ -1105,18 +1120,6 @@ async function runStoryboardBody(
       );
     }
     return runMultiPass(agentUrls, storyboard, options);
-  }
-
-  const allRequires = resolveStoryboardRequires(storyboard, options);
-  if (allRequires.length) {
-    const unmet = checkRequires(allRequires, storyboard, options, options._profile);
-    if (unmet) {
-      const resultAgentUrls = options.agents ? Object.values(options.agents).map(e => e.url) : agentUrls;
-      return {
-        ...buildRequirementUnmetResult(resultAgentUrls, storyboard, unmet.requirement, unmet.detail),
-        notices: collectCapabilityNotices(storyboard, options._profile?.raw_capabilities),
-      };
-    }
   }
 
   if (options.agents) {
@@ -1339,6 +1342,7 @@ const REQUIREMENT_TO_SKIP_REASON: Record<RequirementName, RunnerSkipReason> = {
   seeded_state: 'requirement_unmet',
   real_wire: 'requirement_unmet',
   webhook_receiver: 'requirement_unmet',
+  webhook_replay_receiver: 'not_applicable',
   request_signer: 'not_applicable',
   multi_agent: 'requirement_unmet',
 };
@@ -1498,6 +1502,10 @@ function normalizeAgentToolNames(tools: unknown): string[] | undefined {
  *     Autodetected from step `sample_request` token presence (see
  *     `detectImplicitRequires`); authors don't write this tag manually.
  *     Spec: adcp-client#1678.
+ *   - `webhook_replay_receiver` — operator supplied a non-empty
+ *     `options.webhook_replay_receiver.url`. Autodetected from any
+ *     `replay_webhook_vector` step (see `detectImplicitRequires`); authors
+ *     don't write this tag manually. Spec: adcp-client#2356.
  *   - `request_signer` — agent advertises `request_signing.supported: true`
  *     in `get_adcp_capabilities`. Autodetected for any storyboard whose
  *     id is `'signed_requests'` or that contains a `request_signing_probe`
@@ -1572,6 +1580,19 @@ function checkRequires(
               'Required by the webhook-emission universal: ' +
               'compliance/{version}/universal/webhook-emission.yaml grades not_applicable when ' +
               'no receiver is configured (prerequisites section).',
+          };
+        }
+        break;
+      }
+      case 'webhook_replay_receiver': {
+        if (!options.webhook_replay_receiver?.url) {
+          return {
+            requirement,
+            detail:
+              'Storyboard contains a `replay_webhook_vector` step but no webhook replay receiver URL ' +
+              'is configured. Pass `webhook_replay_receiver.url` in StoryboardRunOptions to run ' +
+              'inbound buyer/orchestrator receiver conformance. Seller agents without an inbound ' +
+              'receiver grade not_applicable for this storyboard.',
           };
         }
         break;
@@ -1684,6 +1705,12 @@ function valueContainsWebhookToken(value: unknown): boolean {
  *     don't need to remember to add `requires: [webhook_receiver]`
  *     separately. Contract-gated synthetic steps only count when their
  *     `requires_contract` is configured for this run. Spec: adcp-client#1678.
+ *   - `'webhook_replay_receiver'`, autodetected from any
+ *     `replay_webhook_vector` step. These vectors target an inbound
+ *     buyer/orchestrator receiver, so without `webhook_replay_receiver.url`
+ *     the whole storyboard grades not_applicable instead of executing an
+ *     all-skipped phase that fails the required-phase rollup. Spec:
+ *     adcp-client#2356.
  *   - `'request_signer'`, autodetected from `storyboard.id ===
  *     'signed_requests'` or any step using the synthesized
  *     `request_signing_probe` task. The signed-requests universal
@@ -1699,16 +1726,17 @@ function detectImplicitRequires(
 ): RequirementName[] {
   const requires: RequirementName[] = [];
   let needsWebhook = false;
+  let needsWebhookReplayReceiver = false;
   let needsSigner = storyboard.id === 'signed_requests';
   const contractsInScope = new Set(options.contracts ?? []);
   for (const phase of storyboard.phases) {
     for (const step of phase.steps) {
-      const rateLimitTripInScope = !step.requires_contract || contractsInScope.has(step.requires_contract);
+      const stepContractInScope = !step.requires_contract || contractsInScope.has(step.requires_contract);
       if (
         !needsWebhook &&
         ((step.sample_request && valueContainsWebhookToken(step.sample_request)) ||
           (step.rate_limit_trip?.trip_target_sample_request &&
-            rateLimitTripInScope &&
+            stepContractInScope &&
             valueContainsWebhookToken(step.rate_limit_trip.trip_target_sample_request)))
       ) {
         needsWebhook = true;
@@ -1716,11 +1744,15 @@ function detectImplicitRequires(
       if (!needsSigner && step.task === 'request_signing_probe') {
         needsSigner = true;
       }
-      if (needsWebhook && needsSigner) break;
+      if (!needsWebhookReplayReceiver && stepContractInScope && step.task === REPLAY_WEBHOOK_VECTOR_TASK) {
+        needsWebhookReplayReceiver = true;
+      }
+      if (needsWebhook && needsWebhookReplayReceiver && needsSigner) break;
     }
-    if (needsWebhook && needsSigner) break;
+    if (needsWebhook && needsWebhookReplayReceiver && needsSigner) break;
   }
   if (needsWebhook) requires.push('webhook_receiver');
+  if (needsWebhookReplayReceiver) requires.push('webhook_replay_receiver');
   if (needsSigner) requires.push('request_signer');
   return requires;
 }
@@ -5452,6 +5484,26 @@ async function executeReplayWebhookVectorStep(
   runState: ExecutionState
 ): Promise<StoryboardStepResult> {
   const start = Date.now();
+  if (step.requires_contract && !new Set(options.contracts ?? []).has(step.requires_contract)) {
+    const detail = `Test-kit contract "${step.requires_contract}" is not configured on this runner.`;
+    const reason: RunnerDetailedSkipReason = 'missing_test_kit_contract';
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: true,
+      skipped: true,
+      skip_reason: reason,
+      skip: buildSkip(DETAILED_SKIP_TO_CANONICAL[reason], detail),
+      duration_ms: Date.now() - start,
+      validations: [],
+      context,
+      next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
+      extraction: { path: 'none', note: 'test-kit contract not configured' },
+    };
+  }
+
   const receiver = options.webhook_replay_receiver;
   if (!receiver?.url) {
     const detail =

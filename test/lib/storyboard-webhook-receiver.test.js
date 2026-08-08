@@ -1047,16 +1047,17 @@ describe('runStoryboard: replay_webhook_vector', () => {
 
     assert.strictEqual(result.overall_passed, true);
     assert.strictEqual(result.failed_count, 0);
-    assert.strictEqual(result.skipped_count, 5);
-    assert.strictEqual(result.phases.length, 2);
-    for (const step of result.phases.flatMap(phase => phase.steps)) {
-      assert.strictEqual(step.skipped, true);
-      assert.strictEqual(step.skip.reason, 'not_applicable');
-      assert.match(step.skip.detail, /webhook_replay_receiver\.url/);
-    }
+    assert.strictEqual(result.skipped_count, 1);
+    assert.strictEqual(result.phases.length, 1);
+    assert.strictEqual(result.phases[0].phase_id, 'requirement_unmet');
+    const step = result.phases[0].steps[0];
+    assert.strictEqual(step.skipped, true);
+    assert.strictEqual(step.skip.reason, 'not_applicable');
+    assert.strictEqual(step.skip.requirement, 'webhook_replay_receiver');
+    assert.match(step.skip.detail, /webhook_replay_receiver\.url/);
   });
 
-  test('does not pass vacuously when another required step has a non-applicable skip reason', async () => {
+  test('applies the receiver requirement before evaluating unrelated step-level skips', async () => {
     const storyboard = storyboardWith([
       {
         id: 'post_delivery_report_envelope',
@@ -1076,12 +1077,11 @@ describe('runStoryboard: replay_webhook_vector', () => {
       agentTools: [],
     });
 
-    assert.strictEqual(result.overall_passed, false);
+    assert.strictEqual(result.overall_passed, true);
     assert.strictEqual(result.failed_count, 0);
-    assert.strictEqual(result.skipped_count, 2);
-    assert.deepStrictEqual(
-      result.phases[0].steps.map(step => step.skip.reason),
-      ['not_applicable', 'missing_tool']
-    );
+    assert.strictEqual(result.skipped_count, 1);
+    assert.strictEqual(result.phases[0].phase_id, 'requirement_unmet');
+    assert.strictEqual(result.phases[0].steps[0].skip.reason, 'not_applicable');
+    assert.strictEqual(result.phases[0].steps[0].skip.requirement, 'webhook_replay_receiver');
   });
 });
