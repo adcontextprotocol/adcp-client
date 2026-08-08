@@ -669,6 +669,29 @@ describe('runStoryboard: multi-instance multi-pass', () => {
     );
   });
 
+  test('gates replay_webhook_vector before multi-pass discovery when no receiver is configured', async () => {
+    const storyboard = storyboardWith([
+      {
+        id: 'replay_envelope',
+        title: 'Replay a canonical webhook envelope',
+        task: 'replay_webhook_vector',
+        vector_ref: 'static/test-vectors/webhook-receiver-envelope.json#positive/mcp-delivery-report-envelope',
+      },
+    ]);
+
+    const result = await runStoryboard(['http://127.0.0.1:1/mcp', 'http://127.0.0.1:2/mcp'], storyboard, {
+      ...RUN_OPTIONS_BASE,
+      multi_instance_strategy: 'multi-pass',
+    });
+
+    assert.strictEqual(result.overall_passed, true);
+    assert.strictEqual(result.failed_count, 0);
+    assert.strictEqual(result.skipped_count, 1, 'whole-storyboard applicability skip is not multiplied per replica');
+    assert.strictEqual(result.passes, undefined, 'gate returns before multi-pass discovery and aggregation');
+    assert.strictEqual(result.phases[0].steps[0].skip.reason, 'not_applicable');
+    assert.strictEqual(result.phases[0].steps[0].skip.requirement, 'webhook_replay_receiver');
+  });
+
   test('rotates dispatch across 3 replicas with 3 passes', async () => {
     const shared = new Map();
     const agents = await Promise.all([
