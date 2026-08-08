@@ -91,6 +91,27 @@ The same rule applies to raw `creative`, `governance`, and `brandRights` groups.
 
 ## Legacy utility and low-level server names
 
+### Upstream recorder payload digests
+
+`computePayloadDigestSha256()` now has one third-argument shape:
+`PayloadDigestOptions`. Replace the removed bare `RegExp` and `false` forms
+with their named equivalents:
+
+```ts
+computePayloadDigestSha256(payload, contentType, {
+  redactPattern: /^(authorization|vendor_secret)$/i,
+});
+
+computePayloadDigestSha256(redactedPayload, contentType, {
+  prenormalized: true,
+});
+```
+
+TypeScript rejects the old forms, and untyped JavaScript calls fail with
+`PayloadDigestError`. When using `redactPattern: false`, also set
+`prenormalized: true`; disabling redaction for an unverified payload remains
+an error.
+
 Named-format fixtures and preview helpers are no longer easy to mistake for
 canonical discovery APIs:
 
