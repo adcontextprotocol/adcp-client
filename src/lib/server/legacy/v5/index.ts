@@ -7,7 +7,8 @@
  * which wraps this constructor with the typed specialism interfaces,
  * compile-time capability enforcement, ctx_metadata auto-hydration,
  * idempotency-principal synthesis, status mappers, multi-tenant routing,
- * and webhook auto-emit. See `docs/migration-5.x-to-6.x.md`.
+ * and async task completion webhooks. Synchronous terminal responses remain
+ * inline by default. See `docs/migration-5.x-to-6.x.md`.
  *
  * Reasons to import from `legacy/v5` rather than `@adcp/sdk/server`:
  *

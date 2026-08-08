@@ -438,14 +438,20 @@ createAdcpServerFromPlatform(platform, {
   `{ tenantId, config, server } | null` without URL parsing. Use this
   instead of `resolveByRequest(canonicalHost, '/<id>/mcp')` tricks.
   Same `pending` / `disabled` health gate as the resolveByXxx helpers.
-- **`autoEmitCompletionWebhooks` is on by default (v6.0).** Sync-success
-  arms of `create_media_buy` / `update_media_buy` / `sync_creatives`
-  auto-fire a completion webhook when the buyer supplied
-  `push_notification_config.url`. Fire-and-forget — does not block the
-  sync response. Adopters who emit webhooks manually inside their
-  handlers (idempotency duplication concern) pass
-  `autoEmitCompletionWebhooks: false` on `createAdcpServerFromPlatform`
-  to suppress.
+- **`autoEmitCompletionWebhooks` now defaults to `false`.** AdCP sends
+  completion webhooks only for status changes after the initial response;
+  a request that returns a terminal result inline does not also emit a
+  completion webhook. This reverses the v6.0 default. Existing integrations
+  that temporarily require the old duplicate-delivery behavior can pass
+  `autoEmitCompletionWebhooks: true` to `createAdcpServerFromPlatform`.
+  That opt-in is a non-conformant compatibility extension: its synthesized
+  `sync-*` task ID is not registered and cannot be polled with
+  `get_task_status`, and it applies to synchronous discovery responses
+  (`get_products`, `get_signals`) as well as mutations. Delivery is detached
+  and best-effort. Use a durable request idempotency store, ingress rate
+  limits, and bounded emitter timeouts while the option is enabled to avoid
+  replayed duplicates or unbounded work from slow receivers. Migrate buyers
+  to consume the inline terminal result, then remove the option.
 - **`allowPrivateWebhookUrls` for sandbox testing.** The framework
   rejects loopback / RFC 1918 / link-local destinations on
   `push_notification_config.url` by default — accepting them in

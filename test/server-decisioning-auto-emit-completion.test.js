@@ -1,9 +1,6 @@
-// F12 — auto-emit completion webhook on sync responses with
-// push_notification_config.url. v6 framework previously fired only on
-// HITL task completion; sync mutating tools left buyers polling
-// (or adopters wired ctx.emitWebhook manually inside every handler).
-// Spec-listed mutating tools (create_media_buy, update_media_buy,
-// sync_creatives) now auto-fire when the buyer supplied a push URL.
+// Sync terminal responses do not emit completion webhooks by default.
+// `autoEmitCompletionWebhooks: true` preserves the legacy behavior as
+// an explicit, non-conformant compatibility extension.
 
 process.env.NODE_ENV = 'test';
 
@@ -49,7 +46,7 @@ function basePlatform() {
   };
 }
 
-function buildServer(opts = {}) {
+function buildServer(opts = {}, platform = basePlatform()) {
   const calls = [];
   const taskWebhookEmitter = {
     emit: async params => {
@@ -58,7 +55,7 @@ function buildServer(opts = {}) {
     },
     unsigned: true, // suppress signed-emitter warning in tests
   };
-  const server = createAdcpServerFromPlatform(basePlatform(), {
+  const server = createAdcpServerFromPlatform(platform, {
     name: 'auto-emit-host',
     version: '0.0.1',
     validation: { requests: 'off', responses: 'off' },
@@ -89,9 +86,73 @@ async function flushMicrotasks() {
   await new Promise(r => setImmediate(r));
 }
 
-describe('F12: auto-emit completion webhook on sync mutating responses', () => {
-  it('fires webhook on sync create_media_buy success when push_notification_config.url is set', async () => {
+describe('sync completion webhook compatibility opt-in', () => {
+  it('does not emit a webhook for a synchronous terminal response by default', async () => {
     const { server, calls } = buildServer();
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          ...ARGS_BASE,
+          push_notification_config: { url: 'https://buyer.example.com/webhook' },
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent.media_buy_id, 'mb_42');
+    await flushMicrotasks();
+    assert.strictEqual(calls.length, 0, 'sync terminal response must not emit by default');
+  });
+
+  it('does not emit by default through the creative-owned sync_creatives path', async () => {
+    const platform = basePlatform();
+    delete platform.sales;
+    platform.capabilities.specialisms = [];
+    platform.creative = {
+      syncCreatives: async () => [{ creative_id: 'cr_1', action: 'created', status: 'approved' }],
+    };
+    const { server, calls } = buildServer({}, platform);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'sync_creatives',
+        arguments: {
+          account: { account_id: 'acc_1' },
+          creatives: [{ creative_id: 'cr_1', name: 'Creative 1', format_kind: 'image', assets: {} }],
+          idempotency_key: 'dddddddd-dddd-dddd-dddd-dddddddddddd',
+          push_notification_config: { url: 'https://buyer.example.com/webhook' },
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    await flushMicrotasks();
+    assert.strictEqual(calls.length, 0, 'creative sync terminal response must not emit by default');
+  });
+
+  it('does not emit by default through the synchronous get_signals path', async () => {
+    const platform = basePlatform();
+    platform.signals = { getSignals: async () => ({ signals: [] }) };
+    const { server, calls } = buildServer({}, platform);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_signals',
+        arguments: {
+          account: { account_id: 'acc_1' },
+          discovery_mode: 'brief',
+          brief: 'sports fans',
+          push_notification_config: { url: 'https://buyer.example.com/webhook' },
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    await flushMicrotasks();
+    assert.strictEqual(calls.length, 0, 'signals sync terminal response must not emit by default');
+  });
+
+  it('fires webhook when the non-conformant compatibility extension is explicitly enabled', async () => {
+    const { server, calls } = buildServer({ autoEmitCompletionWebhooks: true });
     const result = await server.dispatchTestRequest({
       method: 'tools/call',
       params: {
@@ -116,7 +177,7 @@ describe('F12: auto-emit completion webhook on sync mutating responses', () => {
   });
 
   it('does NOT fire when buyer omits push_notification_config.url', async () => {
-    const { server, calls } = buildServer();
+    const { server, calls } = buildServer({ autoEmitCompletionWebhooks: true });
     await server.dispatchTestRequest({
       method: 'tools/call',
       params: { name: 'create_media_buy', arguments: ARGS_BASE },
@@ -140,23 +201,8 @@ describe('F12: auto-emit completion webhook on sync mutating responses', () => {
     assert.strictEqual(calls.length, 0, 'auto-emit suppressed');
   });
 
-  it('default (option omitted) is true — webhook fires', async () => {
-    const { server, calls } = buildServer({});
-    await server.dispatchTestRequest({
-      method: 'tools/call',
-      params: {
-        name: 'create_media_buy',
-        arguments: {
-          ...ARGS_BASE,
-          push_notification_config: { url: 'https://buyer.example.com/webhook' },
-        },
-      },
-    });
-    assert.strictEqual(calls.length, 1, 'default-on');
-  });
-
   it('passes echoed token to the webhook payload', async () => {
-    const { server, calls } = buildServer();
+    const { server, calls } = buildServer({ autoEmitCompletionWebhooks: true });
     await server.dispatchTestRequest({
       method: 'tools/call',
       params: {
@@ -182,6 +228,7 @@ describe('F12: auto-emit completion webhook on sync mutating responses', () => {
       validation: { requests: 'off', responses: 'off' },
       taskWebhookEmitter: failingEmitter,
       allowPrivateWebhookUrls: true,
+      autoEmitCompletionWebhooks: true,
     });
     const result = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -199,7 +246,7 @@ describe('F12: auto-emit completion webhook on sync mutating responses', () => {
   });
 
   it('sync_creatives auto-fires webhook on success', async () => {
-    const { server, calls } = buildServer();
+    const { server, calls } = buildServer({ autoEmitCompletionWebhooks: true });
     await server.dispatchTestRequest({
       method: 'tools/call',
       params: {
@@ -226,7 +273,7 @@ describe('F12: auto-emit completion webhook on sync mutating responses', () => {
     // straight through projectSync without extractPushConfig /
     // routeIfHandoff. Broadcast-tv storyboard's
     // expect_window_update_webhook step relies on this.
-    const { server, calls } = buildServer();
+    const { server, calls } = buildServer({ autoEmitCompletionWebhooks: true });
     await server.dispatchTestRequest({
       method: 'tools/call',
       params: {
@@ -268,6 +315,7 @@ describe('F12: auto-emit completion webhook on sync mutating responses', () => {
       validation: { requests: 'off', responses: 'off' },
       taskWebhookEmitter: slowEmitter,
       allowPrivateWebhookUrls: true,
+      autoEmitCompletionWebhooks: true,
     });
     const start = Date.now();
     const result = await server.dispatchTestRequest({
