@@ -231,3 +231,34 @@ nightly job to broaden coverage.
   fuzzing driven by an LLM.
 - **Semantic validation** — budget math, referential integrity across
   plans. The fuzzer checks shape, not semantics.
+
+## Trusted Match Context router replay
+
+Context Match routers expose raw `POST /context`, not an MCP or A2A tool. A
+storyboard step named `replay_trusted_match_context_vector` therefore uses the
+runner-native HTTP harness:
+
+```ts
+import { runStoryboard } from '@adcp/sdk/testing';
+
+await runStoryboard(routerUrl, storyboard, {
+  trusted_match_context_router_runner: {
+    router_url: routerUrl,
+    async registerProviders({ providers, request }) {
+      // Install each { provider_id, context_url } through the router's
+      // operator/admin seam. Return an optional cleanup callback.
+      await configureRouter({ property_rid: request.property_rid, providers });
+      return () => removeRouterTestRegistrations(request.property_rid);
+    },
+  },
+});
+```
+
+The runner loads the packaged `trusted-match-context-merge` vector, hosts its
+provider `/context` fixtures, calls `registerProviders`, posts the storyboard's
+`sample_request` (or `vector.request` when supplied) to
+`<router_url>/context`, and applies the step's normal validations to the actual
+router response. For remote routers, configure `provider_server` with
+`mode: 'proxy_url'` and a public base URL routed to the local fixture listener.
+Without the option and registration callback, the storyboard grades
+`not_applicable`; the pseudo-task is never sent through MCP or A2A.

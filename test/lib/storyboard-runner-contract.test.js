@@ -504,6 +504,15 @@ describe('runner-output contract: secret redaction', () => {
     assert.deepStrictEqual(out.list, [{ name: 'x' }]);
   });
 
+  test('redactSecrets preserves own JSON keys named __proto__ without mutating the clone prototype', () => {
+    const input = JSON.parse('{"__proto__":{"value":"kept"},"constructor":{"value":"also-kept"}}');
+    const out = redactSecrets(input);
+    assert.equal(Object.getPrototypeOf(out), Object.prototype);
+    assert.equal(Object.hasOwn(out, '__proto__'), true);
+    assert.deepEqual(out.__proto__, { value: 'kept' });
+    assert.deepEqual(out.constructor, { value: 'also-kept' });
+  });
+
   test('filterResponseHeaders allowlists safe headers and drops the rest', () => {
     const out = filterResponseHeaders({
       'content-type': 'application/json',

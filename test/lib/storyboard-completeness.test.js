@@ -49,6 +49,7 @@ const HARNESS_TASKS = new Set([
   // Inbound webhook receiver conformance replays a fixture into the local
   // receiver instead of invoking a seller protocol tool.
   'replay_webhook_vector',
+  'replay_trusted_match_context_vector',
   'fetch_brand_jwks',
   'assert_jwks_purpose',
   'expect_rate_limit_not_replayed',
