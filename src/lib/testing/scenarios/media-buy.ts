@@ -27,6 +27,7 @@ import {
 } from '../client';
 import { testDiscovery } from './discovery';
 import { getAuthoritativeMediaBuyStatus } from '../../utils/media-buy-status';
+import { generateIdempotencyKey } from '../../utils/idempotency';
 
 /**
  * Find a suitable product for testing based on options
@@ -783,7 +784,7 @@ export async function testCreativeSync(
       const firstFormat = formatIds?.[0] || formats?.[0];
       if (firstFormat) {
         if (typeof firstFormat === 'string') {
-          formatId = { id: firstFormat };
+          formatId = { ...formatId, id: firstFormat };
         } else {
           const formatObj = firstFormat as Record<string, unknown>;
           formatId = (formatObj.format_id as Record<string, unknown>) || formatObj;
@@ -794,12 +795,14 @@ export async function testCreativeSync(
 
   // Test sync_creatives with a simple creative
   // Assets must be an object keyed by asset_role, not an array
+  const syncKey = generateIdempotencyKey();
   const testCreative = {
-    creative_id: `test-creative-${Date.now()}`,
+    creative_id: `test-creative-${syncKey}`,
     name: 'E2E Test Creative',
     format_id: formatId,
     assets: {
       primary: {
+        asset_type: 'image' as const,
         url: 'https://via.placeholder.com/300x250',
         width: 300,
         height: 250,
@@ -815,6 +818,7 @@ export async function testCreativeSync(
       client.syncCreatives({
         account: accountRef,
         creatives: [testCreative],
+        idempotency_key: syncKey,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
       } as any) as Promise<TaskResult>
   );
