@@ -1,5 +1,42 @@
 # Changelog
 
+## 13.0.0-rc.9
+
+### Major Changes
+
+- 18a55f1: fix(server): align `list_accounts` handlers with the wire request, type resolved account modes, and project optional pagination totals
+- 76775e2: Stop emitting completion webhooks for synchronous terminal responses by default, as required by AdCP. Existing adopters can temporarily restore the previous duplicate-delivery behavior with the explicit, non-conformant `autoEmitCompletionWebhooks: true` compatibility option.
+- 5c52875: Allow `create_media_buy` server handlers to return the protocol's structured multi-error payload arm without unsafe casts.
+
+  BREAKING NOTE: Code that reads success-only fields from `CreateMediaBuyPayload` must first narrow out the `errors` arm.
+
+- 966e97a: Remove the legacy bare `RegExp` and `false` third-argument forms from `computePayloadDigestSha256()`. Pass custom redaction as `{ redactPattern }` and identify already-normalized payloads with `{ prenormalized: true }`.
+- 7138e1a: **Breaking:** Compliance results no longer serialize scenarios twice.
+
+  `ComplianceResult.tested_tracks` is now `TestedTrackEntry[]`. Reference entries retain track identity, status, label, observations, duration, mode, and `_view: 'reference'`, but no longer carry `scenarios` or `skipped_scenarios`; those arrays live only on canonical `ComplianceResult.tracks` entries. Full `--json` output therefore serializes each scenario once.
+
+  Consumers reading `tested_tracks[n].scenarios` must iterate `tracks` instead. Custom fixtures that used `_view: 'reference'` on `TrackResult` must use `TestedTrackEntry`; `TrackResult._view` now accepts only `'canonical'`. CI consumers that need a stable, compact report should use `buildComplianceSummary()` from `@adcp/sdk/testing` (also re-exported by `@adcp/sdk/compliance`) or `--summary-output`. The new `TestedTrackEntry` type is exported from both package paths.
+
+### Minor Changes
+
+- 90711da: Add the capability-gated OAuth metadata graph grader for the AdCP 3.2 compliance bundle, including bounded per-hop SSRF-safe discovery, exact issuer validation, shared protected-resource normalization, and the upstream deterministic vector corpus. Unknown authored storyboard checks now fail closed instead of producing a false-green not-applicable result.
+
+  Behavior changes: unrecognized authored check values now fail validation instead of passing as `not_applicable`, intentionally enforcing #2455's security-grade release-blocker requirement rather than runner-output-contract v2.0's older fail-open forward-compatibility rule. The existing `resource_equals_agent_url` check now uses the shared security-storyboard resource comparison: scheme and host case plus exact default ports are normalized, while paths (including a trailing slash), userinfo, query strings, and fragments remain byte-significant. Agents that previously passed only because those resource components were discarded may now fail that check.
+
+- f294d53: Grade storyboards with the canonical `fixture_unavailable` reason when the selected test kit cannot synthesize a seller-required creative asset slot. Preflight future directives before intervening side effects, preserve slot-level diagnostics, and use exact text-slot mappings.
+- 4abd5e9: Add a raw-HTTP Trusted Match Context router conformance replay primitive with runner-hosted provider fixtures and an operator-owned registration seam.
+
+### Patch Changes
+
+- d3e3f24: Omit the media-buy capability block from creative-only platforms unless they explicitly declare media-buy features.
+- 52f69c7: Fix `testCreativeSync()` fixture to be schema-valid: add `asset_type: 'image'` discriminator on `assets.primary`, preserve `agent_url` in the string-format fallback path via object spread, and add `idempotency_key` to the `sync_creatives` call envelope.
+- 9689007: Keep testing-scenario creative fixtures schema-valid by adding the inline image discriminator and filling missing format owners from the seller without overwriting explicit creative-agent ownership.
+- 3681669: Fix source builds in hoisted dependency layouts by replacing the install-location-dependent `structured-headers` TypeScript path mapping with a version-pinned local declaration.
+- 3999a50: Honor explicit canonical creative-wire requests in pre-3.2 storyboards and use canonical product catalogs for fixture discovery.
+- 6b2ba73: Grade webhook receiver storyboards as not applicable when no replay receiver URL is configured, instead of reporting an all-skipped run as failing.
+- 8868b28: Grade webhook replay storyboards as not applicable when no inbound receiver URL is configured.
+- bd97b6a: Reject unexpanded storyboard creative-asset directives before client dispatch and expose the expansion helpers through `@adcp/sdk/testing`.
+
 ## 13.0.0-rc.8
 
 ### Minor Changes
