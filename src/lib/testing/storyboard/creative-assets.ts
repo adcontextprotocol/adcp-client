@@ -37,6 +37,8 @@ type AssetBuildResult = { ok: true; asset: JsonObject } | { ok: false; constrain
 
 type AssetsBuildResult = { ok: true; assets: JsonObject } | { ok: false; failure: AssetsBuildFailure };
 
+type RequiredSlotsResult = { ok: true; slots: RequiredSlot[] } | { ok: false; constraint: string };
+
 function isObject(value: unknown): value is JsonObject {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -137,31 +139,42 @@ function slotDimensions(slot: JsonObject, fallback: Dimensions): Dimensions {
   };
 }
 
-function requiredSlots(format: JsonObject): RequiredSlot[] {
+function requiredSlots(format: JsonObject): RequiredSlotsResult {
   const canonicalSlots = Array.isArray(format.slots) ? format.slots : undefined;
   const legacySlots = Array.isArray(format.assets)
     ? format.assets
     : Array.isArray(format.assets_required)
       ? format.assets_required
       : undefined;
+  const usesAssetsRequired = canonicalSlots === undefined && !Array.isArray(format.assets) && legacySlots !== undefined;
   const slots = canonicalSlots ?? legacySlots ?? [];
   const fallback = formatDimensions(format);
+  const container = canonicalSlots !== undefined ? 'slots' : usesAssetsRequired ? 'assets_required' : 'assets';
 
-  return slots.flatMap(slotValue => {
-    if (!isObject(slotValue) || slotValue.required !== true) return [];
+  const required: RequiredSlot[] = [];
+  for (let index = 0; index < slots.length; index += 1) {
+    const slotValue = slots[index];
+    if (!isObject(slotValue) || (!usesAssetsRequired && slotValue.required !== true)) continue;
     const isRepeatableGroup = slotValue.item_type === 'repeatable_group';
-    const id = canonicalSlots || isRepeatableGroup ? slotValue.asset_group_id : slotValue.asset_id;
+    const id = canonicalSlots !== undefined || isRepeatableGroup ? slotValue.asset_group_id : slotValue.asset_id;
     const assetType =
       typeof slotValue.asset_type === 'string'
         ? slotValue.asset_type
         : isRepeatableGroup
           ? 'repeatable_group'
           : undefined;
-    if (typeof id !== 'string' || assetType === undefined) return [];
+    const idField = canonicalSlots !== undefined || isRepeatableGroup ? 'asset_group_id' : 'asset_id';
+    if (typeof id !== 'string') {
+      return { ok: false, constraint: `required ${container}[${index}].${idField} must be a string` };
+    }
+    if (assetType === undefined) {
+      return { ok: false, constraint: `required ${container}[${index}].asset_type must be a string` };
+    }
     const requirements = isObject(slotValue.requirements) ? slotValue.requirements : {};
     const dimensions = slotDimensions(slotValue, fallback);
-    return [{ id, assetType, requirements, ...dimensions }];
-  });
+    required.push({ id, assetType, requirements, ...dimensions });
+  }
+  return { ok: true, slots: required };
 }
 
 function imageConstraint(slot: RequiredSlot): string {
@@ -420,10 +433,13 @@ function buildAssets(value: unknown, context: StoryboardContext, testKit: unknow
   if (!resolved.ok) {
     return { ok: false, failure: { reason: resolved.reason, constraint: resolved.constraint } };
   }
-  const slots = requiredSlots(resolved.format);
+  const required = requiredSlots(resolved.format);
+  if (!required.ok) {
+    return { ok: false, failure: { reason: 'malformed_directive', constraint: required.constraint } };
+  }
 
   const built: JsonObject = {};
-  for (const slot of slots) {
+  for (const slot of required.slots) {
     const result = buildAsset(slot, testKit);
     if (!result.ok) {
       return {

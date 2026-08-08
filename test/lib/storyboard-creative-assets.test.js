@@ -501,6 +501,97 @@ describe('$build_assets_from_format', () => {
     assert.deepStrictEqual(result.value.assets, {});
   });
 
+  test('rejects malformed required slots instead of silently dropping them', () => {
+    const malformedSlots = [
+      {
+        slot: { asset_group_id: 'image_main', required: true },
+        expectedField: 'slots[0].asset_type',
+      },
+      {
+        slot: { asset_group_id: 123, asset_type: 'image', required: true },
+        expectedField: 'slots[0].asset_group_id',
+      },
+    ];
+
+    for (const { slot, expectedField } of malformedSlots) {
+      const result = expandCreativeAssetDirectivesWithDiagnostics(
+        {
+          assets: {
+            [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+              slots: [slot],
+            },
+          },
+        },
+        {},
+        TEST_KIT
+      );
+
+      assert.strictEqual(result.ok, false);
+      assert.strictEqual(result.failure.reason, 'malformed_directive');
+      assert.ok(result.failure.constraint.includes(expectedField));
+    }
+  });
+
+  test('rejects a malformed required slot even when another required slot is valid', () => {
+    const result = expandCreativeAssetDirectivesWithDiagnostics(
+      {
+        assets: {
+          [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+            width: 300,
+            height: 250,
+            slots: [
+              { asset_group_id: 'image_main', asset_type: 'image', required: true },
+              { asset_group_id: 'headline', required: true },
+            ],
+          },
+        },
+      },
+      {},
+      TEST_KIT
+    );
+
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.failure.reason, 'malformed_directive');
+    assert.match(result.failure.constraint, /slots\[1\]\.asset_type/);
+  });
+
+  test('treats every legacy assets_required entry as required', () => {
+    const result = expandCreativeAssetDirectivesWithDiagnostics(
+      {
+        assets: {
+          [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+            width: 300,
+            height: 250,
+            assets_required: [{ asset_id: 'image_main', asset_type: 'image' }],
+          },
+        },
+      },
+      {},
+      TEST_KIT
+    );
+
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.value.assets.image_main.url, 'https://assets.example/300x250.jpg');
+  });
+
+  test('rejects a malformed legacy assets_required entry', () => {
+    const result = expandCreativeAssetDirectivesWithDiagnostics(
+      {
+        assets: {
+          [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+            assets_required: [{ asset_id: 'image_main' }],
+          },
+        },
+      },
+      {},
+      TEST_KIT
+    );
+
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.failure.reason, 'malformed_directive');
+    assert.match(result.failure.constraint, /assets_required\[0\]\.asset_type/);
+  });
+
   test('distinguishes missing format context and malformed directives from fixture gaps', () => {
     const missingFormat = expandCreativeAssetDirectivesWithDiagnostics(
       { assets: { [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: { id: 'missing_format' } } },

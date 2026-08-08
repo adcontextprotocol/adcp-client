@@ -1808,6 +1808,9 @@ export type RunnerSkipReason =
    * The runner selected the pathway but its test kit cannot synthesize a
    * valid input for the seller-declared contract. This is a runner-owned
    * coverage gap: it never fails validations or cascades prerequisites.
+   * Spec: AdCP runner-output-contract v2.8.0,
+   * `skip_result.reasons.fixture_unavailable` (adcp#6276). Early preflight
+   * and whole-storyboard termination semantics: adcp#6278.
    */
   | 'fixture_unavailable'
   | 'unsatisfied_contract'
