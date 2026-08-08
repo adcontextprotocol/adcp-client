@@ -137,9 +137,15 @@ function requiredSlots(format: JsonObject): RequiredSlot[] {
   return slots.flatMap(slotValue => {
     if (!isObject(slotValue) || slotValue.required !== true) return [];
     const id = canonicalSlots ? slotValue.asset_group_id : slotValue.asset_id;
-    if (typeof id !== 'string' || typeof slotValue.asset_type !== 'string') return [];
+    const assetType =
+      typeof slotValue.asset_type === 'string'
+        ? slotValue.asset_type
+        : slotValue.item_type === 'repeatable_group'
+          ? 'repeatable_group'
+          : undefined;
+    if (typeof id !== 'string' || assetType === undefined) return [];
     const requirements = isObject(slotValue.requirements) ? slotValue.requirements : {};
-    return [{ id, assetType: slotValue.asset_type, requirements, ...slotDimensions(slotValue, fallback) }];
+    return [{ id, assetType, requirements, ...slotDimensions(slotValue, fallback) }];
   });
 }
 
