@@ -448,6 +448,7 @@ describe('discover strategy state machine', () => {
     const second = discoveryClient([product('a-product'), product('z-product')]);
     const a = await runControllerSeeding(first.client, sb, { agentTools: ['get_products'] }, {});
     const b = await runControllerSeeding(second.client, sb, { agentTools: ['get_products'] }, {});
+    assert.deepEqual(first.calls[0].params.ext, { adcp: { creative_wire: 'canonical' } });
     assert.equal(a.resolutionRecords[0].seller_ids.product_id, 'a-product');
     assert.deepEqual(a.resolutionRecords, b.resolutionRecords);
   });

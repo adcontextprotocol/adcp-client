@@ -87,6 +87,31 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
     expect(result.data).toEqual({ products: [], format: 'canonical' });
   });
 
+  it('honors an explicit canonical wire request when grading a pre-3.2 storyboard', async () => {
+    const calls: string[] = [];
+    let receivedParams: unknown;
+    const params = {
+      ext: { adcp: { creative_wire: 'canonical', storyboard_marker: true } },
+    };
+    const client = {
+      getAdcpVersion: () => '3.1.10',
+      getProducts: async (request: unknown) => {
+        calls.push('canonical');
+        receivedParams = request;
+        return { data: { products: [], format: 'canonical' } };
+      },
+      getProductsLegacy: async () => {
+        calls.push('legacy');
+        return { data: { products: [], format: 'legacy' } };
+      },
+    };
+
+    const result = await executeStoryboardTask(client, 'get_products', params);
+    expect(calls).toEqual(['canonical']);
+    expect(receivedParams).toBe(params);
+    expect(result.data).toEqual({ products: [], format: 'canonical' });
+  });
+
   it('forwards adcpError from a TaskResultFailure into adcp_error', async () => {
     const client = makeFailureClient(INVALID_REQUEST_ERROR);
     const result = await executeStoryboardTask(client, 'create_media_buy', {});
