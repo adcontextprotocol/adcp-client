@@ -563,6 +563,8 @@ export interface ComplyOptions extends TestOptions {
    * storyboards. Passed through to `runStoryboard`.
    */
   webhook_replay_receiver?: StoryboardRunOptions['webhook_replay_receiver'];
+  /** Configure raw `POST /context` router replay storyboards. */
+  trusted_match_context_router_runner?: StoryboardRunOptions['trusted_match_context_router_runner'];
   /**
    * Test-kit contract ids in scope for this run. Passed through to
    * `runStoryboard`. See `StoryboardRunOptions.contracts`.
@@ -1088,6 +1090,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     signal: externalSignal,
     webhook_receiver,
     webhook_replay_receiver,
+    trusted_match_context_router_runner,
     contracts,
     version,
     complianceDir,
@@ -1314,6 +1317,12 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       agentTools: profile.tools,
       ...(webhook_receiver !== undefined && { webhook_receiver }),
       ...(webhook_replay_receiver !== undefined && { webhook_replay_receiver }),
+      ...(trusted_match_context_router_runner !== undefined && {
+        trusted_match_context_router_runner:
+          complianceDir !== undefined && trusted_match_context_router_runner.vectorsRoot === undefined
+            ? { ...trusted_match_context_router_runner, vectorsRoot: complianceDir }
+            : trusted_match_context_router_runner,
+      }),
       ...(contracts !== undefined && { contracts }),
       ...(signal !== undefined && { signal }),
     };
@@ -1632,6 +1641,12 @@ async function runWithDegradedProfile(
     ...(options.webhook_receiver !== undefined && { webhook_receiver: options.webhook_receiver }),
     ...(options.webhook_replay_receiver !== undefined && {
       webhook_replay_receiver: options.webhook_replay_receiver,
+    }),
+    ...(options.trusted_match_context_router_runner !== undefined && {
+      trusted_match_context_router_runner:
+        options.complianceDir !== undefined && options.trusted_match_context_router_runner.vectorsRoot === undefined
+          ? { ...options.trusted_match_context_router_runner, vectorsRoot: options.complianceDir }
+          : options.trusted_match_context_router_runner,
     }),
     ...(options.contracts !== undefined && { contracts: options.contracts }),
     ...(signal !== undefined && { signal }),

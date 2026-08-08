@@ -89,6 +89,10 @@ export interface Storyboard {
    *     (`StoryboardRunOptions.webhook_replay_receiver.url`). Autodetected
    *     from any `replay_webhook_vector` step and graded not applicable when
    *     absent. Spec: adcp-client#2356.
+   *   - `trusted_match_context_router_runner` — the runner must be configured
+   *     with a raw Context Match router URL and operator registration seam.
+   *     Autodetected from `replay_trusted_match_context_vector`; absent
+   *     harnesses grade not_applicable. Spec: adcp-client#2479.
    *   - `request_signer` — the agent under test MUST advertise
    *     `request_signing.supported: true` in `get_adcp_capabilities`.
    *     Autodetected: any storyboard whose `id === 'signed_requests'`
@@ -1455,6 +1459,56 @@ export interface AgentEntry {
   transport?: 'mcp' | 'a2a';
 }
 
+/** One runner-hosted Context Match provider fixture exposed to the router under test. */
+export interface TrustedMatchContextProviderEndpoint {
+  /** Publisher-controlled registration id from the packaged conformance vector. */
+  provider_id: string;
+  /** Absolute URL serving this provider's vector response at `POST /context`. */
+  context_url: string;
+}
+
+/** Input to the operator-owned router registration seam. */
+export interface TrustedMatchContextRegistrationContext {
+  /** Vector profile, currently `adcp/trusted-match/context-targeting-merge/v1`. */
+  profile: string;
+  /** Fixed provider ids paired with the runner-hosted fixture URLs. */
+  providers: TrustedMatchContextProviderEndpoint[];
+  /** Exact Context Match request the runner will send after registration completes. */
+  request: Record<string, unknown>;
+}
+
+export interface TrustedMatchContextRouterRunnerOptions {
+  /** Router base URL. The runner posts the vector request to `<router_url>/context`. */
+  router_url: string;
+  /**
+   * Operator-owned seam that installs the supplied provider registrations in
+   * the router under test. It may return a cleanup callback, which the runner
+   * invokes after the replay even when the router request fails.
+   */
+  registerProviders(
+    context: TrustedMatchContextRegistrationContext
+  ): void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>;
+  /** Extra headers sent to the router's `/context` endpoint. */
+  headers?: Record<string, string>;
+  /** Router request timeout in milliseconds. Defaults to 10000. */
+  timeoutMs?: number;
+  /** Optional root directory for resolving the packaged vector file. */
+  vectorsRoot?: string;
+  /** Override fetch for tests or custom runtimes. */
+  fetchImpl?: typeof fetch;
+  /** Configuration for the ephemeral provider fixture server. */
+  provider_server?: {
+    /** Loopback by default; proxy mode advertises `public_url` to remote routers. */
+    mode?: 'loopback_mock' | 'proxy_url';
+    /** Bind host for the local fixture listener. Defaults to `127.0.0.1`. */
+    host?: string;
+    /** Bind port. `0` (default) lets the kernel assign one. */
+    port?: number;
+    /** Public base URL routed to the local listener; required in proxy mode. */
+    public_url?: string;
+  };
+}
+
 export interface StoryboardRunOptions extends TestOptions {
   /** Initial context (e.g., from a previous step invocation) */
   context?: StoryboardContext;
@@ -1687,6 +1741,14 @@ export interface StoryboardRunOptions extends TestOptions {
     /** Override fetch for tests or custom runtimes. */
     fetchImpl?: typeof fetch;
   };
+  /**
+   * Raw-HTTP Trusted Match Context router harness used by
+   * `replay_trusted_match_context_vector`. The runner hosts the packaged
+   * provider fixtures, calls `registerProviders`, then posts the vector
+   * request to `<router_url>/context`. Without this option the storyboard
+   * grades `not_applicable`; it never falls back to MCP or A2A.
+   */
+  trusted_match_context_router_runner?: TrustedMatchContextRouterRunnerOptions;
   /**
    * Test-kit contract ids that are in scope for this run. A step with
    * `requires_contract: <id>` grades `not_applicable` when the id is not
@@ -1979,6 +2041,7 @@ export type RequirementName =
   | 'real_wire'
   | 'webhook_receiver'
   | 'webhook_replay_receiver'
+  | 'trusted_match_context_router_runner'
   | 'request_signer'
   | 'multi_agent';
 
@@ -1995,6 +2058,7 @@ export const KNOWN_REQUIREMENTS: ReadonlySet<RequirementName> = new Set([
   'real_wire',
   'webhook_receiver',
   'webhook_replay_receiver',
+  'trusted_match_context_router_runner',
   'request_signer',
   'multi_agent',
 ] as const satisfies readonly RequirementName[]);

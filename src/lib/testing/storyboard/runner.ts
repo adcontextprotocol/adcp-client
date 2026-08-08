@@ -76,6 +76,7 @@ import { runControllerSeeding, type ControllerSeedingResult } from './seeding';
 import { applyFixtureBindingsToRequest, type FixtureBindingRegistry } from './fixture-resolution';
 import { getComplianceCacheDir } from './compliance';
 import { signWebhook, type RequestLike } from '../../signing/client';
+import { replayTrustedMatchContextVector } from './trusted-match-context-replay';
 import {
   gradeOAuthMetadataGraph,
   redactOAuthUrlForOutput,
@@ -248,6 +249,7 @@ const DETAILED_SKIP_DETAILS: Partial<Record<RunnerDetailedSkipReason, string>> =
 };
 
 const REPLAY_WEBHOOK_VECTOR_TASK = 'replay_webhook_vector';
+const REPLAY_TRUSTED_MATCH_CONTEXT_VECTOR_TASK = 'replay_trusted_match_context_vector';
 const WEBHOOK_REPLAY_DEFAULT_TIMEOUT_MS = 10_000;
 
 function selectionForProbeSkip(reason: RunnerDetailedSkipReason, detail: string): RunnerSelectionResult | undefined {
@@ -1391,6 +1393,7 @@ const REQUIREMENT_TO_SKIP_REASON: Record<RequirementName, RunnerSkipReason> = {
   real_wire: 'requirement_unmet',
   webhook_receiver: 'requirement_unmet',
   webhook_replay_receiver: 'not_applicable',
+  trusted_match_context_router_runner: 'not_applicable',
   request_signer: 'not_applicable',
   multi_agent: 'requirement_unmet',
 };
@@ -1554,6 +1557,9 @@ function normalizeAgentToolNames(tools: unknown): string[] | undefined {
  *     `options.webhook_replay_receiver.url`. Autodetected from any
  *     `replay_webhook_vector` step (see `detectImplicitRequires`); authors
  *     don't write this tag manually. Spec: adcp-client#2356.
+ *   - `trusted_match_context_router_runner` — operator supplied a router URL
+ *     and registration callback for raw `POST /context` replay. Autodetected
+ *     from `replay_trusted_match_context_vector`. Spec: adcp-client#2479.
  *   - `request_signer` — agent advertises `request_signing.supported: true`
  *     in `get_adcp_capabilities`. Autodetected for any storyboard whose
  *     id is `'signed_requests'` or that contains a `request_signing_probe`
@@ -1641,6 +1647,19 @@ function checkRequires(
               'is configured. Pass `webhook_replay_receiver.url` in StoryboardRunOptions to run ' +
               'inbound buyer/orchestrator receiver conformance. Seller agents without an inbound ' +
               'receiver grade not_applicable for this storyboard.',
+          };
+        }
+        break;
+      }
+      case 'trusted_match_context_router_runner': {
+        const runner = options.trusted_match_context_router_runner;
+        if (!runner?.router_url || typeof runner.registerProviders !== 'function') {
+          return {
+            requirement,
+            detail:
+              'Storyboard contains a `replay_trusted_match_context_vector` step but no Trusted Match ' +
+              'Context router harness is configured. Pass `trusted_match_context_router_runner` with ' +
+              '`router_url` and `registerProviders` to run raw POST /context conformance.',
           };
         }
         break;
@@ -1759,6 +1778,10 @@ function valueContainsWebhookToken(value: unknown): boolean {
  *     the whole storyboard grades not_applicable instead of executing an
  *     all-skipped phase that fails the required-phase rollup. Spec:
  *     adcp-client#2356.
+ *   - `'trusted_match_context_router_runner'`, autodetected from any
+ *     `replay_trusted_match_context_vector` step. Without the operator-owned
+ *     registration seam the raw router test grades not_applicable and never
+ *     falls back to an MCP/A2A tool call. Spec: adcp-client#2479.
  *   - `'request_signer'`, autodetected from `storyboard.id ===
  *     'signed_requests'` or any step using the synthesized
  *     `request_signing_probe` task. The signed-requests universal
@@ -1775,6 +1798,7 @@ function detectImplicitRequires(
   const requires: RequirementName[] = [];
   let needsWebhook = false;
   let needsWebhookReplayReceiver = false;
+  let needsTrustedMatchContextRouterRunner = false;
   let needsSigner = storyboard.id === 'signed_requests';
   const contractsInScope = new Set(options.contracts ?? []);
   for (const phase of storyboard.phases) {
@@ -1795,12 +1819,20 @@ function detectImplicitRequires(
       if (!needsWebhookReplayReceiver && stepContractInScope && step.task === REPLAY_WEBHOOK_VECTOR_TASK) {
         needsWebhookReplayReceiver = true;
       }
-      if (needsWebhook && needsWebhookReplayReceiver && needsSigner) break;
+      if (
+        !needsTrustedMatchContextRouterRunner &&
+        stepContractInScope &&
+        step.task === REPLAY_TRUSTED_MATCH_CONTEXT_VECTOR_TASK
+      ) {
+        needsTrustedMatchContextRouterRunner = true;
+      }
+      if (needsWebhook && needsWebhookReplayReceiver && needsTrustedMatchContextRouterRunner && needsSigner) break;
     }
-    if (needsWebhook && needsWebhookReplayReceiver && needsSigner) break;
+    if (needsWebhook && needsWebhookReplayReceiver && needsTrustedMatchContextRouterRunner && needsSigner) break;
   }
   if (needsWebhook) requires.push('webhook_receiver');
   if (needsWebhookReplayReceiver) requires.push('webhook_replay_receiver');
+  if (needsTrustedMatchContextRouterRunner) requires.push('trusted_match_context_router_runner');
   if (needsSigner) requires.push('request_signer');
   return requires;
 }
@@ -5520,6 +5552,39 @@ async function executeProbeStep(
         ...(runState.agentUrl ? { url: redactOAuthUrlForOutput(runState.agentUrl) } : {}),
       };
     }
+  } else if (step.task === REPLAY_TRUSTED_MATCH_CONTEXT_VECTOR_TASK) {
+    const routerRunner = options.trusted_match_context_router_runner;
+    if (!routerRunner?.router_url || typeof routerRunner.registerProviders !== 'function') {
+      httpResult = {
+        url: routerRunner?.router_url ?? runState.agentUrl,
+        status: 0,
+        headers: {},
+        body: null,
+        skipped: true,
+        skip_reason: 'grader_skipped',
+        error:
+          'No Trusted Match Context router harness configured. Pass trusted_match_context_router_runner ' +
+          'with router_url and registerProviders; the runner will not dispatch this pseudo-task over MCP/A2A.',
+      };
+    } else {
+      const requestOverride = options.request
+        ? injectContext({ ...options.request }, context, runState.runnerVars)
+        : step.sample_request
+          ? injectContext({ ...step.sample_request }, context, runState.runnerVars)
+          : undefined;
+      const replay = await replayTrustedMatchContextVector(step, routerRunner, {
+        ...(requestOverride && { requestOverride }),
+        ...(options.adcpVersion && { adcpVersion: options.adcpVersion }),
+        ...(options.signal && { signal: options.signal }),
+      });
+      httpResult = replay.httpResult;
+      requestRecordOverride = {
+        transport: 'http',
+        operation: step.task,
+        payload: redactSecrets(replay.request),
+        url: redactOAuthUrlForOutput(replay.httpResult.url),
+      };
+    }
   }
 
   if (httpResult) runState.priorProbes.set(step.task, httpResult);
@@ -5587,12 +5652,21 @@ async function executeProbeStep(
   }
 
   const vctx: ValidationContext = {
-    taskName: step.task,
+    taskName: step.task === REPLAY_TRUSTED_MATCH_CONTEXT_VECTOR_TASK ? 'context_match' : step.task,
     ...(options.adcpVersion && { adcpVersion: options.adcpVersion }),
     ...(options._serverAdcpVersion && { responseAdcpVersion: options._serverAdcpVersion }),
     httpResult: redactedHttpResult,
+    ...(step.task === REPLAY_TRUSTED_MATCH_CONTEXT_VECTOR_TASK &&
+      redactedHttpResult && {
+        taskResult: {
+          success: !redactedHttpResult.error && redactedHttpResult.status >= 200 && redactedHttpResult.status < 300,
+          data: redactedHttpResult.body,
+          ...(redactedHttpResult.error && { error: redactedHttpResult.error }),
+        },
+      }),
     agentUrl: runState.agentUrl,
     contributions: runState.contributions,
+    ...(step.response_schema_ref && { responseSchemaRef: step.response_schema_ref }),
     request: requestRecord,
     ...(responseRecord && { response: responseRecord }),
     storyboardContext: context,

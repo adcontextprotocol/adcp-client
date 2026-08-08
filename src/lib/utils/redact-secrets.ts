@@ -80,10 +80,19 @@ export function redactSecrets(
     seen.add(value);
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] =
+      const redacted =
         secretKeyPatternMatches(effectivePattern, k) && (typeof v === 'string' || typeof v === 'number')
           ? '[redacted]'
           : redactSecrets(v, effectivePattern, depth + 1, seen);
+      // Define rather than assign so an own JSON key named `__proto__`
+      // remains data instead of invoking Object.prototype's legacy setter.
+      // Trusted Match provider ids explicitly exercise this boundary.
+      Object.defineProperty(out, k, {
+        value: redacted,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
     }
     seen.delete(value);
     return out;
