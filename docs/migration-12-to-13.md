@@ -279,7 +279,33 @@ const legacyFormatConverter = ({ formatId }) => ({
 });
 ```
 
-Configure this once as `legacyFormatConverter` on the client to cover canonical discovery, legacy create/update/sync write escape hatches, async continuations, and webhooks. A per-call converter overrides the configured default; `syncCreatives()` gives its projection-specific converter highest precedence. An invalid conversion is rejected before adopter code receives a partially converted object. On discovery, partially mappable products remain with their mapped canonical options and sanitized `FORMAT_PROJECTION_FAILED` entries in `data.errors`. A product with no canonical option is omitted from the canonical product list because the protocol requires `format_options` to contain at least one declaration; its sanitized non-fatal error remains in `data.errors`. A valid legacy `format_ids: []` product uses `CANONICAL_PRODUCT_FORMATS_UNAVAILABLE` with `reason: 'legacy_format_list_empty'`, not `FORMAT_PROJECTION_FAILED`. `data.projection.diagnostics` mirrors SDK-local detail for convenience, but `errors[]` is the portable, multi-hop surface. Use `getProductsLegacy()` when migration tooling needs the original refs or the complete legacy product list. For ordinary downgrade, use `packageRefsForFormatOptions()` on a product with mapped format options. During one client lifetime the SDK retains the corresponding legacy ref in bounded private metadata and emits it only when negotiation selects a legacy wire. After a process boundary, configure `projectionAdaptersFromCatalogSnapshots` or `canonicalFormatLegacyResolver`; canonical data deliberately cannot reconstruct an arbitrary seller owner by itself.
+Configure this once as `legacyFormatConverter` on the client to cover canonical discovery and write paths, async continuations, and webhooks. A per-call converter overrides the configured default; `syncCreatives()` gives its projection-specific converter highest precedence. The explicit `createMediaBuyLegacy()`, `updateMediaBuyLegacy()`, and `syncCreativesLegacy()` methods are raw migration escapes: they preserve legacy wire payloads without creative capability probing or projection, so converter and resolver options are ignored. An invalid conversion is rejected before adopter code receives a partially converted object. On discovery, partially mappable products remain with their mapped canonical options and sanitized `FORMAT_PROJECTION_FAILED` entries in `data.errors`. A product with no canonical option is omitted from the canonical product list because the protocol requires `format_options` to contain at least one declaration; its sanitized non-fatal error remains in `data.errors`. A valid legacy `format_ids: []` product uses `CANONICAL_PRODUCT_FORMATS_UNAVAILABLE` with `reason: 'legacy_format_list_empty'`, not `FORMAT_PROJECTION_FAILED`. `data.projection.diagnostics` mirrors SDK-local detail for convenience, but `errors[]` is the portable, multi-hop surface. Use `getProductsLegacy()` when migration tooling needs the original refs or the complete legacy product list. For ordinary downgrade, use `packageRefsForFormatOptions()` on a product with mapped format options. During one client lifetime the SDK retains the corresponding legacy ref in bounded private metadata. For a process boundary, persist the projector's `legacyRoutes` sidecar and rebuild the resolver with `canonicalFormatLegacyResolverFromRoutes()`, configure `projectionAdaptersFromCatalogSnapshots`, or supply a custom `canonicalFormatLegacyResolver`; canonical data deliberately cannot reconstruct an arbitrary seller owner by itself.
+
+The route sidecar is JSON-safe and includes the full owner, width, height, and
+duration tuple. It does not add legacy identity to canonical protocol objects:
+
+```ts
+import {
+  canonicalFormatLegacyResolverFromRoutes,
+  projectV1ProductToV2,
+} from '@adcp/sdk/v2/projection';
+
+const { v2: product, legacyRoutes } = projectV1ProductToV2(legacyProduct, {
+  legacyFormatConverter,
+});
+
+await products.put(product.product_id, product);
+await creativeRoutes.put(product.product_id, legacyRoutes);
+
+const restoredRoutes = await creativeRoutes.get(product.product_id);
+const canonicalFormatLegacyResolver =
+  canonicalFormatLegacyResolverFromRoutes(restoredRoutes);
+```
+
+Each `CanonicalFormatLegacyRoute` contains `product_id`, the stable
+`format_option_ref`, and one or more exact `format_ids`. Pass the rebuilt
+resolver to `AgentClient` or `createAdcpServerFromPlatform()` without changing
+the existing resolver callback contract.
 
 For a fixed set of temporary seller adapters, prefer one declarative catalog over
 separate forward and reverse callbacks. `projectionAdaptersFromCatalogSnapshots`
@@ -356,7 +382,7 @@ Server platforms use the same resolver as `createAdcpServerFromPlatform(platform
 ## Protocol-version behavior
 
 - AdCP 3.0 is a legacy creative wire. The SDK upgrades inbound data and downgrades canonical requests when an unambiguous mapping exists.
-- AdCP 3.1 is not proof of canonical support. The SDK uses `media_buy.features.canonical_creatives`; absent that declaration, per-tool schema evidence may resolve support, otherwise the peer remains unknown and projection fails closed when no safe mapping exists.
+- AdCP 3.1 is the dual-emission transition release. On an otherwise ambiguous `get_products` request, the decisioning server preserves both `format_ids` and `format_options` when an exact legacy route is available; it does not invent a legacy identity for a canonical-only declaration. Explicit canonical or legacy request evidence still narrows the response. For peer negotiation, 3.1 alone is not proof of canonical write support: the SDK uses `media_buy.features.canonical_creatives`, then per-tool schema evidence, and fails closed when no safe mapping exists.
 - AdCP 3.2 and later are canonical by contract. Advertising `canonical_creatives: false` at 3.2 is a capability error.
 
 Negotiation uses the mutually supported wire release, so a 3.2 SDK talking to a 3.1-only seller follows the 3.1 rules. See [Canonical creative delivery](guides/CREATIVE-DELIVERY.md) for conversion diagnostics and server integration.

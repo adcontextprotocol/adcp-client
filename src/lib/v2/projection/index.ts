@@ -54,6 +54,12 @@ export type {
 } from './v2-to-v1';
 
 export {
+  canonicalFormatLegacyResolverFromRoutes,
+  legacyRoutesForProduct,
+  type CanonicalFormatLegacyRoute,
+} from './legacy-routes';
+
+export {
   augmentProductWithFormatOptions,
   withFormatOptions,
   toCanonicalOnlyProduct,

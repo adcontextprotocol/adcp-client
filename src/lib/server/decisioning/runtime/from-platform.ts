@@ -753,14 +753,15 @@ function asCanonicalGetProductsRequest(request: Record<string, unknown>): Canoni
 
 function asCanonicalListCreativesRequest(
   request: Record<string, unknown>,
-  legacyFormatConverter: LegacyFormatConverter | undefined
+  legacyFormatConverter: LegacyFormatConverter | undefined,
+  responseWireMode: 'canonical' | 'legacy'
 ): CanonicalListCreativesRequest {
   const filters =
     request['filters'] !== null && typeof request['filters'] === 'object' && !Array.isArray(request['filters'])
       ? (request['filters'] as Record<string, unknown>)
       : undefined;
   const legacyFormatIds = filters?.['format_ids'];
-  if (Array.isArray(legacyFormatIds) && legacyFormatIds.length > 0) {
+  if (Array.isArray(legacyFormatIds) && legacyFormatIds.length > 0 && responseWireMode !== 'legacy') {
     throw new AdcpError('INVALID_REQUEST', {
       message: 'list_creatives legacy format_ids filters are unavailable on the canonical platform surface.',
       field: 'filters.format_ids',
@@ -775,15 +776,25 @@ function asCanonicalListCreativesRequest(
     'list_creatives',
     legacyFormatConverter
   ) as Record<string, unknown>;
-  if (!Array.isArray(projected['fields'])) return projected as CanonicalListCreativesRequest;
+  const withLegacyFilter =
+    responseWireMode === 'legacy' && Array.isArray(legacyFormatIds) && legacyFormatIds.length > 0
+      ? {
+          ...projected,
+          filters: {
+            ...((projected['filters'] as Record<string, unknown> | undefined) ?? {}),
+            format_ids: legacyFormatIds,
+          },
+        }
+      : projected;
+  if (!Array.isArray(withLegacyFilter['fields'])) return withLegacyFilter as CanonicalListCreativesRequest;
   const fields = [
     ...new Set(
-      projected['fields'].flatMap(field =>
+      withLegacyFilter['fields'].flatMap(field =>
         field === 'format_id' ? ['format_kind'] : typeof field === 'string' ? [field] : []
       )
     ),
   ] as CanonicalListCreativesRequest['fields'];
-  return { ...projected, fields } as CanonicalListCreativesRequest;
+  return { ...withLegacyFilter, fields } as CanonicalListCreativesRequest;
 }
 
 function asCanonicalProductResponse<T extends { products?: unknown[] }>(
@@ -5629,48 +5640,47 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       },
     }),
 
-    syncCreatives: async (params, ctx) => {
-      const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
-      params = asCanonicalSemanticServerRequest(params, 'sync_creatives', legacyFormatConverter);
-      const reqCtx = ctxFor(ctx, params);
-      const creatives = (params.creatives ?? []) as CanonicalCreativeAsset[];
-      if (!sales?.syncCreatives) {
-        return adcpError('UNSUPPORTED_FEATURE', {
-          message: 'sync_creatives not supported by this sales platform',
-        });
-      }
-      return projectSync(
-        async () => {
-          const push = extractPushConfig(params, logger, { allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls });
-          const result = await sales!.syncCreatives!(creatives, reqCtx);
-          return routeIfHandoff(
-            taskRegistry,
-            {
-              tool: 'sync_creatives',
-              accountId: reqCtx.account.id,
-              ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
-              pushNotificationUrl: push.url,
-              pushNotificationToken: push.token,
-              pushNotificationOperationId: push.operationId,
-              emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-              autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
-              observability,
-              logger,
-            },
-            result,
-            rows =>
-              asSemanticServerResponseForWire(
-                { creatives: rows.map(normalizeRowErrors) },
-                'sync_creatives',
-                legacyFormatConverter,
-                canonicalFormatLegacyResolver,
-                responseWireMode
-              )
-          );
-        },
-        r => r
-      );
-    },
+    ...(sales?.syncCreatives && {
+      syncCreatives: async (params, ctx) => {
+        const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
+        params = asCanonicalSemanticServerRequest(params, 'sync_creatives', legacyFormatConverter);
+        const reqCtx = ctxFor(ctx, params);
+        const creatives = (params.creatives ?? []) as CanonicalCreativeAsset[];
+        return projectSync(
+          async () => {
+            const push = extractPushConfig(params, logger, {
+              allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
+            });
+            const result = await sales.syncCreatives!(creatives, reqCtx);
+            return routeIfHandoff(
+              taskRegistry,
+              {
+                tool: 'sync_creatives',
+                accountId: reqCtx.account.id,
+                ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
+                pushNotificationUrl: push.url,
+                pushNotificationToken: push.token,
+                pushNotificationOperationId: push.operationId,
+                emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+                autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+                observability,
+                logger,
+              },
+              result,
+              rows =>
+                asSemanticServerResponseForWire(
+                  { creatives: rows.map(normalizeRowErrors) },
+                  'sync_creatives',
+                  legacyFormatConverter,
+                  canonicalFormatLegacyResolver,
+                  responseWireMode
+                )
+            );
+          },
+          r => r
+        );
+      },
+    }),
 
     ...(sales?.getMediaBuyDelivery && {
       getMediaBuyDelivery: async (params, ctx) => {
@@ -5825,7 +5835,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
         const canonicalParams = asCanonicalListCreativesRequest(
           params as unknown as Record<string, unknown>,
-          legacyFormatConverter
+          legacyFormatConverter,
+          responseWireMode
         );
         const reqCtx = ctxFor(ctx, canonicalParams);
         return projectSync(
@@ -6004,7 +6015,8 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
           const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
           const canonicalParams = asCanonicalListCreativesRequest(
             params as unknown as Record<string, unknown>,
-            legacyFormatConverter
+            legacyFormatConverter,
+            responseWireMode
           );
           const reqCtx = ctxFor(ctx, canonicalParams);
           return projectSync(

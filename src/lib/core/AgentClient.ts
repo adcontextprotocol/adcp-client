@@ -682,7 +682,10 @@ export class AgentClient {
     return result;
   }
 
-  /** @deprecated Use `createMediaBuy`; this explicit compatibility surface accepts legacy creative `format_id`. */
+  /**
+   * @deprecated Use `createMediaBuy`; this raw compatibility surface accepts legacy creative `format_id`.
+   * Projection-only options are ignored.
+   */
   async createMediaBuyLegacy(
     params: MutatingRequestInput<CreateMediaBuyRequest>,
     inputHandler?: InputHandler,
@@ -721,7 +724,10 @@ export class AgentClient {
     return result;
   }
 
-  /** @deprecated Use `updateMediaBuy`; this explicit compatibility surface accepts legacy creative `format_id`. */
+  /**
+   * @deprecated Use `updateMediaBuy`; this raw compatibility surface accepts legacy creative `format_id`.
+   * Projection-only options are ignored.
+   */
   async updateMediaBuyLegacy(
     params: MutatingRequestInput<UpdateMediaBuyRequest>,
     inputHandler?: InputHandler,
@@ -766,7 +772,10 @@ export class AgentClient {
     return result;
   }
 
-  /** @deprecated Use `syncCreatives`; this explicit compatibility surface accepts legacy creative `format_id`. */
+  /**
+   * @deprecated Use `syncCreatives`; this raw compatibility surface accepts legacy creative `format_id`.
+   * Projection-only options are ignored.
+   */
   async syncCreativesLegacy(
     params: MutatingRequestInput<SyncCreativesRequest>,
     inputHandler?: InputHandler,

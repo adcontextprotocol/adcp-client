@@ -3075,28 +3075,33 @@ export class SingleAgentClient {
       result = { ...result, data: transformCompletedResponse(result.data) };
     }
 
-    // Call handler if task completed successfully and handler is configured
-    if (result.status === 'completed' && result.success && this.asyncHandler) {
-      const handler = this.config.handlers?.[handlerName] as
-        | ((data: unknown, metadata: Record<string, unknown>) => Promise<void>)
-        | undefined;
-      if (handler) {
-        throwIfAborted(effectiveOptions?.signal);
-        const metadata = {
-          operation_id: options?.contextId || 'sync',
-          context_id: options?.contextId,
-          task_id: result.metadata.taskId,
-          agent_id: this.agent.id,
-          task_type: taskType,
-          status: result.status,
-          timestamp: new Date().toISOString(),
-        };
-        await handler(result.data, metadata);
-        throwIfAborted(effectiveOptions?.signal);
-      }
-    }
+    await this.notifyCompletedStatusHandler(result, taskType, handlerName, effectiveOptions);
 
     return result;
+  }
+
+  private async notifyCompletedStatusHandler<T>(
+    result: TaskResult<T>,
+    taskType: string,
+    handlerName: keyof AsyncHandlerConfig,
+    options?: TaskOptions
+  ): Promise<void> {
+    if (result.status !== 'completed' || !result.success || !this.asyncHandler) return;
+    const handler = this.config.handlers?.[handlerName] as
+      | ((data: unknown, metadata: Record<string, unknown>) => void | Promise<void>)
+      | undefined;
+    if (!handler) return;
+    throwIfAborted(options?.signal);
+    await handler(result.data, {
+      operation_id: options?.contextId || 'sync',
+      context_id: options?.contextId,
+      task_id: result.metadata.taskId,
+      agent_id: this.agent.id,
+      task_type: taskType,
+      status: result.status,
+      timestamp: new Date().toISOString(),
+    });
+    throwIfAborted(options?.signal);
   }
 
   private canonicalCreativeInputHandler(taskType: string, inputHandler?: InputHandler): InputHandler | undefined {
@@ -4415,17 +4420,22 @@ export class SingleAgentClient {
     return result;
   }
 
-  /** @deprecated Compatibility-only entry point for callers still holding legacy creative `format_id` values. */
+  /**
+   * @deprecated Compatibility-only entry point for callers still holding legacy creative `format_id` values.
+   * Projection-only options are ignored because this method preserves the caller's legacy wire payload.
+   */
   async createMediaBuyLegacy(
     params: MutatingRequestInput<CreateMediaBuyRequest>,
     inputHandler?: InputHandler,
     options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
-    return (await this.createMediaBuy(
-      params as unknown as MutatingRequestInput<CanonicalCreateMediaBuyRequest>,
+    return this.executeTaskUnprojected<CreateMediaBuyResponse>(
+      'create_media_buy',
+      params,
       inputHandler,
-      options
-    )) as unknown as TaskResult<CreateMediaBuyResponse>;
+      options,
+      'onCreateMediaBuyStatusChange'
+    );
   }
 
   /**
@@ -4489,17 +4499,22 @@ export class SingleAgentClient {
     return result;
   }
 
-  /** @deprecated Compatibility-only entry point for callers still holding legacy creative `format_id` values. */
+  /**
+   * @deprecated Compatibility-only entry point for callers still holding legacy creative `format_id` values.
+   * Projection-only options are ignored because this method preserves the caller's legacy wire payload.
+   */
   async updateMediaBuyLegacy(
     params: MutatingRequestInput<UpdateMediaBuyRequest>,
     inputHandler?: InputHandler,
     options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<UpdateMediaBuyResponse>> {
-    return (await this.updateMediaBuy(
-      params as unknown as MutatingRequestInput<CanonicalUpdateMediaBuyRequest>,
+    return this.executeTaskUnprojected<UpdateMediaBuyResponse>(
+      'update_media_buy',
+      params,
       inputHandler,
-      options
-    )) as unknown as TaskResult<UpdateMediaBuyResponse>;
+      options,
+      'onUpdateMediaBuyStatusChange'
+    );
   }
 
   /**
@@ -4578,17 +4593,22 @@ export class SingleAgentClient {
     );
   }
 
-  /** @deprecated Compatibility-only entry point for callers still holding legacy creative `format_id` values. */
+  /**
+   * @deprecated Compatibility-only entry point for callers still holding legacy creative `format_id` values.
+   * Projection-only options are ignored because this method preserves the caller's legacy wire payload.
+   */
   async syncCreativesLegacy(
     params: MutatingRequestInput<SyncCreativesRequest>,
     inputHandler?: InputHandler,
     options?: SyncCreativesTaskOptions
   ): Promise<TaskResult<SyncCreativesResponse>> {
-    return (await this.syncCreatives(
-      params as unknown as MutatingRequestInput<CanonicalSyncCreativesRequest>,
+    return this.executeTaskUnprojected<SyncCreativesResponse>(
+      'sync_creatives',
+      params,
       inputHandler,
-      options
-    )) as unknown as TaskResult<SyncCreativesResponse>;
+      options,
+      'onSyncCreativesStatusChange'
+    );
   }
 
   private resolveCreativeFormatWireMode(taskType: string, capabilities: unknown): CreativeFormatWireMode {
@@ -5365,11 +5385,19 @@ export class SingleAgentClient {
     taskName: string,
     params: any,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: TaskOptions,
+    handlerName?: keyof AsyncHandlerConfig
   ): Promise<TaskResult<T>> {
-    return withTaskDeadline(options, effectiveOptions =>
-      this.executeTaskUnprojectedWithinDeadline<T>(taskName, params, inputHandler, effectiveOptions)
-    );
+    return withTaskDeadline(options, async effectiveOptions => {
+      const result = await this.executeTaskUnprojectedWithinDeadline<T>(
+        taskName,
+        params,
+        inputHandler,
+        effectiveOptions
+      );
+      if (handlerName) await this.notifyCompletedStatusHandler(result, taskName, handlerName, effectiveOptions);
+      return result;
+    });
   }
 
   private async executeTaskUnprojectedWithinDeadline<T = any>(

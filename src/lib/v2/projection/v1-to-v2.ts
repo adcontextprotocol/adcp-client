@@ -63,6 +63,8 @@ import { legacyFormatConverterFromCatalogSnapshots, type ProjectionCatalogSnapsh
 import { canonicalizeAgentUrl } from '../../discovery/resolve-agent-properties';
 import { isLikelyPrivateUrl } from '../../net/address-guards';
 import { createHmac } from 'crypto';
+import { legacyRoutesForProduct } from './legacy-routes';
+import type { CanonicalFormatLegacyRoute } from './legacy-routes';
 
 const SDK_ID = `@adcp/sdk@${LIBRARY_VERSION}`;
 
@@ -99,6 +101,8 @@ function migratedFormatOptionId(fid: V1FormatId): string {
 export interface V1ToV2Result {
   v2: V2Product;
   diagnostics: ProjectionDiagnostic[];
+  /** Serializable exact routes that can be persisted for a later legacy write. */
+  legacyRoutes: CanonicalFormatLegacyRoute[];
 }
 
 /** Context passed to an adopter's seller-specific legacy format converter. */
@@ -570,7 +574,7 @@ export function projectV1ProductToV2(v1: V1Product, options?: V1ToV2ProjectionOp
     format_options,
   } as V2Product;
 
-  return { v2: v2Product, diagnostics };
+  return { v2: v2Product, diagnostics, legacyRoutes: legacyRoutesForProduct(v1.product_id, format_options) };
 }
 
 export interface BareFormatIdResolveOptions {
