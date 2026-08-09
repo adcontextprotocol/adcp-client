@@ -560,6 +560,22 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     assert.deepStrictEqual(product.format_options[0].v1_format_ref, [mrecRef]);
     assert.strictEqual(product.format_options[1].v1_format_ref, undefined);
     assert.strictEqual(result.structuredContent.errors, undefined);
+
+    const canonicalOnly = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          account: { account_id: 'acc_test' },
+          buying_mode: 'wholesale',
+          fields: ['format_options'],
+        },
+      },
+    });
+
+    assert.notStrictEqual(canonicalOnly.isError, true, JSON.stringify(canonicalOnly.structuredContent));
+    assert.strictEqual(canonicalOnly.structuredContent.products[0].format_ids, undefined);
+    assert.ok(canonicalOnly.structuredContent.errors.some(error => error.code === 'LEGACY_FORMAT_ID_DROPPED_UNMAPPED'));
   });
 
   it('keeps an explicit legacy 3.1 get_products request legacy on the wire while the platform stays canonical', async () => {

@@ -191,7 +191,7 @@ import {
   resolveCanonicalFormatLegacyRefs,
 } from '../../../v2/projection/v2-to-v1';
 import type { CanonicalFormatLegacyResolver } from '../../../v2/projection/v2-to-v1';
-import type { V1FormatId, V1Product, V2Product } from '../../../v2/projection/types';
+import type { ProjectionDiagnostic, V1FormatId, V1Product, V2Product } from '../../../v2/projection/types';
 import { legacyFormatRefsForDeclaration } from '../../../v2/projection/legacy-metadata';
 import { canonicalizeAgentUrl } from '../../../discovery/resolve-agent-properties';
 import { ADCP_VERSION } from '../../../version';
@@ -815,13 +815,20 @@ function asCanonicalProductResponse<T extends { products?: unknown[] }>(
       suggestion: 'Declare canonical format_options or configure legacyCreativeFormatConverter for the legacy format.',
     });
   }
-  const withoutResolvedDropErrors = removeResolvedLegacyDropErrors(projected.response, projected.diagnostics);
-  const canonicalResponse = asCanonicalServerResponse(withoutResolvedDropErrors) as T;
+  const canonicalResponse = asCanonicalServerResponse(projected.response) as T;
+  const resolvedDropDiagnostics = projected.diagnostics.filter(
+    (diagnostic): diagnostic is LegacyDropDiagnostic => diagnostic.code === 'LEGACY_FORMAT_ID_DROPPED_UNMAPPED'
+  );
+  if (resolvedDropDiagnostics.length > 0 && canonicalResponse !== null && typeof canonicalResponse === 'object') {
+    resolvedLegacyDropDiagnosticsByResponse.set(canonicalResponse, resolvedDropDiagnostics);
+  }
   preserveAuthoredFormatIds(response, canonicalResponse);
   return canonicalResponse;
 }
 
 const authoredFormatIdsByOwner = new WeakMap<object, readonly V1FormatId[]>();
+type LegacyDropDiagnostic = Extract<ProjectionDiagnostic, { code: 'LEGACY_FORMAT_ID_DROPPED_UNMAPPED' }>;
+const resolvedLegacyDropDiagnosticsByResponse = new WeakMap<object, readonly LegacyDropDiagnostic[]>();
 
 function ownArrayDataValues(value: readonly unknown[]): unknown[] {
   const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
@@ -918,16 +925,7 @@ function preserveAuthoredFormatIdsForOwner(source: unknown, target: unknown): vo
   }
 }
 
-function removeResolvedLegacyDropErrors<T>(
-  response: T,
-  diagnostics: readonly {
-    code: string;
-    field: string;
-    source: string;
-    sdk_id: string;
-    error: { details: unknown };
-  }[]
-): T {
+function removeResolvedLegacyDropErrors<T>(response: T, diagnostics: readonly LegacyDropDiagnostic[]): T {
   if (response === null || typeof response !== 'object') return response;
   const resolved = diagnostics.filter(diagnostic => diagnostic.code === 'LEGACY_FORMAT_ID_DROPPED_UNMAPPED');
   if (resolved.length === 0) return response;
@@ -1269,8 +1267,15 @@ function asProductResponseForWire<T extends { products?: unknown[] }>(
   emitTransitionalLegacyRefs = false
 ): T {
   if (wireMode === 'canonical') {
+    const responseForWire =
+      emitTransitionalLegacyRefs && canonicalResponse !== null && typeof canonicalResponse === 'object'
+        ? removeResolvedLegacyDropErrors(
+            canonicalResponse,
+            resolvedLegacyDropDiagnosticsByResponse.get(canonicalResponse) ?? []
+          )
+        : canonicalResponse;
     return attachCanonicalFormatWireRefs(
-      canonicalResponse,
+      responseForWire,
       canonicalFormatLegacyResolver,
       'get_products',
       emitTransitionalLegacyRefs
