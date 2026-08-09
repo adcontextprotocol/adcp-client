@@ -1281,6 +1281,8 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       params: {
         name: 'list_creatives',
         arguments: {
+          adcp_version: '3.1',
+          ext: { adcp: { creative_wire: 'canonical' } },
           account: { account_id: 'acc_test' },
           filters: { format_ids: [{ agent_url: 'https://legacy.example/', id: 'display' }] },
         },
@@ -1289,6 +1291,44 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     assert.strictEqual(called, false);
     assert.strictEqual(result.isError, true);
     assert.match(JSON.stringify(result.structuredContent), /filters\.format_ids|legacy format_ids/);
+  });
+
+  it('preserves legacy list_creatives format filters for a negotiated legacy wire', async () => {
+    const base = buildPlatform();
+    let sawRequest;
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          listCreatives: async req => {
+            sawRequest = req;
+            return {
+              query_summary: { total_matching: 0, returned: 0 },
+              pagination: { has_more: false },
+              creatives: [],
+            };
+          },
+        },
+      }),
+      { name: 'legacy-list-filter', version: '1.0.0', validation: { requests: 'off', responses: 'off' } }
+    );
+    const formatId = { agent_url: 'https://legacy.example/', id: 'display' };
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'list_creatives',
+        arguments: {
+          adcp_version: '3.1',
+          account: { account_id: 'acc_test' },
+          filters: { format_ids: [formatId] },
+          fields: ['name', 'format_id'],
+        },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.deepStrictEqual(sawRequest.filters.format_ids, [formatId]);
+    assert.deepStrictEqual(sawRequest.fields, ['name', 'format_kind']);
   });
 
   it('strips legacy creative identity recursively from canonical platform responses', async () => {
@@ -2299,6 +2339,43 @@ describe('CreativeBuilderPlatform + AudiencePlatform wiring', () => {
 
     assert.deepStrictEqual(caps.supported_protocols, ['creative']);
     assert.strictEqual(caps.media_buy.features.inline_creative_management, false);
+  });
+
+  it('preserves negotiated legacy list filters for CreativeAdServerPlatform', async () => {
+    let sawRequest;
+    const platform = {
+      ...buildCreativeOnlyPlatform(),
+      creative: {
+        listCreatives: async req => {
+          sawRequest = req;
+          return {
+            query_summary: { total_matching: 0, returned: 0 },
+            pagination: { has_more: false },
+            creatives: [],
+          };
+        },
+      },
+    };
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'creative-ad-server-list-filter',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const formatId = { agent_url: 'https://external-owner.example/', id: 'video-30s' };
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'list_creatives',
+        arguments: {
+          adcp_version: '3.1',
+          account: { account_id: 'acc_1' },
+          filters: { format_ids: [formatId] },
+        },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.deepStrictEqual(sawRequest.filters.format_ids, [formatId]);
   });
 
   it('build_creative dispatches through platform.creative.buildCreative', async () => {
@@ -4391,6 +4468,41 @@ describe('Custom-handler merge seam (incremental migration)', () => {
     assert.strictEqual(result.structuredContent.media_buys[0].media_buy_id, 'mb_42');
     assert.ok(sawArgs, 'custom getMediaBuys handler was invoked');
     assert.strictEqual(sawArgs.account.id, 'acc_1', 'custom handler received the resolved account in ctx');
+  });
+
+  it('dispatches syncCreatives through opts.legacyHandlers.mediaBuy when sales omits it', async () => {
+    const base = buildPlatform();
+    const { syncCreatives: _omitted, ...salesWithoutSyncCreatives } = base.sales;
+    void _omitted;
+    let sawParams;
+    const server = createAdcpServerFromPlatform(buildPlatform({ sales: salesWithoutSyncCreatives }), {
+      name: 'merged-sync-creatives',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      legacyHandlers: {
+        mediaBuy: {
+          syncCreatives: async params => {
+            sawParams = params;
+            return { creatives: [] };
+          },
+        },
+      },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'sync_creatives',
+        arguments: {
+          account: { account_id: 'acc_1' },
+          idempotency_key: 'legacy-sync-handler-gap',
+          creatives: [],
+        },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.ok(sawParams, 'custom syncCreatives handler was invoked');
+    assert.deepStrictEqual(sawParams.creatives, []);
   });
 
   it('opts.accounts.syncAccounts runs when platform.accounts.upsert is undefined (no UNSUPPORTED_FEATURE shadow)', async () => {

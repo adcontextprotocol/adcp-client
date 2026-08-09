@@ -479,7 +479,7 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
     }
   });
 
-  test('official MCP transport applies the configured converter to every legacy write escape hatch', async () => {
+  test('official MCP transport preserves raw legacy writes and still dispatches status handlers', async () => {
     const captured = {};
     const calls = { create: 0, update: 0, sync: 0 };
     const server = new McpServer({ name: 'canonical-mcp', version: '1.0.0' });
@@ -527,23 +527,18 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
     await server.connect(serverTransport);
     const mcp = new Client({ name: 'canonical-mcp-client', version: '1.0.0' });
     await mcp.connect(clientTransport);
-    const converter = ({ formatId }) =>
-      formatId.agent_url === 'https://seller.example/formats' && formatId.id === 'homepage_takeover'
-        ? {
-            format_kind: 'custom',
-            format_option_id: 'homepage-takeover',
-            format_shape: 'homepage_takeover',
-            format_schema: {
-              uri: 'https://seller.example/schemas/homepage-takeover.json',
-              digest: `sha256:${'b'.repeat(64)}`,
-            },
-            params: {},
-          }
-        : undefined;
+    const statusCalls = [];
     const agent = AgentClient.fromMCPClient(mcp, {
       agentName: 'Canonical MCP',
       validation: { responses: 'off' },
-      legacyFormatConverter: converter,
+      legacyFormatConverter: () => {
+        throw new Error('raw legacy methods must not invoke the configured converter');
+      },
+      handlers: {
+        onCreateMediaBuyStatusChange: () => statusCalls.push('create'),
+        onUpdateMediaBuyStatusChange: () => statusCalls.push('update'),
+        onSyncCreativesStatusChange: () => statusCalls.push('sync'),
+      },
     });
     const legacyRef = { agent_url: 'https://seller.example/formats', id: 'homepage_takeover' };
     const legacyCreative = {
@@ -581,40 +576,46 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
       });
 
       for (const params of [captured.create, captured.update]) {
-        assert.strictEqual(params.packages[0].format_ids, undefined);
-        assert.strictEqual(params.packages[0].format_option_refs[0].format_option_id, 'homepage-takeover');
-        assert.strictEqual(params.packages[0].creatives[0].format_id, undefined);
-        assert.strictEqual(params.packages[0].creatives[0].format_kind, 'custom');
+        assert.deepStrictEqual(params.packages[0].format_ids, [legacyRef]);
+        assert.strictEqual(params.packages[0].format_option_refs, undefined);
+        assert.deepStrictEqual(params.packages[0].creatives[0].format_id, legacyRef);
+        assert.strictEqual(params.packages[0].creatives[0].format_kind, undefined);
       }
-      assert.strictEqual(captured.sync.creatives[0].format_id, undefined);
-      assert.strictEqual(captured.sync.creatives[0].format_kind, 'custom');
+      assert.deepStrictEqual(captured.sync.creatives[0].format_id, legacyRef);
+      assert.strictEqual(captured.sync.creatives[0].format_kind, undefined);
       assert.deepStrictEqual(calls, { create: 1, update: 1, sync: 1 });
+      assert.deepStrictEqual(statusCalls, ['create', 'update', 'sync']);
 
-      const invalidAgent = AgentClient.fromMCPClient(mcp, {
-        agentName: 'Invalid converter MCP',
+      const throwingHandlerAgent = AgentClient.fromMCPClient(mcp, {
+        agentName: 'Throwing status handler MCP',
         validation: { responses: 'off' },
-        legacyFormatConverter: () => {
-          throw new Error('converter must fail before dispatch');
+        handlers: {
+          onCreateMediaBuyStatusChange: () => {
+            throw new Error('status handler failed after completion');
+          },
         },
       });
-      await assert.rejects(() =>
-        invalidAgent.createMediaBuyLegacy({
-          account: { account_id: 'acct-canonical' },
-          brand: { domain: 'buyer.example' },
-          start_time: 'asap',
-          end_time: '2027-12-31T00:00:00Z',
-          packages: [
-            {
-              product_id: 'custom-product',
-              pricing_option_id: 'po_cpm',
-              budget: 1000,
-              format_ids: [legacyRef],
-              creatives: [legacyCreative],
-            },
-          ],
-        })
+      await assert.rejects(
+        () =>
+          throwingHandlerAgent.createMediaBuyLegacy({
+            account: { account_id: 'acct-canonical' },
+            brand: { domain: 'buyer.example' },
+            start_time: 'asap',
+            end_time: '2027-12-31T00:00:00Z',
+            packages: [
+              {
+                buyer_ref: 'pkg-throwing-handler',
+                product_id: 'custom-product',
+                pricing_option_id: 'po_cpm',
+                budget: 1000,
+                format_ids: [legacyRef],
+                creatives: [legacyCreative],
+              },
+            ],
+          }),
+        /status handler failed after completion/
       );
-      assert.strictEqual(calls.create, 1, 'invalid configured conversion must not dispatch create_media_buy');
+      assert.strictEqual(calls.create, 2, 'the completed write must not be retried when its status handler throws');
     } finally {
       await mcp.close();
       await server.close();

@@ -1173,7 +1173,7 @@ describe('creative format delivery projection', () => {
     assert.strictEqual(captured.packages[0].creatives[0].format_kind, undefined);
   });
 
-  test('SingleAgentClient legacy escape hatch upgrades package selectors for a canonical seller', async () => {
+  test('SingleAgentClient canonical write path upgrades legacy package selectors for a canonical seller', async () => {
     const client = new SingleAgentClient({
       id: 'canonical-seller',
       name: 'Canonical seller',
@@ -1187,7 +1187,7 @@ describe('creative format delivery projection', () => {
       return { success: true, status: 'completed', data: {} };
     };
 
-    await client.createMediaBuyLegacy(
+    await client.createMediaBuy(
       {
         account: { account_id: 'test-account' },
         brand: { domain: 'brand.example' },
@@ -1231,7 +1231,7 @@ describe('creative format delivery projection', () => {
     assert.ok(captured.packages.every(pkg => pkg.format_ids === undefined));
   });
 
-  test('SingleAgentClient uses its configured converter for every legacy write escape hatch', async () => {
+  test('SingleAgentClient uses its configured converter for every projected write path', async () => {
     const configuredConverter = ({ formatId }) =>
       formatId.id === 'homepage_takeover'
         ? {
@@ -1276,7 +1276,7 @@ describe('creative format delivery projection', () => {
       creatives: [creative],
     };
 
-    await client.createMediaBuyLegacy({
+    await client.createMediaBuy({
       account: { account_id: 'test-account' },
       brand: { domain: 'brand.example' },
       start_time: 'asap',
@@ -1284,12 +1284,12 @@ describe('creative format delivery projection', () => {
       idempotency_key: 'configured-converter-create',
       packages: [packageFields],
     });
-    await client.updateMediaBuyLegacy({
+    await client.updateMediaBuy({
       media_buy_id: 'mb-custom',
       idempotency_key: 'configured-converter-update',
       packages: [{ ...packageFields, package_id: 'pkg-custom' }],
     });
-    await client.syncCreativesLegacy({
+    await client.syncCreatives({
       account: { account_id: 'test-account' },
       idempotency_key: 'configured-converter-sync',
       creatives: [creative],
@@ -1374,7 +1374,7 @@ describe('creative format delivery projection', () => {
     };
     const callOptions = { legacyFormatConverter: perCallConverter };
 
-    await client.createMediaBuyLegacy(
+    await client.createMediaBuy(
       {
         account: { account_id: 'test-account' },
         brand: { domain: 'brand.example' },
@@ -1386,7 +1386,7 @@ describe('creative format delivery projection', () => {
       undefined,
       callOptions
     );
-    await client.updateMediaBuyLegacy(
+    await client.updateMediaBuy(
       {
         media_buy_id: 'mb-custom',
         idempotency_key: 'per-call-update-converter',
@@ -1395,7 +1395,7 @@ describe('creative format delivery projection', () => {
       undefined,
       callOptions
     );
-    await client.syncCreativesLegacy(
+    await client.syncCreatives(
       {
         account: { account_id: 'test-account' },
         idempotency_key: 'sync-projection-converter',
@@ -1422,6 +1422,51 @@ describe('creative format delivery projection', () => {
         { task: 'sync_creatives', optionRef: 'sync-projection-option', converter: syncProjectionConverter },
       ]
     );
+  });
+
+  test('legacy write methods preserve the raw wire request without capability projection', async () => {
+    const client = new SingleAgentClient({
+      id: 'legacy-wire-seller',
+      name: 'Legacy wire seller',
+      agent_uri: SELLER,
+      protocol: 'mcp',
+    });
+    client.getCapabilities = async () => {
+      throw new Error('legacy write methods must not probe capabilities');
+    };
+    const calls = [];
+    client.executeTaskUnprojected = async (task, params, inputHandler, options) => {
+      calls.push({ task, params, inputHandler, options });
+      return { success: true, status: 'completed', data: {} };
+    };
+    const inputHandler = async () => ({ defer: true, token: 'human-review' });
+    const options = { skipAccountValidation: true };
+    const formatId = { agent_url: 'https://external-owner.example/', id: 'video-30s' };
+    const create = {
+      ext: { adcp: { creative_wire: 'legacy' } },
+      packages: [{ format_ids: [formatId] }],
+    };
+    const update = {
+      ext: { adcp: { creative_wire: 'legacy' } },
+      packages: [{ format_ids: [formatId] }],
+    };
+    const sync = {
+      ext: { adcp: { creative_wire: 'legacy' } },
+      creatives: [{ creative_id: 'legacy-creative', format_id: formatId }],
+    };
+
+    await client.createMediaBuyLegacy(create, inputHandler, options);
+    await client.updateMediaBuyLegacy(update, inputHandler, options);
+    await client.syncCreativesLegacy(sync, inputHandler, options);
+
+    assert.deepStrictEqual(
+      calls.map(({ task }) => task),
+      ['create_media_buy', 'update_media_buy', 'sync_creatives']
+    );
+    assert.strictEqual(calls[0].params, create);
+    assert.strictEqual(calls[1].params, update);
+    assert.strictEqual(calls[2].params, sync);
+    assert.ok(calls.every(call => call.inputHandler === inputHandler && call.options === options));
   });
 
   test('SingleAgentClient detects canonical creative support from the advertised tool schema', async () => {

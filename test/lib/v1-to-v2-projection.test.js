@@ -12,6 +12,11 @@ const { readFileSync, existsSync } = require('node:fs');
 const path = require('node:path');
 
 const { projectV1ProductToV2 } = require('../../dist/lib/v2/projection/v1-to-v2.js');
+const {
+  canonicalFormatLegacyResolverFromRoutes,
+  CreativeFormatProjectionError,
+  projectSyncCreativesForDelivery,
+} = require('../../dist/lib/v2/projection/index.js');
 
 const FIXTURE_DIR = path.join(__dirname, 'v2-projection-fixtures');
 const CATALOG_PATH = path.join(FIXTURE_DIR, 'aao-reference-formats.json');
@@ -47,6 +52,157 @@ function v1ProductFor(catalogEntry, productId) {
     format_ids: [catalogEntry.format_id],
   };
 }
+
+describe('serializable canonical legacy routes', () => {
+  test('survives persistence with the exact owner and dimensional identity', () => {
+    const formatId = {
+      agent_url: 'https://formats.publisher.example/catalog',
+      id: 'homepage_takeover',
+      width: 1440,
+      height: 900,
+      duration_ms: 15000,
+    };
+    const projected = projectV1ProductToV2(
+      {
+        product_id: 'homepage',
+        name: 'Homepage',
+        description: 'Serializable route fixture',
+        format_ids: [formatId],
+      },
+      {
+        legacyFormatConverter: () => ({
+          format_kind: 'custom',
+          format_option_id: 'homepage-takeover',
+          format_shape: 'multi_placement_takeover',
+          format_schema: {
+            uri: 'https://formats.publisher.example/schemas/homepage-takeover.json',
+            digest: `sha256:${'a'.repeat(64)}`,
+          },
+          params: {},
+        }),
+      }
+    );
+
+    const restoredRoutes = JSON.parse(JSON.stringify(projected.legacyRoutes));
+    assert.deepStrictEqual(restoredRoutes, [
+      {
+        product_id: 'homepage',
+        format_option_ref: {
+          scope: 'product',
+          format_option_id: projected.v2.format_options[0].format_option_id,
+        },
+        format_ids: [formatId],
+      },
+    ]);
+
+    const resolver = canonicalFormatLegacyResolverFromRoutes(restoredRoutes);
+    const persistedDeclaration = JSON.parse(JSON.stringify(projected.v2.format_options[0]));
+    delete persistedDeclaration.v1_format_ref;
+    assert.deepStrictEqual(
+      resolver({
+        source: 'product',
+        declaration: persistedDeclaration,
+        productId: 'homepage',
+        field: persistedDeclaration.format_option_id,
+      }),
+      [formatId]
+    );
+    assert.deepStrictEqual(
+      resolver({
+        source: 'creative',
+        creative: {
+          creative_id: 'creative-1',
+          format_option_ref: restoredRoutes[0].format_option_ref,
+        },
+        selector: { product_id: 'homepage' },
+        operation: 'sync_creatives',
+        field: 'creative-1',
+      }),
+      [formatId]
+    );
+
+    const synced = projectSyncCreativesForDelivery(
+      {
+        creatives: [
+          {
+            creative_id: 'creative-1',
+            name: 'Persisted custom creative',
+            format_kind: 'custom',
+            format_option_ref: restoredRoutes[0].format_option_ref,
+            assets: {},
+          },
+        ],
+        assignments: [{ creative_id: 'creative-1', package_id: 'package-1' }],
+      },
+      [
+        {
+          package_id: 'package-1',
+          product_id: 'homepage',
+          format_option_refs: [restoredRoutes[0].format_option_ref],
+        },
+      ],
+      'legacy',
+      undefined,
+      resolver
+    );
+    assert.deepStrictEqual(synced.creatives[0].format_id, formatId);
+    assert.strictEqual(synced.creatives[0].format_kind, undefined);
+
+    assert.strictEqual(
+      resolver({
+        source: 'selector',
+        selector: {
+          product_id: 'homepage',
+          format_option_refs: [
+            restoredRoutes[0].format_option_ref,
+            { scope: 'product', format_option_id: 'missing-option' },
+          ],
+        },
+        operation: 'create_media_buy',
+        field: 'package-1',
+      }),
+      undefined,
+      'a multi-option selector must fail closed when any durable route is missing'
+    );
+
+    assert.throws(
+      () =>
+        projectSyncCreativesForDelivery(
+          {
+            creatives: [
+              {
+                creative_id: 'creative-1',
+                name: 'Ambiguous multi-package creative',
+                format_kind: 'custom',
+                assets: {},
+              },
+            ],
+            assignments: [
+              { creative_id: 'creative-1', package_id: 'package-1' },
+              { creative_id: 'creative-1', package_id: 'package-2' },
+            ],
+          },
+          [
+            {
+              package_id: 'package-1',
+              product_id: 'homepage',
+              format_option_refs: [restoredRoutes[0].format_option_ref],
+            },
+            {
+              package_id: 'package-2',
+              product_id: 'unrouteable-product',
+              format_kind: 'custom',
+            },
+          ],
+          'legacy',
+          undefined,
+          resolver
+        ),
+      CreativeFormatProjectionError,
+      'sync must fail closed when any assigned package lacks a durable route'
+    );
+  });
+});
 
 describe('v1 → v2 projection — every catalog entry projects', { skip: SKIP_REASON }, () => {
   test('all entries with `canonical` annotations project via Step 1', () => {
