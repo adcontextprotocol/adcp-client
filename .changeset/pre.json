@@ -7,6 +7,7 @@
     "@adcp/eslint-plugin": "0.1.6"
   },
   "changesets": [
+    "bright-apes-dual-emit",
     "bright-cats-listen",
     "calm-mice-negotiate",
     "fix-account-list-types",
@@ -47,6 +48,7 @@
     "replay-trusted-match-context-router",
     "require-tenant-ref-access",
     "resolve-storyboard-fixtures",
+    "restore-legacy-creative-routes",
     "soft-fail-legacy-format-ids-projection",
     "soft-tools-smile",
     "split-tested-track-entries",
