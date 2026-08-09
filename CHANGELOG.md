@@ -1,5 +1,15 @@
 # Changelog
 
+## 13.0.0-rc.11
+
+### Minor Changes
+
+- a63c233: Restore legacy creative identity routes by allowing custom `sync_creatives` handlers to fill an omitted sales method, preserving negotiated legacy `list_creatives` filters, keeping explicit legacy client methods unprojected, and exposing a serializable route sidecar for process-safe canonical-to-legacy delivery.
+
+### Patch Changes
+
+- 89d925c: Preserve legacy format references on AdCP 3.1 canonical product responses so transitional buyers receive the protocol's dual-emission wire shape.
+
 ## 13.0.0-rc.10
 
 ### Patch Changes
