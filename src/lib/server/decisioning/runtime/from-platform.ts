@@ -176,7 +176,7 @@ import {
   projectMediaBuyCreativesForDelivery,
   stripLegacyCreativeIdentity,
 } from '../../../v2/projection/creative-delivery';
-import type { LegacyFormatConverter } from '../../../v2/projection/v1-to-v2';
+import { projectV1ProductToV2, type LegacyFormatConverter } from '../../../v2/projection/v1-to-v2';
 import type {
   CanonicalCreativeAsset,
   CanonicalCreateMediaBuyRequest,
@@ -191,8 +191,9 @@ import {
   resolveCanonicalFormatLegacyRefs,
 } from '../../../v2/projection/v2-to-v1';
 import type { CanonicalFormatLegacyResolver } from '../../../v2/projection/v2-to-v1';
-import type { V1Product, V2Product } from '../../../v2/projection/types';
+import type { ProjectionDiagnostic, V1FormatId, V1Product, V2Product } from '../../../v2/projection/types';
 import { legacyFormatRefsForDeclaration } from '../../../v2/projection/legacy-metadata';
+import { canonicalizeAgentUrl } from '../../../discovery/resolve-agent-properties';
 import { ADCP_VERSION } from '../../../version';
 
 function supportsCanonicalCreativeCapability(version: unknown): boolean {
@@ -211,6 +212,23 @@ function requiresCanonicalCreativeWire(version: unknown): boolean {
   const major = Number(match[1]);
   const minor = Number(match[2]);
   return major > 3 || (major === 3 && minor >= 2);
+}
+
+function supportsTransitionalDualCreativeWire(version: unknown): boolean {
+  if (typeof version !== 'string') return false;
+  const match = /^v?(\d+)\.(\d+)(?:\.|-|$)/.exec(version.trim());
+  if (!match) return false;
+  return Number(match[1]) === 3 && Number(match[2]) === 1;
+}
+
+function shouldEmitTransitionalDualCreativeWire(version: unknown, request: unknown): boolean {
+  if (!supportsTransitionalDualCreativeWire(version)) return false;
+  if (request === null || typeof request !== 'object') return true;
+  const fields = Object.getOwnPropertyDescriptor(request, 'fields');
+  if (!fields || !('value' in fields) || !Array.isArray(fields.value)) return true;
+  return Object.values(Object.getOwnPropertyDescriptors(fields.value)).some(
+    descriptor => descriptor.enumerable && 'value' in descriptor && descriptor.value === 'format_ids'
+  );
 }
 
 type CreativeWireEvidence = 'canonical' | 'legacy' | 'mixed' | 'unknown';
@@ -593,7 +611,7 @@ function asSemanticServerResponseForWire<T>(
   wireMode: 'canonical' | 'legacy'
 ): T {
   if (wireMode === 'canonical') {
-    return attachCanonicalCustomFormatWireRefs(
+    return attachCanonicalFormatWireRefs(
       asCanonicalSemanticServerResponse(response, operation, legacyFormatConverter, canonicalFormatLegacyResolver),
       canonicalFormatLegacyResolver,
       operation
@@ -782,27 +800,363 @@ function asCanonicalProductResponse<T extends { products?: unknown[] }>(
       suggestion: 'Return an acyclic data-only product response without enumerable accessors.',
     });
   }
+  validateDualProductFormatDeclarations(response, legacyFormatConverter);
   const projected = toCanonicalOnlyResponse(response as T & { products?: V1Product[] }, {
     legacyFormatConverter,
   });
-  if (projected.diagnostics.length > 0) {
-    const first = projected.diagnostics[0]!;
+  const blockingDiagnostics = projected.diagnostics.filter(
+    diagnostic => diagnostic.code !== 'LEGACY_FORMAT_ID_DROPPED_UNMAPPED'
+  );
+  if (blockingDiagnostics.length > 0) {
+    const first = blockingDiagnostics[0]!;
     throw new AdcpError('INVALID_REQUEST', {
       message: 'get_products returned a legacy format that cannot be represented canonically.',
       field: first.field,
       suggestion: 'Declare canonical format_options or configure legacyCreativeFormatConverter for the legacy format.',
     });
   }
-  return asCanonicalServerResponse(projected.response) as T;
+  const canonicalResponse = asCanonicalServerResponse(projected.response) as T;
+  const resolvedDropDiagnostics = projected.diagnostics.filter(
+    (diagnostic): diagnostic is LegacyDropDiagnostic => diagnostic.code === 'LEGACY_FORMAT_ID_DROPPED_UNMAPPED'
+  );
+  if (resolvedDropDiagnostics.length > 0 && canonicalResponse !== null && typeof canonicalResponse === 'object') {
+    resolvedLegacyDropDiagnosticsByResponse.set(canonicalResponse, resolvedDropDiagnostics);
+  }
+  preserveAuthoredFormatIds(response, canonicalResponse);
+  return canonicalResponse;
 }
 
-function attachCanonicalCustomFormatWireRefs<T>(
+const authoredFormatIdsByOwner = new WeakMap<object, readonly V1FormatId[]>();
+type LegacyDropDiagnostic = Extract<ProjectionDiagnostic, { code: 'LEGACY_FORMAT_ID_DROPPED_UNMAPPED' }>;
+const resolvedLegacyDropDiagnosticsByResponse = new WeakMap<object, readonly LegacyDropDiagnostic[]>();
+
+function ownArrayDataValues(value: readonly unknown[]): unknown[] {
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
+  const length = lengthDescriptor && 'value' in lengthDescriptor ? lengthDescriptor.value : 0;
+  if (typeof length !== 'number' || !Number.isSafeInteger(length) || length < 0) return [];
+  const values: unknown[] = [];
+  for (let index = 0; index < length; index++) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (descriptor?.enumerable && 'value' in descriptor) values.push(descriptor.value);
+  }
+  return values;
+}
+
+function cloneWireData<T>(value: T): T {
+  if (Array.isArray(value)) {
+    const cloned: unknown[] = [];
+    for (const entry of ownArrayDataValues(value)) cloned.push(cloneWireData(entry));
+    return cloned as T;
+  }
+  if (value === null || typeof value !== 'object') return value;
+  const cloned: Record<string, unknown> = {};
+  for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
+    if (descriptor.enumerable && 'value' in descriptor) cloned[key] = cloneWireData(descriptor.value);
+  }
+  return cloned as T;
+}
+
+function preserveAuthoredFormatIds(source: unknown, target: unknown): void {
+  if (source === null || target === null || typeof source !== 'object' || typeof target !== 'object') return;
+  const sourceProducts = Object.getOwnPropertyDescriptor(source, 'products');
+  const targetProducts = Object.getOwnPropertyDescriptor(target, 'products');
+  if (
+    !sourceProducts ||
+    !sourceProducts.enumerable ||
+    !('value' in sourceProducts) ||
+    !Array.isArray(sourceProducts.value) ||
+    !targetProducts ||
+    !targetProducts.enumerable ||
+    !('value' in targetProducts) ||
+    !Array.isArray(targetProducts.value)
+  ) {
+    return;
+  }
+  const sourceValues = ownArrayDataValues(sourceProducts.value);
+  const targetValues = ownArrayDataValues(targetProducts.value);
+  const count = Math.min(sourceValues.length, targetValues.length);
+  for (let index = 0; index < count; index++)
+    preserveAuthoredFormatIdsForOwner(sourceValues[index], targetValues[index]);
+}
+
+function preserveAuthoredFormatIdsForOwner(source: unknown, target: unknown): void {
+  if (source === null || target === null || typeof source !== 'object' || typeof target !== 'object') return;
+  const sourceProductId = Object.getOwnPropertyDescriptor(source, 'product_id');
+  const sourcePlacementId = Object.getOwnPropertyDescriptor(source, 'placement_id');
+  const recognizedOwner =
+    (sourceProductId?.enumerable && 'value' in sourceProductId && typeof sourceProductId.value === 'string') ||
+    (sourcePlacementId?.enumerable && 'value' in sourcePlacementId && typeof sourcePlacementId.value === 'string');
+  if (!recognizedOwner) return;
+  const sourceFormatIds = Object.getOwnPropertyDescriptor(source, 'format_ids');
+  const targetFormatOptions = Object.getOwnPropertyDescriptor(target, 'format_options');
+  if (
+    sourceFormatIds &&
+    sourceFormatIds.enumerable &&
+    'value' in sourceFormatIds &&
+    Array.isArray(sourceFormatIds.value) &&
+    targetFormatOptions &&
+    targetFormatOptions.enumerable &&
+    'value' in targetFormatOptions &&
+    Array.isArray(targetFormatOptions.value)
+  ) {
+    authoredFormatIdsByOwner.set(
+      target,
+      ownArrayDataValues(sourceFormatIds.value).map(ref => cloneWireData(ref as V1FormatId))
+    );
+  }
+  const sourcePlacements = Object.getOwnPropertyDescriptor(source, 'placements');
+  const targetPlacements = Object.getOwnPropertyDescriptor(target, 'placements');
+  if (
+    sourcePlacements &&
+    sourcePlacements.enumerable &&
+    'value' in sourcePlacements &&
+    Array.isArray(sourcePlacements.value) &&
+    targetPlacements &&
+    targetPlacements.enumerable &&
+    'value' in targetPlacements &&
+    Array.isArray(targetPlacements.value)
+  ) {
+    const sourceValues = ownArrayDataValues(sourcePlacements.value);
+    const targetValues = ownArrayDataValues(targetPlacements.value);
+    const count = Math.min(sourceValues.length, targetValues.length);
+    for (let index = 0; index < count; index++) {
+      preserveAuthoredFormatIdsForOwner(sourceValues[index], targetValues[index]);
+    }
+  }
+}
+
+function removeResolvedLegacyDropErrors<T>(response: T, diagnostics: readonly LegacyDropDiagnostic[]): T {
+  if (response === null || typeof response !== 'object') return response;
+  const resolved = diagnostics.filter(diagnostic => diagnostic.code === 'LEGACY_FORMAT_ID_DROPPED_UNMAPPED');
+  if (resolved.length === 0) return response;
+  const record = response as Record<string, unknown>;
+  if (!Array.isArray(record.errors)) return response;
+  const retained: unknown[] = [];
+  for (const value of ownArrayDataValues(record.errors)) {
+    let matchesResolvedDiagnostic = false;
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      const error = value as Record<string, unknown>;
+      for (const diagnostic of resolved) {
+        if (
+          error.code === diagnostic.code &&
+          error.field === diagnostic.field &&
+          error.source === diagnostic.source &&
+          error.sdk_id === diagnostic.sdk_id &&
+          jsonValuesEqual(error.details, diagnostic.error.details)
+        ) {
+          matchesResolvedDiagnostic = true;
+          break;
+        }
+      }
+    }
+    if (!matchesResolvedDiagnostic) retained.push(value);
+  }
+  if (retained.length > 0) return { ...record, errors: retained } as T;
+  const { errors: _resolvedErrors, ...withoutErrors } = record;
+  void _resolvedErrors;
+  return withoutErrors as T;
+}
+
+function legacyFormatRefKey(value: unknown): string | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const ref = value as Record<string, unknown>;
+  if (typeof ref.agent_url !== 'string' || typeof ref.id !== 'string') return undefined;
+  const agentUrl = canonicalizeAgentUrl(ref.agent_url) ?? ref.agent_url;
+  return `${agentUrl}::${ref.id}::${String(ref.width ?? '')}x${String(ref.height ?? '')}::${String(ref.duration_ms ?? '')}`;
+}
+
+function jsonValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right)) return false;
+    const leftValues = ownArrayDataValues(left);
+    const rightValues = ownArrayDataValues(right);
+    if (leftValues.length !== rightValues.length) return false;
+    for (let index = 0; index < leftValues.length; index++) {
+      if (!jsonValuesEqual(leftValues[index], rightValues[index])) return false;
+    }
+    return true;
+  }
+  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') return false;
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord);
+  const rightKeys = Object.keys(rightRecord);
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(key => Object.hasOwn(rightRecord, key) && jsonValuesEqual(leftRecord[key], rightRecord[key]))
+  );
+}
+
+type LegacyRefMatch = 'match' | 'kind_mismatch' | 'params_mismatch' | 'unresolved';
+
+function matchLegacyRefToDeclaration(
+  declaration: Record<string, unknown>,
+  ref: import('../../../v2/projection/types').V1FormatId,
+  ownerId: string,
+  legacyFormatConverter: LegacyFormatConverter | undefined
+): LegacyRefMatch {
+  const projected = projectV1ProductToV2(
+    {
+      product_id: ownerId,
+      name: ownerId,
+      description: ownerId,
+      format_ids: [ref],
+    },
+    { legacyFormatConverter }
+  );
+  if (projected.diagnostics.length > 0 || projected.v2.format_options.length !== 1) return 'unresolved';
+  const expected = projected.v2.format_options[0]!;
+  if (declaration.format_kind !== expected.format_kind) return 'kind_mismatch';
+  const params =
+    declaration.params !== null && typeof declaration.params === 'object' && !Array.isArray(declaration.params)
+      ? (declaration.params as Record<string, unknown>)
+      : {};
+  for (const [key, expectedValue] of Object.entries(expected.params)) {
+    if (!Object.hasOwn(params, key) || !jsonValuesEqual(params[key], expectedValue)) return 'params_mismatch';
+  }
+  return 'match';
+}
+
+function validateLegacyRefNarrowing(
+  declaration: Record<string, unknown>,
+  ref: import('../../../v2/projection/types').V1FormatId,
+  ownerId: string,
+  field: string,
+  legacyFormatConverter: LegacyFormatConverter | undefined
+): void {
+  const match = matchLegacyRefToDeclaration(declaration, ref, ownerId, legacyFormatConverter);
+  if (match === 'kind_mismatch') {
+    throw new AdcpError('INVALID_REQUEST', {
+      message: 'get_products returned divergent legacy and canonical format declarations.',
+      field,
+      suggestion: 'Make format_ids and format_options.v1_format_ref describe the same canonical format.',
+    });
+  }
+  if (match === 'params_mismatch') {
+    throw new AdcpError('INVALID_REQUEST', {
+      message: 'get_products returned a canonical declaration that does not narrow its v1_format_ref.',
+      field: `${field}.params`,
+      suggestion: 'Align canonical format parameters with the referenced legacy format requirements.',
+    });
+  }
+}
+
+function validateDualProductFormatDeclarations(
+  value: unknown,
+  legacyFormatConverter: LegacyFormatConverter | undefined
+): void {
+  const seen = new WeakSet<object>();
+  const visit = (current: unknown, path: string): void => {
+    if (current === null || typeof current !== 'object' || seen.has(current)) return;
+    seen.add(current);
+    if (Array.isArray(current)) {
+      const entries = ownArrayDataValues(current);
+      for (let index = 0; index < entries.length; index++) visit(entries[index], `${path}[${index}]`);
+      return;
+    }
+    const record = current as Record<string, unknown>;
+    const formatOptions = Array.isArray(record.format_options) ? record.format_options : undefined;
+    const ownerId =
+      typeof record.product_id === 'string'
+        ? record.product_id
+        : typeof record.placement_id === 'string'
+          ? record.placement_id
+          : undefined;
+    if (formatOptions && ownerId !== undefined) {
+      const declarationRefs: import('../../../v2/projection/types').V1FormatId[] = [];
+      const declarations = ownArrayDataValues(formatOptions);
+      for (let index = 0; index < declarations.length; index++) {
+        const value = declarations[index];
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+        const declaration = value as Record<string, unknown>;
+        const refs = ownArrayDataValues(
+          legacyFormatRefsForDeclaration(declaration)
+        ) as import('../../../v2/projection/types').V1FormatId[];
+        const field = `${path}.format_options[${index}]`;
+        if (declaration.canonical_formats_only === true && refs.length > 0) {
+          throw new AdcpError('INVALID_REQUEST', {
+            message: 'get_products returned canonical_formats_only together with v1_format_ref.',
+            field,
+            suggestion: 'Remove v1_format_ref or set canonical_formats_only to false.',
+          });
+        }
+        declarationRefs.push(...refs);
+        for (const ref of refs) {
+          validateLegacyRefNarrowing(declaration, ref, ownerId, field, legacyFormatConverter);
+        }
+      }
+      if (Array.isArray(record.format_ids)) {
+        const formatIds = ownArrayDataValues(record.format_ids) as import('../../../v2/projection/types').V1FormatId[];
+        const formatIdKeys = new Set<string>();
+        for (const ref of formatIds) {
+          const key = legacyFormatRefKey(ref);
+          if (key !== undefined) formatIdKeys.add(key);
+        }
+        const declarationRefKeys = new Set<string>();
+        for (const ref of declarationRefs) {
+          const key = legacyFormatRefKey(ref);
+          if (key !== undefined) declarationRefKeys.add(key);
+        }
+        let divergent = false;
+        for (const key of declarationRefKeys) {
+          if (!formatIdKeys.has(key)) divergent = true;
+        }
+        for (const ref of formatIds) {
+          const key = legacyFormatRefKey(ref);
+          if (key !== undefined && declarationRefKeys.has(key)) continue;
+          let matched = false;
+          for (const value of declarations) {
+            if (
+              value !== null &&
+              typeof value === 'object' &&
+              !Array.isArray(value) &&
+              (value as Record<string, unknown>).canonical_formats_only !== true &&
+              matchLegacyRefToDeclaration(value as Record<string, unknown>, ref, ownerId, legacyFormatConverter) ===
+                'match'
+            ) {
+              matched = true;
+              break;
+            }
+          }
+          if (!matched) divergent = true;
+        }
+        if (divergent) {
+          throw new AdcpError('INVALID_REQUEST', {
+            message: 'get_products returned divergent format_ids and format_options.v1_format_ref values.',
+            field: path,
+            suggestion: 'Dual-emitted product declarations must carry the same legacy format references.',
+          });
+        }
+      }
+    }
+    for (const [key, child] of Object.entries(record)) {
+      if (key === 'format_options') continue;
+      visit(child, `${path}.${key}`);
+    }
+  };
+  visit(value, '$');
+}
+
+/**
+ * Rehydrate legacy routing references only at the response wire boundary.
+ * Custom declarations retain their explicit mapping on every canonical
+ * release. AdCP 3.1 additionally dual-emits standard declaration refs and
+ * their product-level `format_ids`; the canonical platform object itself
+ * remains free of legacy identity through SDK-private WeakMap metadata.
+ */
+function attachCanonicalFormatWireRefs<T>(
   value: T,
   canonicalFormatLegacyResolver: CanonicalFormatLegacyResolver | undefined,
-  operation: string
+  operation: string,
+  emitTransitionalLegacyRefs = false
 ): T {
   const visit = (current: unknown): unknown => {
-    if (Array.isArray(current)) return current.map(visit);
+    if (Array.isArray(current)) {
+      const mapped: unknown[] = [];
+      for (const entry of ownArrayDataValues(current)) mapped.push(visit(entry));
+      return mapped;
+    }
     if (current === null || typeof current !== 'object') return current;
     const record = current as Record<string, unknown>;
     const hasFormatDeclarations = Array.isArray(record.format_options);
@@ -814,21 +1168,57 @@ function attachCanonicalCustomFormatWireRefs<T>(
           : '(response)';
     let projected = record;
     if (hasFormatDeclarations) {
-      const formatOptions = (record.format_options as unknown[]).map((value, index) => {
-        if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+      const wireLegacyRefs: V1FormatId[] = [];
+      const wireLegacyRefKeys = new Set<string>();
+      const appendWireLegacyRefs = (refs: readonly V1FormatId[]): void => {
+        for (const ref of refs) {
+          const key = legacyFormatRefKey(ref);
+          if (key === undefined || wireLegacyRefKeys.has(key)) continue;
+          wireLegacyRefKeys.add(key);
+          wireLegacyRefs.push(cloneWireData(ref));
+        }
+      };
+      if (emitTransitionalLegacyRefs) {
+        const authoredRefs = authoredFormatIdsByOwner.get(record);
+        if (authoredRefs) appendWireLegacyRefs(authoredRefs);
+      }
+      const formatOptions: unknown[] = [];
+      const declarations = ownArrayDataValues(record.format_options as unknown[]);
+      for (let index = 0; index < declarations.length; index++) {
+        const value = declarations[index];
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+          formatOptions.push(value);
+          continue;
+        }
         const declaration = value as Record<string, unknown>;
-        if (declaration.format_kind !== 'custom' || declaration.canonical_formats_only === true) return declaration;
-        let refs = [...legacyFormatRefsForDeclaration(declaration)];
+        if (declaration.canonical_formats_only === true) {
+          formatOptions.push(declaration);
+          continue;
+        }
+        let refs = ownArrayDataValues(
+          legacyFormatRefsForDeclaration(declaration)
+        ) as import('../../../v2/projection/types').V1FormatId[];
+        if (emitTransitionalLegacyRefs && refs.length > 0) {
+          const clonedRefs = refs.map(ref => cloneWireData(ref));
+          appendWireLegacyRefs(clonedRefs);
+          formatOptions.push({ ...declaration, v1_format_ref: clonedRefs });
+          continue;
+        }
+        if (declaration.format_kind !== 'custom') {
+          formatOptions.push(declaration);
+          continue;
+        }
         if (refs.length === 0) {
           try {
-            refs =
-              resolveCanonicalFormatLegacyRefs(canonicalFormatLegacyResolver, {
-                source: 'product',
-                declaration:
-                  declaration as unknown as import('../../../v2/projection/types').V2ProductFormatDeclaration,
-                productId: declarationOwner,
-                field: `${declarationOwner}.format_options[${index}]`,
-              }) ?? [];
+            const resolved = resolveCanonicalFormatLegacyRefs(canonicalFormatLegacyResolver, {
+              source: 'product',
+              declaration: declaration as unknown as import('../../../v2/projection/types').V2ProductFormatDeclaration,
+              productId: declarationOwner,
+              field: `${declarationOwner}.format_options[${index}]`,
+            });
+            refs = resolved
+              ? (ownArrayDataValues(resolved) as import('../../../v2/projection/types').V1FormatId[])
+              : [];
           } catch (error) {
             if (!(error instanceof CanonicalFormatLegacyResolutionError)) throw error;
             throw new CreativeFormatProjectionError(
@@ -845,9 +1235,15 @@ function attachCanonicalCustomFormatWireRefs<T>(
             'custom canonical declaration must set canonical_formats_only or provide an explicit legacy mapping'
           );
         }
-        return { ...declaration, v1_format_ref: refs.map(ref => ({ ...ref })) };
-      });
-      projected = { ...record, format_options: formatOptions };
+        const clonedRefs = refs.map(ref => cloneWireData(ref));
+        if (emitTransitionalLegacyRefs) appendWireLegacyRefs(clonedRefs);
+        formatOptions.push({ ...declaration, v1_format_ref: clonedRefs });
+      }
+      projected = {
+        ...record,
+        format_options: formatOptions,
+        ...(emitTransitionalLegacyRefs && wireLegacyRefs.length > 0 && { format_ids: wireLegacyRefs }),
+      };
     }
     let changed = projected !== record;
     const next: Record<string, unknown> = { ...projected };
@@ -867,10 +1263,23 @@ function attachCanonicalCustomFormatWireRefs<T>(
 function asProductResponseForWire<T extends { products?: unknown[] }>(
   canonicalResponse: T,
   wireMode: 'canonical' | 'legacy',
-  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver
+  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
+  emitTransitionalLegacyRefs = false
 ): T {
   if (wireMode === 'canonical') {
-    return attachCanonicalCustomFormatWireRefs(canonicalResponse, canonicalFormatLegacyResolver, 'get_products');
+    const responseForWire =
+      emitTransitionalLegacyRefs && canonicalResponse !== null && typeof canonicalResponse === 'object'
+        ? removeResolvedLegacyDropErrors(
+            canonicalResponse,
+            resolvedLegacyDropDiagnosticsByResponse.get(canonicalResponse) ?? []
+          )
+        : canonicalResponse;
+    return attachCanonicalFormatWireRefs(
+      responseForWire,
+      canonicalFormatLegacyResolver,
+      'get_products',
+      emitTransitionalLegacyRefs
+    );
   }
   if (!Array.isArray(canonicalResponse.products)) return canonicalResponse;
   const products = canonicalResponse.products.map(product => {
@@ -4958,7 +5367,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               return asProductResponseForWire(
                 canonicalResult,
                 responseWireMode,
-                canonicalFormatLegacyResolver
+                canonicalFormatLegacyResolver,
+                shouldEmitTransitionalDualCreativeWire(ctx.servedAdcpVersion, params)
               ) as unknown as import('../../../types/tools.generated').GetProductsResponse;
             };
             const isHandoff = isTaskHandoff<GetProductsPayload>(result);
@@ -5352,7 +5762,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             );
             const wireResult =
               responseWireMode === 'canonical'
-                ? attachCanonicalCustomFormatWireRefs(canonicalResult, canonicalFormatLegacyResolver, 'get_media_buys')
+                ? attachCanonicalFormatWireRefs(canonicalResult, canonicalFormatLegacyResolver, 'get_media_buys')
                 : asSemanticServerResponseForWire(
                     result,
                     'get_media_buys',

@@ -139,11 +139,443 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     assert.strictEqual(result.structuredContent.products[0].product_id, 'p_dispatched');
     assert.strictEqual(result.structuredContent.products[0].format_ids, undefined);
     assert.strictEqual(result.structuredContent.products[0].format_options[0].format_kind, 'image');
+    assert.strictEqual(result.structuredContent.products[0].format_options[0].v1_format_ref, undefined);
     assert.deepStrictEqual(sawRequest.fields, ['name', 'format_options']);
     assert.ok(sawCtx, 'sales.getProducts should receive a RequestContext');
     assert.ok(sawCtx.account, 'ctx.account should be populated from accounts.resolve');
     assert.strictEqual(typeof sawCtx.state.workflowSteps, 'function');
     assert.strictEqual(typeof sawCtx.resolve.creativeFormat, 'function');
+  });
+
+  it('preserves dual format declarations on the AdCP 3.1 canonical product wire (#2440)', async () => {
+    const base = buildPlatform();
+    const legacyRef = {
+      agent_url: 'https://creative.adcontextprotocol.org/',
+      id: 'display_300x250_image',
+    };
+    const platform = buildPlatform({
+      sales: {
+        ...base.sales,
+        getProducts: async () => ({
+          cache_scope: 'account',
+          products: [
+            {
+              product_id: 'canonical-formats-mrec',
+              name: 'Canonical formats MREC',
+              description: 'A transition product with both declarations',
+              format_ids: [legacyRef],
+              format_options: [
+                {
+                  format_kind: 'image',
+                  format_option_id: 'canonical-formats-image-mrec',
+                  v1_format_ref: [legacyRef],
+                  params: { width: 300, height: 250 },
+                },
+              ],
+              placements: [
+                {
+                  kind: 'seller_inline',
+                  placement_id: 'canonical-formats-mrec-slot',
+                  name: 'Canonical formats MREC slot',
+                  mode: 'included',
+                  format_ids: [legacyRef],
+                  format_options: [
+                    {
+                      format_kind: 'image',
+                      format_option_id: 'canonical-formats-image-mrec',
+                      v1_format_ref: [legacyRef],
+                      params: { width: 300, height: 250 },
+                    },
+                  ],
+                },
+              ],
+              channels: ['display'],
+              delivery_type: 'guaranteed',
+              publisher_properties: [{ publisher_domain: 'seller.example', selection_type: 'all' }],
+              pricing_options: [
+                {
+                  pricing_option_id: 'canonical-formats-mrec-cpm',
+                  pricing_model: 'cpm',
+                  currency: 'USD',
+                  fixed_price: 12,
+                },
+              ],
+              reporting_capabilities: {
+                available_reporting_frequencies: ['daily'],
+                expected_delay_minutes: 60,
+                timezone: 'UTC',
+                supports_webhooks: false,
+                available_metrics: ['impressions', 'spend'],
+                date_range_support: 'date_range',
+              },
+            },
+          ],
+        }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'dual-format-product',
+      version: '1.0.0',
+      adcpVersion: '3.1.11',
+      validation: { requests: 'off', responses: 'strict' },
+    });
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: { account: { account_id: 'acc_test' }, buying_mode: 'wholesale' },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    const product = result.structuredContent.products[0];
+    assert.deepStrictEqual(product.format_ids, [legacyRef]);
+    assert.deepStrictEqual(product.format_options[0].v1_format_ref, [legacyRef]);
+    assert.strictEqual(product.format_options[0].format_kind, 'image');
+    assert.deepStrictEqual(product.format_options[0].params, { width: 300, height: 250 });
+    assert.deepStrictEqual(product.placements[0].format_ids, [legacyRef]);
+    assert.deepStrictEqual(product.placements[0].format_options[0].v1_format_ref, [legacyRef]);
+  });
+
+  it('rejects divergent top-level and canonical legacy format references', async () => {
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async () => ({
+            cache_scope: 'account',
+            products: [
+              {
+                product_id: 'divergent-refs',
+                name: 'Divergent refs',
+                description: 'Invalid dual declaration',
+                format_ids: [
+                  {
+                    agent_url: 'https://creative.adcontextprotocol.org/',
+                    id: 'display_728x90_image',
+                  },
+                ],
+                format_options: [
+                  {
+                    format_kind: 'image',
+                    params: { width: 300, height: 250 },
+                    v1_format_ref: [
+                      {
+                        agent_url: 'https://creative.adcontextprotocol.org/',
+                        id: 'display_300x250_image',
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          }),
+        },
+      }),
+      {
+        name: 'divergent-format-refs',
+        version: '1.0.0',
+        adcpVersion: '3.1.11',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: { account: { account_id: 'acc_test' }, buying_mode: 'wholesale' },
+      },
+    });
+
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.match(result.structuredContent.adcp_error.message, /divergent format_ids/);
+  });
+
+  it('rejects a canonical declaration that does not narrow its legacy format reference', async () => {
+    const base = buildPlatform();
+    const legacyRef = {
+      agent_url: 'https://creative.adcontextprotocol.org/',
+      id: 'display_300x250_image',
+    };
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async () => ({
+            cache_scope: 'account',
+            products: [
+              {
+                product_id: 'divergent-params',
+                name: 'Divergent params',
+                description: 'Invalid canonical narrowing',
+                format_ids: [legacyRef],
+                format_options: [
+                  {
+                    format_kind: 'image',
+                    params: { width: 728, height: 90 },
+                    v1_format_ref: [legacyRef],
+                  },
+                ],
+              },
+            ],
+          }),
+        },
+      }),
+      {
+        name: 'divergent-format-params',
+        version: '1.0.0',
+        adcpVersion: '3.1.11',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: { account: { account_id: 'acc_test' }, buying_mode: 'wholesale' },
+      },
+    });
+
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.match(result.structuredContent.adcp_error.message, /does not narrow/);
+  });
+
+  it('rejects v1_format_ref when canonical_formats_only opts out of legacy emission', async () => {
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async () => ({
+            cache_scope: 'account',
+            products: [
+              {
+                product_id: 'conflicting-opt-out',
+                name: 'Conflicting opt-out',
+                description: 'Invalid legacy opt-out',
+                format_options: [
+                  {
+                    format_kind: 'image',
+                    canonical_formats_only: true,
+                    params: { width: 300, height: 250 },
+                    v1_format_ref: [
+                      {
+                        agent_url: 'https://creative.adcontextprotocol.org/',
+                        id: 'display_300x250_image',
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          }),
+        },
+      }),
+      {
+        name: 'conflicting-format-opt-out',
+        version: '1.0.0',
+        adcpVersion: '3.1.11',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: { account: { account_id: 'acc_test' }, buying_mode: 'wholesale' },
+      },
+    });
+
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.match(result.structuredContent.adcp_error.message, /canonical_formats_only/);
+  });
+
+  it('does not use canonical_formats_only declarations to authorize top-level format_ids', async () => {
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async () => ({
+            cache_scope: 'account',
+            products: [
+              {
+                product_id: 'indirect-opt-out-conflict',
+                name: 'Indirect opt-out conflict',
+                description: 'A canonical-only option cannot authorize a legacy ID',
+                format_ids: [
+                  {
+                    agent_url: 'https://creative.adcontextprotocol.org/',
+                    id: 'display_300x250_image',
+                  },
+                ],
+                format_options: [
+                  {
+                    format_kind: 'image',
+                    canonical_formats_only: true,
+                    params: { width: 300, height: 250 },
+                  },
+                ],
+              },
+            ],
+          }),
+        },
+      }),
+      {
+        name: 'indirect-format-opt-out-conflict',
+        version: '1.0.0',
+        adcpVersion: '3.1.11',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: { account: { account_id: 'acc_test' }, buying_mode: 'wholesale' },
+      },
+    });
+
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.match(result.structuredContent.adcp_error.message, /divergent format_ids/);
+  });
+
+  it('deduplicates dual-emitted format_ids without aliasing nested references', async () => {
+    const base = buildPlatform();
+    const legacyRef = {
+      agent_url: 'https://creative.adcontextprotocol.org/',
+      id: 'display_300x250_image',
+    };
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async () => ({
+            cache_scope: 'account',
+            products: [
+              {
+                product_id: 'duplicate-refs',
+                name: 'Duplicate refs',
+                description: 'Two canonical options share one legacy format',
+                format_options: [
+                  { format_kind: 'image', params: { width: 300, height: 250 }, v1_format_ref: [legacyRef] },
+                  { format_kind: 'image', params: { width: 300, height: 250 }, v1_format_ref: [legacyRef] },
+                ],
+              },
+            ],
+          }),
+        },
+      }),
+      {
+        name: 'deduplicated-format-refs',
+        version: '1.0.0',
+        adcpVersion: '3.1.11',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: { account: { account_id: 'acc_test' }, buying_mode: 'wholesale' },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    const product = result.structuredContent.products[0];
+    assert.deepStrictEqual(product.format_ids, [legacyRef]);
+    assert.notStrictEqual(product.format_ids[0], product.format_options[0].v1_format_ref[0]);
+    product.format_ids[0].id = 'mutated';
+    assert.strictEqual(product.format_options[0].v1_format_ref[0].id, 'display_300x250_image');
+  });
+
+  it('preserves compatible authored format_ids without synthesizing v1_format_ref', async () => {
+    const base = buildPlatform();
+    const mrecRef = {
+      agent_url: 'https://creative.adcontextprotocol.org/',
+      id: 'display_300x250_image',
+    };
+    const leaderboardRef = {
+      agent_url: 'https://creative.adcontextprotocol.org/',
+      id: 'display_728x90_image',
+    };
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async () => ({
+            cache_scope: 'account',
+            products: [
+              {
+                product_id: 'independently-authored-dual',
+                name: 'Independently authored dual product',
+                description: 'Top-level legacy IDs include a canonical option without an explicit nested link',
+                format_ids: [mrecRef, leaderboardRef],
+                format_options: [
+                  {
+                    format_kind: 'image',
+                    params: { width: 300, height: 250 },
+                    v1_format_ref: [mrecRef],
+                  },
+                  {
+                    format_kind: 'image',
+                    params: { width: 728, height: 90 },
+                  },
+                ],
+              },
+            ],
+          }),
+        },
+      }),
+      {
+        name: 'independently-authored-dual',
+        version: '1.0.0',
+        adcpVersion: '3.1.11',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: { account: { account_id: 'acc_test' }, buying_mode: 'wholesale' },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    const product = result.structuredContent.products[0];
+    assert.deepStrictEqual(product.format_ids, [mrecRef, leaderboardRef]);
+    assert.deepStrictEqual(product.format_options[0].v1_format_ref, [mrecRef]);
+    assert.strictEqual(product.format_options[1].v1_format_ref, undefined);
+    assert.strictEqual(result.structuredContent.errors, undefined);
+
+    const canonicalOnly = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          account: { account_id: 'acc_test' },
+          buying_mode: 'wholesale',
+          fields: ['format_options'],
+        },
+      },
+    });
+
+    assert.notStrictEqual(canonicalOnly.isError, true, JSON.stringify(canonicalOnly.structuredContent));
+    assert.strictEqual(canonicalOnly.structuredContent.products[0].format_ids, undefined);
+    assert.ok(canonicalOnly.structuredContent.errors.some(error => error.code === 'LEGACY_FORMAT_ID_DROPPED_UNMAPPED'));
   });
 
   it('keeps an explicit legacy 3.1 get_products request legacy on the wire while the platform stays canonical', async () => {
@@ -202,8 +634,13 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       },
     });
     assert.notStrictEqual(ambiguous.isError, true, JSON.stringify(ambiguous.structuredContent));
-    assert.strictEqual(ambiguous.structuredContent.products[0].format_ids, undefined);
+    assert.deepStrictEqual(ambiguous.structuredContent.products[0].format_ids, [
+      { agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' },
+    ]);
     assert.strictEqual(ambiguous.structuredContent.products[0].format_options[0].format_kind, 'image');
+    assert.deepStrictEqual(ambiguous.structuredContent.products[0].format_options[0].v1_format_ref, [
+      { agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' },
+    ]);
   });
 
   it('descriptor-scans request arrays without invoking getters or custom iterators', async () => {
