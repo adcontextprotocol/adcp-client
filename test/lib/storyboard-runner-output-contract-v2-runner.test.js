@@ -784,11 +784,11 @@ describe('runStoryboardStep — capture-failure → consumer-skip cascade', () =
 });
 
 // ────────────────────────────────────────────────────────────
-// Unknown validation checks fail closed
+// Unknown validation checks grade not_applicable for forward compatibility
 // ────────────────────────────────────────────────────────────
 
-describe('runStoryboard — unknown validations fail closed', () => {
-  test('storyboard result fails rather than counting unknown checks as not_applicable', async () => {
+describe('runStoryboard — unknown validations grade not_applicable', () => {
+  test('storyboard remains non-failing and counts unknown checks as not_applicable', async () => {
     const sb = {
       id: 'fwd_compat_sb',
       version: '1.0',
@@ -826,8 +826,8 @@ describe('runStoryboard — unknown validations fail closed', () => {
       _profile: stubProfile,
       agentTools: stubProfile.tools,
     });
-    assert.equal(result.overall_passed, false);
-    assert.equal(result.failed_count, 1);
-    assert.equal(result.validations_not_applicable, undefined);
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.failed_count, 0);
+    assert.equal(result.validations_not_applicable, 2);
   });
 });

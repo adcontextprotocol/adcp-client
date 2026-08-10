@@ -1216,7 +1216,17 @@ export interface RefsResolveScope {
 export interface StoryboardValidation {
   /** Stable authored validation identifier echoed into runner results when present. */
   id?: string;
-  check: StoryboardValidationCheck;
+  /** Known validation kind, or a future string graded not_applicable by older runners. */
+  check: StoryboardValidationCheck | (string & {});
+  /** Whether a failed validation gates the step. Defaults to `required`. */
+  severity?: 'required' | 'advisory';
+  /**
+   * Runner capability version at which an advisory is promoted to required.
+   * Compared using semver.gte against the runner's self-declared capability.
+   */
+  expires_after_version?: string;
+  /** Structured marker for an advisory that deliberately never auto-promotes. */
+  permanent_advisory?: { reason: string };
   /** JSON path for field checks, e.g. "accounts[0].account_id" */
   path?: string;
   /** Expected value for exact-match checks. */
@@ -2196,6 +2206,13 @@ export interface ValidationResult {
   check: string;
   passed: boolean;
   description: string;
+  /** Effective severity after any capability-version promotion. Defaults to `required`. */
+  severity?: 'required' | 'advisory';
+  /**
+   * Present only for expiry-gated advisories that were graded: true when
+   * promoted to required, false while the runner capability remains older.
+   */
+  severity_promoted_from_advisory?: boolean;
   /** Dot/bracket JSON path (legacy). See `json_pointer` for the RFC 6901 form. */
   path?: string;
   /** Human-readable failure detail. */
@@ -2871,6 +2888,8 @@ export interface StoryboardResult {
   passed_count: number;
   failed_count: number;
   skipped_count: number;
+  /** Failed advisory validations, counted separately from failed steps. */
+  validations_advisory_failed?: number;
   /**
    * Validation results graded `not_applicable` because the runner did not
    * implement the authored `check` kind (forward-compat default). Surfaces
@@ -2878,6 +2897,8 @@ export interface StoryboardResult {
    * passes. Per runner-output-contract.yaml v2.0.0 run_summary.
    */
   validations_not_applicable?: number;
+  /** Semver capability used to evaluate advisory validation expiry gates. */
+  runner_capability_version?: string;
   tested_at: string;
   /**
    * Schemas applied during this run. Per the runner-output contract, runners
@@ -3064,6 +3085,8 @@ export interface StoryboardPassResult {
   passed_count: number;
   failed_count: number;
   skipped_count: number;
+  /** Failed advisory validations, counted separately from failed steps. */
+  validations_advisory_failed?: number;
   /** Validations graded `not_applicable` (forward-compat default). */
   validations_not_applicable?: number;
   duration_ms: number;

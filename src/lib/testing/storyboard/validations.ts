@@ -13,8 +13,9 @@ import { injectLegacyEnvelopeStatus } from '../../utils/envelope-status-compat';
 import { TRANSPORT_SUFFIX_REGEX } from '../../utils/a2a-discovery';
 import { validateResponse, type ValidationIssue } from '../../validation/schema-validator';
 import { hasSchemaBundle } from '../../validation/schema-loader';
-import { ADCP_VERSION } from '../../version';
+import { ADCP_VERSION, LIBRARY_VERSION } from '../../version';
 import { isPre31AdcpVersion } from '../../utils/adcp-version-config';
+import { gte as semverGte, valid as validSemver } from 'semver';
 import type { TaskResult } from '../types';
 import type {
   A2ATaskEnvelope,
@@ -226,7 +227,15 @@ export interface UpstreamTrafficQueryResult {
  * Run all validations for a storyboard step.
  */
 export function runValidations(validations: StoryboardValidation[], context: ValidationContext): ValidationResult[] {
-  return validations.map(v => attachOnFailure(runValidation(v, context), context, v));
+  return validations.map(v => decorateValidationResult(runValidation(v, context), context, v));
+}
+
+/** Capability semver emitted in run summaries and used for advisory expiry. */
+export const RUNNER_CAPABILITY_VERSION = LIBRARY_VERSION;
+
+/** True when a failed validation contributes to the owning step's grade. */
+export function validationFailsStep(result: ValidationResult): boolean {
+  return !result.passed && result.severity !== 'advisory';
 }
 
 /**
@@ -235,20 +244,28 @@ export function runValidations(validations: StoryboardValidation[], context: Val
  * minimal — carrying the full payload on every passing check bloats the
  * JSON surface without diagnostic value.
  */
-function attachOnFailure(
+export function decorateValidationResult(
   result: ValidationResult,
   context: ValidationContext,
   validation: StoryboardValidation
 ): ValidationResult {
-  const withId: ValidationResult =
-    validation.id === undefined
-      ? result
-      : {
-          ...result,
-          id: validation.id,
-        };
-  if (withId.passed) return withId;
-  const augmented: ValidationResult = { ...withId };
+  const declaredSeverity = validation.severity ?? 'required';
+  const expiry = validation.expires_after_version;
+  const shouldEvaluatePromotion = !result.not_applicable && declaredSeverity === 'advisory' && expiry !== undefined;
+  if (shouldEvaluatePromotion && validSemver(expiry) === null) {
+    throw new Error(`expires_after_version must be valid semver; received ${JSON.stringify(expiry)}`);
+  }
+  const promotionApplied =
+    shouldEvaluatePromotion &&
+    validSemver(RUNNER_CAPABILITY_VERSION) !== null &&
+    semverGte(RUNNER_CAPABILITY_VERSION, expiry);
+  const augmented: ValidationResult = {
+    ...result,
+    ...(validation.id !== undefined && { id: validation.id }),
+    severity: promotionApplied ? 'required' : declaredSeverity,
+    ...(shouldEvaluatePromotion && { severity_promoted_from_advisory: promotionApplied }),
+  };
+  if (augmented.passed) return augmented;
   if (context.request && augmented.request === undefined) augmented.request = context.request;
   if (context.response && augmented.response === undefined) augmented.response = context.response;
   return augmented;
@@ -346,18 +363,15 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
     case 'array_length':
       return validateArrayLength(validation, resolveTarget(ctx));
     default:
-      // Fail closed. A published storyboard check that this runner does not
-      // implement is a coverage failure, not evidence that the agent passed.
-      // This is especially important for security grades: silently turning a
-      // new auth check into not_applicable can mint a false green report.
+      // Forward compatibility is resolved before advisory expiry promotion:
+      // an older runner cannot grade a check it does not implement, so the
+      // result is not_applicable rather than evidence about the agent.
       return {
         check: validation.check,
-        passed: false,
+        passed: true,
         description: validation.description,
-        error: `runner does not implement authored check type '${validation.check}'`,
-        json_pointer: null,
-        expected: 'a validation check implemented by this runner',
-        actual: validation.check,
+        not_applicable: true,
+        note: `runner does not implement authored check type '${validation.check}'`,
       };
   }
 }

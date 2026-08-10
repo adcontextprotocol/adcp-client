@@ -61,6 +61,8 @@ import { randomBytes } from 'crypto';
 import { isPre31AdcpVersion } from '../../utils/adcp-version-config';
 import { withExternalSchemaRoot } from '../../validation/schema-loader';
 import { redactOAuthUrlForOutput, redactOAuthUrlsInText } from '../storyboard/oauth-metadata-graph';
+import { LIBRARY_VERSION } from '../../version';
+import { validationFailsStep } from '../storyboard/validations';
 
 /**
  * All compliance tracks in display order.
@@ -960,6 +962,7 @@ function buildNotApplicableStoryboardResult(agentUrl: string, na: NotApplicableS
     passed_count: 0,
     failed_count: 0,
     skipped_count: 1,
+    runner_capability_version: LIBRARY_VERSION,
     tested_at: now,
     notices: [],
   };
@@ -1022,7 +1025,7 @@ export function extractFailures(
           }
         }
 
-        const firstFailedValidation = step.validations.find(v => !v.passed);
+        const firstFailedValidation = step.validations.find(validationFailsStep);
         const validationSummary = firstFailedValidation
           ? {
               ...(firstFailedValidation.id !== undefined && { id: firstFailedValidation.id }),
@@ -1846,6 +1849,7 @@ function buildSummary(tracks: TrackResult[], storyboardResults: StoryboardResult
   const stepsSkipped = stepDisposition.stepsSkipped;
   const stepsNotSelected = stepDisposition.notSelected.length;
   const validationsNotApplicable = storyboardResults.reduce((s, r) => s + (r.validations_not_applicable ?? 0), 0);
+  const validationsAdvisoryFailed = storyboardResults.reduce((s, r) => s + (r.validations_advisory_failed ?? 0), 0);
   const totalSteps = stepsPassed + stepsFailed + stepsSkipped + stepsNotSelected;
   const schemasUsed: Array<{ schema_id: string; schema_url: string }> = [];
   const seenSchemas = new Set<string>();
@@ -1867,12 +1871,14 @@ function buildSummary(tracks: TrackResult[], storyboardResults: StoryboardResult
     total_steps: totalSteps,
     steps_passed: stepsPassed,
     steps_failed: stepsFailed,
+    ...(validationsAdvisoryFailed > 0 ? { validations_advisory_failed: validationsAdvisoryFailed } : {}),
     steps_skipped: stepsSkipped,
     steps_not_selected: stepsNotSelected,
     not_selected: stepDisposition.notSelected,
     not_selected_by_reason: stepDisposition.notSelectedByReason,
     skipped_by_reason: stepDisposition.skippedByReason,
     ...(validationsNotApplicable > 0 ? { validations_not_applicable: validationsNotApplicable } : {}),
+    runner_capability_version: LIBRARY_VERSION,
     ...(schemasUsed.length > 0 ? { schemas_used: schemasUsed } : {}),
   };
 }
@@ -1995,6 +2001,7 @@ export function formatComplianceResults(result: ComplianceResult): string {
     output +=
       `Steps: ${result.summary.steps_passed ?? 0} passed, ` +
       `${result.summary.steps_failed ?? 0} failed, ` +
+      `${result.summary.validations_advisory_failed ?? 0} advisory validation(s) failed, ` +
       `${result.summary.steps_skipped ?? 0} skipped, ` +
       `${result.summary.steps_not_selected ?? 0} not selected\n\n`;
     const notSelectedReasons = formatReasonCounts(result.summary.not_selected_by_reason);

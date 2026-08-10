@@ -11,6 +11,7 @@ import { parse } from 'yaml';
 import type { Storyboard } from './types';
 import { MUTATING_TASKS } from '../../utils/idempotency';
 import { validateFixtureResolutionDeclarations } from './fixture-resolution';
+import { valid as validSemver } from 'semver';
 
 /**
  * Supported `branch_set.semantics` values. Extend when AdCP adds `all_of`,
@@ -77,7 +78,50 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
       validateContextOutputs(storyboard.id, phase, step);
       validateUpstreamAttestationMode(storyboard.id, phase, step);
       validateUpstreamIdentifierPaths(storyboard.id, phase, step);
+      validateAdvisoryDeclarations(storyboard.id, phase, step);
       validatePeerSubstitutesFor(storyboard.id, phase, step);
+    }
+  }
+}
+
+function validateAdvisoryDeclarations(
+  storyboardId: string,
+  phase: { id?: string },
+  step: { id?: string; validations?: any[] }
+): void {
+  for (let index = 0; index < (step.validations ?? []).length; index++) {
+    const validation = step.validations![index];
+    if (
+      validation?.severity !== undefined &&
+      validation.severity !== 'required' &&
+      validation.severity !== 'advisory'
+    ) {
+      const prefix = `[${storyboardId}] ${phase.id ?? '?'}.${step.id ?? '?'}.validations[${index}]`;
+      throw new Error(`${prefix}.severity: must be either "required" or "advisory"`);
+    }
+    if (validation?.severity !== 'advisory') continue;
+    const prefix = `[${storyboardId}] ${phase.id ?? '?'}.${step.id ?? '?'}.validations[${index}]`;
+    const hasExpiry = validation.expires_after_version !== undefined;
+    const hasPermanent = validation.permanent_advisory !== undefined;
+    if (hasExpiry === hasPermanent) {
+      throw new Error(
+        `${prefix}: severity "advisory" must declare exactly one of expires_after_version or permanent_advisory`
+      );
+    }
+    if (
+      hasExpiry &&
+      (typeof validation.expires_after_version !== 'string' || !validSemver(validation.expires_after_version))
+    ) {
+      throw new Error(`${prefix}.expires_after_version: must be a valid semver string`);
+    }
+    if (
+      hasPermanent &&
+      (typeof validation.permanent_advisory !== 'object' ||
+        validation.permanent_advisory === null ||
+        typeof validation.permanent_advisory.reason !== 'string' ||
+        validation.permanent_advisory.reason.trim().length === 0)
+    ) {
+      throw new Error(`${prefix}.permanent_advisory.reason: must be a non-empty string`);
     }
   }
 }
