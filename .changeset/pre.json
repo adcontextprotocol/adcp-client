@@ -7,6 +7,7 @@
     "@adcp/eslint-plugin": "0.1.6"
   },
   "changesets": [
+    "add-additive-canonical-product",
     "bright-apes-dual-emit",
     "bright-cats-listen",
     "calm-mice-negotiate",
