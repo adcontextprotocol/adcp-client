@@ -10,6 +10,7 @@ const path = require('node:path');
 const {
   withFormatOptions,
   augmentProductWithFormatOptions,
+  toCanonicalFormatOptionsWithRoutes,
   toAdditiveCanonicalProduct,
   withAdditiveCanonicalFormatOptions,
   canonicalFormatLegacyResolverFromRoutes,
@@ -241,6 +242,72 @@ describe('augmentProductWithFormatOptions', { skip: SKIP_REASON }, () => {
 });
 
 describe('toAdditiveCanonicalProduct', () => {
+  test('projects a standalone declaration array with durable routes and no source mutation', () => {
+    const formatId = {
+      agent_url: 'https://formats.publisher.example/catalog',
+      id: 'standalone_takeover',
+      width: 1280,
+      height: 720,
+    };
+    const sourceFormatOptions = [
+      {
+        format_option_id: 'standalone-takeover',
+        format_kind: 'custom',
+        format_shape: 'multi_placement_takeover',
+        params: { placements: 2 },
+        seller_preference: 'preferred',
+        v1_format_ref: [formatId],
+      },
+    ];
+
+    const { formatOptions, routes } = toCanonicalFormatOptionsWithRoutes('standalone-product', sourceFormatOptions);
+
+    assert.deepStrictEqual(formatOptions, [
+      {
+        format_option_id: 'standalone-takeover',
+        format_kind: 'custom',
+        format_shape: 'multi_placement_takeover',
+        params: { placements: 2 },
+        seller_preference: 'preferred',
+      },
+    ]);
+    assert.notStrictEqual(formatOptions[0], sourceFormatOptions[0]);
+    assert.deepStrictEqual(sourceFormatOptions[0].v1_format_ref, [formatId]);
+
+    const restoredRoutes = JSON.parse(JSON.stringify(routes));
+    assert.deepStrictEqual(restoredRoutes, [
+      {
+        product_id: 'standalone-product',
+        format_option_ref: { scope: 'product', format_option_id: 'standalone-takeover' },
+        format_ids: [formatId],
+      },
+    ]);
+    const resolver = canonicalFormatLegacyResolverFromRoutes(restoredRoutes);
+    assert.deepStrictEqual(
+      resolver({
+        source: 'product',
+        productId: 'standalone-product',
+        declaration: formatOptions[0],
+      }),
+      [formatId]
+    );
+  });
+
+  test('standalone declaration projection rejects direct legacy identity aliases', () => {
+    assert.throws(
+      () =>
+        toCanonicalFormatOptionsWithRoutes('invalid-product', [
+          {
+            format_option_id: 'invalid-option',
+            format_kind: 'image',
+            params: { width: 300, height: 250 },
+            agent_url: 'https://formats.publisher.example/catalog',
+          },
+        ]),
+      /must not use legacy identity field agent_url/
+    );
+  });
+
   test('conceals authored legacy refs, preserves additive identity, and forwards through persisted routes', () => {
     const formatId = {
       agent_url: 'https://formats.publisher.example/catalog',

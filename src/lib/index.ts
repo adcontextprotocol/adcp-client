@@ -4,6 +4,8 @@
 // ====== REGISTRY LOOKUPS ======
 export {
   RegistryClient,
+  RegistryRequestError,
+  isRegistryRequestError,
   RegistrySync,
   PropertyRegistry,
   InMemoryCursorStore,
@@ -1565,6 +1567,7 @@ export {
 } from './v2/projection';
 
 export {
+  toCanonicalFormatOptionsWithRoutes,
   toAdditiveCanonicalProduct,
   withAdditiveCanonicalFormatOptions,
   toCanonicalOnlyProduct,

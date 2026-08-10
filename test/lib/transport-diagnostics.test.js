@@ -161,6 +161,43 @@ test('transport diagnostics waits for async handlers after the request completes
   );
 });
 
+test('transport diagnostics does not deadlock on responses larger than the snippet limit', async () => {
+  const events = [];
+  const largeBody = JSON.stringify({ payload: 'x'.repeat(70 * 1024) });
+  const instrumentedFetch = wrapFetchWithTransportDiagnostics(
+    async () => new Response(largeBody, { headers: { 'content-type': 'application/json' } })
+  );
+
+  let timeout;
+  let consumedBody;
+  try {
+    consumedBody = await Promise.race([
+      withTransportDiagnostics(
+        {
+          agentId: 'large-catalog-agent',
+          protocol: 'mcp',
+          onTransportActivity: event => events.push(event),
+        },
+        async () => {
+          const response = await instrumentedFetch('https://seller.example/mcp', { method: 'POST' });
+          return response.text();
+        }
+      ),
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('large diagnostic response timed out')), 5000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  assert.equal(consumedBody, largeBody);
+  assert.equal(events.length, 2);
+  assert.equal(events[1].type, 'response_received');
+  assert.equal(events[1].responseBody.length <= 64 * 1024, true);
+  assert.equal(events[1].responseBodyTruncated, true);
+});
+
 test('transport diagnostics redacts camelCase secrets and strips URL-bearing body fields', async () => {
   const events = [];
   const instrumentedFetch = wrapFetchWithTransportDiagnostics(

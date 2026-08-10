@@ -23,6 +23,8 @@
  *     `format_options[]`, preserved top-level `format_ids[]`, and explicit
  *     serializable legacy-route sidecars for later forwarding.
  *     `withAdditiveCanonicalFormatOptions` is the response-level companion.
+ *     `toCanonicalFormatOptionsWithRoutes` provides the same safe route-first
+ *     concealment for callers that hold only a declaration array.
  *
  *   - `toCanonicalOnlyProduct` / `toCanonicalOnlyResponse` — the
  *     read-side narrowing for a fully-migrated consumer. Returns
@@ -67,6 +69,7 @@ export {
 export {
   augmentProductWithFormatOptions,
   withFormatOptions,
+  toCanonicalFormatOptionsWithRoutes,
   toAdditiveCanonicalProduct,
   withAdditiveCanonicalFormatOptions,
   toCanonicalOnlyProduct,

@@ -284,6 +284,85 @@ const MAX_BRAND_BULK_DOMAINS = 25;
 const MAX_BULK_DOMAINS = 100;
 const MAX_CHECK_DOMAINS = 10000; // per OpenAPI spec maxItems
 const COMMUNITY_MIRROR_PLATFORM_RE = /^[a-z0-9_-]{1,64}$/;
+const MAX_REGISTRY_ERROR_DETAILS_BYTES = 64 * 1024;
+const MAX_RETRY_AFTER_MS = 2_147_483_647;
+
+/** A non-success HTTP response returned by the AdCP Registry. */
+export class RegistryRequestError extends Error {
+  readonly status: number;
+  readonly method: string;
+  readonly retryAfterMs?: number;
+  /** Bounded, untrusted JSON returned by the remote registry. */
+  readonly details?: Record<string, unknown>;
+
+  constructor(
+    status: number,
+    message: string,
+    options: {
+      method: string;
+      retryAfterMs?: number;
+      details?: Record<string, unknown>;
+      cause?: unknown;
+    }
+  ) {
+    super(message, options.cause === undefined ? undefined : { cause: options.cause });
+    this.name = 'RegistryRequestError';
+    this.status = status;
+    this.method = options.method;
+    this.retryAfterMs = options.retryAfterMs;
+    this.details = options.details;
+  }
+}
+
+/** Cross-realm and duplicate-bundle-safe guard for registry HTTP errors. */
+export function isRegistryRequestError(error: unknown): error is RegistryRequestError {
+  if (error instanceof RegistryRequestError) return true;
+  if (error === null || typeof error !== 'object' || Array.isArray(error)) return false;
+  const candidate = error as Record<string, unknown>;
+  return (
+    candidate.name === 'RegistryRequestError' &&
+    typeof candidate.message === 'string' &&
+    typeof candidate.status === 'number' &&
+    Number.isFinite(candidate.status) &&
+    typeof candidate.method === 'string'
+  );
+}
+
+function parseRegistryErrorDetails(text: string): Record<string, unknown> | undefined {
+  if (new TextEncoder().encode(text).byteLength > MAX_REGISTRY_ERROR_DETAILS_BYTES) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function boundedRetryAfterMsFromSeconds(seconds: number): number | undefined {
+  if (!Number.isFinite(seconds) || seconds < 0) return undefined;
+  const milliseconds = seconds * 1000;
+  if (!Number.isFinite(milliseconds)) return MAX_RETRY_AFTER_MS;
+  return Math.min(milliseconds, MAX_RETRY_AFTER_MS);
+}
+
+function retryAfterMsFromDetails(details: unknown): number | undefined {
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return undefined;
+  const record = details as Record<string, unknown>;
+  if (typeof record.retryAfterMs === 'number' && Number.isFinite(record.retryAfterMs) && record.retryAfterMs >= 0) {
+    return Math.min(record.retryAfterMs, MAX_RETRY_AFTER_MS);
+  }
+  const seconds = record.retryAfter ?? record.retry_after;
+  return typeof seconds === 'number' ? boundedRetryAfterMsFromSeconds(seconds) : undefined;
+}
+
+function retryAfterMsFromHeader(value: string | null): number | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed || !/^\d+$/.test(trimmed)) return undefined;
+  const seconds = Number(trimmed);
+  return Number.isFinite(seconds) ? boundedRetryAfterMsFromSeconds(seconds) : MAX_RETRY_AFTER_MS;
+}
 
 /**
  * Build a catalog-only community mirror adagents.json descriptor.
@@ -1139,7 +1218,7 @@ export class RegistryClient {
       return { events: [], cursor: null, has_more: false, cursor_expired: true };
     }
     if (!res.ok) {
-      throw new Error(`Registry request failed (${res.status}): ${this.preview(text)}`);
+      throw this.requestError(res, text, 'GET');
     }
     return this.parseJson(text);
   }
@@ -1297,7 +1376,7 @@ export class RegistryClient {
     const { res, text } = await this.requestText(url, { headers: this.getHeaders() });
     if (opts?.nullOn404 && res.status === 404) return null as T;
     if (!res.ok) {
-      throw new Error(`Registry request failed (${res.status}): ${this.preview(text)}`);
+      throw this.requestError(res, text, 'GET');
     }
     return this.parseJson(text);
   }
@@ -1309,7 +1388,7 @@ export class RegistryClient {
       body: JSON.stringify(body),
     });
     if (!res.ok) {
-      throw new Error(`Registry request failed (${res.status}): ${this.preview(text)}`);
+      throw this.requestError(res, text, 'POST');
     }
     return this.parseJson(text);
   }
@@ -1321,7 +1400,7 @@ export class RegistryClient {
       body,
     });
     if (!res.ok) {
-      throw new Error(`Registry request failed (${res.status}): ${this.preview(text)}`);
+      throw this.requestError(res, text, 'POST');
     }
     return this.parseJson(text);
   }
@@ -1333,7 +1412,7 @@ export class RegistryClient {
       body: JSON.stringify(body),
     });
     if (!res.ok) {
-      throw new Error(`Registry request failed (${res.status}): ${this.preview(text)}`);
+      throw this.requestError(res, text, 'PUT');
     }
     return this.parseJson(text);
   }
@@ -1344,7 +1423,7 @@ export class RegistryClient {
       headers: this.getHeaders(),
     });
     if (!res.ok) {
-      throw new Error(`Registry request failed (${res.status}): ${this.preview(text)}`);
+      throw this.requestError(res, text, 'DELETE');
     }
     return this.parseJson(text);
   }
@@ -1488,7 +1567,13 @@ export class RegistryClient {
         redirect: this.redirect,
         signal: controller.signal,
       });
-      const text = await this.readBody(res, this.bodyLimitForUrl(url));
+      let text: string;
+      try {
+        text = await this.readBody(res, this.bodyLimitForUrl(url));
+      } catch (error) {
+        if (!res.ok) throw this.requestError(res, '', init.method ?? 'GET', error);
+        throw error;
+      }
       return { res, text };
     });
     requestPromise.catch(() => {});
@@ -1607,6 +1692,18 @@ export class RegistryClient {
     return text
       .slice(0, ERROR_BODY_PREVIEW_CHARS)
       .replace(/[\u0000-\u001f\u007f]/g, ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  }
+
+  private requestError(res: Response, text: string, method: string, cause?: unknown): RegistryRequestError {
+    const details = parseRegistryErrorDetails(text);
+    const retryAfterMs = retryAfterMsFromHeader(res.headers.get('retry-after')) ?? retryAfterMsFromDetails(details);
+    const preview = cause === undefined ? this.preview(text) : '[response body unavailable]';
+    return new RegistryRequestError(res.status, `Registry request failed (${res.status}): ${preview}`, {
+      method,
+      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+      ...(details !== undefined ? { details } : {}),
+      ...(cause !== undefined ? { cause } : {}),
+    });
   }
 
   private buildParams(options?: ListOptions & { source?: string }): string {

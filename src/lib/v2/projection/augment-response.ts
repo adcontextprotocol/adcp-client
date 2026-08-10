@@ -321,6 +321,33 @@ function assertNoDirectLegacyFormatAliases(declarations: readonly V2ProductForma
 }
 
 /**
+ * Conceal migration-only legacy identities from canonical format declarations
+ * while extracting their durable downgrade routes first.
+ *
+ * This is the declaration-array counterpart to
+ * {@link toAdditiveCanonicalProduct}. It is intended for persisted catalogs
+ * and other consumers that do not hold a complete Product. The source array
+ * and declarations are never mutated.
+ *
+ * @throws TypeError when a canonical declaration uses a direct legacy identity
+ * alias such as `agent_url` or `agentUrl` instead of `v1_format_ref`.
+ */
+export function toCanonicalFormatOptionsWithRoutes(
+  productId: string,
+  formatOptions: readonly V2ProductFormatDeclaration[]
+): {
+  formatOptions: CanonicalFormatDeclaration[];
+  routes: CanonicalFormatLegacyRoute[];
+} {
+  assertNoDirectLegacyFormatAliases(formatOptions);
+  const routes = legacyRoutesForProduct(productId, formatOptions);
+  return {
+    formatOptions: canonicalDeclarations(formatOptions),
+    routes,
+  };
+}
+
+/**
  * Project a Product to an additive, URL-free canonical surface.
  *
  * Unlike {@link augmentProductWithFormatOptions}, this always returns fresh
@@ -347,15 +374,14 @@ export function toAdditiveCanonicalProduct<P extends V1Product>(
   routes: CanonicalFormatLegacyRoute[];
 } {
   const { product: augmented, diagnostics } = augmentProductWithFormatOptions(product, options);
-  const routes = legacyRoutesForProduct(product.product_id, augmented.format_options);
-  assertNoDirectLegacyFormatAliases(augmented.format_options);
+  const projected = toCanonicalFormatOptionsWithRoutes(product.product_id, augmented.format_options);
   return {
     product: {
       ...augmented,
-      format_options: canonicalDeclarations(augmented.format_options),
+      format_options: projected.formatOptions,
     } as AdditiveCanonicalProduct<P>,
     diagnostics,
-    routes,
+    routes: projected.routes,
   };
 }
 
