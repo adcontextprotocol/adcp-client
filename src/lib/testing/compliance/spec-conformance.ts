@@ -26,6 +26,7 @@
 
 import type { AgentProfile } from '../types';
 import type { StoryboardResult } from '../storyboard/types';
+import { LIBRARY_VERSION } from '../../version';
 
 /**
  * Synthetic storyboard ID emitted when the account-discovery gate fails.
@@ -136,6 +137,7 @@ export function checkAccountDiscoveryGate(profile: AgentProfile, agentUrl: strin
     passed_count: 0,
     failed_count: 1,
     skipped_count: 0,
+    runner_capability_version: LIBRARY_VERSION,
     tested_at: now,
     notices: [],
   };

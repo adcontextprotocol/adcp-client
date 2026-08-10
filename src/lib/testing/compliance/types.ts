@@ -204,6 +204,8 @@ export interface ComplianceSummary {
   steps_passed?: number;
   /** Storyboard steps that failed. */
   steps_failed?: number;
+  /** Failed advisory validations, reported separately from failed steps. */
+  validations_advisory_failed?: number;
   /** Storyboard steps that were skipped. */
   steps_skipped?: number;
   /** Storyboard steps excluded before execution by run selection. */
@@ -222,6 +224,8 @@ export interface ComplianceSummary {
    * run_summary optional field.
    */
   validations_not_applicable?: number;
+  /** Semver capability used to evaluate advisory validation expiry gates. */
+  runner_capability_version?: string;
   /**
    * Schemas applied across all storyboards. Implementors can re-validate
    * locally against the same artifacts the runner used.

@@ -1,6 +1,6 @@
 /**
  * Tests for runner-output-contract.yaml v2.0.0 behaviors:
- *   1. Unknown check kinds fail closed
+ *   1. Unknown check kinds grade not_applicable across runner/spec skew
  *   2. `capture_path_not_resolvable` — failures surfaced for null/""/absent paths
  *   3. `unresolved_substitution` — synthesized when consumer step skips
  *   4. `upstream_traffic` — controller-backed anti-façade assertion
@@ -16,11 +16,11 @@ const { RESOLVE_PATH_ALL_MAX, resolvePortableIdentifierPathAll } = require('../.
 const { isJsonContentType } = require('../../dist/lib/testing/test-controller');
 
 // ────────────────────────────────────────────────────────────
-// 1. Unknown checks fail closed
+// 1. Unknown checks grade not_applicable for runtime forward compatibility
 // ────────────────────────────────────────────────────────────
 
-describe('unknown check kinds fail closed', () => {
-  test('unknown check kind is a validation failure', () => {
+describe('unknown check kinds grade not_applicable', () => {
+  test('unknown check kind is visible without claiming an agent verdict', () => {
     const validations = [{ check: 'some_future_check_added_in_a_later_spec', description: 'future check' }];
     const ctx = {
       taskName: 'get_signals',
@@ -29,14 +29,14 @@ describe('unknown check kinds fail closed', () => {
       contributions: new Set(),
     };
     const [result] = runValidations(validations, ctx);
-    assert.equal(result.passed, false);
-    assert.equal(result.not_applicable, undefined);
+    assert.equal(result.passed, true);
+    assert.equal(result.not_applicable, true);
     assert.equal(result.check, 'some_future_check_added_in_a_later_spec');
-    assert.match(result.error, /does not implement authored check type/);
-    assert.equal(result.json_pointer, null);
+    assert.match(result.note, /does not implement authored check type/);
+    assert.equal(result.error, undefined);
   });
 
-  test('runner fails an otherwise valid step on an unrecognized check', () => {
+  test('an unrecognized check does not overturn implemented validation results', () => {
     const validations = [
       { check: 'response_schema', description: 'real check that should pass' },
       { check: 'unknown_check_xyz', description: 'unknown check path' },
@@ -49,8 +49,8 @@ describe('unknown check kinds fail closed', () => {
     };
     const results = runValidations(validations, ctx);
     const unknown = results.find(r => r.check === 'unknown_check_xyz');
-    assert.equal(unknown.passed, false);
-    assert.equal(unknown.not_applicable, undefined);
+    assert.equal(unknown.passed, true);
+    assert.equal(unknown.not_applicable, true);
   });
 });
 

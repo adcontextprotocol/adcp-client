@@ -54,6 +54,8 @@ export interface ComplianceSummaryArtifact {
   overall_status: OverallStatus;
   passed: number;
   failed: number;
+  /** Failed advisory validations; does not affect the failed-step count. */
+  validations_advisory_failed?: number;
   skipped: number;
   /**
    * Validation results graded `not_applicable`. Present only when non-zero so
@@ -105,6 +107,9 @@ export function buildComplianceSummary(result: ComplianceResult, opts: BuildSumm
     overall_status: result.overall_status,
     passed: result.summary.steps_passed ?? 0,
     failed: result.summary.steps_failed ?? 0,
+    ...(result.summary.validations_advisory_failed
+      ? { validations_advisory_failed: result.summary.validations_advisory_failed }
+      : {}),
     skipped: result.summary.steps_skipped ?? 0,
     ...(result.summary.validations_not_applicable
       ? { validations_not_applicable: result.summary.validations_not_applicable }
@@ -348,7 +353,7 @@ export function formatComplianceSummaryText(s: ComplianceSummaryArtifact): strin
   lines.push(`SDK:       @adcp/sdk ${s.sdk_version} (AdCP ${s.adcp_version})`);
   lines.push(`Status:    ${s.overall_status}`);
   lines.push(
-    `Steps:     ${s.passed} passed, ${s.failed} failed, ${s.skipped} skipped, ${s.not_selected_count} not selected`
+    `Steps:     ${s.passed} passed, ${s.failed} failed, ${s.validations_advisory_failed ?? 0} advisory validation(s) failed, ${s.skipped} skipped, ${s.not_selected_count} not selected`
   );
   const notSelectedReasons = formatReasonCounts(s.not_selected_by_reason);
   if (notSelectedReasons) lines.push(`Not selected: ${notSelectedReasons}`);
@@ -420,7 +425,7 @@ export function formatComplianceSummaryMarkdown(s: ComplianceSummaryArtifact): s
   lines.push(`- **SDK:** \`@adcp/sdk ${s.sdk_version}\` (AdCP \`${s.adcp_version}\`)`);
   lines.push(`- **Status:** \`${s.overall_status}\``);
   lines.push(
-    `- **Steps:** ${s.passed} passed, ${s.failed} failed, ${s.skipped} skipped, ${s.not_selected_count} not selected`
+    `- **Steps:** ${s.passed} passed, ${s.failed} failed, ${s.validations_advisory_failed ?? 0} advisory validation(s) failed, ${s.skipped} skipped, ${s.not_selected_count} not selected`
   );
   const notSelectedReasons = formatReasonCounts(s.not_selected_by_reason);
   if (notSelectedReasons) lines.push(`- **Not selected:** ${notSelectedReasons}`);

@@ -30,7 +30,10 @@ const { ResponseSchemaValidationError } = require('../../dist/lib/utils/response
  * — the runner's step execution should attribute the failure correctly
  * regardless of what triggered the throw.
  */
-function buildSchemaRejectingClient(toolName = 'get_products') {
+function buildSchemaRejectingClient(
+  toolName = 'get_products',
+  rejectedData = { authorization: 'present', products: [] }
+) {
   return {
     async executeTask(_taskName, _params) {
       throw new ResponseSchemaValidationError(
@@ -43,7 +46,7 @@ function buildSchemaRejectingClient(toolName = 'get_products') {
             message: "Unrecognized key(s) in object: 'authorization'",
           },
         ],
-        { authorization: 'present', products: [] },
+        rejectedData,
         "Unrecognized key(s) in object: 'authorization'"
       );
     },
@@ -58,7 +61,7 @@ function buildSchemaRejectingClient(toolName = 'get_products') {
             message: "Unrecognized key(s) in object: 'authorization'",
           },
         ],
-        { authorization: 'present', products: [] },
+        rejectedData,
         "Unrecognized key(s) in object: 'authorization'"
       );
     },
@@ -188,6 +191,152 @@ describe('adcp-client#1709 — Zod-reject error attribution', () => {
     });
 
     assert.equal(result.passed, false, 'schema rejection must fail the step');
+  });
+
+  test('an authored advisory response_schema keeps the rejection visible without failing the run', async () => {
+    const client = buildSchemaRejectingClient('get_products');
+    const storyboard = buildStoryboard();
+    storyboard.phases[0].steps[0].validations = [
+      {
+        check: 'response_schema',
+        description: 'Schema rollout signal',
+        severity: 'advisory',
+        permanent_advisory: { reason: 'instrumentation rollout' },
+      },
+    ];
+    const result = await runStoryboard('https://stub.example/mcp', storyboard, {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+      agentTools: stubProfile.tools,
+    });
+
+    const step = result.phases[0].steps[0];
+    const schemaValidation = step.validations.find(v => v.check === 'response_schema');
+    assert.equal(schemaValidation.passed, false);
+    assert.equal(schemaValidation.severity, 'advisory');
+    assert.equal(step.passed, true);
+    assert.equal(step.error, undefined);
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.failed_count, 0);
+    assert.equal(result.validations_advisory_failed, 1);
+  });
+
+  test('an advisory schema rejection still grades and gates on other required validations', async () => {
+    const client = buildSchemaRejectingClient('get_products');
+    const storyboard = buildStoryboard();
+    storyboard.phases[0].steps[0].validations = [
+      {
+        check: 'response_schema',
+        description: 'Schema rollout signal',
+        severity: 'advisory',
+        permanent_advisory: { reason: 'instrumentation rollout' },
+      },
+      {
+        check: 'field_present',
+        path: 'products[0].product_id',
+        description: 'First product has an id',
+      },
+    ];
+    const result = await runStoryboard('https://stub.example/mcp', storyboard, {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+      agentTools: stubProfile.tools,
+    });
+
+    const step = result.phases[0].steps[0];
+    const schemaValidation = step.validations.find(v => v.check === 'response_schema');
+    const fieldValidation = step.validations.find(v => v.check === 'field_present');
+    assert.equal(schemaValidation.passed, false);
+    assert.equal(schemaValidation.severity, 'advisory');
+    assert.equal(fieldValidation.passed, false);
+    assert.equal(fieldValidation.severity, 'required');
+    assert.equal(step.passed, false);
+    assert.equal(result.overall_passed, false);
+    assert.equal(result.failed_count, 1);
+    assert.equal(result.validations_advisory_failed, 1);
+  });
+
+  test('a schema rejection reports every authored advisory finding without gating', async () => {
+    const client = buildSchemaRejectingClient('get_products');
+    const storyboard = buildStoryboard();
+    storyboard.phases[0].steps[0].validations = [
+      {
+        check: 'response_schema',
+        description: 'Schema rollout signal',
+        severity: 'advisory',
+        permanent_advisory: { reason: 'instrumentation rollout' },
+      },
+      {
+        check: 'field_present',
+        path: 'products[0].product_id',
+        description: 'Product id rollout signal',
+        severity: 'advisory',
+        permanent_advisory: { reason: 'instrumentation rollout' },
+      },
+    ];
+    const result = await runStoryboard('https://stub.example/mcp', storyboard, {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+      agentTools: stubProfile.tools,
+    });
+
+    const step = result.phases[0].steps[0];
+    const failedAdvisories = step.validations.filter(v => !v.passed && v.severity === 'advisory');
+    assert.deepEqual(
+      failedAdvisories.map(v => v.check),
+      ['response_schema', 'field_present']
+    );
+    assert.equal(step.passed, true);
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.failed_count, 0);
+    assert.equal(result.validations_advisory_failed, 2);
+  });
+
+  test('a rejected success payload retains success semantics for status and error-code checks', async () => {
+    const client = buildSchemaRejectingClient('get_products', {
+      authorization: 'present',
+      products: [],
+      errors: [{ code: 'NON_FATAL_WARNING' }],
+    });
+    const storyboard = buildStoryboard();
+    storyboard.phases[0].steps[0].validations = [
+      {
+        check: 'response_schema',
+        description: 'Schema rollout signal',
+        severity: 'advisory',
+        permanent_advisory: { reason: 'instrumentation rollout' },
+      },
+      {
+        check: 'status_code',
+        description: 'Response used the success arm',
+      },
+      {
+        check: 'error_code',
+        description: 'Non-fatal errors are not terminal error codes',
+        allowed_values: ['NON_FATAL_WARNING'],
+        severity: 'advisory',
+        permanent_advisory: { reason: 'diagnostic coverage' },
+      },
+    ];
+    const result = await runStoryboard('https://stub.example/mcp', storyboard, {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+      agentTools: stubProfile.tools,
+    });
+
+    const step = result.phases[0].steps[0];
+    const statusValidation = step.validations.find(v => v.check === 'status_code');
+    const errorValidation = step.validations.find(v => v.check === 'error_code');
+    assert.equal(statusValidation.passed, true);
+    assert.equal(errorValidation.passed, false);
+    assert.equal(errorValidation.severity, 'advisory');
+    assert.equal(step.passed, true);
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.validations_advisory_failed, 2);
   });
 });
 

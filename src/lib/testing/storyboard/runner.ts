@@ -27,6 +27,9 @@ import { detectShapeDriftHints } from './shape-drift-hints';
 import { detectStrictValidationHints } from './strict-validation-hints';
 import {
   runValidations,
+  decorateValidationResult,
+  validationFailsStep,
+  RUNNER_CAPABILITY_VERSION,
   type ValidationContext,
   type CrossResponseSet,
   type UpstreamTrafficValidationContext,
@@ -1342,6 +1345,7 @@ function buildCapabilityUnsupportedResult(
     passed_count: 0,
     failed_count: 0,
     skipped_count: 1,
+    runner_capability_version: RUNNER_CAPABILITY_VERSION,
     tested_at: new Date().toISOString(),
     strict_validation_summary: {
       observable: false,
@@ -1460,6 +1464,7 @@ function buildRequirementUnmetResult(
     passed_count: 0,
     failed_count: 0,
     skipped_count: 1,
+    runner_capability_version: RUNNER_CAPABILITY_VERSION,
     tested_at: new Date().toISOString(),
     strict_validation_summary: {
       observable: false,
@@ -1512,6 +1517,7 @@ function buildRequiredAnyOfToolsMissingResult(
     passed_count: 0,
     failed_count: 0,
     skipped_count: 1,
+    runner_capability_version: RUNNER_CAPABILITY_VERSION,
     tested_at: new Date().toISOString(),
     strict_validation_summary: {
       observable: false,
@@ -1892,6 +1898,7 @@ export function buildDiscoveryFailedResult(
     passed_count: 0,
     failed_count: 1,
     skipped_count: 0,
+    runner_capability_version: RUNNER_CAPABILITY_VERSION,
     tested_at: new Date().toISOString(),
     strict_validation_summary: {
       observable: false,
@@ -1955,6 +1962,7 @@ function buildRequiredToolsMissingResult(
     passed_count: 0,
     failed_count: 0,
     skipped_count: 1,
+    runner_capability_version: RUNNER_CAPABILITY_VERSION,
     tested_at: new Date().toISOString(),
     strict_validation_summary: {
       observable: false,
@@ -3158,7 +3166,9 @@ async function executeStoryboardPass(
       // invariant pass entirely on this step and emit a single skipped
       // `assertion` entry per invariant so consumers can still see WHICH
       // invariants were skipped and why.
-      const schemaInvalidResponse = result.validations.some(v => v.check === 'response_schema' && !v.passed);
+      const schemaInvalidResponse = result.validations.some(
+        v => v.check === 'response_schema' && validationFailsStep(v)
+      );
 
       // Fire per-step assertions. Each result is appended to the step's
       // `validations[]` under `check: "assertion"` so existing UI renders
@@ -3617,6 +3627,7 @@ async function executeStoryboardPass(
   const schemasUsed = collectSchemasUsed(phaseResults);
   const strictSummary = summarizeStrictValidation(phaseResults);
   const validationsNotApplicable = countValidationsNotApplicable(phaseResults);
+  const validationsAdvisoryFailed = countValidationsAdvisoryFailed(phaseResults);
   // Use the fully-fetched profile for notice detection; fall back to pre-flight
   // notices (which used options._profile) when profile was not re-fetched in
   // this pass (standalone runner with options._profile pre-set skips the fetch).
@@ -3646,7 +3657,9 @@ async function executeStoryboardPass(
     passed_count: passedCount,
     failed_count: failedCount,
     skipped_count: skippedCount,
+    ...(validationsAdvisoryFailed > 0 ? { validations_advisory_failed: validationsAdvisoryFailed } : {}),
     ...(validationsNotApplicable > 0 ? { validations_not_applicable: validationsNotApplicable } : {}),
+    runner_capability_version: RUNNER_CAPABILITY_VERSION,
     tested_at: new Date().toISOString(),
     ...(schemasUsed.length > 0 ? { schemas_used: schemasUsed } : {}),
     ...(assertionResults.length > 0 ? { assertions: assertionResults } : {}),
@@ -3775,6 +3788,9 @@ async function runMultiPass(
       passed_count: result.passed_count,
       failed_count: result.failed_count,
       skipped_count: result.skipped_count,
+      ...(result.validations_advisory_failed
+        ? { validations_advisory_failed: result.validations_advisory_failed }
+        : {}),
       ...(result.validations_not_applicable ? { validations_not_applicable: result.validations_not_applicable } : {}),
       duration_ms: result.total_duration_ms,
     });
@@ -3785,6 +3801,7 @@ async function runMultiPass(
   const passed = passes.reduce((sum, p) => sum + p.passed_count, 0);
   const failed = passes.reduce((sum, p) => sum + p.failed_count, 0);
   const skipped = passes.reduce((sum, p) => sum + p.skipped_count, 0);
+  const advisoryFailed = passes.reduce((sum, p) => sum + (p.validations_advisory_failed ?? 0), 0);
   const notApplicable = passes.reduce((sum, p) => sum + (p.validations_not_applicable ?? 0), 0);
   const schemasUsed = passResults.flatMap(r => r.schemas_used ?? []);
   const schemasDedup = [...new Map(schemasUsed.map(s => [s.schema_id, s])).values()];
@@ -3811,7 +3828,9 @@ async function runMultiPass(
     passed_count: passed,
     failed_count: failed,
     skipped_count: skipped,
+    ...(advisoryFailed > 0 ? { validations_advisory_failed: advisoryFailed } : {}),
     ...(notApplicable > 0 ? { validations_not_applicable: notApplicable } : {}),
+    runner_capability_version: RUNNER_CAPABILITY_VERSION,
     tested_at: new Date().toISOString(),
     ...(schemasDedup.length > 0 ? { schemas_used: schemasDedup } : {}),
     ...(assertionsAgg.length > 0 ? { assertions: assertionsAgg } : {}),
@@ -3841,6 +3860,19 @@ function countValidationsNotApplicable(phases: StoryboardPhaseResult[]): number 
     for (const step of phase.steps) {
       for (const v of step.validations) {
         if (v.not_applicable) n++;
+      }
+    }
+  }
+  return n;
+}
+
+/** Count failed, unpromoted advisories without affecting step verdicts. */
+function countValidationsAdvisoryFailed(phases: StoryboardPhaseResult[]): number {
+  let n = 0;
+  for (const phase of phases) {
+    for (const step of phase.steps) {
+      for (const validation of step.validations) {
+        if (!validation.passed && validation.severity === 'advisory') n++;
       }
     }
   }
@@ -4970,11 +5002,27 @@ async function executeStep(
     passed = stepResult.passed && (taskResult?.success ?? false);
   }
 
+  const schemaValidationError = caughtError instanceof ResponseSchemaValidationError ? caughtError : undefined;
+  // The response unwrapper preserves the rejected payload on its typed error.
+  // Grade every authored validation against that payload even though no normal
+  // TaskResult was returned; otherwise an advisory response_schema check could
+  // hide a required field validation and false-green the step.
+  const validationTaskResult: TaskResult | undefined =
+    taskResult ??
+    (schemaValidationError
+      ? {
+          // ResponseSchemaValidationError is thrown while validating a
+          // successful response arm. Preserve that terminal state so
+          // status_code/error_code checks retain their authored semantics.
+          success: true,
+          data: schemaValidationError.data,
+        }
+      : undefined);
   let validations: ValidationResult[] = [];
   // Run validations. Resolve `$context.<key>` placeholders in `value` and
   // `allowed_values` fields so expected values can reference prior steps
   // (e.g., replay tests assert `media_buy_id === $context.initial_media_buy_id`).
-  if (step.validations?.length && (taskResult || httpResult)) {
+  if (step.validations?.length && (validationTaskResult || httpResult)) {
     const resolvedValidations = step.validations.map(v => {
       const resolved = { ...v };
       if (resolved.value !== undefined) {
@@ -5009,7 +5057,7 @@ async function executeStep(
       taskName: effectiveStep.task,
       ...(options.adcpVersion && { adcpVersion: options.adcpVersion }),
       ...(options._serverAdcpVersion && { responseAdcpVersion: options._serverAdcpVersion }),
-      ...(taskResult && { taskResult }),
+      ...(validationTaskResult && { taskResult: validationTaskResult }),
       ...(httpResult && { httpResult }),
       agentUrl: runState.agentUrl,
       contributions: runState.contributions,
@@ -5096,26 +5144,46 @@ async function executeStep(
   // invariant entry. Step-scope invariants downstream of this point will
   // short-circuit on the schema-invalid response (see the invariant
   // dispatch loop in `executeStoryboardPass`).
-  if (caughtError instanceof ResponseSchemaValidationError) {
-    const issues = caughtError.issues
+  let schemaRejectionIsAdvisory = false;
+  if (schemaValidationError) {
+    const issues = schemaValidationError.issues
       .slice(0, 5)
       .map(i => `${i.path.join('.') || '(root)'}: ${i.message}`)
       .join('; ');
-    const firstIssue = caughtError.issues[0];
+    const firstIssue = schemaValidationError.issues[0];
     const jsonPointer = firstIssue ? '/' + firstIssue.path.map(s => String(s)).join('/') : null;
-    const synthSchemaResult: ValidationResult = {
+    const baseSchemaResult: ValidationResult = {
       check: 'response_schema',
       passed: false,
-      description: `Response schema validation for ${caughtError.toolName}`,
+      description: `Response schema validation for ${schemaValidationError.toolName}`,
       error: issues,
       json_pointer: jsonPointer,
-      expected: `response schema for ${caughtError.toolName}`,
-      actual: caughtError.issues,
+      expected: `response schema for ${schemaValidationError.toolName}`,
+      actual: schemaValidationError.issues,
     };
+    const authoredSchemaValidations = (step.validations ?? []).filter(v => v.check === 'response_schema');
+    const schemaValidationContext: ValidationContext = {
+      taskName: effectiveStep.task,
+      ...(options.adcpVersion && { adcpVersion: options.adcpVersion }),
+      ...(options._serverAdcpVersion && { responseAdcpVersion: options._serverAdcpVersion }),
+      ...(validationTaskResult && { taskResult: validationTaskResult }),
+      agentUrl: runState.agentUrl,
+      contributions: runState.contributions,
+      request: requestRecord,
+      ...(responseRecord && { response: responseRecord }),
+    };
+    const decoratedCandidates = authoredSchemaValidations.map(validation =>
+      decorateValidationResult(baseSchemaResult, schemaValidationContext, validation)
+    );
+    const schemaResults = decoratedCandidates.length
+      ? decoratedCandidates
+      : [{ ...baseSchemaResult, severity: 'required' } satisfies ValidationResult];
+    schemaRejectionIsAdvisory = schemaResults.every(result => !validationFailsStep(result));
+    if (schemaRejectionIsAdvisory && !step.expect_error) passed = true;
     // Prepend so extractFailures picks it up before any inline validation
     // entry that may also be failing (e.g. `field_present` checks that
     // legitimately can't observe their target against an unparsed payload).
-    validations = [synthSchemaResult, ...validations];
+    validations = [...schemaResults, ...validations.filter(result => result.check !== 'response_schema')];
   }
 
   // Persist the captured A2A envelope keyed by step id so cross-step
@@ -5255,7 +5323,7 @@ async function executeStep(
   }
   // Re-evaluate after any synthesized capture-failure validations are
   // appended — the step's overall pass/fail must reflect them.
-  const allValidationsPassedFinal = validations.every(v => v.passed);
+  const allValidationsPassedFinal = validations.every(v => !validationFailsStep(v));
 
   // Emit context-value-rejected hints when the seller's error lists the
   // values it would have accepted and the rejected request value traces
@@ -5340,7 +5408,8 @@ async function executeStep(
         context_provenance: Object.fromEntries(runState.contextProvenance),
       }),
     ...responseDerivedContextResult(runState),
-    error: step.expect_error ? undefined : truncateError(stepResult.error || taskResult?.error),
+    error:
+      step.expect_error || schemaRejectionIsAdvisory ? undefined : truncateError(stepResult.error || taskResult?.error),
     ...(!step.expect_error && taskResult?.adcp_error && { adcp_error: taskResult.adcp_error }),
     next,
     request: requestRecord,
@@ -5702,7 +5771,7 @@ async function executeProbeStep(
     ...(oauthMetadataGraph && { oauthMetadataGraph }),
   };
   const validations = step.validations?.length ? runValidations(step.validations, vctx) : [];
-  const allValidationsPassed = validations.every(v => v.passed);
+  const allValidationsPassed = validations.every(v => !validationFailsStep(v));
 
   // For probes, the "task passed" proxy is: fetch returned without error AND
   // all validations passed. For assert_contribution (no httpResult), we lean
@@ -5985,7 +6054,7 @@ async function executeReplayWebhookVectorStep(
   };
 
   const validations = buildWebhookReplayValidations(step, vector, allSteps, options, requestRecord, responseRecord);
-  const allValidationsPassed = validations.every(v => v.passed);
+  const allValidationsPassed = validations.every(v => !validationFailsStep(v));
   const fetchOk = !httpResult.error;
   const passed = fetchOk && allValidationsPassed;
 

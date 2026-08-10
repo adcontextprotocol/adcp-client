@@ -101,6 +101,16 @@ describe('buildComplianceSummary', () => {
     assert.strictEqual(s.validations_not_applicable, 2);
   });
 
+  test('surfaces advisory failures beside failed steps without changing the verdict', () => {
+    const result = passingResult();
+    result.summary.validations_advisory_failed = 3;
+    const s = buildComplianceSummary(result, { sdkVersion: '13.0.0-rc.11', adcpVersion: '3.1.11' });
+    assert.strictEqual(s.failed, 0);
+    assert.strictEqual(s.validations_advisory_failed, 3);
+    assert.match(formatComplianceSummaryText(s), /0 failed, 3 advisory validation\(s\) failed/);
+    assert.match(formatComplianceSummaryMarkdown(s), /0 failed, 3 advisory validation\(s\) failed/);
+  });
+
   test('failing run flattens failures into the contract shape', () => {
     const s = buildComplianceSummary(failingResult(), { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
     assert.strictEqual(s.failures.length, 2);
