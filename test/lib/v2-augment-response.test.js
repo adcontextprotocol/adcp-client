@@ -376,24 +376,35 @@ describe('toAdditiveCanonicalProduct', () => {
     ]);
   });
 
-  test('does not promote a direct agent_url alias into canonical route identity', () => {
-    assert.throws(
-      () =>
-        toAdditiveCanonicalProduct({
-          product_id: 'invalid-alias',
-          name: 'Invalid alias',
-          description: 'Non-schema identity must not become a canonical route',
-          format_options: [
-            {
-              format_option_id: 'alias-only',
-              format_kind: 'image',
-              params: { width: 300, height: 250 },
-              agent_url: 'https://formats.publisher.example/catalog',
-            },
-          ],
-        }),
-      /must not use legacy identity field agent_url/
-    );
+  test('rejects snake_case and camelCase legacy identity aliases', () => {
+    for (const [field, value] of [
+      ['agent_url', 'https://formats.publisher.example/catalog'],
+      ['agentUrl', 'https://formats.publisher.example/catalog'],
+      ['agentURL', 'https://formats.publisher.example/catalog'],
+      ['format_id', { agent_url: 'https://formats.publisher.example/catalog', id: 'legacy' }],
+      ['formatId', { agent_url: 'https://formats.publisher.example/catalog', id: 'legacy' }],
+      ['format_ids', [{ agent_url: 'https://formats.publisher.example/catalog', id: 'legacy' }]],
+      ['formatIds', [{ agent_url: 'https://formats.publisher.example/catalog', id: 'legacy' }]],
+      ['v1FormatRef', [{ agent_url: 'https://formats.publisher.example/catalog', id: 'legacy' }]],
+    ]) {
+      assert.throws(
+        () =>
+          toAdditiveCanonicalProduct({
+            product_id: `invalid-${field}`,
+            name: 'Invalid alias',
+            description: 'Non-schema identity must not become a canonical route',
+            format_options: [
+              {
+                format_option_id: 'alias-only',
+                format_kind: 'image',
+                params: { width: 300, height: 250 },
+                [field]: value,
+              },
+            ],
+          }),
+        new RegExp(`must not use legacy identity field ${field}`)
+      );
+    }
   });
 
   test('response companion projects every product and accumulates routes', () => {

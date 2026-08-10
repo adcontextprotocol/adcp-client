@@ -31,6 +31,7 @@ import { legacyRoutesForProduct } from './legacy-routes';
 import type { CanonicalFormatLegacyRoute } from './legacy-routes';
 
 const SDK_ID = `@adcp/sdk@${LIBRARY_VERSION}`;
+const DIRECT_LEGACY_FORMAT_IDENTITY_KEYS = new Set(['agenturl', 'formatid', 'formatids', 'v1formatref']);
 
 function canonicalDiagnostic(diagnostic: ProjectionDiagnostic): ProjectionDiagnostic {
   return {
@@ -306,8 +307,11 @@ export type AdditiveCanonicalProduct<P> = Omit<P, 'format_options'> & {
 function assertNoDirectLegacyFormatAliases(declarations: readonly V2ProductFormatDeclaration[]): void {
   for (let index = 0; index < declarations.length; index++) {
     const declaration = declarations[index] as unknown as Record<string, unknown>;
-    for (const field of ['agent_url', 'format_id', 'format_ids']) {
-      if (Object.prototype.hasOwnProperty.call(declaration, field)) {
+    for (const field of Object.keys(declaration)) {
+      if (
+        field !== 'v1_format_ref' &&
+        DIRECT_LEGACY_FORMAT_IDENTITY_KEYS.has(field.replaceAll('_', '').toLowerCase())
+      ) {
         throw new TypeError(
           `format_options[${index}] must not use legacy identity field ${field}; use v1_format_ref for migration routing`
         );
@@ -332,7 +336,7 @@ function assertNoDirectLegacyFormatAliases(declarations: readonly V2ProductForma
  * with `canonicalFormatLegacyResolverFromRoutes(restoredRoutes)`.
  *
  * @throws TypeError when a canonical declaration uses a direct legacy identity
- * alias such as `agent_url` instead of `v1_format_ref`.
+ * alias such as `agent_url` or `agentUrl` instead of `v1_format_ref`.
  */
 export function toAdditiveCanonicalProduct<P extends V1Product>(
   product: P,
