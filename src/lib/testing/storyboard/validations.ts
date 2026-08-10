@@ -365,7 +365,10 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
     default:
       // Forward compatibility is resolved before advisory expiry promotion:
       // an older runner cannot grade a check it does not implement, so the
-      // result is not_applicable rather than evidence about the agent.
+      // result is not_applicable rather than evidence about the agent. This
+      // is the runtime forward-compat default defined by
+      // runner-output-contract.yaml (adcontextprotocol/adcp#3816); publish-time
+      // lint separately rejects unknown check kinds in authored storyboards.
       return {
         check: validation.check,
         passed: true,
