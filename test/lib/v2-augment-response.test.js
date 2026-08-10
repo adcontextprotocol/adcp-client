@@ -7,7 +7,14 @@ const { existsSync, mkdtempSync, writeFileSync, rmSync } = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { withFormatOptions, augmentProductWithFormatOptions } = require('../../dist/lib/v2/projection/index.js');
+const {
+  withFormatOptions,
+  augmentProductWithFormatOptions,
+  toAdditiveCanonicalProduct,
+  withAdditiveCanonicalFormatOptions,
+  canonicalFormatLegacyResolverFromRoutes,
+  projectSyncCreativesForDelivery,
+} = require('../../dist/lib/v2/projection/index.js');
 
 const CATALOG_PATH = path.join(__dirname, 'v2-projection-fixtures', 'aao-reference-formats.json');
 const SKIP_REASON = existsSync(CATALOG_PATH)
@@ -230,6 +237,208 @@ describe('augmentProductWithFormatOptions', { skip: SKIP_REASON }, () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('toAdditiveCanonicalProduct', () => {
+  test('conceals authored legacy refs, preserves additive identity, and forwards through persisted routes', () => {
+    const formatId = {
+      agent_url: 'https://formats.publisher.example/catalog',
+      id: 'homepage_takeover',
+      width: 1440,
+      height: 900,
+      duration_ms: 15000,
+    };
+    const source = {
+      product_id: 'homepage',
+      name: 'Homepage',
+      description: 'Authored additive canonical product',
+      format_ids: [formatId],
+      format_options: [
+        {
+          format_option_id: 'homepage-takeover',
+          format_kind: 'custom',
+          format_shape: 'multi_placement_takeover',
+          format_schema: {
+            uri: 'https://formats.publisher.example/schemas/homepage-takeover.json',
+            digest: `sha256:${'a'.repeat(64)}`,
+          },
+          params: { placements: 3 },
+          v1_format_ref: [formatId],
+        },
+      ],
+    };
+
+    const { product, diagnostics, routes } = toAdditiveCanonicalProduct(source);
+
+    assert.deepStrictEqual(diagnostics, []);
+    assert.deepStrictEqual(product.format_ids, source.format_ids, 'top-level compatibility surface remains');
+    assert.notStrictEqual(product, source, 'projection returns a fresh product');
+    assert.notStrictEqual(
+      product.format_options[0],
+      source.format_options[0],
+      'declarations are copied before concealment'
+    );
+    assert.deepStrictEqual(source.format_options[0].v1_format_ref, [formatId], 'source routing metadata is untouched');
+    assert.deepStrictEqual(product.format_options, [
+      {
+        format_option_id: 'homepage-takeover',
+        format_kind: 'custom',
+        format_shape: 'multi_placement_takeover',
+        format_schema: source.format_options[0].format_schema,
+        params: { placements: 3 },
+      },
+    ]);
+    assert.strictEqual(product.format_options[0].v1_format_ref, undefined);
+
+    const restoredRoutes = JSON.parse(JSON.stringify(routes));
+    assert.deepStrictEqual(restoredRoutes, [
+      {
+        product_id: 'homepage',
+        format_option_ref: { scope: 'product', format_option_id: 'homepage-takeover' },
+        format_ids: [formatId],
+      },
+    ]);
+
+    const resolver = canonicalFormatLegacyResolverFromRoutes(restoredRoutes);
+    const advertisedRef = {
+      scope: 'product',
+      format_option_id: product.format_options[0].format_option_id,
+    };
+    assert.deepStrictEqual(advertisedRef, restoredRoutes[0].format_option_ref);
+    const forwarded = projectSyncCreativesForDelivery(
+      {
+        creatives: [
+          {
+            creative_id: 'creative-1',
+            name: 'Homepage creative',
+            format_kind: 'custom',
+            format_option_ref: advertisedRef,
+            assets: {},
+          },
+        ],
+        assignments: [{ creative_id: 'creative-1', package_id: 'package-1' }],
+      },
+      [
+        {
+          package_id: 'package-1',
+          product_id: 'homepage',
+          format_option_refs: [advertisedRef],
+        },
+      ],
+      'legacy',
+      undefined,
+      resolver
+    );
+    assert.deepStrictEqual(forwarded.creatives[0].format_id, formatId);
+  });
+
+  test('legacy-only input uses the same URL-free declaration and route contract', () => {
+    const formatId = {
+      agent_url: 'https://formats.publisher.example/catalog',
+      id: 'legacy_takeover',
+      width: 1280,
+      height: 720,
+      duration_ms: 30000,
+    };
+    const source = {
+      product_id: 'legacy-homepage',
+      name: 'Legacy homepage',
+      description: 'Legacy-only source product',
+      format_ids: [formatId],
+    };
+
+    const { product, diagnostics, routes } = toAdditiveCanonicalProduct(source, {
+      legacyFormatConverter: () => ({
+        format_option_id: 'legacy-takeover',
+        format_kind: 'custom',
+        format_shape: 'multi_placement_takeover',
+        format_schema: {
+          uri: 'https://formats.publisher.example/schemas/legacy-takeover.json',
+          digest: `sha256:${'b'.repeat(64)}`,
+        },
+        params: { placements: 2 },
+      }),
+    });
+
+    assert.deepStrictEqual(diagnostics, []);
+    assert.deepStrictEqual(product.format_ids, source.format_ids);
+    assert.strictEqual(product.format_options[0].format_option_id, 'legacy-takeover');
+    assert.strictEqual(product.format_options[0].format_kind, 'custom');
+    assert.deepStrictEqual(product.format_options[0].params, { placements: 2 });
+    assert.strictEqual(product.format_options[0].v1_format_ref, undefined);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(routes)), [
+      {
+        product_id: 'legacy-homepage',
+        format_option_ref: { scope: 'product', format_option_id: 'legacy-takeover' },
+        format_ids: [formatId],
+      },
+    ]);
+  });
+
+  test('does not promote a direct agent_url alias into canonical route identity', () => {
+    assert.throws(
+      () =>
+        toAdditiveCanonicalProduct({
+          product_id: 'invalid-alias',
+          name: 'Invalid alias',
+          description: 'Non-schema identity must not become a canonical route',
+          format_options: [
+            {
+              format_option_id: 'alias-only',
+              format_kind: 'image',
+              params: { width: 300, height: 250 },
+              agent_url: 'https://formats.publisher.example/catalog',
+            },
+          ],
+        }),
+      /must not use legacy identity field agent_url/
+    );
+  });
+
+  test('response companion projects every product and accumulates routes', () => {
+    const formatIds = [
+      { agent_url: 'https://formats.publisher.example/catalog', id: 'first' },
+      { agent_url: 'https://formats.publisher.example/catalog', id: 'second' },
+    ];
+    const { response, diagnostics, routes } = withAdditiveCanonicalFormatOptions(
+      {
+        request_id: 'request-1',
+        products: formatIds.map((formatId, index) => ({
+          product_id: `product-${index + 1}`,
+          name: `Product ${index + 1}`,
+          description: 'Legacy source',
+          format_ids: [formatId],
+        })),
+      },
+      {
+        legacyFormatConverter: ({ productId }) => ({
+          format_option_id: `${productId}-option`,
+          format_kind: 'custom',
+          format_shape: 'publisher_defined',
+          format_schema: {
+            uri: `https://formats.publisher.example/schemas/${productId}.json`,
+            digest: `sha256:${'c'.repeat(64)}`,
+          },
+          params: {},
+        }),
+      }
+    );
+
+    assert.strictEqual(response.request_id, 'request-1');
+    assert.deepStrictEqual(diagnostics, []);
+    assert.deepStrictEqual(
+      response.products.map(product => product.format_options[0].format_option_id),
+      ['product-1-option', 'product-2-option']
+    );
+    assert.strictEqual(
+      response.products.some(product => 'v1_format_ref' in product.format_options[0]),
+      false
+    );
+    assert.deepStrictEqual(
+      routes.map(route => route.format_option_ref.format_option_id),
+      ['product-1-option', 'product-2-option']
+    );
   });
 });
 

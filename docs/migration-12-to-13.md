@@ -307,6 +307,34 @@ Each `CanonicalFormatLegacyRoute` contains `product_id`, the stable
 resolver to `AgentClient` or `createAdcpServerFromPlatform()` without changing
 the existing resolver callback contract.
 
+Compatibility consumers that must retain top-level `format_ids[]` while
+publishing URL-free canonical declarations can use the additive projection:
+
+```ts
+import {
+  canonicalFormatLegacyResolverFromRoutes,
+  toAdditiveCanonicalProduct,
+} from '@adcp/sdk/v2/projection';
+
+const { product, diagnostics, routes } =
+  toAdditiveCanonicalProduct(sourceProduct, { legacyFormatConverter });
+
+// product.format_ids is preserved, but product.format_options never exposes
+// v1_format_ref. Extract routes before any JSON round-trip — WeakMap metadata
+// is gone after deserialization. Persist the sidecar before crossing a process
+// boundary.
+await products.put(product.product_id, product);
+await creativeRoutes.put(product.product_id, routes);
+
+const resolver = canonicalFormatLegacyResolverFromRoutes(
+  await creativeRoutes.get(product.product_id)
+);
+```
+
+Source-authored canonical option ids, kinds, and params are preserved exactly;
+only the legacy compatibility hint moves to `routes`. Legacy-only input
+uses the same declaration and route contract after projection.
+
 For a fixed set of temporary seller adapters, prefer one declarative catalog over
 separate forward and reverse callbacks. `projectionAdaptersFromCatalogSnapshots`
 turns exact catalog-authored `v1_format_ref` pairs into client configuration for

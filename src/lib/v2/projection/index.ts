@@ -19,6 +19,11 @@
  *     can read the canonical model regardless of the seller's wire
  *     version. Additive — `format_ids[]` is preserved.
  *
+ *   - `toAdditiveCanonicalProduct` — additive projection with URL-free
+ *     `format_options[]`, preserved top-level `format_ids[]`, and explicit
+ *     serializable legacy-route sidecars for later forwarding.
+ *     `withAdditiveCanonicalFormatOptions` is the response-level companion.
+ *
  *   - `toCanonicalOnlyProduct` / `toCanonicalOnlyResponse` — the
  *     read-side narrowing for a fully-migrated consumer. Returns
  *     `format_options[]` with `format_ids[]` dropped, surfacing a
@@ -62,9 +67,12 @@ export {
 export {
   augmentProductWithFormatOptions,
   withFormatOptions,
+  toAdditiveCanonicalProduct,
+  withAdditiveCanonicalFormatOptions,
   toCanonicalOnlyProduct,
   toCanonicalOnlyResponse,
   type V2AugmentedProduct,
+  type AdditiveCanonicalProduct,
   type CanonicalOnlyProduct,
 } from './augment-response';
 
