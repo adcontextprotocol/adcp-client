@@ -18,6 +18,11 @@ import { pickSafeDetails } from './pick-safe-details';
 export interface AdcpErrorOptions {
   message: string;
   /**
+   * Opaque request context to echo beside `adcp_error`. Only a non-null,
+   * non-array object is echoable, matching the framework envelope behavior.
+   */
+  context?: unknown;
+  /**
    * Override the recovery classification. Defaults to
    * `STANDARD_ERROR_CODES[code].recovery` for known codes, `'terminal'`
    * otherwise. Dropped from the wire shape for codes whose entry in
@@ -93,7 +98,12 @@ export interface AdcpErrorResponse {
   isError: true;
   structuredContent: {
     adcp_error: AdcpErrorPayload;
+    context?: object;
   };
+}
+
+function isEchoableContext(value: unknown): value is object {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 const AUTHORIZATION_REQUIRED_DETAIL_KEYS = [
@@ -150,15 +160,17 @@ const AUTHORIZATION_REQUIRED_DETAIL_KEYS = [
  * ```typescript
  * import { adcpError } from '@adcp/sdk';
  *
- * server.registerTool("get_products", { inputSchema: schema }, async ({ query }) => {
+ * server.registerTool("get_products", { inputSchema: schema }, async request => {
+ *   const { query, context } = request;
  *   if (!products.length) {
  *     return adcpError('PRODUCT_NOT_FOUND', {
  *       message: 'No products match query',
  *       field: 'query',
  *       suggestion: 'Try a broader search term',
+ *       context,
  *     });
  *   }
- *   return { content: [...], structuredContent: { products } };
+ *   return { content: [...], structuredContent: { products, context } };
  * });
  * ```
  */
@@ -177,11 +189,15 @@ export function adcpError(code: StandardErrorCode | (string & {}), options: Adcp
   };
 
   const filtered = applyAdcpErrorAllowlist(code, adcp_error as unknown as Record<string, unknown>);
+  const structuredContent = {
+    adcp_error: filtered,
+    ...(isEchoableContext(options.context) ? { context: options.context } : {}),
+  };
 
   return {
-    content: [{ type: 'text', text: JSON.stringify({ adcp_error: filtered }) }],
+    content: [{ type: 'text', text: JSON.stringify(structuredContent) }],
     isError: true,
-    structuredContent: { adcp_error: filtered },
+    structuredContent,
   };
 }
 

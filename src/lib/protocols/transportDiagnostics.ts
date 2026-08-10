@@ -359,7 +359,12 @@ async function readResponseTextBounded(
       if (text.length > limit) {
         truncated = true;
         text = text.slice(0, limit);
-        await reader.cancel();
+        // A cloned Response body is one branch of a tee. Waiting for this
+        // cancellation can wait for the original branch to be consumed, but
+        // the caller cannot consume it until this diagnostics wrapper returns.
+        // Start cancellation to release the bounded diagnostic branch without
+        // putting that circular dependency on the request path.
+        void reader.cancel().catch(() => {});
         break;
       }
     }

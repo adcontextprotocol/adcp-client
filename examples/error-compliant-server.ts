@@ -101,7 +101,7 @@ const RATE_LIMIT = 50;
 const RATE_WINDOW_MS = 60_000;
 let windowStart = Date.now();
 
-function checkRateLimit() {
+function checkRateLimit(context?: unknown) {
   const now = Date.now();
   if (now - windowStart > RATE_WINDOW_MS) {
     requestCount = 0;
@@ -113,6 +113,7 @@ function checkRateLimit() {
       message: 'Request rate exceeded',
       retry_after: Math.ceil((windowStart + RATE_WINDOW_MS - now) / 1000),
       details: { limit: RATE_LIMIT, remaining: 0, window_seconds: RATE_WINDOW_MS / 1000, scope: 'global' },
+      context,
     });
   }
   return null;
@@ -155,8 +156,8 @@ function createAgentServer() {
   server.registerTool(
     'create_media_buy',
     { inputSchema: LenientCreateMediaBuyInput.shape },
-    async ({ start_time, end_time, packages }) => {
-      const limited = checkRateLimit();
+    async ({ start_time, end_time, packages, context }) => {
+      const limited = checkRateLimit(context);
       if (limited) return limited;
 
       if (new Date(end_time) <= new Date(start_time)) {
@@ -164,6 +165,7 @@ function createAgentServer() {
           message: 'end_time must be after start_time',
           field: 'end_time',
           suggestion: 'Set end_time to a date after start_time',
+          context,
         });
       }
 
@@ -176,6 +178,7 @@ function createAgentServer() {
               message: 'Budget must be non-negative',
               field: `packages[${i}].budget`,
               suggestion: 'Set budget to 0 or greater',
+              context,
             });
           }
 
@@ -185,6 +188,7 @@ function createAgentServer() {
               message: `Product '${pkg.product_id}' not found`,
               field: `packages[${i}].product_id`,
               suggestion: 'Use get_products to discover available products',
+              context,
             });
           }
 
@@ -200,6 +204,7 @@ function createAgentServer() {
               field: `packages[${i}].budget`,
               suggestion: `Increase budget to at least ${pricing.min_spend_per_package}`,
               details: { minimum_budget: pricing.min_spend_per_package, currency: 'USD' },
+              context,
             });
           }
         }
@@ -209,6 +214,7 @@ function createAgentServer() {
 
       return legacyMediaBuyResponse({
         media_buy_id: mediaBuyId,
+        context,
         packages: (packages ?? []).map((pkg, i) => ({
           package_id: `pkg_${i}_${Date.now()}`,
           product_id: pkg.product_id,

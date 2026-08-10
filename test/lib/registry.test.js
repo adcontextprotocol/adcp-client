@@ -1,7 +1,12 @@
 const { test, describe, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert');
 
-const { RegistryClient, buildCommunityMirrorAdagents } = require('../../dist/lib/registry/index.js');
+const {
+  RegistryClient,
+  RegistryRequestError,
+  isRegistryRequestError,
+  buildCommunityMirrorAdagents,
+} = require('../../dist/lib/registry/index.js');
 
 // Helper to mock global fetch
 function mockFetch(handler) {
@@ -80,6 +85,185 @@ describe('RegistryClient', () => {
         () => client.lookupBrand('error.com'),
         err => {
           assert.ok(err.message.includes('500'));
+          return true;
+        }
+      );
+    });
+
+    test('exposes structured HTTP errors without changing the human-readable message', async () => {
+      restore = mockFetch(async () => {
+        return new Response(JSON.stringify({ error: 'Registry unavailable' }), { status: 500 });
+      });
+
+      const client = new RegistryClient();
+      await assert.rejects(
+        () => client.lookupBrand('error.com'),
+        err => {
+          assert.ok(err instanceof RegistryRequestError);
+          assert.strictEqual(err.status, 500);
+          assert.strictEqual(err.method, 'GET');
+          assert.deepStrictEqual(err.details, { error: 'Registry unavailable' });
+          assert.strictEqual(err.retryAfterMs, undefined);
+          assert.strictEqual(err.message, 'Registry request failed (500): {"error":"Registry unavailable"}');
+          return true;
+        }
+      );
+    });
+
+    test('recognizes registry errors across duplicate bundle boundaries', () => {
+      const local = new RegistryRequestError(503, 'Unavailable', { method: 'POST' });
+      const structuralCopy = {
+        name: 'RegistryRequestError',
+        message: 'Unavailable',
+        status: 503,
+        method: 'POST',
+      };
+
+      assert.strictEqual(isRegistryRequestError(local), true);
+      assert.strictEqual(isRegistryRequestError(structuralCopy), true);
+      assert.strictEqual(isRegistryRequestError(new Error('Unavailable')), false);
+    });
+
+    test('throws the same typed error from every RegistryClient HTTP path', async () => {
+      restore = mockFetch(async () => new Response(JSON.stringify({ error: 'Unavailable' }), { status: 503 }));
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      const calls = [
+        ['get', 'GET', () => client.get('https://registry.example/get')],
+        ['getFeed', 'GET', () => client.getFeed()],
+        ['post', 'POST', () => client.post('https://registry.example/post', {})],
+        ['postFormData', 'POST', () => client.postFormData('https://registry.example/form', new FormData())],
+        ['put', 'PUT', () => client.put('https://registry.example/put', {})],
+        ['deleteRequest', 'DELETE', () => client.deleteRequest('https://registry.example/delete')],
+      ];
+
+      for (const [path, method, invoke] of calls) {
+        await assert.rejects(invoke, err => {
+          assert.ok(isRegistryRequestError(err), `${path} must throw RegistryRequestError`);
+          assert.strictEqual(err.status, 503);
+          assert.strictEqual(err.method, method);
+          return true;
+        });
+      }
+    });
+
+    test('exposes Retry-After timing on rate-limit errors', async () => {
+      restore = mockFetch(async () => {
+        return new Response(JSON.stringify({ error: 'Rate limited', retryAfter: 120 }), {
+          status: 429,
+          headers: { 'Retry-After': '30' },
+        });
+      });
+
+      const client = new RegistryClient();
+      await assert.rejects(
+        () => client.lookupBrand('rate-limited.com'),
+        err => {
+          assert.ok(err instanceof RegistryRequestError);
+          assert.strictEqual(err.status, 429);
+          assert.strictEqual(err.retryAfterMs, 30_000, 'Retry-After header takes precedence over JSON');
+          assert.deepStrictEqual(err.details, { error: 'Rate limited', retryAfter: 120 });
+          return true;
+        }
+      );
+    });
+
+    test('uses JSON retry timing when Retry-After is absent', async () => {
+      restore = mockFetch(async () => {
+        return new Response(JSON.stringify({ error: 'Rate limited', retryAfter: 45 }), { status: 429 });
+      });
+
+      const client = new RegistryClient();
+      await assert.rejects(
+        () => client.lookupBrand('rate-limited.com'),
+        err => {
+          assert.ok(err instanceof RegistryRequestError);
+          assert.strictEqual(err.retryAfterMs, 45_000);
+          return true;
+        }
+      );
+    });
+
+    test('ignores Retry-After HTTP dates and bounds huge numeric delays', async () => {
+      const responses = [
+        new Response(JSON.stringify({ error: 'Rate limited' }), {
+          status: 429,
+          headers: { 'Retry-After': 'Wed, 21 Oct 2037 07:28:00 GMT' },
+        }),
+        new Response(JSON.stringify({ error: 'Rate limited' }), {
+          status: 429,
+          headers: { 'Retry-After': '9'.repeat(400) },
+        }),
+        new Response(JSON.stringify({ error: 'Rate limited', retryAfter: 1e308 }), { status: 429 }),
+      ];
+      restore = mockFetch(async () => responses.shift());
+      const client = new RegistryClient();
+
+      await assert.rejects(
+        () => client.lookupBrand('date.example'),
+        err => {
+          assert.strictEqual(err.retryAfterMs, undefined);
+          return true;
+        }
+      );
+      for (const domain of ['header.example', 'body.example']) {
+        await assert.rejects(
+          () => client.lookupBrand(domain),
+          err => {
+            assert.strictEqual(err.retryAfterMs, 2_147_483_647);
+            return true;
+          }
+        );
+      }
+    });
+
+    test('keeps non-JSON HTTP failures typed without inventing details', async () => {
+      restore = mockFetch(async () => new Response('Not found', { status: 404 }));
+
+      const client = new RegistryClient();
+      await assert.rejects(
+        () => client.discoverAgent('https://missing.example'),
+        err => {
+          assert.ok(err instanceof RegistryRequestError);
+          assert.strictEqual(err.status, 404);
+          assert.strictEqual(err.details, undefined);
+          return true;
+        }
+      );
+    });
+
+    test('does not attach oversized registry error details', async () => {
+      restore = mockFetch(async () => new Response(JSON.stringify({ error: 'x'.repeat(70 * 1024) }), { status: 500 }));
+
+      await assert.rejects(
+        () => new RegistryClient().lookupBrand('large-error.example'),
+        err => {
+          assert.ok(isRegistryRequestError(err));
+          assert.strictEqual(err.details, undefined);
+          return true;
+        }
+      );
+    });
+
+    test('preserves the cause when a non-success response body cannot be read', async () => {
+      const readFailure = new Error('stream read failed');
+      restore = mockFetch(
+        async () =>
+          new Response(
+            new ReadableStream({
+              pull(controller) {
+                controller.error(readFailure);
+              },
+            }),
+            { status: 500 }
+          )
+      );
+
+      await assert.rejects(
+        () => new RegistryClient().lookupBrand('unreadable.example'),
+        err => {
+          assert.ok(isRegistryRequestError(err));
+          assert.strictEqual(err.cause, readFailure);
+          assert.match(err.message, /response body unavailable/);
           return true;
         }
       );

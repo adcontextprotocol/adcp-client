@@ -90,6 +90,53 @@ describe('adcpError', () => {
     assert.deepStrictEqual(parsed.adcp_error, result.structuredContent.adcp_error);
   });
 
+  it('echoes request context consistently across structured content and text fallback', () => {
+    const context = {
+      request_id: 'buyer-request-1',
+      opaque: { workflow: ['plan', 7] },
+    };
+    const result = adcpError('PRODUCT_NOT_FOUND', {
+      message: 'Not found',
+      context,
+    });
+
+    assert.strictEqual(result.structuredContent.context, context);
+    assert.deepStrictEqual(JSON.parse(result.content[0].text), {
+      adcp_error: result.structuredContent.adcp_error,
+      context,
+    });
+  });
+
+  it('omits undefined request context and preserves the existing output shape', () => {
+    const withoutEnvelope = adcpError('PRODUCT_NOT_FOUND', { message: 'Not found' });
+    const withUndefinedContext = adcpError('PRODUCT_NOT_FOUND', { message: 'Not found', context: undefined });
+
+    assert.deepStrictEqual(withUndefinedContext, withoutEnvelope);
+    assert.strictEqual('context' in withUndefinedContext.structuredContent, false);
+  });
+
+  it('drops non-object request context values', () => {
+    for (const context of [null, 'not-an-envelope-context', ['not', 'an', 'object']]) {
+      const result = adcpError('PRODUCT_NOT_FOUND', { message: 'Not found', context });
+      assert.strictEqual('context' in result.structuredContent, false);
+      assert.strictEqual('context' in JSON.parse(result.content[0].text), false);
+    }
+  });
+
+  it('keeps context outside per-code adcp_error allowlisting', () => {
+    const context = { field: 'caller-owned', details: { trace_id: 'trace-1' } };
+    const result = adcpError('IDEMPOTENCY_CONFLICT', {
+      message: 'Conflicting request',
+      field: 'must-be-dropped',
+      details: { must_be_dropped: true },
+      context,
+    });
+
+    assert.strictEqual('field' in result.structuredContent.adcp_error, false);
+    assert.strictEqual('details' in result.structuredContent.adcp_error, false);
+    assert.strictEqual(result.structuredContent.context, context);
+  });
+
   it('unknown non-standard code gets terminal recovery', () => {
     const result = adcpError('X_VENDOR_CUSTOM_ERROR', {
       message: 'Custom error',
