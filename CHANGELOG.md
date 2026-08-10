@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.0.0-rc.13
+
+### Minor Changes
+
+- f8a3991: Expose `toAdditiveCanonicalProduct()` and `withAdditiveCanonicalFormatOptions()` for compatibility consumers that need URL-free canonical format declarations, preserved top-level `format_ids`, and serializable exact legacy-route sidecars.
+
 ## 13.0.0-rc.12
 
 ### Minor Changes
