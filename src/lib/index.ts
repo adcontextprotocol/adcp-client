@@ -1565,6 +1565,8 @@ export {
 } from './v2/projection';
 
 export {
+  toAdditiveCanonicalProduct,
+  withAdditiveCanonicalFormatOptions,
   toCanonicalOnlyProduct,
   toCanonicalOnlyResponse,
   packageRefsForFormatOptions,
@@ -1584,6 +1586,7 @@ export {
   type CanonicalFormatLegacyResolver,
   type CanonicalFormatLegacyResolutionContext,
   type CanonicalFormatLegacyRoute,
+  type AdditiveCanonicalProduct,
   type CanonicalOnlyProduct,
   type CanonicalCreativeAsset,
   type CanonicalCreativeAsset as CreativeAsset,

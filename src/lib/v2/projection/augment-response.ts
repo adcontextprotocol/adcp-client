@@ -27,8 +27,11 @@ import { LIBRARY_VERSION } from '../../version';
 import { canonicalize as canonicalizeJson } from '../../utils/jcs';
 import { concealLegacyFormatRefs } from './legacy-metadata';
 import type { CanonicalFormatDeclaration } from './legacy-metadata';
+import { legacyRoutesForProduct } from './legacy-routes';
+import type { CanonicalFormatLegacyRoute } from './legacy-routes';
 
 const SDK_ID = `@adcp/sdk@${LIBRARY_VERSION}`;
+const DIRECT_LEGACY_FORMAT_IDENTITY_KEYS = new Set(['agenturl', 'formatid', 'formatids', 'v1formatref']);
 
 function canonicalDiagnostic(diagnostic: ProjectionDiagnostic): ProjectionDiagnostic {
   return {
@@ -289,6 +292,109 @@ export function withFormatOptions<R extends { products?: V1Product[] }>(
   return {
     response: { ...response, products: out } as R & { products: V2AugmentedProduct<V1Product>[] },
     diagnostics,
+  };
+}
+
+/**
+ * An additive canonical Product: canonical declarations contain no legacy
+ * routing identity, while the Product's top-level `format_ids[]` remains
+ * available to compatibility consumers.
+ */
+export type AdditiveCanonicalProduct<P> = Omit<P, 'format_options'> & {
+  format_options: CanonicalFormatDeclaration[];
+};
+
+function assertNoDirectLegacyFormatAliases(declarations: readonly V2ProductFormatDeclaration[]): void {
+  for (let index = 0; index < declarations.length; index++) {
+    const declaration = declarations[index] as unknown as Record<string, unknown>;
+    for (const field of Object.keys(declaration)) {
+      if (
+        field !== 'v1_format_ref' &&
+        DIRECT_LEGACY_FORMAT_IDENTITY_KEYS.has(field.replaceAll('_', '').toLowerCase())
+      ) {
+        throw new TypeError(
+          `format_options[${index}] must not use legacy identity field ${field}; use v1_format_ref for migration routing`
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Project a Product to an additive, URL-free canonical surface.
+ *
+ * Unlike {@link augmentProductWithFormatOptions}, this always returns fresh
+ * `format_options[]` declarations with `v1_format_ref` concealed. Unlike
+ * {@link toCanonicalOnlyProduct}, it preserves the Product's top-level
+ * `format_ids[]`. Exact canonical-to-legacy downgrade identity is returned
+ * separately as JSON-safe {@link CanonicalFormatLegacyRoute} sidecars.
+ *
+ * Extract `routes` before any JSON round-trip — WeakMap metadata is gone after
+ * deserialization. This helper enforces that ordering internally; persist its
+ * returned `routes` whenever a canonical selection may cross a process boundary
+ * before being forwarded to a legacy seller. Rebuild the write-side resolver
+ * with `canonicalFormatLegacyResolverFromRoutes(restoredRoutes)`.
+ *
+ * @throws TypeError when a canonical declaration uses a direct legacy identity
+ * alias such as `agent_url` or `agentUrl` instead of `v1_format_ref`.
+ */
+export function toAdditiveCanonicalProduct<P extends V1Product>(
+  product: P,
+  options?: V1ToV2ProjectionOptions
+): {
+  product: AdditiveCanonicalProduct<P>;
+  diagnostics: ProjectionDiagnostic[];
+  routes: CanonicalFormatLegacyRoute[];
+} {
+  const { product: augmented, diagnostics } = augmentProductWithFormatOptions(product, options);
+  const routes = legacyRoutesForProduct(product.product_id, augmented.format_options);
+  assertNoDirectLegacyFormatAliases(augmented.format_options);
+  return {
+    product: {
+      ...augmented,
+      format_options: canonicalDeclarations(augmented.format_options),
+    } as AdditiveCanonicalProduct<P>,
+    diagnostics,
+    routes,
+  };
+}
+
+/**
+ * Response-level companion to {@link toAdditiveCanonicalProduct}. Projects
+ * every Product and accumulates its serializable legacy routes.
+ */
+export function withAdditiveCanonicalFormatOptions<R extends { products?: V1Product[] }>(
+  response: R,
+  options?: V1ToV2ProjectionOptions
+): {
+  response: Omit<R, 'products'> & { products: AdditiveCanonicalProduct<V1Product>[] };
+  diagnostics: ProjectionDiagnostic[];
+  routes: CanonicalFormatLegacyRoute[];
+} {
+  if (!Array.isArray(response?.products)) {
+    return {
+      response: { ...response, products: [] } as Omit<R, 'products'> & {
+        products: AdditiveCanonicalProduct<V1Product>[];
+      },
+      diagnostics: [],
+      routes: [],
+    };
+  }
+  const products: AdditiveCanonicalProduct<V1Product>[] = [];
+  const diagnostics: ProjectionDiagnostic[] = [];
+  const routes: CanonicalFormatLegacyRoute[] = [];
+  for (const sourceProduct of response.products) {
+    const projected = toAdditiveCanonicalProduct(sourceProduct, options);
+    products.push(projected.product);
+    diagnostics.push(...projected.diagnostics);
+    routes.push(...projected.routes);
+  }
+  return {
+    response: { ...response, products } as Omit<R, 'products'> & {
+      products: AdditiveCanonicalProduct<V1Product>[];
+    },
+    diagnostics,
+    routes,
   };
 }
 
