@@ -1,5 +1,16 @@
 # Changelog
 
+## 13.0.0-rc.14
+
+### Minor Changes
+
+- bb76fee: Prevent transport diagnostics from deadlocking on large response bodies, expose declaration-level canonical format projection with durable legacy routes, add structured `RegistryClient` HTTP errors, and let `adcpError()` echo request context consistently across its response layers. Instrumented calls that previously stopped after `request_started` on a large response can now complete and emit `response_received` normally.
+- 6d1d339: Fail closed before the `expect_rate_limit_not_replayed` storyboard probe sends mutating requests. Runs must now provide both the `rate_limit_trip_runner` contract and top-level `allowLiveSideEffects: true`; otherwise the probe skips with canonical `unsatisfied_contract` and makes no agent calls. This option is independent from `request_signing.allowLiveSideEffects`, which controls request-signing vectors only.
+
+### Patch Changes
+
+- ea02f07: Classify a failed storyboard-level `requires_capability` predicate as canonical `not_applicable` while preserving the legacy `capability_unsupported` detailed reason.
+
 ## 13.0.0-rc.13
 
 ### Minor Changes
