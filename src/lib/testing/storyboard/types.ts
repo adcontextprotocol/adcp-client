@@ -1592,7 +1592,9 @@ export interface StoryboardRunOptions extends TestOptions {
     /**
      * Opt in to running vectors that produce live agent-side effects
      * (016 replay, 020 rate-abuse). Required unless the test-kit declares
-     * `endpoint_scope: sandbox`.
+     * `endpoint_scope: sandbox`. This flag controls request-signing vectors
+     * only; use the top-level `allowLiveSideEffects` option separately for
+     * `expect_rate_limit_not_replayed`.
      */
     allowLiveSideEffects?: boolean;
     /**
@@ -1766,6 +1768,15 @@ export interface StoryboardRunOptions extends TestOptions {
    * `webhook_receiver_runner`.
    */
   contracts?: string[];
+  /**
+   * Explicitly authorize the `expect_rate_limit_not_replayed` storyboard
+   * probe, which may send hundreds of mutating requests. The probe requires
+   * this opt-in in addition to its `rate_limit_trip_runner` contract;
+   * contract presence alone is not runtime authorization. This does not
+   * authorize request-signing vectors, which use
+   * `request_signing.allowLiveSideEffects`. Default false.
+   */
+  allowLiveSideEffects?: boolean;
   /**
    * Opt out of the runner's pre-flight `comply_test_controller` seeding
    * (adcp-client#778). When true, the runner skips the seed_* loop even if

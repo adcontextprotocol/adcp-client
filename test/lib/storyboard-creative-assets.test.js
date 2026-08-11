@@ -1160,6 +1160,7 @@ describe('$build_assets_from_format', () => {
               id: 'trip',
               title: 'Trip sync creatives rate limit',
               task: 'expect_rate_limit_not_replayed',
+              requires_contract: 'rate_limit_trip_runner',
               rate_limit_trip: {
                 trip_target_task: 'sync_creatives',
                 trip_target_sample_request: {
@@ -1182,7 +1183,23 @@ describe('$build_assets_from_format', () => {
       ],
     };
 
-    const result = await runStoryboard('https://seller.example/mcp', storyboard, runnerOptions(calls));
+    const unauthorizedOptions = runnerOptions(calls);
+    unauthorizedOptions.contracts = ['rate_limit_trip_runner'];
+    const unauthorizedResult = await runStoryboard(
+      'https://seller.example/mcp',
+      structuredClone(storyboard),
+      unauthorizedOptions
+    );
+
+    assert.strictEqual(calls.length, 0);
+    const unauthorizedStep = unauthorizedResult.phases[0].steps[0];
+    assert.strictEqual(unauthorizedStep.skip_reason, 'live_side_effect_opt_in_required');
+    assert.strictEqual(unauthorizedStep.skip.reason, 'unsatisfied_contract');
+
+    const authorizedOptions = runnerOptions(calls);
+    authorizedOptions.contracts = ['rate_limit_trip_runner'];
+    authorizedOptions.allowLiveSideEffects = true;
+    const result = await runStoryboard('https://seller.example/mcp', storyboard, authorizedOptions);
 
     assert.strictEqual(calls.length, 0);
     const step = result.phases[0].steps[0];

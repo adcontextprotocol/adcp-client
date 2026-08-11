@@ -572,6 +572,12 @@ export interface ComplyOptions extends TestOptions {
    * `runStoryboard`. See `StoryboardRunOptions.contracts`.
    */
   contracts?: StoryboardRunOptions['contracts'];
+  /**
+   * Explicitly authorize the `expect_rate_limit_not_replayed` storyboard
+   * probe. Independent from `request_signing.allowLiveSideEffects`. Passed
+   * through to `runStoryboard`; default false.
+   */
+  allowLiveSideEffects?: StoryboardRunOptions['allowLiveSideEffects'];
   /** Explicit compliance cache version override. */
   version?: string;
   /** Explicit compliance cache directory override. */
@@ -1097,6 +1103,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     webhook_replay_receiver,
     trusted_match_context_router_runner,
     contracts,
+    allowLiveSideEffects,
     version,
     complianceDir,
     schemaRoot,
@@ -1329,6 +1336,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
             : trusted_match_context_router_runner,
       }),
       ...(contracts !== undefined && { contracts }),
+      ...(allowLiveSideEffects !== undefined && { allowLiveSideEffects }),
       ...(signal !== undefined && { signal }),
     };
 
@@ -1656,6 +1664,7 @@ async function runWithDegradedProfile(
           : options.trusted_match_context_router_runner,
     }),
     ...(options.contracts !== undefined && { contracts: options.contracts }),
+    ...(options.allowLiveSideEffects !== undefined && { allowLiveSideEffects: options.allowLiveSideEffects }),
     ...(signal !== undefined && { signal }),
   };
 
