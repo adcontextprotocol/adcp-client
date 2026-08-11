@@ -656,7 +656,7 @@ describe('Storyboard.requires gate (#1678): implicit webhook_receiver', () => {
     assert.equal(step.skip.requirement, 'webhook_receiver', 'recursive scan finds nested tokens');
   });
 
-  test('webhook tokens in rate_limit_trip target requests also trigger the gate', async () => {
+  test('authorized rate_limit_trip webhook tokens trigger the receiver gate after the side-effect gate', async () => {
     const sb = buildStoryboard({
       phases: [
         {
@@ -667,6 +667,7 @@ describe('Storyboard.requires gate (#1678): implicit webhook_receiver', () => {
               id: 'trip',
               title: 'Rate-limit trip target request needs a receiver',
               task: 'expect_rate_limit_not_replayed',
+              requires_contract: 'rate_limit_trip_runner',
               rate_limit_trip: {
                 trip_target_task: 'create_media_buy',
                 trip_target_sample_request: {
@@ -684,10 +685,22 @@ describe('Storyboard.requires gate (#1678): implicit webhook_receiver', () => {
       ],
     });
 
+    const unauthorizedResult = await runStoryboard('http://fake-local-99999', structuredClone(sb), {
+      _profile: profileWithoutController,
+      agentTools: profileWithoutController.tools,
+      contracts: ['rate_limit_trip_runner'],
+    });
+
+    const unauthorizedStep = unauthorizedResult.phases[0].steps[0];
+    assert.equal(unauthorizedStep.skipped, true);
+    assert.equal(unauthorizedStep.skip_reason, 'live_side_effect_opt_in_required');
+    assert.equal(unauthorizedStep.skip.reason, 'unsatisfied_contract');
+
     const result = await runStoryboard('http://fake-local-99999', sb, {
       _profile: profileWithoutController,
       agentTools: profileWithoutController.tools,
       contracts: ['rate_limit_trip_runner'],
+      allowLiveSideEffects: true,
     });
 
     const step = result.phases[0].steps[0];

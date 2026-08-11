@@ -37,7 +37,12 @@ import {
 } from './validations';
 import { PARALLEL_DISPATCH_CONTRACT, runParallelDispatches, validateParallelDispatchSpec } from './parallel-dispatch';
 import { resolvePath, resolvePortableIdentifierPathAll, toJsonPointer, validatePortableIdentifierPath } from './path';
-import { RateLimitTripObserver, validateRateLimitTripSpec, type RateLimitTripObservation } from './rate-limit-trip';
+import {
+  RATE_LIMIT_TRIP_CONTRACT,
+  RateLimitTripObserver,
+  validateRateLimitTripSpec,
+  type RateLimitTripObservation,
+} from './rate-limit-trip';
 import { redactSecrets } from '../../utils/redact-secrets';
 import { ResponseSchemaValidationError } from '../../utils/response-unwrapper';
 import { injectLegacyEnvelopeStatus, normalizeLegacyMediaBuyStatusForReturn } from '../../utils/envelope-status-compat';
@@ -1782,7 +1787,10 @@ function valueContainsWebhookToken(value: unknown): boolean {
  *     the runner's webhook receiver cannot run without one — so authors
  *     don't need to remember to add `requires: [webhook_receiver]`
  *     separately. Contract-gated synthetic steps only count when their
- *     `requires_contract` is configured for this run. Spec: adcp-client#1678.
+ *     `requires_contract` is configured for this run. Rate-limit trip probes
+ *     additionally require the exact runner contract and explicit live-side-
+ *     effect authorization before their target request contributes an
+ *     implicit webhook requirement. Spec: adcp-client#1678.
  *   - `'webhook_replay_receiver'`, autodetected from any
  *     `replay_webhook_vector` step. These vectors target an inbound
  *     buyer/orchestrator receiver, so without `webhook_replay_receiver.url`
@@ -1804,7 +1812,7 @@ function valueContainsWebhookToken(value: unknown): boolean {
  */
 function detectImplicitRequires(
   storyboard: Storyboard,
-  options: Pick<StoryboardRunOptions, 'contracts'> = {}
+  options: Pick<StoryboardRunOptions, 'contracts' | 'allowLiveSideEffects'> = {}
 ): RequirementName[] {
   const requires: RequirementName[] = [];
   let needsWebhook = false;
@@ -1815,11 +1823,17 @@ function detectImplicitRequires(
   for (const phase of storyboard.phases) {
     for (const step of phase.steps) {
       const stepContractInScope = !step.requires_contract || contractsInScope.has(step.requires_contract);
+      const rateLimitProbeInScope =
+        step.task !== 'expect_rate_limit_not_replayed' ||
+        (stepContractInScope &&
+          contractsInScope.has(RATE_LIMIT_TRIP_CONTRACT) &&
+          options.allowLiveSideEffects === true);
       if (
         !needsWebhook &&
-        ((step.sample_request && valueContainsWebhookToken(step.sample_request)) ||
+        ((step.sample_request && rateLimitProbeInScope && valueContainsWebhookToken(step.sample_request)) ||
           (step.rate_limit_trip?.trip_target_sample_request &&
             stepContractInScope &&
+            rateLimitProbeInScope &&
             valueContainsWebhookToken(step.rate_limit_trip.trip_target_sample_request)))
       ) {
         needsWebhook = true;
@@ -5443,9 +5457,9 @@ async function executeProbeStep(
   };
   let requestRecordOverride: RunnerRequestRecord | undefined;
 
+  const contractsInScope = new Set(options.contracts ?? []);
   if (step.requires_contract) {
-    const contracts = new Set(options.contracts ?? []);
-    if (!contracts.has(step.requires_contract)) {
+    if (!contractsInScope.has(step.requires_contract)) {
       httpResult = {
         url: runState.agentUrl,
         status: 0,
@@ -5456,6 +5470,21 @@ async function executeProbeStep(
         error: `Test-kit contract "${step.requires_contract}" is not configured on this runner.`,
       };
     }
+  }
+  if (
+    !httpResult &&
+    step.task === 'expect_rate_limit_not_replayed' &&
+    !contractsInScope.has(RATE_LIMIT_TRIP_CONTRACT)
+  ) {
+    httpResult = {
+      url: runState.agentUrl,
+      status: 0,
+      headers: {},
+      body: null,
+      skipped: true,
+      skip_reason: 'missing_test_kit_contract',
+      error: `Test-kit contract "${RATE_LIMIT_TRIP_CONTRACT}" is not configured on this runner.`,
+    };
   }
 
   if (httpResult) {
@@ -5509,6 +5538,18 @@ async function executeProbeStep(
         headers: {},
         body: { attempts: 0, error: 'rate_limit_trip_misconfigured' },
         error: specError,
+      };
+    } else if (options.allowLiveSideEffects !== true) {
+      httpResult = {
+        url: runState.agentUrl,
+        status: 0,
+        headers: {},
+        body: null,
+        skipped: true,
+        skip_reason: 'live_side_effect_opt_in_required',
+        error:
+          'The rate-limit trip probe can send hundreds of mutating requests. ' +
+          'Pass allowLiveSideEffects: true to authorize it explicitly.',
       };
     } else {
       const rateLimitTrip = step.rate_limit_trip!;
@@ -5890,6 +5931,7 @@ function preflightRemainingCreativeAssetDirectives(
   runState: ExecutionState,
   excludedPhaseIds: ReadonlySet<string> = new Set()
 ): CreativeAssetPreflightGap | undefined {
+  const contractsInScope = new Set(options.contracts ?? []);
   for (const target of allSteps) {
     if (target.globalIndex <= afterGlobalIndex) continue;
     if (excludedPhaseIds.has(target.phaseId)) continue;
@@ -5899,7 +5941,13 @@ function preflightRemainingCreativeAssetDirectives(
     if (target.step.requires_tool && options.agentTools && !options.agentTools.includes(target.step.requires_tool)) {
       continue;
     }
-    if (target.step.requires_contract && !new Set(options.contracts ?? []).has(target.step.requires_contract)) {
+    if (target.step.requires_contract && !contractsInScope.has(target.step.requires_contract)) {
+      continue;
+    }
+    if (
+      target.step.task === 'expect_rate_limit_not_replayed' &&
+      (!contractsInScope.has(RATE_LIMIT_TRIP_CONTRACT) || options.allowLiveSideEffects !== true)
+    ) {
       continue;
     }
     if (!PROBE_TASKS.has(target.step.task) && options.agentTools && !options.agentTools.includes(resolvedTask)) {

@@ -74,6 +74,7 @@ function runTripStep(client, storyboard = makeStoryboard(), options = {}) {
     _client: client,
     _profile: { name: 'stub', tools: ['create_media_buy'] },
     contracts: ['rate_limit_trip_runner'],
+    allowLiveSideEffects: true,
     ...options,
   });
 }
@@ -234,7 +235,88 @@ describe('RateLimitTripObserver', () => {
 });
 
 describe('storyboard rate_limit_trip_runner wiring', () => {
-  test('trip plus clean replay passes replay_not_cached_rate_limit', async () => {
+  test('missing contract skips before dispatch even when live side effects are authorized', async () => {
+    let calls = 0;
+    const client = {
+      executeTask: async () => {
+        calls += 1;
+        throw new Error('should not dispatch without the contract');
+      },
+    };
+
+    const result = await runStoryboardStep('https://stub.example/mcp', makeStoryboard(), 'trip', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: { name: 'stub', tools: ['create_media_buy'] },
+      allowLiveSideEffects: true,
+    });
+
+    assert.equal(result.passed, true);
+    assert.equal(result.skipped, true);
+    assert.equal(result.skip_reason, 'missing_test_kit_contract');
+    assert.equal(result.skip.reason, 'unsatisfied_contract');
+    assert.equal(calls, 0);
+  });
+
+  test('contract without live-side-effect authorization skips before dispatch', async () => {
+    let calls = 0;
+    const client = {
+      executeTask: async () => {
+        calls += 1;
+        throw new Error('should not dispatch without explicit authorization');
+      },
+    };
+
+    const result = await runStoryboardStep('https://stub.example/mcp', makeStoryboard(), 'trip', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: { name: 'stub', tools: ['create_media_buy'] },
+      contracts: ['rate_limit_trip_runner'],
+    });
+
+    assert.equal(result.passed, true);
+    assert.equal(result.skipped, true);
+    assert.equal(result.skip_reason, 'live_side_effect_opt_in_required');
+    assert.equal(result.skip.reason, 'unsatisfied_contract');
+    assert.match(result.skip.detail, /allowLiveSideEffects: true/);
+    assert.equal(calls, 0);
+  });
+
+  test('the pseudo-task requires the exact contract even when storyboard metadata omits or misnames it', async () => {
+    for (const scenario of [
+      { label: 'omitted', step: { requires_contract: undefined }, contracts: [] },
+      { label: 'mismatched', step: { requires_contract: 'other_runner' }, contracts: ['other_runner'] },
+    ]) {
+      let calls = 0;
+      const client = {
+        executeTask: async () => {
+          calls += 1;
+          throw new Error(`should not dispatch with ${scenario.label} contract metadata`);
+        },
+      };
+      const result = await runStoryboardStep(
+        'https://stub.example/mcp',
+        makeStoryboard({ step: scenario.step }),
+        'trip',
+        {
+          protocol: 'mcp',
+          _client: client,
+          _profile: { name: 'stub', tools: ['create_media_buy'] },
+          contracts: scenario.contracts,
+          allowLiveSideEffects: true,
+        }
+      );
+
+      assert.equal(result.passed, true, scenario.label);
+      assert.equal(result.skipped, true, scenario.label);
+      assert.equal(result.skip_reason, 'missing_test_kit_contract', scenario.label);
+      assert.equal(result.skip.reason, 'unsatisfied_contract', scenario.label);
+      assert.match(result.skip.detail, /rate_limit_trip_runner/, scenario.label);
+      assert.equal(calls, 0, scenario.label);
+    }
+  });
+
+  test('contract plus live-side-effect authorization runs the observer and passes replay validation', async () => {
     const calls = [];
     const client = {
       executeTask: async (_taskName, params) => {
@@ -379,6 +461,7 @@ describe('storyboard rate_limit_trip_runner wiring', () => {
       _client: client,
       _profile: { name: 'stub', tools: ['create_media_buy'] },
       contracts: ['rate_limit_trip_runner'],
+      allowLiveSideEffects: true,
       context: {
         products: [{ product_id: 'prod_real', pricing_options: [{ pricing_option_id: 'price_real' }] }],
       },
@@ -423,6 +506,7 @@ describe('storyboard rate_limit_trip_runner wiring', () => {
       _client: client,
       _profile: { name: 'stub', tools: ['get_products'] },
       contracts: ['rate_limit_trip_runner'],
+      allowLiveSideEffects: true,
     });
 
     assert.equal(result.passed, true);
