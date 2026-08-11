@@ -1320,7 +1320,7 @@ function buildCapabilityUnsupportedResult(
     passed: true,
     skipped: true,
     skip_reason: 'capability_unsupported',
-    skip: { reason: 'unsatisfied_contract', detail },
+    skip: { reason: DETAILED_SKIP_TO_CANONICAL.capability_unsupported, detail },
     duration_ms: 0,
     validations: [],
     context: {},
