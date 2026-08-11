@@ -159,7 +159,7 @@ describe('requires_capability storyboard skip gate (#933)', () => {
 
     // Structured skip block: canonical spec reason + human-readable detail
     assert.ok(step.skip, 'step.skip block present');
-    assert.equal(step.skip.reason, 'unsatisfied_contract', 'canonical spec reason');
+    assert.equal(step.skip.reason, 'not_applicable', 'canonical spec reason');
     assert.ok(
       step.skip.detail.includes('adcp.idempotency.supported'),
       `detail must mention the capability path: ${step.skip.detail}`
@@ -189,7 +189,7 @@ describe('requires_capability storyboard skip gate (#933)', () => {
     assert.equal(step.step_id, 'capability_unsupported');
     assert.equal(step.skipped, true);
     assert.equal(step.skip_reason, 'capability_unsupported');
-    assert.equal(step.skip.reason, 'unsatisfied_contract');
+    assert.equal(step.skip.reason, 'not_applicable');
     assert.ok(step.skip.detail.includes('media_buy.creative_approval_mode'));
     assert.ok(step.skip.detail.includes('auto_approve'));
     assert.ok(step.skip.detail.includes('did not declare'));
@@ -254,7 +254,7 @@ describe('requires_capability storyboard skip gate (#933)', () => {
     const step = result.phases[0].steps[0];
     assert.equal(step.skipped, true);
     assert.equal(step.skip_reason, 'capability_unsupported');
-    assert.equal(step.skip.reason, 'unsatisfied_contract');
+    assert.equal(step.skip.reason, 'not_applicable');
     assert.ok(step.skip.detail.includes('media_buy.creative_approval_mode'));
     assert.ok(step.skip.detail.includes('did not declare'));
   });
@@ -273,7 +273,7 @@ describe('requires_capability storyboard skip gate (#933)', () => {
     const step = result.phases[0].steps[0];
     assert.equal(step.skipped, true);
     assert.equal(step.skip_reason, 'capability_unsupported');
-    assert.equal(step.skip.reason, 'unsatisfied_contract');
+    assert.equal(step.skip.reason, 'not_applicable');
     assert.ok(step.skip.detail.includes('media_buy.creative_approval_mode'));
     assert.ok(step.skip.detail.includes('did not declare'));
     assert.deepEqual(calls, [], 'top-level gate should skip before dispatching');
@@ -322,7 +322,7 @@ describe('requires_capability storyboard skip gate (#933)', () => {
     const step = result.phases[0].steps[0];
     assert.equal(step.skipped, true);
     assert.equal(step.skip_reason, 'capability_unsupported');
-    assert.equal(step.skip.reason, 'unsatisfied_contract');
+    assert.equal(step.skip.reason, 'not_applicable');
     assert.ok(step.skip.detail.includes('media_buy.features.inline_creative_management'));
     assert.ok(step.skip.detail.includes('did not declare'));
   });
@@ -340,7 +340,7 @@ describe('requires_capability storyboard skip gate (#933)', () => {
     const step = result.phases[0].steps[0];
     assert.equal(step.skipped, true);
     assert.equal(step.skip_reason, 'capability_unsupported');
-    assert.equal(step.skip.reason, 'unsatisfied_contract');
+    assert.equal(step.skip.reason, 'not_applicable');
     assert.ok(step.skip.detail.includes('media_buy.features.inline_creative_management'));
     assert.ok(step.skip.detail.includes('did not declare'));
   });
@@ -359,7 +359,7 @@ describe('requires_capability storyboard skip gate (#933)', () => {
     const step = result.phases[0].steps[0];
     assert.equal(step.skipped, true);
     assert.equal(step.skip_reason, 'capability_unsupported');
-    assert.equal(step.skip.reason, 'unsatisfied_contract');
+    assert.equal(step.skip.reason, 'not_applicable');
     assert.ok(step.skip.detail.includes('media_buy.supports_proposals'));
     assert.ok(step.skip.detail.includes('false'));
   });
@@ -377,15 +377,15 @@ describe('requires_capability storyboard skip gate (#933)', () => {
     const step = result.phases[0].steps[0];
     assert.equal(step.skipped, true);
     assert.equal(step.skip_reason, 'capability_unsupported');
-    assert.equal(step.skip.reason, 'unsatisfied_contract');
+    assert.equal(step.skip.reason, 'not_applicable');
     assert.ok(step.skip.detail.includes('media_buy.supports_proposals'));
     assert.ok(step.skip.detail.includes('did not declare'));
   });
 
-  test('DETAILED_SKIP_TO_CANONICAL maps capability_unsupported to unsatisfied_contract', () => {
+  test('DETAILED_SKIP_TO_CANONICAL maps capability_unsupported to not_applicable', () => {
     assert.equal(
       DETAILED_SKIP_TO_CANONICAL['capability_unsupported'],
-      'unsatisfied_contract',
+      'not_applicable',
       'canonical spec reason for capability_unsupported'
     );
   });
@@ -474,7 +474,7 @@ describe('requires_capability `present:` matcher (#1811)', () => {
     const step = result.phases[0].steps[0];
     assert.equal(step.skipped, true);
     assert.equal(step.skip_reason, 'capability_unsupported');
-    assert.equal(step.skip.reason, 'unsatisfied_contract');
+    assert.equal(step.skip.reason, 'not_applicable');
     assert.ok(
       step.skip.detail.includes('media_buy.conversion_tracking'),
       `detail must mention the capability path: ${step.skip.detail}`
@@ -682,7 +682,7 @@ describe('requires_capability `contains:` matcher (#1817)', () => {
     const step = result.phases[0].steps[0];
     assert.equal(step.skipped, true);
     assert.equal(step.skip_reason, 'capability_unsupported');
-    assert.equal(step.skip.reason, 'unsatisfied_contract');
+    assert.equal(step.skip.reason, 'not_applicable');
     assert.ok(
       step.skip.detail.includes('media_buy.conversion_tracking.supported_targets'),
       `detail must mention capability path: ${step.skip.detail}`

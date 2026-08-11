@@ -1903,7 +1903,8 @@ export type RunnerSkipReason =
    * advertise `comply_test_controller`, or `seeded_state` when the operator
    * didn't pass `--asserts-seeded-state`). Distinct from `missing_tool` /
    * `missing_test_controller` (per-step tool gates) and `unsatisfied_contract`
-   * (capability predicate). The `RunnerSkipResult.requirement` field carries
+   * (a declared runner contract is unavailable). The
+   * `RunnerSkipResult.requirement` field carries
    * the unmet requirement name, including unknown forward-compatible strings.
    * Spec: adcp-client#1626.
    */
@@ -1978,9 +1979,8 @@ export type RunnerDetailedSkipReason =
    * the agent explicitly declared it does not support the capability this
    * storyboard tests (e.g. `adcp.idempotency.supported: false`). The whole
    * storyboard is skipped before any phase runs. Maps to canonical
-   * `unsatisfied_contract`: the agent's self-declared capability profile
-   * does not satisfy the storyboard's preconditions — consistent with peer
-   * skip reasons `rate_abuse_opt_out` and `missing_test_kit_contract`.
+   * `not_applicable`: this storyboard does not target the agent's
+   * self-declared capability profile.
    */
   | 'capability_unsupported'
   /**
@@ -2013,7 +2013,7 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   force_scenario_unsupported: 'not_applicable',
   fixture_seed_unsupported: 'not_applicable',
   fixture_unsatisfied: 'not_applicable',
-  capability_unsupported: 'unsatisfied_contract',
+  capability_unsupported: 'not_applicable',
   rate_abuse_opt_out: 'unsatisfied_contract',
   missing_test_kit_contract: 'unsatisfied_contract',
   live_side_effect_opt_in_required: 'unsatisfied_contract',
