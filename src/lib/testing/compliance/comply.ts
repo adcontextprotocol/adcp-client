@@ -1405,7 +1405,10 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
 
       if (results.length > 0) {
         const trackResult = mapStoryboardResultsToTrackResult(track, results, profile);
-        const observations = collectObservations(track, trackResult.scenarios, profile);
+        const observations = [
+          ...trackResult.observations,
+          ...collectObservations(track, trackResult.scenarios, profile),
+        ];
         trackResult.observations = observations;
         allObservations.push(...observations);
         trackResults.push(trackResult);
@@ -1695,7 +1698,7 @@ async function runWithDegradedProfile(
     const results = grouped.get(track) ?? [];
     if (results.length > 0) {
       const trackResult = mapStoryboardResultsToTrackResult(track, results, profile);
-      const obs = collectObservations(track, trackResult.scenarios, profile);
+      const obs = [...trackResult.observations, ...collectObservations(track, trackResult.scenarios, profile)];
       trackResult.observations = obs;
       allObservations.push(...obs);
       trackResults.push(trackResult);

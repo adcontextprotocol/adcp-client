@@ -279,13 +279,11 @@ export type ObservationSeverity = 'info' | 'suggestion' | 'warning' | 'error';
  *   storyboard pipeline (e.g. auth-failure detection on a 401
  *   discovery response). No storyboard coordinates apply.
  *
- * **`storyboard_id` shape note.** This field is sourced from
- * `TestResult.scenario`, which the storyboard runner constructs as
- * `${storyboard_id}/${phase_id}` (see `storyboard-tracks.ts`). So
- * `source.storyboard_id` is a composite "storyboard/phase" identifier,
- * not the bare storyboard ID. Greppable against the storyboard YAML
- * either way; the composite form gives extra phase-level specificity
- * even when `step_id` is also present.
+ * **`storyboard_id` shape note.** For `storyboard_step` sources this field
+ * is sourced from `TestResult.scenario`, which the storyboard runner
+ * constructs as `${storyboard_id}/${phase_id}` (see
+ * `storyboard-tracks.ts`). For storyboard-wide sources it is the bare
+ * storyboard ID because no single phase owns the finding.
  *
  * **`code` casing note.** `code` is intentionally kebab-case
  * (e.g. `slow-response`, `missing-valid-actions`) to match storyboard

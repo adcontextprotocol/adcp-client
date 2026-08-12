@@ -9,7 +9,8 @@ const http = require('http');
 const os = require('os');
 const path = require('path');
 
-const { comply } = require('../../dist/lib/testing/compliance/index.js');
+const { comply, formatComplianceResultsJSON } = require('../../dist/lib/testing/compliance/index.js');
+const { registerAssertion } = require('../../dist/lib/testing/storyboard/assertions.js');
 const { ADCP_VERSION } = require('../../dist/lib/version.js');
 
 function writeTimeoutComplianceCache() {
@@ -57,6 +58,49 @@ phases:
         sample_request:
           delay_ms: ${delayMs}
 `;
+}
+
+function writeAssertionFailureComplianceCache() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-comply-assertion-'));
+  fs.mkdirSync(path.join(dir, 'universal'), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'index.json'),
+    JSON.stringify({
+      adcp_version: ADCP_VERSION,
+      generated_at: new Date().toISOString(),
+      universal: ['assertion-only-failure'],
+      protocols: [],
+      specialisms: [],
+    })
+  );
+  fs.writeFileSync(
+    path.join(dir, 'universal', 'assertion-only-failure.yaml'),
+    `id: assertion_only_failure
+version: 1.0.0
+title: Assertion-only failure
+category: testing
+track: core
+summary: ''
+narrative: ''
+agent:
+  interaction_model: '*'
+  capabilities: []
+caller:
+  role: buyer_agent
+invariants:
+  enable:
+    - test.aggregate-assertion-failure
+phases:
+  - id: flow
+    title: Flow
+    steps:
+      - id: passing-step
+        title: Passing step
+        task: __test_probe
+        sample_request: {}
+`
+  );
+  return dir;
 }
 
 async function startTimeoutAgent(options = {}) {
@@ -195,6 +239,59 @@ describe('comply() signal option', () => {
         return true;
       }
     );
+  });
+});
+
+describe('comply() storyboard assertion aggregation', () => {
+  test('preserves assertion-only failures in the public ComplianceResult JSON', async () => {
+    registerAssertion({
+      id: 'test.aggregate-assertion-failure',
+      onEnd: () => [
+        {
+          passed: false,
+          description: 'Cross-step invariant',
+          error: 'Observed a forbidden cross-step transition',
+          status: 'fail',
+        },
+      ],
+    });
+    const complianceDir = writeAssertionFailureComplianceCache();
+    const agent = await startTimeoutAgent();
+
+    try {
+      const result = await comply(agent.url, {
+        allow_http: true,
+        complianceDir,
+        storyboards: ['assertion_only_failure'],
+      });
+      const json = JSON.parse(formatComplianceResultsJSON(result));
+      const track = json.tracks.find(candidate => candidate.track === 'core');
+      const trackObservation = track.observations.find(
+        observation => observation.source?.code === 'storyboard-assertion-failed'
+      );
+      const rootObservation = json.observations.find(
+        observation => observation.source?.code === 'storyboard-assertion-failed'
+      );
+      const testedTrackObservation = json.tested_tracks[0].observations.find(
+        observation => observation.source?.code === 'storyboard-assertion-failed'
+      );
+
+      assert.strictEqual(json.overall_status, 'partial');
+      assert.strictEqual(track.status, 'partial');
+      assert.ok(track.scenarios.some(scenario => !scenario.overall_passed));
+      assert.strictEqual(json.summary.steps_passed, 1);
+      assert.strictEqual(json.summary.steps_failed, 0);
+      assert.strictEqual(json.failures, undefined);
+      for (const observation of [trackObservation, rootObservation, testedTrackObservation]) {
+        assert.ok(observation, 'expected assertion failure observation at every aggregate projection');
+        assert.strictEqual(observation.severity, 'error');
+        assert.strictEqual(observation.evidence.assertion_id, 'test.aggregate-assertion-failure');
+        assert.strictEqual(observation.evidence.error, 'Observed a forbidden cross-step transition');
+      }
+    } finally {
+      await closeServer(agent.server);
+      fs.rmSync(complianceDir, { recursive: true, force: true });
+    }
   });
 });
 

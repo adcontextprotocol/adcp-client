@@ -57,6 +57,32 @@ export function mapStoryboardResultsToTrackResult(
 
   for (const sbResult of storyboardResults) {
     totalDuration += sbResult.total_duration_ms;
+    const storyboardAssertionFailures = (sbResult.assertions ?? []).filter(
+      assertion => !assertion.passed && assertion.scope === 'storyboard'
+    );
+
+    for (const assertion of storyboardAssertionFailures) {
+      observations.push({
+        category: 'error_compliance',
+        severity: 'error',
+        track,
+        message: 'A storyboard-scoped compliance assertion failed.',
+        evidence: {
+          assertion_id: assertion.assertion_id,
+          description: assertion.description,
+          scope: assertion.scope,
+          ...(assertion.error !== undefined && { error: assertion.error }),
+          ...(assertion.hint !== undefined && { hint: assertion.hint }),
+          ...(assertion.observation_count !== undefined && { observation_count: assertion.observation_count }),
+          ...(assertion.status !== undefined && { status: assertion.status }),
+        },
+        source: {
+          kind: 'storyboard',
+          code: 'storyboard-assertion-failed',
+          storyboard_id: sbResult.storyboard_id,
+        },
+      });
+    }
 
     for (const phase of sbResult.phases) {
       const steps: TestStepResult[] = phase.steps.map(stepResult => mapStepToTestStep(stepResult));
@@ -74,6 +100,25 @@ export function mapStoryboardResultsToTrackResult(
       };
 
       scenarios.push(testResult);
+    }
+
+    // Phase scenarios retain their own verdicts. When the authoritative
+    // storyboard verdict fails despite every phase passing (for example, an
+    // onEnd assertion failure), add one storyboard-level scenario instead of
+    // falsely attributing the same failure to every phase.
+    if (!sbResult.overall_passed && sbResult.passed_count > 0 && sbResult.phases.every(phase => phase.passed)) {
+      scenarios.push({
+        agent_url: sbResult.agent_url,
+        scenario: `${sbResult.storyboard_id}/storyboard` as any,
+        overall_passed: false,
+        steps: [],
+        summary:
+          storyboardAssertionFailures.length > 0
+            ? `${sbResult.storyboard_title}: ${storyboardAssertionFailures.length} storyboard assertion(s) failed`
+            : `${sbResult.storyboard_title}: storyboard-level verdict failed`,
+        total_duration_ms: 0,
+        tested_at: sbResult.tested_at,
+      });
     }
   }
 
@@ -169,6 +214,10 @@ function computeTrackStatus(results: StoryboardResult[]): TrackStatus {
   if (totalSteps === 0) return 'skip';
   if (totalSteps === totalSkipped) return 'skip';
   if (totalFailed > 0) return totalPassed === 0 ? 'fail' : 'partial';
+  // Storyboard-scoped assertions are not steps, so their failures correctly
+  // leave failed_count at zero. The runner's overall verdict is authoritative:
+  // some steps passed, but the cross-step invariant did not.
+  if (results.some(result => !result.overall_passed)) return 'partial';
   const hasFixtureUnavailable = results.some(result =>
     (result.passes?.flatMap(pass => pass.phases) ?? result.phases).some(phase =>
       phase.steps.some(step => step.skip?.reason === 'fixture_unavailable')
