@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.0.0-rc.16
+
+### Patch Changes
+
+- 5901786: Prevent storyboard runs from mixing test-kit and storyboard compliance lines, and send the required MCP Streamable HTTP Accept media types during capability discovery.
+
 ## 13.0.0-rc.15
 
 ### Patch Changes
