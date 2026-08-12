@@ -1,5 +1,12 @@
 # Changelog
 
+## 13.0.0-rc.17
+
+### Patch Changes
+
+- ec435ef: Reject replay test vectors in `adcp signing verify-vector` by preloading nonce fixtures with the request's canonical target scope.
+- 2112778: Honor storyboard-level assertion failures in compliance track and scenario verdicts, and preserve their diagnostics as structured error observations without incrementing failed-step counters.
+
 ## 13.0.0-rc.16
 
 ### Patch Changes
