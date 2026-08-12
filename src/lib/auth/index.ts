@@ -86,3 +86,36 @@ export function createMCPAuthHeaders(authToken?: string): Record<string, string>
 
   return headers;
 }
+
+/** MCP Streamable HTTP media types required on every POST request. */
+export const MCP_STREAMABLE_HTTP_ACCEPT = 'application/json, text/event-stream';
+
+/**
+ * Merge caller headers with MCP transport defaults.
+ *
+ * `Headers` treats names case-insensitively, but plain object spreads do not.
+ * Check for an existing Accept field before adding the default so a caller's
+ * explicit `accept` / `ACCEPT` value remains deterministic and does not turn
+ * into a duplicate field when the transport normalizes the bag.
+ */
+export function createMCPRequestHeaders(
+  customHeaders?: Record<string, string>,
+  authToken?: string
+): Record<string, string> {
+  const headers: Record<string, string> = Object.fromEntries(
+    Object.entries(customHeaders ?? {}).filter(([key]) => {
+      if (!authToken) return true;
+      const normalized = key.toLowerCase();
+      return normalized !== 'authorization' && normalized !== 'x-adcp-auth';
+    })
+  );
+  const hasAccept = Object.keys(headers).some(key => key.toLowerCase() === 'accept');
+  if (!hasAccept) headers.Accept = MCP_STREAMABLE_HTTP_ACCEPT;
+
+  if (authToken) {
+    headers.Authorization = `Bearer ${authToken}`;
+    headers['x-adcp-auth'] = authToken;
+  }
+
+  return headers;
+}

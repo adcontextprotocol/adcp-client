@@ -97,7 +97,7 @@ const A2AClient: any = A2AClientImpl;
 import { TaskExecutor, DeferredTaskError } from './TaskExecutor';
 import { attachMatch } from './match';
 import { withTaskDeadline } from './task-deadline';
-import { createMCPAuthHeaders } from '../auth';
+import { createMCPRequestHeaders } from '../auth';
 import { isAbortOrTimeoutError } from '../protocols/abort';
 import {
   AuthenticationRequiredError,
@@ -1994,7 +1994,7 @@ export class SingleAgentClient {
       ? this.normalizedAgent.oauth_tokens?.access_token
       : this.agent.auth_token;
     const agentHeaders = this.agent.headers;
-    const authHeaders = { ...agentHeaders, ...createMCPAuthHeaders(authToken) };
+    const authHeaders = createMCPRequestHeaders(agentHeaders, authToken);
     const oauth =
       this.normalizedAgent.oauth_tokens && !this.normalizedAgent.oauth_client_credentials
         ? await import('../auth/oauth')
