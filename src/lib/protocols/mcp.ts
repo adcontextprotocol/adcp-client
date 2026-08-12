@@ -1173,6 +1173,9 @@ export async function connectMCP(options: {
       )
     : customHeaders;
   const authHeaders = createMCPRequestHeaders(filteredCustomHeaders, authToken);
+  const hasNonAcceptCustomHeaders = Object.keys(filteredCustomHeaders ?? {}).some(
+    key => key.toLowerCase() !== 'accept'
+  );
   transportOptions.requestInit = { headers: authHeaders, redirect: 'manual' };
   if (authProvider) {
     transportOptions.authProvider = authProvider;
@@ -1187,7 +1190,7 @@ export async function connectMCP(options: {
       message: 'MCP: Using static token for authentication',
       timestamp: new Date().toISOString(),
     });
-  } else if (Object.keys(authHeaders).length > 0) {
+  } else if (hasNonAcceptCustomHeaders) {
     debugLogs.push({
       type: 'info',
       message: 'MCP: Using custom headers for authentication',
@@ -1254,13 +1257,7 @@ export async function connectMCP(options: {
     // under `.cause` so existing `is401Error` / `error.status` checks
     // downstream still resolve.
     if (is401Error(error)) {
-      const scheme = authProvider
-        ? 'oauth'
-        : authToken
-          ? 'bearer'
-          : Object.keys(authHeaders).length > 0
-            ? 'header'
-            : 'none';
+      const scheme = authProvider ? 'oauth' : authToken ? 'bearer' : hasNonAcceptCustomHeaders ? 'header' : 'none';
       const hint =
         scheme === 'none'
           ? 'No credentials were sent. Configure auth_token, headers, or oauth_tokens on the agent config (or pass --auth on the CLI).'
