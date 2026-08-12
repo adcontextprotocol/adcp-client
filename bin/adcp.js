@@ -1450,6 +1450,195 @@ function loadTestKitFile(testKitPath) {
   }
 }
 
+class TestKitComplianceSelectionError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = 'TestKitComplianceSelectionError';
+    this.code = 'TEST_KIT_COMPLIANCE_VERSION_MISMATCH';
+    this.details = details;
+  }
+}
+
+function complianceVersionFromIndex(index, indexPath) {
+  const declared = index?.adcp_version;
+  const published = index?.published_version;
+  const { resolveBundleKey } = require('../dist/lib/validation/schema-loader.js');
+  const isConcreteVersion = value => {
+    if (typeof value !== 'string' || value.length === 0 || value === 'latest') return false;
+    try {
+      resolveBundleKey(value);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const concreteDeclared = isConcreteVersion(declared);
+  const concretePublished = isConcreteVersion(published);
+  if (concreteDeclared && concretePublished && declared !== published) {
+    throw new TestKitComplianceSelectionError(
+      `Compliance metadata at ${indexPath} disagrees internally: adcp_version is ${declared}, ` +
+        `but published_version is ${published}. Refusing to select an ambiguous compliance line.`,
+      { test_kit_index: indexPath, adcp_version: declared, published_version: published }
+    );
+  }
+  if (concreteDeclared) return declared;
+  if (concretePublished) return published;
+  return null;
+}
+
+function readComplianceMetadata(complianceDir, resolveOptions = {}) {
+  const fs = require('node:fs');
+  const indexPath = path.join(path.resolve(complianceDir), 'index.json');
+  if (!fs.existsSync(indexPath)) return null;
+  let index;
+  try {
+    index = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+  } catch (err) {
+    throw new TestKitComplianceSelectionError(`Failed to read compliance metadata at ${indexPath}: ${err.message}`, {
+      test_kit_index: indexPath,
+    });
+  }
+  const hasVersionMetadata = index?.adcp_version !== undefined || index?.published_version !== undefined;
+  const looksLikeComplianceIndex =
+    hasVersionMetadata ||
+    index?.generated_at !== undefined ||
+    Array.isArray(index?.universal) ||
+    Array.isArray(index?.protocols) ||
+    Array.isArray(index?.specialisms);
+  if (!hasVersionMetadata) {
+    if (!looksLikeComplianceIndex) return null;
+    throw new TestKitComplianceSelectionError(
+      `Compliance metadata at ${indexPath} is missing adcp_version and published_version. ` +
+        `Refusing to run before the test-kit line is known.`,
+      { test_kit_index: indexPath, adcp_version: null, published_version: null }
+    );
+  }
+  let version = complianceVersionFromIndex(index, indexPath);
+  if (!version) {
+    try {
+      const { loadComplianceIndex } = require('../dist/lib/testing/storyboard/index.js');
+      version = loadComplianceIndex({
+        complianceDir: path.dirname(indexPath),
+        ...(resolveOptions.schemaRoot && { schemaRoot: resolveOptions.schemaRoot }),
+      }).adcp_version;
+    } catch (err) {
+      throw new TestKitComplianceSelectionError(
+        `Unable to resolve a concrete compliance version from ${indexPath}: ${err.message}`,
+        {
+          test_kit_index: indexPath,
+          adcp_version: index?.adcp_version ?? null,
+          published_version: index?.published_version ?? null,
+          ...(resolveOptions.schemaRoot && { schema_root: path.resolve(resolveOptions.schemaRoot) }),
+        }
+      );
+    }
+  }
+  return version ? { version, complianceDir: path.dirname(indexPath), indexPath } : null;
+}
+
+function findTestKitComplianceMetadata(testKitPath, resolveOptions = {}) {
+  const fs = require('node:fs');
+  const resolved = fs.realpathSync(testKitPath);
+  let current = path.dirname(resolved);
+  while (true) {
+    const metadata = readComplianceMetadata(current, resolveOptions);
+    if (metadata) return metadata;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return null;
+}
+
+function prepareTestKitComplianceSelection(args, opts) {
+  if (!opts.testKitPath) return { args, opts };
+
+  const resolvedTestKitPath = path.resolve(opts.testKitPath);
+  const loadedTestKit = loadTestKitFile(resolvedTestKitPath);
+  const testKitMetadata = findTestKitComplianceMetadata(resolvedTestKitPath, opts);
+  if (!testKitMetadata) return { args, opts: { ...opts, loadedTestKit } };
+
+  const explicitVersion = opts.complianceVersion;
+  if (explicitVersion && explicitVersion !== testKitMetadata.version) {
+    throw new TestKitComplianceSelectionError(
+      `--test-kit at ${resolvedTestKitPath} targets AdCP ${testKitMetadata.version} ` +
+        `(metadata: ${testKitMetadata.indexPath}), but --compliance-version ${explicitVersion} was specified. ` +
+        `Drop --compliance-version to auto-select the test-kit line, or select matching inputs.`,
+      {
+        test_kit_path: resolvedTestKitPath,
+        test_kit_index: testKitMetadata.indexPath,
+        test_kit_version: testKitMetadata.version,
+        compliance_version: explicitVersion,
+        compliance_version_source: '--compliance-version',
+      }
+    );
+  }
+
+  if (opts.complianceDir) {
+    const selectedMetadata = readComplianceMetadata(opts.complianceDir, opts);
+    if (!selectedMetadata) {
+      throw new TestKitComplianceSelectionError(
+        `--compliance-dir ${path.resolve(opts.complianceDir)} has no index.json with resolvable ` +
+          `adcp_version or published_version metadata. Refusing to run before the active storyboard line is known.`,
+        {
+          test_kit_path: resolvedTestKitPath,
+          test_kit_index: testKitMetadata.indexPath,
+          test_kit_version: testKitMetadata.version,
+          compliance_dir: path.resolve(opts.complianceDir),
+          compliance_version_source: '--compliance-dir',
+        }
+      );
+    }
+    if (selectedMetadata.version !== testKitMetadata.version) {
+      throw new TestKitComplianceSelectionError(
+        `--test-kit at ${resolvedTestKitPath} targets AdCP ${testKitMetadata.version} ` +
+          `(metadata: ${testKitMetadata.indexPath}), but --compliance-dir ${path.resolve(opts.complianceDir)} ` +
+          `targets AdCP ${selectedMetadata.version} (metadata: ${selectedMetadata.indexPath}). ` +
+          `Select a compliance directory from the same published line.`,
+        {
+          test_kit_path: resolvedTestKitPath,
+          test_kit_index: testKitMetadata.indexPath,
+          test_kit_version: testKitMetadata.version,
+          compliance_dir: path.resolve(opts.complianceDir),
+          compliance_index: selectedMetadata.indexPath,
+          compliance_version: selectedMetadata.version,
+          compliance_version_source: '--compliance-dir',
+        }
+      );
+    }
+  }
+
+  const inferredVersion = explicitVersion || testKitMetadata.version;
+  const inferredComplianceDir = opts.complianceDir || testKitMetadata.complianceDir;
+  const resolvedArgs = [...args];
+  if (!explicitVersion) resolvedArgs.push('--compliance-version', inferredVersion);
+  if (!opts.complianceDir) resolvedArgs.push('--compliance-dir', inferredComplianceDir);
+
+  return {
+    args: resolvedArgs,
+    opts: {
+      ...opts,
+      loadedTestKit,
+      complianceVersion: inferredVersion,
+      complianceDir: inferredComplianceDir,
+      testKitComplianceVersion: testKitMetadata.version,
+      testKitComplianceIndex: testKitMetadata.indexPath,
+    },
+  };
+}
+
+function exitTestKitSelectionError(error, jsonOutput) {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = error?.code || 'TEST_KIT_LOAD_FAILED';
+  const details = error?.details || {};
+  if (jsonOutput) {
+    process.stdout.write(`${JSON.stringify({ success: false, error: { code, message, ...details } })}\n`);
+  } else {
+    console.error(`ERROR: ${message}`);
+  }
+  process.exit(2);
+}
+
 async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput, authScheme = null) {
   let agentUrl;
   let protocol = protocolFlag;
@@ -1779,7 +1968,9 @@ RUN OPTIONS (full assessment):
   --compliance-version VERSION
                       Select a compliance cache version, e.g. 3.0.12 or
                       3.1.0-beta.3. The runner uses this cache for
-                      storyboard resolution and wire-version defaults.
+                      storyboard resolution and wire-version defaults. When
+                      --test-kit points into a compliance cache, its version is
+                      selected automatically; an explicit mismatch is rejected.
   --compliance-dir PATH
                       Use a specific compliance cache directory
   --schema-root PATH  Use a specific schema bundle/root for validation.
@@ -1788,6 +1979,9 @@ RUN OPTIONS (full assessment):
                       Hosted badge mode: allow a stable line (e.g. 3.1)
                       to resolve against a prerelease compliance cache.
   --file PATH         Run an ad-hoc storyboard YAML (spec evolution)
+  --test-kit PATH     Load test-kit YAML. If an ancestor index.json declares
+                      adcp_version or published_version, the same compliance
+                      line is required for storyboard resolution.
   --timeout SECONDS   Soft budget in seconds: stop starting new storyboards
                       after this budget, without aborting an active storyboard
                       (default: 120)
@@ -2429,8 +2623,8 @@ function enforceStrictFlags(args, removedFound) {
 }
 
 async function handleStoryboardRun(args) {
-  const opts = parseAgentOptions(args);
-  const {
+  let opts = parseAgentOptions(args);
+  let {
     authToken,
     authScheme,
     protocolFlag,
@@ -2443,6 +2637,26 @@ async function handleStoryboardRun(args) {
   } = opts;
 
   enforceStrictFlags(args, warnRemovedFlags(args));
+
+  try {
+    const prepared = prepareTestKitComplianceSelection(args, opts);
+    args = prepared.args;
+    opts = prepared.opts;
+  } catch (err) {
+    exitTestKitSelectionError(err, jsonOutput);
+  }
+
+  ({
+    authToken,
+    authScheme,
+    protocolFlag,
+    jsonOutput,
+    dryRun,
+    positionalArgs,
+    file: filePath,
+    localAgent,
+    format,
+  } = opts);
 
   // --local-agent <module>: spin the agent up in-process, seed fixtures,
   // run storyboards, tear down. Collapses the 300-line seller-side
@@ -2606,15 +2820,7 @@ async function handleStoryboardRun(args) {
     ? await resolveWebhookReceiverOptions(args, { jsonOutput })
     : webhookReceiverBase;
 
-  let loadedTestKit = null;
-  if (opts.testKitPath) {
-    try {
-      loadedTestKit = loadTestKitFile(opts.testKitPath);
-    } catch (err) {
-      console.error(`ERROR: ${err.message}`);
-      process.exit(2);
-    }
-  }
+  const loadedTestKit = opts.loadedTestKit ?? null;
 
   const options = {
     protocol,
@@ -3464,13 +3670,14 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
       createAgent,
       storyboards: storyboardsSpec,
       compliance: resolveOptions,
-      ...(opts.complianceVersion || opts.schemaRoot || opts.noSandbox || opts.assertsSeededState
+      ...(opts.complianceVersion || opts.schemaRoot || opts.noSandbox || opts.assertsSeededState || opts.loadedTestKit
         ? {
             runStoryboardOptions: {
               ...(opts.complianceVersion && !opts.complianceDir && { adcpVersion: opts.complianceVersion }),
               ...(opts.schemaRoot && { schemaRoot: opts.schemaRoot }),
               ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
               ...(opts.assertsSeededState && { assertsSeededState: true }),
+              ...(opts.loadedTestKit && { test_kit: opts.loadedTestKit }),
             },
           }
         : {}),
@@ -3887,6 +4094,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     ...(opts.schemaRoot && { schemaRoot: opts.schemaRoot }),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
+    ...(opts.loadedTestKit && { test_kit: opts.loadedTestKit }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -4150,6 +4358,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
     ...(opts.schemaRoot && { schemaRoot: opts.schemaRoot }),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
+    ...(opts.loadedTestKit && { test_kit: opts.loadedTestKit }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -4341,15 +4550,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
 
   await loadInvariantModules(rawArgs);
 
-  let loadedTestKit = null;
-  if (opts.testKitPath) {
-    try {
-      loadedTestKit = loadTestKitFile(opts.testKitPath);
-    } catch (err) {
-      console.error(`ERROR: ${err.message}`);
-      process.exit(2);
-    }
-  }
+  const loadedTestKit = opts.loadedTestKit ?? null;
 
   const testOptions = {
     protocol,

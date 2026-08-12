@@ -9,7 +9,7 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import { createHmac } from 'node:crypto';
-import { createMCPAuthHeaders } from '../auth';
+import { createMCPRequestHeaders } from '../auth';
 import { is401Error } from '../errors';
 import type { DebugLogEntry } from '../types/adcp';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
@@ -172,7 +172,7 @@ function cacheDisambiguator(value: string): string {
  * bag. Returns `undefined` when no such header is present.
  *
  * Header keys come in mixed case from different call sites
- * (`createMCPAuthHeaders` emits `Authorization`, custom-headers may emit
+ * (`createMCPRequestHeaders` emits `Authorization`, custom-headers may emit
  * `authorization`); the cache key must treat both as the same credential.
  */
 function extractAuthHeader(headers?: Record<string, string>): string | undefined {
@@ -1020,10 +1020,7 @@ async function callMCPToolImpl(
   requestOptions?: { signal?: AbortSignal; requestTimeoutMs?: number }
 ): Promise<unknown> {
   // Trace context is injected dynamically by the cached transport fetch.
-  const authHeaders = {
-    ...customHeaders,
-    ...(authToken ? createMCPAuthHeaders(authToken) : {}),
-  };
+  const authHeaders = createMCPRequestHeaders(customHeaders, authToken);
 
   const resolvedRequestTimeoutMs = resolveClientRequestTimeoutMs(requestOptions?.requestTimeoutMs);
   const response = await withCachedConnection(
@@ -1063,10 +1060,7 @@ async function callMCPToolRawImpl(
   customHeaders?: Record<string, string>,
   transportFetch?: typeof fetch
 ): Promise<unknown> {
-  const authHeaders = {
-    ...customHeaders,
-    ...(authToken ? createMCPAuthHeaders(authToken) : {}),
-  };
+  const authHeaders = createMCPRequestHeaders(customHeaders, authToken);
 
   return withCachedConnection(
     agentUrl,
@@ -1171,12 +1165,17 @@ export async function connectMCP(options: {
   // OAuth is the source of truth for the bearer in that branch; non-auth
   // routing/tenant headers still flow through.
   const filteredCustomHeaders = authProvider
-    ? Object.fromEntries(Object.entries(customHeaders ?? {}).filter(([k]) => k.toLowerCase() !== 'authorization'))
+    ? Object.fromEntries(
+        Object.entries(customHeaders ?? {}).filter(([k]) => {
+          const normalized = k.toLowerCase();
+          return normalized !== 'authorization' && normalized !== 'x-adcp-auth';
+        })
+      )
     : customHeaders;
-  const authHeaders: Record<string, string> = {
-    ...filteredCustomHeaders,
-    ...(authToken ? createMCPAuthHeaders(authToken) : {}),
-  };
+  const authHeaders = createMCPRequestHeaders(filteredCustomHeaders, authToken);
+  const hasNonAcceptCustomHeaders = Object.keys(filteredCustomHeaders ?? {}).some(
+    key => key.toLowerCase() !== 'accept'
+  );
   transportOptions.requestInit = { headers: authHeaders, redirect: 'manual' };
   if (authProvider) {
     transportOptions.authProvider = authProvider;
@@ -1191,7 +1190,7 @@ export async function connectMCP(options: {
       message: 'MCP: Using static token for authentication',
       timestamp: new Date().toISOString(),
     });
-  } else if (Object.keys(authHeaders).length > 0) {
+  } else if (hasNonAcceptCustomHeaders) {
     debugLogs.push({
       type: 'info',
       message: 'MCP: Using custom headers for authentication',
@@ -1258,13 +1257,7 @@ export async function connectMCP(options: {
     // under `.cause` so existing `is401Error` / `error.status` checks
     // downstream still resolve.
     if (is401Error(error)) {
-      const scheme = authProvider
-        ? 'oauth'
-        : authToken
-          ? 'bearer'
-          : Object.keys(authHeaders).length > 0
-            ? 'header'
-            : 'none';
+      const scheme = authProvider ? 'oauth' : authToken ? 'bearer' : hasNonAcceptCustomHeaders ? 'header' : 'none';
       const hint =
         scheme === 'none'
           ? 'No credentials were sent. Configure auth_token, headers, or oauth_tokens on the agent config (or pass --auth on the CLI).'

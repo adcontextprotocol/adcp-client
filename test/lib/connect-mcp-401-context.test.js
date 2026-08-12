@@ -71,8 +71,9 @@ describe('connectMCP — 401 errors carry auth-scheme context', () => {
   });
 
   it('wraps unauthenticated 401s with scheme="none"', async () => {
+    const debugLogs = [];
     await assert.rejects(
-      () => connectMCP({ agentUrl: baseUrl }),
+      () => connectMCP({ agentUrl: baseUrl, debugLogs }),
       err => {
         assert.strictEqual(err.code, 'MCP_AUTH_REJECTED');
         assert.strictEqual(err.scheme, 'none');
@@ -80,6 +81,32 @@ describe('connectMCP — 401 errors carry auth-scheme context', () => {
         assert.match(err.message, /No credentials were sent/);
         return true;
       }
+    );
+    assert.ok(
+      !debugLogs.some(entry => entry.message === 'MCP: Using custom headers for authentication'),
+      'the default Accept header must not be reported as custom-header authentication'
+    );
+  });
+
+  it('does not classify an explicit Accept header as authentication', async () => {
+    const debugLogs = [];
+    await assert.rejects(
+      () =>
+        connectMCP({
+          agentUrl: baseUrl,
+          debugLogs,
+          customHeaders: { accept: 'application/json, text/event-stream' },
+        }),
+      err => {
+        assert.strictEqual(err.code, 'MCP_AUTH_REJECTED');
+        assert.strictEqual(err.scheme, 'none');
+        assert.match(err.message, /No credentials were sent/);
+        return true;
+      }
+    );
+    assert.ok(
+      !debugLogs.some(entry => entry.message === 'MCP: Using custom headers for authentication'),
+      'an explicit Accept header must not be reported as custom-header authentication'
     );
   });
 

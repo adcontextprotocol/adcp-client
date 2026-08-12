@@ -18,7 +18,7 @@ import {
   type Tool,
 } from '@modelcontextprotocol/client';
 import { createHmac } from 'node:crypto';
-import { createMCPAuthHeaders } from '../auth';
+import { createMCPRequestHeaders } from '../auth';
 import { is401Error } from '../errors';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import {
@@ -117,10 +117,7 @@ function buildAuthHeaders(
           })
         )
       : customHeaders;
-  return {
-    ...filteredHeaders,
-    ...(!authProvider && authToken ? createMCPAuthHeaders(authToken) : {}),
-  };
+  return createMCPRequestHeaders(filteredHeaders, authProvider ? undefined : authToken);
 }
 
 function oauthProviderCacheKey(provider: object | undefined): string | undefined {

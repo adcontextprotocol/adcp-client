@@ -44,6 +44,51 @@ test('MCP: x-adcp-auth header is included in requests', async t => {
     assert.strictEqual(headers['x-adcp-auth'], undefined);
     assert.ok(headers['Accept']);
   });
+
+  await t.test('createMCPRequestHeaders defaults Accept without authentication', () => {
+    const { createMCPRequestHeaders } = require('../../dist/lib/auth/index.js');
+
+    const headers = createMCPRequestHeaders({ 'x-tenant': 'acme' });
+
+    assert.strictEqual(headers.Accept, 'application/json, text/event-stream');
+    assert.strictEqual(headers['x-tenant'], 'acme');
+  });
+
+  await t.test('createMCPRequestHeaders preserves an explicit Accept header case-insensitively', () => {
+    const { createMCPRequestHeaders } = require('../../dist/lib/auth/index.js');
+
+    const headers = createMCPRequestHeaders({ accept: 'application/vnd.example+json', 'x-tenant': 'acme' });
+    const acceptKeys = Object.keys(headers).filter(key => key.toLowerCase() === 'accept');
+
+    assert.deepStrictEqual(acceptKeys, ['accept']);
+    assert.strictEqual(headers.accept, 'application/vnd.example+json');
+    assert.strictEqual(headers['x-tenant'], 'acme');
+  });
+
+  await t.test('createMCPRequestHeaders replaces mixed-case credential headers without duplicates', () => {
+    const { createMCPRequestHeaders } = require('../../dist/lib/auth/index.js');
+
+    const headers = createMCPRequestHeaders(
+      {
+        authorization: 'Basic stale-credential',
+        'X-AdCP-Auth': 'stale-token',
+        'x-tenant': 'acme',
+      },
+      testToken
+    );
+
+    assert.deepStrictEqual(
+      Object.keys(headers).filter(key => key.toLowerCase() === 'authorization'),
+      ['Authorization']
+    );
+    assert.deepStrictEqual(
+      Object.keys(headers).filter(key => key.toLowerCase() === 'x-adcp-auth'),
+      ['x-adcp-auth']
+    );
+    assert.strictEqual(headers.Authorization, `Bearer ${testToken}`);
+    assert.strictEqual(headers['x-adcp-auth'], testToken);
+    assert.strictEqual(headers['x-tenant'], 'acme');
+  });
 });
 
 test('MCP: StreamableHTTPClientTransport configuration', async t => {
