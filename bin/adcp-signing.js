@@ -5,6 +5,7 @@ const { readFileSync, writeFileSync, existsSync } = require('node:fs');
 const path = require('node:path');
 
 const {
+  canonicalTargetUri,
   InMemoryReplayStore,
   InMemoryRevocationStore,
   RequestSignatureError,
@@ -136,23 +137,24 @@ async function verifyVector(argv) {
   const replayStore = new InMemoryReplayStore();
   const revocationStore = new InMemoryRevocationStore();
   const state = vector.test_harness_state ?? {};
-  if (state.replay_cache_entries) {
-    for (const entry of state.replay_cache_entries) {
-      replayStore.preload(entry.keyid, entry.nonce, entry.ttl_seconds, now);
-    }
-  }
-  if (state.revocation_list) revocationStore.load(state.revocation_list);
-  if (state.replay_cache_per_keyid_cap_hit) {
-    replayStore.setCapHitForTesting(state.replay_cache_per_keyid_cap_hit.keyid);
-  }
-
-  const jwksEntries = vector.jwks_override
-    ? vector.jwks_override.keys
-    : (vector.jwks_ref ?? []).map(kid => keysByKid.get(kid)).filter(Boolean);
-  const jwks = new StaticJwksResolver(jwksEntries);
-  const operation = new URL(vector.request.url).pathname.split('/').filter(Boolean).pop();
-
   try {
+    if (state.replay_cache_entries) {
+      const scope = canonicalTargetUri(vector.request.url);
+      for (const entry of state.replay_cache_entries) {
+        replayStore.preload(entry.keyid, scope, entry.nonce, entry.ttl_seconds, now);
+      }
+    }
+    if (state.revocation_list) revocationStore.load(state.revocation_list);
+    if (state.replay_cache_per_keyid_cap_hit) {
+      replayStore.setCapHitForTesting(state.replay_cache_per_keyid_cap_hit.keyid);
+    }
+
+    const jwksEntries = vector.jwks_override
+      ? vector.jwks_override.keys
+      : (vector.jwks_ref ?? []).map(kid => keysByKid.get(kid)).filter(Boolean);
+    const jwks = new StaticJwksResolver(jwksEntries);
+    const operation = new URL(vector.request.url).pathname.split('/').filter(Boolean).pop();
+
     const verified = await verifyRequestSignature(vector.request, {
       capability: vector.verifier_capability,
       jwks,
