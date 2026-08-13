@@ -7,6 +7,7 @@
 // break the emitted d.ts (adcp-client#900 reviewer finding).
 
 import type { StoryboardResult, StoryboardStepResult, StoryboardStepHint } from './types';
+import { collectDetachedAssertionFailures } from '../compliance/storyboard-tracks';
 import { randomBytes } from 'node:crypto';
 
 function xmlEscape(s: unknown): string {
@@ -70,6 +71,7 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
 
   for (const sb of results) {
     const suiteCases: string[] = [];
+    let suiteFailures = sb.failed_count;
     let representedSkipped = 0;
     const passPhases = sb.passes?.length
       ? sb.passes.map(pass => ({ label: `Pass ${pass.pass_index} › `, phases: pass.phases }))
@@ -144,10 +146,23 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
           `    </testcase>`
       );
     }
+    for (const { assertion } of collectDetachedAssertionFailures(sb)) {
+      totalTests += 1;
+      totalFailures += 1;
+      suiteFailures += 1;
+      const passLabel = assertion.pass_index === undefined ? '' : `Pass ${assertion.pass_index} › `;
+      const message = assertion.error ?? assertion.description;
+      const details = `${assertion.assertion_id}: ${assertion.description}${assertion.error ? `\n${assertion.error}` : ''}`;
+      suiteCases.push(
+        `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(`${passLabel}Assertion › ${assertion.assertion_id}`)}" time="0.000">\n` +
+          `      <failure message="${xmlEscape(message)}" type="StoryboardAssertionFailure">${xmlEscape(details)}</failure>\n` +
+          `    </testcase>`
+      );
+    }
     totalDuration += sb.total_duration_ms || 0;
     const suiteTests = suiteCases.length;
     suites.push(
-      `  <testsuite name="${xmlEscape(sb.storyboard_title)}" tests="${suiteTests}" failures="${sb.failed_count}" skipped="${sb.skipped_count}" time="${((sb.total_duration_ms || 0) / 1000).toFixed(3)}" timestamp="${sb.tested_at || new Date().toISOString()}">\n` +
+      `  <testsuite name="${xmlEscape(sb.storyboard_title)}" tests="${suiteTests}" failures="${suiteFailures}" skipped="${sb.skipped_count}" time="${((sb.total_duration_ms || 0) / 1000).toFixed(3)}" timestamp="${sb.tested_at || new Date().toISOString()}">\n` +
         suiteCases.join('\n') +
         `\n  </testsuite>`
     );

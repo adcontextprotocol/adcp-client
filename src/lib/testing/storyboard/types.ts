@@ -2392,9 +2392,13 @@ export interface StoryboardStepResult {
    * by the RFC 9421 request-signing grader (#585, #617). The structured
    * `skip` field below always carries the canonical spec reason so consumers
    * of the runner-output contract don't need to know the grader vocabulary.
+   * In particular, `rate_limit_not_triggered` is a passing skipped result
+   * with `skip.reason === 'not_applicable'`,
+   * `skip.detail === 'rate_limit_not_triggered'`, and no validations. Its
+   * human-readable diagnostic remains on the legacy `response.error` field.
    */
   skip_reason?: RunnerSkipReason | RunnerDetailedSkipReason;
-  /** Structured skip result with canonical spec reason + human-readable detail. */
+  /** Structured skip result with canonical spec reason + contract-defined detail. */
   skip?: RunnerSkipResult;
   /**
    * Structured selection result for steps that were outside the caller's
@@ -3078,6 +3082,8 @@ export interface AssertionResult {
   scope: 'step' | 'storyboard';
   /** Step that produced the observation, when `scope === "step"`. */
   step_id?: string;
+  /** 1-based pass index when aggregated from a multi-pass run. */
+  pass_index?: number;
   /** Failure detail. Absent on pass. */
   error?: string;
   /**

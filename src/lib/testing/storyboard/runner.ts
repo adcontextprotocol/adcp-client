@@ -281,6 +281,14 @@ const DETAILED_SKIP_DETAILS: Partial<Record<RunnerDetailedSkipReason, string>> =
   rate_limit_not_triggered: 'No RATE_LIMITED response was observed within the configured max_attempts.',
 };
 
+/**
+ * Machine-readable detail values required by the AdCP report contract.
+ * The probe's human-readable error remains available on the legacy response.
+ */
+const CANONICAL_SKIP_DETAILS: Partial<Record<RunnerDetailedSkipReason, string>> = {
+  rate_limit_not_triggered: 'rate_limit_not_triggered',
+};
+
 const REPLAY_WEBHOOK_VECTOR_TASK = 'replay_webhook_vector';
 const REPLAY_TRUSTED_MATCH_CONTEXT_VECTOR_TASK = 'replay_trusted_match_context_vector';
 const WEBHOOK_REPLAY_DEFAULT_TIMEOUT_MS = 10_000;
@@ -3293,6 +3301,13 @@ async function executeStoryboardPass(
         v => v.check === 'response_schema' && validationFailsStep(v)
       );
 
+      // Rate-limit exhaustion is a contract-defined applicability result,
+      // not a response to grade. Preserve its empty validations array and
+      // passing skip status. Step assertions still run and remain visible on
+      // the storyboard-level assertions surface, but are not mirrored onto
+      // this skipped step or counted as a failed step.
+      const rateLimitTripNotApplicable = result.skipped === true && result.skip_reason === 'rate_limit_not_triggered';
+
       // Fire per-step assertions. Each result is appended to the step's
       // `validations[]` under `check: "assertion"` so existing UI renders
       // them alongside inline checks, and mirrored into `assertionResults`
@@ -3321,12 +3336,14 @@ async function executeStoryboardPass(
         for (const r of raw) {
           const full: AssertionResult = { ...r, assertion_id: spec.id, scope: 'step', step_id: step.id };
           assertionResults.push(full);
-          result.validations.push({
-            check: 'assertion',
-            passed: r.passed,
-            description: `${spec.id}: ${r.description}`,
-            ...(r.error !== undefined && { error: r.error }),
-          });
+          if (!rateLimitTripNotApplicable) {
+            result.validations.push({
+              check: 'assertion',
+              passed: r.passed,
+              description: `${spec.id}: ${r.description}`,
+              ...(r.error !== undefined && { error: r.error }),
+            });
+          }
           // Issue #935: assertions can attach a structured hint that the
           // runner mirrors into the owning step's `hints[]`. Producers today
           // include `status.monotonic` (monotonic_violation) and
@@ -3339,7 +3356,7 @@ async function executeStoryboardPass(
             result.hints = [...existing, r.hint];
           }
           if (!r.passed) {
-            result.passed = false;
+            if (!rateLimitTripNotApplicable) result.passed = false;
             assertionsFailed = true;
           }
         }
@@ -3966,7 +3983,9 @@ async function runMultiPass(
   // independently and reported `assertion_id` identically. Concatenate so
   // readers see a per-pass timeline; de-duplicating would hide a real
   // "passed on pass 1, failed on pass 2" divergence.
-  const assertionsAgg = passResults.flatMap(r => r.assertions ?? []);
+  const assertionsAgg = passResults.flatMap((r, index) =>
+    (r.assertions ?? []).map(assertion => ({ ...assertion, pass_index: index + 1 }))
+  );
   // Notices are identical across passes (same agent, same capabilities).
   // Schema-invalid capabilities notices retain one row per RFC 6901 pointer.
   const noticesDedup = [...new Map(passResults.flatMap(r => r.notices).map(n => [runnerNoticeKey(n), n])).values()];
@@ -6052,7 +6071,11 @@ async function executeProbeStep(
   if (httpResult?.skipped) {
     const detailedReason = (httpResult.skip_reason ?? 'probe_skipped') as RunnerDetailedSkipReason;
     const canonicalReason = DETAILED_SKIP_TO_CANONICAL[detailedReason] ?? 'not_applicable';
-    const detail = httpResult.error ?? DETAILED_SKIP_DETAILS[detailedReason] ?? SKIP_DETAILS[canonicalReason];
+    const detail =
+      CANONICAL_SKIP_DETAILS[detailedReason] ??
+      httpResult.error ??
+      DETAILED_SKIP_DETAILS[detailedReason] ??
+      SKIP_DETAILS[canonicalReason];
     const selectionResult = selectionForProbeSkip(detailedReason, detail);
     return {
       step_id: step.id,

@@ -1,7 +1,11 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner');
+const { runStoryboard, runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner');
+const { registerAssertion } = require('../../dist/lib/testing/storyboard/assertions');
+const { extractFailures } = require('../../dist/lib/testing/compliance/comply');
+const { mapStoryboardResultsToTrackResult } = require('../../dist/lib/testing/compliance/storyboard-tracks');
+const { formatStoryboardResultsAsJUnit } = require('../../dist/lib/testing/storyboard/junit');
 const { ResponseTooLargeError, ValidationError } = require('../../dist/lib/errors');
 const rootExports = require('../../dist/lib/index');
 const testingExports = require('../../dist/lib/testing/index');
@@ -418,7 +422,7 @@ describe('storyboard rate_limit_trip_runner wiring', () => {
     assert.equal(calls.length, 2);
   });
 
-  test('no RATE_LIMITED emits skip_reason rate_limit_not_triggered and skip.reason not_applicable', async () => {
+  test('no RATE_LIMITED emits the canonical not-applicable skip result without validations', async () => {
     const calls = [];
     const client = {
       executeTask: async (_taskName, params) => {
@@ -433,10 +437,105 @@ describe('storyboard rate_limit_trip_runner wiring', () => {
     assert.equal(result.skipped, true);
     assert.equal(result.skip_reason, 'rate_limit_not_triggered');
     assert.equal(result.skip.reason, 'not_applicable');
+    assert.equal(result.skip.detail, 'rate_limit_not_triggered');
+    assert.deepEqual(result.validations, []);
+    assert.match(result.response.error, /No RATE_LIMITED response observed/);
     assert.equal(calls.length, 50);
     assert.equal(new Set(calls.map(c => c.idempotency_key)).size, 50);
     assert.deepEqual(result.request.payload, calls[49]);
     assert.equal(result.response_record.payload.trip_request.context.correlation_id, 'trip#trip-50');
+  });
+
+  test('full storyboard run preserves the exhaustion skip and aggregate counters', async () => {
+    const calls = [];
+    const client = {
+      executeTask: async (_taskName, params) => {
+        calls.push(params);
+        return { success: true, data: { media_buy_id: `mb_${calls.length}` } };
+      },
+    };
+
+    const result = await runStoryboard('https://stub.example/mcp', makeStoryboard(), {
+      protocol: 'mcp',
+      _client: client,
+      _profile: { name: 'stub', tools: ['create_media_buy'] },
+      agentTools: ['create_media_buy'],
+      contracts: ['rate_limit_trip_runner'],
+      allowLiveSideEffects: true,
+    });
+    const step = result.phases[0].steps[0];
+
+    assert.equal(step.passed, true);
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip.reason, 'not_applicable');
+    assert.equal(step.skip.detail, 'rate_limit_not_triggered');
+    assert.deepEqual(step.validations, []);
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.passed_count, 0);
+    assert.equal(result.failed_count, 0);
+    assert.equal(result.skipped_count, 1);
+    assert.ok(result.assertions.length > 0, 'step assertions still execute for the skipped probe');
+    assert.ok(result.assertions.every(assertion => assertion.passed));
+    assert.equal(calls.length, 50);
+  });
+
+  test('full run surfaces a failing assertion without changing the exhaustion skip tuple', async () => {
+    const assertionId = 'test.rate_limit_exhaustion_failure';
+    registerAssertion({
+      id: assertionId,
+      description: 'test-only rate-limit exhaustion assertion',
+      onStep: async (_context, step) =>
+        step.skip_reason === 'rate_limit_not_triggered'
+          ? [{ passed: false, description: 'rate-limit policy assertion failed', error: 'policy failure' }]
+          : [],
+    });
+
+    const storyboard = makeStoryboard();
+    storyboard.track = 'error_handling';
+    storyboard.invariants = { enable: [assertionId] };
+    storyboard.phases[0].steps[0].expected = 'Rate-limit exhaustion is not a failed replay check.';
+    const client = {
+      executeTask: async () => ({ success: true, data: { media_buy_id: 'mb_no_limit' } }),
+    };
+    const result = await runStoryboard('https://stub.example/mcp', storyboard, {
+      protocol: 'mcp',
+      _client: client,
+      _profile: { name: 'stub', tools: ['create_media_buy'] },
+      agentTools: ['create_media_buy'],
+      contracts: ['rate_limit_trip_runner'],
+      allowLiveSideEffects: true,
+    });
+    const step = result.phases[0].steps[0];
+
+    assert.equal(step.passed, true);
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip.detail, 'rate_limit_not_triggered');
+    assert.deepEqual(step.validations, []);
+    assert.equal(result.failed_count, 0);
+    assert.equal(result.skipped_count, 1);
+    assert.equal(result.overall_passed, false);
+    assert.ok(result.assertions.some(assertion => assertion.assertion_id === assertionId && !assertion.passed));
+
+    const track = mapStoryboardResultsToTrackResult('error_handling', [result], {
+      name: 'stub',
+      tools: [],
+    });
+    assert.equal(track.status, 'fail');
+    const observation = track.observations.find(observation => observation.evidence.assertion_id === assertionId);
+    assert.equal(observation.source.kind, 'storyboard_step');
+    assert.equal(observation.source.storyboard_id, storyboard.id);
+    assert.equal(observation.source.step_id, 'trip');
+
+    const failures = extractFailures([result], [storyboard], 'https://stub.example/mcp');
+    assert.equal(failures.length, 1);
+    assert.equal(failures[0].step_id, 'trip');
+    assert.equal(failures[0].expected, 'Rate-limit exhaustion is not a failed replay check.');
+    assert.equal(failures[0].validation.check, 'assertion');
+
+    const junit = formatStoryboardResultsAsJUnit([result]);
+    assert.match(junit, /<testsuites\b[^>]+failures="1"/);
+    assert.match(junit, /<testsuite\b[^>]+failures="1"/);
+    assert.match(junit, /type="StoryboardAssertionFailure"/);
   });
 
   test('uses normal request enrichment for sentinel product and pricing ids', async () => {

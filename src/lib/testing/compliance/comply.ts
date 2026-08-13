@@ -10,7 +10,7 @@
 
 import { createTestClient, discoverAgentProfile } from '../client';
 import type { TestOptions, TestResult, AgentProfile, TestStepResult } from '../types';
-import { mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
+import { collectDetachedAssertionFailures, mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
 import { applyAdcpVersionRunOptions, runStoryboard } from '../storyboard/runner';
 import { validateTestKit } from '../storyboard/test-kit';
 import { checkAccountDiscoveryGate } from './spec-conformance';
@@ -1021,17 +1021,7 @@ export function extractFailures(
       for (const step of phase.steps) {
         if (step.passed || step.skipped) continue;
 
-        // Find the step definition in the storyboard for expected text
-        let expected: string | undefined;
-        if (sb) {
-          for (const p of sb.phases) {
-            const stepDef = p.steps.find(s => s.id === step.step_id);
-            if (stepDef?.expected) {
-              expected = stepDef.expected.trim();
-              break;
-            }
-          }
-        }
+        const expected = findStoryboardStepExpected(sb, step.step_id);
 
         const firstFailedValidation = step.validations.find(validationFailsStep);
         const validationSummary = firstFailedValidation
@@ -1062,9 +1052,40 @@ export function extractFailures(
         });
       }
     }
+
+    // Assertion failures on skipped steps are not counted as failed steps and
+    // the loop above intentionally ignores skips. Preserve those gating
+    // failures from the storyboard assertion surface instead of dropping them.
+    for (const { assertion, owningStep } of collectDetachedAssertionFailures(result)) {
+      if (!owningStep) continue;
+
+      failures.push({
+        track,
+        storyboard_id: result.storyboard_id,
+        step_id: owningStep.step_id,
+        step_title: owningStep.title,
+        task: owningStep.task,
+        error: assertion.error ?? assertion.description,
+        expected: findStoryboardStepExpected(sb, owningStep.step_id),
+        fix_command: buildFixCommand(agentRef, result.storyboard_id, owningStep.step_id, fixOptions),
+        validation: {
+          check: 'assertion',
+          description: `${assertion.assertion_id}: ${assertion.description}`,
+        },
+      });
+    }
   }
 
   return failures;
+}
+
+function findStoryboardStepExpected(storyboard: Storyboard | undefined, stepId: string): string | undefined {
+  if (!storyboard) return undefined;
+  for (const phase of storyboard.phases) {
+    const expected = phase.steps.find(step => step.id === stepId)?.expected;
+    if (expected) return expected.trim();
+  }
+  return undefined;
 }
 
 function buildFixCommand(
