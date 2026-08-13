@@ -186,6 +186,18 @@ const canonicalGetProductsRequest: CanonicalGetProductsRequest = {
 };
 agent.getProducts(canonicalGetProductsRequest);
 single.getProducts(canonicalGetProductsRequest);
+
+// Keep the SingleAgentClient.getProducts JSDoc example schema-valid and show
+// that advertiser brand context is optional for brief-based discovery.
+const getProductsJSDocExample = {
+  buying_mode: 'brief',
+  brief: 'Find podcast and streaming audio placements for an eco-friendly bike subscription launch',
+} satisfies CanonicalGetProductsRequest;
+single.getProducts(getProductsJSDocExample);
+single.getProducts({
+  ...getProductsJSDocExample,
+  brand: { domain: 'pedal-forward.example' },
+});
 // @ts-expect-error Primary product discovery cannot request legacy format_ids.
 agent.getProducts({ buying_mode: 'wholesale', fields: ['format_ids'] });
 // @ts-expect-error Generic primary execution enforces the same request boundary.
