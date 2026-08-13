@@ -86,11 +86,36 @@ import { getComplianceCacheDir } from './compliance';
 import { signWebhook, type RequestLike } from '../../signing/client';
 import { replayTrustedMatchContextVector } from './trusted-match-context-replay';
 import {
+  TRUSTED_MATCH_PUBLISHER_AUTH_TASKS,
+  prepareTrustedMatchPublisherAuthProbes,
+  probeTrustedMatchPublisherAuth,
+  type PreparedTrustedMatchPublisherAuthProbes,
+  type TrustedMatchPublisherAuthTask,
+} from './trusted-match-publisher-auth';
+import {
   gradeOAuthMetadataGraph,
   redactOAuthUrlForOutput,
   redactOAuthUrlsInText,
   type OAuthMetadataGraphGrade,
 } from './oauth-metadata-graph';
+
+const PREPARED_TRUSTED_MATCH_PUBLISHER_AUTH = Symbol('preparedTrustedMatchPublisherAuth');
+type InternalStoryboardRunOptions = StoryboardRunOptions & {
+  [PREPARED_TRUSTED_MATCH_PUBLISHER_AUTH]?: PreparedTrustedMatchPublisherAuthProbes;
+};
+
+function getPreparedTrustedMatchPublisherAuth(
+  options: StoryboardRunOptions
+): PreparedTrustedMatchPublisherAuthProbes | undefined {
+  return (options as InternalStoryboardRunOptions)[PREPARED_TRUSTED_MATCH_PUBLISHER_AUTH];
+}
+
+function withPreparedTrustedMatchPublisherAuth(
+  options: StoryboardRunOptions,
+  prepared: PreparedTrustedMatchPublisherAuthProbes
+): StoryboardRunOptions {
+  return { ...options, [PREPARED_TRUSTED_MATCH_PUBLISHER_AUTH]: prepared } as InternalStoryboardRunOptions;
+}
 
 /**
  * Pre-computed controller-seeding outcome passed into `executeStoryboardPass`.
@@ -425,6 +450,16 @@ function evaluateRequiresCapabilityGate(
   // profile or advertised get_adcp_capabilities tool is not evidence that the
   // agent asserted oauth.supported: true.
   if ('equals' in predicate && predicate.path === 'oauth.supported' && predicate.equals === true) {
+    return evaluateCapabilityPredicate(predicate, undefined);
+  }
+  // The TMP publisher-auth storyboard is selected only by an explicit
+  // experimental_features declaration. A normalized profile without the raw
+  // capability payload is not evidence of that opt-in.
+  if (
+    'contains' in predicate &&
+    predicate.path === 'experimental_features' &&
+    predicate.contains === 'trusted_match.core'
+  ) {
     return evaluateCapabilityPredicate(predicate, undefined);
   }
   const tools = agentTools ?? profile?.tools;
@@ -1152,18 +1187,48 @@ async function runStoryboardBody(
     );
   }
 
-  // Applicability gates must run before either multi-instance strategy.
-  // In particular, multi-pass performs discovery and aggregates per-replica
-  // counts, while a missing runtime requirement is one whole-storyboard skip.
-  const allRequires = resolveStoryboardRequires(storyboard, options);
-  if (allRequires.length) {
-    const unmet = checkRequires(allRequires, storyboard, options, options._profile);
-    if (unmet) {
+  // When capabilities are already available, applicability MUST be evaluated
+  // before runtime requirements. Without a profile we defer both gates until
+  // executeStoryboardPass has completed discovery; reporting a missing runner
+  // adapter before learning that the agent never claimed the capability would
+  // incorrectly turn not_applicable into requirement_unmet.
+  const deferCapabilityAndRequires = storyboard.requires_capability !== undefined && options._profile === undefined;
+  if (storyboard.requires_capability && !deferCapabilityAndRequires) {
+    const unmetDetail = evaluateRequiresCapabilityGate(
+      storyboard.requires_capability,
+      options._profile,
+      options.agentTools,
+      options.adcpVersion
+    );
+    if (unmetDetail !== null) {
       const resultAgentUrls = options.agents ? Object.values(options.agents).map(e => e.url) : agentUrls;
       return {
-        ...buildRequirementUnmetResult(resultAgentUrls, storyboard, unmet.requirement, unmet.detail),
+        ...buildCapabilityUnsupportedResult(resultAgentUrls, storyboard, unmetDetail),
         notices: collectCapabilityNotices(storyboard, options._profile),
       };
+    }
+  }
+
+  // Runtime gates still run before either multi-instance strategy when they
+  // can be evaluated faithfully, so a missing harness remains one whole-
+  // storyboard skip instead of being multiplied across passes.
+  const allRequires = resolveStoryboardRequires(storyboard, options);
+  if (allRequires.length && !deferCapabilityAndRequires) {
+    const requirementCheck = await checkRequires(allRequires, storyboard, options, options._profile);
+    if ('requirement' in requirementCheck) {
+      const resultAgentUrls = options.agents ? Object.values(options.agents).map(e => e.url) : agentUrls;
+      return {
+        ...buildRequirementUnmetResult(
+          resultAgentUrls,
+          storyboard,
+          requirementCheck.requirement,
+          requirementCheck.detail
+        ),
+        notices: collectCapabilityNotices(storyboard, options._profile),
+      };
+    }
+    if (requirementCheck.preparedPublisherAuthProbes) {
+      options = withPreparedTrustedMatchPublisherAuth(options, requirementCheck.preparedPublisherAuthProbes);
     }
   }
 
@@ -1408,6 +1473,7 @@ const REQUIREMENT_TO_SKIP_REASON: Record<RequirementName, RunnerSkipReason> = {
   webhook_receiver: 'requirement_unmet',
   webhook_replay_receiver: 'not_applicable',
   trusted_match_context_router_runner: 'not_applicable',
+  trusted_match_publisher_auth_runner: 'requirement_unmet',
   request_signer: 'not_applicable',
   multi_agent: 'requirement_unmet',
 };
@@ -1576,6 +1642,9 @@ function normalizeAgentToolNames(tools: unknown): string[] | undefined {
  *   - `trusted_match_context_router_runner` — operator supplied a router URL
  *     and registration callback for raw `POST /context` replay. Autodetected
  *     from `replay_trusted_match_context_vector`. Spec: adcp-client#2479.
+ *   - `trusted_match_publisher_auth_runner` — operator supplied exact
+ *     publisher-facing Context/Identity endpoints plus complete declarative
+ *     absent/invalid credential states. Spec: adcp-client#2526.
  *   - `request_signer` — agent advertises `request_signing.supported: true`
  *     in `get_adcp_capabilities`. Autodetected for any storyboard whose
  *     id is `'signed_requests'` or that contains a `request_signing_probe`
@@ -1596,12 +1665,15 @@ function normalizeAgentToolNames(tools: unknown): string[] | undefined {
  *     the topology this storyboard actually routes through.
  *     Spec: adcp-client#2281.
  */
-function checkRequires(
+async function checkRequires(
   requires: readonly string[],
   storyboard: Storyboard,
   options: StoryboardRunOptions,
   profile?: AgentProfile
-): { requirement: string; detail: string } | null {
+): Promise<
+  { requirement: string; detail: string } | { preparedPublisherAuthProbes?: PreparedTrustedMatchPublisherAuthProbes }
+> {
+  let preparedPublisherAuthProbes = getPreparedTrustedMatchPublisherAuth(options);
   for (const requirement of requires) {
     if (!isKnownRequirement(requirement)) {
       return {
@@ -1680,6 +1752,36 @@ function checkRequires(
         }
         break;
       }
+      case 'trusted_match_publisher_auth_runner': {
+        const runner = options.trusted_match_publisher_auth_runner;
+        if (
+          !runner ||
+          typeof runner.contextEndpoint !== 'string' ||
+          typeof runner.identityEndpoint !== 'string' ||
+          typeof runner.preparePublisherAuthProbe !== 'function'
+        ) {
+          return {
+            requirement,
+            detail:
+              'Storyboard requires `trusted_match_publisher_auth_runner`; configure exact HTTPS ' +
+              '`contextEndpoint` and `identityEndpoint` URLs plus `preparePublisherAuthProbe` for ' +
+              'both absent and invalid credential states.',
+          };
+        }
+        if (!preparedPublisherAuthProbes) {
+          try {
+            preparedPublisherAuthProbes = await prepareTrustedMatchPublisherAuthProbes(runner);
+          } catch (error) {
+            return {
+              requirement,
+              detail:
+                'Storyboard requires a complete `trusted_match_publisher_auth_runner` configuration: ' +
+                (error instanceof Error ? error.message : String(error)),
+            };
+          }
+        }
+        break;
+      }
       case 'request_signer': {
         // Gate is a no-op when no profile is threaded through (external
         // `_client` mode). The caller has accepted responsibility for
@@ -1720,7 +1822,7 @@ function checkRequires(
       }
     }
   }
-  return null;
+  return { ...(preparedPublisherAuthProbes && { preparedPublisherAuthProbes }) };
 }
 
 function collectMultiAgentRequirementRouteKeys(storyboard: Storyboard, options: StoryboardRunOptions): string[] {
@@ -2319,15 +2421,37 @@ async function executeStoryboardPass(
   // collected again from the fully-fetched profile at result-build time.
   const preflightNotices = collectCapabilityNotices(storyboard, options._profile);
 
-  const allRequires = resolveStoryboardRequires(storyboard, options);
-  if (allRequires.length) {
-    const unmet = checkRequires(allRequires, storyboard, options, profile);
-    if (unmet) {
+  // Capability applicability is intentionally first. Optional capability
+  // storyboards must grade not_applicable for agents that did not opt in,
+  // without inspecting or reporting any missing operator runtime adapter.
+  if (storyboard.requires_capability) {
+    const unmetDetail = evaluateRequiresCapabilityGate(
+      storyboard.requires_capability,
+      profile,
+      options.agentTools,
+      options.adcpVersion
+    );
+    if (unmetDetail !== null) {
       if (!callerOwnsClients) await closeScopedConnections(options.protocol);
       return {
-        ...buildRequirementUnmetResult(agentUrls, storyboard, unmet.requirement, unmet.detail),
+        ...buildCapabilityUnsupportedResult(agentUrls, storyboard, unmetDetail),
         notices: preflightNotices,
       };
+    }
+  }
+
+  const allRequires = resolveStoryboardRequires(storyboard, options);
+  if (allRequires.length) {
+    const requirementCheck = await checkRequires(allRequires, storyboard, options, profile);
+    if ('requirement' in requirementCheck) {
+      if (!callerOwnsClients) await closeScopedConnections(options.protocol);
+      return {
+        ...buildRequirementUnmetResult(agentUrls, storyboard, requirementCheck.requirement, requirementCheck.detail),
+        notices: preflightNotices,
+      };
+    }
+    if (requirementCheck.preparedPublisherAuthProbes) {
+      options = withPreparedTrustedMatchPublisherAuth(options, requirementCheck.preparedPublisherAuthProbes);
     }
   }
 
@@ -2341,26 +2465,6 @@ async function executeStoryboardPass(
       if (!callerOwnsClients) await closeScopedConnections(options.protocol);
       return {
         ...buildRequiredAnyOfToolsMissingResult(agentUrls, storyboard, detail),
-        notices: preflightNotices,
-      };
-    }
-  }
-
-  // Evaluate requires_capability predicate before any phase setup.
-  // When the agent explicitly declared it doesn't support what this storyboard
-  // tests (e.g. `adcp.idempotency.supported: false`), skip the whole storyboard
-  // rather than producing a cascade of misleading per-phase failures.
-  if (storyboard.requires_capability) {
-    const unmetDetail = evaluateRequiresCapabilityGate(
-      storyboard.requires_capability,
-      profile,
-      options.agentTools,
-      options.adcpVersion
-    );
-    if (unmetDetail !== null) {
-      if (!callerOwnsClients) await closeScopedConnections(options.protocol);
-      return {
-        ...buildCapabilityUnsupportedResult(agentUrls, storyboard, unmetDetail),
         notices: preflightNotices,
       };
     }
@@ -2593,6 +2697,8 @@ async function executeStoryboardPass(
       agentProfile: profile,
       agentLibraryVersion: profile?.library_version,
       storyboardRequiresRequestSigner: allRequires.includes('request_signer'),
+      storyboardRequiresPublisherAuthRunner:
+        storyboard.requires?.includes('trusted_match_publisher_auth_runner') === true,
     },
     capabilitySkippedPhaseIds
   );
@@ -2761,6 +2867,8 @@ async function executeStoryboardPass(
     agentProfile,
     agentLibraryVersion: agentProfile?.library_version,
     storyboardRequiresRequestSigner: allRequires.includes('request_signer'),
+    storyboardRequiresPublisherAuthRunner:
+      storyboard.requires?.includes('trusted_match_publisher_auth_runner') === true,
     fixtureBindings,
   });
   if (
@@ -3760,6 +3868,40 @@ async function runMultiPass(
       ...(options.agentTools ? {} : { agentTools: normalizeAgentToolNames(preSeedProfile.tools) }),
     };
   }
+
+  // runStoryboardBody cannot evaluate capability-gated requirements until
+  // this multi-pass preflight has discovered the profile. Resolve both gates
+  // once here so an optional capability remains not_applicable and a missing
+  // run-scoped harness remains one storyboard skip rather than N pass skips.
+  if (storyboard.requires_capability) {
+    const unmetDetail = evaluateRequiresCapabilityGate(
+      storyboard.requires_capability,
+      preSeedProfile,
+      options.agentTools,
+      options.adcpVersion
+    );
+    if (unmetDetail !== null) {
+      await closeScopedConnections(options.protocol);
+      return {
+        ...buildCapabilityUnsupportedResult(agentUrls, storyboard, unmetDetail),
+        notices: collectCapabilityNotices(storyboard, preSeedProfile),
+      };
+    }
+  }
+  const allRequires = resolveStoryboardRequires(storyboard, options);
+  if (allRequires.length > 0) {
+    const requirementCheck = await checkRequires(allRequires, storyboard, options, preSeedProfile);
+    if ('requirement' in requirementCheck) {
+      await closeScopedConnections(options.protocol);
+      return {
+        ...buildRequirementUnmetResult(agentUrls, storyboard, requirementCheck.requirement, requirementCheck.detail),
+        notices: collectCapabilityNotices(storyboard, preSeedProfile),
+      };
+    }
+    if (requirementCheck.preparedPublisherAuthProbes) {
+      options = withPreparedTrustedMatchPublisherAuth(options, requirementCheck.preparedPublisherAuthProbes);
+    }
+  }
   const phaseCapabilitySkipDetails = collectPhaseCapabilitySkipDetails(
     storyboard,
     preSeedProfile,
@@ -4096,6 +4238,41 @@ async function runStoryboardStepBody(
     );
   }
 
+  // Standalone execution must preserve the whole-storyboard ordering:
+  // capability applicability comes before the operator runtime requirement.
+  // In particular, a non-TMP agent must not be told that it is missing a
+  // publisher-auth adapter for a capability it never declared.
+  if (storyboard.requires_capability) {
+    const unmetDetail = evaluateRequiresCapabilityGate(
+      storyboard.requires_capability,
+      profile,
+      options.agentTools,
+      options.adcpVersion
+    );
+    if (unmetDetail !== null) {
+      const result: StoryboardStepResult = {
+        storyboard_id: storyboard.id,
+        step_id: found.step.id,
+        phase_id: found.phaseId,
+        title: found.step.title,
+        task: found.step.task,
+        passed: true,
+        skipped: true,
+        skip_reason: 'not_applicable',
+        skip: { reason: 'not_applicable', detail: unmetDetail },
+        duration_ms: 0,
+        validations: [],
+        context,
+        error: unmetDetail,
+        extraction: { path: 'none' },
+        contributions: Array.from(options.contributions ?? []),
+      };
+      if (!clientResolution.reusedShared) await closeScopedConnections(options.protocol);
+      if (ownsWebhookReceiver && webhookReceiver) await webhookReceiver.close();
+      return result;
+    }
+  }
+
   // Seed provenance from the caller-supplied map (threaded through from a
   // previous step's result). Storyboard-level runs build this internally;
   // here the caller owns accumulation across stateless invocations.
@@ -4118,6 +4295,8 @@ async function runStoryboardStepBody(
     agentProfile: profile,
     agentLibraryVersion: profile?.library_version,
     storyboardRequiresRequestSigner: resolveStoryboardRequires(storyboard, options).includes('request_signer'),
+    storyboardRequiresPublisherAuthRunner:
+      storyboard.requires?.includes('trusted_match_publisher_auth_runner') === true,
   });
 
   if (!result.skipped && result.passed && found.step.contributes_to) {
@@ -4204,6 +4383,8 @@ interface ExecutionState {
    * signature-required rejection from a failure in a signing test.
    */
   storyboardRequiresRequestSigner?: boolean;
+  /** Dedicated TMP raw-HTTP tasks are invalid outside their explicit runner contract. */
+  storyboardRequiresPublisherAuthRunner?: boolean;
 }
 
 async function executeStep(
@@ -4227,6 +4408,15 @@ async function executeStep(
     stepRequestStarts: new Map(),
     responseDerivedNotApplicableContextKeys: new Map(),
   };
+
+  // Recognize the dedicated TMP publisher-auth probes before generic auth
+  // overrides, missing-tool checks, or MCP/A2A routing.
+  if (TRUSTED_MATCH_PUBLISHER_AUTH_TASKS.has(step.task)) {
+    if (runState.storyboardRequiresPublisherAuthRunner !== true) {
+      return invalidTrustedMatchPublisherAuthTask(step, phaseId, context, allSteps, runState);
+    }
+    return executeProbeStep(client, step, phaseId, context, allSteps, options, runState);
+  }
 
   // HTTP probe tasks bypass the MCP client entirely.
   if (PROBE_TASKS.has(step.task)) {
@@ -5438,6 +5628,56 @@ async function executeStep(
 // Probe dispatch (raw HTTP tasks)
 // ────────────────────────────────────────────────────────────
 
+function invalidTrustedMatchPublisherAuthTask(
+  step: StoryboardStep,
+  phaseId: string,
+  context: StoryboardContext,
+  allSteps: FlatStep[],
+  runState: ExecutionState
+): StoryboardStepResult {
+  const detail =
+    `Pseudo-task "${step.task}" is valid only in a storyboard declaring ` +
+    '`requires: [trusted_match_publisher_auth_runner]`; it was not dispatched over MCP or A2A.';
+  return {
+    step_id: step.id,
+    phase_id: phaseId,
+    title: step.title,
+    task: step.task,
+    passed: false,
+    duration_ms: 0,
+    validations: [],
+    context,
+    error: detail,
+    next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
+    extraction: { path: 'none' },
+  };
+}
+
+function trustedMatchPublisherAuthRequirementUnmetStep(
+  step: StoryboardStep,
+  phaseId: string,
+  context: StoryboardContext,
+  allSteps: FlatStep[],
+  runState: ExecutionState,
+  detail: string
+): StoryboardStepResult {
+  return {
+    step_id: step.id,
+    phase_id: phaseId,
+    title: step.title,
+    task: step.task,
+    passed: true,
+    skipped: true,
+    skip_reason: 'requirement_unmet',
+    skip: { reason: 'requirement_unmet', requirement: 'trusted_match_publisher_auth_runner', detail },
+    duration_ms: 0,
+    validations: [],
+    context,
+    next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
+    extraction: { path: 'none', note: 'publisher-auth runner requirement unavailable' },
+  };
+}
+
 async function executeProbeStep(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- client type varies (TestClient)
   client: any,
@@ -5489,6 +5729,48 @@ async function executeProbeStep(
 
   if (httpResult) {
     // Contract-gated synthetic probes self-skip before doing any network work.
+  } else if (TRUSTED_MATCH_PUBLISHER_AUTH_TASKS.has(step.task)) {
+    const task = step.task as TrustedMatchPublisherAuthTask;
+    let prepared = getPreparedTrustedMatchPublisherAuth(options);
+    if (!prepared) {
+      const runner = options.trusted_match_publisher_auth_runner;
+      if (!runner) {
+        return trustedMatchPublisherAuthRequirementUnmetStep(
+          step,
+          phaseId,
+          context,
+          allSteps,
+          runState,
+          'No trusted_match_publisher_auth_runner is configured.'
+        );
+      }
+      try {
+        prepared = await prepareTrustedMatchPublisherAuthProbes(runner);
+      } catch (error) {
+        return trustedMatchPublisherAuthRequirementUnmetStep(
+          step,
+          phaseId,
+          context,
+          allSteps,
+          runState,
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    }
+    // These contract-owned raw requests must remain byte-shape faithful to
+    // the storyboard. Generic run-level request overrides are intentionally
+    // ignored; only authored placeholder substitution is allowed.
+    const request = step.sample_request ? injectContext({ ...step.sample_request }, context, runState.runnerVars) : {};
+    httpResult = await probeTrustedMatchPublisherAuth(prepared[task], request, {
+      allowPrivateIp: options.allow_http === true,
+      ...(options.signal && { signal: options.signal }),
+    });
+    requestRecordOverride = {
+      transport: 'http',
+      operation: step.task,
+      payload: redactSecrets(request),
+      url: redactOAuthUrlForOutput(prepared[task].endpoint),
+    };
   } else if (step.task === 'protected_resource_metadata') {
     if (step.validations?.some(validation => validation.check === 'oauth_metadata_graph')) {
       oauthMetadataGraph = await gradeOAuthMetadataGraph(runState.agentUrl, {
@@ -5753,8 +6035,10 @@ async function executeProbeStep(
   const redactedHttpResult = httpResult
     ? {
         ...httpResult,
+        url: redactOAuthUrlForOutput(httpResult.url),
         headers: filteredProbeHeaders ?? {},
         body: redactSecrets(httpResult.body),
+        ...(httpResult.error && { error: redactOAuthUrlsInText(httpResult.error) }),
         ...(responseTransport !== 'http' && { status: undefined }),
       }
     : undefined;

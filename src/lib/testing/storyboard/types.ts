@@ -93,6 +93,12 @@ export interface Storyboard {
    *     with a raw Context Match router URL and operator registration seam.
    *     Autodetected from `replay_trusted_match_context_vector`; absent
    *     harnesses grade not_applicable. Spec: adcp-client#2479.
+   *   - `trusted_match_publisher_auth_runner` — the operator supplies exact
+   *     publisher-facing Context/Identity URLs and declarative absent/invalid
+   *     credential configuration. The SDK owns the guarded raw HTTPS probes.
+   *     Capability applicability is evaluated before this requirement, so a
+   *     non-TMP agent grades not_applicable rather than requirement_unmet.
+   *     Spec: adcp-client#2526.
    *   - `request_signer` — the agent under test MUST advertise
    *     `request_signing.supported: true` in `get_adcp_capabilities`.
    *     Autodetected: any storyboard whose `id === 'signed_requests'`
@@ -170,8 +176,9 @@ export interface Storyboard {
    * When `raw_capabilities` is not available and the discovered profile does
    * not expose `get_adcp_capabilities`, `equals` gates are treated as
    * unsupported because there is no declaration proving the agent opted into
-   * the behavior. Other matcher forms remain a no-op without raw
-   * capabilities because their authored paths cannot be inspected.
+   * the behavior. Other matcher forms remain a no-op without raw capabilities
+   * unless the storyboard contract explicitly requires a raw opt-in (currently
+   * `experimental_features contains trusted_match.core`).
    */
   requires_capability?: RequiresCapabilityPredicate;
   /** Scenario IDs that must pass alongside this storyboard (loaded from storyboards/scenarios/) */
@@ -1519,6 +1526,39 @@ export interface TrustedMatchContextRouterRunnerOptions {
   };
 }
 
+export type TrustedMatchPublisherAuthOperation = 'context' | 'identity';
+export type TrustedMatchPublisherCredentialState = 'absent' | 'invalid';
+
+/** Declarative TLS material for one runner-owned publisher-auth probe. */
+export interface TrustedMatchPublisherAuthTls {
+  clientCertificatePem?: string;
+  privateKeyPem?: string;
+  privateKeyPassphrase?: string;
+  caCertificatePem?: string;
+}
+
+/** The only values an operator adapter may contribute to a publisher-auth probe. */
+export interface TrustedMatchPublisherAuthProbeConfiguration {
+  credentialHeaders?: Record<string, string>;
+  tls?: TrustedMatchPublisherAuthTls;
+}
+
+/**
+ * Operator seam for credential-profile-neutral Trusted Match publisher-auth
+ * conformance. The SDK, not this adapter, owns endpoint validation, routing,
+ * HTTP construction, redirect policy, timeouts, response limits, and output.
+ */
+export interface TrustedMatchPublisherAuthRunner {
+  /** Exact publisher-facing Context Match URL. No path is inferred. */
+  contextEndpoint: string;
+  /** Exact publisher-facing Identity Match URL. No path is inferred. */
+  identityEndpoint: string;
+  preparePublisherAuthProbe(input: {
+    operation: TrustedMatchPublisherAuthOperation;
+    credentialState: TrustedMatchPublisherCredentialState;
+  }): Promise<TrustedMatchPublisherAuthProbeConfiguration>;
+}
+
 export interface StoryboardRunOptions extends TestOptions {
   /** Initial context (e.g., from a previous step invocation) */
   context?: StoryboardContext;
@@ -1552,10 +1592,12 @@ export interface StoryboardRunOptions extends TestOptions {
   /** Agent's available tools for storyboard/step-level tool gates. */
   agentTools?: string[];
   /**
-   * Allow plain-http agent URLs during compliance runs. Normally rejected
-   * because production agents MUST terminate TLS. Intended for local dev
-   * loops (docker compose, localhost harnesses). Emits an advisory banner
-   * in the report when used.
+   * Allow plain-http agent URLs during compliance runs and permit guarded
+   * raw-HTTP probes to reach private/loopback endpoints. Production agents
+   * MUST terminate TLS; dedicated probes that require HTTPS (including TMP
+   * publisher authentication) keep that requirement even when this flag is
+   * enabled. Intended for local dev loops and private staging harnesses.
+   * Emits an advisory banner in the report when used.
    */
   allow_http?: boolean;
   /**
@@ -1761,6 +1803,12 @@ export interface StoryboardRunOptions extends TestOptions {
    * grades `not_applicable`; it never falls back to MCP or A2A.
    */
   trusted_match_context_router_runner?: TrustedMatchContextRouterRunnerOptions;
+  /**
+   * Guarded raw-HTTP harness for the four Trusted Match publisher-auth
+   * pseudo-tasks. Only credential headers and declarative PEM TLS material
+   * cross the adapter boundary; the SDK owns every transport decision.
+   */
+  trusted_match_publisher_auth_runner?: TrustedMatchPublisherAuthRunner;
   /**
    * Test-kit contract ids that are in scope for this run. A step with
    * `requires_contract: <id>` grades `not_applicable` when the id is not
@@ -2063,6 +2111,7 @@ export type RequirementName =
   | 'webhook_receiver'
   | 'webhook_replay_receiver'
   | 'trusted_match_context_router_runner'
+  | 'trusted_match_publisher_auth_runner'
   | 'request_signer'
   | 'multi_agent';
 
@@ -2080,6 +2129,7 @@ export const KNOWN_REQUIREMENTS: ReadonlySet<RequirementName> = new Set([
   'webhook_receiver',
   'webhook_replay_receiver',
   'trusted_match_context_router_runner',
+  'trusted_match_publisher_auth_runner',
   'request_signer',
   'multi_agent',
 ] as const satisfies readonly RequirementName[]);

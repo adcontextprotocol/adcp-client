@@ -262,3 +262,41 @@ router response. For remote routers, configure `provider_server` with
 `mode: 'proxy_url'` and a public base URL routed to the local fixture listener.
 Without the option and registration callback, the storyboard grades
 `not_applicable`; the pseudo-task is never sent through MCP or A2A.
+
+## Trusted Match publisher authentication
+
+The Trusted Match publisher-authentication storyboard sends four guarded raw
+HTTPS probes: missing and invalid credentials for both Context Match and
+Identity Match. Configure the exact publisher-facing endpoints and return only
+the credential headers or declarative TLS material for each state:
+
+```ts
+import { runStoryboard } from '@adcp/sdk/testing';
+
+await runStoryboard(agentUrl, storyboard, {
+  trusted_match_publisher_auth_runner: {
+    contextEndpoint: 'https://publisher.example/context',
+    identityEndpoint: 'https://publisher.example/identity',
+    async preparePublisherAuthProbe({ operation, credentialState }) {
+      if (credentialState === 'absent') {
+        return { tls: { caCertificatePem: publisherCaPem } };
+      }
+      return {
+        credentialHeaders: {
+          authorization: `Bearer known-invalid-${operation}`,
+        },
+        tls: { caCertificatePem: publisherCaPem },
+      };
+    },
+  },
+});
+```
+
+The SDK owns URL validation, DNS pinning, TLS verification and SNI, request
+method/body, redirect refusal, timeout, response limits, and output redaction.
+The adapter cannot supply a fetch implementation or transport policy. For a
+private or loopback HTTPS endpoint in local/staging tests, also set
+`allow_http: true`; this permits the private address but does not relax the
+probe's HTTPS requirement. Non-TMP agents grade `not_applicable` before this
+runner is required; TMP agents with a missing or incomplete runner grade
+`requirement_unmet`.

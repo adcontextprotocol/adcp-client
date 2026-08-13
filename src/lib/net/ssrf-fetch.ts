@@ -32,6 +32,7 @@
  */
 import { type LookupAddress, type LookupOptions } from 'dns';
 import { lookup as dnsLookupAsync } from 'dns/promises';
+import { isIP } from 'node:net';
 import { Agent, fetch as undiciFetch } from 'undici';
 import { isAlwaysBlocked, isPrivateIp } from './address-guards';
 
@@ -121,6 +122,17 @@ export interface SsrfFetchOptions {
   /** Caller-provided abort signal, composed with the internal timeout. */
   signal?: AbortSignal;
   /**
+   * Declarative client-authentication material for a runner-owned HTTPS
+   * connection. Certificate verification remains enabled and SNI is always
+   * derived from the validated URL hostname; callers cannot override either.
+   */
+  tls?: {
+    cert?: string;
+    key?: string;
+    passphrase?: string;
+    ca?: string;
+  };
+  /**
    * Trusted scoped fetch implementation. URL validation and address
    * classification still run before invocation, but DNS pinning is delegated
    * to this implementation because custom fetchers do not accept undici
@@ -156,6 +168,9 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
   const allowPrivateIp = options.allowPrivateIp === true;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+  if (options.tls && options.trustedFetchFn) {
+    throw new Error('ssrf-fetch: tls material requires the internally constructed, DNS-pinned dispatcher');
+  }
 
   let parsed: URL;
   try {
@@ -247,6 +262,12 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
     dispatcher = new Agent({
       connect: {
         timeout: Math.min(5_000, timeoutMs),
+        rejectUnauthorized: true,
+        ...(parsed.protocol === 'https:' && hostname && isIP(hostname) === 0 ? { servername: hostname } : {}),
+        ...(options.tls?.cert !== undefined ? { cert: options.tls.cert } : {}),
+        ...(options.tls?.key !== undefined ? { key: options.tls.key } : {}),
+        ...(options.tls?.passphrase !== undefined ? { passphrase: options.tls.passphrase } : {}),
+        ...(options.tls?.ca !== undefined ? { ca: options.tls.ca } : {}),
         // All addresses were validated above; pin the connect to the first. The
         // custom lookup also means undici won't re-resolve and pick up a rebind.
         // undici's Agent may call lookup with `{ all: true }` (it does for HTTPS
