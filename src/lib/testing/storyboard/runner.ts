@@ -2186,6 +2186,7 @@ function collectCapabilityNotices(storyboard: Storyboard, profile: AgentProfile 
   // unless it actually exercises the delivery path.
   const WEBHOOK_STEP_TASKS = new Set([
     'expect_webhook',
+    'expect_no_webhook',
     'expect_webhook_retry_keys_stable',
     'expect_webhook_signature_valid',
   ]);
