@@ -1,5 +1,15 @@
 # Changelog
 
+## 13.0.0-rc.19
+
+### Minor Changes
+
+- 1df96b8: Add a guarded, credential-profile-neutral Trusted Match publisher-auth compliance runner for absent and invalid Context Match and Identity Match credentials.
+
+### Patch Changes
+
+- 9939304: Correct the `getProducts` API example to use a schema-valid brief request and clarify that brand context is optional.
+
 ## 13.0.0-rc.18
 
 ### Patch Changes

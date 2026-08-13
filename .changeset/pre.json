@@ -8,6 +8,7 @@
   },
   "changesets": [
     "add-additive-canonical-product",
+    "add-tmp-publisher-auth-runner",
     "bright-apes-dual-emit",
     "bright-cats-listen",
     "bright-tools-report",
@@ -23,6 +24,7 @@
     "fix-creative-scenario-fixture-schema-valid",
     "fix-creative-scenario-residuals",
     "fix-era-negotiation-legacy-fallback",
+    "fix-get-products-jsdoc-example",
     "fix-hoisted-structured-headers",
     "fix-list-accounts-brand-enricher",
     "fix-mcp-beta-pins",
