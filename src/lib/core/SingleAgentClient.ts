@@ -4208,8 +4208,8 @@ export class SingleAgentClient {
    * ```typescript
    * const products = await client.getProducts(
    *   {
+   *     buying_mode: 'brief',
    *     brief: 'Premium coffee brands for millennials',
-   *     promoted_offering: 'Artisan coffee blends'
    *   },
    *   (context) => {
    *     if (context.inputRequest.field === 'budget') return 50000;
@@ -5577,7 +5577,7 @@ export class SingleAgentClient {
    * @example
    * ```typescript
    * const agent = new ADCPClient(config);
-   * const initial = await agent.getProducts({ brief: 'Tech products' });
+   * const initial = await agent.getProducts({ buying_mode: 'brief', brief: 'Tech products' });
    *
    * // Continue the conversation — use the server-returned contextId, not
    * // the client-minted correlation taskId.

@@ -68,8 +68,8 @@ export const TEST_AGENT_NO_AUTH_A2A_CONFIG: AgentConfig = {
  *
  * // Simple getProducts call
  * const result = await testAgent.getProducts({
+ *   buying_mode: 'brief',
  *   brief: 'Coffee subscription service for busy professionals',
- *   promoted_offering: 'Premium monthly coffee deliveries'
  * });
  *
  * if (result.success) {
@@ -104,8 +104,8 @@ export const testAgent: AgentClient = new ADCPMultiAgentClient([TEST_AGENT_MCP_C
  * import { testAgentA2A } from '@adcp/sdk/testing';
  *
  * const result = await testAgentA2A.getProducts({
+ *   buying_mode: 'brief',
  *   brief: 'Sustainable fashion brands',
- *   promoted_offering: 'Eco-friendly clothing'
  * });
  * ```
  *
@@ -128,8 +128,8 @@ export const testAgentA2A: AgentClient = new ADCPMultiAgentClient([TEST_AGENT_A2
  * // This will fail with authentication error
  * try {
  *   const result = await testAgentNoAuth.getProducts({
+ *     buying_mode: 'brief',
  *     brief: 'Coffee subscription',
- *     promoted_offering: 'Premium coffee'
  *   });
  * } catch (error) {
  *   console.log('Expected auth error:', error.message);
@@ -157,10 +157,10 @@ export const testAgentNoAuth: AgentClient = new ADCPMultiAgentClient([TEST_AGENT
  * import { testAgentA2A } from '@adcp/sdk/testing';
  *
  * // This works (has auth)
- * const authResult = await testAgentA2A.getProducts({ brief: 'Test' });
+ * const authResult = await testAgentA2A.getProducts({ buying_mode: 'brief', brief: 'Test' });
  *
  * // This fails (no auth)
- * const noAuthResult = await testAgentNoAuthA2A.getProducts({ brief: 'Test' });
+ * const noAuthResult = await testAgentNoAuthA2A.getProducts({ buying_mode: 'brief', brief: 'Test' });
  * ```
  *
  * @remarks
@@ -185,8 +185,8 @@ export const testAgentNoAuthA2A: AgentClient = new ADCPMultiAgentClient([TEST_AG
  *
  * // Or use agent collection for parallel operations
  * const results = await testAgentClient.allAgents().getProducts({
+ *   buying_mode: 'brief',
  *   brief: 'Premium coffee brands',
- *   promoted_offering: 'Artisan coffee'
  * });
  * ```
  *

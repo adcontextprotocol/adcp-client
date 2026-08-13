@@ -627,7 +627,7 @@ export class AgentClient {
    * Compatibility translation for an older seller happens below this method.
    *
    * ```ts
-   * const { data: { products } } = await agent.getProducts({ brief: '...' });
+   * const { data: { products } } = await agent.getProducts({ buying_mode: 'brief', brief: '...' });
    * const product = products[0];
    * const format = product.format_options[0];
    *
@@ -1260,7 +1260,7 @@ export class AgentClient {
    * @example
    * ```typescript
    * const agent = multiClient.agent('my-agent');
-   * await agent.getProducts({ brief: 'Tech products' });
+   * await agent.getProducts({ buying_mode: 'brief', brief: 'Tech products' });
    *
    * // Continue the conversation
    * const refined = await agent.continueConversation(
