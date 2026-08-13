@@ -911,6 +911,8 @@ describe('v3 partial-schema field stripping', () => {
     );
     const stripLog = result.debug_logs.find(log => log.details?.code === 'input_schema_field_stripped');
     assert.ok(stripLog, 'stripped fields should be surfaced in structured debug_logs');
+    assert.match(stripLog.message, /not declared by either the agent tool input schema or canonical AdCP schema/);
+    assert.doesNotMatch(stripLog.message, /not declared in agent tool input schema/);
     assert.strictEqual(stripLog.details.task, 'get_products');
     assert.deepStrictEqual(
       stripLog.details.fields,

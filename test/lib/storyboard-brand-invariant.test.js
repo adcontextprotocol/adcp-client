@@ -170,6 +170,16 @@ describe('applyBrandInvariant', () => {
         'get_products must declare brand at the request root (positive control)'
       );
       assert.strictEqual(
+        schemaAllowsTopLevelField('list_accounts', 'brand'),
+        false,
+        'list_accounts must not declare brand at the request root'
+      );
+      assert.strictEqual(
+        schemaAllowsTopLevelField('list_accounts', 'account'),
+        true,
+        'list_accounts may accept an explicitly authored account filter'
+      );
+      assert.strictEqual(
         schemaAllowsTopLevelField('sync_creatives', 'brand'),
         false,
         'sync_creatives must not declare brand at the request root'
@@ -198,6 +208,15 @@ describe('applyBrandInvariant', () => {
     test('injects top-level brand for get_products (positive control)', () => {
       const result = applyBrandInvariant({}, { brand: BRAND }, 'get_products');
       assert.deepStrictEqual(result.brand, BRAND, 'brand must be injected for get_products');
+    });
+
+    test('does not narrow broad list_accounts discovery to the runner default account', () => {
+      const request = { sandbox: true, pagination: { max_results: 2 } };
+      const result = applyBrandInvariant(request, { brand: BRAND, sandbox: true }, 'list_accounts');
+
+      assert.deepStrictEqual(result, request);
+      assert.equal('brand' in result, false, 'list_accounts has no canonical root brand');
+      assert.equal('account' in result, false, 'an omitted account means enumerate visible accounts');
     });
 
     test('skips top-level brand but keeps account-scoped brand for sync_creatives (#3342)', () => {
@@ -282,6 +301,56 @@ describe('applyBrandInvariant', () => {
  * itself still behaves correctly.
  */
 describe('runStoryboard: brand invariant on the wire', () => {
+  it('keeps broad list_accounts pagination unscoped in the effective request', async () => {
+    const calls = [];
+    const storyboard = {
+      id: 'list_accounts_broad_discovery',
+      version: '1.0.0',
+      title: 'Broad account discovery',
+      category: 'compliance',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      phases: [
+        {
+          id: 'p',
+          title: 'discover',
+          steps: [
+            {
+              id: 'list',
+              title: 'list visible sandbox accounts',
+              task: 'list_accounts',
+              sample_request: { sandbox: true, pagination: { max_results: 2 } },
+              validations: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    await runStoryboard('https://stub.example/mcp', storyboard, {
+      brand: BRAND,
+      sandbox: true,
+      agentTools: ['list_accounts'],
+      _profile: { name: 'stub', tools: ['list_accounts'] },
+      _client: {
+        executeTask: async (name, params) => {
+          calls.push({ name, params });
+          return { success: true, data: { accounts: [], pagination: { has_more: false } } };
+        },
+        resetContext: () => {},
+      },
+    });
+
+    assert.deepStrictEqual(calls, [
+      {
+        name: 'list_accounts',
+        params: { sandbox: true, pagination: { max_results: 2 } },
+      },
+    ]);
+  });
+
   it('sends options.brand on every step regardless of sample_request authorship', async () => {
     const seen = [];
     const server = http.createServer(async (req, res) => {
