@@ -567,6 +567,8 @@ export interface ComplyOptions extends TestOptions {
   webhook_replay_receiver?: StoryboardRunOptions['webhook_replay_receiver'];
   /** Configure raw `POST /context` router replay storyboards. */
   trusted_match_context_router_runner?: StoryboardRunOptions['trusted_match_context_router_runner'];
+  /** Configure guarded publisher-facing TMP Context/Identity authentication probes. */
+  trusted_match_publisher_auth_runner?: StoryboardRunOptions['trusted_match_publisher_auth_runner'];
   /**
    * Test-kit contract ids in scope for this run. Passed through to
    * `runStoryboard`. See `StoryboardRunOptions.contracts`.
@@ -1102,6 +1104,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     webhook_receiver,
     webhook_replay_receiver,
     trusted_match_context_router_runner,
+    trusted_match_publisher_auth_runner,
     contracts,
     allowLiveSideEffects,
     version,
@@ -1335,6 +1338,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
             ? { ...trusted_match_context_router_runner, vectorsRoot: complianceDir }
             : trusted_match_context_router_runner,
       }),
+      ...(trusted_match_publisher_auth_runner !== undefined && { trusted_match_publisher_auth_runner }),
       ...(contracts !== undefined && { contracts }),
       ...(allowLiveSideEffects !== undefined && { allowLiveSideEffects }),
       ...(signal !== undefined && { signal }),
@@ -1665,6 +1669,9 @@ async function runWithDegradedProfile(
         options.complianceDir !== undefined && options.trusted_match_context_router_runner.vectorsRoot === undefined
           ? { ...options.trusted_match_context_router_runner, vectorsRoot: options.complianceDir }
           : options.trusted_match_context_router_runner,
+    }),
+    ...(options.trusted_match_publisher_auth_runner !== undefined && {
+      trusted_match_publisher_auth_runner: options.trusted_match_publisher_auth_runner,
     }),
     ...(options.contracts !== undefined && { contracts: options.contracts }),
     ...(options.allowLiveSideEffects !== undefined && { allowLiveSideEffects: options.allowLiveSideEffects }),

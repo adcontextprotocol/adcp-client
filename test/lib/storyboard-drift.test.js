@@ -35,6 +35,10 @@ const HARNESS_TASKS = new Set([
   'assert_jwks_purpose',
   'expect_rate_limit_not_replayed',
   'replay_trusted_match_context_vector',
+  'trusted_match_missing_auth_context_probe',
+  'trusted_match_invalid_auth_context_probe',
+  'trusted_match_missing_auth_identity_probe',
+  'trusted_match_invalid_auth_identity_probe',
 ]);
 
 // `$test_kit.*` substitution placeholders — resolved at run time, not tasks themselves.

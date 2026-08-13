@@ -50,6 +50,10 @@ const HARNESS_TASKS = new Set([
   // receiver instead of invoking a seller protocol tool.
   'replay_webhook_vector',
   'replay_trusted_match_context_vector',
+  'trusted_match_missing_auth_context_probe',
+  'trusted_match_invalid_auth_context_probe',
+  'trusted_match_missing_auth_identity_probe',
+  'trusted_match_invalid_auth_identity_probe',
   'fetch_brand_jwks',
   'assert_jwks_purpose',
   'expect_rate_limit_not_replayed',
