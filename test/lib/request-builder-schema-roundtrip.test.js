@@ -78,7 +78,6 @@ const EXPECTED_COVERED_TASKS = [
   'get_products',
   'get_rights',
   'get_signals',
-  'list_accounts',
   'list_content_standards',
   'list_creative_formats',
   'list_creatives',
@@ -103,6 +102,22 @@ const EXPECTED_COVERED_TASKS = [
 ];
 
 describe('Request builder schema round-trip', () => {
+  test('list_accounts preserves broad authored filters without implicit brand or account scoping', () => {
+    const request = buildRequest(
+      step('list_accounts', { sample_request: { sandbox: true, pagination: { max_results: 2 } } }),
+      {},
+      DEFAULT_OPTIONS
+    );
+
+    assert.equal(hasRequestBuilder('list_accounts'), false, 'list_accounts should use its authored request directly');
+    assert.deepStrictEqual(request, { sandbox: true, pagination: { max_results: 2 } });
+    assert.equal('brand' in request, false, 'list_accounts must not emit the noncanonical root brand field');
+    assert.equal('account' in request, false, 'broad list_accounts discovery must not be narrowed to one account');
+
+    const parsed = TOOL_REQUEST_SCHEMAS.list_accounts.safeParse(request);
+    assert.equal(parsed.success, true, parsed.success ? '' : formatIssues(parsed.error.issues));
+  });
+
   for (const [task, schema] of Object.entries(ALL_SCHEMAS)) {
     if (!hasRequestBuilder(task)) continue;
 

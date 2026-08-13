@@ -2130,9 +2130,9 @@ function collectInputSchemaFieldStripNotices(debugLogs: unknown, storyboardId: s
       severity: 'info',
       code: 'input_schema_field_stripped',
       message:
-        `Runner stripped fields not declared in the agent's tool input schema for ${task}: ` +
-        `${fields.join(', ')}. Fix the tool schema declaration or avoid sending unsupported fields.`,
-      docs_url: 'https://github.com/adcontextprotocol/adcp/issues/5495',
+        `Runner stripped request fields not declared by either the agent's tool input schema or the canonical AdCP ` +
+        `request schema for ${task}: ${fields.join(', ')}. Check the caller or runner payload before changing the agent schema.`,
+      docs_url: 'https://github.com/adcontextprotocol/adcp/issues/6437',
       storyboard_ids: [storyboardId],
     });
   }
@@ -7093,10 +7093,14 @@ export function applyBrandInvariant(
         result.account = merged;
       }
     }
-  } else if (topAccountOk) {
+  } else if (topAccountOk && taskName !== 'list_accounts') {
     // No account on the request — construct one so tools whose schema
     // declares `account` but not top-level `brand` (e.g. get_media_buys,
     // list_creatives) still carry the run-scoped brand on the wire.
+    // list_accounts is deliberately exempt: without an authored account it
+    // enumerates the caller's visible accounts. Synthesizing the runner's
+    // default natural key would silently narrow pagination and discovery
+    // storyboards to one brand.
     result.account = resolveAccount(options);
   }
   return result;

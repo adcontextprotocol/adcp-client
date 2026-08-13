@@ -4057,11 +4057,14 @@ export class SingleAgentClient {
 
       if (schemaStripped.length > 0) {
         console.warn(
-          `[AdCP] Stripping fields not declared in agent "${this.agent.id}" schema for ${taskType}: ${schemaStripped.join(', ')}`
+          `[AdCP] Stripping request fields not declared by either agent "${this.agent.id}" or canonical AdCP schemas ` +
+            `for ${taskType}: ${schemaStripped.join(', ')}`
         );
         debugLogs?.push({
           type: 'warning',
-          message: `Stripped fields not declared in agent tool input schema for ${taskType}: ${schemaStripped.join(', ')}`,
+          message:
+            `Stripped request fields not declared by either the agent tool input schema or canonical AdCP schema ` +
+            `for ${taskType}: ${schemaStripped.join(', ')}`,
           timestamp: new Date().toISOString(),
           details: {
             code: 'input_schema_field_stripped',

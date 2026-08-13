@@ -189,12 +189,6 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     };
   },
 
-  list_accounts(_step, _context, options) {
-    return {
-      brand: resolveBrand(options),
-    };
-  },
-
   sync_audiences(step, context, options, runnerVars) {
     // Honor hand-authored sample_request so storyboards can register a
     // specific audience_id that downstream steps reference. Without this,

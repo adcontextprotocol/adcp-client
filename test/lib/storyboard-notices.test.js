@@ -422,6 +422,10 @@ describe('RunnerNotice: input_schema_field_stripped (#5495)', () => {
     assert.match(stepNotice.message, /get_products/);
     assert.match(stepNotice.message, /max_width/);
     assert.match(stepNotice.message, /max_height/);
+    assert.match(stepNotice.message, /canonical AdCP request schema/);
+    assert.match(stepNotice.message, /caller or runner payload/);
+    assert.doesNotMatch(stepNotice.message, /Fix the tool schema declaration/);
+    assert.equal(stepNotice.docs_url, 'https://github.com/adcontextprotocol/adcp/issues/6437');
 
     const storyboardNotice = result.notices.find(n => n.code === 'input_schema_field_stripped');
     assert.ok(storyboardNotice, 'StoryboardResult.notices should aggregate the step notice');
