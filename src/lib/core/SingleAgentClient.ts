@@ -4200,6 +4200,10 @@ export class SingleAgentClient {
   /**
    * Discover available advertising products
    *
+   * `brand` is optional when `catalog` is absent, including for the brief-only
+   * request below. Requests with `catalog` must include `brand`; otherwise,
+   * include it whenever discovery should account for a specific advertiser.
+   *
    * @param params - Product discovery parameters
    * @param inputHandler - Handler for clarification requests
    * @param options - Task execution options
@@ -4208,8 +4212,8 @@ export class SingleAgentClient {
    * ```typescript
    * const products = await client.getProducts(
    *   {
-   *     brief: 'Premium coffee brands for millennials',
-   *     promoted_offering: 'Artisan coffee blends'
+   *     buying_mode: 'brief',
+   *     brief: 'Find podcast and streaming audio placements for an eco-friendly bike subscription launch'
    *   },
    *   (context) => {
    *     if (context.inputRequest.field === 'budget') return 50000;
