@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.0.0-rc.18
+
+### Patch Changes
+
+- e73c50a: Keep broad `list_accounts` storyboard requests unscoped instead of injecting a noncanonical root brand or a synthetic account filter, and make stripped-field notices identify request payload drift without incorrectly directing agents to declare noncanonical fields.
+
 ## 13.0.0-rc.17
 
 ### Patch Changes
