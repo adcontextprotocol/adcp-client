@@ -776,7 +776,8 @@ export interface StoryboardStep {
   contributes_if?: string;
   // ──────────────────────────────────────────────────────────
   // Webhook-assertion step fields (only used when task is one
-  // of `expect_webhook`, `expect_webhook_retry_keys_stable`,
+  // of `expect_webhook`, `expect_no_webhook`,
+  // `expect_webhook_retry_keys_stable`, or
   // `expect_webhook_signature_valid`). The runner interprets
   // these pseudo-tasks as receiver observations, not agent calls.
   // ──────────────────────────────────────────────────────────
@@ -788,7 +789,7 @@ export interface StoryboardStep {
   triggered_by?: string;
   /** Match predicate scoped to the per-step URL and/or body fields. */
   filter?: WebhookFilterSpec;
-  /** Seconds to wait for the first matching delivery. Default 30. */
+  /** Seconds to observe for a matching delivery. Default 5 for `expect_no_webhook`, otherwise 30. */
   timeout_seconds?: number;
   /** When true (default) assert `idempotency_key` is present and pattern-valid. */
   expect_idempotency_key?: boolean;
@@ -1350,7 +1351,7 @@ export interface StoryboardValidation {
 // ────────────────────────────────────────────────────────────
 // Webhook-assertion step types
 //
-// The three `expect_webhook*` tasks are pseudo-tasks: they do not drive the
+// The four `expect_webhook*` tasks are pseudo-tasks: they do not drive the
 // agent over MCP. Instead the runner uses them to observe / assert on the
 // webhook deliveries a prior step triggered. Graded only when the storyboard
 // declares the `webhook_receiver_runner` contract and the runner hosts a
@@ -1390,6 +1391,8 @@ export type WebhookAssertionErrorCode =
   | 'missing_idempotency_key'
   | 'invalid_idempotency_key_format'
   | 'duplicate_webhook_on_replay'
+  // expect_no_webhook
+  | 'unexpected_webhook_received'
   // expect_webhook_retry_keys_stable
   | 'insufficient_retries'
   | 'idempotency_key_rotated'

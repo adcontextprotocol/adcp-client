@@ -1,7 +1,7 @@
 /**
  * Webhook-assertion pseudo-tasks.
  *
- * Three step `task` values graded by observing the runner's webhook
+ * Four step `task` values graded by observing the runner's webhook
  * receiver rather than by calling the agent:
  *
  *   - `expect_webhook`
@@ -9,6 +9,10 @@
  *       well-formed `idempotency_key`. Optional: body-schema validation and
  *       max-deliveries-per-logical-event cap (catches duplicate-side-effect
  *       bugs on replay).
+ *
+ *   - `expect_no_webhook`
+ *       Assert that no matching webhook arrives during the observation
+ *       window. Resolves as soon as an unexpected delivery is observed.
  *
  *   - `expect_webhook_retry_keys_stable`
  *       Configure the receiver to reject the first N deliveries with 5xx so
@@ -82,11 +86,13 @@ function getSharedRevocationStore(runnerVars: RunnerVariables, override: Revocat
 
 export const WEBHOOK_ASSERTION_TASKS: Set<string> = new Set([
   'expect_webhook',
+  'expect_no_webhook',
   'expect_webhook_retry_keys_stable',
   'expect_webhook_signature_valid',
 ]);
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
+const DEFAULT_NO_WEBHOOK_TIMEOUT_SECONDS = 5;
 const DEFAULT_RETRY_REPLAY_TIMEOUT_SECONDS = 90;
 const DEFAULT_RETRY_COUNT = 3;
 const DEFAULT_RETRY_HTTP_STATUS = 503;
@@ -172,7 +178,7 @@ export function armWebhookAssertions(
 }
 
 /**
- * Dispatch any of the three webhook-assertion pseudo-tasks.
+ * Dispatch any of the four webhook-assertion pseudo-tasks.
  *
  * Called by runner.executeStep when the step's `task` is in
  * `WEBHOOK_ASSERTION_TASKS`. Every path returns a `StoryboardStepResult`
@@ -229,10 +235,12 @@ export async function executeWebhookAssertionStep(
   // observe — surface as prerequisite_failed rather than timing out.
   if (step.triggered_by) {
     const prior = runState.priorStepResults.get(step.triggered_by);
-    if (prior && (prior.skipped || !prior.passed)) {
+    if (!prior || prior.skipped || !prior.passed) {
       return skippedResult(step, phaseId, context, start, {
         skip_reason: 'prerequisite_failed',
-        detail: `Triggering step "${step.triggered_by}" did not complete successfully.`,
+        detail: prior
+          ? `Triggering step "${step.triggered_by}" did not complete successfully.`
+          : `Triggering step "${step.triggered_by}" has no prior result.`,
         extraction,
         request: requestRecord,
         next,
@@ -250,6 +258,12 @@ export async function executeWebhookAssertionStep(
   switch (step.task) {
     case 'expect_webhook': {
       const outcome = await runExpectWebhook(step, filter, receiver);
+      validations = outcome.validations;
+      passed = outcome.passed;
+      break;
+    }
+    case 'expect_no_webhook': {
+      const outcome = await runExpectNoWebhook(step, filter, receiver);
       validations = outcome.validations;
       passed = outcome.passed;
       break;
@@ -329,6 +343,53 @@ function buildFilter(step: StoryboardStep, context: StoryboardContext, runnerVar
     }
   }
   return filter;
+}
+
+// ────────────────────────────────────────────────────────────
+// expect_no_webhook
+// ────────────────────────────────────────────────────────────
+
+async function runExpectNoWebhook(
+  step: StoryboardStep,
+  filter: WebhookFilter,
+  receiver: WebhookReceiver
+): Promise<{ validations: ValidationResult[]; passed: boolean }> {
+  const timeoutMs = clampTimeoutSeconds(step.timeout_seconds, DEFAULT_NO_WEBHOOK_TIMEOUT_SECONDS) * 1000;
+  const outcome = await receiver.wait(filter, timeoutMs);
+
+  if (!outcome.timed_out && outcome.webhook) {
+    const matches = receiver.matching(filter);
+    const webhook = outcome.webhook;
+    return singleFailure(
+      step,
+      'unexpected_webhook_received',
+      `Observed ${matches.length} webhook ${matches.length === 1 ? 'delivery' : 'deliveries'} matching the filter; expected none.`,
+      'zero webhook deliveries matching filter',
+      {
+        count: matches.length,
+        first_delivery: {
+          id: webhook.id,
+          step_id: webhook.step_id,
+          operation_id: webhook.operation_id,
+          delivery_index: webhook.delivery_index,
+          received_at: webhook.received_at,
+        },
+      },
+      null
+    );
+  }
+
+  return {
+    validations: [
+      {
+        check: 'expect_no_webhook',
+        passed: true,
+        description: `No webhook matching the filter arrived within ${timeoutMs}ms.`,
+        json_pointer: null,
+      },
+    ],
+    passed: true,
+  };
 }
 
 // ────────────────────────────────────────────────────────────
@@ -773,7 +834,8 @@ function singleFailure(
   code: WebhookAssertionErrorCode,
   message: string,
   expected: unknown,
-  actual: unknown
+  actual: unknown,
+  jsonPointer: string | null = '/idempotency_key'
 ): { validations: ValidationResult[]; passed: boolean } {
   return {
     validations: [
@@ -782,7 +844,7 @@ function singleFailure(
         passed: false,
         description: step.expected ?? step.title,
         error: message,
-        json_pointer: '/idempotency_key',
+        json_pointer: jsonPointer,
         expected,
         actual: { code, actual },
       },

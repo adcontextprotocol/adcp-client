@@ -92,6 +92,31 @@ npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --json > report.
 - `--auth <token>` — bearer token (also accepts `$ADCP_AUTH_TOKEN`)
 - `--oauth` — run the browser OAuth flow inline when the saved alias has no valid tokens (MCP only; equivalent to `adcp --save-auth <alias> <url> --oauth` then re-running)
 
+**Authoring webhook assertions.** Webhook storyboard pseudo-steps share the
+receiver URL and filter contract. Use `triggered_by` to scope the observation
+to the earlier step's `{{runner.webhook_url:<step_id>}}`; add `filter.body`
+entries for dotted-path payload matching.
+
+`expect_no_webhook` asserts silence: it passes only when zero matching
+deliveries arrive during the observation window (five seconds by default) and
+fails on the first match with `unexpected_webhook_received`. It deliberately
+does not validate a payload schema or require an `idempotency_key` on the
+passing path because no payload exists to inspect.
+
+```yaml
+- id: expect_sync_silence
+  task: expect_no_webhook
+  triggered_by: sync_get_products_with_webhook_config_success
+  filter:
+    body:
+      operation_id: op_sync_get_products_no_webhook
+  timeout_seconds: 5
+```
+
+All `expect_webhook*` steps require `webhook_receiver` runner support. If the
+`triggered_by` step is missing, skipped, or failed, the assertion skips with
+`prerequisite_failed` instead of treating the absence as a passing result.
+
 **Hosted compliance bundles.** Programmatic runners that mount compliance
 assets outside the installed SDK can pair the storyboard cache and schema cache
 explicitly:

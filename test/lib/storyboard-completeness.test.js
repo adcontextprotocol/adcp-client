@@ -44,6 +44,7 @@ const HARNESS_TASKS = new Set([
   // observes the shared receiver rather than driving the agent, so these
   // steps have no request shape.
   'expect_webhook',
+  'expect_no_webhook',
   'expect_webhook_retry_keys_stable',
   'expect_webhook_signature_valid',
   // Inbound webhook receiver conformance replays a fixture into the local
