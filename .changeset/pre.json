@@ -24,6 +24,7 @@
     "fix-creative-scenario-residuals",
     "fix-era-negotiation-legacy-fallback",
     "fix-hoisted-structured-headers",
+    "fix-list-accounts-brand-enricher",
     "fix-mcp-beta-pins",
     "fix-runner-session-capability-notices",
     "fix-sdk-package-legacy-seed",
