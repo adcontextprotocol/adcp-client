@@ -12,6 +12,16 @@ export interface ProbeOptions {
   allowPrivateIp?: boolean;
   /** Per-call timeout override (ms). */
   timeoutMs?: number;
+  /**
+   * MCP session ID to attach as `Mcp-Session-Id` on every outgoing request,
+   * injected after signing. `Mcp-Session-Id` is not a covered component per
+   * RFC 9421, so the signature remains valid even when the header is appended
+   * post-signing. Required by streamable-HTTP servers that mandate session
+   * state from a prior `initialize` handshake. Omit (or pass `undefined`) for
+   * stateless servers; pass `''` to explicitly skip injection when you know the
+   * server is session-less.
+   */
+  mcpSessionId?: string;
 }
 
 export interface ProbeResult {
@@ -118,6 +128,14 @@ export async function probeSignedRequest(signed: SignedHttpRequest, options: Pro
     },
   });
 
+  // Attach Mcp-Session-Id after the signed headers so the header is not a
+  // covered component — the signature over the signed body/headers is already
+  // computed, and the session ID is orthogonal to the signature's integrity.
+  const outHeaders: Record<string, string> =
+    options.mcpSessionId
+      ? { ...signed.headers, 'Mcp-Session-Id': options.mcpSessionId }
+      : signed.headers;
+
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeout);
   try {
@@ -125,7 +143,7 @@ export async function probeSignedRequest(signed: SignedHttpRequest, options: Pro
       method: signed.method,
       redirect: 'manual',
       signal: ac.signal,
-      headers: signed.headers,
+      headers: outHeaders,
       body: signed.body,
       dispatcher,
     });
@@ -177,6 +195,51 @@ export async function probeSignedRequest(signed: SignedHttpRequest, options: Pro
     result.duration_ms = Date.now() - start;
     await dispatcher.close().catch(() => {});
   }
+}
+
+/**
+ * Perform the MCP Streamable HTTP `initialize` handshake and return the
+ * `Mcp-Session-Id` header value from the response. Call this once before
+ * dispatching signed conformance vectors so that each subsequent
+ * `tools/call` probe can carry the session ID without disturbing the
+ * covered-component set — `Mcp-Session-Id` is not a covered component per
+ * RFC 9421, so appending it after signing leaves signatures intact.
+ *
+ * Returns `{ sessionId: undefined }` when the server responds without a
+ * session header (stateless server, or one that does not require sessions).
+ * Returns `{ sessionId: undefined, error: '...' }` on network failure —
+ * callers that auto-initialize should propagate or surface this as a
+ * grading pre-condition failure rather than running all vectors session-less
+ * and watching them cascade to 400.
+ */
+export async function initializeMcpSession(
+  mcpUrl: string,
+  options: ProbeOptions = {}
+): Promise<{ sessionId: string | undefined; error?: string }> {
+  const body = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 0,
+    method: 'initialize',
+    params: {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'adcp-signing-grader', version: '1.0' },
+    },
+  });
+  const result = await probeSignedRequest(
+    {
+      method: 'POST',
+      url: mcpUrl,
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+      },
+      body,
+    },
+    options
+  );
+  if (result.error) return { sessionId: undefined, error: result.error };
+  return { sessionId: result.headers['mcp-session-id'] };
 }
 
 /**

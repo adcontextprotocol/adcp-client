@@ -1677,6 +1677,18 @@ export interface StoryboardRunOptions extends TestOptions {
      * `mcp` to let the runner round-trip every vector through `tools/call`.
      */
     transport?: 'raw' | 'mcp';
+    /**
+     * Pre-provisioned MCP session ID to attach as `Mcp-Session-Id` on every
+     * vector probe after signing. When `transport` is `'mcp'` and this is
+     * omitted, the runner auto-initializes a session via the MCP
+     * `initialize` handshake before each vector call. Pass a pre-acquired ID
+     * (from `initializeMcpSession`) to reuse one session across the whole
+     * storyboard run and avoid the per-vector round-trip overhead.
+     *
+     * Pass `''` (empty string) to disable auto-initialization for stateless
+     * streamable-HTTP agents that do not issue session IDs.
+     */
+    mcpSessionId?: string;
   };
   /**
    * Distribution strategy across agent URLs in multi-instance mode.
