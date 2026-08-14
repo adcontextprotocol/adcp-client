@@ -17,7 +17,8 @@ import type { WebhookConformanceSigningOptions } from '../../conformance/types';
 export type RequiresCapabilityPredicate =
   | { path: string; equals: boolean | string | number | null }
   | { path: string; present: boolean }
-  | { path: string; contains: boolean | string | number };
+  | { path: string; contains: boolean | string | number }
+  | { path: string; not_contains: boolean | string | number };
 
 export interface Storyboard {
   id: string;
@@ -140,7 +141,7 @@ export interface Storyboard {
    * `path` is a dotted key path into the raw `get_adcp_capabilities` response
    * (e.g. `"adcp.idempotency.supported"`).
    *
-   * Two matcher forms — mutually exclusive on a single gate:
+   * Four matcher forms — mutually exclusive on a single gate:
    *
    * - `equals: V` — scalar equality. The path's resolved value must be
    *   declared and must equal `V` for the storyboard to run. When the path
@@ -172,6 +173,14 @@ export interface Storyboard {
    *   capability object is present. Like `present:`, absence is otherwise the
    *   load-bearing signal — a seller that doesn't advertise the array hasn't
    *   opted into the variant this storyboard tests.
+   *
+   * - `not_contains: V` — negative array-membership matcher. The value at
+   *   `path` MUST be an array and MUST NOT include `V` (strict equality, no
+   *   coercion). This is useful for rejection scenarios that apply only when
+   *   an advertised allowlist omits a value. Missing and non-array values do
+   *   not satisfy the predicate; a separate discovery validation should grade
+   *   a required capability declaration. Schema defaults are materialized on
+   *   the same terms as `contains`.
    *
    * When `raw_capabilities` is not available and the discovered profile does
    * not expose `get_adcp_capabilities`, `equals` gates are treated as
@@ -978,6 +987,13 @@ export type StoryboardValidationCheck =
    */
   | 'field_equals_context'
   /**
+   * Assert a field in the current response is a member of an array captured
+   * from an earlier step via `context_key`. Missing context keeps the same
+   * branch-safe `context_key_absent` behavior as other cross-step checks;
+   * a present non-array context value fails the check.
+   */
+  | 'field_in_context_array'
+  /**
    * Asserts upstream side-effects against the adopter's
    * `comply_test_controller`'s `query_upstream_traffic` scenario. The
    * load-bearing anti-façade contract: a fully-conformant adapter and a
@@ -1260,11 +1276,12 @@ export interface StoryboardValidation {
    *  - `fail` — treat as missing
    */
   on_out_of_scope?: 'warn' | 'ignore' | 'fail';
-  // ─── field_less_than / field_equals_context fields ────────
+  // ─── Cross-step comparison fields ──────────────────────
   /**
    * Key to look up in the accumulated `storyboardContext` for cross-step
    * comparison checks (`field_less_than`, `field_greater_than`,
-   * `field_at_most`, `field_at_least`, `field_equals_context`).
+   * `field_at_most`, `field_at_least`, `field_equals_context`,
+   * `field_in_context_array`).
    * Only consumed by those check types — ignored on all others.
    * When set and the key is absent from context, the check passes with a
    * `context_key_absent` observation rather than failing — the prior step

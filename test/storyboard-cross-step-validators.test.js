@@ -378,3 +378,73 @@ describe('field_equals_context', () => {
     assert.strictEqual(result.passed, true);
   });
 });
+
+// ──────────────────────────────────────────────────────────────
+// field_in_context_array
+// ─────────────────────────────────────────────────────────────
+
+describe('field_in_context_array', () => {
+  it('passes when the response field is a member of the captured array', () => {
+    const [result] = runValidations(
+      [
+        {
+          check: 'field_in_context_array',
+          path: 'billing',
+          context_key: 'supported_billing',
+          description: 'billing advertised',
+        },
+      ],
+      makeCtx({ data: { billing: 'operator' }, storyboardContext: { supported_billing: ['operator', 'agent'] } })
+    );
+    assert.strictEqual(result.passed, true);
+  });
+
+  it('fails when the response field is outside the captured array', () => {
+    const [result] = runValidations(
+      [
+        {
+          check: 'field_in_context_array',
+          path: 'billing',
+          context_key: 'supported_billing',
+          description: 'billing advertised',
+        },
+      ],
+      makeCtx({ data: { billing: 'advertiser' }, storyboardContext: { supported_billing: ['operator', 'agent'] } })
+    );
+    assert.strictEqual(result.passed, false);
+    assert.deepStrictEqual(result.expected, ['operator', 'agent']);
+    assert.strictEqual(result.actual, 'advertiser');
+  });
+
+  it('fails when the captured context value is not an array', () => {
+    const [result] = runValidations(
+      [
+        {
+          check: 'field_in_context_array',
+          path: 'billing',
+          context_key: 'supported_billing',
+          description: 'billing advertised',
+        },
+      ],
+      makeCtx({ data: { billing: 'operator' }, storyboardContext: { supported_billing: 'operator' } })
+    );
+    assert.strictEqual(result.passed, false);
+    assert.ok(result.error.includes('to be an array'));
+  });
+
+  it('passes with an observation when the context key is absent', () => {
+    const [result] = runValidations(
+      [
+        {
+          check: 'field_in_context_array',
+          path: 'billing',
+          context_key: 'missing',
+          description: 'billing advertised',
+        },
+      ],
+      makeCtx({ data: { billing: 'operator' }, storyboardContext: {} })
+    );
+    assert.strictEqual(result.passed, true);
+    assert.ok(result.observations[0].includes('context_key_absent'));
+  });
+});

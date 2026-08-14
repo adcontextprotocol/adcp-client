@@ -825,6 +825,24 @@ describe('requires_capability `contains:` matcher (#1817)', () => {
   });
 });
 
+describe('requires_capability `not_contains:` matcher', () => {
+  test('evaluateCapabilityPredicate: pins negative membership semantics', () => {
+    const notContainsString = { path: 'account.supported_billing', not_contains: 'advertiser' };
+    const notContainsNumber = { path: 'x.y', not_contains: 42 };
+
+    assert.equal(evaluateCapabilityPredicate(notContainsString, ['operator', 'agent']), null);
+    assert.equal(evaluateCapabilityPredicate(notContainsString, []), null);
+    assert.ok(evaluateCapabilityPredicate(notContainsString, ['operator', 'advertiser'])?.includes('must not contain'));
+
+    assert.ok(evaluateCapabilityPredicate(notContainsString, undefined)?.includes('no value'));
+    assert.ok(evaluateCapabilityPredicate(notContainsString, 'operator')?.includes('must not contain'));
+    assert.ok(evaluateCapabilityPredicate(notContainsString, null)?.includes('must not contain'));
+
+    assert.equal(evaluateCapabilityPredicate(notContainsNumber, ['42']), null, 'membership is strict');
+    assert.ok(evaluateCapabilityPredicate(notContainsNumber, [42])?.includes('must not contain'));
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase-level `requires_capability` gates (adcp-client#2224) — same matcher
 // dialect as storyboard-level gates, but scoped to one phase.
@@ -902,6 +920,36 @@ const creativeApprovalPhaseGatedStoryboard = {
   ],
 };
 
+const unsupportedBillingPhaseGatedStoryboard = {
+  id: 'phase_capability_gate_unsupported_billing_test',
+  version: '1.0.0',
+  title: 'Unsupported billing rejection',
+  category: 'test',
+  summary: 'Runs only when advertiser billing is not advertised.',
+  narrative: '',
+  agent: { interaction_model: 'sync', capabilities: [] },
+  caller: { role: 'buyer_agent' },
+  phases: [
+    {
+      id: 'unsupported_advertiser_billing',
+      title: 'Reject unsupported advertiser billing',
+      requires_capability: {
+        path: 'account.supported_billing',
+        not_contains: 'advertiser',
+      },
+      steps: [
+        {
+          id: 'sync_accounts_unsupported_billing',
+          title: 'Submit unsupported billing',
+          task: 'sync_accounts',
+          sample_request: {},
+          validations: [],
+        },
+      ],
+    },
+  ],
+};
+
 function makeCapabilityGateClient(responder = () => ({ success: true, data: {} })) {
   const calls = [];
   const client = {
@@ -914,6 +962,47 @@ function makeCapabilityGateClient(responder = () => ({ success: true, data: {} }
 }
 
 describe('phase-level requires_capability gate (#2224)', () => {
+  test('not_contains runs a phase when the advertised array omits the value', async () => {
+    const { client, calls } = makeCapabilityGateClient();
+    const result = await runStoryboard('https://example.invalid/mcp', unsupportedBillingPhaseGatedStoryboard, {
+      protocol: 'mcp',
+      agentTools: ['get_adcp_capabilities', 'sync_accounts'],
+      _profile: {
+        name: 'Test Agent (operator billing only)',
+        tools: ['get_adcp_capabilities', 'sync_accounts'],
+        raw_capabilities: { account: { supported_billing: ['operator'] } },
+      },
+      _client: client,
+    });
+
+    assert.equal(result.skipped_count, 0);
+    assert.equal(result.passed_count, 1);
+    assert.deepEqual(
+      calls.map(call => call.name),
+      ['sync_accounts']
+    );
+  });
+
+  test('not_contains skips a phase when the advertised array includes the value', async () => {
+    const { client, calls } = makeCapabilityGateClient();
+    const result = await runStoryboard('https://example.invalid/mcp', unsupportedBillingPhaseGatedStoryboard, {
+      protocol: 'mcp',
+      agentTools: ['get_adcp_capabilities', 'sync_accounts'],
+      _profile: {
+        name: 'Test Agent (advertiser billing supported)',
+        tools: ['get_adcp_capabilities', 'sync_accounts'],
+        raw_capabilities: { account: { supported_billing: ['operator', 'advertiser'] } },
+      },
+      _client: client,
+    });
+
+    assert.equal(result.skipped_count, 1);
+    assert.equal(result.failed_count, 0);
+    assert.equal(result.phases[0].steps[0].skip_reason, 'not_applicable');
+    assert.ok(result.phases[0].steps[0].skip.detail.includes('must not contain'));
+    assert.deepEqual(calls, []);
+  });
+
   test('skips deterministic_session as not_applicable when sponsored_intelligence is not advertised', async () => {
     const result = await runStoryboard('http://fake-local-99992', deterministicSessionPhaseGatedStoryboard, {
       _profile: {
