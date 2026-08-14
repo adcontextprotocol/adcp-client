@@ -1,5 +1,12 @@
 # Changelog
 
+## 13.0.0-rc.20
+
+### Patch Changes
+
+- fde0baf: Add an `expect_no_webhook` storyboard assertion that verifies zero matching webhook deliveries during a bounded observation window.
+- 3189ea8: Emit the canonical `rate_limit_not_triggered` detail when a rate-limit trip exhausts its attempts without observing a `RATE_LIMITED` response. Preserve the passing skipped-step contract while surfacing independent assertion failures through compliance reports.
+
 ## 13.0.0-rc.19
 
 ### Minor Changes
