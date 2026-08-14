@@ -98,8 +98,7 @@ export interface GradeOptions extends LoadVectorsOptions {
    */
   agentContentDigestPolicy?: 'required' | 'forbidden' | 'either';
   /**
-   * Transport shape the agent speaks. `'raw'` (default) POSTs per-operation
-   * AdCP endpoints matching the vectors' URL shape. `'mcp'` wraps each
+   * Transport shape the agent speaks. `'mcp'` (default) wraps each
    * vector body in a JSON-RPC `tools/call` envelope and POSTs to the MCP
    * mount path (`agentUrl`) — use when grading an MCP agent whose verifier
    * sits as transport-layer middleware ahead of MCP dispatch.
@@ -243,7 +242,7 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
     mcpSessionId,
   };
 
-  const buildOpts: BuildOptions = { baseUrl: agentUrl, transport: options.transport ?? 'raw' };
+  const buildOpts: BuildOptions = { baseUrl: agentUrl, transport: options.transport ?? 'mcp' };
 
   const positive: VectorGradeResult[] = [];
   for (const vector of loaded.positive) {
@@ -468,7 +467,7 @@ export async function gradeOneVector(
     timeoutMs: options.timeoutMs,
     mcpSessionId,
   };
-  const buildOpts: BuildOptions = { baseUrl: agentUrl, transport: options.transport ?? 'raw' };
+  const buildOpts: BuildOptions = { baseUrl: agentUrl, transport: options.transport ?? 'mcp' };
 
   const vector =
     kind === 'positive' ? loaded.positive.find(v => v.id === vectorId) : loaded.negative.find(v => v.id === vectorId);
