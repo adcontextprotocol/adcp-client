@@ -12,7 +12,7 @@ const assert = require('node:assert');
 // confirmed by the fact that probe.ts adds it to outHeaders after spreading
 // signed.headers (which already contains the RFC 9421 signature headers).
 
-test("mcpSessionId option threads into ProbeOptions without being a signed component", () => {
+test('mcpSessionId option threads into ProbeOptions without being a signed component', () => {
   // ProbeOptions type shape check — mcpSessionId is present and optional
   // This test asserts the contract, not the HTTP behavior (that lives in
   // integration tests against a real MCP server).
@@ -22,12 +22,12 @@ test("mcpSessionId option threads into ProbeOptions without being a signed compo
   assert.strictEqual(typeof probeSignedRequest, 'function');
 });
 
-test("initializeMcpSession is exported from the request-signing barrel", () => {
+test('initializeMcpSession is exported from the request-signing barrel', () => {
   const mod = require('../../dist/lib/testing/storyboard/request-signing/index.js');
   assert.strictEqual(typeof mod.initializeMcpSession, 'function');
 });
 
-test("GradeOptions.mcpSessionId empty string disables auto-init sentinel", () => {
+test('GradeOptions.mcpSessionId empty string disables auto-init sentinel', () => {
   // '' is the opt-out sentinel: gradeRequestSigning / gradeOneVector skip the
   // initialize handshake when mcpSessionId !== undefined (including '').
   // Validate the sentinel is a string (type-level); behaviorally tested in

@@ -131,10 +131,9 @@ export async function probeSignedRequest(signed: SignedHttpRequest, options: Pro
   // Attach Mcp-Session-Id after the signed headers so the header is not a
   // covered component — the signature over the signed body/headers is already
   // computed, and the session ID is orthogonal to the signature's integrity.
-  const outHeaders: Record<string, string> =
-    options.mcpSessionId
-      ? { ...signed.headers, 'Mcp-Session-Id': options.mcpSessionId }
-      : signed.headers;
+  const outHeaders: Record<string, string> = options.mcpSessionId
+    ? { ...signed.headers, 'Mcp-Session-Id': options.mcpSessionId }
+    : signed.headers;
 
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeout);
