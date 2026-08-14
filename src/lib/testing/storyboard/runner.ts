@@ -345,7 +345,7 @@ function resolveCapabilityPathForGate(
   // field never read as absent, silently flipping the gate (e.g. a signals
   // seller that omits `signals.discovery_modes`, default `["brief"]`, would run
   // a `present: true`-gated scenario that should skip). Defaults are resolved
-  // only for the value matchers (`equals` / `contains`), where the default's
+  // only for the value matchers (`equals` / `contains` / `not_contains`), where the default's
   // VALUE is what the gate tests.
   if ('present' in predicate) return undefined;
   if (!schemaDefaultShouldApply(raw, predicate.path)) return undefined;
@@ -371,7 +371,7 @@ function schemaDefaultShouldApply(raw: unknown, dottedPath: string): boolean {
  * predicate is satisfied and a human-readable detail string when the
  * storyboard should be skipped.
  *
- * Three matcher forms — see `Storyboard.requires_capability` for full semantics:
+ * Four matcher forms — see `Storyboard.requires_capability` for full semantics:
  *
  * - `equals: V` — scalar equality. `actual` must be declared and must equal
  *   `V`. Absent fields (`undefined`) skip unless the capabilities schema
@@ -394,6 +394,10 @@ function schemaDefaultShouldApply(raw: unknown, dottedPath: string): boolean {
  *   includes `V` (strict equality, no coercion). Empty arrays, non-arrays,
  *   and absent fields all skip unless the capabilities schema declares a
  *   default that the gate materialized before predicate evaluation.
+ *
+ * - `not_contains: V` — negative array-membership. `actual` must be an array
+ *   that does not include `V` (strict equality, no coercion). Missing and
+ *   non-array values skip; an empty array satisfies the predicate.
  *
  * Exported for direct testing so the predicate semantics are pinned without
  * needing a full runStoryboard() roundtrip.
@@ -421,6 +425,21 @@ export function evaluateCapabilityPredicate(predicate: RequiresCapabilityPredica
     if (!actual.includes(predicate.contains)) {
       return (
         `Capability predicate \`${predicate.path}\` must contain ${JSON.stringify(predicate.contains)}: ` +
+        `agent declared ${JSON.stringify(actual)}.`
+      );
+    }
+    return null;
+  }
+  if ('not_contains' in predicate) {
+    if (!Array.isArray(actual)) {
+      return (
+        `Capability predicate \`${predicate.path}\` must not contain ${JSON.stringify(predicate.not_contains)}: ` +
+        `agent declared ${actual === undefined ? 'no value' : JSON.stringify(actual)}.`
+      );
+    }
+    if (actual.includes(predicate.not_contains)) {
+      return (
+        `Capability predicate \`${predicate.path}\` must not contain ${JSON.stringify(predicate.not_contains)}: ` +
         `agent declared ${JSON.stringify(actual)}.`
       );
     }

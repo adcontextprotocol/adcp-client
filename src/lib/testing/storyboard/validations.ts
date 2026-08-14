@@ -337,6 +337,8 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return validateNumericComparison(validation, ctx, NUMERIC_OPS.at_least);
     case 'field_equals_context':
       return validateFieldEqualsContext(validation, ctx);
+    case 'field_in_context_array':
+      return validateFieldInContextArray(validation, ctx);
     case 'upstream_traffic':
       return validateUpstreamTraffic(validation, ctx);
     case 'replay_not_cached_rate_limit':
@@ -2895,6 +2897,77 @@ function validateFieldEqualsContext(validation: StoryboardValidation, ctx: Valid
     error: `Expected ${JSON.stringify(expected)} (from context["${validation.context_key}"]); got ${JSON.stringify(actual ?? null)}`,
     json_pointer: pointer,
     expected,
+    actual: actual ?? null,
+  };
+}
+
+function validateFieldInContextArray(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
+  if (!validation.path) {
+    return {
+      check: 'field_in_context_array',
+      passed: false,
+      description: validation.description,
+      error: 'No path specified for field_in_context_array validation',
+      json_pointer: null,
+      expected: 'path must be set in storyboard validation entry',
+      actual: null,
+    };
+  }
+  if (!validation.context_key) {
+    return {
+      check: 'field_in_context_array',
+      passed: false,
+      description: validation.description,
+      error: 'field_in_context_array requires context_key to be set',
+      json_pointer: null,
+      expected: 'context_key must be set in storyboard validation entry',
+      actual: null,
+    };
+  }
+
+  const comparandResult = resolveContextComparand(validation, ctx);
+  if (!comparandResult.found) {
+    return {
+      check: 'field_in_context_array',
+      passed: true,
+      description: validation.description,
+      observations: [comparandResult.observation],
+    };
+  }
+
+  const allowed = comparandResult.value;
+  const actual = resolvePath(resolveTarget(ctx).data, validation.path);
+  const pointer = toJsonPointer(validation.path);
+  if (!Array.isArray(allowed)) {
+    return {
+      check: 'field_in_context_array',
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: `Expected context["${validation.context_key}"] to be an array; got ${JSON.stringify(allowed)}`,
+      json_pointer: pointer,
+      expected: 'context value must be an array',
+      actual: allowed,
+    };
+  }
+
+  if (allowed.some(candidate => valuesMatch(actual, candidate))) {
+    return {
+      check: 'field_in_context_array',
+      passed: true,
+      description: validation.description,
+      path: validation.path,
+      json_pointer: pointer,
+    };
+  }
+  return {
+    check: 'field_in_context_array',
+    passed: false,
+    description: validation.description,
+    path: validation.path,
+    error: `Expected ${JSON.stringify(actual ?? null)} to be a member of context["${validation.context_key}"] (${JSON.stringify(allowed)})`,
+    json_pointer: pointer,
+    expected: allowed,
     actual: actual ?? null,
   };
 }
