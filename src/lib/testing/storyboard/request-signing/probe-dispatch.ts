@@ -65,6 +65,12 @@ export async function probeRequestSigningVector(
       skipVectors: rsOpts.skipVectors,
       skipRateAbuse: rsOpts.skipRateAbuse,
       transport: resolveVectorTransport(rsOpts),
+      // The auto-initialize handshake authenticates like any MCP client;
+      // agents commonly require auth on `initialize` (the signed vectors
+      // themselves stay bearer-less — the signature is their auth).
+      ...(options.auth?.type === 'bearer' && options.auth.token
+        ? { initializeHeaders: { authorization: `Bearer ${options.auth.token}` } }
+        : {}),
       mcpSessionId: rsOpts.mcpSessionId,
     });
     if (result.skipped) {

@@ -213,7 +213,15 @@ export async function probeSignedRequest(signed: SignedHttpRequest, options: Pro
  */
 export async function initializeMcpSession(
   mcpUrl: string,
-  options: ProbeOptions = {}
+  options: ProbeOptions = {},
+  /**
+   * Extra headers for the initialize handshake only — typically the agent's
+   * `authorization`. The handshake authenticates like any ordinary MCP client
+   * request; the signed vectors that follow stay bearer-less by design (the
+   * signature is their authentication), so this never leaks into vector
+   * requests.
+   */
+  extraHeaders: Record<string, string> = {}
 ): Promise<{ sessionId: string | undefined; error?: string }> {
   const body = JSON.stringify({
     jsonrpc: '2.0',
@@ -232,6 +240,7 @@ export async function initializeMcpSession(
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json, text/event-stream',
+        ...extraHeaders,
       },
       body,
     },

@@ -124,6 +124,14 @@ export interface GradeOptions extends LoadVectorsOptions {
    */
   mcpSessionId?: string;
   /**
+   * Headers for the auto-`initialize` handshake only (typically the agent's
+   * `authorization`) — agents that require auth on `initialize` would
+   * otherwise 401 the handshake, read as "stateless server", and every
+   * vector would then be sent session-less. Never applied to the signed
+   * vector requests themselves.
+   */
+  initializeHeaders?: Record<string, string>;
+  /**
    * Override the agent's base URL used for the grader's HTTP targets. When set,
    * each vector's `request.url` is rewritten by swapping origin+path under this
    * base — useful when the vectors point at `seller.example.com` but the agent
@@ -215,10 +223,14 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
   // the HTTP middleware layer, ahead of session routing).
   let mcpSessionId: string | undefined = options.mcpSessionId;
   if (options.transport === 'mcp' && mcpSessionId === undefined) {
-    const init = await initializeMcpSession(agentUrl, {
-      allowPrivateIp: options.allowPrivateIp === true,
-      timeoutMs: options.timeoutMs,
-    });
+    const init = await initializeMcpSession(
+      agentUrl,
+      {
+        allowPrivateIp: options.allowPrivateIp === true,
+        timeoutMs: options.timeoutMs,
+      },
+      options.initializeHeaders ?? {}
+    );
     mcpSessionId = init.sessionId; // undefined = stateless server; session-less is fine
   }
 
@@ -434,10 +446,14 @@ export async function gradeOneVector(
   // via options.mcpSessionId to avoid per-call round-trips.
   let mcpSessionId: string | undefined = options.mcpSessionId;
   if (options.transport === 'mcp' && mcpSessionId === undefined) {
-    const init = await initializeMcpSession(agentUrl, {
-      allowPrivateIp: options.allowPrivateIp === true,
-      timeoutMs: options.timeoutMs,
-    });
+    const init = await initializeMcpSession(
+      agentUrl,
+      {
+        allowPrivateIp: options.allowPrivateIp === true,
+        timeoutMs: options.timeoutMs,
+      },
+      options.initializeHeaders ?? {}
+    );
     mcpSessionId = init.sessionId;
   }
 
