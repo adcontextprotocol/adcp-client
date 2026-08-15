@@ -50,6 +50,7 @@
     "ladon-test-trivial-paths",
     "legacy-fallback-on-probe-auth-refusal",
     "oauth-resource-override",
+    "orphaned-params-legacy-downgrade",
     "pick-up-adcp-3-1-8",
     "project-legacy-creative-delivery",
     "project-v25-sync-assignments",
