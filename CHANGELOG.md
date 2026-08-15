@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.0.0-rc.23
+
+### Patch Changes
+
+- 1f9e54f: Structurally match JSON-valued entries in storyboard `contains` and `not_contains` capability gates, including object-valued governance task declarations.
+
 ## 13.0.0-rc.22
 
 ### Patch Changes
