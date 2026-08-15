@@ -14,11 +14,19 @@ import type { WebhookConformanceSigningOptions } from '../../conformance/types';
 // Parsed storyboard structure (mirrors YAML schema)
 // ────────────────────────────────────────────────────────────
 
+export type CapabilityPredicateValue =
+  | boolean
+  | string
+  | number
+  | null
+  | CapabilityPredicateValue[]
+  | { [key: string]: CapabilityPredicateValue };
+
 export type RequiresCapabilityPredicate =
   | { path: string; equals: boolean | string | number | null }
   | { path: string; present: boolean }
-  | { path: string; contains: boolean | string | number }
-  | { path: string; not_contains: boolean | string | number };
+  | { path: string; contains: CapabilityPredicateValue }
+  | { path: string; not_contains: CapabilityPredicateValue };
 
 export interface Storyboard {
   id: string;
@@ -167,7 +175,7 @@ export interface Storyboard {
    *   declaration shape is an array of allowed values (e.g.
    *   `media_buy.conversion_tracking.supported_targets: ["cost_per",
    *   "per_ad_spend"]`). The value at `path` MUST be an array and MUST include
-   *   `V` (strict equality, no coercion). Empty arrays fail; paths resolving
+   *   `V` (structural JSON equality, no coercion). Empty arrays fail; paths resolving
    *   to undefined or non-array values fail unless the `get_adcp_capabilities`
    *   response schema declares a default for that exact path and the parent
    *   capability object is present. Like `present:`, absence is otherwise the
@@ -175,7 +183,7 @@ export interface Storyboard {
    *   opted into the variant this storyboard tests.
    *
    * - `not_contains: V` — negative array-membership matcher. The value at
-   *   `path` MUST be an array and MUST NOT include `V` (strict equality, no
+   *   `path` MUST be an array and MUST NOT include `V` (structural JSON equality, no
    *   coercion). This is useful for rejection scenarios that apply only when
    *   an advertised allowlist omits a value. Missing and non-array values do
    *   not satisfy the predicate; a separate discovery validation should grade

@@ -391,12 +391,12 @@ function schemaDefaultShouldApply(raw: unknown, dottedPath: string): boolean {
  *   `resolveCapabilityPathForGate`).
  *
  * - `contains: V` — array-membership. `actual` must be an array that
- *   includes `V` (strict equality, no coercion). Empty arrays, non-arrays,
+ *   includes `V` (structural JSON equality, no coercion). Empty arrays, non-arrays,
  *   and absent fields all skip unless the capabilities schema declares a
  *   default that the gate materialized before predicate evaluation.
  *
  * - `not_contains: V` — negative array-membership. `actual` must be an array
- *   that does not include `V` (strict equality, no coercion). Missing and
+ *   that does not include `V` (structural JSON equality, no coercion). Missing and
  *   non-array values skip; an empty array satisfies the predicate.
  *
  * Exported for direct testing so the predicate semantics are pinned without
@@ -422,7 +422,7 @@ export function evaluateCapabilityPredicate(predicate: RequiresCapabilityPredica
         `agent declared ${actual === undefined ? 'no value' : JSON.stringify(actual)}.`
       );
     }
-    if (!actual.includes(predicate.contains)) {
+    if (!actual.some(value => capabilityValuesEqual(value, predicate.contains))) {
       return (
         `Capability predicate \`${predicate.path}\` must contain ${JSON.stringify(predicate.contains)}: ` +
         `agent declared ${JSON.stringify(actual)}.`
@@ -437,7 +437,7 @@ export function evaluateCapabilityPredicate(predicate: RequiresCapabilityPredica
         `agent declared ${actual === undefined ? 'no value' : JSON.stringify(actual)}.`
       );
     }
-    if (actual.includes(predicate.not_contains)) {
+    if (actual.some(value => capabilityValuesEqual(value, predicate.not_contains))) {
       return (
         `Capability predicate \`${predicate.path}\` must not contain ${JSON.stringify(predicate.not_contains)}: ` +
         `agent declared ${JSON.stringify(actual)}.`
@@ -460,6 +460,25 @@ export function evaluateCapabilityPredicate(predicate: RequiresCapabilityPredica
     );
   }
   return null;
+}
+
+/** Key-order-insensitive equality for JSON-valued capability declarations. */
+function capabilityValuesEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== typeof b || a === null || b === null || typeof a !== 'object') return false;
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((value, index) => capabilityValuesEqual(value, b[index]));
+  }
+  if (Array.isArray(b)) return false;
+  const aRecord = a as Record<string, unknown>;
+  const bRecord = b as Record<string, unknown>;
+  const aKeys = Object.keys(aRecord).sort();
+  const bKeys = Object.keys(bRecord).sort();
+  return (
+    aKeys.length === bKeys.length &&
+    aKeys.every((key, index) => key === bKeys[index] && capabilityValuesEqual(aRecord[key], bRecord[key]))
+  );
 }
 
 function evaluateRequiresCapabilityGate(

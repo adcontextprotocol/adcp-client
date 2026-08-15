@@ -823,6 +823,55 @@ describe('requires_capability `contains:` matcher (#1817)', () => {
     assert.ok(evaluateCapabilityPredicate(containsNumber, ['42'])?.includes('must contain'));
     assert.ok(evaluateCapabilityPredicate(containsString, [42])?.includes('must contain'));
   });
+
+  test('contains: structurally matches object-valued capability entries', async () => {
+    const governanceTask = {
+      task: 'activate_signal',
+      modes: ['signed_context'],
+    };
+    const storyboard = {
+      ...supportedTargetsGatedStoryboard,
+      requires_capability: {
+        path: 'adcp.governance_enforcement.tasks',
+        contains: governanceTask,
+      },
+    };
+    const profile = {
+      name: 'Test Agent (signed signal governance)',
+      tools: ['get_adcp_capabilities', 'log_event'],
+      raw_capabilities: {
+        adcp: {
+          governance_enforcement: {
+            tasks: [{ modes: ['signed_context'], task: 'activate_signal' }],
+          },
+        },
+      },
+    };
+
+    const { client } = makeCapabilityGateClient();
+    const result = await runStoryboard('https://example.invalid/mcp', storyboard, {
+      protocol: 'mcp',
+      agentTools: profile.tools,
+      _profile: profile,
+      _client: client,
+    });
+
+    assert.equal(result.skipped_count, 0, 'matching object gate must not be skipped');
+    assert.equal(
+      evaluateCapabilityPredicate(
+        storyboard.requires_capability,
+        profile.raw_capabilities.adcp.governance_enforcement.tasks
+      ),
+      null,
+      'object key order must not affect membership'
+    );
+    assert.ok(
+      evaluateCapabilityPredicate(storyboard.requires_capability, [
+        { task: 'activate_signal', modes: ['unsigned_context'] },
+      ])?.includes('must contain'),
+      'nested array values remain significant'
+    );
+  });
 });
 
 describe('requires_capability `not_contains:` matcher', () => {
@@ -840,6 +889,16 @@ describe('requires_capability `not_contains:` matcher', () => {
 
     assert.equal(evaluateCapabilityPredicate(notContainsNumber, ['42']), null, 'membership is strict');
     assert.ok(evaluateCapabilityPredicate(notContainsNumber, [42])?.includes('must not contain'));
+
+    const notContainsObject = {
+      path: 'adcp.governance_enforcement.tasks',
+      not_contains: { task: 'activate_signal', modes: ['signed_context'] },
+    };
+    assert.ok(
+      evaluateCapabilityPredicate(notContainsObject, [
+        { modes: ['signed_context'], task: 'activate_signal' },
+      ])?.includes('must not contain')
+    );
   });
 });
 
