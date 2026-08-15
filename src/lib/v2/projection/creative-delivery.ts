@@ -917,6 +917,7 @@ function projectPackageSelectors(
         next.format_ids = resolved;
         delete next.format_option_refs;
         delete next.format_kind;
+        delete next.params;
         return next;
       }
       next.format_ids = dedupeLegacyRefs(selectedCandidates.map(candidate => candidate.ref));
@@ -960,6 +961,7 @@ function projectPackageSelectors(
       }
     }
     delete next.format_kind;
+    delete next.params;
   }
 
   return next;

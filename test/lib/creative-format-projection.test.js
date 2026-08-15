@@ -476,6 +476,31 @@ describe('creative format delivery projection', () => {
     );
   });
 
+  test('deletes params alongside format_kind when downgrading a package selector to legacy format_ids', () => {
+    const projected = projectMediaBuyCreativesForDelivery(
+      {
+        packages: [
+          {
+            product_id: 'product-123',
+            format_kind: 'video_hosted',
+            params: { width: 640, height: 480 },
+            creatives: [{ creative_id: 'creative-1', name: 'Creative', format_kind: 'video_hosted', assets: {} }],
+          },
+        ],
+      },
+      'legacy',
+      'create_media_buy',
+      undefined,
+      () => ({ agent_url: 'https://seller.example/formats', id: 'video_hosted_v1' })
+    );
+
+    assert.deepStrictEqual(projected.packages[0].format_ids, [
+      { agent_url: 'https://seller.example/formats', id: 'video_hosted_v1' },
+    ]);
+    assert.equal(Object.hasOwn(projected.packages[0], 'format_kind'), false);
+    assert.equal(Object.hasOwn(projected.packages[0], 'params'), false);
+  });
+
   const formats = [
     ['image', { agent_url: SELLER, id: 'display_300x250_image', width: 300, height: 250 }],
     ['html5', { agent_url: SELLER, id: 'display_728x90_html', width: 728, height: 90 }],
