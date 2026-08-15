@@ -8,6 +8,7 @@
   },
   "changesets": [
     "add-additive-canonical-product",
+    "add-negative-capability-gates",
     "add-tmp-publisher-auth-runner",
     "bright-apes-dual-emit",
     "bright-cats-listen",

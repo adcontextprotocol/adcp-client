@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.0.0-rc.21
+
+### Minor Changes
+
+- fe823f7: Add `not_contains` capability gates and a `field_in_context_array` validator so conformance phases can grade omitted capability values and response membership in advertised sets.
+
 ## 13.0.0-rc.20
 
 ### Patch Changes
