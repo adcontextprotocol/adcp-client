@@ -446,6 +446,34 @@ describe('creative format delivery projection', () => {
     );
   });
 
+  test('deletes params alongside format_option_refs when the resolver fallback downgrades a package to legacy format_ids', () => {
+    const first = { agent_url: 'https://seller.example/formats', id: 'image_mrec' };
+    const second = { agent_url: 'https://seller.example/formats', id: 'image_leaderboard' };
+    const projected = projectMediaBuyCreativesForDelivery(
+      {
+        packages: [
+          {
+            product_id: 'multi-option-product',
+            format_option_refs: [
+              { scope: 'product', format_option_id: 'mrec' },
+              { scope: 'product', format_option_id: 'leaderboard' },
+            ],
+            params: { width: 300, height: 250 },
+          },
+        ],
+      },
+      'legacy',
+      'create_media_buy',
+      undefined,
+      context => (context.source === 'selector' ? [first, second] : undefined)
+    );
+
+    assert.deepStrictEqual(projected.packages[0].format_ids, [first, second]);
+    assert.equal(Object.hasOwn(projected.packages[0], 'format_option_refs'), false);
+    assert.equal(Object.hasOwn(projected.packages[0], 'format_kind'), false);
+    assert.equal(Object.hasOwn(projected.packages[0], 'params'), false);
+  });
+
   test('fails closed when a creative in a multi-option package has no unambiguous selection', () => {
     const refs = [
       { agent_url: 'https://seller.example/formats', id: 'image_mrec' },
@@ -474,6 +502,31 @@ describe('creative format delivery projection', () => {
       err =>
         err instanceof CreativeFormatProjectionError && err.message.includes('invalid or ambiguous creative mapping')
     );
+  });
+
+  test('deletes params alongside format_kind when downgrading a package selector to legacy format_ids', () => {
+    const projected = projectMediaBuyCreativesForDelivery(
+      {
+        packages: [
+          {
+            product_id: 'product-123',
+            format_kind: 'video_hosted',
+            params: { width: 640, height: 480 },
+            creatives: [{ creative_id: 'creative-1', name: 'Creative', format_kind: 'video_hosted', assets: {} }],
+          },
+        ],
+      },
+      'legacy',
+      'create_media_buy',
+      undefined,
+      () => ({ agent_url: 'https://seller.example/formats', id: 'video_hosted_v1' })
+    );
+
+    assert.deepStrictEqual(projected.packages[0].format_ids, [
+      { agent_url: 'https://seller.example/formats', id: 'video_hosted_v1' },
+    ]);
+    assert.equal(Object.hasOwn(projected.packages[0], 'format_kind'), false);
+    assert.equal(Object.hasOwn(projected.packages[0], 'params'), false);
   });
 
   const formats = [
