@@ -52,6 +52,7 @@ import {
   type SalesCorePlatform,
 } from '@adcp/sdk/server';
 import type { CanonicalProduct, GetProductsRequest } from '@adcp/sdk';
+import { toCanonicalFormatOptionsWithRoutes, type V2ProductFormatDeclaration } from '@adcp/sdk/v2/projection';
 import { buildGAMLikeRecipe, GAM_LIKE_OVERLAP, type GAMLikeRecipe } from '@adcp/sdk/mock-server';
 import type {
   AccountReference,
@@ -273,12 +274,13 @@ const accounts: AccountStore<NetworkMeta> = {
 // ---------------------------------------------------------------------------
 
 function canonicalFormatOptions(p: UpstreamProduct): CanonicalProduct['format_options'] {
-  const options = p.format_ids.map(id => {
+  const options: V2ProductFormatDeclaration[] = p.format_ids.map(id => {
     const durationSeconds = id.match(/(?:^|_)(\d+)s(?:_|$)/)?.[1];
     if (p.channel === 'video' || p.channel === 'ctv') {
       return {
         format_option_id: id,
         format_kind: 'video_hosted' as const,
+        v1_format_ref: [{ agent_url: PUBLIC_AGENT_URL, id }],
         params: durationSeconds ? { duration_ms_exact: Number(durationSeconds) * 1_000 } : {},
       };
     }
@@ -286,6 +288,7 @@ function canonicalFormatOptions(p: UpstreamProduct): CanonicalProduct['format_op
       return {
         format_option_id: id,
         format_kind: 'audio_hosted' as const,
+        v1_format_ref: [{ agent_url: PUBLIC_AGENT_URL, id }],
         params: durationSeconds ? { duration_ms_exact: Number(durationSeconds) * 1_000 } : {},
       };
     }
@@ -293,13 +296,15 @@ function canonicalFormatOptions(p: UpstreamProduct): CanonicalProduct['format_op
     return {
       format_option_id: id,
       format_kind: 'image' as const,
+      v1_format_ref: [{ agent_url: PUBLIC_AGENT_URL, id }],
       params: dimensions ? { width: Number(dimensions[1]), height: Number(dimensions[2]) } : {},
     };
   });
   if (options.length === 0) {
     throw new AdcpError('INVALID_REQUEST', { message: `product ${p.product_id} has no creative formats` });
   }
-  return [options[0]!, ...options.slice(1)];
+  const canonical = toCanonicalFormatOptionsWithRoutes(p.product_id, options).formatOptions;
+  return [canonical[0]!, ...canonical.slice(1)];
 }
 
 function projectProduct(p: UpstreamProduct, publisherDomain: string, recipe: GAMLikeRecipe): CanonicalProduct {

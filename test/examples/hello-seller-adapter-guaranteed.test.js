@@ -100,6 +100,14 @@ runHelloAdapterGates({
         });
         assert.ok(canonical?.structuredContent?.products?.[0]?.format_options?.[0], JSON.stringify(canonical));
         assert.equal(canonical.structuredContent.products[0].format_ids, undefined);
+
+        const transitional = await callTool('get_products', {
+          buying_mode: 'brief',
+          brief: 'premium inventory',
+          account,
+        });
+        assert.ok(transitional?.structuredContent?.products?.[0]?.format_options?.[0], JSON.stringify(transitional));
+        assert.ok(transitional?.structuredContent?.products?.[0]?.format_ids?.[0], JSON.stringify(transitional));
       },
     },
     {
