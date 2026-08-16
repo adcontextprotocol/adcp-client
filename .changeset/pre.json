@@ -45,6 +45,7 @@
     "fuzzy-pandas-report",
     "fuzzy-pandas-return",
     "grade-oauth-metadata-graph",
+    "grade-raw-product-responses",
     "grade-unavailable-creative-fixtures",
     "guard-unexpanded-creative-assets",
     "harden-ssrf-signature-and-oauth-callback",
