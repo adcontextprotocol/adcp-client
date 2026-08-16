@@ -38,6 +38,20 @@ export interface ProbeResult {
 }
 
 /**
+ * Attach an MCP session header after request signing has completed.
+ *
+ * Keeping this operation separate from the request builder makes the ordering
+ * explicit: neither `Signature-Input` nor `Signature` is recomputed, so the
+ * session identifier can never enter the covered-component set.
+ */
+export function attachMcpSessionHeader(
+  signedHeaders: Record<string, string>,
+  mcpSessionId: string | undefined
+): Record<string, string> {
+  return mcpSessionId ? { ...signedHeaders, 'Mcp-Session-Id': mcpSessionId } : signedHeaders;
+}
+
+/**
  * Send a signed HTTP request to an AdCP agent and capture the response fields
  * needed for conformance grading (status, WWW-Authenticate error code, body).
  *
@@ -131,9 +145,7 @@ export async function probeSignedRequest(signed: SignedHttpRequest, options: Pro
   // Attach Mcp-Session-Id after the signed headers so the header is not a
   // covered component — the signature over the signed body/headers is already
   // computed, and the session ID is orthogonal to the signature's integrity.
-  const outHeaders: Record<string, string> = options.mcpSessionId
-    ? { ...signed.headers, 'Mcp-Session-Id': options.mcpSessionId }
-    : signed.headers;
+  const outHeaders = attachMcpSessionHeader(signed.headers, options.mcpSessionId);
 
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeout);
@@ -247,6 +259,12 @@ export async function initializeMcpSession(
     options
   );
   if (result.error) return { sessionId: undefined, error: result.error };
+  if (result.status < 200 || result.status >= 300) {
+    return {
+      sessionId: undefined,
+      error: `MCP initialize returned HTTP ${result.status}`,
+    };
+  }
   return { sessionId: result.headers['mcp-session-id'] };
 }
 

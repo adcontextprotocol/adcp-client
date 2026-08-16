@@ -231,7 +231,10 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
       },
       options.initializeHeaders ?? {}
     );
-    mcpSessionId = init.sessionId; // undefined = stateless server; session-less is fine
+    if (init.error) {
+      throw new Error(`MCP initialize precondition failed: ${init.error}`);
+    }
+    mcpSessionId = init.sessionId; // undefined without an error = stateless server
   }
 
   const probeOpts = {
@@ -454,6 +457,9 @@ export async function gradeOneVector(
       },
       options.initializeHeaders ?? {}
     );
+    if (init.error) {
+      throw new Error(`MCP initialize precondition failed: ${init.error}`);
+    }
     mcpSessionId = init.sessionId;
   }
 

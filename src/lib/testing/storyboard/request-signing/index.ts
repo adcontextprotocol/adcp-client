@@ -93,6 +93,7 @@ export {
 export {
   probeSignedRequest,
   initializeMcpSession,
+  attachMcpSessionHeader,
   extractSignatureErrorCode,
   type ProbeOptions,
   type ProbeResult,

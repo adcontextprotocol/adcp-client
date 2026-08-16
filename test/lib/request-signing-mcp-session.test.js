@@ -6,20 +6,22 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-// Minimal unit test: verify header injection in probeSignedRequest by inspecting
-// the header forwarded to the fetch mock. The MCP session fix's correctness
-// guarantee is "Mcp-Session-Id is appended post-signing, not pre-signing" —
-// confirmed by the fact that probe.ts adds it to outHeaders after spreading
-// signed.headers (which already contains the RFC 9421 signature headers).
+test('MCP session injection preserves the already-computed signature headers byte-for-byte', () => {
+  const { attachMcpSessionHeader } = require('../../dist/lib/testing/storyboard/request-signing/probe.js');
+  const signedHeaders = {
+    'Content-Type': 'application/json',
+    'Content-Digest': 'sha-256=:signed-digest:',
+    'Signature-Input': 'sig1=("@method" "@target-uri" "content-digest");created=1',
+    Signature: 'sig1=:signed-bytes:',
+  };
 
-test('mcpSessionId option threads into ProbeOptions without being a signed component', () => {
-  // ProbeOptions type shape check — mcpSessionId is present and optional
-  // This test asserts the contract, not the HTTP behavior (that lives in
-  // integration tests against a real MCP server).
-  /** @type {import('../../dist/lib/testing/storyboard/request-signing/probe.js')} */
-  const { probeSignedRequest } = require('../../dist/lib/testing/storyboard/request-signing/probe.js');
-  // The function should exist and be callable with the new ProbeOptions shape
-  assert.strictEqual(typeof probeSignedRequest, 'function');
+  const withSession = attachMcpSessionHeader(signedHeaders, 'session-123');
+
+  assert.strictEqual(withSession['Signature-Input'], signedHeaders['Signature-Input']);
+  assert.strictEqual(withSession.Signature, signedHeaders.Signature);
+  assert.strictEqual(withSession['Content-Digest'], signedHeaders['Content-Digest']);
+  assert.strictEqual(withSession['Mcp-Session-Id'], 'session-123');
+  assert.strictEqual(signedHeaders['Mcp-Session-Id'], undefined, 'the signed header object is not mutated');
 });
 
 test('initializeMcpSession is exported from the request-signing barrel', () => {
@@ -27,11 +29,8 @@ test('initializeMcpSession is exported from the request-signing barrel', () => {
   assert.strictEqual(typeof mod.initializeMcpSession, 'function');
 });
 
-test('GradeOptions.mcpSessionId empty string disables auto-init sentinel', () => {
-  // '' is the opt-out sentinel: gradeRequestSigning / gradeOneVector skip the
-  // initialize handshake when mcpSessionId !== undefined (including '').
-  // Validate the sentinel is a string (type-level); behaviorally tested in
-  // integration. The key invariant: undefined = auto-init; '' = no session.
-  const sentinel = '';
-  assert.strictEqual(sentinel !== undefined, true, 'empty string is not undefined — used as opt-out sentinel');
+test('empty MCP session sentinel leaves the signed header object unchanged', () => {
+  const { attachMcpSessionHeader } = require('../../dist/lib/testing/storyboard/request-signing/probe.js');
+  const signedHeaders = { Signature: 'sig1=:signed-bytes:' };
+  assert.strictEqual(attachMcpSessionHeader(signedHeaders, ''), signedHeaders);
 });
