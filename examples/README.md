@@ -58,6 +58,8 @@ The framework resolves buyer agents, status-gates them, and enforces `sync_accou
 - **`basic-a2a.ts`** - Simple A2A protocol client usage with multi-agent testing
 - **`env-config.ts`** - Loading agent configuration from environment variables
 - **`conversation-client.ts`** - Conversation-aware client with input handlers
+- **`proposal-negotiation-buyer.ts`** - AdCP 3.2 revision, counteroffer, hold, and acceptance flow
+- **`proposal-negotiation-seller.ts`** - Complete-batch validation and atomic proposal persistence
 
 ### Multi-specialism + multi-tenant (account-routed)
 
@@ -149,6 +151,7 @@ const client = ADCPMultiAgentClient.fromEnv();
 AdCP tools available on `AgentClient`:
 
 - `getProducts()` - Discover advertising products
+- `refineProposals()` - Revise or finalize compact proposals with capability-aware preflight
 - `listCreativeFormatsLegacy()` - Inspect the legacy named-format catalog during migration
 - `createMediaBuy()` - Create a media buy
 - `updateMediaBuy()` - Update a media buy

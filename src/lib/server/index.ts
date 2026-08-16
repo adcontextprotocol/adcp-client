@@ -375,6 +375,7 @@ export type {
   HandlerContext as LegacyHandlerContext,
   SessionKeyContext,
   MediaBuyHandlers as LegacyMediaBuyHandlers,
+  ProposalNegotiationHandlers as LegacyProposalNegotiationHandlers,
   SignalsHandlers as LegacySignalsHandlers,
   CreativeHandlers as LegacyCreativeHandlers,
   GovernanceHandlers as LegacyGovernanceHandlers,
@@ -523,6 +524,36 @@ export type {
 // future major. New code should not pin against `legacy/v5` either —
 // reach for `createAdcpServerFromPlatform` first.
 export * from './decisioning';
+export {
+  createProposalRefinementHandler,
+  createProposalSuccessor,
+  proposalRefinementScopeFromContext,
+  classifyProposalRefinementFailure,
+  defineProposalRefinementCapabilities,
+  ProposalSellerPreflightError,
+} from '../negotiation/seller';
+export { proposalTermsDigest, verifyProposalTermsDigest } from '../negotiation/verification';
+export type {
+  ProposalCommercialEvaluator,
+  ProposalFailureClassification,
+  ProposalEvaluationContext,
+  ProposalRefinementHandler,
+  ProposalRefinementHandlerOptions,
+  ProposalRefinementStore,
+  ProposalRefinementTransaction,
+  ProposalRefinementScope,
+  ProposalSourceExpectation,
+  ProposalSourceSnapshot,
+  ProposalSuccessorInput,
+} from '../negotiation/seller';
+export type {
+  CanonicalProposal,
+  ProposalCommercialTerms,
+  ProposalRefinementCapabilities,
+  ProposalRefinementResult,
+  RefineProposalsRequest,
+  RefineProposalsResponse,
+} from '../negotiation/types';
 
 // ---------------------------------------------------------------------------
 // Ctx-metadata store — opaque-blob round-trip for adapter-internal state

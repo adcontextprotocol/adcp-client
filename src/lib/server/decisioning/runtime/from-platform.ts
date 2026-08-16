@@ -2193,7 +2193,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // never negotiate protocol behavior. Only the configured AdCP schema pin
   // determines whether this server may advertise the 3.1 feature bit (3.2+
   // makes canonical creatives part of the release contract itself).
-  const configuredAdcpVersion = opts.adcpVersion ?? ADCP_VERSION;
+  const configuredAdcpVersion = opts.adcpVersion ?? (opts.proposalNegotiation ? '3.2.0' : ADCP_VERSION);
   const configuredRelease = parseAdcpRelease(configuredAdcpVersion);
   if (!configuredRelease) {
     throw new PlatformConfigError(

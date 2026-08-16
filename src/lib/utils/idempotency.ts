@@ -37,6 +37,9 @@ function deriveMutatingTasks(): Set<string> {
       result.add(toolName);
     }
   }
+  // Forward surface: refine_proposals is normative in AdCP 3.2 but is
+  // available on protocol latest before the SDK's generated schema pin moves.
+  result.add('refine_proposals');
   return result;
 }
 

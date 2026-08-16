@@ -721,6 +721,7 @@ export type SyncCreativesTaskOptions = CreativeDeliveryTaskOptions & {
 
 const PRIMARY_ADCP_TASK_NAMES = {
   get_products: true,
+  refine_proposals: true,
   create_media_buy: true,
   update_media_buy: true,
   sync_creatives: true,
