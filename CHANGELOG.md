@@ -1,5 +1,257 @@
 # Changelog
 
+## 13.0.0
+
+### Major Changes
+
+- 18a55f1: fix(server): align `list_accounts` handlers with the wire request, type resolved account modes, and project optional pagination totals
+- 76775e2: Stop emitting completion webhooks for synchronous terminal responses by default, as required by AdCP. Existing adopters can temporarily restore the previous duplicate-delivery behavior with the explicit, non-conformant `autoEmitCompletionWebhooks: true` compatibility option.
+- 5c52875: Allow `create_media_buy` server handlers to return the protocol's structured multi-error payload arm without unsafe casts.
+
+  BREAKING NOTE: Code that reads success-only fields from `CreateMediaBuyPayload` must first narrow out the `errors` arm.
+
+- 607e2a6: Security hardening across the SSRF, request-signature, webhook, and OAuth-callback boundaries. Several items change behavior — read the notes before upgrading.
+
+  > **Breaking:** `reporting_webhook` now throws when you pass one explicitly with no credential available; `redirectToAuthorization` throws without `state`; signed requests on body-bearing methods require `req.rawBody`; webhook delivery no longer follows redirects; and `validateAgentUrl` enforces regardless of `NODE_ENV`.
+
+  **`createPinAndBindFetch` no longer follows redirects.** Both SSRF guards only ever saw the URL the caller passed: the synchronous scheme/CIDR pre-check runs before the request, and undici skips `connect.lookup` for IP-literal hosts. A `Location:` hop therefore reached its destination unevaluated, so a buyer-registered webhook host could answer `302 Location: https://169.254.169.254/…` and take the signed POST to the cloud metadata service. A 3xx now surfaces to the caller as an ordinary non-2xx response, and the mode is forced rather than defaulted — passing `redirect: 'follow'` will not re-enable following. Callers that need to follow a hop should re-enter the fetch with the new URL so the full policy runs on it. `targeting-helpers` already did this at its call site; webhook delivery did not.
+
+  **`createExpressVerifier` no longer verifies against an empty body surrogate.** `resolveRawBody` demanded `req.rawBody` only when `content-length > 0`. `Transfer-Encoding: chunked` requests carry no `Content-Length`, so they fell through and the entire pipeline evaluated a body of `''` — `hasBody` came from the same value, waiving the `content-type` coverage requirement, and a `content-digest` comparison hashed the empty string — after which `next()` handed a downstream parser's real body to the handler. The test is now for positive proof that **no** body exists, rather than for evidence that one does. Enumerating body signals cannot work: HTTP/2 forbids `Transfer-Encoding` outright and makes `content-length` optional, so a DATA-frame body carries neither header and slipped through a signal-based check. `req.rawBody` is therefore required on any body-bearing method (`POST`/`PUT`/`PATCH`/`DELETE`), as well as whenever a `Content-Length`, `Transfer-Encoding`, or already-populated `req.body` indicates a body — failing closed with `request_signature_header_malformed` and an error that names the exact middleware to add. A `Buffer` `rawBody` is now accepted too, which is what the canonical `express.json({ verify })` recipe actually produces; only accepting a string 401'd correctly-wired apps.
+
+  **`validateAgentUrl` shares one SSRF policy with discovery probes.** It previously enforced _only_ when `NODE_ENV === 'production'`, so an unset or orchestrator-stripped `NODE_ENV` disabled the check entirely. It now delegates to `classifyProbeUrl`, which is deliberately **not** keyed on `NODE_ENV` — a staging image running `NODE_ENV=test` must not inherit a looser SSRF posture than production. The range policy: loopback allowed (abusing it already requires on-host access, and every local dev loop and mock-server test targets it), RFC-1918/link-local/ULA refused unless the operator sets `ADCP_ALLOW_INTERNAL_PROBES=1` (the CLI's existing `--allow-http` switch), cloud metadata refused even then. Hand-rolled literal comparisons are gone in favour of the `net/address-guards` CIDR classifiers, which fixes bracketed `[::1]` (Node returns the bracketed form, so the old `'::1'` compare never matched), `127.0.0.2`, CGNAT, and IPv4-mapped IPv6, and stops treating registered names like `10.example.com` as private.
+
+  Two gaps closed in the shared policy while wiring this up: cloud-metadata **hostnames** (`metadata.google.internal` and friends) are now refused — they are registered names, so no CIDR classifier ever saw them, and GCP metadata-by-name needs no IP literal — and a trailing root dot (`localhost.`, `metadata.google.internal.`) no longer bypasses name matching. `net/address-guards` also gains `192.0.0.0/24` (Oracle Cloud IMDS lives at `192.0.0.192`, outside the `169.254.0.0/16` everyone else uses), `192.88.99.0/24`, and `240.0.0.0/4`, which `WEBHOOK_SSRF_POLICY` already denied — the two tables had diverged.
+
+  **This function does not resolve DNS and never did** — it is a literal-host gate, not a rebinding defense. DNS-level protection lives in `ssrfSafeFetch` / `createPinAndBindFetch`, and the MCP/A2A transports do not yet route through them.
+
+  **Webhook registrations no longer advertise a placeholder credential.** `push_notification_config.authentication` and `reporting_webhook.authentication` were emitted with the constant `placeholder_secret_min_32_characters_required` whenever no `webhookSecret` was configured. Per `push-notification-config.json` that block is a scheme _selector_, not a fallback: its presence opts the seller into legacy HMAC-SHA256 and its absence selects the RFC 9421 webhook profile. The placeholder therefore downgraded every secretless webhook to legacy HMAC keyed by a value that shipped in the source.
+
+  The two sites differ because their schemas do:
+  - `push_notification_config.authentication` is optional, so the block is simply **omitted** when no real secret backs it, which selects RFC 9421.
+  - `reporting-webhook.json` makes `authentication` **required** for all of AdCP 3.x (the requirement lifts in 4.0), so the block cannot be omitted and no honest value exists. The library's automatic `reporting_webhook` injection is therefore **skipped** with a one-time warning when there is no `webhookSecret` and the caller supplied no `authentication`. The `create_media_buy` itself is unaffected. Set `webhookSecret`, or pass an explicit `reporting_webhook.authentication`, to keep automated reporting delivery.
+
+  **Receiving without a `webhookSecret` now fails closed.** `verifyAndParseWebhook` returns a new `webhook_unverifiable` code instead of accepting: with no secret the legacy HMAC profile has nothing to verify against, and this client does not yet verify the RFC 9421 profile that an omitted `authentication` block selects, so accepting would dispatch a caller-supplied payload to async and activity handlers and update task status on nothing but its shape. Set `allowUnauthenticatedWebhooks: true` to opt back in — only safe when the receiver route is unreachable from outside your network.
+
+  The CLI's `--wait` path registered a hardcoded `webhookSecret: 'cli-webhook-secret'`, a constant published in the npm tarball; because `authentication` is a selector, that actively downgraded every `--wait` webhook to legacy HMAC keyed by a value anyone can read out of the package. It now generates a per-invocation random secret.
+
+  `push_notification_config` is version-gated: v2.5 makes `authentication` **required** and has no 9421 selector semantics, so omitting the block there would be schema-invalid rather than a mode selection. With no secret, a v2 seller gets no registration (and a warning) instead of a fabricated credential.
+
+  `reporting_webhook`'s `authentication` is also treated as **atomic** rather than field-merged. A field-level merge crossed `schemes` from the caller with `credentials` from `webhookSecret`, so a caller passing `schemes: ['Bearer']` with no credential had the HMAC shared secret registered as a Bearer token — which the seller then sends in cleartext on every delivery. And a caller who passes `reporting_webhook` explicitly with no credential available now gets an **error** rather than having the field silently dropped; only the library's own auto-injection is skipped quietly.
+
+  **The CLI OAuth callback is bound to the request that started it.** `CLIFlowHandler` generated a random `state` but never compared it — the loopback callback resolved the pending authorization on the first request to reach the path, letting any local process inject or cancel a flow, with code substitution available wherever the authorization server does not strictly bind PKCE to the code. The handler now captures `state` from the authorization URL and requires a constant-time match on the callback, **before** interpreting any other callback parameter — reading `error=access_denied` first would have left the cancellation half of the same hole open, letting any local process abort a login with no knowledge of the state. `redirectToAuthorization` throws if the URL carries no `state` or uses a non-http(s) scheme.
+
+  Scope, stated plainly: this defeats a process that cannot see the authorization URL, which is the ordinary case. It does not defeat a same-user process that reads the URL out of this process's argv while the browser opens. PKCE is what protects the code exchange there.
+
+  **Windows browser launch no longer goes through `cmd.exe`.** `spawn('cmd', ['/c', 'start', '', url])` makes the interpreter the child process, so `cmd` parses `&`, `|`, and `^` in the URL even with `shell` unset — and authorization URLs contain `&` by construction and derive partly from a discovered `authorization_endpoint`. Now uses `rundll32 url.dll,FileProtocolHandler`.
+
+  **Two smaller fixes.** The webhook verifier's loopback exemption from the https-only `@target-uri` rule used `hostname.startsWith('127.')`, which also matched registered names like `127.attacker.example` that resolve anywhere; it now requires a real IPv4 literal in `127.0.0.0/8`, `localhost`, or IPv6 loopback. `PropertyListAdapter.generateToken` built a returned `auth_token` from `Math.random` and now uses `crypto.randomBytes`.
+
+  **`testAgent` no longer logs credentials.** It passed the whole `TestOptions` object to `logger.info`, and the default logger `JSON.stringify`s its context to `console.log` — so bearer tokens, Basic passwords, OAuth access/refresh tokens, client-credential secrets, test-kit API keys, and caller-supplied header values all went to stdout and CI logs on every run. The context is now built from an **allowlist** of loggable fields: masking known secrets was not enough, because `TestOptions._client` holds a live client whose own fields lead straight back to the same credentials, so a denylist over that object graph could not be made safe. Shapes are kept — which auth scheme ran, which header names were in play — since that is the debuggable part.
+
+  **Debug logs share one redactor, and it now covers both webhook registrations.** `mcp.ts` masked only the idempotency key, the sibling Tasks path also masked `push_notification_config.authentication`, and the A2A path masked `token` as well — three behaviors across three call sites. All now use one helper.
+
+  That helper masks `authentication` and `token` on **both** `push_notification_config` and `reporting_webhook`. The second matters more than it looks: `reporting-webhook.json` makes `authentication` required for all of AdCP 3.x, so a `create_media_buy` registering reporting always carries a real HMAC secret in `reporting_webhook.authentication.credentials` — on the call most likely to be debug-logged. Masking only the push config left that in plaintext.
+
+  **Redirecting webhook endpoints fail fast instead of burning the retry budget.** `isTerminalStatus` treated 3xx as retryable, so a receiver that permanently redirects (apex→www, http→https, trailing-slash canonicalization — the most common webhook misconfiguration) consumed every attempt and reported a bare `HTTP 302`. A redirect is now terminal, the error names the `Location` and why it was not followed, and the operator bucket is `HTTP_REDIRECT` rather than `UNKNOWN`.
+
+  **Docs:** the Express verifier snippets in `README.md` and `docs/guides/SIGNING-GUIDE.md` called a `rawBodyMiddleware()` that does not exist anywhere in the repo, so following them produced a blanket 401 under the stricter raw-body guard. Both now show the `express.json({ verify: adapter.rawBodyVerify })` form.
+
+  **`structuredSerialize` / `structuredDeserialize` treat `__proto__` as data.** `JSON.parse` produces a genuine own `__proto__` key, so the `out[key] = …` rebuild reached `Object.prototype`'s setter and replaced the result object's prototype with caller data instead of copying a field. Assignment now goes through `Object.defineProperty`, so the key round-trips losslessly as an own property.
+
+- 499132f: Make canonical creatives the primary SDK contract. Product discovery now drops
+  legacy `format_ids` by default, outbound delivery projects canonical creatives
+  only at a proven legacy boundary, and modern server platform handlers normalize
+  legacy inputs before adopter code runs. Add an explicit custom-format converter
+  for seller-owned legacy refs that cannot be mapped by the bundled registry.
+  Raw named-format utilities, response builders, v5 handler-bag types, and the
+  content-standards adapter now use explicit `Legacy` / `legacy` public names.
+  The legacy create/update/sync compatibility methods normalize custom formats
+  through configured converters at the same fail-closed canonical boundary.
+  Pre-resolved publisher/community catalog snapshots participate through exact
+  owner-scoped aliases, and same-client route caching survives JSON product
+  round trips without exposing legacy identifiers. Products with no canonical
+  option are omitted because canonical `format_options: []` is not schema-valid
+  and surface sanitized non-fatal errors in the protocol `errors[]` array. A
+  valid legacy format-agnostic `format_ids: []` response uses the distinct
+  `CANONICAL_PRODUCT_FORMATS_UNAVAILABLE` advisory rather than pretending a
+  catalog lookup failed.
+  Bundled AgenticAdvertising.org catalog aliases now cover deployed static,
+  HTML5, hosted-video, and 30-second audio legacy IDs; fixed dimensions and
+  durations are recovered from catalog-authored requirements and contradictions
+  fail closed.
+  One catalog snapshot can now configure both legacy-to-canonical discovery and
+  canonical-to-legacy delivery through `projectionAdaptersFromCatalogSnapshots`,
+  including persisted selections that no longer carry private in-memory routing
+  metadata.
+  Uniquely AAO-published legacy IDs also upgrade when a deployed seller emitted
+  its own creative-agent URL; collisions and contradictory inline parameters
+  still fail closed. Generated option IDs are stable across seller array
+  reordering, and same-client reverse delivery retains the original seller tuple;
+  process-boundary delivery still requires a durable catalog adapter or resolver.
+  Async creative-task associations retain one shared frozen account/package
+  routing snapshot across task aliases. Submitted executor state and asynchronous
+  product-policy state are compacted to the minimum lifecycle, routing, and
+  policy fields, and terminal deferred continuations release their persisted
+  request state, so inline assets and webhook credentials are not retained.
+- e8cc665: Remove `RegistryClient.resolveBrandHierarchy()`, `resolveBrandHierarchies()`, and their compatibility-only types. The public v3 registry deliberately retired those undeclared routes; use `lookupBrand()` and require `relationship_trust` to be `mutual` or `inline` before extending trust to `house_domain`. Add typed fresh-origin lookup support and document how consumers should interpret provenance, freshness, and migration evidence.
+- 966e97a: Remove the legacy bare `RegExp` and `false` third-argument forms from `computePayloadDigestSha256()`. Pass custom redaction as `{ redactPattern }` and identify already-normalized payloads with `{ prenormalized: true }`.
+- 7273918: **Breaking:** `createTenantStore`'s `refAccess` is now required, with no default.
+
+  It previously defaulted to `'ref-routed'`, under which `accounts.resolve` returns whatever tenant the buyer's ref names without consulting the authenticated principal. That is correct for an agency hub whose single credential legitimately spans tenants — and a cross-tenant **spend** hole for a hub whose tenants are unrelated clients, since `resolve` is the account path for `create_media_buy` and `update_media_buy`. Nothing in the code can distinguish those two deployments, so a default silently picked one.
+
+  Both values remain available and neither behavior changed; only the choice is now explicit.
+  - `'auth-scoped'` — a ref resolving to a tenant other than `resolveFromAuth(ctx)` returns `null` (framework emits `ACCOUNT_NOT_FOUND`). Correct for most multi-tenant deployments.
+  - `'ref-routed'` — previous default. Keep it only if one credential is _supposed_ to span tenants, and layer a `resolve-presets` guard (`requireAccountMatch` / `requireAdvertiserMatch` / `requireOrgScope`) via `composeMethod`.
+
+  Migration is one line per `createTenantStore` call. TypeScript reports it at the call site; the helper also throws at construction on a missing or unrecognized value, so JS adopters and `as any` casts can't fall through to the permissive branch silently.
+
+  Note that `refAccess` governs `resolve` **only** — `upsert` / `syncGovernance` enforce the per-entry tenant gate either way. An adopter who had verified the sync-tool gate was never covered on `resolve`, which is what made the old default easy to miss.
+
+  `skills/build-holdco-agent/SKILL.md` — the doc an adopter actually follows — never mentioned `refAccess` while its front-matter promised "per-tenant data isolation". It now documents the choice, adds a "What the helper does NOT guarantee" section, and `skills/cross-cutting.md` no longer describes the helper as an unqualified isolation gate.
+
+- 7138e1a: **Breaking:** Compliance results no longer serialize scenarios twice.
+
+  `ComplianceResult.tested_tracks` is now `TestedTrackEntry[]`. Reference entries retain track identity, status, label, observations, duration, mode, and `_view: 'reference'`, but no longer carry `scenarios` or `skipped_scenarios`; those arrays live only on canonical `ComplianceResult.tracks` entries. Full `--json` output therefore serializes each scenario once.
+
+  Consumers reading `tested_tracks[n].scenarios` must iterate `tracks` instead. Custom fixtures that used `_view: 'reference'` on `TrackResult` must use `TestedTrackEntry`; `TrackResult._view` now accepts only `'canonical'`. CI consumers that need a stable, compact report should use `buildComplianceSummary()` from `@adcp/sdk/testing` (also re-exported by `@adcp/sdk/compliance`) or `--summary-output`. The new `TestedTrackEntry` type is exported from both package paths.
+
+### Minor Changes
+
+- f8a3991: Expose `toAdditiveCanonicalProduct()` and `withAdditiveCanonicalFormatOptions()` for compatibility consumers that need URL-free canonical format declarations, preserved top-level `format_ids`, and serializable exact legacy-route sidecars.
+- fe823f7: Add `not_contains` capability gates and a `field_in_context_array` validator so conformance phases can grade omitted capability values and response membership in advertised sets.
+- a719f6c: Add first-class AdCP 3.2 proposal negotiation APIs for typed buyer requests/results, capability-aware preflight, normative response verification, retry/finalization orchestration, and seller-side atomic batch handling.
+- 1df96b8: Add a guarded, credential-profile-neutral Trusted Match publisher-auth compliance runner for absent and invalid Context Match and Identity Match credentials.
+- bb76fee: Prevent transport diagnostics from deadlocking on large response bodies, expose declaration-level canonical format projection with durable legacy routes, add structured `RegistryClient` HTTP errors, and let `adcpError()` echo request context consistently across its response layers. Instrumented calls that previously stopped after `request_started` on a large response can now complete and emit `response_received` normally.
+- 0e4744a: Honor storyboard advisory validation severity: preserve failed advisory findings without failing their steps, promote expiry-gated advisories against the runner capability semver, and expose advisory counts in machine and human summaries. Unknown future validation checks now follow the runner-output contract by grading not_applicable across runner/spec version skew instead of producing a false agent verdict.
+- 3861d4a: Expose `PublishedPostAsset`, `ZipAsset`, `CardAsset`, `PixelTrackerAsset`, `VASTTrackerAsset`, and `DAASTTrackerAsset` from the package root and `@adcp/sdk/types`, and include every generated registry-backed variant in `AssetInstance`.
+
+  BREAKING NOTE: exhaustive `AssetInstance` switches must add cases for `zip`, `published_post`, `card`, `pixel_tracker`, `vast_tracker`, and `daast_tracker`. These are additive protocol variants that the SDK previously omitted from its public union.
+
+- 9f62965: Tighten generated canonical delivery-metric and postal-system authoring types to match their JSON Schemas. Code using those standalone canonical types must now provide `content_id`, `keyword`, `match_type`, `geo_level`, `geo_code`, `country`, and `system` where the protocol requires them; the generated postal-system Zod validator now enforces the same contract.
+
+  Buyer-side `GetMediaBuyDeliveryResponse` types retain response-local optional compatibility aliases for legacy sellers that omit the newer currency, package pricing, and breakdown identifier fields. Existing canonical delivery-metric exports from `@adcp/sdk/types/tools.generated` remain available as strict re-exports.
+
+- 90711da: Add the capability-gated OAuth metadata graph grader for the AdCP 3.2 compliance bundle, including bounded per-hop SSRF-safe discovery, exact issuer validation, shared protected-resource normalization, and the upstream deterministic vector corpus. Unknown authored storyboard checks now fail closed instead of producing a false-green not-applicable result.
+
+  Behavior changes: unrecognized authored check values now fail validation instead of passing as `not_applicable`, intentionally enforcing #2455's security-grade release-blocker requirement rather than runner-output-contract v2.0's older fail-open forward-compatibility rule. The existing `resource_equals_agent_url` check now uses the shared security-storyboard resource comparison: scheme and host case plus exact default ports are normalized, while paths (including a trailing slash), userinfo, query strings, and fragments remain byte-significant. Agents that previously passed only because those resource components were discarded may now fail that check.
+
+- f294d53: Grade storyboards with the canonical `fixture_unavailable` reason when the selected test kit cannot synthesize a seller-required creative asset slot. Preflight future directives before intervening side effects, preserve slot-level diagnostics, and use exact text-slot mappings.
+- 65e6f0b: Add a validated RFC 8707 resource override to web and provider OAuth flows, preserve it during token refresh, support explicit removal, and add an opt-in Auth0 `audience` authorization parameter.
+- 16c61f2: Upgrade the bundled AdCP protocol schemas and generated SDK surfaces to 3.1.10.
+
+  This release adds Retina display catalog mappings for 2x-only and required 1x/2x rendition sets across the standard display sizes. It also updates experimental Trusted Match to provider-local TMPX slots, enforces its provider/router/publisher privacy boundaries at runtime, and preserves deprecated aliases for the pre-3.1.10 public names.
+
+- 4abd5e9: Add a raw-HTTP Trusted Match Context router conformance replay primitive with runner-hosted provider fixtures and an operator-owned registration seam.
+- 7711a84: Resolve AdCP 3.2 storyboard product and pricing-option fixture handles through ordered seed/discover strategies, with schema-annotated request substitution and machine-readable resolution evidence.
+- a63c233: Restore legacy creative identity routes by allowing custom `sync_creatives` handlers to fill an omitted sales method, preserving negotiated legacy `list_creatives` filters, keeping explicit legacy client methods unprojected, and exposing a serializable route sidecar for process-safe canonical-to-legacy delivery.
+- 6d1d339: Fail closed before the `expect_rate_limit_not_replayed` storyboard probe sends mutating requests. Runs must now provide both the `rate_limit_trip_runner` contract and top-level `allowLiveSideEffects: true`; otherwise the probe skips with canonical `unsatisfied_contract` and makes no agent calls. This option is independent from `request_signing.allowLiveSideEffects`, which controls request-signing vectors only.
+
+### Patch Changes
+
+- 89d925c: Preserve legacy format references on AdCP 3.1 canonical product responses so transitional buyers receive the protocol's dual-emission wire shape.
+- 7debbe6: Update the modular MCP client to 2.0.0-beta.5 and reuse authorization-scoped modern discovery results, including across OAuth endpoint discovery and read-only reconnects.
+- 3594440: Upgrade the bundled AdCP protocol schemas, generated types, and compliance surfaces from 3.1.13 to signed release 3.1.14.
+- 13921c9: Upgrade the signed AdCP protocol and compliance bundle from 3.1.14 to 3.1.15, including the corrected rate-limit exhaustion grading.
+- 5901786: Prevent storyboard runs from mixing test-kit and storyboard compliance lines, and send the required MCP Streamable HTTP Accept media types during capability discovery.
+- bc7c0d7: Upgrade the modular MCP client, Node transport, and server dependencies to the stable 2.0.0 release. Preserve HTTP 5xx discovery failures instead of treating them as evidence of a legacy MCP endpoint.
+- 1f9e54f: Structurally match JSON-valued entries in storyboard `contains` and `not_contains` capability gates, including object-valued governance task declarations.
+- fde0baf: Add an `expect_no_webhook` storyboard assertion that verifies zero matching webhook deliveries during a bounded observation window.
+- 563fe56: Accept canonical `format_kind` identities in strict `list_creatives` response validation while retaining legacy `format_id` compatibility.
+- f01ac27: Fix capability normalization to expose portfolio `primary_channels` and `primary_countries` from spec-compliant sales agents.
+- 3594440: Fix compliance-line schema selection, legacy media-buy handler routing, storyboard validation and creative-wire hints, and generated Zod constraints for creative assets and structured format references.
+- d3e3f24: Omit the media-buy capability block from creative-only platforms unless they explicitly declare media-buy features.
+- 52f69c7: Fix `testCreativeSync()` fixture to be schema-valid: add `asset_type: 'image'` discriminator on `assets.primary`, preserve `agent_url` in the string-format fallback path via object spread, and add `idempotency_key` to the `sync_creatives` call envelope.
+- 9689007: Keep testing-scenario creative fixtures schema-valid by adding the inline image discriminator and filling missing format owners from the seller without overwriting explicit creative-agent ownership.
+- 61bb944: Treat ERA_NEGOTIATION_FAILED as a legacy-era signal in probeModernMCPConnection, attemptModernCall, and tryListModernMCPTools. Servers that respond to the server/discover probe with a malformed envelope (e.g. id: null) now fall back to the v1 transport path instead of surfacing "None responded to MCP protocol."
+- 9939304: Correct the `getProducts` API example to use a schema-valid brief request and clarify that brand context is optional.
+- 3681669: Fix source builds in hoisted dependency layouts by replacing the install-location-dependent `structured-headers` TypeScript path mapping with a version-pinned local declaration.
+- e73c50a: Keep broad `list_accounts` storyboard requests unscoped instead of injecting a noncanonical root brand or a synthetic account filter, and make stripped-field notices identify request payload drift without incorrectly directing agents to declare noncanonical fields.
+- c5636e9: Align the modular MCP client, Node transport, and server dependencies on 2.0.0-beta.5.
+- 3189ea8: Emit the canonical `rate_limit_not_triggered` detail when a rate-limit trip exhausts its attempts without observing a `RATE_LIMITED` response. Preserve the passing skipped-step contract while surfacing independent assertion failures through compliance reports.
+- 6090920: Fix storyboard account selection for default implicit-account capabilities and agency-operated brands; reuse and gracefully close caller-owned MCP workflow sessions while treating session 404s as terminal and never implicitly replaying ambiguous tool-call failures; and surface schema-invalid `get_adcp_capabilities` responses as structured preflight notices.
+- 0149983: Use request-scoped seller capabilities for protocol-version adaptation instead of stale capabilities cached from another request context. Add an explicit raw storyboard response projection so compatibility scenarios can grade dual legacy and canonical format declarations without changing the seller request.
+- 6e09fd1: Include migration guides in the published package so README links work for installed consumers.
+
+  Add `mergeSeedProductLegacy` to `@adcp/sdk/testing` as an explicit typed entry point for raw legacy product fixtures. It delegates to the existing product seed merge behavior and preserves the input subtype.
+
+- ec435ef: Reject replay test vectors in `adcp signing verify-vector` by preloading nonce fixtures with the request's canonical target scope.
+- 3999a50: Honor explicit canonical creative-wire requests in pre-3.2 storyboards and use canonical product catalogs for fixture discovery.
+- 1c9f083: Expand seller-declared required creative assets from storyboard test-kit fixtures before dispatch, and cover nested `$context` substitutions inside request arrays.
+- 2f8b886: Enforce `TaskOptions.timeout` as an absolute wall-clock deadline across discovery, capability preflight, and MCP/A2A tool execution. The SDK now composes the deadline with caller cancellation, aborts in-flight protocol work, surfaces `TaskTimeoutError`, and keeps `workingTimeout` as a separate resettable progress timeout.
+- 6b2ba73: Grade webhook receiver storyboards as not applicable when no replay receiver URL is configured, instead of reporting an all-skipped run as failing.
+- 8868b28: Grade webhook replay storyboards as not applicable when no inbound receiver URL is configured.
+- 2112778: Honor storyboard-level assertion failures in compliance track and scenario verdicts, and preserve their diagnostics as structured error observations without incrementing failed-step counters.
+- b226ab8: Make schema-compliance `get_products` storyboard steps grade raw protocol responses by default so SDK convenience projections cannot rewrite conformance evidence. Flow storyboards and fixture seeding keep canonical SDK projection, while product-discovery request wire selection remains authored or negotiated independently.
+- bd97b6a: Reject unexpanded storyboard creative-asset directives before client dispatch and expose the expansion helpers through `@adcp/sdk/testing`.
+- 3594440: Harden agent transports and OAuth discovery against DNS rebinding and redirect-based SSRF, authenticate and correlate CLI async webhooks, fail closed when browser OAuth state binding is omitted, verify signed schema inputs in release automation, and restrict privileged issue-triage commands to trusted collaborators.
+
+  Migration notes:
+  - Rename `transport.fetchFn` to `transport.trustedFetchFn` and OAuth discovery/web-flow `fetch` hooks to `trustedFetchFn`. The deprecated names still work and warn; setting both to different functions throws.
+  - A `trustedFetchFn` owns DNS pinning and private-address policy. Prefer the built-in transport when possible.
+  - Private-DNS agents must opt in per client with `transport.allowPrivateIp: true`; loopback/private IP literals remain scoped to their exact initial origin.
+
+- ea02f07: Classify a failed storyboard-level `requires_capability` predicate as canonical `not_applicable` while preserving the legacy `capability_unsupported` detailed reason.
+- 774c5ff: Fall back to the legacy `initialize` handshake when a server refuses the
+  `server/discover` version-negotiation probe with 401/403 and the probe already
+  carried a static credential.
+
+  `mode: 'auto'` documents that "definitive legacy signals (and anything
+  unrecognized) fall back to the plain legacy `initialize` handshake", but the MCP
+  client's classifier treats 401/403 as the sole terminal probe outcome. A server
+  that rejects the modern discovery method while accepting the very same
+  credential on `initialize` and `tools/list` was therefore unreachable, and the
+  caller was told to supply an `auth_token` it was already sending.
+
+  The fallback is deliberately narrow. With no credential a probe 401 is the
+  server's own challenge and still reaches the caller, so the
+  `WWW-Authenticate`/RFC 9728 walk is unaffected; with an OAuth provider a 401
+  still propagates as the provider's cue to refresh. Only a static
+  token/header credential refused on the probe alone triggers the retry, and if
+  that credential really is bad the legacy connect fails on its own and surfaces
+  the server's 401.
+
+- 21a7b8e: Fix `createMediaBuy`/`updateMediaBuy` leaving an orphaned `params` object on a package after downgrading a canonical `format_kind` + `params` selector to the legacy `format_ids` shape, which produced a wire payload matching neither the canonical nor legacy contract.
+- 3605dec: Upgrade the bundled AdCP protocol schemas and generated SDK surfaces to 3.1.8.
+
+  This release expands the legacy-to-canonical creative mapping registry with `display_static` and twelve observed unsuffixed display size IDs. These formats now project deterministically to canonical image declarations while preserving exact dimensions when the legacy ID carries them. There are no wire-level schema changes from AdCP 3.1.7.
+
+  It also refreshes the generated AgenticAdvertising registry client types for relationship-trust metadata, live `brand.json` diagnostics, hosted record sources, and the current resolver limits and error responses.
+
+- f4ffcdc: Project `sync_creatives.assignments` from the AdCP 3 edge-list shape into the creative-keyed object required by AdCP 2.5 sellers. Assignment weights and placement restrictions now fail closed when targeting a 2.5 seller because that wire version cannot represent them. Callers that manually supplied the v2.5 object as a workaround should return to the public AdCP 3 array shape.
+
+  Refresh generated registry types for the latest canonical creative-capability, placement-summary, and registry-feed fields.
+
+- e9f70dc: Upgrade the bundled AdCP protocol schemas and compliance surfaces from 3.1.11 to 3.1.13.
+
+  There are no wire-level schema changes. The refreshed compliance bundle gates the asynchronous `create_media_buy` scenario on advertised controller support and skips per-agent billing-gate phases when the seller does not advertise agent billing.
+
+  The release also refreshes registry client types for canonical verification badge roles, per-role verified AdCP versions, structured invalid-role errors, and temporary-unavailability responses.
+
+- 6e09fd1: Refresh the bundled registry OpenAPI document and generated registry types with the latest additive brand provenance, diagnostics, probing, and organization-selection fields.
+- c2b48df: In `mcp` transport mode, the `signed_requests` grader now auto-initializes an MCP session via the `initialize` handshake before dispatching conformance vectors. The `Mcp-Session-Id` response header is attached to each subsequent probe request _after_ signing — `Mcp-Session-Id` is not a covered component per RFC 9421, so signatures remain valid. Negative vectors still reach the verifier before MCP session dispatch (the signature check fires at the HTTP middleware layer, ahead of session routing). A new `initializeMcpSession` helper is exported from `@adcp/sdk/testing/storyboard/request-signing` for callers that pre-initialize once and reuse the session ID across many vectors. The `GradeOptions.mcpSessionId` / `StoryboardRunOptions.request_signing.mcpSessionId` field lets callers pass a pre-acquired session ID to avoid per-vector round-trips; pass `''` to opt out of auto-initialization for stateless streamable-HTTP agents.
+- c2b48df: The `signed_requests` storyboard's vector dispatch now defaults to `transport: 'mcp'` — wrapping each conformance vector in a `tools/call` envelope re-signed against the agent's actual MCP endpoint — instead of replaying the fixtures' recorded REST-binding targets verbatim, which routed to nonexistent per-task paths and graded every vector as a 404 against MCP-transport agents (adcontextprotocol/adcp#6548). REST-binding agents opt back in with `request_signing.transport: 'raw'`.
+- f8f24fb: Soft-fail legacy format_ids projection for canonical wire mode. When a package's legacy format_ids cannot be converted to canonical format_option_refs, return the package unchanged rather than throwing so get_media_buys responses for existing buys remain usable.
+- 0ec560c: Upgrade the bundled AdCP protocol schemas and generated SDK surfaces to 3.1.6.
+
+  This release expands the v1-to-canonical creative format mapping registry with nine observed legacy video and audio format IDs, preserving their duration, dimensions, and VAST delivery constraints during projection. It also refreshes protocol metadata, documentation, compatibility declarations, and generated source references. There are no wire-level schema changes from AdCP 3.1.5.
+
+- 0852df0: Sync `schemas/registry/registry.yaml` and `src/lib/registry/types.generated.ts` with the upstream AdCP registry.
+
+  Generated output only — no hand edits and no behavior change. The registry types are published, so this is a type-surface addition rather than a no-op; existing type references are unaffected (additive).
+
+  Regenerate with `npm run sync-schemas:all && npm run generate-types && npm run generate-registry-types -- --sync`.
+
+- 92bb92a: Grade unsigned functional storyboard steps as not applicable when an agent capability requires a request signature and returns the corresponding rejection.
+- 607e2a6: fix(oauth): require browser state binding in `completeWebOAuthFlow`
+
+  `CompleteWebFlowOptions.expectedState` was optional and silently skipped when absent — the flow was replay-protected via atomic consume but not browser-bound. Now:
+  - Omitting `expectedState` throws `BrowserBindingRequiredError` by default. Pass the state from the session cookie created at `/oauth/start`.
+  - Trusted non-browser integrations can explicitly set `allowUnboundState: true`; browser handlers must not use this escape hatch.
+  - The deprecated `requireBrowserBinding` option remains accepted for source compatibility, but binding is now the default.
+  - New `BrowserBindingRequiredError` class is exported from `@adcp/sdk/auth/oauth`.
+
+  Parallels the `CLIFlowHandler` state-binding hardened in the same security PR.
+
 ## 13.0.0-rc.26
 
 ### Minor Changes
