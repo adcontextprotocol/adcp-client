@@ -98,3 +98,4 @@ jobs:
           app-id: ${{ secrets.SECRETARIAT_APP_ID }}
           app-private-key: ${{ secrets.SECRETARIAT_APP_PRIVATE_KEY }}
           model: claude-opus-4-8
+          skip-bot-authors: dependabot[bot],renovate[bot],github-actions[bot],aao-ipr-bot[bot]
