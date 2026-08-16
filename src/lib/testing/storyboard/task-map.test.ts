@@ -65,7 +65,7 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
     expect(result.data).toEqual({ products: [], format: 'legacy' });
   });
 
-  it('uses canonical creative methods when grading a 3.2+ wire', async () => {
+  it('preserves the raw seller response when grading a 3.2+ wire', async () => {
     const calls: string[] = [];
     let receivedParams: unknown;
     const client = {
@@ -75,19 +75,20 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
         receivedParams = params;
         return { data: { products: [], format: 'canonical' } };
       },
-      getProductsLegacy: async () => {
-        calls.push('legacy');
-        return { data: { products: [] } };
+      getProductsLegacy: async (params: unknown) => {
+        calls.push('raw');
+        receivedParams = params;
+        return { data: { products: [], format: 'canonical' } };
       },
     };
 
     const result = await executeStoryboardTask(client, 'get_products', {});
-    expect(calls).toEqual(['canonical']);
+    expect(calls).toEqual(['raw']);
     expect(receivedParams).toEqual({});
     expect(result.data).toEqual({ products: [], format: 'canonical' });
   });
 
-  it('honors an explicit canonical wire request when grading a pre-3.2 storyboard', async () => {
+  it('honors an explicit canonical wire request without projecting its response', async () => {
     const calls: string[] = [];
     let receivedParams: unknown;
     const params = {
@@ -100,14 +101,15 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
         receivedParams = request;
         return { data: { products: [], format: 'canonical' } };
       },
-      getProductsLegacy: async () => {
-        calls.push('legacy');
-        return { data: { products: [], format: 'legacy' } };
+      getProductsLegacy: async (request: unknown) => {
+        calls.push('raw');
+        receivedParams = request;
+        return { data: { products: [], format: 'canonical' } };
       },
     };
 
     const result = await executeStoryboardTask(client, 'get_products', params);
-    expect(calls).toEqual(['canonical']);
+    expect(calls).toEqual(['raw']);
     expect(receivedParams).toBe(params);
     expect(result.data).toEqual({ products: [], format: 'canonical' });
   });
@@ -191,7 +193,7 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
 
   it('infers failure from a failed AdCP payload when TaskResult.success is omitted', async () => {
     const client = {
-      getProducts: async () => ({
+      getProductsLegacy: async () => ({
         data: MULTI_FINALIZE_FAILED_PAYLOAD,
       }),
     };
@@ -211,7 +213,7 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
 
     for (const testCase of cases) {
       const client = {
-        getProducts: async () => ({ data: testCase.data }),
+        getProductsLegacy: async () => ({ data: testCase.data }),
       };
 
       const result = await executeStoryboardTask(client, 'get_products', {});
@@ -222,7 +224,7 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
 
   it('does not treat advisory errors on a success payload as failure', async () => {
     const client = {
-      getProducts: async () => ({
+      getProductsLegacy: async () => ({
         data: { status: 'completed', products: [], errors: [ADVISORY_ERROR] },
       }),
     };
@@ -234,7 +236,7 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
 
   it('forwards top-level adcp_error from a TaskResult when adcpError is absent', async () => {
     const client = {
-      getProducts: async () => ({
+      getProductsLegacy: async () => ({
         adcp_error: INVALID_REQUEST_ERROR,
       }),
     };

@@ -65,7 +65,7 @@ describe('executeStoryboardTask error normalization', () => {
 });
 
 describe('executeStoryboardTask creative wire selection', () => {
-  test('uses the canonical method for an explicit canonical 3.1 request', async () => {
+  test('uses the raw response projection for an explicit canonical 3.1 request', async () => {
     const calls = [];
     const params = { ext: { adcp: { creative_wire: 'canonical' } } };
     const result = await executeStoryboardTask(
@@ -77,14 +77,36 @@ describe('executeStoryboardTask creative wire selection', () => {
         },
         getProductsLegacy: async request => {
           calls.push({ method: 'legacy', request });
-          return { data: { products: [], wire: 'legacy' } };
+          return { data: { products: [], wire: 'canonical' } };
         },
       },
       'get_products',
       params
     );
 
-    assert.deepEqual(calls, [{ method: 'canonical', request: params }]);
+    assert.deepEqual(calls, [{ method: 'legacy', request: params }]);
+    assert.equal(result.data.wire, 'canonical');
+  });
+
+  test('uses the raw response projection for an unhinted 3.2 request', async () => {
+    const calls = [];
+    const result = await executeStoryboardTask(
+      {
+        getAdcpVersion: () => '3.2',
+        getProducts: async request => {
+          calls.push({ method: 'canonical', request });
+          return { data: { products: [], wire: 'projected' } };
+        },
+        getProductsLegacy: async request => {
+          calls.push({ method: 'raw', request });
+          return { data: { products: [], wire: 'canonical' } };
+        },
+      },
+      'get_products',
+      {}
+    );
+
+    assert.deepEqual(calls, [{ method: 'raw', request: {} }]);
     assert.equal(result.data.wire, 'canonical');
   });
 

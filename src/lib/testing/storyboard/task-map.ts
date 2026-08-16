@@ -23,7 +23,9 @@ export const TASK_TO_METHOD: Record<string, string> = {
   sync_audiences: 'syncAudiences',
 
   // Product discovery & media buy
-  get_products: 'getProducts',
+  // Conformance must grade the seller's protocol response before the SDK's
+  // canonical convenience projection adds, removes, or rewrites fields.
+  get_products: 'getProductsLegacy',
   create_media_buy: 'createMediaBuy',
   update_media_buy: 'updateMediaBuy',
   get_media_buys: 'getMediaBuys',
@@ -195,7 +197,10 @@ export async function executeStoryboardTask(
   }
 
   // AdCP 3.1 transition storyboards default to the legacy creative wire, but
-  // canonical-specific storyboards must be able to opt into the canonical API.
+  // canonical-specific storyboards can opt into the canonical wire. Product
+  // discovery still uses getProductsLegacy in either case because that method
+  // preserves the seller response; wire selection and response projection are
+  // independent concerns.
   const forceRawProjection = opts.responseProjection === 'raw';
   const useLegacyCreativeMethod =
     forceRawProjection || (gradesLegacyCreativeWire(client) && readCreativeWireHint(params) !== 'canonical');
