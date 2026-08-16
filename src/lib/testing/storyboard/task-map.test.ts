@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { executeStoryboardTask } from './task-map';
+import { defaultStoryboardResponseProjection, executeStoryboardTask } from './task-map';
 
 const INVALID_REQUEST_ERROR = {
   code: 'INVALID_REQUEST',
@@ -65,7 +65,7 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
     expect(result.data).toEqual({ products: [], format: 'legacy' });
   });
 
-  it('uses canonical creative methods when grading a 3.2+ wire', async () => {
+  it('uses canonical creative methods when called without runner projection policy on a 3.2+ wire', async () => {
     const calls: string[] = [];
     let receivedParams: unknown;
     const client = {
@@ -76,7 +76,7 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
         return { data: { products: [], format: 'canonical' } };
       },
       getProductsLegacy: async () => {
-        calls.push('legacy');
+        calls.push('raw');
         return { data: { products: [] } };
       },
     };
@@ -87,7 +87,7 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
     expect(result.data).toEqual({ products: [], format: 'canonical' });
   });
 
-  it('honors an explicit canonical wire request when grading a pre-3.2 storyboard', async () => {
+  it('honors an explicit canonical wire request when called without runner projection policy', async () => {
     const calls: string[] = [];
     let receivedParams: unknown;
     const params = {
@@ -101,7 +101,7 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
         return { data: { products: [], format: 'canonical' } };
       },
       getProductsLegacy: async () => {
-        calls.push('legacy');
+        calls.push('raw');
         return { data: { products: [], format: 'legacy' } };
       },
     };
@@ -243,5 +243,12 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
 
     expect(result.success).toBe(false);
     expect(result.adcp_error).toEqual(INVALID_REQUEST_ERROR);
+  });
+
+  it('defaults schema-compliance get_products steps to raw evidence only', () => {
+    expect(defaultStoryboardResponseProjection('get_products', 'schema_compliance')).toBe('raw');
+    expect(defaultStoryboardResponseProjection('get_products', 'full_sales_flow')).toBeUndefined();
+    expect(defaultStoryboardResponseProjection('get_products', undefined)).toBeUndefined();
+    expect(defaultStoryboardResponseProjection('create_media_buy', 'schema_compliance')).toBeUndefined();
   });
 });

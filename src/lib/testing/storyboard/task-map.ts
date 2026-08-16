@@ -81,6 +81,18 @@ const LEGACY_CREATIVE_TASK_TO_METHOD: Readonly<Record<string, string>> = {
   list_creatives: 'listCreativesLegacy',
 };
 
+/**
+ * Schema-compliance steps grade seller evidence before SDK convenience
+ * projection. Flow storyboards and fixture seeding intentionally keep the
+ * canonical SDK projection because they consume normalized product shapes.
+ */
+export function defaultStoryboardResponseProjection(
+  taskName: string,
+  complyScenario: string | undefined
+): 'raw' | undefined {
+  return taskName === 'get_products' && complyScenario === 'schema_compliance' ? 'raw' : undefined;
+}
+
 function gradesLegacyCreativeWire(client: unknown): boolean {
   if (client === null || typeof client !== 'object') return false;
   const getAdcpVersion = (client as { getAdcpVersion?: unknown }).getAdcpVersion;
@@ -195,7 +207,10 @@ export async function executeStoryboardTask(
   }
 
   // AdCP 3.1 transition storyboards default to the legacy creative wire, but
-  // canonical-specific storyboards must be able to opt into the canonical API.
+  // canonical-specific storyboards can opt into the canonical wire. Product
+  // discovery still uses getProductsLegacy in either case because that method
+  // preserves the seller response; wire selection and response projection are
+  // independent concerns.
   const forceRawProjection = opts.responseProjection === 'raw';
   const useLegacyCreativeMethod =
     forceRawProjection || (gradesLegacyCreativeWire(client) && readCreativeWireHint(params) !== 'canonical');
@@ -203,9 +218,9 @@ export async function executeStoryboardTask(
   const methodName =
     legacyMethodName ?? (Object.hasOwn(TASK_TO_METHOD, taskName) ? TASK_TO_METHOD[taskName] : undefined);
   // A forced raw projection is a runner concern, not wire negotiation. Leave
-  // the authored request untouched so dual-declaration storyboards can grade
-  // the seller's default response. Normal pre-3.2 grading still requests the
-  // legacy creative wire explicitly.
+  // the authored request untouched so the seller and negotiated protocol
+  // select the wire. Ordinary pre-3.2 SDK calls retain their explicit legacy
+  // compatibility hint, including fixture-seeding discovery calls.
   const callParams = legacyMethodName && !forceRawProjection ? withLegacyCreativeWireHint(params) : params;
 
   // Only pass TaskOptions when a flag is actually set — avoids changing

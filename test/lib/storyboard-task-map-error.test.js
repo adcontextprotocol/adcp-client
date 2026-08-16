@@ -65,7 +65,7 @@ describe('executeStoryboardTask error normalization', () => {
 });
 
 describe('executeStoryboardTask creative wire selection', () => {
-  test('uses the canonical method for an explicit canonical 3.1 request', async () => {
+  test('uses the canonical method for an explicit canonical 3.1 request without runner projection policy', async () => {
     const calls = [];
     const params = { ext: { adcp: { creative_wire: 'canonical' } } };
     const result = await executeStoryboardTask(
@@ -77,7 +77,7 @@ describe('executeStoryboardTask creative wire selection', () => {
         },
         getProductsLegacy: async request => {
           calls.push({ method: 'legacy', request });
-          return { data: { products: [], wire: 'legacy' } };
+          return { data: { products: [], wire: 'canonical' } };
         },
       },
       'get_products',
