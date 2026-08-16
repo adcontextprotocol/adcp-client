@@ -195,10 +195,7 @@ export async function executeStoryboardTask(
   const legacyMethodName = useLegacyCreativeMethod ? LEGACY_CREATIVE_TASK_TO_METHOD[taskName] : undefined;
   const methodName =
     legacyMethodName ?? (Object.hasOwn(TASK_TO_METHOD, taskName) ? TASK_TO_METHOD[taskName] : undefined);
-  // getProductsLegacy selects the raw response projection, not a legacy-only
-  // request contract. Leave its wire hint unset so the seller can return the
-  // canonical format_options required by canonical discovery storyboards.
-  const callParams = legacyMethodName && taskName !== 'get_products' ? withLegacyCreativeWireHint(params) : params;
+  const callParams = legacyMethodName ? withLegacyCreativeWireHint(params) : params;
 
   // Only pass TaskOptions when a flag is actually set — avoids changing
   // behavior for the common path that relies on method defaults.

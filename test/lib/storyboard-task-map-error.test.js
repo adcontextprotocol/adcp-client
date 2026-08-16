@@ -88,7 +88,7 @@ describe('executeStoryboardTask creative wire selection', () => {
     assert.equal(result.data.wire, 'canonical');
   });
 
-  test('uses the raw projection without forcing a legacy wire for unhinted 3.1 product discovery', async () => {
+  test('retains the legacy default for an unhinted 3.1 request', async () => {
     const calls = [];
     const result = await executeStoryboardTask(
       {
@@ -106,25 +106,8 @@ describe('executeStoryboardTask creative wire selection', () => {
       {}
     );
 
-    assert.deepEqual(calls, [{ method: 'legacy', request: {} }]);
+    assert.deepEqual(calls, [{ method: 'legacy', request: { ext: { adcp: { creative_wire: 'legacy' } } } }]);
     assert.equal(result.data.wire, 'legacy');
-  });
-
-  test('still forces the legacy wire for creative tasks on 3.1', async () => {
-    const calls = [];
-    await executeStoryboardTask(
-      {
-        getAdcpVersion: () => '3.1.10',
-        syncCreativesLegacy: async request => {
-          calls.push(request);
-          return { data: { creatives: [] } };
-        },
-      },
-      'sync_creatives',
-      {}
-    );
-
-    assert.deepEqual(calls, [{ ext: { adcp: { creative_wire: 'legacy' } } }]);
   });
 });
 
