@@ -245,9 +245,10 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
     expect(result.adcp_error).toEqual(INVALID_REQUEST_ERROR);
   });
 
-  it('defaults executable get_products storyboard steps to raw evidence only', () => {
-    expect(defaultStoryboardResponseProjection('get_products')).toBe('raw');
-    expect(defaultStoryboardResponseProjection('create_media_buy')).toBeUndefined();
-    expect(defaultStoryboardResponseProjection('comply_test_controller')).toBeUndefined();
+  it('defaults schema-compliance get_products steps to raw evidence only', () => {
+    expect(defaultStoryboardResponseProjection('get_products', 'schema_compliance')).toBe('raw');
+    expect(defaultStoryboardResponseProjection('get_products', 'full_sales_flow')).toBeUndefined();
+    expect(defaultStoryboardResponseProjection('get_products', undefined)).toBeUndefined();
+    expect(defaultStoryboardResponseProjection('create_media_buy', 'schema_compliance')).toBeUndefined();
   });
 });

@@ -82,12 +82,15 @@ const LEGACY_CREATIVE_TASK_TO_METHOD: Readonly<Record<string, string>> = {
 };
 
 /**
- * Conformance steps grade seller evidence before SDK convenience projection.
- * Fixture seeding calls executeStoryboardTask directly and intentionally does
- * not use this runner-only default.
+ * Schema-compliance steps grade seller evidence before SDK convenience
+ * projection. Flow storyboards and fixture seeding intentionally keep the
+ * canonical SDK projection because they consume normalized product shapes.
  */
-export function defaultStoryboardResponseProjection(taskName: string): 'raw' | undefined {
-  return taskName === 'get_products' ? 'raw' : undefined;
+export function defaultStoryboardResponseProjection(
+  taskName: string,
+  complyScenario: string | undefined
+): 'raw' | undefined {
+  return taskName === 'get_products' && complyScenario === 'schema_compliance' ? 'raw' : undefined;
 }
 
 function gradesLegacyCreativeWire(client: unknown): boolean {

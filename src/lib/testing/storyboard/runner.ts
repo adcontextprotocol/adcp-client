@@ -5037,7 +5037,8 @@ async function executeStep(
           skipIdempotencyAutoInject: testsMissingIdempotencyKey,
           skipAccountValidation: testsMissingAccount,
           responseProjection:
-            effectiveStep.response_projection ?? defaultStoryboardResponseProjection(effectiveStep.task),
+            effectiveStep.response_projection ??
+            defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
           signal: options.signal,
         });
       const run = await runStep(step.title, effectiveStep.task, async () => {
