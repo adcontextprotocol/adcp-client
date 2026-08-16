@@ -33,6 +33,7 @@
     "fix-mcp-beta-pins",
     "fix-rate-limit-exhaustion-detail",
     "fix-runner-session-capability-notices",
+    "fix-scoped-storyboard-routing",
     "fix-sdk-package-legacy-seed",
     "fix-signing-cli-replay-preload",
     "fix-storyboard-canonical-wire-selection",
