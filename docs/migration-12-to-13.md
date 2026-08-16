@@ -2,6 +2,94 @@
 
 Version 13 makes canonical creatives the contract of the primary TypeScript SDK. Installing the modern SDK means application code uses `format_kind`, `format_options`, and `format_option_refs`; `{ agent_url, id }` creative format identity is confined to wire adapters and explicitly named migration APIs.
 
+## Required upgrade checklist
+
+Before deploying v13:
+
+1. Move application code to the canonical creative fields and rename any intentional raw-wire use to the explicit `Legacy*`, `legacy*`, or `*Legacy()` APIs described below.
+2. Add `refAccess` to every `createTenantStore()` call. Most credentials that belong to exactly one tenant should use `'auth-scoped'`; use `'ref-routed'` only when one credential is intentionally allowed to span tenants.
+3. If you verify signed Express requests, capture `req.rawBody` before the verifier. Body-bearing requests now fail closed without it.
+4. Give every HMAC webhook registration a real credential, make webhook URLs non-redirecting, and decide explicitly whether an internal-only receiver may accept unauthenticated webhooks.
+5. Ensure custom OAuth flow handlers preserve `state` and pass an HTTP(S) authorization URL to `redirectToAuthorization()`.
+6. Narrow the new error arm before reading success-only fields from `CreateMediaBuyPayload`, and update exhaustive `AssetInstance` switches.
+7. Update compliance-report consumers to read scenario detail from `tracks`, not `tested_tracks`.
+
+Run your normal TypeScript build after these mechanical changes. The renamed public APIs intentionally turn most remaining migration work into compile errors instead of allowing legacy creative identity to cross the canonical boundary silently.
+
+## Security-sensitive behavior changes
+
+### Signed Express requests require the raw body
+
+`createExpressVerifier()` requires `req.rawBody` for `POST`, `PUT`, `PATCH`, and `DELETE`, and whenever headers or a parsed body show that a body exists. Mount raw-body capture before the verifier; the Express adapter supplies the compatible hook:
+
+```ts
+import { createExpressAdapter } from '@adcp/sdk/server';
+import { createExpressVerifier } from '@adcp/sdk/signing';
+
+const adapter = createExpressAdapter(/* ... */);
+
+app.use(express.json({ verify: adapter.rawBodyVerify }));
+app.post('/mcp', createExpressVerifier(/* ... */), handler);
+```
+
+Both `Buffer` and string raw bodies are accepted. A missing raw body now returns `request_signature_header_malformed`; v12's empty-body surrogate is no longer used. See [Signing guide](guides/SIGNING-GUIDE.md) for the complete setup.
+
+### Webhooks require an honest authentication mode
+
+The SDK no longer inserts a published placeholder HMAC credential:
+
+- `push_notification_config.authentication` is omitted when no `webhookSecret` exists, selecting the RFC 9421 profile on AdCP 3.x. For a v2.5 seller, which requires legacy authentication, the SDK skips registration and warns instead.
+- An automatically generated `reporting_webhook` is skipped with a warning when it has no credential. An explicitly supplied `reporting_webhook` without credentials throws. Set `webhookSecret` or supply a complete `authentication` block; authentication is atomic and is not field-merged with SDK defaults.
+- Receiving an HMAC webhook without `webhookSecret` returns `webhook_unverifiable`. `allowUnauthenticatedWebhooks: true` is an explicit compatibility escape intended only for receivers that are unreachable from untrusted networks.
+
+Webhook delivery and `createPinAndBindFetch()` no longer follow redirects. Give callers the final HTTPS URL; a 3xx is terminal and reported as `HTTP_REDIRECT`. If application code must follow a redirect, start a new guarded fetch for the new URL so SSRF policy is applied again.
+
+### URL validation and OAuth state always enforce
+
+`validateAgentUrl()` now applies its literal-host SSRF policy in every `NODE_ENV`. Loopback remains allowed; RFC-1918, link-local, ULA, CGNAT, and other internal ranges require the explicit internal-probe opt-in, while cloud metadata addresses remain blocked. This literal-host check does not replace the DNS pinning in `ssrfSafeFetch()` / `createPinAndBindFetch()`.
+
+`CLIFlowHandler.redirectToAuthorization()` now rejects non-HTTP(S) URLs and URLs without `state`, and verifies the callback state before accepting either success or error parameters. Custom flow handlers should preserve the same binding. Web flows that call `completeWebOAuthFlow()` without `expectedState` warn; set `requireBrowserBinding: true` to fail closed when the browser-session state is missing.
+
+## Tenant reference access must be explicit
+
+`createTenantStore()` has no default for `refAccess` in v13. Choose the policy at construction:
+
+```ts
+const accounts = createTenantStore({
+  refAccess: 'auth-scoped',
+  resolveByRef,
+  resolveFromAuth,
+  tenantId,
+  accountForTenant,
+  // ...the existing callbacks
+});
+```
+
+- `'auth-scoped'` rejects a ref that resolves outside `resolveFromAuth(ctx)` and is the safe choice when each credential belongs to one tenant.
+- `'ref-routed'` preserves the v12 default. Use it only for an agency or holdco credential that is intentionally allowed to span tenants, then layer the appropriate `requireAccountMatch`, `requireAdvertiserMatch`, or `requireOrgScope` resolve preset through `composeMethod()`.
+
+`refAccess` governs `accounts.resolve` only. The existing per-entry tenant gate for `upsert` and `syncGovernance` applies in both modes.
+
+## Payload and generated-type changes
+
+`CreateMediaBuyPayload` now includes the protocol's structured multi-error arm. Narrow it before reading success-only fields:
+
+```ts
+function handleCreateResult(payload: CreateMediaBuyPayload) {
+  if ('errors' in payload) {
+    return handleErrors(payload.errors);
+  }
+
+  return persistBuy(payload.media_buy_id);
+}
+```
+
+`AssetInstance` now contains all registry-backed variants. Exhaustive switches must add `zip`, `published_post`, `card`, `pixel_tracker`, `vast_tracker`, and `daast_tracker`.
+
+Standalone canonical delivery-metric and postal-system authoring types now require the fields that their JSON Schemas already required: `content_id`, `keyword`, `match_type`, `geo_level`, `geo_code`, `country`, and `system` where applicable. Buyer-side delivery responses keep their compatibility aliases for legacy sellers.
+
+The server `list_accounts` hook now receives the actual wire request, resolved account modes are typed, and optional pagination totals are projected. Remove adapter-local request casts or response wrappers that compensated for the v12 types and follow the v13 handler signature reported by TypeScript.
+
 ## Compliance results serialize scenario detail once
 
 `ComplianceResult.tested_tracks` is now `TestedTrackEntry[]` rather than
