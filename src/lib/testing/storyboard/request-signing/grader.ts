@@ -1,6 +1,6 @@
 import { randomBytes } from 'crypto';
 import { buildNegativeRequest, buildPositiveRequest, type BuildOptions, type SignedHttpRequest } from './builder';
-import { probeSignedRequest, type ProbeResult } from './probe';
+import { initializeMcpSession, probeSignedRequest, type ProbeResult } from './probe';
 import { loadRequestSigningVectors, type LoadVectorsOptions } from './vector-loader';
 import { loadSignedRequestsRunnerContract, type SignedRequestsRunnerContract } from './test-kit';
 import {
@@ -108,6 +108,30 @@ export interface GradeOptions extends LoadVectorsOptions {
    */
   transport?: 'raw' | 'mcp';
   /**
+   * MCP session ID to attach as `Mcp-Session-Id` on every probe after
+   * signing. When `transport` is `'mcp'` and this field is `undefined`,
+   * `gradeRequestSigning` / `gradeOneVector` automatically performs an
+   * `initialize` handshake to acquire a session ID before grading starts.
+   *
+   * Pass a pre-acquired ID (from `initializeMcpSession`) to reuse one
+   * session across multiple calls and avoid repeated handshakes — useful
+   * when the storyboard runner initializes the session once at storyboard
+   * start and threads it through each per-vector call.
+   *
+   * Pass `''` (empty string) to opt out of auto-initialization and send
+   * requests session-less — for stateless streamable-HTTP agents that do
+   * not issue a session ID.
+   */
+  mcpSessionId?: string;
+  /**
+   * Headers for the auto-`initialize` handshake only (typically the agent's
+   * `authorization`) — agents that require auth on `initialize` would
+   * otherwise 401 the handshake, read as "stateless server", and every
+   * vector would then be sent session-less. Never applied to the signed
+   * vector requests themselves.
+   */
+  initializeHeaders?: Record<string, string>;
+  /**
    * Override the agent's base URL used for the grader's HTTP targets. When set,
    * each vector's `request.url` is rewritten by swapping origin+path under this
    * base — useful when the vectors point at `seller.example.com` but the agent
@@ -192,9 +216,31 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
   const loaded = loadRequestSigningVectors(options);
   const contract = loadSignedRequestsRunnerContract(options);
 
+  // Auto-initialize MCP session once before all vectors. A single session
+  // covers the full batch — the session ID is injected post-signing so
+  // Mcp-Session-Id is never a covered component, and negative vectors reach
+  // the verifier before MCP session dispatch (the signature check fires at
+  // the HTTP middleware layer, ahead of session routing).
+  let mcpSessionId: string | undefined = options.mcpSessionId;
+  if (options.transport === 'mcp' && mcpSessionId === undefined) {
+    const init = await initializeMcpSession(
+      agentUrl,
+      {
+        allowPrivateIp: options.allowPrivateIp === true,
+        timeoutMs: options.timeoutMs,
+      },
+      options.initializeHeaders ?? {}
+    );
+    if (init.error) {
+      throw new Error(`MCP initialize precondition failed: ${init.error}`);
+    }
+    mcpSessionId = init.sessionId; // undefined without an error = stateless server
+  }
+
   const probeOpts = {
     allowPrivateIp: options.allowPrivateIp === true,
     timeoutMs: options.timeoutMs,
+    mcpSessionId,
   };
 
   const buildOpts: BuildOptions = { baseUrl: agentUrl, transport: options.transport ?? 'raw' };
@@ -396,9 +442,31 @@ export async function gradeOneVector(
 ): Promise<VectorGradeResult> {
   const loaded = loadRequestSigningVectors(options);
   const contract = loadSignedRequestsRunnerContract(options);
+
+  // Per-vector session initialization for the storyboard-runner path.
+  // Callers that dispatch many vectors in sequence (e.g., storyboard runner)
+  // should pre-initialize once with initializeMcpSession() and pass the ID
+  // via options.mcpSessionId to avoid per-call round-trips.
+  let mcpSessionId: string | undefined = options.mcpSessionId;
+  if (options.transport === 'mcp' && mcpSessionId === undefined) {
+    const init = await initializeMcpSession(
+      agentUrl,
+      {
+        allowPrivateIp: options.allowPrivateIp === true,
+        timeoutMs: options.timeoutMs,
+      },
+      options.initializeHeaders ?? {}
+    );
+    if (init.error) {
+      throw new Error(`MCP initialize precondition failed: ${init.error}`);
+    }
+    mcpSessionId = init.sessionId;
+  }
+
   const probeOpts = {
     allowPrivateIp: options.allowPrivateIp === true,
     timeoutMs: options.timeoutMs,
+    mcpSessionId,
   };
   const buildOpts: BuildOptions = { baseUrl: agentUrl, transport: options.transport ?? 'raw' };
 

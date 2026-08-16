@@ -4,6 +4,20 @@ import { parseRequestSigningStepId } from './synthesize';
 import { loadRequestSigningVectors } from './vector-loader';
 
 /**
+ * Resolve the vector transport for a graded agent. Defaults to `'mcp'`: the
+ * storyboard runner reaches agents through `tools/call` (MCP, or the
+ * AdCP-over-A2A binding) — never through per-task HTTP paths — so replaying
+ * the vectors' recorded REST targets (`/adcp/create_media_buy`, raw task
+ * body) verbatim guarantees a routing 404 on every MCP-transport agent
+ * before its verifier can run (adcontextprotocol/adcp#6548). Operators
+ * grading a REST-binding agent opt back in with
+ * `request_signing.transport: 'raw'`.
+ */
+export function resolveVectorTransport(rsOpts: { transport?: 'raw' | 'mcp' }): 'raw' | 'mcp' {
+  return rsOpts.transport ?? 'mcp';
+}
+
+/**
  * Dispatch a synthesized request-signing step. The step ID encodes the vector
  * (`positive-<id>` / `negative-<id>`); this helper decodes it, runs the
  * grader's per-vector logic, and maps the `VectorGradeResult` to an
@@ -50,7 +64,14 @@ export async function probeRequestSigningVector(
       onlyVectors: rsOpts.onlyVectors,
       skipVectors: rsOpts.skipVectors,
       skipRateAbuse: rsOpts.skipRateAbuse,
-      ...(rsOpts.transport && { transport: rsOpts.transport }),
+      transport: resolveVectorTransport(rsOpts),
+      // The auto-initialize handshake authenticates like any MCP client;
+      // agents commonly require auth on `initialize` (the signed vectors
+      // themselves stay bearer-less — the signature is their auth).
+      ...(options.auth?.type === 'bearer' && options.auth.token
+        ? { initializeHeaders: { authorization: `Bearer ${options.auth.token}` } }
+        : {}),
+      mcpSessionId: rsOpts.mcpSessionId,
     });
     if (result.skipped) {
       return skipProbe(agentUrl, (result.skip_reason as RunnerDetailedSkipReason | undefined) ?? 'grader_skipped');

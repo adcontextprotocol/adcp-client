@@ -90,4 +90,11 @@ export {
   type SignedRequestsRunnerContract,
 } from './test-kit';
 
-export { probeSignedRequest, extractSignatureErrorCode, type ProbeOptions, type ProbeResult } from './probe';
+export {
+  probeSignedRequest,
+  initializeMcpSession,
+  attachMcpSessionHeader,
+  extractSignatureErrorCode,
+  type ProbeOptions,
+  type ProbeResult,
+} from './probe';
