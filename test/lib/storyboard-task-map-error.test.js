@@ -65,7 +65,7 @@ describe('executeStoryboardTask error normalization', () => {
 });
 
 describe('executeStoryboardTask creative wire selection', () => {
-  test('uses the canonical method for an explicit canonical 3.1 request', async () => {
+  test('uses the raw product projection with an explicit canonical 3.1 wire', async () => {
     const calls = [];
     const params = { ext: { adcp: { creative_wire: 'canonical' } } };
     const result = await executeStoryboardTask(
@@ -84,8 +84,8 @@ describe('executeStoryboardTask creative wire selection', () => {
       params
     );
 
-    assert.deepEqual(calls, [{ method: 'canonical', request: params }]);
-    assert.equal(result.data.wire, 'canonical');
+    assert.deepEqual(calls, [{ method: 'legacy', request: params }]);
+    assert.equal(result.data.wire, 'legacy');
   });
 
   test('retains the legacy default for an unhinted 3.1 request', async () => {

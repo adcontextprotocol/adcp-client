@@ -191,7 +191,13 @@ export async function executeStoryboardTask(
 
   // AdCP 3.1 transition storyboards default to the legacy creative wire, but
   // canonical-specific storyboards must be able to opt into the canonical API.
-  const useLegacyCreativeMethod = gradesLegacyCreativeWire(client) && readCreativeWireHint(params) !== 'canonical';
+  const creativeWireHint = readCreativeWireHint(params);
+  // getProductsLegacy is the raw-response projection needed to grade both
+  // format_ids and format_options during the migration window. Its request
+  // wire is negotiated independently below: unhinted calls default to legacy,
+  // while an explicit canonical hint is preserved.
+  const useLegacyCreativeMethod =
+    gradesLegacyCreativeWire(client) && (taskName === 'get_products' || creativeWireHint !== 'canonical');
   const legacyMethodName = useLegacyCreativeMethod ? LEGACY_CREATIVE_TASK_TO_METHOD[taskName] : undefined;
   const methodName =
     legacyMethodName ?? (Object.hasOwn(TASK_TO_METHOD, taskName) ? TASK_TO_METHOD[taskName] : undefined);
