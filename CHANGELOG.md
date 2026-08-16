@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.0.0-rc.24
+
+### Patch Changes
+
+- 0149983: Use request-scoped seller capabilities for protocol-version adaptation instead of stale capabilities cached from another request context. Add an explicit raw storyboard response projection so compatibility scenarios can grade dual legacy and canonical format declarations without changing the seller request.
+
 ## 13.0.0-rc.23
 
 ### Patch Changes
