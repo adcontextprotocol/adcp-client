@@ -65,7 +65,7 @@ describe('executeStoryboardTask error normalization', () => {
 });
 
 describe('executeStoryboardTask creative wire selection', () => {
-  test('uses the raw product projection with an explicit canonical 3.1 wire', async () => {
+  test('uses the canonical method for an explicit canonical 3.1 request', async () => {
     const calls = [];
     const params = { ext: { adcp: { creative_wire: 'canonical' } } };
     const result = await executeStoryboardTask(
@@ -84,8 +84,8 @@ describe('executeStoryboardTask creative wire selection', () => {
       params
     );
 
-    assert.deepEqual(calls, [{ method: 'legacy', request: params }]);
-    assert.equal(result.data.wire, 'legacy');
+    assert.deepEqual(calls, [{ method: 'canonical', request: params }]);
+    assert.equal(result.data.wire, 'canonical');
   });
 
   test('retains the legacy default for an unhinted 3.1 request', async () => {
@@ -108,6 +108,30 @@ describe('executeStoryboardTask creative wire selection', () => {
 
     assert.deepEqual(calls, [{ method: 'legacy', request: { ext: { adcp: { creative_wire: 'legacy' } } } }]);
     assert.equal(result.data.wire, 'legacy');
+  });
+
+  test('uses a raw product projection without changing the authored wire', async () => {
+    const calls = [];
+    const params = { context: { correlation_id: 'dual-format-grading' } };
+    const result = await executeStoryboardTask(
+      {
+        getAdcpVersion: () => '3.1.10',
+        getProducts: async request => {
+          calls.push({ method: 'canonical', request });
+          return { data: { products: [], wire: 'canonical' } };
+        },
+        getProductsLegacy: async request => {
+          calls.push({ method: 'raw', request });
+          return { data: { products: [], wire: 'dual' } };
+        },
+      },
+      'get_products',
+      params,
+      { responseProjection: 'raw' }
+    );
+
+    assert.deepEqual(calls, [{ method: 'raw', request: params }]);
+    assert.equal(result.data.wire, 'dual');
   });
 });
 

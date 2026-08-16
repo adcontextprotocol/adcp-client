@@ -659,6 +659,12 @@ export interface StoryboardStep {
   doc_ref?: string;
   /** Maps to existing @adcp/sdk test scenario (legacy, partial coverage) */
   comply_scenario?: string;
+  /**
+   * Select the SDK response projection used for this step. `raw` is reserved
+   * for compatibility storyboards that must grade both legacy and canonical
+   * fields from the same seller response without changing the request wire.
+   */
+  response_projection?: 'raw';
   /** Whether this step depends on state from a previous step */
   stateful?: boolean;
   /**
