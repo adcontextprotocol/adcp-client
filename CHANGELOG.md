@@ -1,5 +1,16 @@
 # Changelog
 
+## 13.0.0-rc.26
+
+### Minor Changes
+
+- a719f6c: Add first-class AdCP 3.2 proposal negotiation APIs for typed buyer requests/results, capability-aware preflight, normative response verification, retry/finalization orchestration, and seller-side atomic batch handling.
+
+### Patch Changes
+
+- c2b48df: In `mcp` transport mode, the `signed_requests` grader now auto-initializes an MCP session via the `initialize` handshake before dispatching conformance vectors. The `Mcp-Session-Id` response header is attached to each subsequent probe request _after_ signing — `Mcp-Session-Id` is not a covered component per RFC 9421, so signatures remain valid. Negative vectors still reach the verifier before MCP session dispatch (the signature check fires at the HTTP middleware layer, ahead of session routing). A new `initializeMcpSession` helper is exported from `@adcp/sdk/testing/storyboard/request-signing` for callers that pre-initialize once and reuse the session ID across many vectors. The `GradeOptions.mcpSessionId` / `StoryboardRunOptions.request_signing.mcpSessionId` field lets callers pass a pre-acquired session ID to avoid per-vector round-trips; pass `''` to opt out of auto-initialization for stateless streamable-HTTP agents.
+- c2b48df: The `signed_requests` storyboard's vector dispatch now defaults to `transport: 'mcp'` — wrapping each conformance vector in a `tools/call` envelope re-signed against the agent's actual MCP endpoint — instead of replaying the fixtures' recorded REST-binding targets verbatim, which routed to nonexistent per-task paths and graded every vector as a 404 against MCP-transport agents (adcontextprotocol/adcp#6548). REST-binding agents opt back in with `request_signing.transport: 'raw'`.
+
 ## 13.0.0-rc.25
 
 ### Patch Changes

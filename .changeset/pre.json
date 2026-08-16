@@ -9,6 +9,7 @@
   "changesets": [
     "add-additive-canonical-product",
     "add-negative-capability-gates",
+    "add-proposal-negotiation",
     "add-tmp-publisher-auth-runner",
     "bright-apes-dual-emit",
     "bright-cats-listen",
@@ -68,6 +69,8 @@
     "resolve-storyboard-fixtures",
     "restore-legacy-creative-routes",
     "safe-rate-limit-trip-probes",
+    "signed-requests-mcp-session-init",
+    "signed-requests-mcp-transport-default",
     "soft-fail-legacy-format-ids-projection",
     "soft-tools-smile",
     "split-tested-track-entries",
