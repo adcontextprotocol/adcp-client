@@ -61,7 +61,7 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
 
     const result = await executeStoryboardTask(client, 'get_products', {});
     expect(calls).toEqual(['legacy']);
-    expect(receivedParams).toEqual({ ext: { adcp: { creative_wire: 'legacy' } } });
+    expect(receivedParams).toEqual({});
     expect(result.data).toEqual({ products: [], format: 'legacy' });
   });
 

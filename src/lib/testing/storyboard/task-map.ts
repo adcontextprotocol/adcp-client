@@ -207,11 +207,14 @@ export async function executeStoryboardTask(
   const legacyMethodName = useLegacyCreativeMethod ? LEGACY_CREATIVE_TASK_TO_METHOD[taskName] : undefined;
   const methodName =
     legacyMethodName ?? (Object.hasOwn(TASK_TO_METHOD, taskName) ? TASK_TO_METHOD[taskName] : undefined);
-  // A forced raw projection is a runner concern, not wire negotiation. Leave
-  // the authored request untouched so dual-declaration storyboards can grade
-  // the seller's default response. Normal pre-3.2 grading still requests the
-  // legacy creative wire explicitly.
-  const callParams = legacyMethodName && !forceRawProjection ? withLegacyCreativeWireHint(params) : params;
+  // Response projection is a runner concern, not wire negotiation. Product
+  // discovery keeps the authored request unchanged in every version so the
+  // seller and negotiated protocol select the wire. Other pre-3.2 creative
+  // tasks retain their explicit legacy-wire compatibility hint.
+  const callParams =
+    legacyMethodName && !forceRawProjection && taskName !== 'get_products'
+      ? withLegacyCreativeWireHint(params)
+      : params;
 
   // Only pass TaskOptions when a flag is actually set — avoids changing
   // behavior for the common path that relies on method defaults.
