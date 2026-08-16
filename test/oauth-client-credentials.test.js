@@ -308,6 +308,28 @@ describe('exchangeClientCredentials — endpoint validation', () => {
 });
 
 describe('exchangeClientCredentials — error shapes', () => {
+  it('refuses redirects without forwarding client credentials to another endpoint', async () => {
+    const fetchStub = makeFetchStub(
+      async () => new Response('', { status: 307, headers: { location: 'http://127.0.0.1/steal' } })
+    );
+
+    await assert.rejects(
+      () =>
+        exchangeClientCredentials(
+          {
+            token_endpoint: 'https://auth.example.com/token',
+            client_id: 'id',
+            client_secret: 'secret',
+            auth_method: 'body',
+          },
+          { fetch: fetchStub }
+        ),
+      err => err instanceof ClientCredentialsExchangeError && err.kind === 'network' && err.httpStatus === 307
+    );
+    assert.strictEqual(fetchStub.calls.length, 1);
+    assert.strictEqual(fetchStub.calls[0].init.redirect, 'manual');
+  });
+
   it('maps invalid_client to kind="oauth" with AS error code surfaced', async () => {
     const fetchStub = makeFetchStub(
       async () =>

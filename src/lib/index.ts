@@ -1296,6 +1296,7 @@ export * from './types/enums.generated';
 // `VideoAssetRequirements_ContainersValues`. Companion to enums.generated;
 // see scripts/generate-inline-enum-arrays.ts for naming + scoping rules.
 export * from './types/inline-enums.generated';
+export * from './types/enum-compat';
 
 // PreviewCreativeRequestSchema is now a flat z.object() with request_type discriminant.
 // The old variant exports (PreviewCreativeSingleRequestSchema, etc.) are no longer needed —

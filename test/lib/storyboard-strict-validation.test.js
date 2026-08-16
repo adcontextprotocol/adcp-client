@@ -86,16 +86,16 @@ describe('storyboard validations: strict/lenient response_schema delta', () => {
     assert.match(v.error, /cache_scope/);
   });
 
-  test('strictness-delta scenario: Zod accepts a bad URI, AJV rejects format: uri', () => {
-    // Zod's generated `z.string()` doesn't enforce `format` keywords. AJV
-    // does. A response where `format_id.agent_url` is a bare word rather
-    // than a URI is the canonical "lenient passes, strict fails" case —
-    // the delta signal #820 wants agent developers to see.
+  test('generated Zod and strict AJV both reject a bad URI', () => {
+    // URI formats are now enforced in generated Zod schemas as well as the
+    // strict AJV pass. This used to be the canonical strictness-delta fixture;
+    // retaining it as a parity regression guard prevents the lenient path
+    // from silently accepting malformed portable identifiers again.
     const response = {
       formats: [
         {
           // agent_url is declared `format: uri` per core/format-id.json.
-          // "not-a-uri" satisfies z.string() but fails AJV's URI check.
+          // "not-a-uri" fails both generated Zod and AJV URI validation.
           format_id: { agent_url: 'not-a-uri', id: 'display_static' },
           name: 'Display Static',
           description: 'Static display format',
@@ -108,22 +108,17 @@ describe('storyboard validations: strict/lenient response_schema delta', () => {
       ctx('list_creative_formats', response, 'creative/list-creative-formats-response.json')
     );
     const v = results[0];
-    assert.strictEqual(v.passed, true, 'Zod path accepts bare string (lenient-pass)');
+    assert.strictEqual(v.passed, false, 'generated Zod rejects the bare string');
+    assert.match(v.error, /agent_url|URL|url|uri/i);
     assert.ok(v.strict);
     assert.strictEqual(v.strict.valid, false, 'AJV rejects bare string where format: uri is required');
     assert.ok(v.strict.issues);
     const hasFormat = v.strict.issues.some(i => i.keyword === 'format');
     assert.ok(hasFormat, `expected a format issue, got: ${JSON.stringify(v.strict.issues)}`);
-    // Warning must be populated on strict-only failure so LLM-driven
-    // self-correction and CI graphs that scan error/warning fields see
-    // something — the runner shouldn't flip passed (backwards compat)
-    // but also shouldn't leave the strict finding only in nested arrays.
-    assert.ok(typeof v.warning === 'string', 'warning surfaced on strict-only failure');
-    assert.match(v.warning, /strict JSON-schema rejected/);
-    assert.match(v.warning, /format/);
+    assert.strictEqual(v.warning, undefined, 'the primary Zod failure already carries the diagnostic');
   });
 
-  test('strictness warning preserves authored validation id', () => {
+  test('URI parity failure preserves authored validation id', () => {
     const response = {
       formats: [
         {
@@ -139,8 +134,8 @@ describe('storyboard validations: strict/lenient response_schema delta', () => {
       ctx('list_creative_formats', response, 'creative/list-creative-formats-response.json')
     );
     const v = results[0];
-    assert.strictEqual(v.passed, true);
-    assert.ok(typeof v.warning === 'string', 'warning surfaced on strict-only failure');
+    assert.strictEqual(v.passed, false);
+    assert.strictEqual(v.warning, undefined);
     assert.strictEqual(v.id, 'check_format_agent_url_uri');
   });
 

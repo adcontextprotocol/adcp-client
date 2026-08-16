@@ -63,6 +63,7 @@ import { withExternalSchemaRoot } from '../../validation/schema-loader';
 import { redactOAuthUrlForOutput, redactOAuthUrlsInText } from '../storyboard/oauth-metadata-graph';
 import { LIBRARY_VERSION } from '../../version';
 import { validationFailsStep } from '../storyboard/validations';
+import { isLikelyPrivateUrl } from '../../net/address-guards';
 
 /**
  * All compliance tracks in display order.
@@ -1179,7 +1180,11 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
         ? { ...effectiveOptions, versionEnvelope: 'major-only' as const }
         : effectiveOptions;
     const discoveryClient = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', discoveryOptions);
-    const { profile, step: profileStep } = await discoverAgentProfile(discoveryClient, signal);
+    const { profile, step: profileStep } = await discoverAgentProfile(
+      discoveryClient,
+      signal,
+      complianceIndex.adcp_version
+    );
     effectiveOptions = applyNegotiatedComplianceVersionOptions(profile, effectiveOptions, {
       complianceVersion: complianceIndex.adcp_version,
       ...(hostedStableLineAlias !== undefined && { hostedStableLineAlias }),
@@ -1265,7 +1270,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
         agentUrl,
         profileStep.error,
         signal,
-        effectiveOptions.transport?.fetchFn
+        effectiveOptions.transport?.trustedFetchFn
       );
       if (authCheck.isAuth) {
         const degraded: AgentProfile = { name: profile.name || 'Unknown (auth required)', tools: [] };
@@ -1619,7 +1624,10 @@ export async function detectAuthRejection(
 
   if (isAuth) {
     const { discoverOAuthMetadata } = await import('../../auth/oauth/discovery');
-    const oauthMeta = await discoverOAuthMetadata(agentUrl, { fetch: fetchFn });
+    const oauthMeta = await discoverOAuthMetadata(agentUrl, {
+      trustedFetchFn: fetchFn,
+      allowPrivateIp: isLikelyPrivateUrl(agentUrl),
+    });
     // Classify OAuth vs bearer based on (a) explicit OAuth phrasing in the
     // error text, or (b) a resolvable OAuth metadata document. Either is
     // enough; a plain 401 on a static-token endpoint matches neither.
@@ -1806,7 +1814,7 @@ async function buildUnreachableResult(
     agentUrl,
     errorMsg,
     signal,
-    effectiveOptions.transport?.fetchFn
+    effectiveOptions.transport?.trustedFetchFn
   );
   const err = redactOAuthUrlsInText(errorMsg || 'Unknown error');
   const headline = isAuth ? `Authentication required` : `Agent unreachable — ${err}`;

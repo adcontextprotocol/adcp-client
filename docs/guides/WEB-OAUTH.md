@@ -142,6 +142,9 @@ not use it in production — restarts lose every in-flight flow.
   user-recoverable: prompt to re-authorize.
 - `StateMismatchError` — caller passed `expectedState` and it didn't
   match the AS-supplied `state`. Almost always CSRF or a stale cookie.
+- `BrowserBindingRequiredError` — `expectedState` was omitted. Browser callbacks
+  fail closed by default; only non-browser compatibility flows should set
+  `allowUnboundState: true`.
 - `TokenExchangeError` — AS rejected the code exchange. Carries
   `oauthErrorCode` (`invalid_grant`, `invalid_client`, …), `status`, and
   a redacted `body` for diagnostics. Treat `body` as sensitive — do not
@@ -175,7 +178,7 @@ not use it in production — restarts lose every in-flight flow.
 - **CSRF.** `expectedState` binds the flow to the user's browser. The
   SDK cannot do this for you because it can't see your session
   middleware — you stash `state` in a cookie at `/start` and pass it
-  back in at `/callback`.
+  back in at `/callback`. Omission throws by default.
 - **`carry` is attacker-influenced.** It's whatever the caller of
   `/oauth/start` put in the request. Always validate before reflecting
   (use `safeReturnTo` for redirect targets).

@@ -1,13 +1,14 @@
 ---
-"@adcp/sdk": patch
+'@adcp/sdk': patch
 ---
 
-feat(oauth): add `requireBrowserBinding` and warn when `expectedState` is omitted from `completeWebOAuthFlow`
+fix(oauth): require browser state binding in `completeWebOAuthFlow`
 
 `CompleteWebFlowOptions.expectedState` was optional and silently skipped when absent — the flow was replay-protected via atomic consume but not browser-bound. Now:
 
-- Omitting `expectedState` emits a `console.warn` pointing callers to the session-cookie pattern.
-- Setting `requireBrowserBinding: true` promotes the omission to a `BrowserBindingRequiredError` (strict mode for frameworks where session cookies are always available).
+- Omitting `expectedState` throws `BrowserBindingRequiredError` by default. Pass the state from the session cookie created at `/oauth/start`.
+- Trusted non-browser integrations can explicitly set `allowUnboundState: true`; browser handlers must not use this escape hatch.
+- The deprecated `requireBrowserBinding` option remains accepted for source compatibility, but binding is now the default.
 - New `BrowserBindingRequiredError` class is exported from `@adcp/sdk/auth/oauth`.
 
 Parallels the `CLIFlowHandler` state-binding hardened in the same security PR.

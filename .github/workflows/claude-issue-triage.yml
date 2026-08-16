@@ -1,7 +1,7 @@
 name: Claude Issue Triage
 
 # Fires the Claude Code triage routine's /fire endpoint when a new issue
-# opens, when a comment lands on an issue OR PR, or when a repo member
+# opens, when a trusted collaborator comments on an issue OR PR, or when a repo member
 # invokes `/triage` via comment (dispatched by
 # `.github/workflows/slash-command-dispatch.yml`).
 #
@@ -43,7 +43,8 @@ jobs:
     timeout-minutes: 3
     # Three trigger paths, each with its own gate:
     #   - issues.opened/reopened    → skip bot-opened issues
-    #   - issue_comment.created     → skip bots, skip self-loop (routine's
+    #   - issue_comment.created     → require a trusted repository association,
+    #                                 skip bots, skip self-loop (routine's
     #                                 own comments contain "Triaged by
     #                                 Claude Code"), skip /triage (handled
     #                                 by slash-command-dispatch path).
@@ -60,6 +61,7 @@ jobs:
       ) ||
       (
         github.event_name == 'issue_comment' &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
         github.event.comment.user.type != 'Bot' &&
         !endsWith(github.event.comment.user.login, '[bot]') &&
         github.event.sender.type != 'Bot' &&
@@ -74,6 +76,8 @@ jobs:
     steps:
       - name: Resolve issue number + event kind
         id: ctx
+        env:
+          DISPATCH_ARGS: ${{ github.event.client_payload.slash_command.args.all }}
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "issues" ]; then
@@ -95,7 +99,11 @@ jobs:
             echo "kind=manual" >> "$GITHUB_OUTPUT"
             echo "action=triage" >> "$GITHUB_OUTPUT"
             echo "commenter=${{ github.event.client_payload.github.payload.comment.user.login }}" >> "$GITHUB_OUTPUT"
-            echo "args=${{ github.event.client_payload.slash_command.args.all }}" >> "$GITHUB_OUTPUT"
+            # Slash-command arguments are collaborator-controlled data. Keep
+            # them out of the generated shell program and collapse newlines so
+            # they remain a single GitHub output value.
+            safe_args=$(printf '%s' "${DISPATCH_ARGS:-}" | tr -d '\000' | tr '\r\n' ' ' | head -c 1024)
+            printf 'args=%s\n' "$safe_args" >> "$GITHUB_OUTPUT"
             echo "comment_id=${{ github.event.client_payload.github.payload.comment.id }}" >> "$GITHUB_OUTPUT"
           fi
 
@@ -249,7 +257,7 @@ jobs:
           token: ${{ secrets.TRIAGE_DISPATCH_PAT }}
           repository: ${{ github.event.client_payload.github.payload.repository.full_name }}
           comment-id: ${{ steps.ctx.outputs.comment_id }}
-          reactions: "+1"
+          reactions: '+1'
 
       - name: React -1 on manual-nudge comment (failure)
         if: steps.ctx.outputs.kind == 'manual' && failure() && steps.ctx.outputs.comment_id != ''
@@ -258,4 +266,4 @@ jobs:
           token: ${{ secrets.TRIAGE_DISPATCH_PAT }}
           repository: ${{ github.event.client_payload.github.payload.repository.full_name }}
           comment-id: ${{ steps.ctx.outputs.comment_id }}
-          reactions: "-1"
+          reactions: '-1'

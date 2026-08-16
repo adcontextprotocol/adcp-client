@@ -5,8 +5,9 @@
  * MCP servers expose OAuth metadata at /.well-known/oauth-authorization-server
  */
 
-import { wrapFetchWithSizeLimit } from '../../protocols/responseSizeLimit';
 import { throwIfAborted } from '../../protocols/abort';
+import { wrapFetchWithSizeLimit } from '../../protocols/responseSizeLimit';
+import { ssrfSafeFetch, SsrfRefusedError, SSRF_TRANSIENT_CODES } from '../../net/ssrf-fetch';
 
 /**
  * OAuth Authorization Server Metadata
@@ -39,8 +40,15 @@ export interface OAuthMetadata {
 export interface DiscoveryOptions {
   /** Timeout in milliseconds (default: 5000) */
   timeout?: number;
-  /** Custom fetch function (for testing or custom HTTP handling) */
+  /**
+   * Caller-owned fetch that provides connect-time DNS pinning itself.
+   * Use only for a controlled test transport or a hardened egress proxy.
+   */
+  trustedFetchFn?: typeof fetch;
+  /** @deprecated Rename to `trustedFetchFn`; the custom transport must pin DNS. */
   fetch?: typeof fetch;
+  /** Permit HTTP and private DNS answers for local/private development agents. */
+  allowPrivateIp?: boolean;
   /** Caller cancellation, including the absolute task deadline. */
   signal?: AbortSignal;
 }
@@ -68,11 +76,18 @@ export async function discoverOAuthMetadata(
   agentUrl: string,
   options: DiscoveryOptions = {}
 ): Promise<OAuthMetadata | null> {
-  // Wrap with the response-size-limit guard so a hostile metadata endpoint
-  // can't buffer-bomb during discovery. Pass-through when no
-  // `withResponseSizeLimit` slot is active. (#1175)
-  const { timeout = 5000, fetch: providedFetch = fetch } = options;
-  const customFetch = wrapFetchWithSizeLimit(providedFetch);
+  const { timeout = 5000 } = options;
+  if (options.fetch && options.trustedFetchFn && options.fetch !== options.trustedFetchFn) {
+    throw new TypeError('DiscoveryOptions cannot set different fetch and trustedFetchFn implementations');
+  }
+  if (options.fetch) {
+    console.warn(
+      '[adcp] DiscoveryOptions.fetch is deprecated; rename it to trustedFetchFn. ' +
+        'Custom fetch implementations must provide connect-time DNS pinning.'
+    );
+  }
+  const selectedFetch = options.trustedFetchFn ?? options.fetch;
+  const trustedFetchFn = selectedFetch ? wrapFetchWithSizeLimit(selectedFetch) : undefined;
   throwIfAborted(options.signal);
 
   try {
@@ -95,16 +110,20 @@ export async function discoverOAuthMetadata(
       const signal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
 
       try {
-        const response = await customFetch(metadataUrl.toString(), {
-          headers: { Accept: 'application/json' },
+        const response = await ssrfSafeFetch(metadataUrl.toString(), {
+          headers: { accept: 'application/json' },
           signal,
+          timeoutMs: timeout,
+          maxBodyBytes: 64 * 1024,
+          allowPrivateIp: options.allowPrivateIp,
+          ...(trustedFetchFn ? { trustedFetchFn } : {}),
         });
 
-        if (!response.ok) {
+        if (response.status < 200 || response.status >= 300) {
           continue;
         }
 
-        const metadata = (await response.json()) as OAuthMetadata;
+        const metadata = JSON.parse(new TextDecoder().decode(response.body)) as OAuthMetadata;
 
         // Validate required fields
         if (!metadata.authorization_endpoint || !metadata.token_endpoint) {
@@ -112,16 +131,18 @@ export async function discoverOAuthMetadata(
         }
 
         return metadata;
-      } catch {
+      } catch (error) {
         throwIfAborted(options.signal);
+        if (error instanceof SsrfRefusedError && !SSRF_TRANSIENT_CODES.has(error.code)) throw error;
         // Parse error, timeout, or network error on this URL -- try next
         continue;
       }
     }
 
     return null;
-  } catch {
+  } catch (error) {
     throwIfAborted(options.signal);
+    if (error instanceof SsrfRefusedError && !SSRF_TRANSIENT_CODES.has(error.code)) throw error;
     // Network error, timeout, or invalid URL - agent doesn't support OAuth
     return null;
   }

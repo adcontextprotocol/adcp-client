@@ -261,7 +261,7 @@ export interface TransportOptions {
    *
    * @remarks
    * Future hardening knobs (DNS-rebind defense, scheme allow-list, request
-   * timeout overrides) will land here as additional fields. When `fetchFn`
+   * timeout overrides) will land here as additional fields. When `trustedFetchFn`
    * is supplied, the SDK composes it inside its signing, capture, size-limit,
    * timeout, and diagnostics wrappers so callers do not have to reproduce
    * that non-obvious ordering themselves.
@@ -276,13 +276,24 @@ export interface TransportOptions {
    * agent records, storyboard artifacts, or compliance output. When unset,
    * the SDK uses the global `fetch` implementation.
    *
-   * For SSRF-sensitive metadata probes, supplying this function makes it the
-   * trusted network boundary: the SDK still validates schemes and resolved
-   * addresses, but a custom fetch API cannot accept the SDK's pinned undici
-   * dispatcher. The implementation must therefore prevent DNS rebinding (for
+   * Supplying this function makes it the trusted network boundary: the SDK
+   * still validates URL schemes, redirect behavior, timeouts, and body limits,
+   * but delegates DNS resolution and address policy to the implementation.
+   * It must prevent DNS rebinding and unsafe private-address access itself (for
    * example with an egress proxy or its own DNS pinning).
    */
+  trustedFetchFn?: typeof fetch;
+  /**
+   * @deprecated Rename to `trustedFetchFn`. Supplying this legacy alias is
+   * treated as an explicit assertion that the implementation pins DNS.
+   */
   fetchFn?: typeof fetch;
+  /**
+   * Permit this client to connect to private DNS answers. Localhost and an
+   * initial private IP literal are allowed automatically only on their exact
+   * origin; use this for private-DNS enterprise agents.
+   */
+  allowPrivateIp?: boolean;
   /**
    * Timeout in milliseconds for bounded one-shot transport requests such as
    * A2A agent-card discovery and MCP read-path probes. Defaults to 60 seconds
@@ -290,6 +301,24 @@ export interface TransportOptions {
    * Set to `0` to disable the SDK-imposed discovery timeout.
    */
   requestTimeoutMs?: number;
+}
+
+let warnedLegacyTransportFetch = false;
+
+/** @internal Normalize the pre-GA fetch hook rename without silently dropping JS callers. */
+export function normalizeTransportOptions(transport?: TransportOptions): TransportOptions | undefined {
+  if (!transport?.fetchFn) return transport;
+  if (transport.trustedFetchFn && transport.trustedFetchFn !== transport.fetchFn) {
+    throw new TypeError('TransportOptions cannot set different fetchFn and trustedFetchFn implementations');
+  }
+  if (!warnedLegacyTransportFetch) {
+    warnedLegacyTransportFetch = true;
+    console.warn(
+      '[adcp] TransportOptions.fetchFn is deprecated; rename it to trustedFetchFn. ' +
+        'Custom fetch implementations must provide connect-time DNS pinning.'
+    );
+  }
+  return { ...transport, trustedFetchFn: transport.trustedFetchFn ?? transport.fetchFn };
 }
 
 /**
@@ -387,11 +416,12 @@ export class ProtocolClient {
       adcpVersion,
       wireAdcpVersion,
       versionEnvelope: versionEnvelopeMode = 'auto',
-      transport,
+      transport: requestedTransport,
       signal,
       onTransportActivity,
       transportActivityContext,
     } = options;
+    const transport = normalizeTransportOptions(requestedTransport);
     // Per-instance version envelope. Throws on unparseable pins via
     // `resolveWireMajor`; construction-time `resolveAdcpVersion` is the
     // primary gate but this is the failsafe for callers reaching
@@ -456,11 +486,11 @@ export class ProtocolClient {
               // explicit opt-in via the library API.
               if (agent.oauth_client_credentials) {
                 const ccStorage = getAgentStorage(agent);
-                const allowPrivateIp = isLikelyPrivateUrl(agent.agent_uri);
+                const allowPrivateIp = transport?.allowPrivateIp ?? isLikelyPrivateUrl(agent.agent_uri);
                 await ensureClientCredentialsTokens(agent, {
                   storage: ccStorage,
                   allowPrivateIp,
-                  fetch: transport?.fetchFn,
+                  fetch: transport?.trustedFetchFn,
                   signal,
                 });
               }
@@ -571,13 +601,20 @@ export class ProtocolClient {
                       signingContext,
                       signal,
                       requestTimeoutMs: transport?.requestTimeoutMs,
-                      fetchFn: transport?.fetchFn,
+                      fetchFn: transport?.trustedFetchFn,
+                      allowPrivateIp: transport?.allowPrivateIp,
                     });
                   } catch (err) {
                     // Refresh failed or server rejected the refreshed token — walk the
                     // discovery chain so the caller can distinguish "re-auth needed"
                     // from other failure modes.
-                    await rethrowAsNeedsAuthorization(err, agent.agent_uri, transport?.fetchFn, signal);
+                    await rethrowAsNeedsAuthorization(
+                      err,
+                      agent.agent_uri,
+                      transport?.trustedFetchFn,
+                      signal,
+                      transport?.allowPrivateIp
+                    );
                     throw err;
                   }
                 }
@@ -598,7 +635,8 @@ export class ProtocolClient {
                       ...(transport?.requestTimeoutMs !== undefined && {
                         requestTimeoutMs: transport.requestTimeoutMs,
                       }),
-                      ...(transport?.fetchFn && { fetchFn: transport.fetchFn }),
+                      ...(transport?.trustedFetchFn && { fetchFn: transport.trustedFetchFn }),
+                      ...(transport?.allowPrivateIp !== undefined && { allowPrivateIp: transport.allowPrivateIp }),
                     }
                   );
                 } catch (err) {
@@ -608,12 +646,12 @@ export class ProtocolClient {
                   // loop if the credentials are genuinely wrong.
                   if (agent.oauth_client_credentials && is401Error(err)) {
                     const ccStorage = getAgentStorage(agent);
-                    const allowPrivateIp = isLikelyPrivateUrl(agent.agent_uri);
+                    const allowPrivateIp = transport?.allowPrivateIp ?? isLikelyPrivateUrl(agent.agent_uri);
                     await ensureClientCredentialsTokens(agent, {
                       storage: ccStorage,
                       force: true,
                       allowPrivateIp,
-                      fetch: transport?.fetchFn,
+                      fetch: transport?.trustedFetchFn,
                       signal,
                     });
                     const retryAuthToken = agent.oauth_tokens?.access_token ?? authToken;
@@ -631,15 +669,30 @@ export class ProtocolClient {
                           ...(transport?.requestTimeoutMs !== undefined && {
                             requestTimeoutMs: transport.requestTimeoutMs,
                           }),
-                          ...(transport?.fetchFn && { fetchFn: transport.fetchFn }),
+                          ...(transport?.trustedFetchFn && { fetchFn: transport.trustedFetchFn }),
+                          ...(transport?.allowPrivateIp !== undefined && {
+                            allowPrivateIp: transport.allowPrivateIp,
+                          }),
                         }
                       );
                     } catch (retryErr) {
-                      await rethrowAsNeedsAuthorization(retryErr, agent.agent_uri, transport?.fetchFn, signal);
+                      await rethrowAsNeedsAuthorization(
+                        retryErr,
+                        agent.agent_uri,
+                        transport?.trustedFetchFn,
+                        signal,
+                        transport?.allowPrivateIp
+                      );
                       throw retryErr;
                     }
                   }
-                  await rethrowAsNeedsAuthorization(err, agent.agent_uri, transport?.fetchFn, signal);
+                  await rethrowAsNeedsAuthorization(
+                    err,
+                    agent.agent_uri,
+                    transport?.trustedFetchFn,
+                    signal,
+                    transport?.allowPrivateIp
+                  );
                   throw err;
                 }
               } else if (agent.protocol === 'a2a') {
@@ -657,7 +710,8 @@ export class ProtocolClient {
                     session,
                     signal,
                     transport?.requestTimeoutMs,
-                    transport?.fetchFn
+                    transport?.trustedFetchFn,
+                    transport?.allowPrivateIp
                   );
                 } catch (err) {
                   // Same single-retry-on-401 for client-credentials agents as the
@@ -666,12 +720,12 @@ export class ProtocolClient {
                   // rewrap on a retry that still 401s.
                   if (agent.oauth_client_credentials && is401Error(err)) {
                     const ccStorage = getAgentStorage(agent);
-                    const allowPrivateIp = isLikelyPrivateUrl(agent.agent_uri);
+                    const allowPrivateIp = transport?.allowPrivateIp ?? isLikelyPrivateUrl(agent.agent_uri);
                     await ensureClientCredentialsTokens(agent, {
                       storage: ccStorage,
                       force: true,
                       allowPrivateIp,
-                      fetch: transport?.fetchFn,
+                      fetch: transport?.trustedFetchFn,
                       signal,
                     });
                     const retryAuthToken = agent.oauth_tokens?.access_token ?? authToken;
@@ -688,14 +742,27 @@ export class ProtocolClient {
                         session,
                         signal,
                         transport?.requestTimeoutMs,
-                        transport?.fetchFn
+                        transport?.trustedFetchFn,
+                        transport?.allowPrivateIp
                       );
                     } catch (retryErr) {
-                      await rethrowAsNeedsAuthorization(retryErr, agent.agent_uri, transport?.fetchFn, signal);
+                      await rethrowAsNeedsAuthorization(
+                        retryErr,
+                        agent.agent_uri,
+                        transport?.trustedFetchFn,
+                        signal,
+                        transport?.allowPrivateIp
+                      );
                       throw retryErr;
                     }
                   }
-                  await rethrowAsNeedsAuthorization(err, agent.agent_uri, transport?.fetchFn, signal);
+                  await rethrowAsNeedsAuthorization(
+                    err,
+                    agent.agent_uri,
+                    transport?.trustedFetchFn,
+                    signal,
+                    transport?.allowPrivateIp
+                  );
                   throw err;
                 }
               } else {
@@ -721,7 +788,8 @@ async function rethrowAsNeedsAuthorization(
   err: unknown,
   agentUrl: string,
   fetchFn?: typeof fetch,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  configuredAllowPrivateIp?: boolean
 ): Promise<void> {
   if (err instanceof NeedsAuthorizationError) throw err;
   if (!is401Error(err)) return;
@@ -729,7 +797,7 @@ async function rethrowAsNeedsAuthorization(
   // If the caller has already connected to the agent URL, they've implicitly
   // trusted it — inherit that trust for the discovery probe so loopback /
   // private-IP development agents work the same way as public ones.
-  const allowPrivateIp = isLikelyPrivateUrl(agentUrl);
+  const allowPrivateIp = configuredAllowPrivateIp ?? isLikelyPrivateUrl(agentUrl);
 
   // discoverAuthorizationRequirements internally catches network failures and
   // returns null rather than throwing — anything that escapes is a genuine
@@ -759,6 +827,7 @@ export const createMCPClient = (
   transport?: TransportOptions,
   versionEnvelopeMode: VersionEnvelopeMode = 'auto'
 ) => {
+  transport = normalizeTransportOptions(transport);
   // Validate the pin at factory time so a typo surfaces here rather than at
   // first call. `buildVersionEnvelope` throws via `resolveWireMajor` on bad
   // input — call it once to surface, then close over the envelope.
@@ -775,7 +844,8 @@ export const createMCPClient = (
           headers,
           {
             ...(transport?.requestTimeoutMs !== undefined && { requestTimeoutMs: transport.requestTimeoutMs }),
-            ...(transport?.fetchFn && { fetchFn: transport.fetchFn }),
+            ...(transport?.trustedFetchFn && { fetchFn: transport.trustedFetchFn }),
+            ...(transport?.allowPrivateIp !== undefined && { allowPrivateIp: transport.allowPrivateIp }),
           }
         )
       ),
@@ -791,6 +861,7 @@ export const createA2AClient = (
   transport?: TransportOptions,
   versionEnvelopeMode: VersionEnvelopeMode = 'auto'
 ) => {
+  transport = normalizeTransportOptions(transport);
   const versionEnvelope = buildVersionEnvelopeForMode(versionEnvelopeMode, adcpVersion, serverVersion);
   return {
     callTool: (toolName: string, parameters: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
@@ -807,7 +878,8 @@ export const createA2AClient = (
           undefined,
           undefined,
           transport?.requestTimeoutMs,
-          transport?.fetchFn
+          transport?.trustedFetchFn,
+          transport?.allowPrivateIp
         )
       ),
   };

@@ -120,7 +120,7 @@ describe('ssrfSafeFetch — happy path (allowPrivateIp for localhost)', () => {
     }
   });
 
-  it('marks trusted custom-fetch connections as caller-pinned', async () => {
+  it('delegates DNS pinning metadata to trusted custom-fetch connections', async () => {
     const server = http.createServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end('{}');
@@ -133,7 +133,8 @@ describe('ssrfSafeFetch — happy path (allowPrivateIp for localhost)', () => {
         trustedFetchFn: fetch,
       });
       assert.strictEqual(result.status, 200);
-      assert.strictEqual(result.pinnedAddress, '127.0.0.1');
+      assert.strictEqual(result.pinnedAddress, undefined);
+      assert.strictEqual(result.pinnedFamily, undefined);
       assert.strictEqual(result.connectionPinned, false);
     } finally {
       server.close();

@@ -64,6 +64,25 @@ interface AdcpManifest {
   specialisms: Record<string, ManifestSpecialism>;
 }
 
+const MANIFEST_ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]*$/;
+const MANIFEST_PROTOCOL_PATTERN = /^[a-z][a-z0-9-]*$/;
+
+function assertManifestKeysAreSafe(manifest: AdcpManifest, sourcePath: string): void {
+  for (const code of Object.keys(manifest.error_codes)) {
+    if (!MANIFEST_ERROR_CODE_PATTERN.test(code)) {
+      throw new Error(`manifest.json at ${sourcePath} contains an invalid error-code key: ${JSON.stringify(code)}`);
+    }
+  }
+  for (const [toolName, tool] of Object.entries(manifest.tools)) {
+    if (!MANIFEST_PROTOCOL_PATTERN.test(tool.protocol)) {
+      throw new Error(
+        `manifest.json at ${sourcePath} contains an invalid protocol for tool ${JSON.stringify(toolName)}: ` +
+          JSON.stringify(tool.protocol)
+      );
+    }
+  }
+}
+
 function loadManifest(): { manifest: AdcpManifest; sourcePath: string } {
   const adcpVersionPath = path.join(__dirname, '../ADCP_VERSION');
   if (!existsSync(adcpVersionPath)) {
@@ -88,6 +107,7 @@ function loadManifest(): { manifest: AdcpManifest; sourcePath: string } {
       `manifest.json at ${manifestPath} is missing required sections. ` + `Required: error_codes, tools, specialisms.`
     );
   }
+  assertManifestKeysAreSafe(manifest, manifestPath);
   return { manifest, sourcePath: manifestPath };
 }
 
@@ -156,7 +176,7 @@ function generateFile(manifest: AdcpManifest, sourcePath: string): string {
       const description = JSON.stringify(info.description);
       const recovery = JSON.stringify(info.recovery);
       const suggestion = info.suggestion ? `,\n    suggestion: ${JSON.stringify(info.suggestion)}` : '';
-      return `  ${code}: {\n    description: ${description},\n    recovery: ${recovery}${suggestion}\n  }`;
+      return `  ${JSON.stringify(code)}: {\n    description: ${description},\n    recovery: ${recovery}${suggestion}\n  }`;
     })
     .join(',\n');
 
@@ -275,4 +295,4 @@ if (require.main === module) {
   }
 }
 
-export { main as generateManifestDerived };
+export { assertManifestKeysAreSafe, main as generateManifestDerived };

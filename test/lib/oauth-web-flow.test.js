@@ -14,8 +14,8 @@ const assert = require('node:assert');
 const http = require('node:http');
 
 const {
-  startWebOAuthFlow,
-  completeWebOAuthFlow,
+  startWebOAuthFlow: rawStartWebOAuthFlow,
+  completeWebOAuthFlow: rawCompleteWebOAuthFlow,
   safeReturnTo,
   InMemoryPendingFlowStore,
   InvalidOrExpiredFlowError,
@@ -27,6 +27,11 @@ const {
   AgentChangedDuringFlowError,
   ConfidentialClientNotAllowedError,
 } = require('../../dist/lib/auth/oauth');
+
+// This suite intentionally uses an in-process plaintext authorization server.
+const startWebOAuthFlow = options => rawStartWebOAuthFlow({ allowHttp: true, ...options });
+const completeWebOAuthFlow = options =>
+  rawCompleteWebOAuthFlow({ allowHttp: true, allowUnboundState: true, ...options });
 
 const state = {
   server: null,
@@ -135,6 +140,35 @@ function installStandardASHandlers({ tokenEndpointAuthMethods, registrationEndpo
 }
 
 describe('startWebOAuthFlow', () => {
+  test('rejects an unconstrained PRM authorization server before discovery', async () => {
+    let fetchCount = 0;
+    const customFetch = async url => {
+      fetchCount += 1;
+      if (url.toString().includes('oauth-protected-resource')) {
+        return new Response(
+          JSON.stringify({
+            resource: 'https://example.com/mcp',
+            authorization_servers: ['http://127.0.0.1/internal-as'],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      throw new Error('authorization-server discovery should not run');
+    };
+
+    await assert.rejects(
+      () =>
+        rawStartWebOAuthFlow({
+          agent: makeAgent({ agent_uri: 'https://example.com/mcp' }),
+          redirectUri: 'https://app.example.com/callback',
+          pendingFlowStore: new InMemoryPendingFlowStore(),
+          trustedFetchFn: customFetch,
+        }),
+      err => err instanceof ProtectedResourceMetadataError && /must use HTTPS/.test(err.message)
+    );
+    assert.strictEqual(fetchCount, 1);
+  });
+
   test('prefers PRM.resource over the server-derived fallback', async () => {
     // The agent_uri carries a trailing slash; the PRM advertises the
     // canonical no-slash form. The local-guess path would be `/mcp/`
@@ -234,6 +268,7 @@ describe('startWebOAuthFlow', () => {
             redirectUri: 'http://localhost:9999/callback',
             pendingFlowStore: new InMemoryPendingFlowStore(),
             resourceOverride,
+            allowHttp: false,
           }),
         { code: 'invalid_resource_override' }
       );
@@ -776,7 +811,7 @@ describe('completeWebOAuthFlow', () => {
     assert.strictEqual(completion.tokens.access_token, 'issued-access-token');
   });
 
-  test('warns via console.warn when expectedState is omitted', async () => {
+  test('fails closed when expectedState is omitted', async () => {
     state.handlers['/.well-known/oauth-protected-resource/mcp'] = (req, res) =>
       jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [origin()] });
     installStandardASHandlers();
@@ -788,23 +823,13 @@ describe('completeWebOAuthFlow', () => {
       pendingFlowStore,
     });
 
-    const warnings = [];
-    const origWarn = console.warn;
-    console.warn = (...args) => warnings.push(args.join(' '));
-    try {
-      await completeWebOAuthFlow({ state: start.state, code: 'c', pendingFlowStore });
-    } finally {
-      console.warn = origWarn;
-    }
-
-    assert.ok(warnings.length > 0, 'expected at least one console.warn');
-    assert.ok(
-      warnings.some(w => w.includes('browser-bound')),
-      `expected "browser-bound" in warning, got: ${warnings.join('; ')}`
+    await assert.rejects(
+      () => rawCompleteWebOAuthFlow({ state: start.state, code: 'c', pendingFlowStore, allowHttp: true }),
+      err => err instanceof BrowserBindingRequiredError
     );
   });
 
-  test('does not warn when expectedState is provided', async () => {
+  test('allows an explicit non-browser compatibility escape hatch', async () => {
     state.handlers['/.well-known/oauth-protected-resource/mcp'] = (req, res) =>
       jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [origin()] });
     installStandardASHandlers();
@@ -816,20 +841,14 @@ describe('completeWebOAuthFlow', () => {
       pendingFlowStore,
     });
 
-    const warnings = [];
-    const origWarn = console.warn;
-    console.warn = (...args) => warnings.push(args.join(' '));
-    try {
-      await completeWebOAuthFlow({ state: start.state, code: 'c', pendingFlowStore, expectedState: start.state });
-    } finally {
-      console.warn = origWarn;
-    }
-
-    assert.strictEqual(
-      warnings.filter(w => w.includes('browser-bound')).length,
-      0,
-      'should not warn when expectedState is supplied'
-    );
+    const result = await rawCompleteWebOAuthFlow({
+      state: start.state,
+      code: 'c',
+      pendingFlowStore,
+      allowHttp: true,
+      allowUnboundState: true,
+    });
+    assert.strictEqual(result.tokens.access_token, 'issued-access-token');
   });
 
   test('throws BrowserBindingRequiredError when requireBrowserBinding:true and expectedState omitted', async () => {

@@ -61,8 +61,45 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
 
     const result = await executeStoryboardTask(client, 'get_products', {});
     expect(calls).toEqual(['legacy']);
-    expect(receivedParams).toEqual({ ext: { adcp: { creative_wire: 'legacy' } } });
+    expect(receivedParams).toEqual({});
     expect(result.data).toEqual({ products: [], format: 'legacy' });
+  });
+
+  it('retains explicit legacy wire routing for media-buy lifecycle tasks', async () => {
+    let receivedParams: unknown;
+    const client = {
+      getAdcpVersion: () => '3.1.13',
+      createMediaBuyLegacy: async (params: unknown) => {
+        receivedParams = params;
+        return { data: { media_buy_id: 'buy_1' } };
+      },
+    };
+
+    await executeStoryboardTask(client, 'create_media_buy', { packages: [] });
+    expect(receivedParams).toEqual({
+      packages: [],
+      ext: { adcp: { creative_wire: 'legacy' } },
+    });
+  });
+
+  it('routes get_media_buys through raw execution with the legacy wire hint', async () => {
+    let receivedTask: string | undefined;
+    let receivedParams: unknown;
+    const client = {
+      getAdcpVersion: () => '3.1.13',
+      getMediaBuys: async () => {
+        throw new Error('canonical method must not be selected');
+      },
+      executeTask: async (task: string, params: unknown) => {
+        receivedTask = task;
+        receivedParams = params;
+        return { data: { media_buys: [] } };
+      },
+    };
+
+    await executeStoryboardTask(client, 'get_media_buys', {});
+    expect(receivedTask).toBe('get_media_buys');
+    expect(receivedParams).toEqual({ ext: { adcp: { creative_wire: 'legacy' } } });
   });
 
   it('uses canonical creative methods when called without runner projection policy on a 3.2+ wire', async () => {

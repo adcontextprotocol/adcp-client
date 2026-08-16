@@ -7,14 +7,56 @@ function errorCodeValidation(value) {
   return { check: 'error_code', value, description: `Expected ${value}` };
 }
 
-function runOne(validations, taskName, taskResult) {
+function runOne(validations, taskName, taskResult, storyboardContext) {
   return runValidations(validations, {
     taskName,
     taskResult,
     agentUrl: 'https://example.com/mcp',
     contributions: new Set(),
+    storyboardContext,
   });
 }
+
+describe('all_fields_in_context_array', () => {
+  const validation = {
+    check: 'all_fields_in_context_array',
+    path: 'products[*].channels[*]',
+    context_key: 'portfolio_channels',
+    description: 'all routed channels are in the portfolio',
+  };
+
+  it('passes when every wildcard terminal deep-equals a captured member', () => {
+    const [result] = runOne(
+      [validation],
+      'get_products',
+      { success: true, data: { products: [{ channels: ['ctv', { id: 'display', tier: 1 }] }] } },
+      { portfolio_channels: [{ tier: 1, id: 'display' }, 'ctv'] }
+    );
+    assert.strictEqual(result.passed, true, result.error);
+  });
+
+  it('fails with the captured array and all resolved terminals on conflict', () => {
+    const [result] = runOne(
+      [validation],
+      'get_products',
+      { success: true, data: { products: [{ channels: ['ctv', 'audio'] }, { channels: ['display'] }] } },
+      { portfolio_channels: ['ctv', 'display'] }
+    );
+    assert.strictEqual(result.passed, false);
+    assert.deepStrictEqual(result.expected, ['ctv', 'display']);
+    assert.deepStrictEqual(result.actual, ['ctv', 'audio', 'display']);
+  });
+
+  it('passes vacuously when the response resolves zero terminals', () => {
+    const [result] = runOne(
+      [validation],
+      'get_products',
+      { success: true, data: { products: [] } },
+      { portfolio_channels: ['ctv'] }
+    );
+    assert.strictEqual(result.passed, true, result.error);
+  });
+});
 
 describe('validateErrorCode', () => {
   it('reads spec-canonical code from data.errors[0].code', () => {

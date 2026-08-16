@@ -2594,7 +2594,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // doesn't yet model (content-standards CRUD, sync_event_sources, etc.).
     // See `CreateAdcpServerFromPlatformOptions` JSDoc for the migration-seam
     // contract.
-    mediaBuy: mergeHandlers(
+    mediaBuy: mergeMediaBuyHandlers(
       legacyHandlers.mediaBuy,
       buildMediaBuyHandlers(
         platform,
@@ -2615,7 +2615,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         defaultCreativeWireMode
       ),
       'mediaBuy',
-      mergeOpts
+      mergeOpts,
+      defaultCreativeWireMode
     ),
     creative: mergeHandlers(
       legacyHandlers.creative,
@@ -3593,6 +3594,41 @@ function mergeHandlers<T extends object>(
   }
 
   return { ...custom, ...platform };
+}
+
+/**
+ * Native media-buy methods operate on the canonical platform surface, while
+ * the explicitly named `legacyHandlers` surface is the adopter's raw-wire
+ * compatibility escape hatch. For the three lifecycle methods that can echo
+ * package selectors, route an actually negotiated legacy request to that raw
+ * handler when both implementations are present. Canonical requests continue
+ * to use the native platform method, and strict merge-seam collision checking
+ * remains unchanged.
+ */
+function mergeMediaBuyHandlers(
+  custom: MediaBuyHandlers<Account> | undefined,
+  platform: MediaBuyHandlers<Account> | undefined,
+  domain: string,
+  opts: { mode: MergeSeamMode; logger: AdcpLogger },
+  fallbackWireMode: 'canonical' | 'legacy'
+): MediaBuyHandlers<Account> | undefined {
+  const merged = mergeHandlers(custom, platform, domain, opts);
+  if (!custom || !platform || !merged) return merged;
+
+  const routed = { ...merged } as Record<string, unknown>;
+  for (const key of ['createMediaBuy', 'updateMediaBuy', 'getMediaBuys'] as const) {
+    const customHandler = (custom as Record<string, unknown>)[key];
+    const platformHandler = (platform as Record<string, unknown>)[key];
+    if (typeof customHandler !== 'function' || typeof platformHandler !== 'function') continue;
+    routed[key] = (...args: unknown[]) => {
+      const ctx = args[1] as HandlerContext<Account> | undefined;
+      if (ctx && creativeWireModeForRequest(ctx, fallbackWireMode, args[0]) === 'legacy') {
+        return Reflect.apply(customHandler, custom, args);
+      }
+      return Reflect.apply(platformHandler, platform, args);
+    };
+  }
+  return routed as MediaBuyHandlers<Account>;
 }
 
 // ---------------------------------------------------------------------------

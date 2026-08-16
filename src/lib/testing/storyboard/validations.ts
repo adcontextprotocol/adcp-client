@@ -339,6 +339,8 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return validateFieldEqualsContext(validation, ctx);
     case 'field_in_context_array':
       return validateFieldInContextArray(validation, ctx);
+    case 'all_fields_in_context_array':
+      return validateAllFieldsInContextArray(validation, ctx);
     case 'upstream_traffic':
       return validateUpstreamTraffic(validation, ctx);
     case 'replay_not_cached_rate_limit':
@@ -2969,6 +2971,79 @@ function validateFieldInContextArray(validation: StoryboardValidation, ctx: Vali
     json_pointer: pointer,
     expected: allowed,
     actual: actual ?? null,
+  };
+}
+
+function validateAllFieldsInContextArray(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
+  const check = 'all_fields_in_context_array';
+  if (!validation.path) {
+    return {
+      check,
+      passed: false,
+      description: validation.description,
+      error: `No path specified for ${check} validation`,
+      json_pointer: null,
+      expected: 'path must be set in storyboard validation entry',
+      actual: null,
+    };
+  }
+  if (!validation.context_key) {
+    return {
+      check,
+      passed: false,
+      description: validation.description,
+      error: `${check} requires context_key to be set`,
+      json_pointer: null,
+      expected: 'context_key must be set in storyboard validation entry',
+      actual: null,
+    };
+  }
+
+  const comparandResult = resolveContextComparand(validation, ctx);
+  if (!comparandResult.found) {
+    return {
+      check,
+      passed: true,
+      description: validation.description,
+      observations: [comparandResult.observation],
+    };
+  }
+
+  const allowed = comparandResult.value;
+  const actual = resolvePathAll(resolveTarget(ctx).data, validation.path);
+  const pointer = toJsonPointer(validation.path);
+  if (!Array.isArray(allowed)) {
+    return {
+      check,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: `Expected context["${validation.context_key}"] to be an array; got ${JSON.stringify(allowed)}`,
+      json_pointer: pointer,
+      expected: 'context value must be an array',
+      actual: allowed,
+    };
+  }
+
+  const passed = actual.every(value => allowed.some(candidate => deepEqualJsonValue(value, candidate)));
+  if (passed) {
+    return {
+      check,
+      passed: true,
+      description: validation.description,
+      path: validation.path,
+      json_pointer: pointer,
+    };
+  }
+  return {
+    check,
+    passed: false,
+    description: validation.description,
+    path: validation.path,
+    error: `Expected every value at ${validation.path} to be a member of context["${validation.context_key}"]`,
+    json_pointer: pointer,
+    expected: allowed,
+    actual,
   };
 }
 

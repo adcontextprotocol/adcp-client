@@ -39,6 +39,7 @@ import {
 import { wrapFetchWithCapture } from './rawResponseCapture';
 import { wrapFetchWithSizeLimit } from './responseSizeLimit';
 import { wrapFetchWithTransportDiagnostics } from './transportDiagnostics';
+import { createAgentTransportFetch } from '../net/agent-transport-fetch';
 
 type CallToolResponse = {
   isError?: boolean;
@@ -55,6 +56,7 @@ export interface ModernMCPConnectionOptions {
   signal?: AbortSignal;
   requestTimeoutMs?: number;
   fetchFn?: typeof fetch;
+  allowPrivateIp?: boolean;
   /** Use the v2 SDK's negotiated legacy client instead of handing off to v1. */
   handleLegacy?: boolean;
 }
@@ -69,6 +71,7 @@ interface ModernConnectionOptions {
   signal?: AbortSignal;
   requestTimeoutMs?: number;
   fetchFn?: typeof fetch;
+  allowPrivateIp?: boolean;
   handleLegacy?: boolean;
 }
 
@@ -158,7 +161,8 @@ function connectionCacheKey(
   fetchFn?: typeof fetch,
   signal?: AbortSignal,
   requestTimeoutMs?: number,
-  handleLegacy?: boolean
+  handleLegacy?: boolean,
+  allowPrivateIp?: boolean
 ): string {
   const normalizedHeaders = Object.entries(headers)
     .map(([key, value]) => [key.toLowerCase(), value] as const)
@@ -173,6 +177,7 @@ function connectionCacheKey(
   if (signalKey) parts.push(signalKey);
   if (requestTimeoutMs !== undefined) parts.push(`timeout:${requestTimeoutMs}`);
   if (handleLegacy !== undefined) parts.push(`handle-legacy:${handleLegacy}`);
+  if (allowPrivateIp !== undefined) parts.push(`allow-private-ip:${allowPrivateIp}`);
   const scopeKey = currentMCPConnectionScopeKey();
   if (scopeKey) parts.push(scopeKey);
   return parts.join('::');
@@ -322,7 +327,10 @@ async function createNegotiatedClient(
   const generation = connectionGeneration;
   const requestTimeoutMs = resolveRequestTimeoutMs(options.requestTimeoutMs);
   const clientRequestTimeoutMs = resolveClientRequestTimeoutMs(options.requestTimeoutMs);
-  const rawNetworkFetch: typeof fetch = options.fetchFn ?? ((input, init) => fetch(input, init));
+  const rawNetworkFetch = createAgentTransportFetch(options.agentUrl, {
+    trustedFetchFn: options.fetchFn,
+    allowPrivateIp: options.allowPrivateIp,
+  });
   const networkFetch: typeof fetch = (input, init) =>
     withAbortSignal<Response>([init?.signal], requestTimeoutMs, signal => rawNetworkFetch(input, { ...init, signal }));
   const diagnosticFetch = wrapFetchWithTransportDiagnostics(wrapFetchWithSizeLimit(networkFetch));
@@ -494,7 +502,8 @@ async function attemptModernCall(
     options.fetchFn,
     options.signal,
     options.requestTimeoutMs,
-    options.handleLegacy
+    options.handleLegacy,
+    options.allowPrivateIp
   );
   if (isKnownLegacy(cacheKey)) return { handled: false };
 
@@ -610,6 +619,7 @@ export async function tryCallModernMCPTool(
           signal: options.signal,
           requestTimeoutMs: options.requestTimeoutMs,
           fetchFn: options.fetchFn,
+          allowPrivateIp: options.allowPrivateIp,
           handleLegacy: options.handleLegacy,
         },
         toolName,
@@ -639,6 +649,7 @@ export async function probeModernMCPConnection(
     signal: options.signal,
     requestTimeoutMs: options.requestTimeoutMs,
     fetchFn: options.fetchFn,
+    allowPrivateIp: options.allowPrivateIp,
     handleLegacy: options.handleLegacy,
   };
   const authHeaders = buildAuthHeaders(authToken, customHeaders, options.authProvider);
@@ -650,7 +661,8 @@ export async function probeModernMCPConnection(
     options.fetchFn,
     options.signal,
     options.requestTimeoutMs,
-    options.handleLegacy
+    options.handleLegacy,
+    options.allowPrivateIp
   );
   let client: Client | undefined;
   try {
@@ -685,6 +697,7 @@ export async function tryListModernMCPTools(
     signal: options.signal,
     requestTimeoutMs: options.requestTimeoutMs,
     fetchFn: options.fetchFn,
+    allowPrivateIp: options.allowPrivateIp,
   };
   const authHeaders = buildAuthHeaders(authToken, customHeaders, options.authProvider);
   const cacheKey = connectionCacheKey(
@@ -695,7 +708,8 @@ export async function tryListModernMCPTools(
     options.fetchFn,
     options.signal,
     options.requestTimeoutMs,
-    options.handleLegacy
+    options.handleLegacy,
+    options.allowPrivateIp
   );
   let client: Client | undefined;
   const listTools = async (connectedClient: Client): Promise<ModernMCPListAttempt> => {

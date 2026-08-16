@@ -52,6 +52,7 @@ import type {
 import type { AgentConfig, OAuthConfigStorage } from './types';
 import { DEFAULT_CLIENT_METADATA, fromMCPClientInfo, fromMCPTokens, OAuthError, toMCPClientInfo } from './types';
 import { validateOAuthResourceUrl } from './resource-url';
+import { ssrfSafeFetch } from '../../net/ssrf-fetch';
 
 /**
  * Default TTL for a pending web flow row. RFC 6749 §10.12 recommends
@@ -223,8 +224,8 @@ export class ConfidentialClientNotAllowedError extends OAuthError {
 export class BrowserBindingRequiredError extends OAuthError {
   constructor() {
     super(
-      'completeWebOAuthFlow called with requireBrowserBinding:true but expectedState was not supplied — ' +
-        'pass the state value from the session cookie set at /oauth/start',
+      'completeWebOAuthFlow requires expectedState by default — pass the state value from the session cookie ' +
+        'set at /oauth/start, or set allowUnboundState:true only for a trusted non-browser flow',
       'browser_binding_required'
     );
     this.name = 'BrowserBindingRequiredError';
@@ -270,7 +271,12 @@ export interface StartWebFlowOptions {
   ttlMs?: number;
   /** Override the random-state generator (defaults to 32 bytes base64url). */
   generateState?: () => string;
-  /** Override `fetch` (timeouts, signing, mocks). */
+  /**
+   * Override with a fetch that performs its own connect-time DNS pinning.
+   * Intended for controlled tests or a hardened egress proxy.
+   */
+  trustedFetchFn?: typeof fetch;
+  /** @deprecated Rename to `trustedFetchFn`; the custom transport must pin DNS. */
   fetch?: typeof fetch;
   /**
    * Override base client metadata. `redirect_uris` is always replaced
@@ -299,22 +305,25 @@ export interface CompleteWebFlowOptions {
   pendingFlowStore: PendingWebFlowStore;
   /** When provided, the issued tokens are persisted to `agent.oauth_tokens`. */
   agentStorage?: OAuthConfigStorage;
+  /** Caller-owned fetch that performs its own connect-time DNS pinning. */
+  trustedFetchFn?: typeof fetch;
+  /** @deprecated Rename to `trustedFetchFn`; the custom transport must pin DNS. */
   fetch?: typeof fetch;
+  /** Permit HTTP/private OAuth endpoints for local development. Default false. */
+  allowHttp?: boolean;
   /**
    * The caller-bound expected state (e.g. from a session cookie set at
-   * `/oauth/start`). When provided, must equal `state`; mismatch throws
-   * {@link StateMismatchError}. Without this, `state` is replay-protected
-   * but not browser-bound — see WEB-OAUTH.md.
+   * `/oauth/start`). Must equal `state`; mismatch throws
+   * {@link StateMismatchError}. Omission fails closed unless the caller
+   * explicitly sets `allowUnboundState`.
    */
   expectedState?: string;
   /**
-   * When `true`, throws {@link BrowserBindingRequiredError} if `expectedState`
-   * is omitted instead of emitting a `console.warn`. Use this in frameworks
-   * where session cookies are always available so that a missing bind is caught
-   * at development time rather than silently permitted in production.
-   *
-   * Default: `false`.
+   * Explicit compatibility escape hatch for non-browser flows that cannot
+   * bind state to a session. Default false. Do not enable for browser callbacks.
    */
+  allowUnboundState?: boolean;
+  /** @deprecated Browser binding is now required by default. */
   requireBrowserBinding?: boolean;
 }
 
@@ -345,10 +354,12 @@ export async function startWebOAuthFlow(opts: StartWebFlowOptions): Promise<Star
     allowHttp = false,
     ttlMs = DEFAULT_WEB_FLOW_TTL_MS,
     generateState,
-    fetch: fetchFn,
+    trustedFetchFn,
+    fetch: legacyFetchFn,
     clientMetadata: clientMetadataOverrides,
     allowConfidentialClient = false,
   } = opts;
+  const fetchFn = resolveTrustedOAuthFetch(trustedFetchFn, legacyFetchFn);
 
   if (!agent.agent_uri) {
     throw new OAuthError('Agent missing agent_uri', 'invalid_agent', agent.id);
@@ -362,14 +373,15 @@ export async function startWebOAuthFlow(opts: StartWebFlowOptions): Promise<Star
     ? validateOAuthResourceUrl(rawResourceOverride, { allowHttp }).href
     : undefined;
 
-  const prm = await tryDiscoverPRM(agent.agent_uri, fetchFn);
+  const guardedFetch = createSsrfSafeOAuthFetch(fetchFn, allowHttp);
+  const prm = await tryDiscoverPRM(agent.agent_uri, guardedFetch);
   if (!resourceOverride && prm?.resource) {
     assertPrmResourceMatchesAgentOrigin(agent.agent_uri, prm.resource);
   }
 
-  const asUrl = resolveAuthorizationServerUrl(agent.agent_uri, prm);
+  const asUrl = resolveAuthorizationServerUrl(agent.agent_uri, prm, allowHttp);
 
-  const asMetadata = await discoverAuthorizationServerMetadata(asUrl.toString(), { fetchFn });
+  const asMetadata = await discoverAuthorizationServerMetadata(asUrl.toString(), { fetchFn: guardedFetch });
   if (!asMetadata) {
     throw new OAuthError(`No OAuth metadata at ${asUrl.toString()}`, 'no_authorization_server_metadata', agent.id);
   }
@@ -394,7 +406,7 @@ export async function startWebOAuthFlow(opts: StartWebFlowOptions): Promise<Star
     asUrl,
     asMetadata,
     clientMetadata: baseClientMetadata,
-    fetchFn,
+    fetchFn: guardedFetch,
     allowConfidentialClient,
   });
 
@@ -451,22 +463,22 @@ export async function startWebOAuthFlow(opts: StartWebFlowOptions): Promise<Star
  * for the full tradeoff discussion.
  */
 export async function completeWebOAuthFlow(opts: CompleteWebFlowOptions): Promise<CompleteWebFlowResult> {
-  const { state, code, pendingFlowStore, agentStorage, fetch: fetchFn, expectedState, requireBrowserBinding } = opts;
+  const {
+    state,
+    code,
+    pendingFlowStore,
+    agentStorage,
+    trustedFetchFn,
+    fetch: legacyFetchFn,
+    allowHttp = false,
+    expectedState,
+    allowUnboundState = false,
+    requireBrowserBinding = false,
+  } = opts;
+  const fetchFn = resolveTrustedOAuthFetch(trustedFetchFn, legacyFetchFn);
 
   if (expectedState === undefined) {
-    if (requireBrowserBinding) {
-      throw new BrowserBindingRequiredError();
-    }
-    // Warn callers who omit expectedState: the flow is replay-protected via
-    // atomic consume but is not browser-bound (any request carrying the correct
-    // state + code would be accepted). Pass expectedState from a session cookie
-    // set at /oauth/start to fully bind the callback to the initiating browser.
-    // Set requireBrowserBinding:true to make this a hard error instead.
-    console.warn(
-      '[adcp/sdk] completeWebOAuthFlow: expectedState not supplied — the callback is replay-protected ' +
-        'but not browser-bound. Pass expectedState from a session cookie set at /oauth/start, ' +
-        'or set requireBrowserBinding:true to enforce it.'
-    );
+    if (!allowUnboundState || requireBrowserBinding) throw new BrowserBindingRequiredError();
   } else if (expectedState !== state) {
     throw new StateMismatchError();
   }
@@ -476,6 +488,8 @@ export async function completeWebOAuthFlow(opts: CompleteWebFlowOptions): Promis
     throw new InvalidOrExpiredFlowError(state);
   }
 
+  const guardedFetch = createSsrfSafeOAuthFetch(fetchFn, allowHttp);
+
   let agentForPersistence: AgentConfig | undefined;
   if (agentStorage) {
     agentForPersistence = await agentStorage.loadAgent(flow.agentId);
@@ -483,7 +497,7 @@ export async function completeWebOAuthFlow(opts: CompleteWebFlowOptions): Promis
   }
 
   const asMetadata = await discoverAuthorizationServerMetadata(flow.authorizationServerUrl, {
-    fetchFn,
+    fetchFn: guardedFetch,
   });
 
   let tokens: OAuthTokens;
@@ -495,7 +509,7 @@ export async function completeWebOAuthFlow(opts: CompleteWebFlowOptions): Promis
       codeVerifier: flow.codeVerifier,
       redirectUri: flow.redirectUri,
       resource: flow.resource ? new URL(flow.resource) : undefined,
-      fetchFn,
+      fetchFn: guardedFetch,
     });
   } catch (err) {
     throw wrapTokenExchangeError(err);
@@ -670,12 +684,91 @@ function assertPrmResourceMatchesAgentOrigin(agentUrl: string, prmResource: stri
   }
 }
 
-function resolveAuthorizationServerUrl(agentUrl: string, prm: OAuthProtectedResourceMetadata | undefined): URL {
+function resolveAuthorizationServerUrl(
+  agentUrl: string,
+  prm: OAuthProtectedResourceMetadata | undefined,
+  allowHttp: boolean
+): URL {
   const first = prm?.authorization_servers?.[0];
-  if (first) {
-    return new URL(first);
+  let url: URL;
+  try {
+    url = first ? new URL(first) : new URL(new URL(agentUrl).origin);
+  } catch {
+    throw new ProtectedResourceMetadataError('Authorization server metadata contains an invalid URL');
   }
-  return new URL(new URL(agentUrl).origin);
+  if (url.username || url.password || url.hash) {
+    throw new ProtectedResourceMetadataError('Authorization server URL must not contain userinfo or a fragment');
+  }
+  if (url.protocol !== 'https:' && !(allowHttp && url.protocol === 'http:')) {
+    throw new ProtectedResourceMetadataError('Authorization server URL must use HTTPS');
+  }
+  return url;
+}
+
+let warnedLegacyOAuthFetch = false;
+
+function resolveTrustedOAuthFetch(
+  trustedFetchFn: typeof fetch | undefined,
+  legacyFetchFn: typeof fetch | undefined
+): typeof fetch | undefined {
+  if (trustedFetchFn && legacyFetchFn && trustedFetchFn !== legacyFetchFn) {
+    throw new TypeError('OAuth flow options cannot set different fetch and trustedFetchFn implementations');
+  }
+  if (legacyFetchFn && !warnedLegacyOAuthFetch) {
+    warnedLegacyOAuthFetch = true;
+    console.warn(
+      '[adcp] OAuth flow option fetch is deprecated; rename it to trustedFetchFn. ' +
+        'Custom fetch implementations must provide connect-time DNS pinning.'
+    );
+  }
+  return trustedFetchFn ?? legacyFetchFn;
+}
+
+/**
+ * Adapt the buffered DNS-pinning SSRF primitive to the Fetch API expected by
+ * the MCP OAuth helpers. Redirects remain manual, so every endpoint is bound
+ * to the validated URL and credentials are never forwarded to a second hop.
+ */
+function createSsrfSafeOAuthFetch(trustedFetchFn: typeof fetch | undefined, allowHttp: boolean): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const inputRequest = typeof Request !== 'undefined' && input instanceof Request ? input : undefined;
+    const url = inputRequest?.url ?? input.toString();
+    const method = init?.method ?? inputRequest?.method ?? 'GET';
+    const headers = new Headers(inputRequest?.headers);
+    new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
+
+    let body: string | Uint8Array | undefined;
+    const rawBody = init?.body;
+    if (typeof rawBody === 'string') body = rawBody;
+    else if (rawBody instanceof URLSearchParams) body = rawBody.toString();
+    else if (rawBody instanceof Uint8Array) body = rawBody;
+    else if (rawBody instanceof ArrayBuffer) body = new Uint8Array(rawBody);
+    else if (rawBody !== undefined && rawBody !== null) {
+      throw new OAuthError('Unsupported OAuth request body type', 'oauth_fetch_body_unsupported');
+    } else if (inputRequest && inputRequest.body) {
+      body = new Uint8Array(await inputRequest.arrayBuffer());
+    }
+
+    const headerRecord: Record<string, string> = {};
+    headers.forEach((value, key) => {
+      headerRecord[key] = value;
+    });
+
+    const result = await ssrfSafeFetch(url, {
+      method,
+      headers: headerRecord,
+      body,
+      allowPrivateIp: allowHttp,
+      maxBodyBytes: 1024 * 1024,
+      signal: init?.signal ?? inputRequest?.signal,
+      ...(trustedFetchFn ? { trustedFetchFn } : {}),
+    });
+
+    return new Response(Buffer.from(result.body), {
+      status: result.status,
+      headers: result.headers,
+    });
+  }) as typeof fetch;
 }
 
 async function resolveClientInformation(args: {

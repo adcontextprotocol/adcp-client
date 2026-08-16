@@ -13,3 +13,4 @@
 // per-field unions.
 export * from './types/enums.generated';
 export * from './types/inline-enums.generated';
+export * from './types/enum-compat';

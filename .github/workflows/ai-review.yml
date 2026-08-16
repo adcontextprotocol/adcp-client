@@ -21,7 +21,13 @@ on:
 
 jobs:
   code_review:
-    if: github.actor != 'dependabot[bot]' && github.event.pull_request.draft == false
+    # Ladon intentionally refuses bot-authored reviews. Release PRs are
+    # created by the AAO IPR App, so skip them instead of producing a failing
+    # required check that can never post a review.
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      github.actor != 'aao-ipr-bot' &&
+      github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-04T18:36:16.953Z
+// Generated at: 2026-08-16T18:17:21.269Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -281,7 +281,7 @@ export const PriceBreakdownSchema = z.object({
 }).passthrough();
 
 export const FormatReferenceStructuredObjectSchema = z.object({
-    agent_url: z.string(),
+    agent_url: z.url(),
     id: z.string().regex(/^[a-zA-Z0-9_-]+$/),
     width: z.number().min(1).optional(),
     height: z.number().min(1).optional(),
@@ -1197,7 +1197,7 @@ export const CanonicalFormatSponsoredPlacementRetailMediaCatalogDrivenSchema = z
     required_connections: z.array(DownstreamConnectionRequirementSchema).optional(),
     reference_mutability: z.union([z.literal("immutable_snapshot"), z.literal("mutable_requires_reapproval"), z.literal("mutable_auto_recheck")]).optional(),
     production_window_business_days: z.number().optional(),
-    supported_catalog_types: z.array(z.union([z.literal("product"), z.literal("store"), z.literal("offering"), z.literal("hotel"), z.literal("flight"), z.literal("vehicle"), z.literal("real_estate"), z.literal("education"), z.literal("destination"), z.literal("app"), z.literal("job"), z.literal("inventory")])).optional(),
+    supported_catalog_types: z.array(CatalogTypeSchema).optional(),
     min_items: z.number().min(1).optional(),
     max_items: z.number().optional(),
     fanout_mode: z.union([z.literal("per_item"), z.literal("multi_item_in_creative"), z.literal("single_item")]).optional(),
@@ -5417,8 +5417,6 @@ export const DomainSchema = z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[
 
 export const ChangedFieldsSchema = z.array(z.string());
 
-export const BadgeRoleSchema = z.union([z.literal("media-buy"), z.literal("creative"), z.literal("signals"), z.literal("governance"), z.literal("brand"), z.literal("sponsored-intelligence")]);
-
 export const PublisherAdagentsPayloadSchema = z.object({
     publisher_domain: DomainSchema.optional(),
     domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/).optional(),
@@ -8743,7 +8741,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
         features: MediaBuyFeaturesSchema.optional(),
         execution: z.object({
             trusted_match: z.object({
-                surfaces: z.array(z.union([z.literal("website"), z.literal("mobile_app"), z.literal("ctv_app"), z.literal("desktop_app"), z.literal("dooh"), z.literal("podcast"), z.literal("radio"), z.literal("streaming_audio"), z.literal("ai_assistant")])).optional()
+                surfaces: z.array(PropertyTypeSchema).optional()
             }).passthrough().optional(),
             axe_integrations: z.array(z.string()).optional(),
             creative_specs: z.object({
@@ -9961,7 +9959,17 @@ export const CreativeAssetSchema = z.object({
     placement_ids: z.array(z.string()).optional(),
     industry_identifiers: z.array(IndustryIdentifierSchema).optional(),
     provenance: ProvenanceSchema.optional()
-}).passthrough().and(z.union([LegacyCreativeNamedFormatReferenceSchema, CreativeCanonicalFormatKindSchema]));
+}).passthrough().and(z.union([LegacyCreativeNamedFormatReferenceSchema, CreativeCanonicalFormatKindSchema])).superRefine((value, ctx) => {
+    const hasFormatId = value.format_id !== undefined;
+    const hasFormatKind = value.format_kind !== undefined;
+    if (hasFormatId === hasFormatKind) {
+        ctx.addIssue({
+            code: "custom",
+            path: [],
+            message: "creative identity requires exactly one of format_id or format_kind"
+        });
+    }
+});
 
 export const BuildCreativeRequestSchema = z.object({
     adcp_version: z.string().optional(),
@@ -10424,7 +10432,7 @@ export const RegistryEventSchema = z.object({
         entity_type: z.literal("agent").optional(),
         payload: z.object({
             agent_url: z.string(),
-            role: BadgeRoleSchema,
+            role: AdCPProtocolSchema,
             verified_specialisms: z.array(z.string()),
             adcp_version: z.string().optional()
         }).passthrough().optional()
@@ -10433,7 +10441,7 @@ export const RegistryEventSchema = z.object({
         entity_type: z.literal("agent").optional(),
         payload: z.object({
             agent_url: z.string(),
-            role: BadgeRoleSchema,
+            role: AdCPProtocolSchema,
             reason: z.string(),
             adcp_version: z.string().optional()
         }).passthrough().optional()

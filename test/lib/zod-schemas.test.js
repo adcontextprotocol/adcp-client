@@ -390,6 +390,27 @@ describe('Zod Schema Validation', () => {
     );
   });
 
+  test('CreativeAssetSchema enforces exclusive identity and a valid legacy agent URL', async () => {
+    const schemas = await import('../../dist/lib/types/schemas.generated.mjs');
+    const base = { creative_id: 'creative_1', name: 'Creative', assets: {} };
+
+    assert.strictEqual(
+      schemas.CreativeAssetSchema.safeParse({
+        ...base,
+        format_kind: 'image',
+        format_id: { agent_url: 'https://legacy.example', id: 'display_image' },
+      }).success,
+      false
+    );
+    assert.strictEqual(
+      schemas.CreativeAssetSchema.safeParse({
+        ...base,
+        format_id: { agent_url: 'bad', id: 'display_image' },
+      }).success,
+      false
+    );
+  });
+
   test('GetMediaBuysRequestSchema validates valid request', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');
