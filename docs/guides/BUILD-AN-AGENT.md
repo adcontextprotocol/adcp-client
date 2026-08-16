@@ -210,7 +210,9 @@ const a2a = createA2AAdapter({
   },
   async authenticate(req) {
     const token = req.headers.authorization?.replace(/^Bearer\s+/, '');
-    return token ? { token, clientId: 'buyer_123', scopes: [] } : null;
+    if (!token) return null;
+    const principal = await tokenStore.lookup(token);
+    return principal ? { token, clientId: principal.id, scopes: principal.scopes } : null;
   },
 });
 
@@ -224,6 +226,9 @@ app.use(express.json());
 a2a.mount(app);
 app.listen(3000);
 ```
+
+`tokenStore.lookup` represents your real credential verifier or identity provider. Returning a fixed principal for any
+non-empty bearer is an authentication bypass, not a safe example simplification.
 
 Both transports share the same `AdcpServer` — handlers, idempotency store, state store, and `resolveAccount` all run the same pipeline regardless of which transport received the request. Changes to handlers are picked up by both at once.
 

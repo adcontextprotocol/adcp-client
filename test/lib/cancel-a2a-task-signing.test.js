@@ -74,6 +74,24 @@ function startStrictSigningSeller() {
 
   return new Promise(resolve => {
     const server = http.createServer((req, res) => {
+      if (req.method === 'GET') {
+        const url = `http://127.0.0.1:${server.address().port}/`;
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            name: 'Strict signing seller',
+            description: 'A2A cancellation fixture',
+            url,
+            version: '1.0.0',
+            protocolVersion: '0.3.0',
+            capabilities: {},
+            defaultInputModes: ['application/json'],
+            defaultOutputModes: ['application/json'],
+            skills: [],
+          })
+        );
+        return;
+      }
       const chunks = [];
       req.on('data', c => chunks.push(c));
       req.on('end', async () => {
@@ -87,20 +105,23 @@ function startStrictSigningSeller() {
         requests.push({ method: req.method, url, headers, body });
 
         try {
-          const result = await verifyRequestSignature({
-            method: req.method,
-            url,
-            headers,
-            body,
-            jwks,
-            replayStore,
-            revocationStore,
-          });
-          if (!result.verified) {
+          const result = await verifyRequestSignature(
+            { method: req.method, url, headers, body },
+            {
+              capability: {
+                supported: true,
+                covers_content_digest: 'either',
+                required_for: [],
+                protocol_methods_required_for: ['tasks/cancel'],
+              },
+              jwks,
+              replayStore,
+              revocationStore,
+            }
+          );
+          if (result.status !== 'verified') {
             res.writeHead(401, { 'content-type': 'application/json' });
-            res.end(
-              JSON.stringify({ error: 'signature_required', detail: result.reason ?? 'missing or invalid signature' })
-            );
+            res.end(JSON.stringify({ error: 'signature_required', detail: 'missing or invalid signature' }));
             return;
           }
           // Accept the cancel — return a synthetic success body. Phase 2
@@ -168,12 +189,31 @@ describe('cancelA2ATask: Phase 2 signing (#1617)', () => {
     const requests = [];
     const server = await new Promise(resolve => {
       const s = http.createServer((req, res) => {
+        if (req.method === 'GET') {
+          const url = `http://127.0.0.1:${s.address().port}/`;
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              name: 'Unsigned seller',
+              description: 'A2A cancellation fixture',
+              url,
+              version: '1.0.0',
+              protocolVersion: '0.3.0',
+              capabilities: {},
+              defaultInputModes: ['application/json'],
+              defaultOutputModes: ['application/json'],
+              skills: [],
+            })
+          );
+          return;
+        }
         const chunks = [];
         req.on('data', c => chunks.push(c));
         req.on('end', () => {
           requests.push({ headers: req.headers, body: Buffer.concat(chunks).toString('utf8') });
           res.writeHead(200, { 'content-type': 'application/json' });
-          res.end('{"jsonrpc":"2.0","id":"x","result":{"id":"task","status":{"state":"canceled"}}}');
+          const id = JSON.parse(requests.at(-1).body).id;
+          res.end(JSON.stringify({ jsonrpc: '2.0', id, result: { id: 'task', status: { state: 'canceled' } } }));
         });
       });
       s.listen(0, '127.0.0.1', () =>

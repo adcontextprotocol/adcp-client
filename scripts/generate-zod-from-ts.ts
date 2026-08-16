@@ -447,6 +447,43 @@ function postProcessTrustedMatchPrivacyBoundaryStrictness(content: string): stri
   return result;
 }
 
+/** Preserve JSON-Schema-only creative identity constraints lost in TS projection. */
+function postProcessCreativeAssetIdentityConstraints(content: string): string {
+  const schemaBlock = (schemaName: string): { start: number; end: number; block: string } => {
+    const start = content.indexOf(`export const ${schemaName} = `);
+    const end = content.indexOf('\n\nexport const ', start + 1);
+    if (start === -1 || end === -1) {
+      throw new Error(`Unable to locate generated ${schemaName} boundary.`);
+    }
+    return { start, end, block: content.slice(start, end) };
+  };
+
+  const creativeAsset = schemaBlock('CreativeAssetSchema');
+  const suffix = `.superRefine((value, ctx) => {
+    const hasFormatId = value.format_id !== undefined;
+    const hasFormatKind = value.format_kind !== undefined;
+    if (hasFormatId === hasFormatKind) {
+        ctx.addIssue({
+            code: "custom",
+            path: [],
+            message: "creative identity requires exactly one of format_id or format_kind"
+        });
+    }
+})`;
+  const strictCreativeAsset = creativeAsset.block.replace(/;\s*$/, `${suffix};`);
+  if (strictCreativeAsset === creativeAsset.block) {
+    throw new Error('Unable to apply format identity XOR validation to CreativeAssetSchema.');
+  }
+  content = content.slice(0, creativeAsset.start) + strictCreativeAsset + content.slice(creativeAsset.end);
+
+  const formatReference = schemaBlock('FormatReferenceStructuredObjectSchema');
+  const strictFormatReference = formatReference.block.replace('agent_url: z.string()', 'agent_url: z.url()');
+  if (strictFormatReference === formatReference.block) {
+    throw new Error('Unable to apply URI validation to FormatReferenceStructuredObjectSchema.agent_url.');
+  }
+  return content.slice(0, formatReference.start) + strictFormatReference + content.slice(formatReference.end);
+}
+
 function postProcessTrustedMatchResponseSchemas(content: string): string {
   const replaceSchema = (schemaName: string, nextSchemaName: string, replacement: string): void => {
     const start = content.indexOf(`export const ${schemaName} = `);
@@ -1922,6 +1959,10 @@ async function generateZodSchemas() {
     // Agents may return extra/platform-specific fields not in the schema. Without passthrough,
     // Zod strips those fields, causing data loss for consumers who need them.
     zodSchemas = postProcessForPassthrough(zodSchemas);
+
+    // TypeScript cannot retain JSON Schema `format: uri` or root oneOf
+    // exclusivity. Restore both for legacy/canonical creative identity.
+    zodSchemas = postProcessCreativeAssetIdentityConstraints(zodSchemas);
 
     // Trusted Match request schemas are closed privacy-boundary contracts.
     // Unlike ordinary AdCP tool payloads, accepting unknown root/nested fields

@@ -101,7 +101,7 @@ describe('discoverAgentProfile: AbortSignal honored (#1612)', () => {
         data: {
           adcp: { major_versions: [3], idempotency: { supported: true, replay_ttl_seconds: 86400 } },
           supported_protocols: ['media_buy'],
-          account: { sandbox: { supported: true } },
+          account: { supported_billing: 'operator', sandbox: { supported: true } },
         },
       }),
     };

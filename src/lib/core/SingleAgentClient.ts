@@ -99,6 +99,7 @@ import { attachMatch } from './match';
 import { withTaskDeadline } from './task-deadline';
 import { createMCPRequestHeaders } from '../auth';
 import { isAbortOrTimeoutError } from '../protocols/abort';
+import { normalizeTransportOptions } from '../protocols';
 import {
   AuthenticationRequiredError,
   ConfigurationError,
@@ -108,7 +109,7 @@ import {
   VersionUnsupportedError,
   is401Error,
 } from '../errors';
-import { isLikelyPrivateUrl } from '../net';
+import { createAgentTransportFetch, isLikelyPrivateUrl } from '../net';
 import {
   discoverAuthorizationRequirements,
   NeedsAuthorizationError,
@@ -1350,6 +1351,8 @@ export class SingleAgentClient {
     private agent: AgentConfig,
     private config: SingleAgentClientConfig = {}
   ) {
+    this.config = { ...config, transport: normalizeTransportOptions(config.transport) };
+    config = this.config;
     // Validate the configured adcpVersion at construction time. Throws
     // ConfigurationError if the pin's major differs from ADCP_MAJOR_VERSION
     // — cross-major support lands in Stage 3 of the multi-version refactor.
@@ -1738,8 +1741,8 @@ export class SingleAgentClient {
   private async ensureEndpointDiscovered(options?: ReadRequestOptions): Promise<AgentConfig> {
     throwIfAborted(options?.signal);
     const needsDiscovery = this.normalizedAgent._needsDiscovery;
-    const transport = options?.transport ?? this.config.transport;
-    const usesScopedFetch = transport?.fetchFn !== undefined;
+    const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
+    const usesScopedFetch = transport?.trustedFetchFn !== undefined;
 
     if (!needsDiscovery) {
       return this.normalizedAgent;
@@ -1765,8 +1768,8 @@ export class SingleAgentClient {
       const { ensureClientCredentialsTokens, getAgentStorage } = await import('../auth/oauth');
       await ensureClientCredentialsTokens(this.normalizedAgent, {
         storage: getAgentStorage(this.normalizedAgent),
-        allowPrivateIp: isLikelyPrivateUrl(this.normalizedAgent.agent_uri),
-        fetch: transport?.fetchFn,
+        allowPrivateIp: transport?.allowPrivateIp ?? isLikelyPrivateUrl(this.normalizedAgent.agent_uri),
+        fetch: transport?.trustedFetchFn,
         signal: options?.signal,
       });
     }
@@ -1808,8 +1811,8 @@ export class SingleAgentClient {
   private async ensureCanonicalUrlResolved(options?: ReadRequestOptions): Promise<AgentConfig> {
     throwIfAborted(options?.signal);
     const needsCanonicalUrl = this.normalizedAgent._needsCanonicalUrl;
-    const transport = options?.transport ?? this.config.transport;
-    const usesScopedFetch = transport?.fetchFn !== undefined;
+    const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
+    const usesScopedFetch = transport?.trustedFetchFn !== undefined;
 
     if (!needsCanonicalUrl) {
       return this.normalizedAgent;
@@ -1827,8 +1830,8 @@ export class SingleAgentClient {
       const { ensureClientCredentialsTokens, getAgentStorage } = await import('../auth/oauth');
       await ensureClientCredentialsTokens(this.normalizedAgent, {
         storage: getAgentStorage(this.normalizedAgent),
-        allowPrivateIp: isLikelyPrivateUrl(this.normalizedAgent.agent_uri),
-        fetch: transport?.fetchFn,
+        allowPrivateIp: transport?.allowPrivateIp ?? isLikelyPrivateUrl(this.normalizedAgent.agent_uri),
+        fetch: transport?.trustedFetchFn,
         signal: options?.signal,
       });
     }
@@ -1857,11 +1860,14 @@ export class SingleAgentClient {
     // active ALS slot enforces the cap on the wire call. Matches the same
     // pattern in `getAgentInfo` (closed #1799 via PR #1802).
     const { withResponseSizeLimit, wrapFetchWithSizeLimit } = await import('../protocols/responseSizeLimit');
-    const transport = readOptions?.transport ?? this.config.transport;
+    const transport = normalizeTransportOptions(readOptions?.transport ?? this.config.transport);
     const maxResponseBytes = transport?.maxResponseBytes;
     const requestTimeoutMs = resolveRequestTimeoutMs(transport?.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS);
-    const sizeLimitedFetch = wrapFetchWithSizeLimit((input, init) =>
-      transport?.fetchFn ? transport.fetchFn(input, init) : fetch(input as RequestInfo | URL, init)
+    const sizeLimitedFetch = wrapFetchWithSizeLimit(
+      createAgentTransportFetch(agentUri, {
+        trustedFetchFn: transport?.trustedFetchFn,
+        allowPrivateIp: transport?.allowPrivateIp,
+      })
     );
 
     const authToken = this.normalizedAgent.oauth_client_credentials
@@ -1926,8 +1932,8 @@ export class SingleAgentClient {
       // one-hop AuthenticationRequiredError so behavior degrades gracefully.
       if (is401Error(error, got401)) {
         const requirements = await discoverAuthorizationRequirements(agentUri, {
-          allowPrivateIp: isLikelyPrivateUrl(agentUri),
-          fetchFn: transport?.fetchFn,
+          allowPrivateIp: transport?.allowPrivateIp ?? isLikelyPrivateUrl(agentUri),
+          fetchFn: transport?.trustedFetchFn,
           signal: readOptions?.signal,
         });
         if (requirements) {
@@ -1939,12 +1945,13 @@ export class SingleAgentClient {
         // common non-Bearer case) so consumers don't bounce through OAuth
         // remediation that will never succeed.
         const challenge = await probeAuthChallenge(agentUri, {
-          allowPrivateIp: isLikelyPrivateUrl(agentUri),
-          fetchFn: transport?.fetchFn,
+          allowPrivateIp: transport?.allowPrivateIp ?? isLikelyPrivateUrl(agentUri),
+          fetchFn: transport?.trustedFetchFn,
           signal: readOptions?.signal,
         });
         const oauthMetadata = await discoverOAuthMetadata(agentUri, {
-          fetch: transport?.fetchFn,
+          trustedFetchFn: transport?.trustedFetchFn,
+          allowPrivateIp: transport?.allowPrivateIp ?? isLikelyPrivateUrl(agentUri),
           signal: readOptions?.signal,
         });
         throw new AuthenticationRequiredError(agentUri, oauthMetadata || undefined, undefined, challenge ?? undefined);
@@ -1992,7 +1999,8 @@ export class SingleAgentClient {
     throwIfAborted(options?.signal);
     const { connectMCPWithFallback } = await import('../protocols/mcp');
     const { probeModernMCPConnection } = await import('../protocols/mcp-modern');
-    const usesScopedFetch = (options?.transport ?? this.config.transport)?.fetchFn !== undefined;
+    const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
+    const usesScopedFetch = transport?.trustedFetchFn !== undefined;
 
     const authToken = this.normalizedAgent.oauth_client_credentials
       ? this.normalizedAgent.oauth_tokens?.access_token
@@ -2022,8 +2030,9 @@ export class SingleAgentClient {
         const modern = await probeModernMCPConnection(url, authToken, agentHeaders, {
           authProvider,
           signal: options?.signal,
-          requestTimeoutMs: options?.transport?.requestTimeoutMs ?? this.config.transport?.requestTimeoutMs,
-          fetchFn: options?.transport?.fetchFn ?? this.config.transport?.fetchFn,
+          requestTimeoutMs: transport?.requestTimeoutMs,
+          fetchFn: transport?.trustedFetchFn,
+          allowPrivateIp: transport?.allowPrivateIp,
         });
         if (modern.connected) {
           if (!usesScopedFetch) {
@@ -2040,10 +2049,11 @@ export class SingleAgentClient {
           authHeaders,
           [],
           'endpoint discovery',
-          options?.transport?.fetchFn ?? this.config.transport?.fetchFn,
+          transport?.trustedFetchFn,
           {
             signal: options?.signal,
-            requestTimeoutMs: options?.transport?.requestTimeoutMs ?? this.config.transport?.requestTimeoutMs,
+            requestTimeoutMs: transport?.requestTimeoutMs,
+            allowPrivateIp: transport?.allowPrivateIp,
           }
         );
         await client.close();
@@ -2119,8 +2129,8 @@ export class SingleAgentClient {
     // metadata when the walk doesn't yield enough.
     if (got401) {
       const requirements = await discoverAuthorizationRequirements(providedUri, {
-        allowPrivateIp: isLikelyPrivateUrl(providedUri),
-        fetchFn: options?.transport?.fetchFn ?? this.config.transport?.fetchFn,
+        allowPrivateIp: transport?.allowPrivateIp ?? isLikelyPrivateUrl(providedUri),
+        fetchFn: transport?.trustedFetchFn,
         signal: options?.signal,
       });
       if (requirements) {
@@ -2131,12 +2141,13 @@ export class SingleAgentClient {
       // gateway-fronted agents (Apigee, Kong, AWS API GW) and routing
       // consumers at OAuth would never succeed.
       const challenge = await probeAuthChallenge(providedUri, {
-        allowPrivateIp: isLikelyPrivateUrl(providedUri),
-        fetchFn: options?.transport?.fetchFn ?? this.config.transport?.fetchFn,
+        allowPrivateIp: transport?.allowPrivateIp ?? isLikelyPrivateUrl(providedUri),
+        fetchFn: transport?.trustedFetchFn,
         signal: options?.signal,
       });
       const oauthMetadata = await discoverOAuthMetadata(providedUri, {
-        fetch: options?.transport?.fetchFn ?? this.config.transport?.fetchFn,
+        trustedFetchFn: transport?.trustedFetchFn,
+        allowPrivateIp: transport?.allowPrivateIp ?? isLikelyPrivateUrl(providedUri),
         signal: options?.signal,
       });
       throw new AuthenticationRequiredError(providedUri, oauthMetadata || undefined, undefined, challenge ?? undefined);
@@ -6034,7 +6045,7 @@ export class SingleAgentClient {
     // `withResponseSizeLimit` is a no-op when no cap is configured.
     const { withResponseSizeLimit } = await import('../protocols/responseSizeLimit');
     throwIfAborted(options?.signal);
-    const transport = options?.transport ?? this.config.transport;
+    const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
     const maxResponseBytes = transport?.maxResponseBytes;
     const requestTimeoutMs = resolveRequestTimeoutMs(transport?.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS);
     const clientRequestTimeoutMs = resolveClientRequestTimeoutMs(transport?.requestTimeoutMs);
@@ -6047,8 +6058,8 @@ export class SingleAgentClient {
       const { ensureClientCredentialsTokens, getAgentStorage } = await import('../auth/oauth');
       await ensureClientCredentialsTokens(this.normalizedAgent, {
         storage: getAgentStorage(this.normalizedAgent),
-        allowPrivateIp: isLikelyPrivateUrl(this.normalizedAgent.agent_uri),
-        fetch: transport?.fetchFn,
+        allowPrivateIp: transport?.allowPrivateIp ?? isLikelyPrivateUrl(this.normalizedAgent.agent_uri),
+        fetch: transport?.trustedFetchFn,
         signal: options?.signal,
       });
       return this.normalizedAgent.oauth_tokens?.access_token;
@@ -6094,8 +6105,11 @@ export class SingleAgentClient {
       if (transport?.requestTimeoutMs !== undefined) {
         connectOptions.requestTimeoutMs = transport.requestTimeoutMs;
       }
-      if (transport?.fetchFn) {
-        connectOptions.fetchFn = transport.fetchFn;
+      if (transport?.trustedFetchFn) {
+        connectOptions.fetchFn = transport.trustedFetchFn;
+      }
+      if (transport?.allowPrivateIp !== undefined) {
+        connectOptions.allowPrivateIp = transport.allowPrivateIp;
       }
       if (this.normalizedAgent.headers && Object.keys(this.normalizedAgent.headers).length > 0) {
         connectOptions.customHeaders = this.normalizedAgent.headers;
@@ -6115,7 +6129,7 @@ export class SingleAgentClient {
       }
 
       const modernTools =
-        !transport?.fetchFn &&
+        !transport?.trustedFetchFn &&
         this.discoveredMcpEra === 'legacy' &&
         Date.now() - this.discoveredMcpEraAt < 5 * 60 * 1000
           ? ({ handled: false } as const)
@@ -6124,7 +6138,8 @@ export class SingleAgentClient {
                 authProvider,
                 signal: options?.signal,
                 requestTimeoutMs: transport?.requestTimeoutMs,
-                fetchFn: transport?.fetchFn,
+                fetchFn: transport?.trustedFetchFn,
+                allowPrivateIp: transport?.allowPrivateIp,
               })
             );
       if (modernTools.handled) {
@@ -6181,7 +6196,7 @@ export class SingleAgentClient {
       const authToken = await ensureReadAuthToken();
       const agentHeaders = this.normalizedAgent.headers ?? {};
       const sizeLimitedFetch = wrapFetchWithSizeLimit((input, init) =>
-        transport?.fetchFn ? transport.fetchFn(input, init) : fetch(input as RequestInfo | URL, init)
+        transport?.trustedFetchFn ? transport.trustedFetchFn(input, init) : fetch(input as RequestInfo | URL, init)
       );
       const normalizeHeaders = (headers?: HeadersInit): Record<string, string> => {
         const normalized: Record<string, string> = {};
@@ -6288,7 +6303,8 @@ export class SingleAgentClient {
   async getCapabilities(options?: ReadRequestOptions): Promise<AdcpCapabilities> {
     throwIfAborted(options?.signal);
     const discoveryContext = (options as InternalReadRequestOptions | undefined)?.[CAPABILITY_DISCOVERY_CONTEXT];
-    const usesScopedFetch = (options?.transport ?? this.config.transport)?.fetchFn !== undefined;
+    const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
+    const usesScopedFetch = transport?.trustedFetchFn !== undefined;
     // Return cached if available
     if (!usesScopedFetch && this.cachedCapabilities) {
       if (discoveryContext) discoveryContext.toolSchemas = this.cachedToolSchemas;

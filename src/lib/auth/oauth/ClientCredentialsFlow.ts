@@ -173,7 +173,7 @@ function validateTokenEndpoint(tokenEndpoint: string, options: { allowPrivateIp?
 
   if (!options.allowPrivateIp && isLikelyPrivateUrl(tokenEndpoint)) {
     throw new ClientCredentialsExchangeError(
-      `token_endpoint resolves to a private or loopback address (${host}). Pass { allowPrivateIp: true } to exchangeClientCredentials / ensureClientCredentialsTokens if this is intentional (operator-driven CLI or local test setups).`,
+      `token_endpoint uses a private or loopback hostname/address (${host}). Pass { allowPrivateIp: true } to exchangeClientCredentials / ensureClientCredentialsTokens if this is intentional (operator-driven CLI or local test setups).`,
       'malformed'
     );
   }
@@ -256,6 +256,9 @@ export async function exchangeClientCredentials(
       async signal => {
         const tokenResponse = await fetchImpl(credentials.token_endpoint, {
           method: 'POST',
+          // Never forward client credentials or accept tokens across a
+          // redirect. The validated endpoint is the only authorized sink.
+          redirect: 'manual',
           headers,
           body: body.toString(),
           signal,
@@ -277,6 +280,16 @@ export async function exchangeClientCredentials(
     throw new ClientCredentialsExchangeError(
       `Failed to reach token endpoint ${credentials.token_endpoint}: ${(err as Error).message}`,
       'network'
+    );
+  }
+
+  if (response.status >= 300 && response.status < 400) {
+    throw new ClientCredentialsExchangeError(
+      `Token endpoint refused: redirects are not followed during client credentials exchange (HTTP ${response.status}).`,
+      'network',
+      undefined,
+      undefined,
+      response.status
     );
   }
 

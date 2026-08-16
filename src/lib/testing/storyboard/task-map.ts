@@ -75,6 +75,7 @@ export const TASK_TO_METHOD: Record<string, string> = {
 /** Storyboards grade the selected protocol wire, not the SDK's canonical API. */
 const LEGACY_CREATIVE_TASK_TO_METHOD: Readonly<Record<string, string>> = {
   get_products: 'getProductsLegacy',
+  get_media_buys: 'getMediaBuysLegacy',
   create_media_buy: 'createMediaBuyLegacy',
   update_media_buy: 'updateMediaBuyLegacy',
   sync_creatives: 'syncCreativesLegacy',
@@ -217,11 +218,14 @@ export async function executeStoryboardTask(
   const legacyMethodName = useLegacyCreativeMethod ? LEGACY_CREATIVE_TASK_TO_METHOD[taskName] : undefined;
   const methodName =
     legacyMethodName ?? (Object.hasOwn(TASK_TO_METHOD, taskName) ? TASK_TO_METHOD[taskName] : undefined);
-  // A forced raw projection is a runner concern, not wire negotiation. Leave
-  // the authored request untouched so the seller and negotiated protocol
-  // select the wire. Ordinary pre-3.2 SDK calls retain their explicit legacy
-  // compatibility hint, including fixture-seeding discovery calls.
-  const callParams = legacyMethodName && !forceRawProjection ? withLegacyCreativeWireHint(params) : params;
+  // Product discovery must remain ambiguous during the 3.1 transition so a
+  // seller can dual-emit format_ids + format_options. The legacy method keeps
+  // the raw response shape; it must not force the seller onto a legacy-only
+  // response. Other creative lifecycle methods retain explicit legacy routing.
+  const callParams =
+    legacyMethodName && taskName !== 'get_products' && !forceRawProjection
+      ? withLegacyCreativeWireHint(params)
+      : params;
 
   // Only pass TaskOptions when a flag is actually set — avoids changing
   // behavior for the common path that relies on method defaults.

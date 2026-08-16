@@ -6,6 +6,7 @@
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('crypto');
+const { Agent, fetch: undiciFetch } = require('undici');
 
 const { GovernanceAgentStub } = require('../../dist/lib/testing/stubs/index.js');
 const { callMCPTool } = require('../../dist/lib/protocols/mcp.js');
@@ -176,18 +177,23 @@ describe('GovernanceAgentStub', () => {
 describe('GovernanceAgentStub HTTPS', () => {
   let stub;
   let stubUrl;
+  let dispatcher;
+  let trustedFetchFn;
 
   before(async () => {
     stub = new GovernanceAgentStub();
     const info = await stub.startHttps();
     stubUrl = info.url;
-    // Allow self-signed certs for this test
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+    // This fixture intentionally uses a short-lived self-signed certificate.
+    // Keep that trust local to the injected test transport rather than
+    // disabling TLS verification process-wide for concurrently running tests.
+    dispatcher = new Agent({ connect: { rejectUnauthorized: false } });
+    trustedFetchFn = (input, init) => undiciFetch(input, { ...init, dispatcher });
   });
 
   after(async () => {
-    delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
     await closeMCPConnections();
+    await dispatcher.close();
     await stub.stop();
   });
 
@@ -197,13 +203,23 @@ describe('GovernanceAgentStub HTTPS', () => {
   });
 
   it('responds to MCP calls over HTTPS', async () => {
-    const result = await callMCPTool(stubUrl, 'check_governance', {
-      plan_id: 'plan-https-test',
-      binding: 'proposed',
-      caller: 'buyer',
-      tool: 'create_media_buy',
-      payload: {},
-    });
+    const result = await callMCPTool(
+      stubUrl,
+      'check_governance',
+      {
+        plan_id: 'plan-https-test',
+        binding: 'proposed',
+        caller: 'buyer',
+        tool: 'create_media_buy',
+        payload: {},
+      },
+      undefined,
+      [],
+      undefined,
+      undefined,
+      trustedFetchFn,
+      { allowPrivateIp: true }
+    );
 
     const parsed = JSON.parse(result.content[0].text);
     assert.equal(parsed.verdict, 'approved');

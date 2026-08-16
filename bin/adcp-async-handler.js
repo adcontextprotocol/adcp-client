@@ -11,7 +11,10 @@
 
 const http = require('http');
 const { spawn } = require('child_process');
-const { randomUUID } = require('crypto');
+const { createHmac, randomUUID, timingSafeEqual } = require('crypto');
+
+const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
+const WEBHOOK_REQUEST_TIMEOUT_MS = 10_000;
 
 class AsyncWebhookHandler {
   constructor(options = {}) {
@@ -22,6 +25,7 @@ class AsyncWebhookHandler {
     this.ngrokProcess = null;
     this.webhookUrl = null;
     this.operationId = randomUUID();
+    this.webhookSecret = options.webhookSecret;
     this.responsePromise = null;
     this.responseResolver = null;
   }
@@ -47,7 +51,7 @@ class AsyncWebhookHandler {
       this.responseRejector = reject;
 
       // Set timeout
-      setTimeout(() => {
+      this.timeoutHandle = setTimeout(() => {
         reject(new Error(`Webhook timeout after ${this.timeout}ms`));
       }, this.timeout);
     });
@@ -74,7 +78,7 @@ class AsyncWebhookHandler {
       }
     }
 
-    return this.webhookUrl;
+    return this.getWebhookUrl();
   }
 
   /**
@@ -83,15 +87,51 @@ class AsyncWebhookHandler {
   startServer() {
     return new Promise((resolve, reject) => {
       this.server = http.createServer((req, res) => {
-        if (req.method === 'POST') {
+        const requestUrl = new URL(req.url || '/', 'http://localhost');
+        const operationMatches = requestUrl.searchParams.get('op') === this.operationId;
+
+        if (req.method === 'POST' && operationMatches) {
+          const contentLength = Number(req.headers['content-length']);
+          if (Number.isFinite(contentLength) && contentLength > MAX_WEBHOOK_BODY_BYTES) {
+            res.writeHead(413, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Payload too large' }));
+            req.destroy();
+            return;
+          }
+
           let body = '';
+          let bodyBytes = 0;
+
+          req.setTimeout(WEBHOOK_REQUEST_TIMEOUT_MS, () => {
+            if (!res.headersSent) {
+              res.writeHead(408, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Request timeout' }));
+            }
+            req.destroy();
+          });
 
           req.on('data', chunk => {
+            bodyBytes += chunk.length;
+            if (bodyBytes > MAX_WEBHOOK_BODY_BYTES) {
+              if (!res.headersSent) {
+                res.writeHead(413, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Payload too large' }));
+              }
+              req.destroy();
+              return;
+            }
             body += chunk.toString();
           });
 
           req.on('end', () => {
+            if (bodyBytes > MAX_WEBHOOK_BODY_BYTES || res.headersSent) return;
             try {
+              if (!this.verifyHmac(req.headers, body)) {
+                res.writeHead(401, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Invalid webhook signature' }));
+                return;
+              }
+
               const payload = JSON.parse(body);
 
               if (this.debug) {
@@ -105,7 +145,9 @@ class AsyncWebhookHandler {
 
               // Resolve the promise with the webhook payload
               if (this.responseResolver) {
+                clearTimeout(this.timeoutHandle);
                 this.responseResolver(payload);
+                this.responseResolver = null;
               }
             } catch (error) {
               if (this.debug) {
@@ -115,10 +157,14 @@ class AsyncWebhookHandler {
               res.end(JSON.stringify({ error: 'Invalid JSON' }));
             }
           });
-        } else {
-          // Health check endpoint
+        } else if (req.method === 'GET') {
+          // Health checks intentionally do not disclose the operation token.
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ status: 'ready', operation_id: this.operationId }));
+          res.end(JSON.stringify({ status: 'ready' }));
+        } else {
+          // A non-matching POST must not settle the pending operation.
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not found' }));
         }
       });
 
@@ -135,6 +181,26 @@ class AsyncWebhookHandler {
 
       this.server.on('error', reject);
     });
+  }
+
+  verifyHmac(headers, rawBody) {
+    if (!this.webhookSecret) return false;
+    const timestamp = headers['x-adcp-timestamp'];
+    const signature = headers['x-adcp-signature'];
+    if (typeof timestamp !== 'string' || !/^\d+$/.test(timestamp)) return false;
+    if (typeof signature !== 'string' || !/^sha256=[a-f0-9]{64}$/.test(signature)) return false;
+
+    const parsedTimestamp = Number(timestamp);
+    if (!Number.isSafeInteger(parsedTimestamp) || Math.abs(Math.floor(Date.now() / 1000) - parsedTimestamp) > 300) {
+      return false;
+    }
+
+    const expected = `sha256=${createHmac('sha256', this.webhookSecret)
+      .update(`${timestamp}.${rawBody}`, 'utf8')
+      .digest('hex')}`;
+    const expectedBytes = Buffer.from(expected, 'utf8');
+    const actualBytes = Buffer.from(signature, 'utf8');
+    return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
   }
 
   /**
@@ -244,6 +310,8 @@ class AsyncWebhookHandler {
       console.error('🧹 Cleaning up...');
     }
 
+    clearTimeout(this.timeoutHandle);
+
     // Close HTTP server
     if (this.server) {
       await new Promise(resolve => {
@@ -268,7 +336,9 @@ class AsyncWebhookHandler {
     if (!this.webhookUrl) {
       throw new Error('Webhook server not started');
     }
-    return `${this.webhookUrl}?operation_id=${this.operationId}`;
+    const url = new URL(this.webhookUrl);
+    url.searchParams.set('op', this.operationId);
+    return url.toString();
   }
 }
 

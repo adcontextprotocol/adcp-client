@@ -831,32 +831,44 @@ describe('discoverOAuthMetadata', () => {
   function mockFetch(urlToResponse) {
     return async url => {
       const entry = urlToResponse[url];
-      if (!entry) return { ok: false, status: 404, json: async () => ({}) };
-      return { ok: true, status: 200, json: async () => entry };
+      if (!entry) return new Response('{}', { status: 404 });
+      return new Response(JSON.stringify(entry), { status: 200, headers: { 'content-type': 'application/json' } });
     };
   }
 
   test('root URL discovers at /.well-known/oauth-authorization-server', async () => {
     let fetchedUrl;
     const metadata = await discoverOAuthMetadata('https://example.com', {
-      fetch: async url => {
+      trustedFetchFn: async url => {
         fetchedUrl = url;
-        return { ok: true, json: async () => validMetadata };
+        return new Response(JSON.stringify(validMetadata), { status: 200 });
       },
     });
     assert.strictEqual(fetchedUrl, 'https://example.com/.well-known/oauth-authorization-server');
     assert.deepStrictEqual(metadata, validMetadata);
   });
 
+  test('explicit private-network opt-in supports loopback OAuth discovery', async () => {
+    const metadata = await discoverOAuthMetadata('http://127.0.0.1:3000/mcp', {
+      allowPrivateIp: true,
+      trustedFetchFn: async url => {
+        assert.strictEqual(url.toString(), 'http://127.0.0.1:3000/.well-known/oauth-authorization-server/mcp');
+        return new Response(JSON.stringify(validMetadata), { status: 200 });
+      },
+    });
+
+    assert.deepStrictEqual(metadata, validMetadata);
+  });
+
   test('path URL tries path-aware discovery first', async () => {
     const fetched = [];
     const metadata = await discoverOAuthMetadata('https://example.com/mcp', {
-      fetch: async url => {
+      trustedFetchFn: async url => {
         fetched.push(url);
         if (url === 'https://example.com/.well-known/oauth-authorization-server/mcp') {
-          return { ok: true, json: async () => validMetadata };
+          return new Response(JSON.stringify(validMetadata), { status: 200 });
         }
-        return { ok: false, status: 404, json: async () => ({}) };
+        return new Response('{}', { status: 404 });
       },
     });
     assert.deepStrictEqual(metadata, validMetadata);
@@ -866,7 +878,7 @@ describe('discoverOAuthMetadata', () => {
 
   test('path URL falls back to root when path-aware returns 404', async () => {
     const metadata = await discoverOAuthMetadata('https://example.com/mcp', {
-      fetch: mockFetch({
+      trustedFetchFn: mockFetch({
         'https://example.com/.well-known/oauth-authorization-server': validMetadata,
       }),
     });
@@ -875,7 +887,7 @@ describe('discoverOAuthMetadata', () => {
 
   test('trailing slash is stripped from path', async () => {
     const metadata = await discoverOAuthMetadata('https://example.com/mcp/', {
-      fetch: mockFetch({
+      trustedFetchFn: mockFetch({
         'https://example.com/.well-known/oauth-authorization-server/mcp': validMetadata,
       }),
     });
@@ -884,33 +896,25 @@ describe('discoverOAuthMetadata', () => {
 
   test('returns null when no endpoint responds', async () => {
     const metadata = await discoverOAuthMetadata('https://example.com/mcp', {
-      fetch: mockFetch({}),
+      trustedFetchFn: mockFetch({}),
     });
     assert.strictEqual(metadata, null);
   });
 
   test('returns null when metadata lacks required fields', async () => {
     const metadata = await discoverOAuthMetadata('https://example.com', {
-      fetch: async () => ({
-        ok: true,
-        json: async () => ({ issuer: 'https://example.com' }),
-      }),
+      trustedFetchFn: async () => new Response(JSON.stringify({ issuer: 'https://example.com' }), { status: 200 }),
     });
     assert.strictEqual(metadata, null);
   });
 
   test('falls back to root when path-aware URL returns malformed JSON', async () => {
     const metadata = await discoverOAuthMetadata('https://example.com/mcp', {
-      fetch: async url => {
+      trustedFetchFn: async url => {
         if (url === 'https://example.com/.well-known/oauth-authorization-server/mcp') {
-          return {
-            ok: true,
-            json: async () => {
-              throw new SyntaxError('Unexpected token');
-            },
-          };
+          return new Response('{not-json', { status: 200 });
         }
-        return { ok: true, json: async () => validMetadata };
+        return new Response(JSON.stringify(validMetadata), { status: 200 });
       },
     });
     assert.deepStrictEqual(metadata, validMetadata);
@@ -918,11 +922,24 @@ describe('discoverOAuthMetadata', () => {
 
   test('returns null for network errors', async () => {
     const metadata = await discoverOAuthMetadata('https://example.com', {
-      fetch: async () => {
+      trustedFetchFn: async () => {
         throw new Error('network error');
       },
     });
     assert.strictEqual(metadata, null);
+  });
+
+  test('does not follow metadata redirects to an unvalidated destination', async () => {
+    const fetched = [];
+    const metadata = await discoverOAuthMetadata('https://example.com/mcp', {
+      trustedFetchFn: async url => {
+        fetched.push(url.toString());
+        return new Response('', { status: 302, headers: { location: 'http://127.0.0.1/latest/meta-data' } });
+      },
+    });
+    assert.strictEqual(metadata, null);
+    assert.ok(fetched.length > 0);
+    assert.ok(fetched.every(url => new URL(url).hostname === 'example.com'));
   });
 });
 

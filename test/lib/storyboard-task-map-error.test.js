@@ -88,7 +88,7 @@ describe('executeStoryboardTask creative wire selection', () => {
     assert.equal(result.data.wire, 'canonical');
   });
 
-  test('retains the legacy default for an unhinted 3.1 request', async () => {
+  test('keeps an unhinted 3.1 product request ambiguous for dual-format responses', async () => {
     const calls = [];
     const result = await executeStoryboardTask(
       {
@@ -106,7 +106,7 @@ describe('executeStoryboardTask creative wire selection', () => {
       {}
     );
 
-    assert.deepEqual(calls, [{ method: 'legacy', request: { ext: { adcp: { creative_wire: 'legacy' } } } }]);
+    assert.deepEqual(calls, [{ method: 'legacy', request: {} }]);
     assert.equal(result.data.wire, 'legacy');
   });
 

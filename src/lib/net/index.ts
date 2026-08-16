@@ -13,3 +13,4 @@ export {
   type SsrfFetchResult,
 } from './ssrf-fetch';
 export { isPrivateIp, isAlwaysBlocked, isLikelyPrivateUrl } from './address-guards';
+export { createAgentTransportFetch, type AgentTransportFetchOptions } from './agent-transport-fetch';

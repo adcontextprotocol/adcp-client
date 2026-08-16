@@ -90,7 +90,7 @@ describe('OAuth perimeter response-size cap (#1175)', () => {
       // null after exhausting candidates. Under a tight cap, both URL
       // attempts fail with ResponseTooLargeError → function returns null.
       const result = await withResponseSizeLimit(500, () =>
-        discoverOAuthMetadata('https://agent.example.invalid/mcp', { fetch: hostileFetch })
+        discoverOAuthMetadata('https://example.com/mcp', { trustedFetchFn: hostileFetch })
       );
       assert.strictEqual(result, null, 'oversized metadata must not surface as a successful discovery');
     });
@@ -106,7 +106,7 @@ describe('OAuth perimeter response-size cap (#1175)', () => {
           headers: { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(ok)) },
         });
 
-      const metadata = await discoverOAuthMetadata('https://agent.example.invalid/mcp', { fetch: benignFetch });
+      const metadata = await discoverOAuthMetadata('https://example.com/mcp', { trustedFetchFn: benignFetch });
       assert.ok(metadata, 'discovery must succeed without a size-limit slot');
       assert.strictEqual(metadata.token_endpoint, 'https://as.example.invalid/token');
     });

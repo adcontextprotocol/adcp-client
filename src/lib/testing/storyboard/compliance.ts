@@ -256,7 +256,12 @@ export function loadComplianceIndex(options: ResolveOptions = {}): ComplianceInd
 export function getExternalSchemaRootForCompliance(options: ResolveOptions, adcpVersion: string): string | undefined {
   const configuredSchemaRoot = getConfiguredSchemaRoot(options);
   if (configuredSchemaRoot) return configuredSchemaRoot;
-  const complianceDir = getConfiguredComplianceDir(options);
+  // An explicit version still resolves through the package's default compliance
+  // cache. Probe from that directory too so preflight capability discovery uses
+  // the selected release's exact schema tree rather than whatever bundle the SDK
+  // happened to compile as its default.
+  const complianceDir =
+    getConfiguredComplianceDir(options) ?? (options.version !== undefined ? getComplianceCacheDir(options) : undefined);
   const siblingSchemaRoot = complianceDir ? findExternalSchemaRoot(complianceDir, adcpVersion) : undefined;
   if (siblingSchemaRoot) return siblingSchemaRoot;
   if (options.version !== undefined || complianceDir !== undefined) {
@@ -399,11 +404,6 @@ function schemaRootCandidatesForComplianceDir(complianceDir: string, adcpVersion
   for (const packageRoot of packageRoots) {
     addVersionedSchemaRoots(packageRoot, adcpVersion ?? ADCP_VERSION, add);
   }
-  for (const packageRoot of packageRoots) {
-    add(join(packageRoot, 'dist', 'schemas', 'latest'));
-    add(join(packageRoot, 'schemas', 'cache', 'latest'));
-    add(join(packageRoot, 'dist', 'lib', 'schemas-data', 'latest'));
-  }
   if (adcpVersion === undefined) {
     for (const packageRoot of packageRoots) {
       addSchemaContainerChildren(join(packageRoot, 'dist', 'lib', 'schemas-data'), add);
@@ -417,11 +417,15 @@ function schemaRootCandidatesForComplianceDir(complianceDir: string, adcpVersion
 
 function addVersionedSchemaRoots(packageRoot: string, adcpVersion: string, add: (candidate: string) => void): void {
   const key = resolveBundleKey(adcpVersion);
+  // Prefer exact release roots before stable-minor aliases. Patch releases
+  // normally share wire shape, but an explicitly selected compliance kit is
+  // the authority for its own preflight validation and must not be shadowed
+  // by an older `3.1` bundle left in dist.
   add(join(packageRoot, 'dist', 'lib', 'schemas-data', adcpVersion));
-  add(join(packageRoot, 'dist', 'lib', 'schemas-data', key));
   add(join(packageRoot, 'dist', 'schemas', adcpVersion));
-  add(join(packageRoot, 'dist', 'schemas', key));
   add(join(packageRoot, 'schemas', 'cache', adcpVersion));
+  add(join(packageRoot, 'dist', 'lib', 'schemas-data', key));
+  add(join(packageRoot, 'dist', 'schemas', key));
   add(join(packageRoot, 'schemas', 'cache', key));
 }
 

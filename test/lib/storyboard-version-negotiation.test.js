@@ -617,6 +617,19 @@ describe('storyboard runner AdCP version negotiation', () => {
     );
   });
 
+  test('explicit compliance version probes the default cache sibling schema tree (#2524)', () => {
+    const { getExternalSchemaRootForCompliance } = require('../../dist/lib/testing/storyboard/index.js');
+    const selectedVersion = require('../../dist/lib/version.js').ADCP_VERSION;
+
+    const resolvedRoot = getExternalSchemaRootForCompliance({ version: selectedVersion }, selectedVersion);
+
+    assert.ok(resolvedRoot, 'an explicit compliance line should resolve an exact schema root');
+    assert.ok(
+      resolvedRoot.endsWith(path.join('schemas', 'cache', selectedVersion)),
+      `expected exact selected-version schema root, got ${resolvedRoot}`
+    );
+  });
+
   test('ADCP_COMPLIANCE_DIR resolves sibling schema bundle for scoped validation', () => {
     const {
       getExternalSchemaRootForCompliance,

@@ -30,7 +30,12 @@ type CallToolResponse = {
 };
 
 interface MCPTaskProtocolOptions {
-  transport?: { maxResponseBytes?: number; fetchFn?: typeof fetch; requestTimeoutMs?: number };
+  transport?: {
+    maxResponseBytes?: number;
+    trustedFetchFn?: typeof fetch;
+    requestTimeoutMs?: number;
+    allowPrivateIp?: boolean;
+  };
   onTransportActivity?: TransportActivityHandler;
   transportActivityContext?: {
     agentId: string;
@@ -178,6 +183,7 @@ export async function callMCPToolWithTasks(
     signal?: AbortSignal;
     requestTimeoutMs?: number;
     fetchFn?: typeof fetch;
+    allowPrivateIp?: boolean;
   }
 ): Promise<unknown> {
   // Keep the public debug-log contract identical across modern and legacy
@@ -211,6 +217,7 @@ export async function callMCPToolWithTasks(
     ...(options?.signal && { signal: options.signal }),
     ...(options?.requestTimeoutMs !== undefined && { requestTimeoutMs: options.requestTimeoutMs }),
     ...(options?.fetchFn && { fetchFn: options.fetchFn }),
+    ...(options?.allowPrivateIp !== undefined && { allowPrivateIp: options.allowPrivateIp }),
   });
   if (modernAttempt.handled) {
     debugLogs.push({
@@ -250,7 +257,11 @@ export async function callMCPToolWithTasks(
               options?.requestTimeoutMs
             ),
           options?.fetchFn,
-          { signal: options?.signal, requestTimeoutMs: options?.requestTimeoutMs }
+          {
+            signal: options?.signal,
+            requestTimeoutMs: options?.requestTimeoutMs,
+            allowPrivateIp: options?.allowPrivateIp,
+          }
         );
       })
   );
@@ -578,8 +589,11 @@ export async function listMCPTasks(
             });
             return result.tasks.map((task: any) => mapMCPTaskToTaskInfo(task));
           },
-          options.transport?.fetchFn,
-          { requestTimeoutMs: options.transport?.requestTimeoutMs }
+          options.transport?.trustedFetchFn,
+          {
+            requestTimeoutMs: options.transport?.requestTimeoutMs,
+            allowPrivateIp: options.transport?.allowPrivateIp,
+          }
         )
     )
   );

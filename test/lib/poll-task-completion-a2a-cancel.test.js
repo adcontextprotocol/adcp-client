@@ -2,20 +2,17 @@
 // fires — Phase 1 of adcp-client#1617. The cancel is fire-and-forget:
 // failure is non-fatal and the caller's TaskResult is unaffected.
 
-const { test, describe, beforeEach, afterEach, mock } = require('node:test');
+const { test, describe, beforeEach, mock } = require('node:test');
 const assert = require('node:assert');
 
 describe('pollTaskCompletion A2A cancel-on-abort (#1617)', () => {
   let TaskExecutor;
-  let originalFetch;
   let mockAgent;
 
   beforeEach(() => {
     delete require.cache[require.resolve('../../dist/lib/index.js')];
     const lib = require('../../dist/lib/index.js');
     TaskExecutor = lib.TaskExecutor;
-    originalFetch = global.fetch;
-
     mockAgent = {
       id: 'test-agent',
       name: 'Test Agent',
@@ -24,21 +21,38 @@ describe('pollTaskCompletion A2A cancel-on-abort (#1617)', () => {
     };
   });
 
-  afterEach(() => {
-    global.fetch = originalFetch;
-  });
+  function agentCardResponse() {
+    return new Response(
+      JSON.stringify({
+        name: 'Cancel test agent',
+        description: 'A2A cancellation fixture',
+        url: mockAgent.agent_uri,
+        version: '1.0.0',
+        protocolVersion: '0.3.0',
+        capabilities: {},
+        defaultInputModes: ['application/json'],
+        defaultOutputModes: ['application/json'],
+        skills: [],
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  }
 
   test('fires tasks/cancel JSON-RPC call to seller when A2A poll aborts', async () => {
     const cancelCalls = [];
-    global.fetch = mock.fn(async (url, options) => {
+    const trustedFetchFn = mock.fn(async (url, options) => {
+      if (!options?.body) return agentCardResponse();
       cancelCalls.push({ url, body: JSON.parse(options.body) });
-      return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { id: 'task-xyz' } }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
+      return new Response(
+        JSON.stringify({ jsonrpc: '2.0', id: cancelCalls.at(-1).body.id, result: { id: 'task-xyz' } }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }
+      );
     });
 
-    const executor = new TaskExecutor();
+    const executor = new TaskExecutor({ transport: { trustedFetchFn } });
     const signal = AbortSignal.abort('test cancelled');
     const result = await executor.pollTaskCompletion(mockAgent, 'task-xyz', 10, undefined, signal);
 
@@ -52,17 +66,13 @@ describe('pollTaskCompletion A2A cancel-on-abort (#1617)', () => {
 
     assert.strictEqual(cancelCalls.length, 1, 'should have fired exactly one cancel request');
     const [call] = cancelCalls;
-    assert.strictEqual(call.url, mockAgent.agent_uri, 'should POST to agent_uri');
+    assert.strictEqual(String(call.url), mockAgent.agent_uri, 'should POST to agent_uri');
     assert.strictEqual(call.body.jsonrpc, '2.0');
-    // A2A 0.3.0 §7.4 defines tasks/cancel as request/response, so the wire
-    // request must carry a real (non-null) id — JSON-RPC 2.0 §4.1.3 reserves
-    // null for notifications. Fire-and-forget is the caller's discipline
-    // (we don't await/parse the response), not a wire-protocol claim.
-    assert.match(
-      call.body.id,
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-      `expected a UUID v4 id, got: ${JSON.stringify(call.body.id)}`
-    );
+    // A2A 0.3.0 §7.4 defines tasks/cancel as request/response, so the official
+    // client must carry a real (non-null) JSON-RPC id. Its allocator currently
+    // uses integers; the protocol contract does not require a UUID.
+    assert.notStrictEqual(call.body.id, null);
+    assert.notStrictEqual(call.body.id, undefined);
     assert.strictEqual(call.body.method, 'tasks/cancel');
     assert.strictEqual(call.body.params.id, 'task-xyz', 'should address cancel by server task id');
   });
@@ -73,13 +83,18 @@ describe('pollTaskCompletion A2A cancel-on-abort (#1617)', () => {
   // sellers split on which header they recognize.
   test('cancel POST carries Bearer + x-adcp-auth headers when agent has auth_token', async () => {
     let lastHeaders;
-    global.fetch = mock.fn(async (_url, options) => {
-      lastHeaders = options.headers;
-      return new Response('{}', { status: 200 });
+    const trustedFetchFn = mock.fn(async (_url, options) => {
+      if (!options?.body) return agentCardResponse();
+      lastHeaders = Object.fromEntries(new Headers(options.headers));
+      const id = JSON.parse(options.body).id;
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: { id: 'task-auth' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
     });
 
     const authedAgent = { ...mockAgent, auth_token: 'tok-secret-abc' };
-    const executor = new TaskExecutor();
+    const executor = new TaskExecutor({ transport: { trustedFetchFn } });
     const signal = AbortSignal.abort('test cancelled');
     await executor.pollTaskCompletion(authedAgent, 'task-auth', 10, undefined, signal);
 
@@ -88,19 +103,19 @@ describe('pollTaskCompletion A2A cancel-on-abort (#1617)', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     await new Promise(resolve => setTimeout(resolve, 0));
 
-    assert.strictEqual(lastHeaders.Authorization, 'Bearer tok-secret-abc');
+    assert.strictEqual(lastHeaders.authorization, 'Bearer tok-secret-abc');
     assert.strictEqual(lastHeaders['x-adcp-auth'], 'tok-secret-abc');
   });
 
   test('does NOT fire tasks/cancel for MCP agents on abort', async () => {
     let fetchCalled = false;
-    global.fetch = mock.fn(async () => {
+    const trustedFetchFn = mock.fn(async () => {
       fetchCalled = true;
       return new Response('{}', { status: 200 });
     });
 
     const mcpAgent = { ...mockAgent, protocol: 'mcp' };
-    const executor = new TaskExecutor();
+    const executor = new TaskExecutor({ transport: { trustedFetchFn } });
     const signal = AbortSignal.abort('test cancelled');
     const result = await executor.pollTaskCompletion(mcpAgent, 'task-mcp', 10, undefined, signal);
 
@@ -111,11 +126,11 @@ describe('pollTaskCompletion A2A cancel-on-abort (#1617)', () => {
   });
 
   test('cancel failure does not affect the TaskResult returned to caller', async () => {
-    global.fetch = mock.fn(async () => {
+    const trustedFetchFn = mock.fn(async () => {
       throw new Error('simulated network unreachable');
     });
 
-    const executor = new TaskExecutor();
+    const executor = new TaskExecutor({ transport: { trustedFetchFn } });
     const signal = AbortSignal.abort('test cancelled');
     const result = await executor.pollTaskCompletion(mockAgent, 'task-cancel-fail', 10, undefined, signal);
 
@@ -129,12 +144,12 @@ describe('pollTaskCompletion A2A cancel-on-abort (#1617)', () => {
 
   test('skips cancel when taskId is empty', async () => {
     let fetchCalled = false;
-    global.fetch = mock.fn(async () => {
+    const trustedFetchFn = mock.fn(async () => {
       fetchCalled = true;
       return new Response('{}', { status: 200 });
     });
 
-    const executor = new TaskExecutor();
+    const executor = new TaskExecutor({ transport: { trustedFetchFn } });
     const signal = AbortSignal.abort('test cancelled');
     await executor.pollTaskCompletion(mockAgent, '', 10, undefined, signal);
 

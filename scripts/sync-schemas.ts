@@ -184,14 +184,20 @@ async function fetchText(url: string): Promise<string> {
 }
 
 /**
- * If cosign sidecars exist for this tarball, verify them. Graceful degradation:
+ * If cosign sidecars exist for this tarball, verify them. Local development
+ * degrades gracefully unless ADCP_REQUIRE_SIGNATURE=1; artifact-producing CI
+ * sets that flag and fails closed.
  *   - `latest.tgz` is intentionally unsigned upstream (rebuilt too frequently) — skip.
  *   - Missing sidecars (404) → checksum-only trust, log and continue.
  *   - Sidecars present but `cosign` binary missing → checksum-only, log install hint.
  *   - Sidecars present and `cosign` available → verify; throw on failure.
  */
 async function verifyCosignSignature(tgzPath: string, version: string, baseUrl = ADCP_BASE_URL): Promise<void> {
+  const requireSignature = process.env.ADCP_REQUIRE_SIGNATURE === '1';
   if (version === 'latest') {
+    if (requireSignature) {
+      throw new Error('Refusing unsigned latest.tgz because ADCP_REQUIRE_SIGNATURE=1. Pin a signed release.');
+    }
     console.log('ℹ️  latest.tgz is intentionally unsigned upstream (checksum-only trust).');
     return;
   }
@@ -205,6 +211,9 @@ async function verifyCosignSignature(tgzPath: string, version: string, baseUrl =
   ]);
 
   if (sigProbe.status === 404 || crtProbe.status === 404) {
+    if (requireSignature) {
+      throw new Error(`Cosign sidecars are required for v${version} but were not published.`);
+    }
     console.log(`ℹ️  No cosign sidecars for v${version} (checksum-only trust — upstream predates signing).`);
     return;
   }
@@ -215,6 +224,9 @@ async function verifyCosignSignature(tgzPath: string, version: string, baseUrl =
 
   const cosign = spawnSync('cosign', ['version'], { stdio: 'ignore' });
   if (cosign.error || cosign.status !== 0) {
+    if (requireSignature) {
+      throw new Error(`cosign is required for v${version} because ADCP_REQUIRE_SIGNATURE=1, but it is unavailable.`);
+    }
     console.warn(
       `⚠️  cosign sidecars are published for v${version} but \`cosign\` is not installed. ` +
         `Proceeding with checksum-only trust — install cosign (\`brew install cosign\` / ` +
@@ -526,13 +538,20 @@ async function downloadSchema(
 }
 
 function refToLocalPath(ref: string, cacheDir: string): string {
+  const cacheRoot = path.resolve(cacheDir);
+  let relativePath: string;
   if (ref.startsWith('/schemas/')) {
-    let relativePath = ref.substring('/schemas/'.length);
+    relativePath = ref.substring('/schemas/'.length);
     const firstSlash = relativePath.indexOf('/');
     if (firstSlash > 0) relativePath = relativePath.substring(firstSlash + 1);
-    return path.join(cacheDir, relativePath);
+  } else {
+    relativePath = path.basename(ref);
   }
-  return path.join(cacheDir, path.basename(ref));
+  const candidate = path.resolve(cacheRoot, relativePath);
+  if (candidate !== cacheRoot && !candidate.startsWith(`${cacheRoot}${path.sep}`)) {
+    throw new Error(`Schema ref escapes the cache directory: ${JSON.stringify(ref)}`);
+  }
+  return candidate;
 }
 
 function extractRefs(schema: any, refs: Set<string> = new Set()): Set<string> {
@@ -605,6 +624,11 @@ async function sync(version?: string, options: { includeSharedSurfaces?: boolean
       if (viaGithubTarball) return;
     }
     if (!viaTarball) {
+      if (process.env.ADCP_REQUIRE_SIGNATURE === '1') {
+        throw new Error(
+          `Signed protocol tarball required for AdCP ${adcpVersion}; refusing unsigned per-file schema fallback.`
+        );
+      }
       await syncSchemasPerFile(adcpVersion, baseUrl, includeSharedSurfaces);
     }
   }

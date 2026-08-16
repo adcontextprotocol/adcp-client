@@ -1008,6 +1008,12 @@ export type StoryboardValidationCheck =
    */
   | 'field_in_context_array'
   /**
+   * Resolve every terminal value at a wildcard-aware response path and require
+   * each value to deep-equal a member of a context-captured array. An empty
+   * terminal set passes vacuously; missing context is branch-safe.
+   */
+  | 'all_fields_in_context_array'
+  /**
    * Asserts upstream side-effects against the adopter's
    * `comply_test_controller`'s `query_upstream_traffic` scenario. The
    * load-bearing anti-façade contract: a fully-conformant adapter and a
@@ -1295,7 +1301,7 @@ export interface StoryboardValidation {
    * Key to look up in the accumulated `storyboardContext` for cross-step
    * comparison checks (`field_less_than`, `field_greater_than`,
    * `field_at_most`, `field_at_least`, `field_equals_context`,
-   * `field_in_context_array`).
+   * `field_in_context_array`, `all_fields_in_context_array`).
    * Only consumed by those check types — ignored on all others.
    * When set and the key is absent from context, the check passes with a
    * `context_key_absent` observation rather than failing — the prior step

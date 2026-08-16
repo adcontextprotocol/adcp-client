@@ -33,7 +33,6 @@ export const AudioChannelLayoutValues = ["mono", "stereo", "5.1", "7.1"] as cons
 export const AudioDistributionTypeValues = ["music_streaming_service", "fm_am_broadcast", "podcast", "catch_up_radio", "web_radio", "video_game", "text_to_speech"] as const;
 export const AuthenticationSchemeValues = ["Bearer", "HMAC-SHA256"] as const;
 export const AvailableMetricValues = ["impressions", "spend", "clicks", "ctr", "views", "completed_views", "completion_rate", "conversions", "conversion_value", "roas", "cost_per_acquisition", "new_to_brand_rate", "leads", "reach", "frequency", "grps", "engagements", "engagement_rate", "follows", "saves", "profile_visits", "viewability", "quartile_data", "dooh_metrics", "cost_per_click", "cost_per_completed_view", "cpm", "downloads", "units_sold", "new_to_brand_units", "plays", "incremental_sales_lift", "brand_lift", "foot_traffic", "conversion_lift", "brand_search_lift"] as const;
-export const BadgeRoleValues = ["media-buy", "creative", "signals", "governance", "brand", "sponsored-intelligence"] as const;
 export const BillingPartyValues = ["operator", "agent", "advertiser"] as const;
 export const BinaryVerdictValues = ["pass", "fail"] as const;
 export const BrandAgentTypeValues = ["brand", "rights", "measurement", "governance", "creative", "sales", "buying", "signals"] as const;

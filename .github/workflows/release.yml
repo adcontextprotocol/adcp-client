@@ -21,6 +21,8 @@ jobs:
     name: Release
     needs: reference-seller-interop
     runs-on: ubuntu-latest
+    env:
+      ADCP_REQUIRE_SIGNATURE: '1'
     permissions:
       contents: write
       pull-requests: write
@@ -53,6 +55,9 @@ jobs:
 
       - name: Install Dependencies
         run: npm ci
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: Build
         run: npm run build:lib

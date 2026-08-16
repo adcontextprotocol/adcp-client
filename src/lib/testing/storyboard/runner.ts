@@ -10,7 +10,12 @@ import { createHash, createHmac } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { getOrCreateClientResolution, getOrDiscoverProfile, runStep, type TestClient } from '../client';
-import { closeScopedConnections, withMCPConnectionScope, type VersionEnvelopeMode } from '../../protocols';
+import {
+  closeScopedConnections,
+  normalizeTransportOptions,
+  withMCPConnectionScope,
+  type VersionEnvelopeMode,
+} from '../../protocols';
 import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
 import { defaultStoryboardResponseProjection, executeStoryboardTask } from './task-map';
 import {
@@ -1186,6 +1191,7 @@ export async function runStoryboard(
   return withMCPConnectionScope(
     async () => {
       options = applyStoryboardVersionOptions(storyboard, options);
+      options = { ...options, transport: normalizeTransportOptions(options.transport) };
       const schemaRoot = getRunSchemaRoot(options);
       if (schemaRoot) {
         return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, () =>
@@ -4939,7 +4945,7 @@ async function executeStep(
         args: request,
         headers: rawProbeHeaders,
         allowPrivateIp: options.allow_http === true,
-        fetchFn: options.transport?.fetchFn,
+        fetchFn: options.transport?.trustedFetchFn,
       });
       httpResult = probe.httpResult;
       taskResult = probe.taskResult;
@@ -5754,7 +5760,7 @@ async function executeProbeStep(
   let oauthMetadataGraph: OAuthMetadataGraphGrade | undefined;
   const probeOpts = {
     allowPrivateIp: options.allow_http === true,
-    fetchFn: options.transport?.fetchFn,
+    fetchFn: options.transport?.trustedFetchFn,
   };
   let requestRecordOverride: RunnerRequestRecord | undefined;
 
@@ -5837,7 +5843,7 @@ async function executeProbeStep(
       oauthMetadataGraph = await gradeOAuthMetadataGraph(runState.agentUrl, {
         allowHttp: options.allow_http === true,
         signal: options.signal,
-        trustedFetchFn: options.transport?.fetchFn,
+        trustedFetchFn: options.transport?.trustedFetchFn,
       });
       httpResult = oauthMetadataGraph.protected_resource_result;
     } else {

@@ -4090,20 +4090,7 @@ export interface CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven {
   /**
    * Catalog types this product accepts.
    */
-  supported_catalog_types?: (
-    | 'product'
-    | 'store'
-    | 'offering'
-    | 'hotel'
-    | 'flight'
-    | 'vehicle'
-    | 'real_estate'
-    | 'education'
-    | 'destination'
-    | 'app'
-    | 'job'
-    | 'inventory'
-  )[];
+  supported_catalog_types?: CatalogType[];
   /**
    * Minimum catalog item count buyer must supply.
    * @minimum 1
@@ -22870,17 +22857,7 @@ export interface GetAdCPCapabilitiesResponse {
         /**
          * Surface types this seller supports via TMP.
          */
-        surfaces?: (
-          | 'website'
-          | 'mobile_app'
-          | 'ctv_app'
-          | 'desktop_app'
-          | 'dooh'
-          | 'podcast'
-          | 'radio'
-          | 'streaming_audio'
-          | 'ai_assistant'
-        )[];
+        surfaces?: PropertyType[];
       };
       /**
        * Deprecated. Legacy AXE integrations. Use trusted_match for new integrations.

@@ -4439,7 +4439,8 @@ describe('Custom-handler merge seam (incremental migration)', () => {
   // tools the platform doesn't yet model — getMediaBuys, listCreativeFormats,
   // providePerformanceFeedback, reportUsage, sync_event_sources, content-
   // standards CRUD, etc. — without forking the runtime. Platform-derived
-  // handlers WIN per-key; adopter handlers fill the rest.
+  // handlers WIN per-key; adopter handlers fill the rest. The explicit raw
+  // media-buy lifecycle handlers win only for a negotiated legacy wire.
 
   it('dispatches getMediaBuys through opts.legacyHandlers.mediaBuy', async () => {
     const platform = buildPlatform();
@@ -4503,6 +4504,89 @@ describe('Custom-handler merge seam (incremental migration)', () => {
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
     assert.ok(sawParams, 'custom syncCreatives handler was invoked');
     assert.deepStrictEqual(sawParams.creatives, []);
+  });
+
+  it('routes legacy media-buy lifecycle requests through the raw compatibility facade', async () => {
+    const legacyRef = {
+      agent_url: 'https://creative.adcontextprotocol.org/',
+      id: 'display_300x250_image',
+      width: 300,
+      height: 250,
+    };
+    const nativeCalls = [];
+    const rawCalls = [];
+    const base = buildPlatform();
+    const packageState = { package_id: 'pkg_legacy', product_id: 'product_legacy', format_ids: [legacyRef] };
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          createMediaBuy: async () => {
+            nativeCalls.push('create');
+            return { media_buy_id: 'native' };
+          },
+          updateMediaBuy: async () => {
+            nativeCalls.push('update');
+            return { media_buy_id: 'native' };
+          },
+          getMediaBuys: async () => {
+            nativeCalls.push('get');
+            return { media_buys: [] };
+          },
+        },
+      }),
+      {
+        name: 'legacy-media-buy-facade',
+        version: '1.0.0',
+        adcpVersion: '3.0.12',
+        mergeSeam: 'silent',
+        validation: { requests: 'off', responses: 'off' },
+        legacyHandlers: {
+          mediaBuy: {
+            createMediaBuy: async () => {
+              rawCalls.push('create');
+              return { media_buy_id: 'mb_legacy', packages: [packageState] };
+            },
+            updateMediaBuy: async () => {
+              rawCalls.push('update');
+              return { media_buy_id: 'mb_legacy', revision: 2, packages: [packageState] };
+            },
+            getMediaBuys: async () => {
+              rawCalls.push('get');
+              return { media_buys: [{ media_buy_id: 'mb_legacy', status: 'active', packages: [packageState] }] };
+            },
+          },
+        },
+      }
+    );
+
+    const calls = [
+      {
+        name: 'create_media_buy',
+        arguments: {
+          account: { account_id: 'acc_1' },
+          idempotency_key: 'legacy-raw-create',
+          packages: [{ product_id: 'product_legacy', pricing_option_id: 'cpm', budget: 100, format_ids: [legacyRef] }],
+        },
+      },
+      {
+        name: 'update_media_buy',
+        arguments: {
+          account: { account_id: 'acc_1' },
+          idempotency_key: 'legacy-raw-update',
+          media_buy_id: 'mb_legacy',
+        },
+      },
+      { name: 'get_media_buys', arguments: { account: { account_id: 'acc_1' } } },
+    ];
+    for (const call of calls) {
+      const result = await server.dispatchTestRequest({ method: 'tools/call', params: call });
+      assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+      const mediaBuy = result.structuredContent.media_buys?.[0] ?? result.structuredContent;
+      assert.deepStrictEqual(mediaBuy.packages[0].format_ids, [legacyRef]);
+    }
+    assert.deepStrictEqual(rawCalls, ['create', 'update', 'get']);
+    assert.deepStrictEqual(nativeCalls, []);
   });
 
   it('opts.accounts.syncAccounts runs when platform.accounts.upsert is undefined (no UNSUPPORTED_FEATURE shadow)', async () => {

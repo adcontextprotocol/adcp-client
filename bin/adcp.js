@@ -6388,6 +6388,7 @@ credential material — never sync or commit.
     // Set up webhook handler if --wait flag is used
     let webhookHandler = null;
     let webhookUrl = null;
+    let webhookSecret = null;
 
     if (waitForAsync) {
       const useNgrok = !useLocalWebhook;
@@ -6410,9 +6411,11 @@ credential material — never sync or commit.
         console.error(`DEBUG: Setting up ${useNgrok ? 'ngrok' : 'local'} webhook handler...\n`);
       }
 
+      webhookSecret = randomBytes(32).toString('base64url');
       webhookHandler = new AsyncWebhookHandler({
         timeout: timeout,
         debug: debug,
+        webhookSecret,
       });
 
       try {
@@ -6582,7 +6585,7 @@ credential material — never sync or commit.
         // selector rather than a fallback, registering it would actively
         // downgrade every `--wait` webhook to legacy HMAC keyed by a value
         // anyone can read out of the published package.
-        webhookSecret: randomBytes(32).toString('base64url'),
+        webhookSecret,
       }),
     });
 

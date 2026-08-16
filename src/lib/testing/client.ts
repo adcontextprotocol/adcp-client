@@ -209,7 +209,7 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
       ...(options.wireAdcpVersion !== undefined && { wireAdcpVersion: options.wireAdcpVersion }),
       versionEnvelope: options.versionEnvelope ?? 'auto',
       ...(authMode !== undefined && { authMode }),
-      ...(options.transport?.fetchFn && { fetchFn: options.transport.fetchFn }),
+      ...(options.transport?.trustedFetchFn && { fetchFn: options.transport.trustedFetchFn }),
       ...(options.transport?.maxResponseBytes !== undefined && {
         maxResponseBytes: options.transport.maxResponseBytes,
       }),
@@ -273,7 +273,7 @@ function testClientMatchesVersionOptions(client: TestClient, options: TestOption
     meta.wireAdcpVersion === expectedWireAdcpVersion &&
     meta.versionEnvelope === expectedVersionEnvelope &&
     meta.authMode === expectedAuthMode &&
-    meta.fetchFn === effectiveOptions.transport?.fetchFn &&
+    meta.fetchFn === effectiveOptions.transport?.trustedFetchFn &&
     meta.maxResponseBytes === effectiveOptions.transport?.maxResponseBytes &&
     meta.requestTimeoutMs === effectiveOptions.transport?.requestTimeoutMs
   );
@@ -329,7 +329,7 @@ export async function getOrDiscoverProfile(
       step: { step: 'Discover agent capabilities', passed: true, duration_ms: 0 },
     };
   }
-  return discoverAgentProfile(client, options.signal);
+  return discoverAgentProfile(client, options.signal, options.adcpVersion);
 }
 
 /**
@@ -448,7 +448,9 @@ export async function runStep<T>(
  */
 export async function discoverAgentProfile(
   client: TestClient,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  /** Compliance/schema line selected by the caller. Defaults to the client pin. */
+  schemaAdcpVersion?: string
 ): Promise<{ profile: AgentProfile; step: TestStepResult }> {
   const { result: agentInfo, step } = await runStep('Discover agent capabilities', 'getAgentInfo', () =>
     raceWithSignal(client.getAgentInfo({ signal }), signal)
@@ -481,7 +483,7 @@ export async function discoverAgentProfile(
           caps.data,
           'strict',
           undefined,
-          client.getAdcpVersion()
+          schemaAdcpVersion ?? client.getAdcpVersion()
         );
         if (!validation.valid) {
           profile.capabilities_schema_issues = validation.issues.map(issue => ({

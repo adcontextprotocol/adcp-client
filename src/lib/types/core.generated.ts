@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.1.13
-// Generated at: 2026-08-11T18:21:14.977Z
+// Generated AdCP core types from official schemas v3.1.14
+// Generated at: 2026-08-16T18:17:04.058Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -5962,20 +5962,7 @@ export interface CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven {
   /**
    * Catalog types this product accepts.
    */
-  supported_catalog_types?: (
-    | 'product'
-    | 'store'
-    | 'offering'
-    | 'hotel'
-    | 'flight'
-    | 'vehicle'
-    | 'real_estate'
-    | 'education'
-    | 'destination'
-    | 'app'
-    | 'job'
-    | 'inventory'
-  )[];
+  supported_catalog_types?: CatalogType[];
   /**
    * Minimum catalog item count buyer must supply.
    * @minimum 1
@@ -22812,17 +22799,7 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
         /**
          * Surface types this seller supports via TMP.
          */
-        surfaces?: (
-          | 'website'
-          | 'mobile_app'
-          | 'ctv_app'
-          | 'desktop_app'
-          | 'dooh'
-          | 'podcast'
-          | 'radio'
-          | 'streaming_audio'
-          | 'ai_assistant'
-        )[];
+        surfaces?: PropertyType[];
       };
       /**
        * Deprecated. Legacy AXE integrations. Use trusted_match for new integrations.
@@ -27817,7 +27794,7 @@ export type RegistryEvent = {
       entity_type?: 'agent';
       payload?: {
         agent_url: string;
-        role: BadgeRole;
+        role: AdCPProtocol;
         verified_specialisms: string[];
         adcp_version?: string;
       };
@@ -27827,7 +27804,7 @@ export type RegistryEvent = {
       entity_type?: 'agent';
       payload?: {
         agent_url: string;
-        role: BadgeRole;
+        role: AdCPProtocol;
         reason: string;
         adcp_version?: string;
       };
@@ -27883,7 +27860,6 @@ export type ChangedFields = string[];
 export type StringArray = string[];
 export type ComplianceStatus = 'passing' | 'degraded' | 'failing' | 'unknown';
 export type StoryboardStatus = 'passing' | 'failing' | 'partial' | 'untested' | 'skipped' | 'not_selected' | 'unknown';
-export type BadgeRole = 'media-buy' | 'creative' | 'signals' | 'governance' | 'brand' | 'sponsored-intelligence';
 export type Countries = string[];
 
 export interface PropertyPayload {
