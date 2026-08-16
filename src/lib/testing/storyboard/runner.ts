@@ -5036,6 +5036,7 @@ async function executeStep(
         executeStoryboardTask(client, effectiveStep.task, request, {
           skipIdempotencyAutoInject: testsMissingIdempotencyKey,
           skipAccountValidation: testsMissingAccount,
+          responseProjection: effectiveStep.response_projection,
           signal: options.signal,
         });
       const run = await runStep(step.title, effectiveStep.task, async () => {

@@ -1439,4 +1439,61 @@ describe('strict request validation against v2 servers', () => {
     assert.strictEqual(call.args.buying_mode, 'brief', 'buying_mode is preserved for v3');
     assert.deepStrictEqual(call.args.brand, { domain: 'example.com' }, 'brand is preserved for v3');
   });
+
+  test('request-scoped capabilities override a stale cache during version adaptation', async () => {
+    const mockMCPAgent = {
+      id: 'scoped-v31-agent',
+      name: 'Scoped AdCP 3.1 Agent',
+      agent_uri: 'https://agents.example.com/mcp',
+      protocol: 'mcp',
+    };
+    const client = new AdCPClient([mockMCPAgent]);
+    const agent = client.agent(mockMCPAgent.id);
+    const inner = agent.client;
+
+    inner.discoveredEndpoint = mockMCPAgent.agent_uri;
+    inner.cachedCapabilities = {
+      version: 'v3',
+      majorVersions: [3],
+      supportedVersions: ['3.0'],
+      protocols: ['media_buy'],
+      features: {},
+      extensions: [],
+      _synthetic: false,
+    };
+    inner.getCapabilities = async () => ({
+      version: 'v3',
+      majorVersions: [3],
+      supportedVersions: ['3.1'],
+      protocols: ['media_buy'],
+      features: {},
+      extensions: [],
+      _synthetic: false,
+    });
+
+    const capturedCalls = [];
+    const originalCallTool = ProtocolClient.callTool;
+    ProtocolClient.callTool = async (_agentConfig, toolName, args) => {
+      capturedCalls.push({ toolName, args });
+      return { status: 'completed', products: [] };
+    };
+
+    try {
+      await agent.getProductsLegacy({
+        buying_mode: 'brief',
+        brief: 'Premium ad placements',
+        filters: { pricing_currencies: ['USD'] },
+      });
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+    }
+
+    const call = capturedCalls.find(c => c.toolName === 'get_products');
+    assert.ok(call, 'get_products should have reached the protocol layer');
+    assert.deepStrictEqual(
+      call.args.filters?.pricing_currencies,
+      ['USD'],
+      'the stale 3.0 cache must not strip fields supported by the request-scoped 3.1 seller'
+    );
+  });
 });

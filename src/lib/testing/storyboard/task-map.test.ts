@@ -112,6 +112,29 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
     expect(result.data).toEqual({ products: [], format: 'canonical' });
   });
 
+  it('uses the raw product projection without changing an unhinted request', async () => {
+    const calls: string[] = [];
+    let receivedParams: unknown;
+    const params = { context: { correlation_id: 'dual-format-grading' } };
+    const client = {
+      getAdcpVersion: () => '3.1.10',
+      getProducts: async () => {
+        calls.push('canonical');
+        return { data: { products: [] } };
+      },
+      getProductsLegacy: async (request: unknown) => {
+        calls.push('raw');
+        receivedParams = request;
+        return { data: { products: [], format: 'dual' } };
+      },
+    };
+
+    const result = await executeStoryboardTask(client, 'get_products', params, { responseProjection: 'raw' });
+    expect(calls).toEqual(['raw']);
+    expect(receivedParams).toBe(params);
+    expect(result.data).toEqual({ products: [], format: 'dual' });
+  });
+
   it('forwards adcpError from a TaskResultFailure into adcp_error', async () => {
     const client = makeFailureClient(INVALID_REQUEST_ERROR);
     const result = await executeStoryboardTask(client, 'create_media_buy', {});

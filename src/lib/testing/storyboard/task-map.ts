@@ -176,7 +176,12 @@ export async function executeStoryboardTask(
   client: any,
   taskName: string,
   params: Record<string, unknown>,
-  opts: { skipIdempotencyAutoInject?: boolean; skipAccountValidation?: boolean; signal?: AbortSignal } = {}
+  opts: {
+    skipIdempotencyAutoInject?: boolean;
+    skipAccountValidation?: boolean;
+    responseProjection?: 'raw';
+    signal?: AbortSignal;
+  } = {}
 ): Promise<TaskResult> {
   const unresolvedAssetDirectives = findUnresolvedCreativeAssetDirectives(params);
   if (unresolvedAssetDirectives.length > 0) {
@@ -191,11 +196,17 @@ export async function executeStoryboardTask(
 
   // AdCP 3.1 transition storyboards default to the legacy creative wire, but
   // canonical-specific storyboards must be able to opt into the canonical API.
-  const useLegacyCreativeMethod = gradesLegacyCreativeWire(client) && readCreativeWireHint(params) !== 'canonical';
+  const forceRawProjection = opts.responseProjection === 'raw';
+  const useLegacyCreativeMethod =
+    forceRawProjection || (gradesLegacyCreativeWire(client) && readCreativeWireHint(params) !== 'canonical');
   const legacyMethodName = useLegacyCreativeMethod ? LEGACY_CREATIVE_TASK_TO_METHOD[taskName] : undefined;
   const methodName =
     legacyMethodName ?? (Object.hasOwn(TASK_TO_METHOD, taskName) ? TASK_TO_METHOD[taskName] : undefined);
-  const callParams = legacyMethodName ? withLegacyCreativeWireHint(params) : params;
+  // A forced raw projection is a runner concern, not wire negotiation. Leave
+  // the authored request untouched so dual-declaration storyboards can grade
+  // the seller's default response. Normal pre-3.2 grading still requests the
+  // legacy creative wire explicitly.
+  const callParams = legacyMethodName && !forceRawProjection ? withLegacyCreativeWireHint(params) : params;
 
   // Only pass TaskOptions when a flag is actually set — avoids changing
   // behavior for the common path that relies on method defaults.

@@ -207,7 +207,10 @@ import { canonicalize as canonicalizeJson } from '../utils/jcs';
 
 type ReadRequestOptions = Pick<TaskOptions, 'signal' | 'transport'>;
 type ToolSchemaMap = Map<string, Record<string, unknown>>;
-type CapabilityDiscoveryContext = { toolSchemas?: ToolSchemaMap };
+type CapabilityDiscoveryContext = {
+  toolSchemas?: ToolSchemaMap;
+  capabilities?: AdcpCapabilities;
+};
 const CAPABILITY_DISCOVERY_CONTEXT = Symbol('capabilityDiscoveryContext');
 type InternalReadRequestOptions = ReadRequestOptions & {
   [CAPABILITY_DISCOVERY_CONTEXT]?: CapabilityDiscoveryContext;
@@ -3003,7 +3006,8 @@ export class SingleAgentClient {
       normalizedParams,
       serverVersion,
       inputSchemaStripLogs,
-      capabilityDiscoveryContext.toolSchemas
+      capabilityDiscoveryContext.toolSchemas,
+      capabilityDiscoveryContext.capabilities
     );
 
     // Symmetric to the pre-adapter v3 pass above: when the adapter
@@ -3946,7 +3950,8 @@ export class SingleAgentClient {
     params: any,
     serverVersion: string,
     debugLogs?: any[],
-    perCallToolSchemas?: ToolSchemaMap
+    perCallToolSchemas?: ToolSchemaMap,
+    perCallCapabilities?: AdcpCapabilities
   ): { params: any; driftLogs: Record<string, unknown>[] } {
     const driftLogs: Record<string, unknown>[] = [];
     let adapted = params;
@@ -4082,7 +4087,7 @@ export class SingleAgentClient {
     // AdCP version. `resolveAdapterKey` returns the effective target version
     // based on the client pin and the seller's advertised caps; adapters live
     // in `src/lib/adapters/version/<target>/`.
-    const adapterKey = resolveAdapterKey(this.resolvedAdcpVersion, this.cachedCapabilities);
+    const adapterKey = resolveAdapterKey(this.resolvedAdcpVersion, perCallCapabilities ?? this.cachedCapabilities);
     if (adapterKey) {
       const versionAdapter = getVersionAdapter(adapterKey, taskType);
       if (versionAdapter) {
@@ -5458,7 +5463,8 @@ export class SingleAgentClient {
         normalizedParams,
         serverVersion,
         inputSchemaStripLogs,
-        capabilityDiscoveryContext.toolSchemas
+        capabilityDiscoveryContext.toolSchemas,
+        capabilityDiscoveryContext.capabilities
       );
 
       // Symmetric warn-only post-adapter pass against the v2.5 schema bundle.
@@ -6534,6 +6540,8 @@ export class SingleAgentClient {
    */
   async detectServerVersion(options?: ReadRequestOptions): Promise<'v2' | 'v3'> {
     const capabilities = await this.getCapabilities(options);
+    const discoveryContext = (options as InternalReadRequestOptions | undefined)?.[CAPABILITY_DISCOVERY_CONTEXT];
+    if (discoveryContext) discoveryContext.capabilities = capabilities;
     return capabilities.version;
   }
 

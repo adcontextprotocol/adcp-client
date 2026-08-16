@@ -109,6 +109,30 @@ describe('executeStoryboardTask creative wire selection', () => {
     assert.deepEqual(calls, [{ method: 'legacy', request: { ext: { adcp: { creative_wire: 'legacy' } } } }]);
     assert.equal(result.data.wire, 'legacy');
   });
+
+  test('uses a raw product projection without changing the authored wire', async () => {
+    const calls = [];
+    const params = { context: { correlation_id: 'dual-format-grading' } };
+    const result = await executeStoryboardTask(
+      {
+        getAdcpVersion: () => '3.1.10',
+        getProducts: async request => {
+          calls.push({ method: 'canonical', request });
+          return { data: { products: [], wire: 'canonical' } };
+        },
+        getProductsLegacy: async request => {
+          calls.push({ method: 'raw', request });
+          return { data: { products: [], wire: 'dual' } };
+        },
+      },
+      'get_products',
+      params,
+      { responseProjection: 'raw' }
+    );
+
+    assert.deepEqual(calls, [{ method: 'raw', request: params }]);
+    assert.equal(result.data.wire, 'dual');
+  });
 });
 
 describe('executeStoryboardTask creative asset directives', () => {
