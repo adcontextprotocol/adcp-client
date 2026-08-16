@@ -77,14 +77,7 @@ const stableV30ComplianceOk = hasStableV30ComplianceCache();
 const v25Ok = hasV25Cache();
 
 const current = currentAdcpVersion();
-if (
-  currentV3Ok &&
-  stableV30Ok &&
-  proposalNegotiationOk &&
-  currentComplianceOk &&
-  stableV30ComplianceOk &&
-  v25Ok
-) {
+if (currentV3Ok && stableV30Ok && proposalNegotiationOk && currentComplianceOk && stableV30ComplianceOk && v25Ok) {
   pointLatestAtCurrent(CACHE_ROOT, current);
   pointLatestAtCurrent(COMPLIANCE_CACHE_ROOT, current);
   process.exit(0);
