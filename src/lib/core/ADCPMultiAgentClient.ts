@@ -1,7 +1,13 @@
 // Multi-agent orchestrator providing simple, intuitive API
 
 import type { AgentConfig } from '../types';
-import { AgentClient, type CanonicalGetProductsResponse, type CanonicalProjectionTaskOptions } from './AgentClient';
+import {
+  AgentClient,
+  type CanonicalGetProductsResponse,
+  type CanonicalProjectionTaskOptions,
+  type ProposalRefinementTaskOptions,
+} from './AgentClient';
+import type { RefineProposalsInput, RefineProposalsResponse } from '../negotiation/types';
 import type {
   CreativeDeliveryTaskOptions,
   SingleAgentClientConfig,
@@ -124,6 +130,15 @@ export class AgentCollection {
     options?: CanonicalProjectionTaskOptions
   ): Promise<TaskResult<CanonicalGetProductsResponse>[]> {
     return this.executeAllSettled(client => client.getProducts(params, inputHandler, options));
+  }
+
+  /** Revise/finalize proposals across every selected agent. */
+  async refineProposals(
+    params: RefineProposalsInput,
+    inputHandler?: InputHandler,
+    options?: ProposalRefinementTaskOptions
+  ): Promise<TaskResult<RefineProposalsResponse>[]> {
+    return this.executeAllSettled(client => client.refineProposals(params, inputHandler, options));
   }
 
   /** @deprecated Explicit raw-wire fan-out for migration tooling. */

@@ -106,6 +106,13 @@ import type {
   ListTransformersResponse,
 } from '../types/tools.generated';
 import type { MutatingRequestInput } from '../utils/idempotency';
+import { buildRefineProposalsRequest } from '../negotiation/buyer';
+import { assertRefineProposalsResponse } from '../negotiation/verification';
+import type {
+  ProposalRefinementCapabilities,
+  RefineProposalsInput,
+  RefineProposalsResponse,
+} from '../negotiation/types';
 import type { V1Product } from '../v2/projection/types';
 import type { LegacyFormatConverter } from '../v2/projection/v1-to-v2';
 import type { ProjectionCatalogSnapshot } from '../v2/projection/catalog-snapshot';
@@ -129,6 +136,18 @@ export type CanonicalProjectionTaskOptions = TaskOptions & {
   projectionCatalogs?: readonly ProjectionCatalogSnapshot[];
 };
 
+export type ProposalRefinementTaskOptions = TaskOptions & {
+  /** Explicit seller declaration from media_buy.proposal_refinement. */
+  proposalRefinementCapabilities?: ProposalRefinementCapabilities;
+};
+
+function stripRefineProposalsSdkAnnotations(data: RefineProposalsResponse): RefineProposalsResponse {
+  const canonical = { ...(data as RefineProposalsResponse & { success?: unknown; _message?: unknown }) };
+  delete canonical.success;
+  delete canonical._message;
+  return canonical;
+}
+
 /**
  * Projection metadata attached to canonical `get_products` responses.
  *
@@ -151,6 +170,7 @@ export type V2AugmentedGetProductsResponse = CanonicalGetProductsResponse;
  */
 export type TaskResponseTypeMap = {
   get_products: CanonicalGetProductsResponse;
+  refine_proposals: RefineProposalsResponse;
   create_media_buy: CanonicalCreativeResponse<CreateMediaBuyResponse>;
   update_media_buy: CanonicalCreativeResponse<UpdateMediaBuyResponse>;
   sync_creatives: CanonicalCreativeResponse<SyncCreativesResponse>;
@@ -191,6 +211,7 @@ export type AdcpTaskName = keyof TaskResponseTypeMap;
 /** Exact request mapping paired with {@link TaskResponseTypeMap}. */
 export type TaskRequestTypeMap = {
   get_products: CanonicalGetProductsRequest;
+  refine_proposals: RefineProposalsInput;
   create_media_buy: MutatingRequestInput<CanonicalCreateMediaBuyRequest>;
   update_media_buy: MutatingRequestInput<CanonicalUpdateMediaBuyRequest>;
   sync_creatives: MutatingRequestInput<CanonicalSyncCreativesRequest>;
@@ -575,6 +596,35 @@ export class AgentClient {
     });
 
     this.retainSession(result);
+    return result;
+  }
+
+  /**
+   * Revise or atomically finalize compact AdCP proposals.
+   *
+   * The SDK validates batch/cardinality rules and any explicit seller
+   * capability declaration before transport, and auto-generates the
+   * idempotency key when omitted.
+   */
+  async refineProposals(
+    params: RefineProposalsInput,
+    inputHandler?: InputHandler,
+    options?: ProposalRefinementTaskOptions
+  ): Promise<TaskResult<RefineProposalsResponse>> {
+    const { proposalRefinementCapabilities, ...taskOptions } = options ?? {};
+    const request = buildRefineProposalsRequest(params, proposalRefinementCapabilities);
+    const result = (await this.client.executeTask(
+      'refine_proposals' as never,
+      request as never,
+      inputHandler,
+      this.withSession('refine_proposals', taskOptions)
+    )) as TaskResult<RefineProposalsResponse>;
+    this.retainSession(result);
+    if (result.success && result.status === 'completed') {
+      const data = stripRefineProposalsSdkAnnotations(result.data);
+      assertRefineProposalsResponse(request, data);
+      return { ...result, data };
+    }
     return result;
   }
 
@@ -1498,6 +1548,12 @@ export class AgentClient {
     switch (taskName) {
       case 'get_products':
         return this.getProducts(params as CanonicalGetProductsRequest, inputHandler, options);
+      case 'refine_proposals':
+        return (await this.refineProposals(
+          params as RefineProposalsInput,
+          inputHandler,
+          options
+        )) as TaskResult<unknown>;
       case 'create_media_buy':
         return (await this.createMediaBuy(
           params as MutatingRequestInput<CanonicalCreateMediaBuyRequest>,

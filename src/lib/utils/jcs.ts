@@ -132,7 +132,9 @@ function serializeNumber(n: number): string {
  * - Escape " \ and control chars U+0000..U+001F
  * - Use shortest escape form: \b \t \n \f \r for the common ones, \u00XX for others
  * - Do NOT escape forward slash, non-ASCII chars pass through verbatim
- * - Lone surrogates are preserved (JSON allows them)
+ * - Lone surrogates are preserved for backwards compatibility with existing
+ *   shared idempotency/signing callers; protocol surfaces that require strict
+ *   I-JSON must validate the canonical output at their boundary
  */
 function serializeString(s: string): string {
   let out = '"';

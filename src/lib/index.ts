@@ -291,6 +291,7 @@ export {
   AgentClient,
   type CanonicalGetProductsResponse,
   type CanonicalProjectionTaskOptions,
+  type ProposalRefinementTaskOptions,
   type TaskResponseTypeMap,
   type TaskRequestTypeMap,
   type TaskRequestFor,
@@ -613,6 +614,9 @@ export type { IdempotencyCapabilities } from './utils/capabilities';
 export type { MutatingRequestInput } from './utils/idempotency';
 export { canonicalize, canonicalJsonSha256 } from './utils/jcs';
 export { rollupOptimizationMetricsFromProducts } from './utils/capability-rollups';
+
+// ====== PROPOSAL NEGOTIATION (AdCP 3.2) ======
+export * from './negotiation';
 
 // ====== CORE TYPES ======
 export * from './types';
