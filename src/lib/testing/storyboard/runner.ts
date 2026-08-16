@@ -12,7 +12,7 @@ import { basename, join } from 'node:path';
 import { getOrCreateClientResolution, getOrDiscoverProfile, runStep, type TestClient } from '../client';
 import { closeScopedConnections, withMCPConnectionScope, type VersionEnvelopeMode } from '../../protocols';
 import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
-import { executeStoryboardTask } from './task-map';
+import { defaultStoryboardResponseProjection, executeStoryboardTask } from './task-map';
 import {
   extractContextWithProvenance,
   injectContext,
@@ -5036,7 +5036,8 @@ async function executeStep(
         executeStoryboardTask(client, effectiveStep.task, request, {
           skipIdempotencyAutoInject: testsMissingIdempotencyKey,
           skipAccountValidation: testsMissingAccount,
-          responseProjection: effectiveStep.response_projection,
+          responseProjection:
+            effectiveStep.response_projection ?? defaultStoryboardResponseProjection(effectiveStep.task),
           signal: options.signal,
         });
       const run = await runStep(step.title, effectiveStep.task, async () => {
