@@ -385,11 +385,26 @@ test('alternatives require both unique terms and unique digests', () => {
   );
 });
 
-test('JCS rejects lone Unicode surrogates before hashing but accepts valid pairs', () => {
-  assert.throws(() => canonicalize({ value: '\ud800' }), /lone Unicode surrogate/);
-  assert.throws(() => canonicalize({ ['\udc00']: 'value' }), /lone Unicode surrogate/);
+test('proposal JCS rejects lone Unicode surrogates without changing shared canonicalization', () => {
+  assert.equal(canonicalize({ value: '\ud800' }), '{"value":"\ud800"}');
   assert.equal(canonicalize({ value: '\ud83d\ude80' }), '{"value":"🚀"}');
   assert.throws(() => proposalTermsDigest({ value: '\ud800' }), /lone Unicode surrogate/);
+  assert.throws(() => proposalTermsDigest({ ['\udc00']: 'value' }), /lone Unicode surrogate/);
+  assert.doesNotThrow(() => proposalTermsDigest({ value: '\ud83d\ude80' }));
+});
+
+test('proposal digest validates the exact canonical bytes produced by accessors', () => {
+  let reads = 0;
+  const terms = {};
+  Object.defineProperty(terms, 'value', {
+    enumerable: true,
+    get() {
+      reads++;
+      return reads === 1 ? 'safe' : '\ud800';
+    },
+  });
+
+  assert.throws(() => proposalTermsDigest(terms), /lone Unicode surrogate/);
 });
 
 test('counteroffer selection returns the verified canonical object and invalid hold expiries fail closed', async () => {

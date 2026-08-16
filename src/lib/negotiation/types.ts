@@ -141,7 +141,6 @@ export interface ProposalResolvedPricing {
   floor_price?: number;
   min_spend_per_package?: number;
   commission_rate?: number;
-  [key: string]: unknown;
 }
 
 export interface ProposalPurchase {
@@ -151,7 +150,6 @@ export interface ProposalPurchase {
   impressions?: number;
   start_time: string;
   end_time: string;
-  [key: string]: unknown;
 }
 
 export interface ProposalCommercialTerms<TPurchase extends ProposalPurchase = ProposalPurchase> {
@@ -160,7 +158,6 @@ export interface ProposalCommercialTerms<TPurchase extends ProposalPurchase = Pr
   start_time: string;
   end_time: string;
   total_budget?: { amount: number; currency: string };
-  [key: string]: unknown;
 }
 
 export interface CanonicalProposal<TTerms extends ProposalCommercialTerms = ProposalCommercialTerms> {

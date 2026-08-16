@@ -25,8 +25,7 @@ export class ProposalResponseVerificationError extends Error {
 
 /** Normative `sha256:` + base64url(SHA-256(RFC 8785 JCS(terms))). */
 export function proposalTermsDigest(commercialTerms: unknown): string {
-  const digest = createHash('sha256').update(canonicalize(commercialTerms)).digest('base64url');
-  return `sha256:${digest}`;
+  return digestCanonicalTerms(canonicalProposalTerms(commercialTerms));
 }
 
 export function verifyProposalTermsDigest(proposal: CanonicalProposal): boolean {
@@ -593,8 +592,8 @@ function verifyProposalSet(
     }
     let terms: string | undefined;
     try {
-      terms = canonicalize(proposal.commercial_terms);
-      if (proposal.terms_digest !== proposalTermsDigest(proposal.commercial_terms)) {
+      terms = canonicalProposalTerms(proposal.commercial_terms);
+      if (proposal.terms_digest !== digestCanonicalTerms(terms)) {
         push(issues, 'terms_digest', `${path}.terms_digest`, 'terms_digest does not match commercial_terms');
       }
     } catch (error) {
@@ -915,6 +914,34 @@ function allowedKeys(
     if (!allowed.has(key)) valid = shape(issues, `${path}.${key}`, `${key} is not allowed`);
   }
   return valid;
+}
+
+/** Canonicalize once so validation and hashing observe the exact same bytes, including accessor-backed input. */
+function canonicalProposalTerms(value: unknown): string {
+  const canonical = canonicalize(value);
+  assertIJsonString(canonical);
+  return canonical;
+}
+
+function digestCanonicalTerms(canonical: string): string {
+  return `sha256:${createHash('sha256').update(canonical).digest('base64url')}`;
+}
+
+function assertIJsonString(value: string): void {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const low = value.charCodeAt(index + 1);
+      if (low >= 0xdc00 && low <= 0xdfff) {
+        index++;
+        continue;
+      }
+      throw new TypeError('JCS: lone Unicode surrogate is not valid I-JSON');
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      throw new TypeError('JCS: lone Unicode surrogate is not valid I-JSON');
+    }
+  }
 }
 
 function shape(issues: ProposalVerificationIssue[], path: string, message: string): false {

@@ -132,24 +132,14 @@ function serializeNumber(n: number): string {
  * - Escape " \ and control chars U+0000..U+001F
  * - Use shortest escape form: \b \t \n \f \r for the common ones, \u00XX for others
  * - Do NOT escape forward slash, non-ASCII chars pass through verbatim
- * - Lone surrogates are rejected as required by RFC 8785
+ * - Lone surrogates are preserved for backwards compatibility with existing
+ *   shared idempotency/signing callers; protocol surfaces that require strict
+ *   I-JSON must validate the canonical output at their boundary
  */
 function serializeString(s: string): string {
   let out = '"';
   for (let i = 0; i < s.length; i++) {
     const code = s.charCodeAt(i);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const low = s.charCodeAt(i + 1);
-      if (!(low >= 0xdc00 && low <= 0xdfff)) {
-        throw new TypeError('JCS: lone Unicode surrogate is not valid I-JSON');
-      }
-      out += s.charAt(i) + s.charAt(i + 1);
-      i++;
-      continue;
-    }
-    if (code >= 0xdc00 && code <= 0xdfff) {
-      throw new TypeError('JCS: lone Unicode surrogate is not valid I-JSON');
-    }
     if (code === 0x22) {
       out += '\\"';
     } else if (code === 0x5c) {
