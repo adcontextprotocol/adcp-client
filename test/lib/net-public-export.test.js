@@ -18,6 +18,9 @@ describe('net SSRF helpers public exports', () => {
     assert.strictEqual(typeof sdk.isLikelyPrivateUrl, 'function');
     assert.ok(sdk.SSRF_TRANSIENT_CODES instanceof Set);
     assert.strictEqual(sdk.isPrivateIp('127.0.0.1'), true);
+    assert.strictEqual(sdk.isLikelyPrivateUrl('http://my-svc.default.svc.cluster.local.:4000/mcp'), true);
+    assert.strictEqual(sdk.isLikelyPrivateUrl('http://my-svc.default.svc.cluster.local/mcp'), true);
+    assert.strictEqual(sdk.isLikelyPrivateUrl('https://example.com/'), false);
 
     assert.strictEqual(typeof net.ssrfSafeFetch, 'function');
     assert.strictEqual(typeof net.decodeBodyAsJsonOrText, 'function');
