@@ -114,9 +114,9 @@ export function isPrivateIp(address: string): boolean {
 
 /**
  * Best-effort check that a URL targets a development/private host, without
- * doing a DNS lookup. Matches loopback hostnames (`localhost`) and any IP
- * literal that {@link isPrivateIp} would reject. Public domain names always
- * return `false`.
+ * doing a DNS lookup. Matches loopback hostnames (`localhost`), Kubernetes
+ * service DNS names (`.cluster.local` suffix), and any IP literal that
+ * {@link isPrivateIp} would reject. Public domain names always return `false`.
  *
  * Used by higher layers that need to inherit the operator's "private is OK"
  * trust from a primary probe and propagate it to same-origin chain hops —
@@ -128,8 +128,15 @@ export function isPrivateIp(address: string): boolean {
 export function isLikelyPrivateUrl(url: string): boolean {
   try {
     const u = new URL(url);
-    const host = u.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    // Strip optional trailing DNS dot from FQDN form (e.g. "foo.svc.cluster.local.")
+    const host = u.hostname
+      .replace(/^\[|\]$/g, '')
+      .replace(/\.$/, '')
+      .toLowerCase();
     if (host === 'localhost') return true;
+    // Kubernetes service DNS names end in .cluster.local and always resolve to
+    // private ClusterIP addresses. Matching by suffix avoids a DNS round-trip.
+    if (host.endsWith('.cluster.local')) return true;
     return isPrivateIp(host);
   } catch {
     return false;
