@@ -44,10 +44,13 @@ function deriveMutatingTasks(): Set<string> {
 }
 
 function isRequiredZodField(field: unknown): boolean {
-  const def = (field as { _def?: { typeName?: string } })?._def;
-  if (!def) return false;
-  // Zod wraps optional fields in ZodOptional or ZodDefault. Required = neither.
-  return def.typeName !== 'ZodOptional' && def.typeName !== 'ZodDefault';
+  const candidate = field as { safeParse?: (value: unknown) => { success: boolean } };
+  if (typeof candidate?.safeParse !== 'function') return false;
+  // Zod v4 no longer exposes the v3 `_def.typeName` discriminator used by
+  // the original implementation. Asking the schema whether `undefined` is
+  // valid is both version-independent and exactly matches the semantic we
+  // need: optional/defaulted fields accept it; required fields reject it.
+  return !candidate.safeParse(undefined).success;
 }
 
 /**

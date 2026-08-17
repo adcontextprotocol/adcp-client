@@ -542,7 +542,14 @@ function _adopter_result_payload_aliases_do_not_require_protocol_status(): _Adop
     _ok({ deployments: [] }),
     _ok({ brand_id: 'brand_1', house: { domain: 'acme.com', name: 'Acme' }, names: [{ en: 'Acme' }] }),
     _ok({ rights: [] }),
-    _ok({ rights_id: 'rights_1', terms: rightsTerms }),
+    _ok({
+      rights_id: 'rights_1',
+      rights_status: 'acquired',
+      brand_id: 'brand_1',
+      terms: rightsTerms,
+      generation_credentials: [],
+      rights_constraint: {} as never,
+    }),
     _ok({ approval_status: 'approved', rights_id: 'rights_1' }),
     _ok(_createBuyPayload()),
     _ok([]),
@@ -601,7 +608,7 @@ function _server_payload_preserves_domain_status_fields(): void {
     confirmed_at: '2026-01-01T00:00:00Z',
     revision: 1,
     packages: [],
-    status: 'active',
+    media_buy_status: 'active',
   };
   void payload;
 }

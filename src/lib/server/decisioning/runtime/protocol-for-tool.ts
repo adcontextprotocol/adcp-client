@@ -13,6 +13,7 @@
  */
 
 import type { AdCPProtocol } from '../../../types/core.generated';
+import { TaskTypeValues } from '../../../types/enums.generated';
 
 type AdcpProtocol = AdCPProtocol;
 
@@ -71,11 +72,21 @@ export const TOOL_PROTOCOL_MAP: Readonly<Record<string, AdcpProtocol>> = {
   search_brands: 'brand',
   get_rights: 'brand',
   acquire_rights: 'brand',
+  update_rights: 'brand',
 
   // media-buy (explicit listing — anything not here falls back to media-buy)
   get_products: 'media-buy',
+  list_products: 'media-buy',
+  request_proposals: 'media-buy',
+  refine_proposals: 'media-buy',
+  decline_proposals: 'media-buy',
+  buy_products: 'media-buy',
+  accept_proposal: 'media-buy',
+  control_media_buy: 'media-buy',
+  sync_agent_notification_configs: 'media-buy',
   create_media_buy: 'media-buy',
   update_media_buy: 'media-buy',
+  media_buy_delivery: 'media-buy',
   get_media_buy_delivery: 'media-buy',
   sync_event_sources: 'media-buy',
   sync_audiences: 'media-buy',
@@ -111,26 +122,4 @@ export function protocolForTool(tool: string): AdcpProtocol {
  *
  * @internal
  */
-export const SPEC_WEBHOOK_TASK_TYPES: ReadonlySet<string> = new Set([
-  'get_products',
-  'create_media_buy',
-  'update_media_buy',
-  'sync_creatives',
-  'activate_signal',
-  'get_signals',
-  'create_property_list',
-  'update_property_list',
-  'get_property_list',
-  'list_property_lists',
-  'delete_property_list',
-  'sync_accounts',
-  'get_account_financials',
-  'get_creative_delivery',
-  'sync_event_sources',
-  'sync_audiences',
-  'sync_catalogs',
-  'log_event',
-  'get_brand_identity',
-  'get_rights',
-  'acquire_rights',
-]);
+export const SPEC_WEBHOOK_TASK_TYPES: ReadonlySet<string> = new Set(TaskTypeValues);

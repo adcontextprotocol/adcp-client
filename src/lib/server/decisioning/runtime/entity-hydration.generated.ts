@@ -1,6 +1,6 @@
 // Generated entity-hydration field map — do NOT edit by hand
 //
-// Source: `schemas/cache/3.1.15/manifest.json` + per-tool request
+// Source: `schemas/cache/3.2.0-beta.0/manifest.json` + per-tool request
 // schemas. Every top-level `x-entity`-tagged string field on a request
 // schema lands here. The runtime hydrator (`from-platform.ts` →
 // `hydrateForTool`) walks this map plus the hand-curated
@@ -21,6 +21,9 @@ export interface EntityHydrationField {
 }
 
 export const TOOL_ENTITY_FIELDS: Readonly<Record<string, ReadonlyArray<EntityHydrationField>>> = {
+  accept_proposal: [
+    { field: "proposal_id", xEntity: "proposal" },
+  ],
   acquire_rights: [
     { field: "pricing_option_id", xEntity: "vendor_pricing_option" },
     { field: "rights_id", xEntity: "rights_grant" },
@@ -39,8 +42,12 @@ export const TOOL_ENTITY_FIELDS: Readonly<Record<string, ReadonlyArray<EntityHyd
   check_governance: [
     { field: "plan_id", xEntity: "governance_plan" },
   ],
+  control_media_buy: [
+    { field: "media_buy_id", xEntity: "media_buy" },
+  ],
   create_media_buy: [
     { field: "plan_id", xEntity: "governance_plan" },
+    { field: "proposal_id", xEntity: "proposal" },
   ],
   delete_collection_list: [
     { field: "list_id", xEntity: "collection_list" },
@@ -73,6 +80,12 @@ export const TOOL_ENTITY_FIELDS: Readonly<Record<string, ReadonlyArray<EntityHyd
     { field: "creative_id", xEntity: "creative" },
     { field: "media_buy_id", xEntity: "media_buy" },
     { field: "package_id", xEntity: "package" },
+  ],
+  report_plan_adjustment: [
+    { field: "adjustment_id", xEntity: "governance_adjustment" },
+    { field: "outcome_id", xEntity: "governance_outcome" },
+    { field: "plan_id", xEntity: "governance_plan" },
+    { field: "seller_adjustment_id", xEntity: "seller_adjustment" },
   ],
   report_plan_outcome: [
     { field: "check_id", xEntity: "governance_check" },

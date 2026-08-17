@@ -11,6 +11,7 @@
 import { writeFileSync, readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { jsonSchemaToZod } from 'json-schema-to-zod';
 import path from 'path';
+import { resolveSchemaRefInCache } from './schema-cache-ref';
 import { removeMinItemsConstraints } from './schema-utils';
 
 const SCHEMA_CACHE_DIR = path.join(__dirname, '../schemas/cache');
@@ -63,17 +64,8 @@ function getLatestCacheDir(): string {
 
 function loadCachedSchema(schemaRef: string): any {
   const latestCacheDir = getLatestCacheDir();
-  let relativePath = schemaRef;
-  if (relativePath.startsWith('/schemas/')) {
-    relativePath = relativePath.substring('/schemas/'.length);
-    const firstSlash = relativePath.indexOf('/');
-    if (firstSlash > 0) {
-      relativePath = relativePath.substring(firstSlash + 1);
-    }
-  }
-  const schemaPath = path.resolve(latestCacheDir, relativePath);
-  // Guard against path traversal via crafted $ref values
-  if (!schemaPath.startsWith(path.resolve(latestCacheDir) + path.sep)) {
+  const schemaPath = resolveSchemaRefInCache(latestCacheDir, schemaRef);
+  if (!schemaPath) {
     console.warn(`  ⚠️  Schema ref escapes cache directory: ${schemaRef}`);
     return null;
   }

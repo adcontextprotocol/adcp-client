@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Idempotent guard for the schema cache. Tests load schemas from
- * `schemas/cache/{current,3.2.0,3.0.x,v2.5}/` (gitignored, populated by
+ * `schemas/cache/{current,3.1.15,3.0.24,v2.5}/` (gitignored, populated by
  * `npm run sync-schemas:all`). Fresh clones, branch switches that wipe
  * the cache, and `git clean -fdx` all leave a dev environment that
  * silently fails ~9 test suites with "AdCP schema data for version 'v2.5'
@@ -24,12 +24,8 @@ import { spawnSync } from 'child_process';
 const REPO_ROOT = path.join(__dirname, '..');
 const CACHE_ROOT = path.join(REPO_ROOT, 'schemas/cache');
 const COMPLIANCE_CACHE_ROOT = path.join(REPO_ROOT, 'compliance/cache');
-const STABLE_3_0_SCHEMA_VERSION = '3.0.12';
-// `refine_proposals` is a first-class opt-in server surface while the SDK's
-// default client pin remains on 3.1. Keep its validator bundle available in
-// fresh clones and published builds so proposal-enabled servers can resolve
-// their automatic 3.2 pin without relying on a developer's pre-existing cache.
-const PROPOSAL_NEGOTIATION_SCHEMA_VERSION = '3.2.0';
+const STABLE_3_0_SCHEMA_VERSION = '3.0.24';
+const STABLE_3_1_SCHEMA_VERSION = '3.1.15';
 
 function currentAdcpVersion(): string {
   return readFileSync(path.join(REPO_ROOT, 'ADCP_VERSION'), 'utf8').trim();
@@ -44,8 +40,8 @@ function hasStableV30Cache(): boolean {
   return existsSync(path.join(CACHE_ROOT, STABLE_3_0_SCHEMA_VERSION));
 }
 
-function hasProposalNegotiationCache(): boolean {
-  return existsSync(path.join(CACHE_ROOT, PROPOSAL_NEGOTIATION_SCHEMA_VERSION));
+function hasStableV31Cache(): boolean {
+  return existsSync(path.join(CACHE_ROOT, STABLE_3_1_SCHEMA_VERSION));
 }
 
 function hasCurrentComplianceCache(): boolean {
@@ -54,6 +50,10 @@ function hasCurrentComplianceCache(): boolean {
 
 function hasStableV30ComplianceCache(): boolean {
   return existsSync(path.join(COMPLIANCE_CACHE_ROOT, STABLE_3_0_SCHEMA_VERSION));
+}
+
+function hasStableV31ComplianceCache(): boolean {
+  return existsSync(path.join(COMPLIANCE_CACHE_ROOT, STABLE_3_1_SCHEMA_VERSION));
 }
 
 function hasV25Cache(): boolean {
@@ -71,13 +71,22 @@ function pointLatestAtCurrent(cacheRoot: string, current: string): void {
 
 const currentV3Ok = hasCurrentV3Cache();
 const stableV30Ok = hasStableV30Cache();
-const proposalNegotiationOk = hasProposalNegotiationCache();
+const stableV31Ok = hasStableV31Cache();
 const currentComplianceOk = hasCurrentComplianceCache();
 const stableV30ComplianceOk = hasStableV30ComplianceCache();
+const stableV31ComplianceOk = hasStableV31ComplianceCache();
 const v25Ok = hasV25Cache();
 
 const current = currentAdcpVersion();
-if (currentV3Ok && stableV30Ok && proposalNegotiationOk && currentComplianceOk && stableV30ComplianceOk && v25Ok) {
+if (
+  currentV3Ok &&
+  stableV30Ok &&
+  stableV31Ok &&
+  currentComplianceOk &&
+  stableV30ComplianceOk &&
+  stableV31ComplianceOk &&
+  v25Ok
+) {
   pointLatestAtCurrent(CACHE_ROOT, current);
   pointLatestAtCurrent(COMPLIANCE_CACHE_ROOT, current);
   process.exit(0);
@@ -88,7 +97,7 @@ if (currentV3Ok && stableV30Ok && proposalNegotiationOk && currentComplianceOk &
 const scripts: string[] = [];
 if (!currentV3Ok || !currentComplianceOk) scripts.push('sync-schemas');
 if (!stableV30Ok || !stableV30ComplianceOk) scripts.push(`sync-schemas -- ${STABLE_3_0_SCHEMA_VERSION}`);
-if (!proposalNegotiationOk) scripts.push(`sync-schemas -- ${PROPOSAL_NEGOTIATION_SCHEMA_VERSION}`);
+if (!stableV31Ok || !stableV31ComplianceOk) scripts.push(`sync-schemas -- ${STABLE_3_1_SCHEMA_VERSION}`);
 if (!v25Ok) scripts.push('sync-schemas:v2.5');
 
 console.log(`[schemas:ensure] Missing schema cache; running: ${scripts.join(', ')}`);
@@ -102,7 +111,7 @@ for (const script of scripts) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-// `sync-schemas -- 3.0.12` and `sync-schemas:v2.5` update the `latest`
+// Support-cache syncs update the `latest`
 // symlink as a side effect. If the current cache was already present and only
 // support caches were missing, restore `latest` to the ADCP_VERSION pin so
 // subsequent generators do not accidentally read an older bundle.

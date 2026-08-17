@@ -20,6 +20,7 @@
 
 import type { AdcpStructuredError, ErrorCode } from '../server/decisioning/async-outcome';
 import { applyAdcpErrorAllowlist } from '../server/errors';
+import { STANDARD_ERROR_CODES } from '../types/error-codes';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -149,7 +150,7 @@ type CodePolicy =
  * - `GOVERNANCE_UNAVAILABLE`, `CAMPAIGN_SUSPENDED` are spec-`transient` but
  *   escalate here (out-of-band — agent can't unblock).
  */
-const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
+const EXPLICIT_CODE_POLICY: Partial<Record<ErrorCode, CodePolicy>> = {
   // Transients — server-side, retry-safe with same idempotency_key.
   RATE_LIMITED: { action: 'retry', attemptCap: 5, baseDelayMs: 1000, expBackoff: true },
   SERVICE_UNAVAILABLE: { action: 'retry', attemptCap: 3, baseDelayMs: 1000, expBackoff: true },
@@ -353,6 +354,18 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
   ITEM_VALIDATION_FAILED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
   CATALOG_LIMIT_EXCEEDED: { action: 'escalate', escalateReason: 'commercial' },
 };
+
+const DEFAULT_CODE_POLICY = Object.fromEntries(
+  Object.entries(STANDARD_ERROR_CODES).map(([code, info]) => {
+    const fallback: CodePolicy =
+      info.recovery === 'transient'
+        ? { action: 'retry', attemptCap: 3, baseDelayMs: 1000, expBackoff: true }
+        : info.recovery === 'correctable'
+          ? { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 }
+          : { action: 'escalate', escalateReason: 'terminal' };
+    return [code, EXPLICIT_CODE_POLICY[code as ErrorCode] ?? fallback];
+  })
+) as Record<ErrorCode, CodePolicy>;
 
 // ---------------------------------------------------------------------------
 // Implementation

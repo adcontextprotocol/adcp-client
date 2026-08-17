@@ -43,9 +43,10 @@ import {
   toReleasePrecisionVersion,
   type AdcpVersion,
 } from '../version';
-import { resolveAdcpVersion } from '../utils/adcp-version-config';
+import { isMovingAdcpPrereleaseFamilyAlias, resolveAdcpVersion } from '../utils/adcp-version-config';
 import { getValidator, hasSchemaBundle, resolveBundleKey } from '../validation/schema-loader';
 import { TOOL_INPUT_SHAPES } from '../schemas';
+import { TaskTypeValues } from '../types/enums.generated';
 import { bundleSupportsAdcpVersionField } from '../protocols';
 import { getToolsWithErrorArm, type ErrorArmDescriptor } from './error-arm-tools';
 import type { ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -145,6 +146,7 @@ function hasIdempotencyClearAll(store: IdempotencyStore): boolean {
   return typeof store.clearAll === 'function';
 }
 import { isMutatingTask, IDEMPOTENCY_KEY_PATTERN, MUTATING_TASKS } from '../utils/idempotency';
+import { STATUS_FREE_SYNC_RESPONSE_TOOLS } from '../utils/envelope-status-compat';
 import { validateRequest, validateResponse, formatIssues, type ValidationIssue } from '../validation/schema-validator';
 import { buildAdcpValidationErrorPayload } from '../validation/schema-errors';
 import type { IdempotencyStore } from './idempotency';
@@ -199,11 +201,17 @@ import type { JwksResolver } from '../signing/jwks';
 import type { ReplayStore } from '../signing/replay';
 import type { RevocationStore } from '../signing/revocation';
 import type { ContentDigestPolicy } from '../signing/types';
-import { LIBRARY_VERSION } from '../version';
+import { ADCP_VERSION, LIBRARY_VERSION } from '../version';
 
 // Type-only imports for AdcpToolMap handler signatures (z.input<typeof ...>)
 import type {
   GetProductsRequestSchema,
+  ListProductsRequestSchema,
+  RequestProposalsRequestSchema,
+  DeclineProposalsRequestSchema,
+  BuyProductsRequestSchema,
+  AcceptProposalRequestSchema,
+  ControlMediaBuyRequestSchema,
   CreateMediaBuyRequestSchema,
   UpdateMediaBuyRequestSchema,
   GetMediaBuysRequestSchema,
@@ -211,6 +219,7 @@ import type {
   ProvidePerformanceFeedbackRequestSchema,
   GetTaskStatusRequestSchema,
   ListTasksRequestSchema,
+  SyncAgentNotificationConfigsRequestSchema,
   ListCreativeFormatsRequestSchema,
   ListTransformersRequestSchema,
   BuildCreativeRequestSchema,
@@ -249,6 +258,7 @@ import type {
   SyncPlansRequestSchema,
   CheckGovernanceRequestSchema,
   ReportPlanOutcomeRequestSchema,
+  ReportPlanAdjustmentRequestSchema,
   GetPlanAuditLogsRequestSchema,
   SIGetOfferingRequestSchema,
   SIInitiateSessionRequestSchema,
@@ -273,6 +283,12 @@ import type {
 } from '../types/core.generated';
 import type {
   GetProductsResponse,
+  ListProductsResponse,
+  RequestProposalsResponse,
+  DeclineProposalsResponse,
+  BuyProductsResponse,
+  AcceptProposalResponse,
+  ControlMediaBuyResponse,
   CreateMediaBuyResponse,
   UpdateMediaBuySuccess,
   UpdateMediaBuyResponse,
@@ -280,6 +296,7 @@ import type {
   GetMediaBuyDeliveryResponse,
   GetTaskStatusResponse,
   ListTasksResponse,
+  SyncAgentNotificationConfigsResponse,
   ListAccountsResponse,
   ListCreativeFormatsResponse,
   ListTransformersResponse,
@@ -310,6 +327,7 @@ import type {
   SyncPlansResponse,
   CheckGovernanceResponse,
   ReportPlanOutcomeResponse,
+  ReportPlanAdjustmentResponse,
   GetPlanAuditLogsResponse,
   SIGetOfferingResponse,
   SIInitiateSessionResponse,
@@ -410,6 +428,14 @@ const noopLogger: AdcpLogger = {
 // Handler context
 // ---------------------------------------------------------------------------
 
+/** Trusted caller namespace for agent-level and governance mutations. */
+export interface CallerMutationScope {
+  tenant_id: string;
+  principal_id: string;
+  /** Optional account boundary when the mutation is account-owned. */
+  account_id?: string;
+}
+
 /**
  * Context passed to every handler.
  *
@@ -462,6 +488,8 @@ export interface HandlerContext<TAccount = unknown> {
   authInfo?: ResolvedAuthInfo;
   /** Trusted proposal namespace resolved by `proposalNegotiation.resolveScope`. */
   proposalRefinementScope?: Readonly<ProposalRefinementScope>;
+  /** Trusted namespace for caller-scoped 3.2 mutations. Persist records under this tuple. */
+  callerMutationScope?: Readonly<CallerMutationScope>;
   /**
    * Emit a signed webhook to a buyer's `push_notification_config.url`.
    * Populated when `AdcpServerConfig.webhooks` is configured. Handles
@@ -561,10 +589,40 @@ export function requireSessionKey<TAccount = unknown>(ctx: HandlerContext<TAccou
  * builder only fires on the Success arm.
  */
 export interface AdcpToolMap {
+  list_products: {
+    params: z.input<typeof ListProductsRequestSchema>;
+    result: ServerPayload<ListProductsResponse>;
+    response: ListProductsResponse;
+  };
+  request_proposals: {
+    params: z.input<typeof RequestProposalsRequestSchema>;
+    result: ServerPayload<RequestProposalsResponse>;
+    response: RequestProposalsResponse;
+  };
   refine_proposals: {
     params: RefineProposalsRequest;
     result: RefineProposalsResponse;
     response: RefineProposalsResponse;
+  };
+  decline_proposals: {
+    params: z.input<typeof DeclineProposalsRequestSchema>;
+    result: ServerPayload<DeclineProposalsResponse>;
+    response: DeclineProposalsResponse;
+  };
+  buy_products: {
+    params: z.input<typeof BuyProductsRequestSchema>;
+    result: ServerPayload<BuyProductsResponse>;
+    response: BuyProductsResponse;
+  };
+  accept_proposal: {
+    params: z.input<typeof AcceptProposalRequestSchema>;
+    result: ServerPayload<AcceptProposalResponse>;
+    response: AcceptProposalResponse;
+  };
+  control_media_buy: {
+    params: z.input<typeof ControlMediaBuyRequestSchema>;
+    result: ServerPayload<ControlMediaBuyResponse>;
+    response: ControlMediaBuyResponse;
   };
   get_products: {
     params: z.input<typeof GetProductsRequestSchema>;
@@ -605,6 +663,11 @@ export interface AdcpToolMap {
     params: z.input<typeof ListTasksRequestSchema>;
     result: ServerPayload<ListTasksResponse>;
     response: ListTasksResponse;
+  };
+  sync_agent_notification_configs: {
+    params: z.input<typeof SyncAgentNotificationConfigsRequestSchema>;
+    result: ServerPayload<SyncAgentNotificationConfigsResponse>;
+    response: SyncAgentNotificationConfigsResponse;
   };
   list_creative_formats: {
     params: z.input<typeof ListCreativeFormatsRequestSchema>;
@@ -801,6 +864,11 @@ export interface AdcpToolMap {
     result: ServerPayload<ReportPlanOutcomeResponse>;
     response: ReportPlanOutcomeResponse;
   };
+  report_plan_adjustment: {
+    params: z.input<typeof ReportPlanAdjustmentRequestSchema>;
+    result: ServerPayload<ReportPlanAdjustmentResponse>;
+    response: ReportPlanAdjustmentResponse;
+  };
   get_plan_audit_logs: {
     params: z.input<typeof GetPlanAuditLogsRequestSchema>;
     result: ServerPayload<GetPlanAuditLogsResponse>;
@@ -910,6 +978,12 @@ type DomainHandler<K extends AdcpServerToolName, TAccount> = (
 
 export interface MediaBuyHandlers<TAccount = unknown> {
   getProducts?: DomainHandler<'get_products', TAccount>;
+  listProducts?: DomainHandler<'list_products', TAccount>;
+  requestProposals?: DomainHandler<'request_proposals', TAccount>;
+  declineProposals?: DomainHandler<'decline_proposals', TAccount>;
+  buyProducts?: DomainHandler<'buy_products', TAccount>;
+  acceptProposal?: DomainHandler<'accept_proposal', TAccount>;
+  controlMediaBuy?: DomainHandler<'control_media_buy', TAccount>;
   createMediaBuy?: DomainHandler<'create_media_buy', TAccount>;
   updateMediaBuy?: DomainHandler<'update_media_buy', TAccount>;
   getMediaBuys?: DomainHandler<'get_media_buys', TAccount>;
@@ -973,7 +1047,22 @@ export interface GovernanceHandlers<TAccount = unknown> {
   syncPlans?: DomainHandler<'sync_plans', TAccount>;
   checkGovernance?: DomainHandler<'check_governance', TAccount>;
   reportPlanOutcome?: DomainHandler<'report_plan_outcome', TAccount>;
+  /** Authorize and scope report_plan_adjustment to its tenant and plan owner. */
+  resolveReportPlanAdjustmentScope?: (
+    ctx: HandlerContext<TAccount>,
+    params: AdcpToolMap['report_plan_adjustment']['params']
+  ) => CallerMutationScope | Promise<CallerMutationScope>;
+  reportPlanAdjustment?: DomainHandler<'report_plan_adjustment', TAccount>;
   getPlanAuditLogs?: DomainHandler<'get_plan_audit_logs', TAccount>;
+}
+
+export interface ProtocolHandlers<TAccount = unknown> {
+  /** Resolve the authenticated caller namespace used to isolate its subscriber set. */
+  resolveScope?: (
+    ctx: HandlerContext<TAccount>,
+    params: AdcpToolMap['sync_agent_notification_configs']['params']
+  ) => CallerMutationScope | Promise<CallerMutationScope>;
+  syncAgentNotificationConfigs?: DomainHandler<'sync_agent_notification_configs', TAccount>;
 }
 
 export interface AccountHandlers<TAccount = unknown> {
@@ -1065,6 +1154,8 @@ export interface AdcpCapabilitiesConfig {
   idempotency?: {
     replay_ttl_seconds?: number;
   };
+  /** Freshness and notification support for the capability document. */
+  capability_changes?: NonNullable<GetAdCPCapabilitiesResponse['adcp']['capability_changes']>;
   portfolio?: {
     publisher_domains: string[];
     primary_channels?: MediaChannel[];
@@ -1175,7 +1266,7 @@ export interface SignedRequestsConfig {
    * AdCP tool names in `required_for`; examples include `tasks/cancel`.
    */
   protocol_methods_required_for?: string[];
-  /** Default `'either'` — accept signatures with or without Content-Digest. */
+  /** Defaults to `required` on 3.2 and `either` on legacy endpoints. */
   covers_content_digest?: ContentDigestPolicy;
   /**
    * Resolve the `agent_url` claim the verifier stamps on successful results.
@@ -1577,6 +1668,7 @@ export interface AdcpServerConfig<TAccount = unknown> {
   signals?: SignalsHandlers<TAccount>;
   creative?: CreativeHandlers<TAccount>;
   governance?: GovernanceHandlers<TAccount>;
+  protocol?: ProtocolHandlers<TAccount>;
   accounts?: AccountHandlers<TAccount>;
   eventTracking?: EventTrackingHandlers<TAccount>;
   sponsoredIntelligence?: SponsoredIntelligenceHandlers<TAccount>;
@@ -2250,8 +2342,16 @@ function isThrownAdcpError(value: unknown): value is McpToolResponse {
 function resolveExtraScope(
   toolName: string,
   params: Record<string, unknown>,
-  proposalScope?: Readonly<ProposalRefinementScope>
+  proposalScope?: Readonly<ProposalRefinementScope>,
+  callerMutationScope?: Readonly<CallerMutationScope>
 ): string | undefined {
+  if (CALLER_SCOPED_MUTATION_TOOLS.has(toolName) && callerMutationScope) {
+    return JSON.stringify([
+      callerMutationScope.tenant_id,
+      callerMutationScope.principal_id,
+      callerMutationScope.account_id ?? null,
+    ]);
+  }
   if (toolName === 'si_send_message') {
     const sessionId = params.session_id;
     return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : undefined;
@@ -2267,64 +2367,14 @@ function resolveExtraScope(
 
 function genericResponse(toolName: string, data: object, summary?: string): McpToolResponse {
   const structuredContent = { ...toStructuredContent(data) };
-  if (structuredContent.status === undefined) structuredContent.status = 'completed';
+  if (STATUS_FREE_SYNC_RESPONSE_TOOLS.has(toolName)) delete structuredContent.status;
   return {
     content: [{ type: 'text', text: summary ?? `${toolName} completed` }],
     structuredContent,
   };
 }
 
-const ADCP_TASK_TYPES = new Set<TaskType>([
-  'get_products',
-  'create_media_buy',
-  'update_media_buy',
-  'media_buy_delivery',
-  'sync_creatives',
-  'activate_signal',
-  'get_signals',
-  'create_property_list',
-  'update_property_list',
-  'get_property_list',
-  'list_property_lists',
-  'delete_property_list',
-  'sync_accounts',
-  'get_account_financials',
-  'get_creative_delivery',
-  'sync_event_sources',
-  'sync_audiences',
-  'sync_catalogs',
-  'log_event',
-  'get_brand_identity',
-  'search_brands',
-  'get_rights',
-  'acquire_rights',
-]);
-
-const PROTOCOL_TASK_TYPE_TO_PROTOCOL: Partial<Record<TaskType, WireAdcpProtocol>> = {
-  get_products: 'media-buy',
-  create_media_buy: 'media-buy',
-  update_media_buy: 'media-buy',
-  media_buy_delivery: 'media-buy',
-  sync_creatives: 'creative',
-  get_creative_delivery: 'creative',
-  activate_signal: 'signals',
-  get_signals: 'signals',
-  sync_accounts: 'media-buy',
-  get_account_financials: 'media-buy',
-  sync_event_sources: 'media-buy',
-  sync_audiences: 'media-buy',
-  sync_catalogs: 'media-buy',
-  log_event: 'media-buy',
-  get_brand_identity: 'brand',
-  search_brands: 'brand',
-  get_rights: 'brand',
-  acquire_rights: 'brand',
-  create_property_list: 'governance',
-  update_property_list: 'governance',
-  get_property_list: 'governance',
-  list_property_lists: 'governance',
-  delete_property_list: 'governance',
-};
+const ADCP_TASK_TYPES = new Set<TaskType>(TaskTypeValues);
 
 function readRegistryTaskType(task: TaskRecord): TaskType | undefined {
   return ADCP_TASK_TYPES.has(task.tool as TaskType) ? (task.tool as TaskType) : undefined;
@@ -2333,7 +2383,7 @@ function readRegistryTaskType(task: TaskRecord): TaskType | undefined {
 function toProtocolTaskStatus(task: TaskRecord): GetTaskStatusResponse | undefined {
   const taskType = readRegistryTaskType(task);
   if (taskType === undefined) return undefined;
-  const protocol = PROTOCOL_TASK_TYPE_TO_PROTOCOL[taskType] ?? 'media-buy';
+  const protocol = protocolForTool(taskType) as WireAdcpProtocol;
   return {
     task_id: task.taskId,
     task_type: taskType,
@@ -2362,11 +2412,11 @@ function toProtocolTaskStatus(task: TaskRecord): GetTaskStatusResponse | undefin
 function toProtocolTaskListItem(task: TaskRecord): ListTasksResponse['tasks'][number] | undefined {
   const taskType = readRegistryTaskType(task);
   if (taskType === undefined) return undefined;
-  const protocol = PROTOCOL_TASK_TYPE_TO_PROTOCOL[taskType] ?? 'media-buy';
+  const protocol = protocolForTool(taskType) as WireAdcpProtocol;
   return {
     task_id: task.taskId,
     task_type: taskType,
-    domain: protocol === 'signals' ? 'signals' : 'media-buy',
+    domain: protocol === 'signals' || protocol === 'creative' ? protocol : 'media-buy',
     status: task.status as TaskStatus,
     created_at: task.createdAt,
     updated_at: task.updatedAt,
@@ -2415,7 +2465,7 @@ function taskMatchesFilters(task: TaskRecord, filters: ListTasksRequest['filters
   if (!isPlainObject(filters)) return true;
   const item = toProtocolTaskListItem(task);
   if (item === undefined) return false;
-  const protocol = PROTOCOL_TASK_TYPE_TO_PROTOCOL[item.task_type] ?? 'media-buy';
+  const protocol = protocolForTool(item.task_type) as WireAdcpProtocol;
   if (typeof filters.protocol === 'string' && protocol !== filters.protocol) return false;
   if (Array.isArray(filters.protocols) && !filters.protocols.includes(protocol)) return false;
   if (typeof filters.status === 'string' && item.status !== filters.status) return false;
@@ -2478,8 +2528,8 @@ function compareProtocolTaskItems(
   else if (field === 'status') result = left.status.localeCompare(right.status);
   else if (field === 'task_type') result = left.task_type.localeCompare(right.task_type);
   else if (field === 'protocol') {
-    const leftProtocol = PROTOCOL_TASK_TYPE_TO_PROTOCOL[left.task_type] ?? 'media-buy';
-    const rightProtocol = PROTOCOL_TASK_TYPE_TO_PROTOCOL[right.task_type] ?? 'media-buy';
+    const leftProtocol = protocolForTool(left.task_type);
+    const rightProtocol = protocolForTool(right.task_type);
     result = leftProtocol.localeCompare(rightProtocol);
   } else {
     result = left.created_at.localeCompare(right.created_at);
@@ -2634,7 +2684,13 @@ function fieldPathToPointer(path: string | undefined): string {
 
 const TOOL_META: Record<string, ToolMeta> = {
   // Media Buy
+  list_products: { wrap: null, annotations: RO },
+  request_proposals: { wrap: null, annotations: IDEMP },
   refine_proposals: { wrap: null, annotations: IDEMP },
+  decline_proposals: { wrap: null, annotations: IDEMP },
+  buy_products: { wrap: null, annotations: IDEMP },
+  accept_proposal: { wrap: null, annotations: IDEMP },
+  control_media_buy: { wrap: null, annotations: IDEMP },
   get_products: { wrap: productsResponse, annotations: RO },
   create_media_buy: { wrap: mediaBuyResponse, annotations: MUT },
   update_media_buy: { wrap: updateMediaBuyResponse, annotations: MUT },
@@ -2645,6 +2701,7 @@ const TOOL_META: Record<string, ToolMeta> = {
   // Protocol
   get_task_status: { wrap: null, annotations: RO },
   list_tasks: { wrap: null, annotations: RO },
+  sync_agent_notification_configs: { wrap: null, annotations: IDEMP },
 
   // Creative
   list_creative_formats: { wrap: listCreativeFormatsResponse, annotations: RO },
@@ -2702,6 +2759,7 @@ const TOOL_META: Record<string, ToolMeta> = {
   sync_plans: { wrap: null, annotations: IDEMP },
   check_governance: { wrap: null, annotations: RO },
   report_plan_outcome: { wrap: null, annotations: MUT },
+  report_plan_adjustment: { wrap: null, annotations: IDEMP },
   get_plan_audit_logs: { wrap: null, annotations: RO },
 
   // Sponsored Intelligence
@@ -2717,6 +2775,18 @@ const TOOL_META: Record<string, ToolMeta> = {
   update_rights: { wrap: updateRightsResponse, annotations: MUT },
 };
 
+const CALLER_SCOPED_MUTATION_TOOLS = new Set(['sync_agent_notification_configs', 'report_plan_adjustment']);
+
+const COMPACT_MEDIA_BUY_LIFECYCLE_TOOLS = [
+  'list_products',
+  'request_proposals',
+  'refine_proposals',
+  'decline_proposals',
+  'buy_products',
+  'accept_proposal',
+  'control_media_buy',
+] as const;
+
 // ---------------------------------------------------------------------------
 // Domain → tool name mapping
 // ---------------------------------------------------------------------------
@@ -2725,6 +2795,12 @@ type HandlerEntry = { handlerKey: string; toolName: string };
 
 const MEDIA_BUY_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'getProducts', toolName: 'get_products' },
+  { handlerKey: 'listProducts', toolName: 'list_products' },
+  { handlerKey: 'requestProposals', toolName: 'request_proposals' },
+  { handlerKey: 'declineProposals', toolName: 'decline_proposals' },
+  { handlerKey: 'buyProducts', toolName: 'buy_products' },
+  { handlerKey: 'acceptProposal', toolName: 'accept_proposal' },
+  { handlerKey: 'controlMediaBuy', toolName: 'control_media_buy' },
   { handlerKey: 'createMediaBuy', toolName: 'create_media_buy' },
   { handlerKey: 'updateMediaBuy', toolName: 'update_media_buy' },
   { handlerKey: 'getMediaBuys', toolName: 'get_media_buys' },
@@ -2781,7 +2857,12 @@ const GOVERNANCE_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'syncPlans', toolName: 'sync_plans' },
   { handlerKey: 'checkGovernance', toolName: 'check_governance' },
   { handlerKey: 'reportPlanOutcome', toolName: 'report_plan_outcome' },
+  { handlerKey: 'reportPlanAdjustment', toolName: 'report_plan_adjustment' },
   { handlerKey: 'getPlanAuditLogs', toolName: 'get_plan_audit_logs' },
+];
+
+const PROTOCOL_ENTRIES: HandlerEntry[] = [
+  { handlerKey: 'syncAgentNotificationConfigs', toolName: 'sync_agent_notification_configs' },
 ];
 
 const ACCOUNT_ENTRIES: HandlerEntry[] = [
@@ -2811,7 +2892,7 @@ const BRAND_RIGHTS_ENTRIES: HandlerEntry[] = [
 // ---------------------------------------------------------------------------
 
 const TOOL_PROTOCOL_MAP: [readonly string[], AdcpProtocol][] = [
-  [[...MEDIA_BUY_TOOLS, 'refine_proposals'], 'media_buy'],
+  [MEDIA_BUY_TOOLS, 'media_buy'],
   [SIGNALS_TOOLS, 'signals'],
   [GOVERNANCE_TOOLS, 'governance'],
   [CREATIVE_TOOLS, 'creative'],
@@ -3303,10 +3384,11 @@ function injectContextIntoResponse(response: McpToolResponse, context: unknown):
  *   a spec ambiguity tracked at adcp-client#1897; this seam refuses to
  *   destroy payload semantics until the spec disambiguates.
  */
-function injectEnvelopeStatusIntoResponse(response: McpToolResponse): void {
+function injectEnvelopeStatusIntoResponse(response: McpToolResponse, toolName: string): void {
   const sc = response.structuredContent as Record<string, unknown> | undefined;
   if (!sc || typeof sc !== 'object') return;
   if ('status' in sc) return;
+  if (STATUS_FREE_SYNC_RESPONSE_TOOLS.has(toolName)) return;
   // AdCP 3.1.0-beta.2+ requires envelope `status` on EVERY response, error
   // or otherwise. Map MCP's `isError` to the wire-level task state:
   //   - `isError: true`           → `'failed'`  (task explicitly failed)
@@ -3408,7 +3490,8 @@ function injectVersionIntoResponse(response: McpToolResponse, servedVersion: str
  */
 function buildSignedRequestsPreTransport(
   signedRequests: SignedRequestsConfig,
-  capabilityRequestSigning?: NonNullable<GetAdCPCapabilitiesResponse['request_signing']>
+  capabilityRequestSigning?: NonNullable<GetAdCPCapabilitiesResponse['request_signing']>,
+  adcpVersion?: string
 ): AdcpPreTransport {
   // Precedence: explicit signedRequests.required_for > capabilities.request_signing.required_for
   // > fallback to every mutating task. Buyers read required_for from
@@ -3419,16 +3502,22 @@ function buildSignedRequestsPreTransport(
   const requiredFor = signedRequests.required_for ?? capabilityRequestSigning?.required_for ?? [...MUTATING_TASKS];
   const protocolMethodsRequiredFor =
     signedRequests.protocol_methods_required_for ?? capabilityRequestSigning?.protocol_methods_required_for;
+  const signingRelease = adcpVersion ? parseAdcpRelease(adcpVersion) : undefined;
+  const configuredDigestPolicy =
+    signedRequests.covers_content_digest ?? capabilityRequestSigning?.covers_content_digest;
+  const coversContentDigest =
+    configuredDigestPolicy ?? (signingRelease?.major === 3 && signingRelease.minor >= 2 ? 'required' : 'either');
   const verifier = createExpressVerifier({
     capability: {
       supported: true,
-      covers_content_digest: signedRequests.covers_content_digest ?? 'either',
+      covers_content_digest: coversContentDigest,
       required_for: requiredFor,
       ...(protocolMethodsRequiredFor ? { protocol_methods_required_for: protocolMethodsRequiredFor } : {}),
     },
     jwks: signedRequests.jwks,
     replayStore: signedRequests.replayStore,
     revocationStore: signedRequests.revocationStore,
+    adcpVersion,
     ...(signedRequests.agentUrlForKeyid ? { agentUrlForKeyid: signedRequests.agentUrlForKeyid } : {}),
     resolveOperation: req => {
       const raw = (req as { rawBody?: string }).rawBody;
@@ -3700,10 +3789,18 @@ function selectServedAdcpRelease(
 
   const advertisedValues = capConfig?.supported_versions?.length ? capConfig.supported_versions : undefined;
   const advertised = advertisedValues
-    ? advertisedValues.map(parseAdcpRelease)
+    ? advertisedValues.flatMap(value => {
+        // SDK <=13 and early 3.x adopters sometimes placed a major-only
+        // string in supported_versions. Interpret it like major_versions so
+        // an SDK 14 server can still negotiate 3.0/3.1 wire bundles.
+        if (/^v?\d+$/.test(value.trim())) {
+          return bundledReleasesForMajors([Number.parseInt(value.replace(/^v/, ''), 10)], configured);
+        }
+        return [parseAdcpRelease(value)];
+      })
     : capConfig?.major_versions?.length
       ? bundledReleasesForMajors(capConfig.major_versions, configured)
-      : [configured];
+      : bundledReleasesForMajors([configured.major], configured);
   if (advertised.some(value => value === undefined)) {
     return adcpError('VERSION_UNSUPPORTED', {
       message: 'Seller capabilities contain an invalid supported_versions release.',
@@ -3849,6 +3946,26 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     testController: testControllerBridge,
     responseEnhancer,
   } = config;
+  const notificationHandlerConfigured = typeof config.protocol?.syncAgentNotificationConfigs === 'function';
+  const notificationCapabilitySupported = capConfig?.capability_changes?.notifications?.supported === true;
+  if (notificationHandlerConfigured !== notificationCapabilitySupported) {
+    throw new Error(
+      'createAdcpServer: syncAgentNotificationConfigs and capabilities.capability_changes.notifications.supported must be enabled together'
+    );
+  }
+  if (notificationHandlerConfigured && typeof config.protocol?.resolveScope !== 'function') {
+    throw new Error(
+      'createAdcpServer: protocol.resolveScope is required to isolate sync_agent_notification_configs by authenticated caller'
+    );
+  }
+  if (
+    typeof config.governance?.reportPlanAdjustment === 'function' &&
+    typeof config.governance.resolveReportPlanAdjustmentScope !== 'function'
+  ) {
+    throw new Error(
+      'createAdcpServer: governance.resolveReportPlanAdjustmentScope is required to authorize report_plan_adjustment'
+    );
+  }
   const frameworkInputSchemaFor = (toolName: string) =>
     config.exposeToolSchemas === true
       ? (shallowToolInputHintSchema(toolName) ?? PASSTHROUGH_INPUT_SCHEMA)
@@ -3908,7 +4025,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // bundled 3.2 server surface. Keep the SDK-wide client pin unchanged,
   // but make this server instance negotiate and advertise the release it
   // actually serves. An explicit older pin is rejected below.
-  const adcpVersion = resolveAdcpVersion(configuredAdcpVersion ?? (config.proposalNegotiation ? '3.2.0' : undefined));
+  const adcpVersion = resolveAdcpVersion(
+    configuredAdcpVersion ?? (config.proposalNegotiation ? ADCP_VERSION : undefined)
+  );
+  const movingSupportedVersion = capConfig?.supported_versions?.find(isMovingAdcpPrereleaseFamilyAlias);
+  if (movingSupportedVersion) {
+    throw new Error(
+      `createAdcpServer: capabilities.supported_versions contains moving prerelease-family alias ${JSON.stringify(movingSupportedVersion)}; pin ${JSON.stringify(toReleasePrecisionVersion(ADCP_VERSION))} instead`
+    );
+  }
   const proposalRefinementCapabilities = config.proposalNegotiation
     ? defineProposalRefinementCapabilities(config.proposalNegotiation.capabilities)
     : undefined;
@@ -3964,21 +4089,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     const bundleKey = protocolBundleKey;
     return bundleSupportsAdcpVersionField(bundleKey) ? bundleKey : undefined;
   })();
+  const protocolTaskRelease = parseAdcpRelease(protocolBundleKey);
   const supportsProtocolTaskTools =
-    protocolBundleKey === '3.1.0-rc.7' ||
-    protocolBundleKey === '3.1-rc.7' ||
-    protocolBundleKey === '3.1.0-rc.8' ||
-    protocolBundleKey === '3.1-rc.8' ||
-    protocolBundleKey === '3.1.0-rc.9' ||
-    protocolBundleKey === '3.1-rc.9' ||
-    protocolBundleKey === '3.1.0-rc.10' ||
-    protocolBundleKey === '3.1-rc.10' ||
-    protocolBundleKey === '3.1.0-rc.13' ||
-    protocolBundleKey === '3.1-rc.13' ||
-    protocolBundleKey === '3.1.0-rc.14' ||
-    protocolBundleKey === '3.1-rc.14' ||
-    protocolBundleKey === '3.1-rc' ||
-    protocolBundleKey === '3.1';
+    protocolTaskRelease !== undefined &&
+    (protocolTaskRelease.major > 3 || (protocolTaskRelease.major === 3 && protocolTaskRelease.minor >= 1));
 
   // Tool-name set for two-layer error emission. Computed once at server
   // build from the bundled response schemas: any tool whose top-level
@@ -4385,7 +4499,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     enrichErrorTwoLayer(response, toolName, getToolsWithErrorArm(release.validationVersion));
     if (!isErrorResponse(response)) {
       normalizeMediaBuyStatusCollision(response, toolName);
-      injectEnvelopeStatusIntoResponse(response);
+      injectEnvelopeStatusIntoResponse(response, toolName);
       const validationError = protocolTaskResponseValidationError(toolName, response, params);
       if (validationError) return finalizeProtocolTaskToolResponse(toolName, params, validationError, opts);
     }
@@ -4734,6 +4848,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     [config.signals as Record<string, Function> | undefined, SIGNALS_ENTRIES],
     [config.creative as Record<string, Function> | undefined, CREATIVE_ENTRIES],
     [config.governance as Record<string, Function> | undefined, GOVERNANCE_ENTRIES],
+    [config.protocol as Record<string, Function> | undefined, PROTOCOL_ENTRIES],
     [config.accounts as Record<string, Function> | undefined, ACCOUNT_ENTRIES],
     [config.eventTracking as Record<string, Function> | undefined, EVENT_TRACKING_ENTRIES],
     [config.sponsoredIntelligence as Record<string, Function> | undefined, SI_ENTRIES],
@@ -4745,6 +4860,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
     // Warn on unrecognized handler keys (likely typos)
     const knownKeys = new Set(entries.map(e => e.handlerKey));
+    for (const key of ['capabilities', 'resolveScope', 'resolveReportPlanAdjustmentScope']) knownKeys.add(key);
     for (const key of Object.keys(handlers)) {
       if (typeof (handlers as Record<string, unknown>)[key] === 'function' && !knownKeys.has(key)) {
         logger.warn(`Unknown handler key "${key}" — will not be registered. Check for typos.`);
@@ -4837,7 +4953,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // injection so those run on the final two-layer payload.
           enrichErrorTwoLayer(response, toolName, requestErrorArms);
           normalizeMediaBuyStatusCollision(response, toolName);
-          injectEnvelopeStatusIntoResponse(response);
+          injectEnvelopeStatusIntoResponse(response, toolName);
           injectContextIntoResponse(response, params.context);
           injectVersionIntoResponse(response, requestRelease.wireVersion);
           return applyResponseEnhancer(response);
@@ -5368,6 +5484,36 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
         }
 
+        if (CALLER_SCOPED_MUTATION_TOOLS.has(toolName)) {
+          if (ctx.authInfo === undefined && ctx.agent === undefined) {
+            return finalize(
+              adcpError('AUTH_MISSING', {
+                message: `${toolName} requires an authenticated caller principal`,
+              })
+            );
+          }
+          try {
+            const scope =
+              toolName === 'sync_agent_notification_configs'
+                ? await config.protocol!.resolveScope!(ctx, params)
+                : await config.governance!.resolveReportPlanAdjustmentScope!(ctx, params);
+            if (!scope?.tenant_id || !scope.principal_id) {
+              throw new Error('scope resolver must return non-empty tenant_id and principal_id');
+            }
+            ctx.callerMutationScope = Object.freeze({ ...scope });
+          } catch (err) {
+            if (err instanceof AdcpError) return finalize(projectThrownAdcpError(err));
+            const reason = err instanceof Error ? err.message : String(err);
+            logger.error('Caller-scoped mutation resolution failed', { tool: toolName, error: reason });
+            return finalize(
+              adcpError('SERVICE_UNAVAILABLE', {
+                message: 'Caller-scoped mutation resolution failed',
+                ...(exposeErrorDetails && { details: { reason: redactCredentialPatterns(reason) } }),
+              })
+            );
+          }
+        }
+
         if (toolName === 'refine_proposals') {
           if (ctx.authInfo === undefined && ctx.agent === undefined) {
             return finalize(
@@ -5436,10 +5582,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
           // Pattern check already ran in the shape gate above. By this
           // point `key` is guaranteed to match IDEMPOTENCY_KEY_PATTERN.
+          const callerMutationPrincipal = ctx.callerMutationScope
+            ? JSON.stringify([
+                ctx.callerMutationScope.tenant_id,
+                ctx.callerMutationScope.principal_id,
+                ctx.callerMutationScope.account_id ?? null,
+              ])
+            : undefined;
           const principal =
             (resolveIdempotencyPrincipal
               ? resolveIdempotencyPrincipal(ctx, params, toolName as AdcpServerToolName)
-              : ctx.sessionKey) ?? '';
+              : (callerMutationPrincipal ?? ctx.sessionKey)) ?? '';
           if (!principal) {
             logger.error('Idempotency principal unresolved', { tool: toolName });
             return finalize(
@@ -5453,7 +5606,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // two different sessions must not replay into each other. The
           // caller's session_id enters the scope tuple so each session has
           // its own idempotency namespace.
-          const extraScope = resolveExtraScope(toolName, params, ctx.proposalRefinementScope);
+          const extraScope = resolveExtraScope(toolName, params, ctx.proposalRefinementScope, ctx.callerMutationScope);
 
           try {
             const checkResult = await idempotency.check({ principal, key, payload: params, extraScope });
@@ -6154,7 +6307,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             }
             if (!isErrorResponse(formatted)) {
               normalizeMediaBuyStatusCollision(formatted, toolName);
-              injectEnvelopeStatusIntoResponse(formatted);
+              injectEnvelopeStatusIntoResponse(formatted, toolName);
             }
           }
 
@@ -6726,6 +6879,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       major_versions: capConfig?.major_versions ?? [3],
       ...(capConfig?.supported_versions?.length && { supported_versions: [...capConfig.supported_versions] }),
       idempotency: idempotencyCapability,
+      ...(capConfig?.capability_changes && { capability_changes: structuredClone(capConfig.capability_changes) }),
     },
     supported_protocols: protocols as GetAdCPCapabilitiesResponse['supported_protocols'],
   };
@@ -6795,12 +6949,24 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         audience_targeting: false,
       },
     });
-    const forwardMediaBuy = mediaBuy as typeof mediaBuy & {
-      lifecycle_tools?: string[];
-      proposal_refinement?: ProposalRefinementCapabilities;
+    mediaBuy.proposal_refinement = {
+      ...proposalRefinementCapabilities,
+      supported_dimensions: [...proposalRefinementCapabilities.supported_dimensions],
     };
-    forwardMediaBuy.proposal_refinement = proposalRefinementCapabilities;
-    forwardMediaBuy.lifecycle_tools = [...new Set([...(forwardMediaBuy.lifecycle_tools ?? []), 'refine_proposals'])];
+  }
+
+  const compactLifecycleTools = COMPACT_MEDIA_BUY_LIFECYCLE_TOOLS.filter(tool => registeredToolNames.has(tool));
+  if (compactLifecycleTools.length > 0) {
+    const mediaBuy = (capabilitiesData.media_buy ??= {
+      features: {
+        inline_creative_management: false,
+        property_list_filtering: false,
+        content_standards: false,
+        conversion_tracking: false,
+        audience_targeting: false,
+      },
+    });
+    mediaBuy.lifecycle_tools = compactLifecycleTools;
   }
 
   if (
@@ -6926,7 +7092,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         }),
       } as GetAdCPCapabilitiesResponse;
       const selected = parseAdcpRelease(release.validationVersion);
+      if (
+        selected !== undefined &&
+        (selected.major > 3 || (selected.major === 3 && selected.minor >= 2)) &&
+        data.request_signing?.supported === true
+      ) {
+        // 3.2's advertised contract is strict even when the internal verifier
+        // temporarily accepts the legacy serialization during a rolling deploy.
+        data.request_signing = { ...data.request_signing, covers_content_digest: 'required' };
+      }
       if (selected !== undefined && (selected.major < 3 || (selected.major === 3 && selected.minor < 2))) {
+        delete (data.adcp as GetAdCPCapabilitiesResponse['adcp'] & { capability_changes?: unknown }).capability_changes;
         const forwardMediaBuy = data.media_buy as
           | (NonNullable<typeof data.media_buy> & {
               lifecycle_tools?: string[];
@@ -6937,7 +7113,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           delete forwardMediaBuy.proposal_refinement;
           if (forwardMediaBuy.lifecycle_tools) {
             forwardMediaBuy.lifecycle_tools = forwardMediaBuy.lifecycle_tools.filter(
-              tool => tool !== 'refine_proposals'
+              tool =>
+                !COMPACT_MEDIA_BUY_LIFECYCLE_TOOLS.includes(tool as (typeof COMPACT_MEDIA_BUY_LIFECYCLE_TOOLS)[number])
             );
             if (forwardMediaBuy.lifecycle_tools.length === 0) delete forwardMediaBuy.lifecycle_tools;
           }
@@ -7067,7 +7244,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // on the wrapper — it's a private contract between this function and
   // `serve()` for wiring, not part of the AdcpServer public API.
   if (signedRequests) {
-    const preTransport = buildSignedRequestsPreTransport(signedRequests, capConfig?.request_signing);
+    const preTransport = buildSignedRequestsPreTransport(signedRequests, capConfig?.request_signing, adcpVersion);
     Object.defineProperty(wrapped, ADCP_PRE_TRANSPORT, {
       value: preTransport,
       enumerable: false,

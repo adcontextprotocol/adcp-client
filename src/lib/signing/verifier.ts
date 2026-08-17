@@ -6,7 +6,7 @@ import {
   rejectNonAsciiHost,
   type RequestLike,
 } from './canonicalize';
-import { contentDigestMatches } from './content-digest';
+import { contentDigestMatches, contentDigestUsesEncoding, requestSigningEncodingForVersion } from './content-digest';
 import { RequestSignatureError } from './errors';
 import { parseSignature, parseSignatureInput, type ParsedSignatureInput } from './parser';
 import { jwkToPublicKey, verifySignature } from './crypto';
@@ -23,6 +23,7 @@ import {
   type VerifierCapability,
   type VerifyResult,
 } from './types';
+import { ADCP_VERSION } from '../version';
 
 export interface VerifyRequestOptions {
   capability: VerifierCapability;
@@ -38,6 +39,8 @@ export interface VerifyRequestOptions {
    * always-verify mode (where every request is signed) can leave this blank.
    */
   operation?: string;
+  /** Trusted endpoint release pin; never inferred from request payload data. */
+  adcpVersion?: string;
   agentUrlForKeyid?: (keyid: string) => string | undefined;
 }
 
@@ -46,6 +49,7 @@ export async function verifyRequestSignature(
   options: VerifyRequestOptions
 ): Promise<VerifyResult> {
   const now = options.now ? options.now() : Math.floor(Date.now() / 1000);
+  const binaryEncoding = requestSigningEncodingForVersion(options.adcpVersion ?? ADCP_VERSION);
   const sigInputHeader = getHeaderValue(request.headers, 'Signature-Input');
   const sigHeader = getHeaderValue(request.headers, 'Signature');
 
@@ -106,7 +110,22 @@ export async function verifyRequestSignature(
 
   // Step 1: parse.
   const parsedInput = parseSignatureInput(sigInputHeader);
-  const parsedSig = parseSignature(sigHeader, parsedInput.label);
+  let parsedSig;
+  try {
+    parsedSig = parseSignature(sigHeader, parsedInput.label, binaryEncoding);
+  } catch (error) {
+    // `either` is the explicit rolling-upgrade profile: SDK 14 servers may
+    // receive SDK 12/13 Base64URL signatures while the endpoint itself is
+    // pinned to 3.2. The signature bytes are identical; only their structured
+    // field serialization differs. Strict `required`/`forbidden` profiles do
+    // not take this fallback.
+    if (options.capability.covers_content_digest !== 'either') throw error;
+    parsedSig = parseSignature(
+      sigHeader,
+      parsedInput.label,
+      binaryEncoding === 'rfc8941-base64' ? 'legacy-base64url' : 'rfc8941-base64'
+    );
+  }
   rejectNonAsciiHost(request.url);
   validateSingleValuedCoveredHeaders(parsedInput.components, request);
 
@@ -135,7 +154,11 @@ export async function verifyRequestSignature(
   validateWindow(parsedInput.params.created, parsedInput.params.expires, now);
 
   // Step 6: covered components.
-  validateCoveredComponents(parsedInput.components, options.capability, request);
+  const effectiveCapability =
+    binaryEncoding === 'rfc8941-base64'
+      ? { ...options.capability, covers_content_digest: 'required' as const }
+      : options.capability;
+  validateCoveredComponents(parsedInput.components, effectiveCapability, request);
 
   // Step 7: resolve keyid.
   const jwk = await options.jwks.resolve(parsedInput.params.keyid);
@@ -215,7 +238,15 @@ export async function verifyRequestSignature(
   // Step 11: content-digest match (only if covered).
   if (parsedInput.components.includes('content-digest')) {
     const digestHeader = getHeaderValue(request.headers, 'Content-Digest');
-    if (!digestHeader || !contentDigestMatches(digestHeader, request.body ?? '')) {
+    const encodingMatches =
+      !!digestHeader &&
+      (contentDigestUsesEncoding(digestHeader, binaryEncoding) ||
+        (options.capability.covers_content_digest === 'either' &&
+          contentDigestUsesEncoding(
+            digestHeader,
+            binaryEncoding === 'rfc8941-base64' ? 'legacy-base64url' : 'rfc8941-base64'
+          )));
+    if (!digestHeader || !encodingMatches || !contentDigestMatches(digestHeader, request.body ?? '')) {
       throw new RequestSignatureError(
         'request_signature_digest_mismatch',
         11,

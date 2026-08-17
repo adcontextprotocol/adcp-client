@@ -303,6 +303,7 @@ describe('gradeSigner', () => {
       jwksUrl,
       allowPrivateIp: true,
       coversContentDigest: 'forbidden',
+      adcpVersion: '3.1',
     });
     assert.strictEqual(report.passed, true);
     const headers = report.sample.headers;

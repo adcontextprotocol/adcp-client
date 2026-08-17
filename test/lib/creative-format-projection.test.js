@@ -615,14 +615,14 @@ describe('creative format delivery projection', () => {
       },
       'legacy'
     ).packages[0].creatives[0];
-    registerExternalSchemaRoot('3.0.12', path.resolve('schemas/cache/3.0.12'));
+    registerExternalSchemaRoot('3.0.24', path.resolve('schemas/cache/3.0.24'));
     try {
-      const validate = getSchemaValidatorByRef('core/creative-asset.json', '3.0.12');
+      const validate = getSchemaValidatorByRef('core/creative-asset.json', '3.0.24');
       assert.equal(typeof validate, 'function');
       assert.equal(validate(canonical), false);
       assert.equal(validate(projected), true);
     } finally {
-      unregisterExternalSchemaRoot('3.0.12');
+      unregisterExternalSchemaRoot('3.0.24');
     }
   });
 

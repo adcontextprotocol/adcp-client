@@ -11,14 +11,30 @@ This skill enables you to execute the AdCP Media Buy Protocol with sales agents.
 
 ## Overview
 
-The Media Buy Protocol provides 11 standardized tasks for managing advertising campaigns:
+> **3.2 preview:** Targeting-aware discovery fields are available only when the
+> seller serves AdCP 3.2+ and the installed SDK exposes the 3.2 schema. Check
+> `get_adcp_capabilities.adcp.supported_versions`, pin the selected release in
+> `adcp_version`, and validate the echoed served release before sending them.
+> A missing release-precision declaration, a 3.1-or-earlier result, or a
+> major-only declaration is not evidence of support: omit the 3.2 fields and use
+> legacy targeting filters or explicit brief prose. Do not probe by sending
+> unknown fields because a legacy open schema may accept and ignore them. The public
+> training agent will implement this flow after the 3.2 beta SDK release; until
+> then use its legacy brief exercise and do not treat ignored unknown fields as
+> acceptance.
+
+The Media Buy Protocol provides these common standardized tasks:
 
 | Task | Purpose | Response Time |
 |------|---------|---------------|
-| `get_products` | Discover inventory using natural language | ~60s |
+| `list_products` | Read matching offers without seller curation | ~1-5s |
+| `request_proposals` | Request seller-authored draft plans | ~60s or async |
+| `refine_proposals` | Revise drafts or finalize unchanged terms into inventory holds | ~60s or async |
+| `decline_proposals` | Record terminal buyer disposition | ~1-5s |
+| `accept_proposal` | Accept a finalized proposal into a MediaBuy | Minutes-Days |
+| `get_products` | Use the 3.x compatibility facade for discovery and proposals | ~60s |
 | `get_adcp_capabilities` | See agent capabilities, supported protocols, and publisher properties | ~1s |
-| `list_creative_formats` | View creative specifications | ~1s |
-| `create_media_buy` | Create campaigns | Minutes-Days |
+| `create_media_buy` | Create direct buys or use the 3.x proposal adapter | Minutes-Days |
 | `update_media_buy` | Modify campaigns | Minutes-Days |
 | `get_media_buys` | Retrieve campaign state and status | ~1-5s |
 | `sync_creatives` | Upload creative assets | Minutes-Days |
@@ -29,29 +45,30 @@ The Media Buy Protocol provides 11 standardized tasks for managing advertising c
 
 ## Typical Workflow
 
-1. **Discover products**: `get_products` with a natural language brief
-2. **Review formats**: `list_creative_formats` to understand creative requirements
-3. **Create campaign**: `create_media_buy` with selected products and budget
-4. **Upload creatives**: `sync_creatives` to add creative assets
-5. **Monitor delivery**: `get_media_buy_delivery` to track performance
+1. **Discover products**: use `list_products`, or `request_proposals` with a brief
+2. **Verify the offer**: inspect formats, pricing, forecast, `overlay_support`, and any `targeting_resolution`
+3. **Negotiate and hold**: revise a draft as needed, then finalize it without changing terms
+4. **Accept or decline**: call `accept_proposal` for the held snapshot or `decline_proposals` when the buyer stops pursuing it
+5. **Upload creatives**: use `sync_creatives` to add creative assets
+6. **Monitor delivery**: use `get_media_buy_delivery` to track performance
 
 ---
 
-## Canonical formats (AdCP 3.1+)
+## Canonical formats (AdCP 3.2)
 
 Products carry `format_options[]`: a list of `ProductFormatDeclaration` entries describing the creative shapes the product accepts. Each declaration carries:
 
-- `format_kind` — canonical type (image / html5 / display_tag / video_hosted / video_vast / audio_hosted / audio_daast / image_carousel / responsive_creative / sponsored_placement / agent_placement / custom)
+- `format_kind` — one of the 12 canonicals: `image`, `html5`, `display_tag`, `image_carousel`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`, `sponsored_placement`, `native_in_feed`, `responsive_creative`, or `agent_placement`; use `custom` only with `format_shape` and `format_schema`
 - `params` — per-canonical parameters narrowing the format (dimensions, durations, codecs, char limits, CTA enums)
-- Optional `capability_id` — disambiguates when a product carries multiple declarations of the same `format_kind`, and lets a placement reference a publisher-catalog declaration by ID rather than inlining
+- Optional `format_option_id` — disambiguates product options and identifies publisher-catalog declarations when paired with `publisher_domain`
 - Optional `v1_format_ref: [{agent_url, id}]` — array linking this v2 declaration to one or more v1 named formats (for dual emission during the v1↔v2 migration). Multi-size declarations should carry one ref per size
 - Optional `seller_preference: "preferred" | "accepted" | "discouraged"` — soft routing hint when a multi-format product has several options at the same price
 
-**Multi-format products.** A flexible publisher slot is one product with N format_options entries — e.g., NYTimes Homepage accepts image OR html5 OR display_tag at multiple sizes via three format_options, one per type. Buyer picks the creative type they ship.
+**Multi-format products.** A flexible publisher slot is one product with N format_options entries — e.g., Pinnacle Media's homepage accepts image OR html5 OR display_tag at multiple sizes via three format_options, one per type. Buyer picks the creative type they ship.
 
 **Size flexibility.** Display canonicals (image / html5 / display_tag) declare size in one of three modes: fixed (`width`+`height`), multi-size (`sizes: [{w,h}]` — mirrors OpenRTB `banner.format[]`), or responsive (`min_width`/`max_width`/`min_height`/`max_height`). Modes are mutually exclusive.
 
-**Discovering publisher catalogs.** `list_creative_formats(publisher_domain="meta.com")` returns the publisher's authoritative format list by reading `<publisher_domain>/.well-known/adagents.json` `formats[]`, falling back to the AAO community mirror at `https://creative.adcontextprotocol.org/translated/<platform>/adagents.json`, then to agent-derived from own products. Response carries `source: "publisher" | "aao_mirror" | "agent_derived"` so buyers know which tier produced the list.
+**Discovering publisher catalogs.** Call `GET https://agenticadvertising.org/api/registry/publisher?domain=<publisher_domain>` for publisher-origin → AgenticAdvertising.org community-catalog → fail-closed resolution and provenance. Add `&include=placements` for provenance-labeled placement summaries with resolved canonical format options. The lookup's top-level `formats[]` remains a lossy display summary; fetch the returned raw registry or hosting URL when you need custom schema fields or other omitted declaration fields. Do not infer publisher authority from a seller's product catalog. Seller-specific deliverability comes from that seller's `Product.format_options[]`.
 
 **Conversion tracking lives elsewhere.** Pixel-firing, conversion events, and attribution belong on `sync_event_sources` / `event_log` (campaign-scoped), NOT on creative format declarations. Sending `pixel_id` in `platform_extensions` on a format is a category error.
 
@@ -65,52 +82,73 @@ See `docs/creative/canonical-formats.mdx` for the full vocabulary, narrowing rul
 
 ### get_products
 
-Discover advertising products using natural language briefs.
+Discover buyable product configurations. Choose each request surface by what it
+means:
+
+- `brief`: goals, context, semantic audience intent, preferences, and
+  requirements without a structured representation.
+- `filters`: hard offer filters such as metadata, dates, budget, availability,
+  commercial fit, and reporting support. They decide which products may be
+  returned and apply in `brief`, `wholesale`, and `refine`.
+- `targeting_overlay`: exact delivery constraints known now. Use this for
+  countries, ages, placements, properties, collections, and other typed
+  targeting so availability, price, and forecast already reflect them.
+- `required_overlay_support`: targeting dimensions whose values will be chosen
+  independently on packages later. This requests capability, not one product
+  per value.
+
+Prefer a structured field whenever one exists. It uses fewer tokens, is applied
+by code, and avoids lossy inference. Explicit hard targeting written only in a
+brief is still binding; when a seller extracts a structured predicate from
+prose that materially affects eligibility, pricing, or forecasting, require one response-level confirmation in
+`GetProductsResponse.targeting_resolution.brief_targeting`.
 
 **Request:**
+
 ```json
 {
   "buying_mode": "brief",
-  "brief": "Looking for premium video inventory for a tech brand targeting developers",
+  "brief": "Premium video for a developer-tool launch; prioritize engineering and open-source contexts",
   "brand": {
     "domain": "example.com"
   },
   "filters": {
-    "channels": ["video", "ctv"],
-    "budget_range": { "min": 5000, "max": 50000 }
+    "channels": ["olv", "ctv"],
+    "delivery_type": "guaranteed",
+    "pricing_currencies": ["USD"]
+  },
+  "targeting_overlay": {
+    "geo_countries": ["US"],
+    "demographics": {
+      "age": { "min": 18, "max": 44, "include_unknown": false }
+    }
+  },
+  "required_overlay_support": {
+    "geo_metros": { "systems": ["nielsen_dma"] }
   }
 }
 ```
 
 **Key fields:**
-- `buying_mode` (string): Required discriminator - `"brief"` or `"wholesale"`
-- `brief` (string): Natural language description of campaign requirements
+- `buying_mode` (string): `"brief"`, `"wholesale"`, or `"refine"`
+- `brief` (string): Natural-language curation input; hard statements remain requirements
 - `brand` (object): Brand identity - `{ "domain": "acmecorp.com" }`
-- `filters` (object, optional): Filter by channels, budget, delivery_type
+- `filters` (object, optional): Hard offer filters that decide which products may be returned
+- `targeting_overlay` (object, optional): Concrete targeting applied during discovery and carried into purchase
+- `required_overlay_support` (object, optional): Dimensions the product must allow packages to select later
 
 **Response contains:**
+
 - `products`: Array of matching products with `product_id`, `name`, `description`, `pricing_options`
-- Each product includes `format_ids` (supported creative formats) and `targeting` (available targeting)
+- Each product includes canonical `format_options[]` and targeting capabilities
+- `overlay_support`: binding product-scoped dimensions selectable later
+- `targeting_resolution.modifications`: sparse differences from the requested structured overlay; selecting the product accepts them
+- Response `targeting_resolution.brief_targeting`: the seller's single structured interpretation of hard targeting inferred from prose
+- No `targeting_resolution` means exact acceptance of the structured overlay only; it does not prove how prose was interpreted
 
----
-
-### list_creative_formats
-
-View supported creative specifications.
-
-**Request:**
-```json
-{
-  "asset_types": ["video", "image"]
-}
-```
-
-**Key fields:**
-- `asset_types` (array, optional): Filter by asset types (image, video, audio, text, html, vast, etc.)
-- `name_search` (string, optional): Case-insensitive partial match on name or description
-
-**Response contains:**
-- `formats`: Array of format specifications with dimensions, requirements, and asset schemas
+Treat `product_id` as the opaque identity of this configured offer. Keep it
+within the same discovery/refinement context and purchase it before
+`expires_at`; do not assume it is a permanent cross-session ID.
 
 ---
 
@@ -119,6 +157,7 @@ View supported creative specifications.
 Create an advertising campaign from selected products.
 
 **Request:**
+
 ```json
 {
   "brand": {
@@ -126,9 +165,14 @@ Create an advertising campaign from selected products.
   },
   "packages": [
     {
-      "product_id": "premium_video_30s",
+      "product_id": "prod_configured_us_18_44",
       "pricing_option_id": "cpm-standard",
-      "budget": 10000
+      "budget": 10000,
+      "targeting_overlay": {
+        "geo_metros": [
+          { "system": "nielsen_dma", "values": ["501"] }
+        ]
+      }
     }
   ],
   "start_time": "asap",
@@ -137,18 +181,20 @@ Create an advertising campaign from selected products.
 ```
 
 **Key fields:**
+
 - `brand` (object, required): Brand identity - `{ "domain": "acmecorp.com" }`
 - `packages` (array, required): Products to purchase, each with:
   - `product_id`: From `get_products` response
   - `pricing_option_id`: From product's `pricing_options`
   - `budget`: Amount in dollars
   - `bid_price`: Required for auction pricing
-  - `targeting_overlay`: Additional targeting constraints
+  - `targeting_overlay`: Package targeting permitted by the selected product's `overlay_support`; it composes with targeting already bound during discovery and must not silently broaden it
   - `creative_ids` or `creatives`: Creative assignments
 - `start_time` (string, required): `"asap"` or an ISO 8601 datetime (e.g., `"2024-06-01T00:00:00Z"`)
 - `end_time` (string, required): ISO 8601 datetime
 
 **Response contains:**
+
 - `media_buy_id`: The created campaign identifier
 - `status`: Current lifecycle state — `pending_creatives` (no creatives assigned yet), `pending_start` (waiting for flight date), or `active` (serving immediately)
 - `packages`: Created packages with their IDs
@@ -160,8 +206,10 @@ Create an advertising campaign from selected products.
 Modify an existing campaign.
 
 **Request:**
+
 ```json
 {
+  "idempotency_key": "update-mb-abc123-2024-04-pause",
   "media_buy_id": "mb_abc123",
   "updates": {
     "budget_change": 5000,
@@ -172,6 +220,7 @@ Modify an existing campaign.
 ```
 
 **Key fields:**
+
 - `media_buy_id` (string, required): The campaign to update
 - `updates` (object): Changes to apply - budget_change, end_time, status, targeting, etc.
 
@@ -182,6 +231,7 @@ Modify an existing campaign.
 Sync product catalogs, store locations, job postings, and other structured feeds to a seller account. Supports inline items or external feed URLs. When called without catalogs, returns existing catalogs (discovery mode).
 
 **Request:**
+
 ```json
 {
   "account": {
@@ -193,7 +243,12 @@ Sync product catalogs, store locations, job postings, and other structured feeds
       "name": "Winter 2025 Collection",
       "type": "product",
       "items": [
-        { "id": "sku-001", "name": "Wool Coat", "price": 299.99, "currency": "USD" }
+        {
+          "id": "sku-001",
+          "name": "Wool Coat",
+          "price": 299.99,
+          "currency": "USD"
+        }
       ]
     }
   ]
@@ -201,6 +256,7 @@ Sync product catalogs, store locations, job postings, and other structured feeds
 ```
 
 **Key fields:**
+
 - `account` (object, required): Account that owns the catalogs — `{ account_id }`
 - `catalogs` (array, optional): Catalog objects to sync. Omit for discovery mode.
   - `type` (string, required): `offering`, `product`, `inventory`, `store`, `promotion`, `hotel`, `flight`, `job`, `vehicle`, `real_estate`, `education`, `destination`, `app`
@@ -217,15 +273,17 @@ Sync product catalogs, store locations, job postings, and other structured feeds
 Upload and manage creative assets.
 
 **Request:**
+
 ```json
 {
   "creatives": [
     {
       "creative_id": "hero_video_30s",
       "name": "Brand Hero Video",
-      "format_id": {
-        "agent_url": "https://creative.adcontextprotocol.org",
-        "id": "video_standard_30s"
+      "format_kind": "video_hosted",
+      "format_option_ref": {
+        "scope": "product",
+        "format_option_id": "video_30s"
       },
       "assets": {
         "video": {
@@ -244,9 +302,11 @@ Upload and manage creative assets.
 ```
 
 **Key fields:**
+
 - `creatives` (array, required): Creative assets to sync
   - `creative_id`: Your unique identifier
-  - `format_id`: Object with `agent_url` and `id` from format specifications
+  - `format_kind`: Canonical format accepted by the selected product
+  - `format_option_ref`: Product or publisher option when `format_kind` alone is ambiguous
   - `assets`: Asset content (video, image, html, etc.)
 - `assignments` (object, optional): Map creative_id to package IDs
 - `dry_run` (boolean): Preview changes without applying
@@ -259,6 +319,7 @@ Upload and manage creative assets.
 Query the creative library with filtering.
 
 **Request:**
+
 ```json
 {
   "filters": {
@@ -275,6 +336,7 @@ Query the creative library with filtering.
 Retrieve media buy state: status, valid_actions, creative approvals, pending formats, and optional delivery snapshots or revision history.
 
 **Request:**
+
 ```json
 {
   "media_buy_ids": ["mb_abc123"],
@@ -284,6 +346,7 @@ Retrieve media buy state: status, valid_actions, creative approvals, pending for
 ```
 
 **Key fields:**
+
 - `media_buy_ids` (array, optional): Specific media buy IDs to retrieve
 - `account` (object, optional): Filter to a specific account
 - `status_filter` (string or array, optional): Filter by status — `pending_creatives`, `pending_start`, `active`, `paused`, `completed`, `rejected`, `canceled`. Defaults to `["active"]` when no IDs provided.
@@ -291,38 +354,74 @@ Retrieve media buy state: status, valid_actions, creative approvals, pending for
 - `include_history` (integer, optional): Include the last N revision history entries per media buy
 
 **Response contains:**
+
 - `media_buys`: Array with `media_buy_id`, `status`, `valid_actions`, `packages`, creative approval state
 - Optional `snapshot` per package (impressions, spend, pacing)
 - Optional `history` entries (revision, timestamp, actor, action, summary)
+
+#### Relationship-scoped indicators
+
+Before querying indicators, read `get_adcp_capabilities.media_buy.supported_indicator_types`. Indicators may appear at three levels:
+
+- buy: `get_media_buys.media_buys[]` (`budget_constrained`)
+- package: `packages[]` (`creative_diversity_low`, `audience_saturation`, `inventory_shortfall_forecast`, `pacing_risk`, `budget_constrained`)
+- assignment: `creative_approvals[]` and the matching `list_creatives.assignments.assigned_packages[]` (`creative_fatigue`, `creative_quality_opportunity`)
+
+`indicators` omitted means unknown. A present array requires `indicator_types_evaluated` and `indicators_as_of`; empty means clear only for those named types and coverage. `scope` narrows an assertion; `indicators_evaluated_scope` declares partial publisher/placement coverage. Creative-library sellers advertise `list_creatives` in `relationship_notifications.projection_tasks`; those sellers include `media_buy_id`, approval state, and any `approval_scopes` on every reverse assignment row. Every seller repairs through `get_media_buys`.
+
+For portfolio discovery, call `list_creatives` with `filters.indicator_types`, `include_assignments: true`, `assignment_projection: "matching"`, a bounded `assignment_limit`, `fields: ["creative_id", "assignments"]`, and cursor pagination. The seller still returns the released required creative envelope; `fields` limits optional payload. Check `assignments_truncated`; use `get_media_buys` for complete repair. Key evaluated state by seller + `media_buy_id` + `package_id` + `creative_id` + type + normalized placement scope.
+
+Never clear from filtered disappearance or failure. Reread directly without `indicator_types`; clear only a named evaluated type in covered scope from a strictly newer snapshot. Equal-timestamp conflicts are no-ops. Direct assignment deletion retires its keys.
+
+Indicator polling through `get_media_buys` does not require webhooks. Sellers may additionally declare `indicators.changed` and may independently declare `creative.assignment_changed`; creative-library sellers may advertise the bounded `list_creatives` reverse projection. Subscriptions are prospective, so establish a complete `get_media_buys` baseline after activation by enumerating known IDs or requesting every media-buy status and exhausting pagination, without `indicator_types`. Verify, dedupe, and reread `get_media_buys`; webhook payloads are invalidations, not state. Timestamp-only reevaluation does not fire, while material in-place creative updates invalidate prior assignment evaluations. Root `warnings[]` on completed `buy_products`, `accept_proposal`, or `control_media_buy` calls are immediate receipts; `create_media_buy` and `update_media_buy` facades mirror them. Inventory and pacing warning codes require the matching advertised durable indicator type.
 
 ---
 
 ### provide_performance_feedback
 
-Share performance outcomes with publishers to enable data-driven optimization.
+Submit one compact optimizer-ready assertion. Measurement agents call a buyer-controlled orchestrator gateway; the orchestrator authenticates and normalizes provider output, then calls each seller under the buyer's identity. Measurement providers do not receive seller-account grants.
 
 **Request:**
+
 ```json
 {
+  "idempotency_key": "feedback-mb-abc123-2025-01-final",
   "media_buy_id": "mb_abc123",
   "measurement_period": {
     "start": "2025-01-01T00:00:00Z",
     "end": "2025-01-31T23:59:59Z"
   },
   "performance_index": 1.2,
-  "metric_type": "conversion_rate",
-  "feedback_source": "buyer_attribution"
+  "baseline": "campaign_target",
+  "metric": {
+    "scope": "standard",
+    "metric_id": "conversions"
+  },
+  "producer": { "domain": "pinnacle-measurement.example" },
+  "methodology": "deterministic_attribution",
+  "final": true
 }
 ```
 
 **Key fields:**
+
+- `idempotency_key` (string, required): Stable key for this logical assertion; retries reuse the same key and payload
 - `media_buy_id` (string, required): Publisher's media buy identifier
 - `measurement_period` (object, required): Time period with `start` and `end` (ISO 8601)
-- `performance_index` (number, required): Normalized score — 0.0 = no value, 1.0 = expected, >1.0 = above expected
+- `performance_index` (number, required): Normalized score — 1.0 equals `baseline`, lower underperforms, higher outperforms. Use observed/baseline for higher-is-better ratios and baseline/observed for lower-is-better ratios such as CPA.
+- `baseline` (string, required for compact-contract producers): `campaign_target`, `control_group`, `seller_history`, `buyer_portfolio`, `market_benchmark`, or `other`
 - `package_id` (string, optional): Specific package for package-level feedback
 - `creative_id` (string, optional): Specific creative for creative-level feedback
-- `metric_type` (string, optional): `overall_performance`, `conversion_rate`, `brand_lift`, `click_through_rate`, `completion_rate`, `viewability`, `brand_safety`, `cost_efficiency`
-- `feedback_source` (string, optional): `buyer_attribution`, `third_party_measurement`, `platform_analytics`, `verification_partner`
+- `metric` (object, optional): Standard/vendor metric identity; preferred over deprecated `metric_type`
+- `producer` (BrandRef, conditionally required): Measurement provider that produced the analysis; required when `methodology` or `methodology_version` is present. The orchestrator verifies it against provider identity before preserving it on seller submissions
+- `methodology`, `methodology_version` (string, optional): Provider-scoped open identifiers
+- `study_ref` (string, optional): Opaque correlation reference, never an experiment-execution instruction
+- `evidence` / `evidence_ref` (optional): Small inline summary and provider-hosted detail
+- `final`, `as_of`, `supersedes_feedback_id` (optional): Maturation and immutable revision fields
+
+Sellers declaring `media_buy.performance_feedback` also list `measurement.core` in top-level `experimental_features` and return `feedback_id`. When `reports_application_status` is true, inspect `application_status`: `accepted` is not an application claim; `applied` means the signal entered optimizer inputs; `not_applied` includes a reason. Do not confuse this with the response envelope's task `status`.
+
+Do not send raw measurement datasets through this task or through `report_usage`. In the first gateway tier the provider reads delivery through the orchestrator's `get_media_buy_delivery` task and returns only the compact decision signal through `provide_performance_feedback`.
 
 ---
 
@@ -331,6 +430,7 @@ Share performance outcomes with publishers to enable data-driven optimization.
 Retrieve performance metrics for a campaign.
 
 **Request:**
+
 ```json
 {
   "media_buy_id": "mb_abc123",
@@ -343,6 +443,7 @@ Retrieve performance metrics for a campaign.
 ```
 
 **Response contains:**
+
 - `delivery`: Aggregated metrics (impressions, spend, clicks, etc.)
 - `by_package`: Breakdown by package
 - `timeseries`: Data points over time if granularity specified
@@ -365,23 +466,24 @@ Brand context is provided by domain reference:
 
 The agent resolves the domain to retrieve the brand's identity (name, colors, guidelines, etc.) from its `brand.json` file.
 
-### Format IDs
+### Canonical format options
 
-Creative format identifiers are structured objects:
+Products declare their closed accepted set directly:
+
 ```json
 {
-  "format_id": {
-    "agent_url": "https://creative.adcontextprotocol.org",
-    "id": "display_300x250"
-  }
+  "format_option_id": "display_image_300x250",
+  "format_kind": "image",
+  "params": { "width": 300, "height": 250 }
 }
 ```
 
-The `agent_url` specifies which creative agent defines the format. Use `https://creative.adcontextprotocol.org` for standard IAB formats.
+Buyers select the option with `format_option_refs[]` on the package and submit a manifest using `format_kind` plus `format_option_ref`. Compound named format IDs are deprecated in 3.2.
 
 ### Pricing Options
 
 Products include `pricing_options` array. Each option has:
+
 - `pricing_option_id`: Use this in `create_media_buy`
 - `pricing_model`: "cpm", "cpm-auction", "flat-fee", etc.
 - `price`: Base price (for fixed pricing)
@@ -392,6 +494,7 @@ For auction pricing, include `bid_price` in your package.
 ### Asynchronous Operations
 
 Operations like `create_media_buy` and `sync_creatives` may require human approval. The response includes:
+
 - `status: "pending"` - Operation awaiting approval
 - `task_id` - For tracking async progress
 
@@ -409,6 +512,7 @@ Common error patterns:
 - **422 Validation Error**: Schema validation failure - check field types
 
 Error responses include:
+
 ```json
 {
   "errors": [
@@ -428,6 +532,7 @@ Error responses include:
 Use **sandbox mode** for testing without real transactions. Sandbox is account-level — once a request references a sandbox account, the entire request is treated as sandbox with no real platform calls or spend.
 
 Check whether the agent supports sandbox via `get_adcp_capabilities`:
+
 ```json
 {
   "account": {
@@ -437,6 +542,7 @@ Check whether the agent supports sandbox via `get_adcp_capabilities`:
 ```
 
 To enter sandbox mode, set `sandbox: true` on the account reference:
+
 ```json
 {
   "account": {

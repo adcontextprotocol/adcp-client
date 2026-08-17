@@ -20,6 +20,7 @@ const { createExpressVerifier } = require('../../dist/lib/signing/middleware.js'
 
 function makeVerifier() {
   return createExpressVerifier({
+    adcpVersion: '3.1',
     // Reached only if the raw-body guard lets the request through, which is
     // exactly what these tests assert must not happen.
     jwks: { resolve: async () => null },

@@ -47,17 +47,22 @@ export const UPDATE_FIELDS_BY_ACTION: Readonly<
     deprecated: false,
   },
   "increase_budget": {
-    update_fields: ["packages[].budget"] as const,
+    update_fields: ["total_budget", "packages[].budget"] as const,
     rollup: null,
     deprecated: false,
   },
   "decrease_budget": {
-    update_fields: ["packages[].budget"] as const,
+    update_fields: ["total_budget", "packages[].budget"] as const,
     rollup: null,
     deprecated: false,
   },
   "reallocate_budget": {
     update_fields: ["packages[].budget"] as const,
+    rollup: null,
+    deprecated: false,
+  },
+  "update_budget_allocation": {
+    update_fields: ["budget_allocation", "packages[].min_spend_target"] as const,
     rollup: null,
     deprecated: false,
   },
@@ -67,7 +72,12 @@ export const UPDATE_FIELDS_BY_ACTION: Readonly<
     deprecated: false,
   },
   "update_pacing": {
-    update_fields: ["packages[].pacing"] as const,
+    update_fields: ["pacing", "packages[].pacing"] as const,
+    rollup: null,
+    deprecated: false,
+  },
+  "update_bidding": {
+    update_fields: ["bidding", "packages[].bidding"] as const,
     rollup: null,
     deprecated: false,
   },
@@ -102,8 +112,8 @@ export const UPDATE_FIELDS_BY_ACTION: Readonly<
     deprecated: false,
   },
   "update_budget": {
-    update_fields: ["packages[].budget"] as const,
-    rollup: ["increase_budget", "decrease_budget", "reallocate_budget"] as const,
+    update_fields: ["total_budget", "budget_allocation", "packages[].budget", "packages[].min_spend_target"] as const,
+    rollup: ["increase_budget", "decrease_budget", "reallocate_budget", "update_budget_allocation"] as const,
     deprecated: true,
   },
   "update_dates": {
@@ -113,7 +123,7 @@ export const UPDATE_FIELDS_BY_ACTION: Readonly<
   },
   "update_packages": {
     update_fields: ["packages[]"] as const,
-    rollup: ["update_targeting", "update_pacing", "update_frequency_caps", "reallocate_budget", "remove_packages"] as const,
+    rollup: ["update_targeting", "update_pacing", "update_bidding", "update_frequency_caps", "reallocate_budget", "remove_packages"] as const,
     deprecated: true,
   },
   "sync_creatives": {
@@ -126,10 +136,14 @@ export const UPDATE_FIELDS_BY_ACTION: Readonly<
 export const ACTIONS_BY_FIELD: Readonly<
   Record<string, readonly MediaBuyValidAction[]>
 > = {
+  "bidding": ["update_bidding"] as const,
+  "budget_allocation": ["update_budget_allocation"] as const,
   "canceled": ["cancel"] as const,
   "cancellation_reason": ["cancel"] as const,
   "end_time": ["extend_flight", "shorten_flight", "update_flight_dates"] as const,
   "new_packages": ["add_packages"] as const,
+  "pacing": ["update_pacing"] as const,
+  "packages[].bidding": ["update_bidding"] as const,
   "packages[].budget": ["increase_budget", "decrease_budget", "reallocate_budget"] as const,
   "packages[].canceled": ["remove_packages"] as const,
   "packages[].creative_assignments": ["update_creative_assignments", "remove_creative"] as const,
@@ -137,6 +151,7 @@ export const ACTIONS_BY_FIELD: Readonly<
   "packages[].end_time": ["extend_flight", "shorten_flight", "update_flight_dates"] as const,
   "packages[].keyword_targets_add": ["update_targeting"] as const,
   "packages[].keyword_targets_remove": ["update_targeting"] as const,
+  "packages[].min_spend_target": ["update_budget_allocation"] as const,
   "packages[].negative_keywords_add": ["update_targeting"] as const,
   "packages[].negative_keywords_remove": ["update_targeting"] as const,
   "packages[].pacing": ["update_pacing"] as const,
@@ -145,6 +160,7 @@ export const ACTIONS_BY_FIELD: Readonly<
   "packages[].targeting_overlay.frequency_cap": ["update_frequency_caps"] as const,
   "paused": ["pause", "resume"] as const,
   "start_time": ["update_flight_dates"] as const,
+  "total_budget": ["increase_budget", "decrease_budget"] as const,
 } as const;
 
 export { LEGACY_COARSE_ACTIONS } from './types';

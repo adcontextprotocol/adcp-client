@@ -514,13 +514,9 @@ describe('validateResponseSchema', () => {
       );
     });
 
-    it('registers every generated tool response schema', () => {
-      const generatedToolSchemas = Object.keys(schemas)
-        .filter(name => name.endsWith('ResponseSchema'))
-        .filter(name => !NON_TOOL_RESPONSE_SCHEMAS.has(name));
-
-      for (const schemaName of generatedToolSchemas) {
-        const toolName = TOOL_NAME_OVERRIDES.get(schemaName) ?? schemaNameToToolName(schemaName);
+    it('registers every manifest-declared tool response schema', () => {
+      const manifest = require('../../schemas/cache/latest/manifest.json');
+      for (const toolName of Object.keys(manifest.tools)) {
         assert.ok(TOOL_RESPONSE_SCHEMAS[toolName], `Missing schema registration for tool: ${toolName}`);
       }
     });

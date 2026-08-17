@@ -137,13 +137,15 @@ type IsLegacyCreativeIdentityKey<K extends PropertyKey> = K extends string
 /** Recursively removes legacy creative routing identity from primary response types. */
 export type CanonicalCreativeResponse<T> = T extends (...args: never[]) => unknown
   ? T
-  : T extends readonly (infer TItem)[]
-    ? CanonicalCreativeResponse<TItem>[]
-    : T extends object
-      ? {
-          [K in keyof T as IsLegacyCreativeIdentityKey<K> extends true ? never : K]: CanonicalCreativeResponse<T[K]>;
-        }
-      : T;
+  : T extends string | number | boolean | bigint | symbol | null | undefined
+    ? T
+    : T extends readonly unknown[]
+      ? { [K in keyof T]: CanonicalCreativeResponse<T[K]> }
+      : T extends object
+        ? {
+            [K in keyof T as IsLegacyCreativeIdentityKey<K> extends true ? never : K]: CanonicalCreativeResponse<T[K]>;
+          }
+        : T;
 
 /** Runtime counterpart to {@link CanonicalCreativeResponse}. */
 export function stripLegacyCreativeIdentity<T>(value: T): CanonicalCreativeResponse<T> {

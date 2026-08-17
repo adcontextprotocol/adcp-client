@@ -111,8 +111,14 @@ function loadIndex(): SchemaIndex {
 }
 
 function loadSchema(ref: string): any {
-  // Strip /schemas/{version}/ prefix to get relative path
+  // Indexes may use either root-relative or absolute canonical schema URLs.
+  // Resolve both to a cache-relative path before stripping the version.
   let rel = ref;
+  try {
+    rel = new URL(ref).pathname;
+  } catch {
+    // A relative reference is already suitable for the handling below.
+  }
   if (rel.startsWith('/schemas/')) {
     rel = rel.substring('/schemas/'.length);
     const segments = rel.split('/');
@@ -221,6 +227,12 @@ function collectTools(index: SchemaIndex): ToolInfo[] {
 
       const reqSchema = task.request?.$ref ? loadSchema(task.request.$ref) : null;
       const resSchema = task.response?.$ref ? loadSchema(task.response.$ref) : null;
+      if (task.request?.$ref && !reqSchema) {
+        throw new Error(`Unable to resolve request schema for ${kebab}: ${task.request.$ref}`);
+      }
+      if (task.response?.$ref && !resSchema) {
+        throw new Error(`Unable to resolve response schema for ${kebab}: ${task.response.$ref}`);
+      }
       const { required, optional } = summarizeFields(reqSchema);
       const resFields = summarizeResponseFields(resSchema);
 

@@ -17,6 +17,7 @@ import type {
   ListTransformersRequest,
   ListTransformersResponse,
   CreateMediaBuyRequest,
+  CreateMediaBuyResponse,
   UpdateMediaBuyRequest,
   UpdateMediaBuyResponse,
   SyncCreativesRequest,
@@ -82,12 +83,7 @@ import type {
 } from '../types/tools.generated';
 import { type MutatingRequestInput, generateIdempotencyKey, isMutatingTask } from '../utils/idempotency';
 
-import type {
-  MCPWebhookPayload,
-  AdCPAsyncResponseData,
-  TaskStatus,
-  CreateMediaBuyResponse,
-} from '../types/core.generated';
+import type { MCPWebhookPayload, AdCPAsyncResponseData, TaskStatus } from '../types/core.generated';
 import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 import { A2AClient as A2AClientImpl } from '@a2a-js/sdk/client';
 // A2A SDK client used untyped — wire shapes are validated at runtime, matching
@@ -722,7 +718,13 @@ export type SyncCreativesTaskOptions = CreativeDeliveryTaskOptions & {
 
 const PRIMARY_ADCP_TASK_NAMES = {
   get_products: true,
+  list_products: true,
+  request_proposals: true,
   refine_proposals: true,
+  decline_proposals: true,
+  buy_products: true,
+  accept_proposal: true,
+  control_media_buy: true,
   create_media_buy: true,
   update_media_buy: true,
   sync_creatives: true,
@@ -750,7 +752,9 @@ const PRIMARY_ADCP_TASK_NAMES = {
   sync_plans: true,
   check_governance: true,
   report_plan_outcome: true,
+  report_plan_adjustment: true,
   get_plan_audit_logs: true,
+  sync_agent_notification_configs: true,
   context_match: true,
   identity_match: true,
 } satisfies Record<AdcpTaskName, true>;

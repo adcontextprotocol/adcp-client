@@ -84,7 +84,17 @@ test('generated types maintain strict schema enforcement', () => {
   // - New compliance domain (comply_test_controller) adds oneOf variants with extensible params
   // - Account, SI session, creative, media buy lifecycle schemas added extensible fields
   //
-  const MAX_ALLOWED = 450;
+  // Updated from 450 to 1050 for AdCP 3.2.0-beta.0:
+  // - The signed bundle expands all canonical-format, proposal, measurement,
+  //   brand, and publisher/property contracts into the public SDK surface.
+  // - Those contracts deliberately preserve vendor-namespaced `ext`, opaque
+  //   context/evidence, and forward-compatible asset metadata at many nested
+  //   positions; the same shared schemas are repeated in multiple tool slices.
+  // - `check-no-loose-oneof.test.js` independently rejects index signatures
+  //   that appear as accidental union arms, so this ceiling covers intentional
+  //   extensibility rather than allowing the known jsts failure mode.
+  //
+  const MAX_ALLOWED = 1050;
 
   console.log(`📊 Type strictness metrics:`);
   console.log(`   Index signatures found: ${count}`);
@@ -148,7 +158,11 @@ test('core types maintain strict schema enforcement', () => {
   // - Upstream added additionalProperties: true to many core types for extensibility
   // - New enum schemas (account-status, si-session-status) with descriptions
   // - Business entity, price breakdown, adjustment types added
-  const MAX_CORE_ALLOWED = 450;
+  //
+  // Updated from 450 to 950 for AdCP 3.2.0-beta.0 canonical-format,
+  // proposal, measurement, and registry expansion. As above, the separate
+  // loose-oneOf scanner continues to fail on accidental permissive arms.
+  const MAX_CORE_ALLOWED = 950;
 
   console.log(`📊 Core types strictness:`);
   console.log(`   Index signatures found: ${count}`);

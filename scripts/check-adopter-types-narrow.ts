@@ -45,6 +45,9 @@ const NARROW_TOOLS = [
   'get_products', // wholesale-feed branch + cache_scope
   'get_adcp_capabilities', // exercises the `adcp` AdCP carve-out
   'si_get_offering', // exercises the `si` SI carve-out
+  'refine_proposals', // 3.2 type-alias response + deep proposal closure
+  'report_plan_adjustment', // 3.2 governance mutation
+  'sync_agent_notification_configs', // 3.2 protocol configuration mutation
 ];
 
 // `moduleResolution: node16` (or newer: nodenext / bundler) is required

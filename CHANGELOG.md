@@ -1,5 +1,15 @@
 # Changelog
 
+## 14.0.0-beta.0
+
+### Major Changes
+
+- Add the AdCP 3.2 beta surface, including compact media-buy lifecycle tools, plan-adjustment reporting, agent notification configuration, version-aware request signing, regenerated types and schemas, and mixed-version compatibility for AdCP 3.0 and 3.1 peers.
+
+### Patch Changes
+
+- b42d757: `isLikelyPrivateUrl` now recognizes Kubernetes service DNS names (`.cluster.local` suffix) as private. Callers connecting to a managed internal agent whose URI ends in `.svc.cluster.local` (with or without the trailing FQDN dot) are granted `allowPrivateIp` automatically, without needing `ADCP_ALLOW_PRIVATE_AGENT_URL=1`.
+
 ## 13.0.0
 
 ### Major Changes

@@ -785,6 +785,8 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     return {
       plan_id: context.plan_id ?? 'unknown',
       caller: FALLBACK_CALLER_AGENT_URL,
+      tool: 'get_products',
+      target_agent: 'https://seller.example/',
       payload: {
         type: 'media_buy',
         account: context.account ?? resolveAccount(options),

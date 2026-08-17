@@ -71,8 +71,14 @@ const collisionResults = [
 const toolsGenerated = readFileSync(${JSON.stringify(path.join(REPO_ROOT, 'src/lib/types/tools.generated.ts'))}, 'utf8');
 const generatedSurface = {
   importsCoreSharedTypes: /import type \\{[\\s\\S]*\\bAudienceConstraints\\b[\\s\\S]*\\bPurchaseType\\b[\\s\\S]*\\} from '\\.\\/core\\.generated';/.test(toolsGenerated),
-  reExportsCoreSharedTypes: toolsGenerated.includes(
-    "export type { AudienceConstraints, CatalogItemDeliveryMetrics, GeoDeliveryMetrics, KeywordDeliveryMetrics, PurchaseType } from './core.generated';"
+  reExportsCoreSharedTypes: [
+    'AudienceConstraints',
+    'CatalogItemDeliveryMetrics',
+    'GeoDeliveryMetrics',
+    'KeywordDeliveryMetrics',
+    'PurchaseType',
+  ].every(name =>
+    new RegExp("export type \\\\{[^;]*\\\\b" + name + "\\\\b[^;]*\\\\} from '\\\\.\\\\/core\\\\.generated';").test(toolsGenerated)
   ),
   declaresAudienceConstraints: /export interface AudienceConstraints\\b/.test(toolsGenerated),
   declaresCatalogItemDeliveryMetrics: /export type CatalogItemDeliveryMetrics\\b/.test(toolsGenerated),

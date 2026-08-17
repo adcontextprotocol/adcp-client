@@ -25,8 +25,11 @@ const {
   StaticJwksResolver,
   canonicalTargetUri,
   signRequest,
-  verifyRequestSignature,
+  verifyRequestSignature: verifyRequestSignatureForProfile,
 } = require('../dist/lib/signing/index.js');
+
+const verifyRequestSignature = (request, options) =>
+  verifyRequestSignatureForProfile(request, { adcpVersion: '3.1', ...options });
 
 const KEYS_PATH = path.join(
   __dirname,

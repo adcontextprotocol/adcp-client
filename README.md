@@ -30,10 +30,11 @@ AdCP operations are **distributed and asynchronous by default**. An agent might:
 
 ```bash
 npm install @adcp/sdk@adcp-3.0   # 7.x, AdCP 3.0
-npm install @adcp/sdk@adcp-3.1   # 8.x beta, AdCP 3.1
+npm install @adcp/sdk             # 13.x, maintained AdCP 3.1 stable line
+npm install @adcp/sdk@beta        # 14.x beta, AdCP 3.2 beta
 ```
 
-Upgrading from v12 to the canonical-creative SDK surface? See [`docs/migration-12-to-13.md`](./docs/migration-12-to-13.md). Older paths: **[MIGRATION-v8.md](./MIGRATION-v8.md)** and [`docs/migration-8.0-to-8.1.md`](./docs/migration-8.0-to-8.1.md).
+Trying the v14 beta? Read the [14.0.0 beta release notes](./docs/releases/14.0.0-beta.0.md), then use the [13-to-14](./docs/migration-13-to-14.md) or [12-to-14](./docs/migration-12-to-14.md) migration guide. The npm `latest` tag remains on v13 for the maintained AdCP 3.1 stable line. Older paths: [12-to-13](./docs/migration-12-to-13.md), **[MIGRATION-v8.md](./MIGRATION-v8.md)**, and [8.0-to-8.1](./docs/migration-8.0-to-8.1.md).
 
 ### Narrow type imports (`@adcp/sdk/types/<tool>`)
 

@@ -34,6 +34,7 @@ export interface RenderDimensions {
 
 /** Fixed-dimensions render — display banners, video placements, any format with a known W×H. */
 export interface DimensionsRender {
+  [key: string]: unknown;
   role: string;
   dimensions: RenderDimensions;
 }

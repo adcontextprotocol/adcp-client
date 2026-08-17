@@ -41,6 +41,7 @@ import type {
   ListCreativesResponse,
   ListPropertyListsResponse,
   LogEventSuccess,
+  MediaBuyStatus,
   PreviewCreativeResponse,
   ProvidePerformanceFeedbackSuccess,
   ReportPlanOutcomeResponse,
@@ -83,6 +84,9 @@ type ExclusivePayload<TLeft, TRight> =
   | (TLeft & { [K in Exclude<keyof TRight, keyof TLeft>]?: never })
   | (TRight & { [K in Exclude<keyof TLeft, keyof TRight>]?: never });
 
+/** SDK 13 server handlers used `status` for the domain media-buy status. */
+type LegacyMediaBuyStatusInput<T> = T & { status?: MediaBuyStatus };
+
 export type GetAdCPCapabilitiesPayload = ServerPayload<GetAdCPCapabilitiesResponse>;
 
 export type ListAccountsPayload = ServerPayload<ListAccountsResponse>;
@@ -96,10 +100,10 @@ export type GetAccountFinancialsSuccessPayload = ServerPayload<GetAccountFinanci
 
 export type GetProductsPayload = RequireCacheScopeWhenProducts<ServerPayload<GetProductsResponse>>;
 export type CreateMediaBuyPayload = ExclusivePayload<
-  ServerPayload<CreateMediaBuySuccess>,
+  LegacyMediaBuyStatusInput<ServerPayload<CreateMediaBuySuccess>>,
   ServerPayload<CreateMediaBuyError>
 >;
-export type UpdateMediaBuyPayload = ServerPayload<UpdateMediaBuySuccess>;
+export type UpdateMediaBuyPayload = LegacyMediaBuyStatusInput<ServerPayload<UpdateMediaBuySuccess>>;
 export type GetMediaBuysPayload = ServerPayload<GetMediaBuysResponse>;
 export type GetMediaBuyDeliveryPayload = ServerPayload<GetMediaBuyDeliveryResponse>;
 export type ProvidePerformanceFeedbackPayload = ServerPayload<ProvidePerformanceFeedbackSuccess>;

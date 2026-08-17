@@ -65,6 +65,7 @@ async function runVector(vector) {
       revocationStore,
       now: () => now,
       operation: operationFromUrl(vector.request.url),
+      adcpVersion: vector.signing_profile_version ?? '3.1',
     });
     return { success: true };
   } catch (err) {
@@ -104,6 +105,27 @@ describe('RFC 9421 verifier: negative conformance vectors (adcp#2323)', () => {
   for (const file of readdirSync(dir).sort()) {
     const vector = JSON.parse(readFileSync(path.join(dir, file), 'utf8'));
     test(`${file} → ${vector.expected_outcome.error_code}`, async () => {
+      const actual = await runVector(vector);
+      assert.strictEqual(actual.success, false);
+      assert.strictEqual(actual.error_code, vector.expected_outcome.error_code);
+    });
+  }
+});
+
+describe('AdCP 3.2 signing-profile vectors', () => {
+  const profileRoot = path.join(ROOT, 'profile-3.2');
+
+  for (const file of readdirSync(path.join(profileRoot, 'positive')).sort()) {
+    const vector = JSON.parse(readFileSync(path.join(profileRoot, 'positive', file), 'utf8'));
+    test(`positive/${file}`, async () => {
+      const actual = await runVector(vector);
+      assert.strictEqual(actual.success, true, JSON.stringify(actual));
+    });
+  }
+
+  for (const file of readdirSync(path.join(profileRoot, 'negative')).sort()) {
+    const vector = JSON.parse(readFileSync(path.join(profileRoot, 'negative', file), 'utf8'));
+    test(`negative/${file}`, async () => {
       const actual = await runVector(vector);
       assert.strictEqual(actual.success, false);
       assert.strictEqual(actual.error_code, vector.expected_outcome.error_code);

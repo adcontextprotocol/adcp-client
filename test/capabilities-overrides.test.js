@@ -178,6 +178,9 @@ describe('capabilities.overrides — per-domain merge (#654)', () => {
     const server = createAdcpServer({
       name: 'Test',
       version: '1.0.0',
+      // `covers_content_digest: "either"` is a 3.1 compatibility value;
+      // AdCP 3.2 correctly forces it to `required` after all overrides.
+      adcpVersion: '3.1',
       mediaBuy: { getProducts: async () => ({ products: [] }) },
       capabilities: {
         request_signing: {
@@ -197,6 +200,25 @@ describe('capabilities.overrides — per-domain merge (#654)', () => {
     const caps = await callCapabilities(server);
     assert.deepStrictEqual(caps.request_signing.required_for, []);
     assert.strictEqual(caps.request_signing.covers_content_digest, 'either');
+  });
+
+  it('projects an internal rolling verifier policy as the strict 3.2 public contract', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      validation: { responses: 'strict' },
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      capabilities: {
+        request_signing: {
+          supported: true,
+          required_for: ['create_media_buy'],
+          covers_content_digest: 'either',
+        },
+      },
+    });
+    const caps = await callCapabilities(server);
+    assert.strictEqual(caps.request_signing.covers_content_digest, 'required');
+    assert.strictEqual(caps.adcp_version, '3.2-beta.0');
   });
 
   it('undefined overrides are no-ops', async () => {
