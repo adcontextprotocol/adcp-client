@@ -212,4 +212,28 @@ describe('storyboard expect_error failed payload normalization (#2179)', () => {
     assert.equal(gateStep.passed, true);
     assert.equal(result.overall_passed, true);
   });
+
+  test('successful payloads do not pass expect_error merely because they contain an error field', async () => {
+    const client = {
+      getAgentInfo: async () => ({ name: 'stub', tools: [{ name: 'get_products' }] }),
+      getProducts: async () => ({
+        success: true,
+        data: {
+          success: true,
+          error_code: 'INVALID_REQUEST',
+          message: 'Advisory only',
+        },
+      }),
+    };
+
+    const result = await runStoryboard('https://stub.example/mcp', buildStoryboard(), {
+      protocol: 'mcp',
+      _client: client,
+      _profile: { name: 'stub', tools: [{ name: 'get_products' }] },
+    });
+
+    const rejectStep = result.phases[0].steps[0];
+    assert.equal(rejectStep.passed, false);
+    assert.equal(result.overall_passed, false);
+  });
 });

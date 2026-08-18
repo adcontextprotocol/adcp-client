@@ -5291,8 +5291,13 @@ async function executeStep(
   // Determine pass/fail — inverted when expect_error is set
   let passed: boolean;
   if (step.expect_error) {
-    // Step passes when the task fails (returns an error)
-    passed = !taskResult?.success || !!stepResult.error;
+    // Raw protocol probes can succeed at the transport layer while carrying
+    // a controller-level rejection in their structured payload. Treat the
+    // payload's explicit failure signal as the expected error; authored
+    // validations below still verify that it is the *right* rejection.
+    const responsePayload = taskResult?.data as { success?: unknown } | undefined;
+    const payloadReportsFailure = responsePayload?.success === false;
+    passed = !taskResult?.success || !!stepResult.error || payloadReportsFailure;
   } else if (crossResponses) {
     // Parallel-dispatch step: pass/fail is driven by the cross-response
     // set, not the representative arm. The representative is pinned to
