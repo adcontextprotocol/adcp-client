@@ -1537,7 +1537,13 @@ export class SingleAgentClient {
             adcpVersion: this.resolvedAdcpVersion,
             ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
             ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
-            transport: this.config.transport,
+            transport: {
+              ...this.config.transport,
+              requestTimeoutMs:
+                this.config.transport?.requestTimeoutMs ??
+                this.config.webhookVerification?.resolverOptions?.timeoutMs ??
+                10_000,
+            },
           }
         );
       },
