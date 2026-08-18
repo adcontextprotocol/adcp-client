@@ -68,7 +68,7 @@ describe('refine_proposals server integration', () => {
   test('modern platform seam auto-pins to an advertised 3.2 release', async () => {
     const server = createAdcpServerFromPlatform(
       {
-        capabilities: { specialisms: [], supported_versions: ['3.2-beta.0'] },
+        capabilities: { specialisms: [], supported_versions: ['3.2-beta.1'] },
         accounts: {
           resolution: 'derived',
           resolve: async () => ({ id: 'account-1', metadata: {} }),
@@ -101,8 +101,8 @@ describe('refine_proposals server integration', () => {
     const listed = await server.dispatchTestRequest({ method: 'tools/list' });
     assert.ok(listed.tools.some(tool => tool.name === 'refine_proposals'));
     const capabilities = await call(server, 'get_adcp_capabilities', {});
-    assert.equal(capabilities.structuredContent.adcp_version, '3.2-beta.0');
-    assert.deepEqual(capabilities.structuredContent.adcp.supported_versions, ['3.2-beta.0']);
+    assert.equal(capabilities.structuredContent.adcp_version, '3.2-beta.1');
+    assert.deepEqual(capabilities.structuredContent.adcp.supported_versions, ['3.2-beta.1']);
     assert.deepEqual(capabilities.structuredContent.media_buy.proposal_refinement, {
       supported_dimensions: [],
     });
@@ -138,7 +138,7 @@ describe('refine_proposals server integration', () => {
 
   test('hides proposal refinement capabilities from a negotiated pre-3.2 response', async () => {
     const server = negotiationServer(undefined, {
-      serverCapabilities: { supported_versions: ['3.1', '3.2-beta.0'] },
+      serverCapabilities: { supported_versions: ['3.1', '3.2-beta.1'] },
     });
 
     const legacy = await call(server, 'get_adcp_capabilities', {
@@ -150,10 +150,10 @@ describe('refine_proposals server integration', () => {
     assert.equal(legacy.structuredContent.media_buy.lifecycle_tools, undefined);
 
     const modern = await call(server, 'get_adcp_capabilities', {
-      adcp_version: '3.2-beta.0',
+      adcp_version: '3.2-beta.1',
       adcp_major_version: 3,
     });
-    assert.equal(modern.structuredContent.adcp_version, '3.2-beta.0');
+    assert.equal(modern.structuredContent.adcp_version, '3.2-beta.1');
     assert.deepEqual(modern.structuredContent.media_buy.proposal_refinement, {
       supported_dimensions: ['total_budget', 'alternatives'],
       max_alternatives: 4,
