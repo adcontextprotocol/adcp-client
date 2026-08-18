@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
+  createCanonicalReferenceCache,
   createCanonicalReferenceResolver,
   resolveFormatSchemaReference,
   resolvePlatformExtensionsReference,
@@ -196,6 +197,102 @@ describe('canonical reference resolver', () => {
     assert.strictEqual(second.status, 'resolved');
     assert.deepStrictEqual(second.document, { vendor: 'example', feature: true });
     assert.strictEqual(Buffer.from(second.body).toString('utf8'), body.toString('utf8'));
+  });
+
+  test('bounded cache refreshes LRU hits and evicts the least-recent entry', async () => {
+    const fixtures = [
+      ['/cache-lru-a.json', { value: 'a' }],
+      ['/cache-lru-b.json', { value: 'b' }],
+      ['/cache-lru-c.json', { value: 'c' }],
+    ].map(([route, value]) => {
+      const body = jsonBody(value);
+      routes.set(route, (_req, res) => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(body);
+      });
+      return { route, body };
+    });
+    const resolver = createCanonicalReferenceResolver({
+      ...unsafeLocal,
+      cache: createCanonicalReferenceCache({ maxEntries: 2, maxBytes: 1024 * 1024 }),
+    });
+
+    await resolver.resolvePlatformExtensions(ref(baseUrl, fixtures[0].route, fixtures[0].body));
+    await resolver.resolvePlatformExtensions(ref(baseUrl, fixtures[1].route, fixtures[1].body));
+    await resolver.resolvePlatformExtensions(ref(baseUrl, fixtures[0].route, fixtures[0].body)); // touch A
+    await resolver.resolvePlatformExtensions(ref(baseUrl, fixtures[2].route, fixtures[2].body)); // evict B
+    const recent = await resolver.resolvePlatformExtensions(ref(baseUrl, fixtures[0].route, fixtures[0].body));
+    const evicted = await resolver.resolvePlatformExtensions(ref(baseUrl, fixtures[1].route, fixtures[1].body));
+
+    assert.strictEqual(recent.fromCache, true);
+    assert.strictEqual(evicted.fromCache, false);
+    assert.strictEqual(requestCounts.get('/cache-lru-a.json'), 1);
+    assert.strictEqual(requestCounts.get('/cache-lru-b.json'), 2);
+    assert.strictEqual(requestCounts.get('/cache-lru-c.json'), 1);
+  });
+
+  test('oversize entries are returned without being retained', async () => {
+    const body = jsonBody({ value: 'too-large-for-cache' });
+    routes.set('/cache-oversize.json', (_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(body);
+    });
+    const resolver = createCanonicalReferenceResolver({
+      ...unsafeLocal,
+      cache: createCanonicalReferenceCache({ maxEntries: 10, maxBytes: 1 }),
+    });
+    const reference = ref(baseUrl, '/cache-oversize.json', body);
+
+    const first = await resolver.resolvePlatformExtensions(reference);
+    const second = await resolver.resolvePlatformExtensions(reference);
+
+    assert.strictEqual(first.status, 'resolved');
+    assert.strictEqual(second.fromCache, false);
+    assert.strictEqual(requestCounts.get('/cache-oversize.json'), 2);
+  });
+
+  test('zero-argument cache is bounded and validates explicit limits', () => {
+    const cache = createCanonicalReferenceCache();
+    for (let index = 0; index < 65; index++) {
+      cache.set(`key-${index}`, {
+        body: new Uint8Array(),
+        text: '',
+        document: {},
+      });
+    }
+
+    assert.strictEqual(cache.get('key-0'), undefined);
+    assert.ok(cache.get('key-64'));
+    assert.throws(() => createCanonicalReferenceCache({ maxEntries: -1 }), /maxEntries/);
+    assert.throws(() => createCanonicalReferenceCache({ maxBytes: Number.POSITIVE_INFINITY }), /maxBytes/);
+  });
+
+  test('byte accounting includes URI/key strings and subtracts replacements', () => {
+    const longUri = `https://cache.example/schema.json#${'x'.repeat(1_000)}`;
+    const longKey = `${longUri}@sha256:${'a'.repeat(64)}`;
+    const bounded = createCanonicalReferenceCache({ maxEntries: 10, maxBytes: 1_024 });
+    bounded.set(longKey, {
+      body: new Uint8Array(),
+      text: '',
+      document: {},
+      cacheKey: longKey,
+      ref: { uri: longUri, digest: `sha256:${'a'.repeat(64)}` },
+    });
+    assert.strictEqual(bounded.get(longKey), undefined);
+
+    const replacements = createCanonicalReferenceCache({ maxEntries: 10, maxBytes: 1_800 });
+    const result = (key, text) => ({
+      body: new TextEncoder().encode(text),
+      text,
+      document: {},
+      cacheKey: key,
+      ref: { uri: `https://cache.example/${key}`, digest: `sha256:${'b'.repeat(64)}` },
+    });
+    replacements.set('a', result('a', 'x'.repeat(300)));
+    replacements.set('a', result('a', ''));
+    replacements.set('b', result('b', ''));
+    assert.ok(replacements.get('a'));
+    assert.ok(replacements.get('b'));
   });
 
   test('cache scope includes body caps so permissive calls do not relax later strict calls', async () => {
