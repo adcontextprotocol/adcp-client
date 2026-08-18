@@ -442,6 +442,7 @@ export {
   resolvePlatformExtensionsReference,
   type CanonicalReference,
   type CanonicalReferenceCache,
+  type CanonicalReferenceCacheOptions,
   type CanonicalReferenceError,
   type CanonicalReferenceErrorCode,
   type CanonicalReferenceFailureResult,

@@ -295,4 +295,152 @@ describe('createUpstreamHttpClient', () => {
     await client.get('/items', undefined, undefined, { authContext: { principal: 'caller_token_xyz' } });
     assert.equal(capturedRequests[0].init.headers['Authorization'], 'Bearer caller_token_xyz');
   });
+
+  it('times out a fetch that never resolves and aborts the composed signal', async () => {
+    let seenSignal;
+    const client = createUpstreamHttpClient({
+      baseUrl: 'https://api.example.com',
+      auth: { kind: 'none' },
+      requestTimeoutMs: 10,
+      fetch: async (_url, init) => {
+        seenSignal = init.signal;
+        return new Promise(() => {});
+      },
+    });
+
+    await assert.rejects(client.get('/hang'), error => error.name === 'TimeoutError');
+    assert.strictEqual(seenSignal.aborted, true);
+  });
+
+  it('keeps the deadline active while consuming the response body', async () => {
+    const client = createUpstreamHttpClient({
+      baseUrl: 'https://api.example.com',
+      auth: { kind: 'none' },
+      requestTimeoutMs: 10,
+      fetch: async () => ({
+        status: 200,
+        ok: true,
+        text: async () => new Promise(() => {}),
+      }),
+    });
+
+    await assert.rejects(client.get('/slow-body'), error => error.name === 'TimeoutError');
+  });
+
+  it('bounds streamed response bodies and supports a per-call opt-out', async () => {
+    const client = createUpstreamHttpClient({
+      baseUrl: 'https://api.example.com',
+      auth: { kind: 'none' },
+      maxResponseBytes: 4,
+      fetch: async () => new Response('12345', { status: 200 }),
+    });
+
+    await assert.rejects(client.get('/large'), error => error.name === 'ResponseTooLargeError');
+    const unbounded = await client.get('/large', undefined, undefined, { maxResponseBytes: 0 });
+    assert.strictEqual(unbounded.body, 12345);
+  });
+
+  it('cancels a 404 response body before returning null', async () => {
+    let cancelled = 0;
+    const client = createUpstreamHttpClient({
+      baseUrl: 'https://api.example.com',
+      auth: { kind: 'none' },
+      fetch: async () => ({
+        status: 404,
+        ok: false,
+        body: { cancel: async () => cancelled++ },
+      }),
+    });
+
+    const result = await client.get('/missing');
+    assert.deepStrictEqual(result, { status: 404, body: null });
+    assert.strictEqual(cancelled, 1);
+  });
+
+  it('composes caller cancellation without misreporting it as a timeout', async () => {
+    const controller = new AbortController();
+    const client = createUpstreamHttpClient({
+      baseUrl: 'https://api.example.com',
+      auth: { kind: 'none' },
+      requestTimeoutMs: 1_000,
+      fetch: async () => new Promise(() => {}),
+    });
+
+    const pending = client.get('/cancel', undefined, undefined, { signal: controller.signal });
+    controller.abort();
+    await assert.rejects(pending, error => error.name === 'AbortError');
+  });
+
+  it('supports per-call timeout overrides and 0 disables the default deadline', async () => {
+    let disabledSignal = 'not-called';
+    const client = createUpstreamHttpClient({
+      baseUrl: 'https://api.example.com',
+      auth: { kind: 'none' },
+      requestTimeoutMs: 1_000,
+      fetch: async (_url, init) => {
+        disabledSignal = init.signal;
+        return { status: 204, ok: true, text: async () => '' };
+      },
+    });
+
+    await client.get('/no-deadline', undefined, undefined, { requestTimeoutMs: 0 });
+    assert.strictEqual(disabledSignal, undefined);
+
+    const hanging = createUpstreamHttpClient({
+      baseUrl: 'https://api.example.com',
+      auth: { kind: 'none' },
+      requestTimeoutMs: 1_000,
+      fetch: async () => new Promise(() => {}),
+    });
+    await assert.rejects(
+      hanging.get('/short-deadline', undefined, undefined, { requestTimeoutMs: 10 }),
+      error => error.name === 'TimeoutError'
+    );
+  });
+
+  it('does not start fetch after auth resolution completes past the deadline', async () => {
+    let resolveToken;
+    let fetchCalls = 0;
+    const client = createUpstreamHttpClient({
+      baseUrl: 'https://api.example.com',
+      auth: {
+        kind: 'dynamic_bearer',
+        getToken: () =>
+          new Promise(resolve => {
+            resolveToken = resolve;
+          }),
+      },
+      requestTimeoutMs: 10,
+      fetch: async () => {
+        fetchCalls++;
+        return new Response('{}', { status: 200 });
+      },
+    });
+
+    await assert.rejects(client.get('/late-auth'), error => error.name === 'TimeoutError');
+    resolveToken('late-token');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.strictEqual(fetchCalls, 0);
+  });
+
+  it('rejects invalid request timeout configuration', () => {
+    assert.throws(
+      () =>
+        createUpstreamHttpClient({
+          baseUrl: 'https://api.example.com',
+          auth: { kind: 'none' },
+          requestTimeoutMs: -1,
+        }),
+      /requestTimeoutMs/
+    );
+    assert.throws(
+      () =>
+        createUpstreamHttpClient({
+          baseUrl: 'https://api.example.com',
+          auth: { kind: 'none' },
+          maxResponseBytes: -1,
+        }),
+      /maxResponseBytes/
+    );
+  });
 });

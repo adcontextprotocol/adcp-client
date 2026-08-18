@@ -671,7 +671,7 @@ function generateLlmsTxt(
   ln(`## Canonical Reference Resolver`);
   ln();
   ln(
-    `\`format_schema\` and \`platform_extensions\` references use immutable \`{ uri, digest }\` pointers. Use \`createCanonicalReferenceResolver\` from \`@adcp/sdk/canonical-references\` instead of raw fetches; it applies SSRF-safe DNS-pinned fetches, redirect blocking, timeout/body caps, SHA-256 verification, structured non-throwing statuses, and caller-owned policy-scoped caching.`
+    `\`format_schema\` and \`platform_extensions\` references use immutable \`{ uri, digest }\` pointers. Use \`createCanonicalReferenceResolver\` from \`@adcp/sdk/canonical-references\` instead of raw fetches; it applies SSRF-safe DNS-pinned fetches, redirect blocking, timeout/body caps, SHA-256 verification, structured non-throwing statuses, and bounded policy-scoped LRU caching. The zero-argument cache holds at most 64 entries / 32 MiB estimated retained data; use \`createCanonicalReferenceCache({ maxEntries, maxBytes })\` to tune the per-resolver budget or inject a fully caller-owned cache.`
   );
   ln();
   ln('```typescript');

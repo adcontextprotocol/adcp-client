@@ -16,12 +16,7 @@ Pass functions for `publicUrl` and `protectedResource`, branch on `ctx.host` in 
 
 ```typescript
 import { UnknownHostError, hostname } from '@adcp/sdk';
-import {
-  createAdcpServerFromPlatform,
-  serve,
-  verifyBearer,
-  type DecisioningPlatform,
-} from '@adcp/sdk/server';
+import { createAdcpServerFromPlatform, serve, verifyBearer, type DecisioningPlatform } from '@adcp/sdk/server';
 
 declare const snapPlatform: DecisioningPlatform;
 declare const metaPlatform: DecisioningPlatform;
@@ -36,17 +31,17 @@ const adapters = new Map<string, { name: string; platform: DecisioningPlatform }
   // ... one entry per hostname you front
 ]);
 
+function requireHostConfig(rawHost: string) {
+  if (!rawHost) throw new UnknownHostError('Host header required');
+  const host = hostname(rawHost); // strips a local/test port; works for IPv6
+  const config = adapters.get(host);
+  if (!config) throw new UnknownHostError(`No adapter configured for ${host}`);
+  return { host, ...config };
+}
+
 serve(
   ctx => {
-    // Fail closed on missing Host header. HTTP/1.1 requires it, but a
-    // misbehaving client can omit it — ctx.host is `''` in that case,
-    // and a blank-host adapter lookup would mint audience-mismatched
-    // tokens if we proceeded.
-    if (!ctx.host) throw new UnknownHostError('Host header required');
-    const cfg = adapters.get(ctx.host);
-    // UnknownHostError → 404 (generic body, routing table stays off the wire).
-    // Any other thrown error still surfaces as 500.
-    if (!cfg) throw new UnknownHostError(`No adapter configured for ${ctx.host}`);
+    const cfg = requireHostConfig(ctx.host);
     return createAdcpServerFromPlatform(cfg.platform, {
       name: cfg.name,
       version: '1.0.0',
@@ -54,11 +49,11 @@ serve(
   },
   {
     trustForwardedHost: true, // behind Fly/Cloud Run/ALB that sets X-Forwarded-Host
-    // hostname() strips the port — test/local runs include `:3001`, production
-    // doesn't. Works for IPv6 too.
-    publicUrl: host => `https://${hostname(host)}/mcp`,
-    protectedResource: host => ({
-      authorization_servers: [`https://${hostname(host)}/oauth`],
+    // The auth-free PRM route invokes these resolvers before the factory, so
+    // they MUST enforce the same allowlist instead of interpolating raw Host.
+    publicUrl: rawHost => `https://${requireHostConfig(rawHost).host}/mcp`,
+    protectedResource: rawHost => ({
+      authorization_servers: [`https://${requireHostConfig(rawHost).host}/oauth`],
       scopes_supported: ['read', 'write'],
     }),
     authenticate: verifyBearer({
@@ -74,13 +69,13 @@ serve(
 );
 ```
 
-Each unique host runs its resolver once and the result is cached. Every host advertises its own RFC 9728 `resource` URL, the 401 challenge carries the host's `resource_metadata` URL, and the factory sees the resolved host so it can return host-specific handlers. Auth, RFC 9421 signature verification, idempotency, and governance composition all stay inside `serve()` — nothing extra to re-own.
+Up to 128 accepted hosts are cached in a process-local LRU. `publicUrl` and `protectedResource` must be side-effect-free and idempotent because an evicted host is resolved again on its next request. Every host advertises its own RFC 9728 `resource` URL, the 401 challenge carries the host's `resource_metadata` URL, and the factory sees the resolved host so it can return host-specific handlers. Auth, RFC 9421 signature verification, idempotency, and governance composition all stay inside `serve()` — nothing extra to re-own.
 
 **Audience binding: use the ctx-form callback.** `audience: (req, { publicUrl }) => publicUrl` is the safest shape — the JWT audience check is guaranteed to match what RFC 9728 PRM advertises for this host, and `publicUrl` already follows `serve()`'s host resolution. `audience: (req) => ...` also works but you own the security: don't read `X-Forwarded-Host` there directly (it bypasses `trustForwardedHost`), and don't string-concat the mount path (it breaks silently if the mount path changes).
 
 **`trustForwardedHost: true` requires an overwriting proxy.** The framework trusts the first entry in an `X-Forwarded-Host` chain — safe when your proxy rewrites the header on ingress, UNSAFE when it appends (the attacker gets to pick the first entry). Fly, Cloud Run, and GCP HTTPS LBs overwrite. AWS ALB default and nginx default append — these need `proxy_set_header X-Forwarded-Host $host;` or equivalent before you enable the flag. Verify against a request that already has `X-Forwarded-Host: attacker.example` in it. RFC 7239 `Forwarded: host=...` is read the same way (same trust requirement).
 
-**Unknown hosts: throw `UnknownHostError` from the factory.** `serve()` catches it and responds 404 with a generic body (the routing table never crosses the wire). Throwing any other `Error` stays as a 500 so unrelated bugs remain loud.
+**Unknown hosts: throw `UnknownHostError` from every host callback.** Use one shared allowlist helper for the factory, `publicUrl`, and `protectedResource`; the auth-free PRM route can invoke the resolvers before the factory. `serve()` catches the error and responds 404 with a generic body (the routing table never crosses the wire). Throwing any other `Error` stays as a 500 so unrelated bugs remain loud.
 
 **Factory runs per request.** `serve()` calls the factory on every incoming request (to avoid cross-request state bleed). By default it closes the returned server at the end of each request — so caching the `AdcpServer` from one call to the next is unsafe without opt-in. Keep the default-path factory cheap: look up a pre-built platform from a module-scoped `Map`, and let `createAdcpServerFromPlatform(...)` build a fresh wrapper from that platform on every call.
 

@@ -10,6 +10,7 @@ const {
   extractBearerToken,
   createAdcpServer,
   AuthError,
+  UnknownHostError,
   DEFAULT_JWT_ALGORITHMS,
 } = require('../dist/lib/server/legacy/v5/index.js');
 
@@ -478,6 +479,91 @@ describe('serve() + publicUrl + protectedResource', () => {
       // No Authorization header — must still succeed.
       const res = await fetchPath(ctx.port, '/.well-known/oauth-protected-resource/mcp');
       assert.strictEqual(res.status, 200);
+    } finally {
+      ctx.server.close();
+    }
+  });
+
+  it('bounds function-form host metadata with one coordinated LRU', async () => {
+    const publicCalls = new Map();
+    const prmCalls = new Map();
+    const ctx = await startServer({
+      trustForwardedHost: true,
+      publicUrl: host => {
+        publicCalls.set(host, (publicCalls.get(host) ?? 0) + 1);
+        return `https://${host}/mcp`;
+      },
+      protectedResource: host => {
+        prmCalls.set(host, (prmCalls.get(host) ?? 0) + 1);
+        return { authorization_servers: [`https://auth.${host}`] };
+      },
+    });
+    const metadataPath = '/.well-known/oauth-protected-resource/mcp';
+    const requestHost = host => fetchPath(ctx.port, metadataPath, { headers: { 'x-forwarded-host': host } });
+
+    try {
+      for (let index = 0; index < 128; index++) {
+        const res = await requestHost(`host-${index}.example`);
+        assert.strictEqual(res.status, 200);
+      }
+      await requestHost('host-0.example'); // refresh oldest
+      await requestHost('host-128.example'); // evict host-1
+      await requestHost('host-0.example');
+      await requestHost('host-1.example');
+
+      assert.strictEqual(publicCalls.get('host-0.example'), 1);
+      assert.strictEqual(prmCalls.get('host-0.example'), 1);
+      assert.strictEqual(publicCalls.get('host-1.example'), 2);
+      assert.strictEqual(prmCalls.get('host-1.example'), 2);
+    } finally {
+      ctx.server.close();
+    }
+  });
+
+  it('does not cache hosts rejected by a function-form resolver', async () => {
+    let calls = 0;
+    const ctx = await startServer({
+      publicUrl: host => {
+        calls++;
+        throw new UnknownHostError(`Unknown host ${host}`);
+      },
+      protectedResource: { authorization_servers: ['https://auth.example'] },
+    });
+    try {
+      const path = '/.well-known/oauth-protected-resource/mcp';
+      const first = await fetchPath(ctx.port, path, { headers: { host: 'unknown.example' } });
+      const second = await fetchPath(ctx.port, path, { headers: { host: 'unknown.example' } });
+      assert.strictEqual(first.status, 404);
+      assert.strictEqual(second.status, 404);
+      assert.strictEqual(calls, 2);
+    } finally {
+      ctx.server.close();
+    }
+  });
+
+  it('rolls back partial host metadata when the PRM resolver rejects', async () => {
+    let publicCalls = 0;
+    let prmCalls = 0;
+    const ctx = await startServer({
+      trustForwardedHost: true,
+      publicUrl: host => {
+        publicCalls++;
+        return `https://${host}/mcp`;
+      },
+      protectedResource: host => {
+        prmCalls++;
+        throw new UnknownHostError(`Unknown host ${host}`);
+      },
+    });
+    try {
+      const path = '/.well-known/oauth-protected-resource/mcp';
+      const headers = { 'x-forwarded-host': 'unknown-prm.example' };
+      const first = await fetchPath(ctx.port, path, { headers });
+      const second = await fetchPath(ctx.port, path, { headers });
+      assert.strictEqual(first.status, 404);
+      assert.strictEqual(second.status, 404);
+      assert.strictEqual(publicCalls, 2);
+      assert.strictEqual(prmCalls, 2);
     } finally {
       ctx.server.close();
     }
