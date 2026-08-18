@@ -678,9 +678,17 @@ function postProcessCreativeRuntimeConstraints(content: string): string {
       // `patternProperties` is lost when json-schema-to-typescript combines it
       // with `additionalProperties: true`. Preserve validation for canonical
       // slot keys while continuing to allow forward-compatible extension keys.
+      // Some generated inputs preserve the closed AssetVariant union directly;
+      // replace that shape too because it rejects
+      // forward-compatible extension slots and eagerly references a later
+      // declaration.
       // AssetVariantSchema is declared later in the generated module, so defer
       // resolving it until parse time to avoid a top-level TDZ reference.
-      .replace('assets: z.record(z.string(), z.unknown())', 'assets: CreativeAssetsSchema');
+      .replace('assets: z.record(z.string(), z.unknown())', 'assets: CreativeAssetsSchema')
+      .replace(
+        'assets: z.record(z.string(), z.union([AssetVariantSchema, z.array(AssetVariantSchema)]))',
+        'assets: CreativeAssetsSchema'
+      );
     if (constrainedAssets === schema.block) {
       throw new Error(`Unable to preserve creative asset constraints on ${schemaName}.`);
     }
@@ -709,6 +717,7 @@ function postProcessCreativeRuntimeConstraints(content: string): string {
   preserveCreativeConstraints('CreativeAssetSchema');
   preserveCreativeConstraints('CreativeManifestSchema');
 
+  const creativeAsset = schemaBlock('CreativeAssetSchema');
   const creativeManifest = schemaBlock('CreativeManifestSchema');
   const assetValueSchema = `const CreativeAssetValueSchema: z.ZodType = z.unknown().superRefine((value, ctx) => {
     const variants = Array.isArray(value) ? value : [value];
@@ -733,7 +742,8 @@ const CreativeAssetsSchema: z.ZodType<Record<string, unknown>> = z.record(z.stri
 });
 
 `;
-  content = content.slice(0, creativeManifest.start) + assetValueSchema + content.slice(creativeManifest.start);
+  const firstCreativeSchemaStart = Math.min(creativeAsset.start, creativeManifest.start);
+  content = content.slice(0, firstCreativeSchemaStart) + assetValueSchema + content.slice(firstCreativeSchemaStart);
 
   const formatReference = schemaBlock('FormatReferenceStructuredObjectSchema');
   const strictFormatReference = formatReference.block.replace(
@@ -2365,6 +2375,7 @@ export const __test__ = {
   postProcessMarkerUnionObjectIntersections,
   postProcessCanonicalFormatSlots,
   postProcessCreativeBriefRequiredDisclosures,
+  postProcessCreativeRuntimeConstraints,
   postProcessObjectUnionIntersections,
   postProcessObjectIntersections,
   postProcessRecordSizeConstraints,

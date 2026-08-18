@@ -62,6 +62,53 @@ function postProcessObjectUnionIntersections(input) {
   return runPostProcess('postProcessObjectUnionIntersections', input, '.zod-object-union-');
 }
 
+function postProcessCreativeRuntimeConstraints(input) {
+  return runPostProcess('postProcessCreativeRuntimeConstraints', input, '.zod-creative-runtime-');
+}
+
+test('postProcessCreativeRuntimeConstraints handles legacy and AssetVariant record emissions', () => {
+  const assetRecords = [
+    'z.record(z.string(), z.unknown())',
+    'z.record(z.string(), z.union([AssetVariantSchema, z.array(AssetVariantSchema)]))',
+  ];
+
+  for (const assetRecord of assetRecords) {
+    const output = postProcessCreativeRuntimeConstraints(`
+export const CreativeAssetSchema = z.object({
+  format_id: z.string().optional(),
+  format_kind: z.string().optional(),
+  assets: ${assetRecord}
+}).passthrough().and(z.union([V1CreativeNamedFormatReferenceSchema, V2CreativeCanonicalFormatKindSchema]));
+
+export const SpacerSchema = z.string();
+
+export const CreativeManifestSchema = z.object({
+  format_id: z.string().optional(),
+  format_kind: z.string().optional(),
+  assets: ${assetRecord}
+}).passthrough().and(z.union([NamedFormatManifestSchema, CanonicalFormatManifestSchema]));
+
+export const AssetVariantSchema = z.object({ asset_type: z.string() });
+
+export const FormatReferenceStructuredObjectSchema = z.object({
+  agent_url: z.string()
+});
+
+export const TailSchema = z.string();
+`);
+
+    assert.equal((output.match(/assets: CreativeAssetsSchema/g) || []).length, 2);
+    assert.equal((output.match(/const CreativeAssetsSchema:/g) || []).length, 1);
+    assert.doesNotMatch(output, /assets: z\.record\(z\.string\(\), z\.(?:union|unknown)/);
+    assert.doesNotMatch(output, /\.and\(z\.union\(\[(?:V1CreativeNamed|NamedFormatManifest)/);
+    assert.match(output, /const CreativeAssetValueSchema: z\.ZodType/);
+    assert.match(output, /creative identity requires exactly one of format_id or format_kind/);
+    assert.match(output, /agent_url: z\.string\(\)\.regex/);
+    assert.ok(output.indexOf('const CreativeAssetsSchema:') < output.indexOf('export const CreativeAssetSchema'));
+    assert.ok(output.indexOf('const CreativeAssetsSchema:') < output.indexOf('export const CreativeManifestSchema'));
+  }
+});
+
 test('postProcessForNullish keeps never optional constraints strict', () => {
   const output = postProcessForNullish(`
 export const ExampleSchema = z.object({
