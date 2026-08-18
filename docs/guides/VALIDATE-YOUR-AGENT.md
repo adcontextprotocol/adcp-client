@@ -258,7 +258,9 @@ The `deterministic_testing` universal storyboard — plus rejection-branch and d
 import { createComplyController, TestControllerError } from '@adcp/sdk/testing';
 
 const controller = createComplyController({
-  sandboxGate: input => input.auth?.sandbox === true,   // fail closed
+  // This is server-controlled deployment state. Every field in `input` is
+  // buyer-supplied and MUST NOT be used as the authority boundary.
+  sandboxGate: () => process.env.ADCP_SANDBOX === '1',
   seed: {
     buyer_agent: (params, ctx) => {
       const seededAccount = ctx.input.account ?? ctx.input.context?.account;
@@ -293,6 +295,19 @@ const controller = createComplyController({
 
 controller.register(server);
 ```
+
+Direct `controller.register(server)` calls without a `sandboxGate` are
+refused. The only escape hatch is for deliberately ungated local harnesses:
+set `NODE_ENV` to `test` or `development` **and** set
+`ADCP_COMPLY_CONTROLLER_UNGATED=1`. `ADCP_SANDBOX=1` alone is not a request
+gate and does not authorize ungated registration.
+
+Migration for direct registrations: pass a `sandboxGate` that closes over
+trusted server-side deployment or authentication state. The callback's
+`input` argument contains buyer-supplied tool arguments, not trusted auth
+context. For per-principal sandbox accounts, use
+`createAdcpServerFromPlatform(platform, { complyTest })`; its framework-owned
+registration resolves the authenticated account before dispatch.
 
 Omit adapters you don't support — they auto-return `UNKNOWN_SCENARIO`. Throw `TestControllerError('INVALID_TRANSITION', msg, currentState)` when the state machine disallows a transition; the helper emits the typed envelope. `controller.register(server)` auto-emits `capabilities.compliance_testing.scenarios` per AdCP 3.0 — don't declare `compliance_testing` in `supported_protocols`.
 
@@ -358,6 +373,11 @@ import { createAdcpServer, bridgeFromSessionStore } from '@adcp/sdk/server';
 
 const server = createAdcpServer({
   // ... usual config + per-adapter handlers ...
+  // Both paths are required: account-bearing tools use resolveAccount;
+  // account-less tools use resolveAccountFromAuth. Resolve mode from trusted
+  // server-side account state, never from the request's sandbox marker.
+  resolveAccount: (ref, ctx) => accounts.resolve(ref, ctx),
+  resolveAccountFromAuth: ctx => accounts.resolve(undefined, ctx),
   testController: bridgeFromSessionStore({
     loadSession: (_input, ctx) => sessionStore.loadForAccount(requireResolvedAccount(ctx.account)),
 
@@ -387,7 +407,7 @@ const server = createAdcpServer({
 
 Bridge contract:
 
-- **Triply gated.** Bridge runs only when the bridge is registered, the request carries a sandbox marker (`account.sandbox === true` or `context.sandbox === true`), and — if `resolveAccount` produced a record — that record is `sandbox: true` too. Production traffic untouched.
+- **Triply gated.** Bridge runs only when the bridge is registered, the request carries a sandbox marker (`account.sandbox === true` or `context.sandbox === true`), and the applicable resolver returns a trusted account with `mode: 'sandbox' | 'mock'` (or legacy `sandbox: true`). Account-bearing tools use `resolveAccount`; account-less tools use `resolveAccountFromAuth`. Missing or null resolution fails closed. Production traffic is untouched.
 - **Post-handler merge.** The adapter's real handler runs first (so a broken `snapClient.getCreatives()` still fails the conformance gate — the bridge supplements, it does not replace adapter behavior). Seeded entries append; on id collision the seeded fixture wins.
 - **Singleton exception.** `get_account_financials` returns one account's envelope, so the bridge picks the seeded fixture whose `account.account_id` matches the request's `account.account_id` and REPLACES the handler envelope for that account. Other accounts pass through unchanged. When `resolveAccount` produces a record, the resolved `account_id` wins over the request's `account_id` — fixtures are interchangeable across `AccountReference` variants. The same pattern applies to `get_property_list` / `get_collection_list` (pick seeded entry by `list_id` matching `request.list_id`, replace the response's `list` field while preserving handler `identifiers` / `pagination` / `resolved_at` / `cache_valid_until` / `coverage_gaps` / `context` / `ext`), `get_content_standards` (pick by `standards_id`, replace the `ContentStandards` body and preserve handler's `context` and `ext`), `get_brand_identity` (pick by `brand_id`, replace the success body and preserve handler `context` / `ext`), and `si_get_offering` (pick by `offering.offering_id` matching `request.offering_id`, replace the response body and preserve handler `context` / `ext`). The seeded fixture array for each governance tool also feeds the matching list tool (`list_property_lists`, `list_collection_lists`, `list_content_standards`) via append-merge with seeded-wins on collision. `get_rights` is a discovery / search tool with an array response — append-merge by `rights_id`, seeded wins on collision (no list / singleton pair).
 - **Delivery merge recomputes aggregated_totals.** `get_media_buy_delivery` is the one append-merge bridge that updates the response envelope: after seeded deliveries merge in (seeded wins on `media_buy_id` collision — matches the precedent set by the other five `getSeeded*` bridges, since storyboards seed deliberately and a seeded fixture for an existing id is an explicit author override), `aggregated_totals` is recomputed from the merged per-delivery `totals`. Required sums (`impressions`, `spend`, `media_buy_count`) always recompute. Optional sums (`clicks`, `completed_views`, `views`, `conversions`, `conversion_value`) only recompute when every merged delivery populates the field — partial population falls back to the handler's value (no silent under-counting). Derived ratios (`roas`, `completion_rate`, `cost_per_acquisition`) recompute only when both inputs were recomputed AND the divisor is non-zero. Pass-through fields (`reach`, `reach_unit`, `frequency`, `new_to_brand_rate`) keep the handler's value verbatim — they aren't derivable from per-delivery `totals`.

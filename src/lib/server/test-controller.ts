@@ -1574,28 +1574,31 @@ export function toMcpResponse(data: ComplyTestControllerResponse): McpToolRespon
  * envelope fields. No top-level `account` or `brand` — AdCP routes account
  * and brand context through `context` on this tool.
  *
- * **Extending for vendor fields.** Custom wrappers that route sandbox gating
- * or tenant scoping on top-level fields can extend the shape locally.
+ * **Extending for vendor fields.** Custom wrappers that carry tenant or
+ * account references in top-level fields can extend the shape locally.
+ * Those buyer-supplied fields are identifiers only: resolve them through a
+ * trusted server-side account resolver before making authorization decisions.
  * Both `account` and `brand` are commonly added — storyboard fixtures and
  * v5-shaped wrappers often send them alongside `params`:
  *
  * ```ts
  * const MY_SHAPE = {
  *   ...TOOL_INPUT_SHAPE,
- *   account: z.object({ sandbox: z.boolean() }).passthrough().optional(),
+ *   account: z.object({ account_id: z.string() }).passthrough().optional(),
  *   brand: z.object({ domain: z.string() }).passthrough().optional(),
  * };
  * server.registerTool(
  *   'comply_test_controller',
  *   { description: 'Sandbox only.', inputSchema: MY_SHAPE },
  *   async input => {
- *     if (input.account?.sandbox !== true) return toMcpResponse({ ... });
+ *     const account = await accounts.resolve(input.account, trustedRequestContext());
+ *     if (!isSandboxOrMockAccount(account)) return toMcpResponse({ ... });
  *     return toMcpResponse(await handleTestControllerRequest(store, input as Record<string, unknown>));
  *   }
  * );
  * ```
  *
- * Adopters routing through `createAdcpServerFromPlatform({ complyTest })`
+ * Adopters routing through `createAdcpServerFromPlatform(platform, { complyTest })`
  * pass the same fields via `complyTest.inputSchema` (see
  * `ComplyControllerConfig.inputSchema` in `@adcp/sdk/testing`).
  *

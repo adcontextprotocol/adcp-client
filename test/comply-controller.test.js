@@ -838,15 +838,20 @@ describe('createComplyController — register()', () => {
     };
   };
 
-  // Capture console.warn without polluting test output.
-  const withCapturedWarn = fn => {
-    const warnings = [];
-    const original = console.warn;
-    console.warn = (...args) => warnings.push(args.join(' '));
+  const withRegistrationEnv = (nodeEnv, acknowledged, fn) => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalAck = process.env.ADCP_COMPLY_CONTROLLER_UNGATED;
     try {
-      fn(warnings);
+      if (nodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = nodeEnv;
+      if (acknowledged === undefined) delete process.env.ADCP_COMPLY_CONTROLLER_UNGATED;
+      else process.env.ADCP_COMPLY_CONTROLLER_UNGATED = acknowledged;
+      fn();
     } finally {
-      console.warn = original;
+      if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalNodeEnv;
+      if (originalAck === undefined) delete process.env.ADCP_COMPLY_CONTROLLER_UNGATED;
+      else process.env.ADCP_COMPLY_CONTROLLER_UNGATED = originalAck;
     }
   };
 
@@ -863,82 +868,60 @@ describe('createComplyController — register()', () => {
     assert.strictEqual(fake.calls[0].handlerType, 'function');
   });
 
-  it('warns on register() when no sandboxGate and no ADCP_SANDBOX env flag', () => {
-    const originalSandbox = process.env.ADCP_SANDBOX;
-    const originalUngated = process.env.ADCP_COMPLY_CONTROLLER_UNGATED;
-    delete process.env.ADCP_SANDBOX;
-    delete process.env.ADCP_COMPLY_CONTROLLER_UNGATED;
-    try {
-      withCapturedWarn(warnings => {
-        const controller = createComplyController({});
-        controller.register(makeFakeServer());
-        assert.strictEqual(warnings.length, 1);
-        assert.match(warnings[0], /no sandboxGate/i);
-        assert.match(warnings[0], /ADCP_SANDBOX/);
-      });
-    } finally {
-      if (originalSandbox !== undefined) process.env.ADCP_SANDBOX = originalSandbox;
-      if (originalUngated !== undefined) process.env.ADCP_COMPLY_CONTROLLER_UNGATED = originalUngated;
-    }
-  });
-
-  it('stays silent on register() when sandboxGate is configured', () => {
-    withCapturedWarn(warnings => {
-      const controller = createComplyController({ sandboxGate: () => true });
-      controller.register(makeFakeServer());
-      assert.strictEqual(warnings.length, 0);
+  it('refuses ungated registration when the environment is unset', () => {
+    withRegistrationEnv(undefined, undefined, () => {
+      const controller = createComplyController({});
+      assert.throws(() => controller.register(makeFakeServer()), /refusing to register.*without sandboxGate/i);
     });
   });
 
-  it('warns once per controller even when register() is called per-request (serve() pattern)', () => {
-    const originalSandbox = process.env.ADCP_SANDBOX;
-    const originalUngated = process.env.ADCP_COMPLY_CONTROLLER_UNGATED;
-    delete process.env.ADCP_SANDBOX;
-    delete process.env.ADCP_COMPLY_CONTROLLER_UNGATED;
-    try {
-      withCapturedWarn(warnings => {
-        const controller = createComplyController({});
-        // serve() invokes the factory per request → register fires repeatedly.
-        controller.register(makeFakeServer());
-        controller.register(makeFakeServer());
-        controller.register(makeFakeServer());
-        assert.strictEqual(warnings.length, 1, 'warning must de-dupe per controller instance');
-      });
-    } finally {
-      if (originalSandbox !== undefined) process.env.ADCP_SANDBOX = originalSandbox;
-      if (originalUngated !== undefined) process.env.ADCP_COMPLY_CONTROLLER_UNGATED = originalUngated;
-    }
+  it('registers in any environment when sandboxGate is configured', () => {
+    withRegistrationEnv('production', undefined, () => {
+      const fake = makeFakeServer();
+      const controller = createComplyController({ sandboxGate: () => true });
+      controller.register(fake);
+      assert.strictEqual(fake.calls.length, 1);
+    });
   });
 
-  it('stays silent when ADCP_SANDBOX=1 is set (deployment-level gating opt-out)', () => {
-    const original = process.env.ADCP_SANDBOX;
+  it('refuses ungated registration in test without the explicit acknowledgement', () => {
+    withRegistrationEnv('test', undefined, () => {
+      const controller = createComplyController({});
+      assert.throws(() => controller.register(makeFakeServer()), /ADCP_COMPLY_CONTROLLER_UNGATED=1/);
+    });
+  });
+
+  it('refuses ungated registration in production even with the acknowledgement', () => {
+    withRegistrationEnv('production', '1', () => {
+      const controller = createComplyController({});
+      assert.throws(() => controller.register(makeFakeServer()), /NODE_ENV is test\/development/);
+    });
+  });
+
+  it('does not treat ADCP_SANDBOX=1 as an ungated-registration acknowledgement', () => {
+    const originalSandbox = process.env.ADCP_SANDBOX;
     process.env.ADCP_SANDBOX = '1';
     try {
-      withCapturedWarn(warnings => {
+      withRegistrationEnv('test', undefined, () => {
         const controller = createComplyController({});
-        controller.register(makeFakeServer());
-        assert.strictEqual(warnings.length, 0);
+        assert.throws(() => controller.register(makeFakeServer()), /ADCP_COMPLY_CONTROLLER_UNGATED=1/);
       });
     } finally {
-      if (original === undefined) delete process.env.ADCP_SANDBOX;
-      else process.env.ADCP_SANDBOX = original;
+      if (originalSandbox === undefined) delete process.env.ADCP_SANDBOX;
+      else process.env.ADCP_SANDBOX = originalSandbox;
     }
   });
 
-  it('stays silent when ADCP_COMPLY_CONTROLLER_UNGATED=1 (explicit opt-out)', () => {
-    const original = process.env.ADCP_COMPLY_CONTROLLER_UNGATED;
-    process.env.ADCP_COMPLY_CONTROLLER_UNGATED = '1';
-    try {
-      withCapturedWarn(warnings => {
+  for (const nodeEnv of ['test', 'development']) {
+    it(`allows explicitly acknowledged ungated registration in ${nodeEnv}`, () => {
+      withRegistrationEnv(nodeEnv, '1', () => {
+        const fake = makeFakeServer();
         const controller = createComplyController({});
-        controller.register(makeFakeServer());
-        assert.strictEqual(warnings.length, 0);
+        controller.register(fake);
+        assert.strictEqual(fake.calls.length, 1);
       });
-    } finally {
-      if (original === undefined) delete process.env.ADCP_COMPLY_CONTROLLER_UNGATED;
-      else process.env.ADCP_COMPLY_CONTROLLER_UNGATED = original;
-    }
-  });
+    });
+  }
 });
 
 describe('createComplyController — context echo', () => {
