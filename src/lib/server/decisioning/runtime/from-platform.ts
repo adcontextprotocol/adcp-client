@@ -54,6 +54,7 @@ import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type { AdcpServer } from '../../adcp-server';
 import {
   createAdcpServer,
+  COMPACT_MEDIA_BUY_MUTATION_TOOLS,
   type AdcpServerConfig,
   type MediaBuyHandlers,
   type ProposalNegotiationHandlers,
@@ -2548,7 +2549,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     resolveIdempotencyPrincipal:
       opts.resolveIdempotencyPrincipal ??
       ((ctx, _params, toolName) =>
-        COMPACT_MEDIA_BUY_MUTATION_TOOL_NAMES.has(toolName)
+        COMPACT_MEDIA_BUY_MUTATION_TOOLS.has(toolName)
           ? authenticatedPrincipalFor(ctx)
           : (ctx.authInfo?.clientId ?? ctx.sessionKey ?? ctx.account?.id ?? undefined)),
     resolveAccount: async (ref, ctx) => {
@@ -4077,15 +4078,6 @@ function authenticatedPrincipalFor(ctx: HandlerContext<Account>): string | undef
   }
   return undefined;
 }
-
-const COMPACT_MEDIA_BUY_MUTATION_TOOL_NAMES = new Set([
-  'request_proposals',
-  'refine_proposals',
-  'decline_proposals',
-  'buy_products',
-  'accept_proposal',
-  'control_media_buy',
-]);
 
 function hasPushNotificationConfig(params: unknown): boolean {
   return (

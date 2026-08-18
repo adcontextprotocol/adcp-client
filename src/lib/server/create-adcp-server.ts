@@ -2943,7 +2943,8 @@ const COMPACT_MEDIA_BUY_LIFECYCLE_TOOLS = [
   'control_media_buy',
 ] as const;
 
-const COMPACT_MEDIA_BUY_MUTATION_TOOLS = new Set<string>([
+/** @internal Shared by the platform adapter's principal resolver and dispatcher gate. */
+export const COMPACT_MEDIA_BUY_MUTATION_TOOLS = new Set<string>([
   'request_proposals',
   'refine_proposals',
   'decline_proposals',
