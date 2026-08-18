@@ -13,6 +13,7 @@ const {
   proposalRefinementScopeFromContext,
   proposalTermsDigest,
 } = require('../../dist/lib/server/index.js');
+const { verifyRefineProposalsResponse } = require('../../dist/lib/index.js');
 
 const request = (key, proposalId = 'source-1') => ({
   adcp_version: '3.2',
@@ -121,8 +122,14 @@ describe('refine_proposals server integration', () => {
     assert.equal(capabilities.structuredContent.adcp_version, '3.2-beta.0');
     assert.ok(capabilities.structuredContent.media_buy.lifecycle_tools.includes('refine_proposals'));
 
-    const response = await call(server, 'refine_proposals', request('version-envelope-key-0001'), 'buyer-a');
+    const betaRequest = request('version-envelope-key-0001');
+    const response = await call(server, 'refine_proposals', betaRequest, 'buyer-a');
     assert.equal(response.structuredContent.adcp_version, '3.2-beta.0');
+    assert.equal(
+      verifyRefineProposalsResponse(betaRequest, response.structuredContent).ok,
+      true,
+      'the SDK buyer verifier must accept the default beta server response'
+    );
   });
 
   test('rejects an explicit pre-3.2 server pin', () => {

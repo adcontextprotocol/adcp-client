@@ -252,6 +252,47 @@ test('compact submitted responses validate without completed-field access', () =
   }
 });
 
+test('response verifier accepts only release-precision values on the AdCP 3.2 line', () => {
+  const submitted = {
+    status: 'submitted',
+    task_id: 'proposal-task-version',
+  };
+
+  for (const adcp_version of ['3.2', '3.2-beta.0', '3.2-rc.1', '3.2-beta..1']) {
+    assert.equal(validateRefineProposalsResponseShape({ ...submitted, adcp_version }).ok, true, adcp_version);
+  }
+
+  for (const adcp_version of [
+    '3.1',
+    '4.0',
+    '3.2.0',
+    '3.2.0-beta.0',
+    '3.2-.',
+    '3.2-.beta',
+    '3.2-beta.',
+    '3.2--',
+    'garbage',
+    3.2,
+    null,
+    {},
+    true,
+  ]) {
+    const result = validateRefineProposalsResponseShape({ ...submitted, adcp_version });
+    assert.equal(result.ok, false, String(adcp_version));
+    assert.equal(result.issues[0]?.path, 'adcp_version');
+    assert.match(result.issues[0]?.message ?? '', /3\.2 release line; received/);
+  }
+
+  assert.match(
+    validateRefineProposalsResponseShape({ ...submitted, adcp_version: 3.2 }).issues[0]?.message ?? '',
+    /received 3\.2$/
+  );
+  assert.match(
+    validateRefineProposalsResponseShape({ ...submitted, adcp_version: null }).issues[0]?.message ?? '',
+    /received null$/
+  );
+});
+
 test('response verifier validates discriminated result shapes before semantic checks', () => {
   const req = request();
   const cases = [

@@ -139,8 +139,15 @@ function validateResponseShape(value: unknown, issues: ProposalVerificationIssue
     return false;
   }
   let valid = allowedKeys(value, RESPONSE_KEYS, 'response', issues);
-  if (value.adcp_version !== undefined && value.adcp_version !== '3.2') {
-    valid = shape(issues, 'adcp_version', 'refine_proposals response adcp_version must be 3.2');
+  if (
+    value.adcp_version !== undefined &&
+    (typeof value.adcp_version !== 'string' || !ADCP_3_2_RELEASE_PATTERN.test(value.adcp_version))
+  ) {
+    valid = shape(
+      issues,
+      'adcp_version',
+      `refine_proposals response adcp_version must be on the 3.2 release line; received ${formatReceivedValue(value.adcp_version)}`
+    );
   }
   if (value.message !== undefined && (typeof value.message !== 'string' || value.message.length > 2000)) {
     valid = shape(issues, 'message', 'message must be a string of at most 2000 characters');
@@ -854,6 +861,7 @@ const PRICING_KEYS = new Set([
 const MONEY_KEYS = new Set(['amount', 'currency']);
 const CANCELLATION_KEYS = new Set(['effective_at', 'fee', 'reason']);
 const OUTCOMES = new Set(['revised', 'partial', 'finalized', 'unable']);
+const ADCP_3_2_RELEASE_PATTERN = /^3\.2(?:-[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)?$/;
 const REASONS = new Set<ProposalRefinementReason>([
   'commercially_declined',
   'constraint_unsatisfiable',
@@ -889,6 +897,16 @@ function nonempty(value: unknown): value is string {
 
 function boundedString(value: unknown, min: number, max: number): value is string {
   return typeof value === 'string' && value.length >= min && value.length <= max;
+}
+
+function formatReceivedValue(value: unknown): string {
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) return typeof value;
+    return serialized.length <= 200 ? serialized : `${serialized.slice(0, 197)}...`;
+  } catch {
+    return typeof value;
+  }
 }
 
 function finite(value: unknown): value is number {
