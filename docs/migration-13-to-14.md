@@ -90,6 +90,13 @@ Use the generated request types or the narrow imports under `@adcp/sdk/types/<to
 
 For proposal refinement, validate the advertised limits and supported dimensions, keep hard constraints distinct from legacy discovery filters, and re-check `expires_at` immediately before acceptance. See [AdCP 3.2 proposal negotiation](migration-adcp-3.1-to-3.2-proposals.md).
 
+AdCP 3.2's exact MCP schema also requires `account` at the top level of every
+`comply_test_controller` request. Move a legacy
+`context: { account, session_id }` controller call to
+`{ account, context: { session_id } }`. The account remains an assertion of
+intent; the seller must resolve it through its trusted account store and admit
+only a persisted sandbox or mock account.
+
 ## Request-signing profiles are versioned
 
 SDK 13 used the legacy AdCP 3.0/3.1 representation. SDK 14 selects between two profiles:

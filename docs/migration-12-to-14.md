@@ -127,6 +127,12 @@ a replacement key.
 
 For `refine_proposals`, respect the advertised batch, alternative, and dimension limits; keep hard constraints distinct from the soft filters used by legacy `get_products`. Verify proposal expiry immediately before acceptance. See [AdCP 3.2 proposal negotiation](migration-adcp-3.1-to-3.2-proposals.md).
 
+For conformance harnesses, AdCP 3.2's exact MCP schema requires `account` at
+the top level of `comply_test_controller` requests. Replace
+`context: { account, session_id }` with
+`{ account, context: { session_id } }`; continue resolving that assertion
+against trusted persisted sandbox/mock state before dispatch.
+
 ## Adopt version-aware request signing
 
 SDK 14 retains the AdCP 3.0/3.1 unpadded Base64URL `Signature` profile and adds the AdCP 3.2 padded standard-Base64 signature profile with mandatory `Content-Digest`. `Content-Digest` itself remains an RFC 9530 structured field using padded standard Base64 across versions. High-level clients propagate their configured agent version. Low-level callers and server verifiers should bind a trusted negotiated/configured version to signing options; an unpinned verifier remains tolerant of both signature encodings for SDK 13 source compatibility.
