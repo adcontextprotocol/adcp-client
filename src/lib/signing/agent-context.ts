@@ -9,6 +9,7 @@ import {
 } from './capability-cache';
 import type { SigningProvider } from './provider';
 import type { AdcpSignAlg } from './types';
+import { ADCP_VERSION } from '../version';
 
 /**
  * Snapshot of the signing identity captured at context-build time. The
@@ -49,6 +50,8 @@ export interface AgentSigningContext {
   cache: CapabilityCache;
   /** Stable cache key used against the capability cache itself. */
   capabilityCacheKey: string;
+  /** Trusted SDK/endpoint pin used to select the request-signing wire profile. */
+  adcpVersion: string;
   /**
    * Evict this context's capability entry so the next outbound call
    * re-primes `get_adcp_capabilities`. Use after a seller-side rotation
@@ -79,7 +82,7 @@ export const signingContextStorage = globalAsyncLocalStorage<AgentSigningContext
  */
 export function buildAgentSigningContext(
   agent: AgentConfig,
-  options: { cache?: CapabilityCache } = {}
+  options: { cache?: CapabilityCache; adcpVersion?: string } = {}
 ): AgentSigningContext | undefined {
   const signing = agent.request_signing;
   if (!signing) return undefined;
@@ -87,7 +90,8 @@ export function buildAgentSigningContext(
   const cache = options.cache ?? defaultCapabilityCache;
   const identity = snapshotIdentity(signing);
   const cacheFingerprint = deriveCacheFingerprint(identity);
-  const capabilityCacheKey = buildCapabilityCacheKey(agent.agent_uri, agent.auth_token, cacheFingerprint);
+  const adcpVersion = options.adcpVersion ?? ADCP_VERSION;
+  const capabilityCacheKey = buildCapabilityCacheKey(agent.agent_uri, agent.auth_token, cacheFingerprint, adcpVersion);
   // Transport-connection cache-key suffix binds to the defensively hashed
   // identity, not just the advertised `kid`. Two tenants that misconfigure
   // the same `kid` string but hold distinct keys must not collide on a
@@ -95,7 +99,7 @@ export function buildAgentSigningContext(
   // requests with the other tenant's key (same `kid`, different material),
   // an impersonation. The hash includes `algorithm` so an Ed25519/P-256
   // swap on the same `kid+fingerprint` doesn't alias either.
-  const cacheKey = `sig=${cacheFingerprint}`;
+  const cacheKey = `sig=${cacheFingerprint};adcp=${adcpVersion}`;
   const provider = signing.kind === 'provider' ? signing.provider : undefined;
 
   return {
@@ -105,6 +109,7 @@ export function buildAgentSigningContext(
     cacheKey,
     cache,
     capabilityCacheKey,
+    adcpVersion,
     getCapability: () => cache.get(capabilityCacheKey),
     invalidate: () => cache.invalidate(capabilityCacheKey),
   };

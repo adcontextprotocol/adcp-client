@@ -34,13 +34,17 @@ const {
   HttpsJwksResolver,
   HttpsRevocationStore,
   RequestSignatureError,
-  verifyRequestSignature,
+  verifyRequestSignature: verifyRequestSignatureForProfile,
   signRequest,
   InMemoryReplayStore,
-  createExpressVerifier,
+  createExpressVerifier: createExpressVerifierForProfile,
 } = require('../dist/lib/signing');
 const { SsrfRefusedError } = require('../dist/lib/net');
 const { startJwksServer, startRevocationServer, revocationSnapshot } = require('./helpers/signing-origin-servers');
+
+const verifyRequestSignature = (request, options) =>
+  verifyRequestSignatureForProfile(request, { adcpVersion: '3.1', ...options });
+const createExpressVerifier = options => createExpressVerifierForProfile({ adcpVersion: '3.1', ...options });
 
 // ────────────────────────────────────────────────────────────
 // Key material — shared test vectors shipped with the spec.

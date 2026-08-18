@@ -170,11 +170,12 @@ export async function testSignalsFlow(
             null,
             2
           );
-          step.created_id = firstDeployment
+          const deploymentId = firstDeployment
             ? 'platform' in firstDeployment
               ? firstDeployment.platform
               : firstDeployment.agent_url
             : undefined;
+          step.created_id = typeof deploymentId === 'string' ? deploymentId : undefined;
         } else if (result && !result.success) {
           // Check if this is an expected failure (e.g., destination not supported)
           const error = result.error || '';

@@ -113,10 +113,10 @@ describe('decideRetry — operator-grade defaults', () => {
   });
 
   describe('idempotency safety guards (financial-liability defense)', () => {
-    it('IDEMPOTENCY_CONFLICT → mutate-and-retry (different payload, fresh key is safe)', () => {
+    it('IDEMPOTENCY_CONFLICT → escalate for natural-key reconciliation', () => {
       const d = decideRetry(err('IDEMPOTENCY_CONFLICT'));
-      assert.equal(d.action, 'mutate-and-retry');
-      assert.equal(d.reason, 'validation');
+      assert.equal(d.action, 'escalate');
+      assert.equal(d.reason, 'idempotency_check_required');
     });
 
     it('IDEMPOTENCY_EXPIRED → escalate (idempotency_check_required) — DO NOT auto-retry', () => {

@@ -527,6 +527,7 @@ describe('end-to-end: provider-signed request verifies under the SDK verifier', 
   function makeVerifierContext(kid) {
     const publicJwk = publicJwkFor(kid);
     return {
+      adcpVersion: '3.1',
       jwks: new StaticJwksResolver([publicJwk]),
       replayStore: new InMemoryReplayStore(),
       revocationStore: new InMemoryRevocationStore(),

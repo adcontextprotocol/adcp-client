@@ -46,14 +46,14 @@ void getProductsShape.brief;
 
 const createMediaBuyShape = TOOL_REQUEST_SCHEMAS.create_media_buy.shape;
 void createMediaBuyShape.account;
-// @ts-expect-error known tool request schemas should reject bogus fields
+// @ts-expect-error Known request shape keys remain exact even though runtime parsing is passthrough.
 void createMediaBuyShape.not_a_real_field;
 
 void TOOL_REQUEST_SCHEMAS.preview_creative.shape.request_type;
 const previewRequestType: 'single' | 'batch' | 'variant' =
   TOOL_REQUEST_SCHEMAS.preview_creative.shape.request_type.parse('single');
 void previewRequestType;
-// @ts-expect-error TS7056 object annotations should keep known request fields exact
+// @ts-expect-error Known request shape keys remain exact even though runtime parsing is passthrough.
 void TOOL_REQUEST_SCHEMAS.preview_creative.shape.not_a_real_field;
 
 void TOOL_INPUT_SHAPES.update_media_buy.media_buy_id;

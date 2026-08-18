@@ -8,6 +8,7 @@ const { ADCP_VERSION, toReleasePrecisionVersion } = require('../../dist/lib/vers
 const CURRENT_PRERELEASE_VERSION = ADCP_VERSION;
 const CURRENT_IS_PRERELEASE = CURRENT_PRERELEASE_VERSION.includes('-');
 const CURRENT_PRERELEASE_RELEASE_PRECISION = toReleasePrecisionVersion(ADCP_VERSION);
+const CURRENT_RELEASE_LINE = CURRENT_PRERELEASE_RELEASE_PRECISION.match(/^\d+\.\d+/)?.[0] ?? '3.2';
 const CURRENT_PRERELEASE_FAMILY = CURRENT_PRERELEASE_RELEASE_PRECISION.includes('-')
   ? CURRENT_PRERELEASE_RELEASE_PRECISION.replace(/\.\d+$/, '')
   : CURRENT_PRERELEASE_RELEASE_PRECISION;
@@ -377,7 +378,7 @@ describe('storyboard runner AdCP version negotiation', () => {
       isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, [CURRENT_PRERELEASE_RELEASE_PRECISION]),
       true
     );
-    assert.strictEqual(isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, [CURRENT_PRERELEASE_FAMILY]), true);
+    assert.strictEqual(isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, [CURRENT_PRERELEASE_FAMILY]), false);
     assert.strictEqual(
       isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, [DIFFERENT_PRERELEASE_RELEASE_PRECISION]),
       false
@@ -417,16 +418,19 @@ describe('storyboard runner AdCP version negotiation', () => {
         tools: ['get_adcp_capabilities', 'get_products'],
         adcp_version: 'v3',
         adcp_major_versions: [3],
-        adcp_supported_versions: ['3.1'],
+        adcp_supported_versions: [CURRENT_RELEASE_LINE],
         supported_protocols: ['media_buy'],
       },
       { adcpVersion: CURRENT_PRERELEASE_VERSION, versionEnvelope: 'auto' },
-      { complianceVersion: CURRENT_PRERELEASE_VERSION, hostedStableLineAlias: '3.1' }
+      { complianceVersion: CURRENT_PRERELEASE_VERSION, hostedStableLineAlias: CURRENT_RELEASE_LINE }
     );
 
     assert.strictEqual(options.adcpVersion, CURRENT_PRERELEASE_VERSION);
-    assert.strictEqual(options.wireAdcpVersion, CURRENT_IS_PRERELEASE ? '3.1' : undefined);
-    assert.strictEqual(options._serverAdcpVersion, CURRENT_IS_PRERELEASE ? '3.1' : CURRENT_PRERELEASE_VERSION);
+    assert.strictEqual(options.wireAdcpVersion, CURRENT_IS_PRERELEASE ? CURRENT_RELEASE_LINE : undefined);
+    assert.strictEqual(
+      options._serverAdcpVersion,
+      CURRENT_IS_PRERELEASE ? CURRENT_RELEASE_LINE : CURRENT_PRERELEASE_VERSION
+    );
   });
 
   test('missing supported_versions alone does not downgrade a v3 seller', () => {
@@ -501,15 +505,19 @@ describe('storyboard runner AdCP version negotiation', () => {
       writeComplianceIndex(complianceDir, CURRENT_PRERELEASE_VERSION);
 
       assert.strictEqual(
-        isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, ['3.1']),
+        isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, [CURRENT_RELEASE_LINE]),
         !CURRENT_PRERELEASE_VERSION.includes('-')
       );
       assert.strictEqual(
-        isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, ['3.1'], { hostedStableLineAlias: '3.1' }),
+        isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, [CURRENT_RELEASE_LINE], {
+          hostedStableLineAlias: CURRENT_RELEASE_LINE,
+        }),
         true
       );
       assert.strictEqual(
-        isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, ['3.0'], { hostedStableLineAlias: '3.1' }),
+        isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, ['3.0'], {
+          hostedStableLineAlias: CURRENT_RELEASE_LINE,
+        }),
         false
       );
 
@@ -517,22 +525,24 @@ describe('storyboard runner AdCP version negotiation', () => {
         assert.throws(
           () =>
             resolveStoryboardsForCapabilities(
-              { supported_protocols: [], supported_versions: ['3.1'] },
+              { supported_protocols: [], supported_versions: [CURRENT_RELEASE_LINE] },
               { complianceDir }
             ),
           err => err instanceof CapabilityResolutionError && err.code === 'unsupported_adcp_version'
         );
       } else {
         assert.deepStrictEqual(
-          resolveStoryboardsForCapabilities({ supported_protocols: [], supported_versions: ['3.1'] }, { complianceDir })
-            .storyboards,
+          resolveStoryboardsForCapabilities(
+            { supported_protocols: [], supported_versions: [CURRENT_RELEASE_LINE] },
+            { complianceDir }
+          ).storyboards,
           []
         );
       }
       assert.deepStrictEqual(
         resolveStoryboardsForCapabilities(
-          { supported_protocols: [], supported_versions: ['3.1'] },
-          { complianceDir, hostedStableLineAlias: '3.1' }
+          { supported_protocols: [], supported_versions: [CURRENT_RELEASE_LINE] },
+          { complianceDir, hostedStableLineAlias: CURRENT_RELEASE_LINE }
         ).storyboards,
         []
       );
@@ -625,8 +635,9 @@ describe('storyboard runner AdCP version negotiation', () => {
 
     assert.ok(resolvedRoot, 'an explicit compliance line should resolve an exact schema root');
     assert.ok(
-      resolvedRoot.endsWith(path.join('schemas', 'cache', selectedVersion)),
-      `expected exact selected-version schema root, got ${resolvedRoot}`
+      resolvedRoot.endsWith(path.join('schemas', 'cache', selectedVersion)) ||
+        resolvedRoot.endsWith(path.join('schemas-data', selectedVersion)),
+      `expected exact selected-version source or packaged schema root, got ${resolvedRoot}`
     );
   });
 

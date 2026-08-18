@@ -37,6 +37,19 @@ const SCHEMA_FILENAME_SUFFIX: Record<Direction, string> = {
   'input-required': 'async-response-input-required',
 };
 
+// Protocol bundles may ship transport-specific schema projections alongside
+// the canonical AdCP schemas. They are not runtime validation sources: the
+// official clients own transport framing, while this loader validates the
+// canonical tool arguments/results. AdCP 3.2's `mcp/2026-07-28` projection
+// also uses JSON Schema 2020-12, whereas the canonical bundle remains
+// Draft-07. Mixing it into the canonical AJV registry both indexes duplicate
+// tools and makes a Draft-07 instance attempt to register another dialect.
+const TRANSPORT_PROJECTION_DIRECTORIES = new Set(['mcp']);
+
+function isRuntimeSchemaDirectory(name: string): boolean {
+  return name !== 'bundled' && !TRANSPORT_PROJECTION_DIRECTORIES.has(name);
+}
+
 /**
  * Map a consumer-provided version pin to the loader's bundle key.
  *
@@ -614,7 +627,7 @@ function buildFileIndex(root: string): Map<string, string> {
   // for any domain that ships both.
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    if (entry.name === 'bundled' || entry.name === 'core') continue;
+    if (!isRuntimeSchemaDirectory(entry.name) || entry.name === 'core') continue;
     const domainDir = path.join(root, entry.name);
     for (const file of walkJsonFiles(domainDir)) {
       const base = path.basename(file, '.json');
@@ -717,7 +730,7 @@ function ensureCoreLoaded(s: LoaderState): void {
   const registeredIds = getAjvRegisteredIds(s.ajv);
   for (const entry of readdirSync(s.root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    if (entry.name === 'bundled') continue;
+    if (!isRuntimeSchemaDirectory(entry.name)) continue;
     const abs = path.join(s.root, entry.name);
     for (const file of walkJsonFiles(abs)) {
       const responseDirection = responseToolFiles.get(file);
@@ -818,6 +831,11 @@ export function getSchemaValidatorByRef(
   const registeredIds = new Set<string>();
   for (const schemaFile of walkJsonFiles(s.root)) {
     if (schemaFile.includes(`${path.sep}bundled${path.sep}`)) continue;
+    if (
+      [...TRANSPORT_PROJECTION_DIRECTORIES].some(directory => schemaFile.includes(`${path.sep}${directory}${path.sep}`))
+    ) {
+      continue;
+    }
     if (schemaFile === file) continue;
     const schema = loadJson(schemaFile);
     if (typeof schema.$id === 'string' && !registeredIds.has(schema.$id)) {
@@ -915,6 +933,48 @@ export function hasSchemaBundle(version: string): boolean {
   }
 }
 
+const mcpProfileInputSchemaCache = new Map<string, Readonly<Record<string, unknown>> | null>();
+
+/** Load the exact self-contained request projection from an MCP role profile. */
+export function getMcpProfileInputSchema(
+  toolName: string,
+  profile: string,
+  version: string = ADCP_VERSION
+): Readonly<Record<string, unknown>> | undefined {
+  const root = resolveSchemaRoot(version);
+  const cacheKey = `${root}\u001f${profile}\u001f${toolName}`;
+  const cached = mcpProfileInputSchemaCache.get(cacheKey);
+  if (cached !== undefined) return cached ?? undefined;
+
+  const mcpRoot = path.join(root, 'mcp');
+  if (!existsSync(mcpRoot)) {
+    mcpProfileInputSchemaCache.set(cacheKey, null);
+    return undefined;
+  }
+  const protocolVersions = readdirSync(mcpRoot, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name)
+    .sort()
+    .reverse();
+  for (const protocolVersion of protocolVersions) {
+    const profileRoot = path.resolve(mcpRoot, protocolVersion, 'profiles', profile);
+    const manifestFile = path.join(profileRoot, 'manifest.json');
+    if (!existsSync(manifestFile)) continue;
+    const manifest = loadJson(manifestFile) as {
+      tools?: Record<string, { inputSchema?: unknown }>;
+    };
+    const schemaRef = manifest.tools?.[toolName]?.inputSchema;
+    if (typeof schemaRef !== 'string') continue;
+    const schemaFile = path.resolve(profileRoot, schemaRef);
+    if (!schemaFile.startsWith(`${profileRoot}${path.sep}`) || !existsSync(schemaFile)) continue;
+    const schema = Object.freeze(loadJson(schemaFile));
+    mcpProfileInputSchemaCache.set(cacheKey, schema);
+    return schema;
+  }
+  mcpProfileInputSchemaCache.set(cacheKey, null);
+  return undefined;
+}
+
 /**
  * Test hook: reset cached state. With no argument, clears every version's
  * loader state; with a version, clears only the bundle that version
@@ -922,6 +982,7 @@ export function hasSchemaBundle(version: string): boolean {
  * bundle).
  */
 export function _resetValidationLoader(version?: string): void {
+  mcpProfileInputSchemaCache.clear();
   if (version === undefined) {
     states.clear();
   } else {

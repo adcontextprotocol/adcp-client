@@ -104,7 +104,7 @@ describe('Typed AdcpError subclasses — code + spec-correct recovery shape', ()
     assert.equal(e.code, 'IDEMPOTENCY_CONFLICT');
     assert.equal(e.recovery, 'correctable');
     assert.equal(e.field, 'idempotency_key');
-    assert.match(e.suggestion, /fresh/);
+    assert.match(e.suggestion, /reconcile.*natural key/i);
   });
 
   it('InvalidRequestError carries field + message', () => {

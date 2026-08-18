@@ -9,7 +9,7 @@
 import { ValidationError } from '../errors';
 import { brandManifestToBrandReference, promotedProductsToCatalog } from '../types/compat';
 import { warnOnce } from './deprecation';
-import { MUTATING_TASKS, generateIdempotencyKey } from './idempotency';
+import { generateIdempotencyKey, requestUsesIdempotency } from './idempotency';
 
 /**
  * Normalize a single package's params for backward compatibility.
@@ -102,11 +102,11 @@ export function normalizeRequestParams(
   // code never needs to track keys of its own — retries via a kept-around
   // key are the less-common path, and those callers supply their own.
   // `opts.skipIdempotencyAutoInject` disables this for compliance testing.
-  // MUTATING_TASKS is derived from the Zod request schemas at module load
-  // so this stays in sync with the upstream spec — no hand-maintained list.
+  // Classification is schema-driven for ordinary mutations and request-aware
+  // for compatibility facades such as get_products proposal finalization.
   if (
     !opts.skipIdempotencyAutoInject &&
-    MUTATING_TASKS.has(taskType) &&
+    requestUsesIdempotency(taskType, normalized) &&
     (typeof normalized.idempotency_key !== 'string' || normalized.idempotency_key.length === 0)
   ) {
     normalized.idempotency_key = generateIdempotencyKey();

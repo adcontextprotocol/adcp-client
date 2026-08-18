@@ -173,8 +173,9 @@ void recursivelyCanonical.creative_manifest.target_format_ids;
 const primaryContentStandardsRequest: RootListContentStandardsRequest = legacyListContentStandardsRequest;
 void primaryContentStandardsRequest;
 void rootPackage.format_option_refs;
-// @ts-expect-error Primary Package recursively removes legacy format IDs.
-void rootPackage.format_ids;
+// @ts-expect-error Primary Package exposes no typed legacy format IDs (passthrough keys remain unknown).
+const rootPackageFormatIds: FormatReferenceStructuredObject[] = rootPackage.format_ids;
+void rootPackageFormatIds;
 void legacyPackage.format_ids;
 // @ts-expect-error The unqualified root FormatID is intentionally unusable.
 const rootFormatId: RootFormatID = legacyFormatId;
@@ -390,10 +391,11 @@ new SingleAgentClient(
   {
     handlers: {
       onGetProductsStatusChange(response) {
-        if ('products' in response) {
-          void response.products[0]!.format_options;
+        if ('products' in response && Array.isArray(response.products)) {
+          const products = response.products as CanonicalProduct[];
+          void products[0]!.format_options;
           // @ts-expect-error Completion handlers expose canonical products only.
-          const legacyIds: FormatReferenceStructuredObject[] = response.products[0]!.format_ids;
+          const legacyIds: FormatReferenceStructuredObject[] = products[0]!.format_ids;
           void legacyIds;
         }
       },

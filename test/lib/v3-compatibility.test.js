@@ -195,6 +195,7 @@ describe('parseCapabilitiesResponse', () => {
       },
       supported_protocols: ['media_buy', 'signals'],
       media_buy: {
+        lifecycle_tools: ['list_products', 'request_proposals', 42],
         features: {
           inline_creative_management: true,
           property_list_filtering: true,
@@ -218,6 +219,7 @@ describe('parseCapabilitiesResponse', () => {
     assert.strictEqual(capabilities.features.inlineCreativeManagement, true);
     assert.strictEqual(capabilities.features.propertyListFiltering, true);
     assert.strictEqual(capabilities.features.contentStandards, true);
+    assert.deepStrictEqual(capabilities.mediaBuyLifecycleTools, ['list_products', 'request_proposals']);
     assert.deepStrictEqual(capabilities.extensions, ['scope3']);
     assert.deepStrictEqual(capabilities.publisherDomains, ['example.com']);
     assert.deepStrictEqual(capabilities.channels, ['display', 'olv']);
@@ -1259,6 +1261,17 @@ describe('Tool Constants', () => {
     assert.ok(MEDIA_BUY_TOOLS.includes('update_media_buy'));
     assert.ok(MEDIA_BUY_TOOLS.includes('sync_creatives'));
     assert.ok(MEDIA_BUY_TOOLS.includes('list_creative_formats'));
+    for (const tool of [
+      'list_products',
+      'request_proposals',
+      'refine_proposals',
+      'decline_proposals',
+      'buy_products',
+      'accept_proposal',
+      'control_media_buy',
+    ]) {
+      assert.ok(MEDIA_BUY_TOOLS.includes(tool), `expected media-buy classifier to include ${tool}`);
+    }
   });
 
   test('SIGNALS_TOOLS should contain expected tools', () => {
@@ -1431,6 +1444,14 @@ describe('normalizeRequestParams: idempotency_key auto-inject (MUTATING_TASKS co
         `${task}: read-only task should not auto-inject idempotency_key`
       );
     }
+  });
+
+  test('the proposal-finalize get_products variant receives an auto-injected key', () => {
+    const result = normalizeRequestParams('get_products', {
+      buying_mode: 'refine',
+      refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'proposal_1' }],
+    });
+    assert.match(String(result?.idempotency_key), UUID_V4_PATTERN);
   });
 
   test('preserves a caller-supplied idempotency_key (BYOK)', () => {

@@ -50,6 +50,7 @@ function baseOptions(overrides = {}) {
       covers_content_digest: 'either',
       required_for: [],
     },
+    adcpVersion: '3.1',
     resolveOperation: req => {
       const raw = req.rawBody;
       if (!raw) return undefined;

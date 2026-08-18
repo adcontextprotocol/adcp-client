@@ -72,6 +72,15 @@ describe('applyIdempotencyInvariant', () => {
     assert.strictEqual(result.idempotency_key, undefined);
   });
 
+  test('injects for the state-changing get_products proposal-finalize variant', () => {
+    const result = applyIdempotencyInvariant(
+      { refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'proposal_1' }] },
+      'get_products',
+      {}
+    );
+    assert.match(result.idempotency_key, UUID_V4);
+  });
+
   test('preserves a caller-supplied idempotency_key (BYOK)', () => {
     const result = applyIdempotencyInvariant(
       { idempotency_key: 'byok-1234567890abcdef', name: 'p1' },
@@ -96,6 +105,18 @@ describe('applyIdempotencyInvariant', () => {
     const result = applyIdempotencyInvariant({ name: 'p1' }, 'create_property_list', {
       omit_idempotency_key: true,
     });
+    assert.strictEqual(result.idempotency_key, undefined);
+  });
+
+  test('does not inject on proposal finalize when step.omit_idempotency_key=true — the scenario exercises the 3.2 compatibility path', () => {
+    const result = applyIdempotencyInvariant(
+      {
+        buying_mode: 'refine',
+        refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'proposal_1' }],
+      },
+      'get_products',
+      { omit_idempotency_key: true }
+    );
     assert.strictEqual(result.idempotency_key, undefined);
   });
 
@@ -464,6 +485,64 @@ describe('runStoryboard: idempotency_key invariant on the wire', { concurrency: 
       seen[0].options.skipIdempotencyAutoInject,
       true,
       'runner must signal the SDK transport to leave idempotency_key absent'
+    );
+  });
+
+  it('keeps proposal-finalize idempotency_key absent through SDK dispatch when the storyboard opts out', async () => {
+    const seen = [];
+    const storyboard = {
+      id: 'proposal_finalize_unkeyed_compat_sb',
+      version: '1.0.0',
+      title: 'Unkeyed proposal finalize compatibility',
+      category: 'compliance',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      phases: [
+        {
+          id: 'p',
+          title: 'compatibility',
+          steps: [
+            {
+              id: 'finalize_without_key',
+              title: 'legacy buyer finalizes without the optional replay key',
+              task: 'get_products',
+              omit_idempotency_key: true,
+              sample_request: {
+                buying_mode: 'refine',
+                refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'proposal_1' }],
+              },
+              validations: [],
+            },
+          ],
+        },
+      ],
+    };
+    const getProducts = async (args, _inputHandler, options) => {
+      seen.push({ args, options });
+      return { success: true, status: 'completed', data: { products: [] } };
+    };
+    await runStoryboard('http://127.0.0.1:1/mcp', storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      auth: { type: 'bearer', token: 'tok-finalize' },
+      test_session_id: 'sess-finalize',
+      agentTools: ['get_products'],
+      _profile: { name: 'Test', tools: ['get_products'] },
+      _client: {
+        getAgentInfo: async () => ({ name: 'Test', tools: [{ name: 'get_products' }] }),
+        getProducts,
+        getProductsLegacy: getProducts,
+      },
+    });
+
+    assert.strictEqual(seen.length, 1, `expected 1 SDK tool call, got ${seen.length}`);
+    assert.strictEqual(seen[0].args.idempotency_key, undefined);
+    assert.strictEqual(
+      seen[0].options.skipIdempotencyAutoInject,
+      true,
+      'request-aware finalize omission must reach the SDK dispatch options'
     );
   });
 });

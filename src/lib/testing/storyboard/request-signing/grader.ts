@@ -553,6 +553,7 @@ async function gradeJwksOverrideNegative(vector: NegativeVector): Promise<Vector
       revocationStore,
       now: () => vector.reference_now,
       operation,
+      adcpVersion: vector.signing_profile_version,
     });
     return {
       vector_id: vector.id,
@@ -748,6 +749,7 @@ function buildPositiveRequestFromNegative(
     kind: 'positive',
     id: vector.id,
     name: vector.name,
+    signing_profile_version: vector.signing_profile_version,
     reference_now: vector.reference_now,
     request: vector.request,
     verifier_capability: vector.verifier_capability,

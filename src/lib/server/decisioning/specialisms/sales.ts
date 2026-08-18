@@ -80,6 +80,7 @@ import type {
   ListCreativeFormatsResponse,
   ListCreativesRequest,
   ListCreativesResponse,
+  MediaBuyStatus,
   SyncCatalogsRequest,
   SyncCatalogsSuccess,
   LogEventRequest,
@@ -89,8 +90,10 @@ import type {
   SyncCreativesError,
   SyncCreativesSuccess,
 } from '../../../types/tools.generated';
+import type { ProposalRefinementCapabilities } from '../../../negotiation/types';
+import type { AdcpToolMap } from '../../create-adcp-server';
 import type {
-  CanonicalCreativeAsset,
+  CanonicalSyncCreativeAsset,
   CanonicalCreateMediaBuyRequest,
   CanonicalCreativeResponse,
   CanonicalGetProductsRequest,
@@ -100,20 +103,25 @@ import type {
   CanonicalUpdateMediaBuyRequest,
 } from '../../../v2/projection/creative-delivery';
 
-type Creative = CanonicalCreativeAsset;
+type SyncCreative = CanonicalSyncCreativeAsset;
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 type ExclusivePayload<TLeft, TRight> =
   | (TLeft & { [K in Exclude<keyof TRight, keyof TLeft>]?: never })
   | (TRight & { [K in Exclude<keyof TLeft, keyof TRight>]?: never });
+type LegacyMediaBuyStatusInput<T> = T & { status?: MediaBuyStatus };
 
 type CanonicalGetProductsPayload = Omit<ServerPayload<CanonicalCreativeResponse<GetProductsResponse>>, 'products'> & {
   products?: CanonicalProduct[];
 };
 export type GetProductsPayload = RequireCacheScopeWhenProducts<CanonicalGetProductsPayload>;
-type CreateMediaBuySuccessPayload = ServerPayload<CanonicalCreativeResponse<CreateMediaBuySuccess>>;
+type CreateMediaBuySuccessPayload = LegacyMediaBuyStatusInput<
+  ServerPayload<CanonicalCreativeResponse<CreateMediaBuySuccess>>
+>;
 type CreateMediaBuyErrorPayload = ServerPayload<CanonicalCreativeResponse<CreateMediaBuyError>>;
 export type CreateMediaBuyPayload = ExclusivePayload<CreateMediaBuySuccessPayload, CreateMediaBuyErrorPayload>;
-export type UpdateMediaBuyPayload = ServerPayload<CanonicalCreativeResponse<UpdateMediaBuySuccess>>;
+export type UpdateMediaBuyPayload = LegacyMediaBuyStatusInput<
+  ServerPayload<CanonicalCreativeResponse<UpdateMediaBuySuccess>>
+>;
 export type GetMediaBuyDeliveryPayload = ServerPayload<CanonicalCreativeResponse<GetMediaBuyDeliveryResponse>>;
 export type GetMediaBuysPayload = ServerPayload<CanonicalCreativeResponse<GetMediaBuysResponse>>;
 export type ProvidePerformanceFeedbackPayload = ServerPayload<ProvidePerformanceFeedbackSuccess>;
@@ -121,10 +129,10 @@ export type LegacyListCreativeFormatsPayload = ServerPayload<ListCreativeFormats
 export type ListCreativesPayload = ServerPayload<CanonicalListCreativesResponse>;
 export type LegacyGetProductsPayload = RequireCacheScopeWhenProducts<ServerPayload<GetProductsResponse>>;
 export type LegacyCreateMediaBuyPayload = ExclusivePayload<
-  ServerPayload<CreateMediaBuySuccess>,
+  LegacyMediaBuyStatusInput<ServerPayload<CreateMediaBuySuccess>>,
   ServerPayload<CreateMediaBuyError>
 >;
-export type LegacyUpdateMediaBuyPayload = ServerPayload<UpdateMediaBuySuccess>;
+export type LegacyUpdateMediaBuyPayload = LegacyMediaBuyStatusInput<ServerPayload<UpdateMediaBuySuccess>>;
 export type LegacyGetMediaBuyDeliveryPayload = ServerPayload<GetMediaBuyDeliveryResponse>;
 export type LegacyGetMediaBuysPayload = ServerPayload<GetMediaBuysResponse>;
 export type LegacyListCreativesPayload = ServerPayload<ListCreativesResponse>;
@@ -134,6 +142,13 @@ export type SyncCreativesPayload = SyncCreativesSuccessPayload | SyncCreativesEr
 export type SyncCatalogsPayload = ServerPayload<SyncCatalogsSuccess>;
 export type LogEventPayload = ServerPayload<LogEventSuccess>;
 export type SyncEventSourcesPayload = ServerPayload<SyncEventSourcesSuccess>;
+export type ListProductsPayload = AdcpToolMap['list_products']['result'];
+export type RequestProposalsPayload = AdcpToolMap['request_proposals']['result'];
+export type DeclineProposalsPayload = AdcpToolMap['decline_proposals']['result'];
+export type BuyProductsPayload = AdcpToolMap['buy_products']['result'];
+export type AcceptProposalPayload = AdcpToolMap['accept_proposal']['result'];
+export type ControlMediaBuyPayload = AdcpToolMap['control_media_buy']['result'];
+export type RefineProposalsPayload = AdcpToolMap['refine_proposals']['result'];
 
 /**
  * Wire success-row shape for `sync_creatives`. Returning the array of these
@@ -145,6 +160,75 @@ export type GetProductsHandlerResult = GetProductsPayload | TaskHandoff<GetProdu
 export type CreateMediaBuyHandlerResult = CreateMediaBuyPayload | TaskHandoff<CreateMediaBuySuccessPayload>;
 export type UpdateMediaBuyHandlerResult = UpdateMediaBuyPayload | TaskHandoff<UpdateMediaBuyPayload>;
 export type SyncCreativesHandlerResult = SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>;
+
+type CompactLifecycleHandlerResult<T> = T | TaskHandoff<T>;
+
+/**
+ * Primary AdCP 3.2 media-buy lifecycle surface.
+ *
+ * This lives beside {@link SalesPlatform} so SDK 14 adopters can implement
+ * the compact protocol without translating it back into deprecated
+ * `get_products` / `create_media_buy` / `update_media_buy` methods. Keep a
+ * `SalesPlatform` implementation as well when the same deployment must serve
+ * legacy 3.0/3.1 buyers; the server advertises only the compact profile to
+ * 3.2 MCP discovery while retaining those older call routes.
+ *
+ * `refineProposals` requires `proposalRefinement` so capability discovery can
+ * declare the supported structured refinement dimensions truthfully.
+ *
+ * @public
+ */
+export interface MediaBuyLifecyclePlatform<TCtxMeta = Record<string, unknown>> {
+  proposalRefinement?: ProposalRefinementCapabilities;
+  listProducts?(req: AdcpToolMap['list_products']['params'], ctx: Ctx<TCtxMeta>): Promise<ListProductsPayload>;
+  requestProposals?(
+    req: AdcpToolMap['request_proposals']['params'],
+    ctx: Ctx<TCtxMeta>
+  ): Promise<CompactLifecycleHandlerResult<RequestProposalsPayload>>;
+  refineProposals?(
+    req: AdcpToolMap['refine_proposals']['params'],
+    ctx: Ctx<TCtxMeta>
+  ): Promise<CompactLifecycleHandlerResult<RefineProposalsPayload>>;
+  declineProposals?(
+    req: AdcpToolMap['decline_proposals']['params'],
+    ctx: Ctx<TCtxMeta>
+  ): Promise<CompactLifecycleHandlerResult<DeclineProposalsPayload>>;
+  buyProducts?(
+    req: AdcpToolMap['buy_products']['params'],
+    ctx: Ctx<TCtxMeta>
+  ): Promise<CompactLifecycleHandlerResult<BuyProductsPayload>>;
+  acceptProposal?(
+    req: AdcpToolMap['accept_proposal']['params'],
+    ctx: Ctx<TCtxMeta>
+  ): Promise<CompactLifecycleHandlerResult<AcceptProposalPayload>>;
+  controlMediaBuy?(
+    req: AdcpToolMap['control_media_buy']['params'],
+    ctx: Ctx<TCtxMeta>
+  ): Promise<CompactLifecycleHandlerResult<ControlMediaBuyPayload>>;
+  getMediaBuys?(req: GetMediaBuysRequest, ctx: Ctx<TCtxMeta>): Promise<GetMediaBuysPayload>;
+  getMediaBuyDelivery?(filter: GetMediaBuyDeliveryRequest, ctx: Ctx<TCtxMeta>): Promise<GetMediaBuyDeliveryPayload>;
+}
+
+export type MediaBuyLifecycleCorePlatform<TCtxMeta = Record<string, unknown>> = Required<
+  Pick<
+    MediaBuyLifecyclePlatform<TCtxMeta>,
+    'listProducts' | 'buyProducts' | 'controlMediaBuy' | 'getMediaBuys' | 'getMediaBuyDelivery'
+  >
+>;
+
+export type MediaBuyLifecycleProposalPlatform<TCtxMeta = Record<string, unknown>> = Required<
+  Pick<
+    MediaBuyLifecyclePlatform<TCtxMeta>,
+    | 'proposalRefinement'
+    | 'listProducts'
+    | 'requestProposals'
+    | 'refineProposals'
+    | 'declineProposals'
+    | 'acceptProposal'
+    | 'getMediaBuys'
+    | 'getMediaBuyDelivery'
+  >
+>;
 
 export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   // **Method shape — all optional, enforced per-specialism.** Every method on
@@ -273,7 +357,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
    * }
    * ```
    */
-  syncCreatives?(creatives: Creative[], ctx: Ctx<TCtxMeta>): Promise<SyncCreativesHandlerResult>;
+  syncCreatives?(creatives: SyncCreative[], ctx: Ctx<TCtxMeta>): Promise<SyncCreativesHandlerResult>;
 
   // ── get_media_buy_delivery: sync only ───────────────────────────────
 

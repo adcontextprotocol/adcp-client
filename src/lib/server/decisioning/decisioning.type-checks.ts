@@ -22,6 +22,8 @@ import type {
   CreativeBuilderPlatform,
   CreativeTemplatePlatform,
   SalesPlatform,
+  MediaBuyLifecyclePlatform,
+  MediaBuyLifecycleCorePlatform,
   SalesCorePlatform,
   SalesIngestionPlatform,
   ActivateSignalPayload,
@@ -119,8 +121,16 @@ async function _adcp_error_throw_pattern(): Promise<{ id: string }> {
 // ── RequiredPlatformsFor enforces specialism → interface mapping ─────
 
 // Positive: claiming sales-non-guaranteed AND providing sales: SalesPlatform satisfies the constraint.
-type _ok_sales_only = RequiredPlatformsFor<'sales-non-guaranteed'> extends { sales: SalesPlatform } ? true : false;
+type _ok_sales_only =
+  { sales: SalesCorePlatform & SalesIngestionPlatform } extends RequiredPlatformsFor<'sales-non-guaranteed'>
+    ? true
+    : false;
 const _check_sales_only: _ok_sales_only = true;
+type _ok_compact_sales_only =
+  { mediaBuyLifecycle: MediaBuyLifecycleCorePlatform } extends RequiredPlatformsFor<'sales-non-guaranteed'>
+    ? true
+    : false;
+const _check_compact_sales_only: _ok_compact_sales_only = true;
 
 // Positive: claiming creative-template AND providing creative: CreativeBuilderPlatform satisfies.
 // (CreativeTemplatePlatform is a deprecated alias of CreativeBuilderPlatform — both
@@ -335,13 +345,16 @@ interface _PlatformWithoutSales {
   // Note: no `sales` field.
 }
 
-// Negative: the conditional should resolve to `{ sales: SalesPlatform }` when
-// the specialism is `sales-non-guaranteed`. A platform missing `sales`
-// fails to satisfy the requirement — error reads "Property 'sales' is missing"
-// rather than the unactionable "does not satisfy constraint 'never'".
-type _missing_sales_required =
-  RequiredPlatformsFor<'sales-non-guaranteed'> extends infer R ? (R extends { sales: unknown } ? true : false) : false;
-const _check_sales_required: _missing_sales_required = true;
+// Sales specialisms accept either the legacy or compact lifecycle field;
+// validatePlatform() enforces that at least one is present at runtime.
+type _sales_fields_available =
+  RequiredPlatformsFor<'sales-non-guaranteed'> extends {
+    sales?: unknown;
+    mediaBuyLifecycle?: unknown;
+  }
+    ? true
+    : false;
+const _check_sales_fields_available: _sales_fields_available = true;
 
 // ── Platform identity helpers — defineSalesPlatform / defineAudiencePlatform ─
 
@@ -387,9 +400,7 @@ function _sales_guaranteed_field_annotation_pattern() {
     getMediaBuys: async () => ({ status: 'completed' as const, media_buys: [] }),
     syncCreatives: async () => [],
   };
-  type _SalesGuaranteedShape = (RequiredPlatformsFor<'sales-guaranteed'> & {
-    sales: unknown;
-  })['sales'];
+  type _SalesGuaranteedShape = NonNullable<RequiredPlatformsFor<'sales-guaranteed'>['sales']>;
   const _check: _SalesGuaranteedShape = sales;
   return _check;
 }
@@ -415,9 +426,7 @@ function _sales_guaranteed_spread_helpers_pattern() {
       syncCreatives: async () => [],
     }),
   };
-  type _SalesGuaranteedShape = (RequiredPlatformsFor<'sales-guaranteed'> & {
-    sales: unknown;
-  })['sales'];
+  type _SalesGuaranteedShape = NonNullable<RequiredPlatformsFor<'sales-guaranteed'>['sales']>;
   const _check: _SalesGuaranteedShape = sales;
   return _check;
 }
@@ -542,7 +551,14 @@ function _adopter_result_payload_aliases_do_not_require_protocol_status(): _Adop
     _ok({ deployments: [] }),
     _ok({ brand_id: 'brand_1', house: { domain: 'acme.com', name: 'Acme' }, names: [{ en: 'Acme' }] }),
     _ok({ rights: [] }),
-    _ok({ rights_id: 'rights_1', terms: rightsTerms }),
+    _ok({
+      rights_id: 'rights_1',
+      rights_status: 'acquired',
+      brand_id: 'brand_1',
+      terms: rightsTerms,
+      generation_credentials: [],
+      rights_constraint: {} as never,
+    }),
     _ok({ approval_status: 'approved', rights_id: 'rights_1' }),
     _ok(_createBuyPayload()),
     _ok([]),
@@ -601,7 +617,7 @@ function _server_payload_preserves_domain_status_fields(): void {
     confirmed_at: '2026-01-01T00:00:00Z',
     revision: 1,
     packages: [],
-    status: 'active',
+    media_buy_status: 'active',
   };
   void payload;
 }
@@ -721,12 +737,8 @@ function _operational_platform_payload_returns_do_not_require_protocol_status():
   };
 }
 
-// Negative: bare `defineSalesPlatform<Meta>({...})` does NOT preserve the
-// closed shape; its return type is the loose `SalesPlatform<TCtxMeta>`
-// (all-optional after #1341). Adopters claiming `sales-guaranteed` need
-// pattern A or B above. This test documents the limitation so future
-// changes that "fix" `defineSalesPlatform`'s return type without proving
-// inference-through-defaults don't silently regress the adopter migration.
+// The compact-lifecycle alternative intentionally makes the sales requirement
+// a union, so this helper remains source-compatible for legacy adopters.
 function _define_sales_platform_widens_post_1341() {
   const sales = defineSalesPlatform<_SocialMeta>({
     getProducts: async () => ({ status: 'completed' as const, products: [], cache_scope: 'public' as const }),
@@ -739,16 +751,7 @@ function _define_sales_platform_widens_post_1341() {
     }),
     getMediaBuys: async () => ({ status: 'completed' as const, media_buys: [] }),
   });
-  type _SalesGuaranteedShape = (RequiredPlatformsFor<'sales-guaranteed'> & {
-    sales: unknown;
-  })['sales'];
-  // @ts-expect-error — defineSalesPlatform returns SalesPlatform<TCtxMeta>
-  // (all-optional after #1341) which doesn't satisfy the closed-shape
-  // constraint of RequiredPlatformsFor<'sales-guaranteed'>. The expected
-  // failure here is the regression alarm: if this stops failing, the
-  // helper's return type narrowed and the migration patterns above can
-  // be relaxed.
-  const _check: _SalesGuaranteedShape = sales;
+  const _check: SalesPlatform<_SocialMeta> = sales;
   return _check;
 }
 
@@ -1066,7 +1069,7 @@ export const _references = [
   _postal_area_support_accepts_native_and_deprecated_forms,
   _targeting_capabilities_rejects_unknown_geo_metro,
   _new_codes_compile,
-  _check_sales_required,
+  _check_sales_fields_available,
   _check_brand_rights_requires_brand,
   _check_sales_no_required_caps,
   _define_sales_platform_identity,

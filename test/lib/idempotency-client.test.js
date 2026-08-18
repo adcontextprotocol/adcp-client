@@ -92,6 +92,17 @@ describe('TaskExecutor idempotency_key injection', () => {
     assert.equal(capture[0].params.idempotency_key, undefined);
   });
 
+  it('auto-generates a key for the get_products proposal-finalize variant', async () => {
+    const executor = new TaskExecutor();
+    const result = await executor.executeTask(agent, 'get_products', {
+      buying_mode: 'refine',
+      refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'proposal_1' }],
+    });
+    const sentKey = capture[0].params.idempotency_key;
+    assert.match(sentKey, /^[A-Za-z0-9_.:-]{16,255}$/);
+    assert.equal(result.metadata.idempotency_key, sentKey);
+  });
+
   it('does NOT inject for si_terminate_session (naturally idempotent)', async () => {
     const executor = new TaskExecutor();
     await executor.executeTask(agent, 'si_terminate_session', { session_id: 's_1' });

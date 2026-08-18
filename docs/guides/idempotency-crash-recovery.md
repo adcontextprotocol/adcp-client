@@ -7,7 +7,7 @@ How a buyer agent recovers when a process crashes mid-retry without creating dup
 A buyer process sends `create_media_buy` to a seller, the seller accepts it, but the process crashes before it can persist the response. On restart, the buyer does not know whether the call landed. Three things can happen on the next attempt:
 
 - **Normal replay** — the seller is still within its replay window and returns the cached response. `result.metadata.replayed` is `true`.
-- **Conflict** — the same key was used but the buyer's planner emitted a different payload (e.g., LLM re-ran and budget changed). `IdempotencyConflictError`.
+- **Conflict** — the same key now maps to a different canonical payload. This can mean planner drift, or an SDK upgrade may have strengthened replay identity after the original operation succeeded. `IdempotencyConflictError` is therefore a reconciliation stop, not permission to rotate immediately.
 - **Expired** — the replay window elapsed before the buyer could confirm. `IdempotencyExpiredError`. Re-sending the same key at this point bypasses the seller's replay cache, so the seller would create a **second** media buy unless the buyer looks up by natural key first.
 
 This guide shows the buyer-side recipe that handles all three.
@@ -111,13 +111,14 @@ export async function sendCreateMediaBuy(order: BuyerOrder) {
   // errorInstance is populated alongside adcpError when the code has a
   // dedicated class.
   if (result.errorInstance instanceof IdempotencyConflictError) {
-    // Planner re-ran and emitted a different payload under the same key.
-    // Treat as a new intent: mint a fresh key and retry once.
-    const nextKey = await rotateKey(order.order_id);
-    return seller.createMediaBuy({
-      ...order.request,
-      ...useIdempotencyKey(nextKey),
-    });
+    // The prior operation may already have succeeded. Reconcile by the
+    // buyer's natural key before deciding whether this is a genuinely new
+    // intent; never rotate blindly on conflict.
+    const existing = await lookupByNaturalKey(seller, order.order_id);
+    if (existing) return existing;
+    // No matching operation exists. Escalate the payload mismatch so a human
+    // or deterministic planner can confirm whether a new intent is intended.
+    throw result.errorInstance;
   }
   if (result.errorInstance instanceof IdempotencyExpiredError) {
     // Window closed between our TTL check and the seller's view (clock skew,
@@ -154,13 +155,14 @@ On every attempt, evaluate in order:
 2. **Is `now() - created_at > getIdempotencyReplayTtlSeconds()`?** Yes → call `lookupByNaturalKey`. Resource found → return it. Not found → rotate to a fresh key and continue.
 3. **Send the request with the persisted key.**
 4. **Did the call return a typed idempotency error on `result.errorInstance`?**
-   - `IdempotencyConflictError` → payload mismatch under the same key. Rotate key, retry once. If it conflicts again, surface to the operator — your planner is non-deterministic on input the seller treats as material.
+   - `IdempotencyConflictError` → reconcile by natural key first. Resource found → return it. Not found → surface the mismatch for a human or deterministic planner to decide whether this is a genuinely new intent; do not rotate automatically.
    - `IdempotencyExpiredError` → race between your TTL gate and the seller. Fall back to `lookupByNaturalKey`; rotate and retry if absent.
 5. **Otherwise the response is `success`. Check `result.metadata.replayed`.** `true` → the seller is handing back a cached response; skip side effects. `false` → first landing; fire side effects as normal.
 
 ## Pitfalls
 
 - **Don't regenerate the key on every retry.** A fresh key on retry defeats the replay cache — the seller sees a new request and creates a duplicate. Persist once per natural key and reuse.
+- **Don't rotate immediately on `IdempotencyConflictError`.** The prior operation may have succeeded before an SDK replay-identity upgrade. Reconcile by natural key first, then require an explicit new-intent decision before minting another key.
 - **Don't trust a `result.success === true` without checking `result.metadata.replayed`.** A cached replay is success-shaped but the work already happened. Firing side effects on both the original call and the replay is the top at-least-once bug.
 - **Don't assume the seller's TTL is 24 hours.** `getIdempotencyReplayTtlSeconds()` throws on v3 sellers that fail to declare `adcp.idempotency.replay_ttl_seconds` and returns `undefined` on v2 sellers. The SDK does not default to 24h because a silent default misleads retry-sensitive flows. Catch the throw and fail the operation, or fall through the natural-key lookup path unconditionally on v2.
 - **Don't persist idempotency keys in process memory.** An in-memory `Map` is gone on crash — the entire point of the pattern is surviving restart. Use Postgres, Redis with durability, or whatever your system already persists orders to.

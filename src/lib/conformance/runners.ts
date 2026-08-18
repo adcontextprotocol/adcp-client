@@ -8,7 +8,7 @@ import type {
   SkipReason,
 } from './types';
 import { schemaToArbitrary } from './schemaArbitrary';
-import { ADCP_MAJOR_VERSION } from '../version';
+import { ADCP_MAJOR_VERSION, ADCP_VERSION, toReleasePrecisionVersion } from '../version';
 import { loadRequestSchema, type ConformanceSchemaOptions } from './schemaLoader';
 import { evaluate, prepareResponseValidator } from './oracle';
 
@@ -85,7 +85,11 @@ export async function runToolFuzz(
     // separately by storyboards (`error_compliance/unsupported_major_version`).
     const probeRequest =
       'adcp_major_version' in request || 'adcp_version' in request
-        ? { ...request, adcp_major_version: ADCP_MAJOR_VERSION }
+        ? {
+            ...request,
+            ...('adcp_version' in request && { adcp_version: toReleasePrecisionVersion(ADCP_VERSION) }),
+            adcp_major_version: ADCP_MAJOR_VERSION,
+          }
         : request;
 
     let result;

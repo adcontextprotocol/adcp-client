@@ -13,6 +13,7 @@
 
 import { z } from 'zod';
 import * as schemas from '../types/schemas.generated';
+import type { AccountReference, CreateMediaBuyRequest, PreviewCreativeRequest } from '../types/tools.generated';
 
 type InputShape = Record<string, z.ZodType>;
 type WithOptionalAccountShape<TShape extends InputShape & { account: z.ZodType }> = Omit<TShape, 'account'> & {
@@ -28,14 +29,84 @@ type WithOptionalAccountShape<TShape extends InputShape & { account: z.ZodType }
 function withOptionalAccount<TShape extends InputShape & { account: z.ZodType }>(
   schema: z.ZodObject<TShape>
 ): z.ZodObject<WithOptionalAccountShape<TShape>, any> {
-  return schema.extend({ account: schema.shape.account.optional() }) as z.ZodObject<
+  return schema.safeExtend({ account: schema.shape.account.optional() } as any) as z.ZodObject<
     WithOptionalAccountShape<TShape>,
     any
   >;
 }
 
-const CreateMediaBuyToolRequestSchema = withOptionalAccount(schemas.CreateMediaBuyRequestSchema);
+const CreateMediaBuyToolRequestSchemaBase: z.ZodObject<InputShape & { account: z.ZodOptional<z.ZodType> }, any> =
+  withOptionalAccount(schemas.CreateMediaBuyRequestSchema);
+type CreateMediaBuyToolRequestKey =
+  | 'adcp_version'
+  | 'adcp_major_version'
+  | 'governance_context'
+  | 'idempotency_key'
+  | 'plan_id'
+  | 'account'
+  | 'proposal_id'
+  | 'opportunity'
+  | 'total_budget'
+  | 'daily_budget_cap'
+  | 'budget_cap_timezone'
+  | 'budget_allocation'
+  | 'packages'
+  | 'brand'
+  | 'advertiser_industry'
+  | 'invoice_recipient'
+  | 'io_acceptance'
+  | 'po_number'
+  | 'name'
+  | 'agency_estimate_number'
+  | 'start_time'
+  | 'end_time'
+  | 'pacing'
+  | 'bidding'
+  | 'paused'
+  | 'push_notification_config'
+  | 'reporting_webhook'
+  | 'artifact_webhook'
+  | 'context'
+  | 'ext';
+type CreateMediaBuyToolRequestShape = {
+  [K in Exclude<CreateMediaBuyToolRequestKey, 'account'>]-?: z.ZodType<
+    CreateMediaBuyRequest[K],
+    CreateMediaBuyRequest[K]
+  >;
+} & {
+  account: z.ZodOptional<z.ZodType<AccountReference, AccountReference>>;
+};
+const CreateMediaBuyToolRequestSchema = CreateMediaBuyToolRequestSchemaBase as unknown as z.ZodObject<
+  CreateMediaBuyToolRequestShape,
+  any
+>;
 const UpdateMediaBuyToolRequestSchema = withOptionalAccount(schemas.UpdateMediaBuyRequestSchema);
+type PreviewCreativeToolRequestKey =
+  | 'adcp_version'
+  | 'adcp_major_version'
+  | 'request_type'
+  | 'creative_manifest'
+  | 'target_capability_id'
+  | 'format_id'
+  | 'inputs'
+  | 'template_id'
+  | 'quality'
+  | 'output_format'
+  | 'item_limit'
+  | 'requests'
+  | 'variant_id'
+  | 'creative_id'
+  | 'allow_async'
+  | 'push_notification_config'
+  | 'context'
+  | 'ext';
+type PreviewCreativeToolRequestShape = {
+  [K in PreviewCreativeToolRequestKey]-?: z.ZodType<PreviewCreativeRequest[K], PreviewCreativeRequest[K]>;
+};
+const PreviewCreativeToolRequestSchema = schemas.PreviewCreativeRequestSchema as unknown as z.ZodObject<
+  PreviewCreativeToolRequestShape,
+  any
+>;
 
 /**
  * Exact schema types for tool names known at build time. Prefer this type for
@@ -43,6 +114,13 @@ const UpdateMediaBuyToolRequestSchema = withOptionalAccount(schemas.UpdateMediaB
  * runtime string that may not match a known tool.
  */
 export type KnownToolRequestSchemas = {
+  list_products: typeof schemas.ListProductsRequestSchema;
+  request_proposals: typeof schemas.RequestProposalsRequestSchema;
+  refine_proposals: typeof schemas.RefineProposalsRequestSchema;
+  decline_proposals: typeof schemas.DeclineProposalsRequestSchema;
+  buy_products: typeof schemas.BuyProductsRequestSchema;
+  accept_proposal: typeof schemas.AcceptProposalRequestSchema;
+  control_media_buy: typeof schemas.ControlMediaBuyRequestSchema;
   get_products: typeof schemas.GetProductsRequestSchema;
   create_media_buy: typeof CreateMediaBuyToolRequestSchema;
   update_media_buy: typeof UpdateMediaBuyToolRequestSchema;
@@ -52,7 +130,7 @@ export type KnownToolRequestSchemas = {
   list_creative_formats: typeof schemas.ListCreativeFormatsRequestSchema;
   list_transformers: typeof schemas.ListTransformersRequestSchema;
   build_creative: typeof schemas.BuildCreativeRequestSchema;
-  preview_creative: typeof schemas.PreviewCreativeRequestSchema;
+  preview_creative: typeof PreviewCreativeToolRequestSchema;
   sync_creatives: typeof schemas.SyncCreativesRequestSchema;
   list_creatives: typeof schemas.ListCreativesRequestSchema;
   get_creative_delivery: typeof schemas.GetCreativeDeliveryRequestSchema;
@@ -86,6 +164,7 @@ export type KnownToolRequestSchemas = {
   sync_plans: typeof schemas.SyncPlansRequestSchema;
   check_governance: typeof schemas.CheckGovernanceRequestSchema;
   report_plan_outcome: typeof schemas.ReportPlanOutcomeRequestSchema;
+  report_plan_adjustment: typeof schemas.ReportPlanAdjustmentRequestSchema;
   get_plan_audit_logs: typeof schemas.GetPlanAuditLogsRequestSchema;
   create_collection_list: typeof schemas.CreateCollectionListRequestSchema;
   update_collection_list: typeof schemas.UpdateCollectionListRequestSchema;
@@ -97,8 +176,11 @@ export type KnownToolRequestSchemas = {
   si_send_message: typeof schemas.SISendMessageRequestSchema;
   si_terminate_session: typeof schemas.SITerminateSessionRequestSchema;
   get_adcp_capabilities: typeof schemas.GetAdCPCapabilitiesRequestSchema;
+  sync_agent_notification_configs: typeof schemas.SyncAgentNotificationConfigsRequestSchema;
   comply_test_controller: typeof schemas.ComplyTestControllerRequestSchema;
+  validate_input: typeof schemas.ValidateInputRequestSchema;
   get_brand_identity: typeof schemas.GetBrandIdentityRequestSchema;
+  search_brands: typeof schemas.SearchBrandsRequestSchema;
   get_rights: typeof schemas.GetRightsRequestSchema;
   acquire_rights: typeof schemas.AcquireRightsRequestSchema;
   update_rights: typeof schemas.UpdateRightsRequestSchema;
@@ -112,6 +194,13 @@ export type ToolRequestSchemas = Readonly<KnownToolRequestSchemas> & {
 
 export const TOOL_REQUEST_SCHEMAS: ToolRequestSchemas = {
   // Product discovery & media buy
+  list_products: schemas.ListProductsRequestSchema,
+  request_proposals: schemas.RequestProposalsRequestSchema,
+  refine_proposals: schemas.RefineProposalsRequestSchema,
+  decline_proposals: schemas.DeclineProposalsRequestSchema,
+  buy_products: schemas.BuyProductsRequestSchema,
+  accept_proposal: schemas.AcceptProposalRequestSchema,
+  control_media_buy: schemas.ControlMediaBuyRequestSchema,
   get_products: schemas.GetProductsRequestSchema,
   create_media_buy: CreateMediaBuyToolRequestSchema,
   update_media_buy: UpdateMediaBuyToolRequestSchema,
@@ -123,7 +212,7 @@ export const TOOL_REQUEST_SCHEMAS: ToolRequestSchemas = {
   list_creative_formats: schemas.ListCreativeFormatsRequestSchema,
   list_transformers: schemas.ListTransformersRequestSchema,
   build_creative: schemas.BuildCreativeRequestSchema,
-  preview_creative: schemas.PreviewCreativeRequestSchema,
+  preview_creative: PreviewCreativeToolRequestSchema,
   sync_creatives: schemas.SyncCreativesRequestSchema,
   list_creatives: schemas.ListCreativesRequestSchema,
   get_creative_delivery: schemas.GetCreativeDeliveryRequestSchema,
@@ -167,6 +256,7 @@ export const TOOL_REQUEST_SCHEMAS: ToolRequestSchemas = {
   sync_plans: schemas.SyncPlansRequestSchema,
   check_governance: schemas.CheckGovernanceRequestSchema,
   report_plan_outcome: schemas.ReportPlanOutcomeRequestSchema,
+  report_plan_adjustment: schemas.ReportPlanAdjustmentRequestSchema,
   get_plan_audit_logs: schemas.GetPlanAuditLogsRequestSchema,
 
   // Collection lists
@@ -186,12 +276,17 @@ export const TOOL_REQUEST_SCHEMAS: ToolRequestSchemas = {
   get_adcp_capabilities: schemas.GetAdCPCapabilitiesRequestSchema,
   get_task_status: schemas.GetTaskStatusRequestSchema,
   list_tasks: schemas.ListTasksRequestSchema,
+  sync_agent_notification_configs: schemas.SyncAgentNotificationConfigsRequestSchema,
+
+  // Creative preflight
+  validate_input: schemas.ValidateInputRequestSchema,
 
   // Test controller
   comply_test_controller: schemas.ComplyTestControllerRequestSchema,
 
   // Brand rights
   get_brand_identity: schemas.GetBrandIdentityRequestSchema,
+  search_brands: schemas.SearchBrandsRequestSchema,
   get_rights: schemas.GetRightsRequestSchema,
   acquire_rights: schemas.AcquireRightsRequestSchema,
   update_rights: schemas.UpdateRightsRequestSchema,

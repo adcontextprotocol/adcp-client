@@ -1,6 +1,10 @@
 # Changelog
 
-## 13.0.1
+## 14.0.0-beta.0
+
+### Major Changes
+
+- Add the AdCP 3.2 beta surface, including compact media-buy lifecycle tools, plan-adjustment reporting, agent notification configuration, version-aware request signing, regenerated types and schemas, and mixed-version compatibility for AdCP 3.0 and 3.1 peers.
 
 ### Patch Changes
 

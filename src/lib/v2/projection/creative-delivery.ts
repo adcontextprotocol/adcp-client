@@ -35,10 +35,40 @@ import type { CanonicalFormatDeclaration } from './legacy-metadata';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, Extract<keyof T, K>> : never;
 
-/** Primary SDK creative shape. Legacy creative identity is a wire-adapter concern. */
-export type CanonicalCreativeAsset = Omit<CanonicalCreativeResponse<CreativeAsset>, 'format_kind'> & {
+/**
+ * Primary SDK creative shape. Spell out the named fields rather than using
+ * `Omit`: the generated 3.2 type intentionally has an extension index
+ * signature, and `Omit` would collapse its named properties to `unknown`.
+ * Legacy creative identity remains a wire-adapter concern.
+ */
+type CanonicalCreativeAssetFields = {
+  creative_id: CreativeAsset['creative_id'];
+  name: CreativeAsset['name'];
   format_kind: CanonicalFormatKind;
+  format_option_ref?: CreativeAsset['format_option_ref'];
   format_id?: never;
+  assets: CreativeAsset['assets'];
+  inputs?: CreativeAsset['inputs'];
+  tags?: CreativeAsset['tags'];
+  status?: CreativeAsset['status'];
+  weight?: CreativeAsset['weight'];
+  placement_refs?: CreativeAsset['placement_refs'];
+  placement_ids?: CreativeAsset['placement_ids'];
+  industry_identifiers?: CreativeAsset['industry_identifiers'];
+  provenance?: CreativeAsset['provenance'];
+  rights?: CreativeAsset['rights'];
+};
+
+export type CanonicalCreativeAsset = CanonicalCreativeAssetFields & {
+  [key: string]: unknown;
+  /** Localization is accepted only by sync_creatives, never inline in packages. */
+  localization?: never;
+};
+
+/** Canonical creative accepted by sync_creatives, including sync-only localization metadata. */
+export type CanonicalSyncCreativeAsset = CanonicalCreativeAssetFields & {
+  [key: string]: unknown;
+  localization?: NonNullable<SyncCreativesRequest['creatives']>[number]['localization'];
 };
 
 /** Explicit compatibility-only creative shape used at a legacy wire boundary. */
@@ -93,7 +123,7 @@ export type CanonicalUpdateMediaBuyRequest = Omit<
   new_packages?: CanonicalPackageRequest[];
 };
 export type CanonicalSyncCreativesRequest = Omit<CanonicalCreativeResponse<SyncCreativesRequest>, 'creatives'> & {
-  creatives: CanonicalCreativeAsset[];
+  creatives: CanonicalSyncCreativeAsset[];
 };
 export type CanonicalListedCreative = Omit<
   CanonicalCreativeResponse<ListCreativesResponse['creatives'][number]>,
@@ -137,13 +167,15 @@ type IsLegacyCreativeIdentityKey<K extends PropertyKey> = K extends string
 /** Recursively removes legacy creative routing identity from primary response types. */
 export type CanonicalCreativeResponse<T> = T extends (...args: never[]) => unknown
   ? T
-  : T extends readonly (infer TItem)[]
-    ? CanonicalCreativeResponse<TItem>[]
-    : T extends object
-      ? {
-          [K in keyof T as IsLegacyCreativeIdentityKey<K> extends true ? never : K]: CanonicalCreativeResponse<T[K]>;
-        }
-      : T;
+  : T extends string | number | boolean | bigint | symbol | null | undefined
+    ? T
+    : T extends readonly unknown[]
+      ? { [K in keyof T]: CanonicalCreativeResponse<T[K]> }
+      : T extends object
+        ? {
+            [K in keyof T as IsLegacyCreativeIdentityKey<K> extends true ? never : K]: CanonicalCreativeResponse<T[K]>;
+          }
+        : T;
 
 /** Runtime counterpart to {@link CanonicalCreativeResponse}. */
 export function stripLegacyCreativeIdentity<T>(value: T): CanonicalCreativeResponse<T> {

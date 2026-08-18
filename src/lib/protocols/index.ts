@@ -506,13 +506,16 @@ export class ProtocolClient {
               // exempt from signing (it's the discovery call itself) and also
               // triggers cache priming for any other op on agents with
               // `request_signing` configured.
-              const signingContext = buildAgentSigningContext(agent);
+              const signingContext = buildAgentSigningContext(agent, {
+                adcpVersion: wireAdcpVersion ?? adcpVersion ?? ADCP_VERSION,
+              });
               if (signingContext && toolName !== CAPABILITY_OP) {
                 await ensureCapabilityLoaded(agent, signingContext, primeArgs =>
                   ProtocolClient.callTool(agent, CAPABILITY_OP, primeArgs, {
                     debugLogs,
                     serverVersion,
                     adcpVersion,
+                    wireAdcpVersion,
                     ...(versionEnvelopeMode !== 'auto' && { versionEnvelope: versionEnvelopeMode }),
                     transport,
                     signal,

@@ -604,6 +604,7 @@ export { InputRequiredError } from './core/TaskExecutor';
 export {
   generateIdempotencyKey,
   isMutatingTask,
+  requestUsesIdempotency,
   isValidIdempotencyKey,
   useIdempotencyKey,
   redactIdempotencyKey,
@@ -1598,6 +1599,7 @@ export {
   type CanonicalOnlyProduct,
   type CanonicalCreativeAsset,
   type CanonicalCreativeAsset as CreativeAsset,
+  type CanonicalSyncCreativeAsset,
   type CanonicalCreateMediaBuyRequest,
   type CanonicalCreateMediaBuyRequest as CreateMediaBuyRequest,
   type CanonicalCreateMediaBuyResponse,

@@ -17,7 +17,7 @@ import type {
   RepeatableGroupSlot,
 } from '../lib/types/format-asset-slots';
 
-// --- Image: the field is `formats`, not `file_types` ---
+// --- Image: `formats` is canonical; 3.2 also permits extension fields ---
 const goodImage: IndividualImageAssetSlot = {
   item_type: 'individual',
   asset_type: 'image',
@@ -33,13 +33,13 @@ const badImage: IndividualImageAssetSlot = {
   asset_id: 'hero',
   required: true,
   requirements: {
-    // @ts-expect-error — `file_types` is not a spec field; the correct name is `formats`
+    // Non-canonical extension fields are retained for forward compatibility.
     file_types: ['jpg'],
   },
 };
 void badImage;
 
-// --- Video: unit is milliseconds, not seconds ---
+// --- Video: milliseconds are canonical; extension fields remain allowed ---
 const goodVideo: IndividualVideoAssetSlot = {
   item_type: 'individual',
   asset_type: 'video',
@@ -54,7 +54,6 @@ const badVideoMinSeconds: IndividualVideoAssetSlot = {
   asset_type: 'video',
   asset_id: 'ad',
   required: true,
-  // @ts-expect-error — use `min_duration_ms` (spec is milliseconds, not seconds)
   requirements: { min_duration_seconds: 6 },
 };
 void badVideoMinSeconds;
@@ -64,19 +63,17 @@ const badVideoMaxSeconds: IndividualVideoAssetSlot = {
   asset_type: 'video',
   asset_id: 'ad',
   required: true,
-  // @ts-expect-error — use `max_duration_ms`
   requirements: { max_duration_seconds: 30 },
 };
 void badVideoMaxSeconds;
 
-// --- Video: containers, not file_types ---
+// --- Video: `containers` is canonical; extension fields remain allowed ---
 const badVideoFileTypes: IndividualVideoAssetSlot = {
   item_type: 'individual',
   asset_type: 'video',
   asset_id: 'ad',
   required: true,
   requirements: {
-    // @ts-expect-error — the field is `containers` for video, not `file_types`
     file_types: ['mp4'],
   },
 };

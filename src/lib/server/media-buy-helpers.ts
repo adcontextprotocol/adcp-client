@@ -6,7 +6,8 @@
  * builders get the right shape by default.
  */
 
-import type { MediaBuyStatus, CanceledBy, CreateMediaBuySuccess, Package } from '../types/core.generated';
+import type { MediaBuyStatus, CanceledBy, Package } from '../types/core.generated';
+import type { CreateMediaBuySuccess } from '../types/tools.generated';
 
 /**
  * Actions a buyer can perform on a media buy.

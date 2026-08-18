@@ -285,7 +285,12 @@ const BUILTIN_IDENTIFIERS = new Set([
   'ReferenceError',
   // Utility types.
   'Partial',
-  'Required',
+  // Do not add `Required` here: AdCP 3.2 exports a protocol type named
+  // `Required = true` for targeting-overlay requirement flags. The generated
+  // declarations currently do not use TypeScript's `Required<T>` utility, so
+  // treating the identifier as a built-in drops the protocol declaration from
+  // narrow per-tool slices and makes bare `Required` references resolve to the
+  // generic utility with a missing type argument.
   'Readonly',
   'Pick',
   'Omit',
@@ -352,24 +357,31 @@ function closure(allExports: Map<string, ExportInfo>, seeds: readonly string[]):
 }
 
 /**
- * Discover the AdCP tool list from the source manifest. Tools are
- * camel-cased there but kebab-cased in the schema cache; the official
- * name is the snake_case form used in tool definitions.
+ * Discover the AdCP tool list from the generated protocol manifest. The
+ * schema emitter's `// <tool> parameters` markers are not a complete source:
+ * a tool whose request follows shared definitions may not receive a marker
+ * even though its canonical Request/Response types were emitted. That caused
+ * narrow slices for tools including refine_proposals, decline_proposals, and
+ * get_media_buy_delivery to disappear silently.
  */
 function loadToolList(): string[] {
-  // tools.generated.ts has `// <tool_name> parameters` markers — that's
-  // the most authoritative list, and it filters out v2.5 / experimental
-  // tools that aren't in the current AdCP surface.
-  const toolsGeneratedTs = path.join(REPO_ROOT, 'src', 'lib', 'types', 'tools.generated.ts');
-  if (!existsSync(toolsGeneratedTs)) {
-    throw new Error(`Cannot find ${toolsGeneratedTs}. Run \`npm run build:lib\` first.`);
+  const manifestPath = path.join(REPO_ROOT, 'src', 'lib', 'types', 'manifest.generated.ts');
+  if (!existsSync(manifestPath)) {
+    throw new Error(`Cannot find ${manifestPath}. Run \`npm run generate-manifest-derived\` first.`);
   }
-  const text = readFileSync(toolsGeneratedTs, 'utf8');
+  const text = readFileSync(manifestPath, 'utf8');
   const tools = new Set<string>();
-  const re = /^\/\/ ([a-z][a-z0-9_]*) parameters$/gm;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    tools.add(m[1]);
+  const category = /export const [A-Z_]+_TOOLS_FROM_MANIFEST = \[([\s\S]*?)\] as const;/g;
+  let categoryMatch: RegExpExecArray | null;
+  while ((categoryMatch = category.exec(text)) !== null) {
+    const quotedTool = /"([a-z][a-z0-9_]*)"/g;
+    let toolMatch: RegExpExecArray | null;
+    while ((toolMatch = quotedTool.exec(categoryMatch[1]!)) !== null) {
+      tools.add(toolMatch[1]!);
+    }
+  }
+  if (tools.size === 0) {
+    throw new Error(`No tool category arrays found in ${manifestPath}. Regenerate the protocol manifest.`);
   }
   return [...tools].sort();
 }
@@ -564,4 +576,4 @@ if (require.main === module) {
   main();
 }
 
-export const __test__ = { stripComments, shouldWarnOnExportCollision };
+export const __test__ = { stripComments, shouldWarnOnExportCollision, closure };

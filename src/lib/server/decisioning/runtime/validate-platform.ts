@@ -29,18 +29,36 @@ function isSalesSpecialism(s: AdCPSpecialism): boolean {
   return s.startsWith('sales-');
 }
 
+const COMPACT_CORE_METHODS = [
+  'listProducts',
+  'buyProducts',
+  'controlMediaBuy',
+  'getMediaBuys',
+  'getMediaBuyDelivery',
+] as const;
+const COMPACT_PROPOSAL_METHODS = [
+  'proposalRefinement',
+  'listProducts',
+  'requestProposals',
+  'refineProposals',
+  'declineProposals',
+  'acceptProposal',
+  'getMediaBuys',
+  'getMediaBuyDelivery',
+] as const;
+
 const SPECIALISM_REQUIREMENTS: Partial<Record<AdCPSpecialism, ReadonlyArray<keyof DecisioningPlatform>>> = {
   // All sales-* specialisms share the SalesPlatform interface. Adopters
   // implement `sales` once; the specialism enum picks which buyer-side
   // storyboard the agent is validated against. Wired here per the AdCP 3.0
   // GA enum; preview specialisms (sales-streaming-tv, sales-exchange,
   // sales-retail-media) get added when they land in `AdCPSpecialism`.
-  'sales-non-guaranteed': ['sales'],
-  'sales-guaranteed': ['sales'],
-  'sales-broadcast-tv': ['sales'],
+  'sales-non-guaranteed': [],
+  'sales-guaranteed': [],
+  'sales-broadcast-tv': [],
   'sales-social': ['sales'],
   'sales-catalog-driven': ['sales'],
-  'sales-proposal-mode': ['sales'],
+  'sales-proposal-mode': [],
   // Creative specialisms share the CreativeXxxPlatform field name; adopters
   // pick the right archetype (template / generative / ad-server) at
   // construction time.
@@ -96,6 +114,25 @@ export class PlatformConfigError extends Error {
 export function validatePlatform(platform: DecisioningPlatform): void {
   const claimed = platform.capabilities?.specialisms ?? [];
   const errors: string[] = [];
+
+  for (const specialism of claimed) {
+    const acceptsCompactLifecycle =
+      specialism === 'sales-non-guaranteed' ||
+      specialism === 'sales-guaranteed' ||
+      specialism === 'sales-broadcast-tv' ||
+      specialism === 'sales-proposal-mode';
+    if (acceptsCompactLifecycle && platform.sales == null && platform.mediaBuyLifecycle == null) {
+      errors.push(`${specialism} requires platform.sales or platform.mediaBuyLifecycle`);
+    }
+    if (acceptsCompactLifecycle && platform.sales == null && platform.mediaBuyLifecycle != null) {
+      const required = specialism === 'sales-proposal-mode' ? COMPACT_PROPOSAL_METHODS : COMPACT_CORE_METHODS;
+      for (const method of required) {
+        if (platform.mediaBuyLifecycle[method] == null) {
+          errors.push(`${specialism} requires platform.mediaBuyLifecycle.${method}`);
+        }
+      }
+    }
+  }
 
   // 1. Specialism declarations match required interfaces.
   for (const specialism of claimed) {

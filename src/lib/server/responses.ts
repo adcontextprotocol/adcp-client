@@ -40,14 +40,14 @@
  */
 
 import type { GetAdCPCapabilitiesResponse } from '../types/tools.generated';
-import type { GetProductsResponse } from '../types/core.generated';
-import type { CreateMediaBuySuccess } from '../types/core.generated';
 import type { GetMediaBuyDeliveryResponse } from '../types/tools.generated';
 import type { RequireCacheScopeWhenProducts, ServerPayload } from '../types/server-payload';
 import { validActionsForStatus } from './media-buy-helpers';
 import type { CancelMediaBuyInput } from './media-buy-helpers';
 import type {
   ListCreativeFormatsResponse,
+  GetProductsResponse,
+  CreateMediaBuySuccess,
   UpdateMediaBuySuccess,
   GetMediaBuysResponse,
   ProvidePerformanceFeedbackSuccess,
@@ -282,14 +282,18 @@ export function productsResponse(
 export function mediaBuyResponse(data: ServerPayload<CreateMediaBuySuccess>, summary?: string): McpToolResponse {
   assertNoTopLevelSetup(data, 'mediaBuyResponse');
   const withDefaults = { ...stripMediaBuyWriteOnlyFields(data) };
+  const legacyStatus = (withDefaults as typeof withDefaults & { status?: unknown }).status;
+  if (withDefaults.media_buy_status == null && typeof legacyStatus === 'string') {
+    withDefaults.media_buy_status = legacyStatus as NonNullable<typeof withDefaults.media_buy_status>;
+  }
   if (withDefaults.revision === undefined) {
     withDefaults.revision = 1;
   }
   if (withDefaults.confirmed_at === undefined) {
     withDefaults.confirmed_at = new Date().toISOString();
   }
-  if (withDefaults.valid_actions === undefined && withDefaults.status != null) {
-    withDefaults.valid_actions = validActionsForStatus(withDefaults.status);
+  if (withDefaults.valid_actions === undefined && withDefaults.media_buy_status != null) {
+    withDefaults.valid_actions = validActionsForStatus(withDefaults.media_buy_status);
   }
   return {
     content: [{ type: 'text', text: summary ?? `Media buy ${withDefaults.media_buy_id} created` }],
@@ -344,15 +348,19 @@ export function listCreativeFormatsResponse(
 /**
  * Build a successful update_media_buy response.
  *
- * When `status` is provided but `valid_actions` is not, auto-populates
+ * When `media_buy_status` is provided but `valid_actions` is not, auto-populates
  * `valid_actions` from `validActionsForStatus()`.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function updateMediaBuyResponse(data: ServerPayload<UpdateMediaBuySuccess>, summary?: string): McpToolResponse {
   assertNoTopLevelSetup(data, 'updateMediaBuyResponse');
   const withDefaults = { ...stripBusinessEntityBank(data, 'invoice_recipient') };
-  if (withDefaults.valid_actions === undefined && withDefaults.status != null) {
-    withDefaults.valid_actions = validActionsForStatus(withDefaults.status);
+  const legacyStatus = (withDefaults as typeof withDefaults & { status?: unknown }).status;
+  if (withDefaults.media_buy_status == null && typeof legacyStatus === 'string') {
+    withDefaults.media_buy_status = legacyStatus as NonNullable<typeof withDefaults.media_buy_status>;
+  }
+  if (withDefaults.valid_actions === undefined && withDefaults.media_buy_status != null) {
+    withDefaults.valid_actions = validActionsForStatus(withDefaults.media_buy_status);
   }
   return {
     content: [{ type: 'text', text: summary ?? `Media buy ${withDefaults.media_buy_id} updated` }],

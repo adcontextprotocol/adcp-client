@@ -19,19 +19,19 @@ const AUDIO_TEST_KIT = path.join(REPO_ROOT, 'test', 'fixtures', 'acme-outdoor-au
 function assertAudioStoryboardRan(grader) {
   const scenarios = (grader.tracks ?? []).flatMap(track => track.scenarios ?? []);
 
-  const formatScenario = scenarios.find(scenario => scenario.scenario === 'creative_template/format_exposure');
-  const formats = formatScenario?.steps?.find(
-    step => step.step_id === 'discover_formats' || step.task === 'list_creative_formats'
-  )?.observation_data?.formats;
-  assert.ok(Array.isArray(formats), 'format_exposure did not capture list_creative_formats formats');
+  const capabilityStep = scenarios
+    .flatMap(scenario => scenario.steps ?? [])
+    .find(step => step.step_id === 'get_capabilities' || step.task === 'get_adcp_capabilities');
+  const formats = capabilityStep?.observation_data?.creative?.supported_formats;
+  assert.ok(Array.isArray(formats), 'capability discovery did not advertise creative.supported_formats');
   assert.ok(
     formats.some(
       format =>
-        format.format_id?.id === 'audio_30s' &&
-        format.renders?.some(render => render.parameters_from_format_id === true) &&
-        format.assets?.some(asset => asset.asset_id === 'serving_tag' && asset.asset_type === 'audio')
+        format.capability_id === 'audio_30s' &&
+        format.format?.format_kind === 'audio_hosted' &&
+        format.operations?.includes('build')
     ),
-    'list_creative_formats did not advertise audio_30s with an audio serving_tag output slot'
+    'creative.supported_formats did not advertise the canonical audio_30s output contract'
   );
 
   const audioScenario = scenarios.find(scenario => scenario.scenario === 'creative_template/audio_build');
@@ -43,9 +43,9 @@ function assertAudioStoryboardRan(grader) {
   assert.notEqual(buildStep.skipped, true, 'build_audio_creative step was skipped');
   assert.equal(buildStep.passed, true, 'build_audio_creative step did not pass');
 
-  const asset = buildStep.observation_data?.creative_manifest?.assets?.serving_tag;
-  assert.equal(asset?.asset_type, 'audio', 'build_audio_creative did not return an audio serving_tag asset');
-  assert.ok(asset?.url, 'audio serving_tag asset did not include a URL');
+  const asset = buildStep.observation_data?.creative_manifest?.assets?.audio_main;
+  assert.equal(asset?.asset_type, 'audio', 'build_audio_creative did not satisfy the advertised audio_main slot');
+  assert.ok(asset?.url, 'audio_main asset did not include a URL');
   const audioUrl = new URL(asset.url);
   assert.match(audioUrl.protocol, /^https?:$/, 'audio serving_tag asset URL was not HTTP(S)');
 }
@@ -70,6 +70,71 @@ runHelloAdapterGates({
       label: 'passes the audio-enabled creative_template storyboard and exercises audio_build',
       testKitPath: AUDIO_TEST_KIT,
       assertResult: assertAudioStoryboardRan,
+    },
+  ],
+  extraMcpAssertions: [
+    {
+      label: 'rejects an unadvertised canonical preview target with canonical error attribution',
+      run: async ({ callTool }) => {
+        const response = await callTool('preview_creative', {
+          request_type: 'single',
+          target_capability_id: 'upstream_only_template',
+          creative_manifest: {
+            format_kind: 'image',
+            assets: {
+              image: {
+                asset_type: 'image',
+                url: 'https://test-assets.adcontextprotocol.org/acme-outdoor/banner_300x250.jpg',
+                width: 300,
+                height: 250,
+              },
+            },
+          },
+        });
+        assert.equal(response?.structuredContent?.adcp_error?.code, 'FORMAT_NOT_SUPPORTED', JSON.stringify(response));
+        assert.equal(response?.structuredContent?.adcp_error?.field, 'target_capability_id', JSON.stringify(response));
+      },
+    },
+    {
+      label: 'routes legacy preview by the top-level format_id selector',
+      run: async ({ agentUrl, callTool }) => {
+        const response = await callTool('preview_creative', {
+          adcp_version: '3.1',
+          request_type: 'single',
+          format_id: { agent_url: agentUrl, id: 'display_300x250' },
+          creative_manifest: {
+            format_id: { agent_url: agentUrl, id: 'display_728x90' },
+            assets: {
+              image: {
+                asset_type: 'image',
+                url: 'https://test-assets.adcontextprotocol.org/acme-outdoor/banner_300x250.jpg',
+                width: 300,
+                height: 250,
+              },
+            },
+          },
+        });
+        const dimensions = response?.structuredContent?.previews?.[0]?.renders?.[0]?.dimensions;
+        assert.deepEqual(dimensions, { width: 300, height: 250 }, JSON.stringify(response));
+
+        const manifestOnly = await callTool('preview_creative', {
+          adcp_version: '3.1',
+          request_type: 'single',
+          creative_manifest: {
+            format_id: { agent_url: agentUrl, id: 'display_728x90' },
+            assets: {
+              image: {
+                asset_type: 'image',
+                url: 'https://test-assets.adcontextprotocol.org/acme-outdoor/banner_728x90.jpg',
+                width: 728,
+                height: 90,
+              },
+            },
+          },
+        });
+        const manifestOnlyDimensions = manifestOnly?.structuredContent?.previews?.[0]?.renders?.[0]?.dimensions;
+        assert.deepEqual(manifestOnlyDimensions, { width: 728, height: 90 }, JSON.stringify(manifestOnly));
+      },
     },
   ],
 });

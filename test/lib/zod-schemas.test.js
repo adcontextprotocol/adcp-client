@@ -1225,6 +1225,30 @@ describe('Zod Schema Validation', () => {
     );
   });
 
+  test('activate signal destination/deployment unions preserve platform and agent identities', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const destinations = [
+      { type: 'platform', platform: 'the-trade-desk', account: 'seat_123' },
+      { type: 'agent', agent_url: 'https://signals.example.com/mcp', account: 'agent_account_456' },
+    ];
+    const request = schemas.ActivateSignalRequestSchema.safeParse({
+      signal_agent_segment_id: 'segment_1',
+      destinations,
+      idempotency_key: 'activate-signal-union-0001',
+    });
+    assert.ok(request.success, `Both destination arms should validate: ${JSON.stringify(request.error?.issues)}`);
+
+    const deployments = destinations.map(destination =>
+      destination.type === 'platform' ? { ...destination, is_live: false } : { ...destination, is_live: false }
+    );
+    const response = schemas.ActivateSignalSuccessSchema.safeParse({ deployments });
+    assert.ok(response.success, `Both deployment arms should validate: ${JSON.stringify(response.error?.issues)}`);
+    assert.deepStrictEqual(response.data.deployments, deployments);
+  });
+
   test('record schemas preserve value types after undefined removal', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');

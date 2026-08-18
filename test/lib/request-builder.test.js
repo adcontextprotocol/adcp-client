@@ -38,6 +38,43 @@ function withDateNow(iso, fn) {
 }
 
 describe('Request Builder', () => {
+  describe('build_creative', () => {
+    test('does not mix a legacy target_format_id into a canonical single target', () => {
+      const result = buildRequest(
+        step('build_creative', { sample_request: { target_capability_id: 'display_300x250' } }),
+        {},
+        DEFAULT_OPTIONS
+      );
+      assert.strictEqual(result.target_capability_id, 'display_300x250');
+      assert.strictEqual(result.target_format_id, undefined);
+    });
+
+    test('does not mix a legacy target_format_id into canonical plural targets', () => {
+      const result = buildRequest(
+        step('build_creative', {
+          sample_request: { target_capability_ids: ['display_300x250', 'display_728x90'] },
+        }),
+        {},
+        DEFAULT_OPTIONS
+      );
+      assert.deepStrictEqual(result.target_capability_ids, ['display_300x250', 'display_728x90']);
+      assert.strictEqual(result.target_format_id, undefined);
+    });
+
+    test('does not inject a target when refining an earlier build variant', () => {
+      const result = buildRequest(
+        step('build_creative', {
+          sample_request: { refine_from_build_variant_id: 'variant_from_previous_build' },
+        }),
+        {},
+        DEFAULT_OPTIONS
+      );
+      assert.strictEqual(result.refine_from_build_variant_id, 'variant_from_previous_build');
+      assert.strictEqual(result.target_format_id, undefined);
+      assert.strictEqual(result.target_capability_id, undefined);
+    });
+  });
+
   describe('create_media_buy', () => {
     test('always includes pricing_option_id from discovered context', () => {
       const context = {

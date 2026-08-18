@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   generateIdempotencyKey,
   isMutatingTask,
+  requestUsesIdempotency,
   isValidIdempotencyKey,
   useIdempotencyKey,
   redactIdempotencyKey,
@@ -84,6 +85,35 @@ describe('idempotency utilities', () => {
     });
   });
 
+  describe('requestUsesIdempotency', () => {
+    it('classifies proposal finalization as a state-changing get_products variant', () => {
+      assert.ok(
+        requestUsesIdempotency('get_products', {
+          refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'proposal_1' }],
+        })
+      );
+      assert.ok(!requestUsesIdempotency('get_products', { brief: 'find inventory' }));
+      assert.ok(
+        !requestUsesIdempotency('get_products', {
+          refine: [{ scope: 'proposal', action: 'adjust', proposal_id: 'proposal_1' }],
+        })
+      );
+    });
+
+    it('fails closed on malformed finalize intent', () => {
+      assert.ok(requestUsesIdempotency('get_products', { refine: [{ action: 'finalize', proposal_id: 123 }] }));
+      assert.ok(
+        requestUsesIdempotency('get_products', {
+          refine: { scope: 'proposal', action: 'finalize', proposal_id: 'proposal_1' },
+        })
+      );
+    });
+
+    it('still classifies schema-required mutating tools', () => {
+      assert.ok(requestUsesIdempotency('create_media_buy', {}));
+    });
+  });
+
   describe('MUTATING_TASKS set', () => {
     it('includes the canonical mutating tools', () => {
       assert.ok(MUTATING_TASKS.has('create_media_buy'));
@@ -108,7 +138,7 @@ describe('IdempotencyConflictError', () => {
 
   it('has a default message pointing at recovery', () => {
     const err = new IdempotencyConflictError('abc-123');
-    assert.match(err.message, /fresh UUID v4|original payload/i);
+    assert.match(err.message, /reconcile.*natural key/i);
   });
 
   it('accepts a custom message', () => {

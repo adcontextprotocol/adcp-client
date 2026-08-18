@@ -8,6 +8,7 @@ const {
   TOOL_PROTOCOL_MAP,
   SPEC_WEBHOOK_TASK_TYPES,
 } = require('../dist/lib/server/decisioning/runtime/protocol-for-tool');
+const { TaskTypeValues } = require('../dist/lib/types/enums.generated');
 
 describe('protocolForTool — webhook + tasks_get protocol routing', () => {
   it('maps sales tools to media-buy', () => {
@@ -90,11 +91,8 @@ describe('TOOL_PROTOCOL_MAP — table integrity', () => {
 });
 
 describe('SPEC_WEBHOOK_TASK_TYPES — closed-enum gate', () => {
-  it('matches the AdCP rc8 enums/task-type.json closed enum plus SDK compatibility shim (21 values)', () => {
-    // If this count changes, sync with schemas/cache/latest/enums/task-type.json
-    // and update protocol-for-tool.ts. The framework gates webhook delivery
-    // to this set so spec-validating receivers don't reject envelopes.
-    assert.strictEqual(SPEC_WEBHOOK_TASK_TYPES.size, 21);
+  it('matches the generated AdCP task-type closed enum', () => {
+    assert.deepStrictEqual([...SPEC_WEBHOOK_TASK_TYPES].sort(), [...TaskTypeValues].sort());
   });
 
   it('includes the canonical HITL tools', () => {
@@ -106,14 +104,13 @@ describe('SPEC_WEBHOOK_TASK_TYPES — closed-enum gate', () => {
     assert.ok(SPEC_WEBHOOK_TASK_TYPES.has('activate_signal'));
   });
 
-  it('excludes non-spec tools the framework dispatches', () => {
-    // These tools are dispatched by the framework but not in the spec's
-    // closed task-type enum. Webhook delivery for them is gated off until
-    // the spec enum is widened. Adopters surface their lifecycle via
-    // `publishStatusChange` instead.
+  it('tracks newly spec-listed creative and compact lifecycle tools', () => {
     assert.ok(!SPEC_WEBHOOK_TASK_TYPES.has('check_governance'));
-    assert.ok(!SPEC_WEBHOOK_TASK_TYPES.has('build_creative'));
-    assert.ok(!SPEC_WEBHOOK_TASK_TYPES.has('preview_creative'));
+    assert.ok(SPEC_WEBHOOK_TASK_TYPES.has('build_creative'));
+    assert.ok(SPEC_WEBHOOK_TASK_TYPES.has('preview_creative'));
+    assert.ok(SPEC_WEBHOOK_TASK_TYPES.has('request_proposals'));
+    assert.ok(SPEC_WEBHOOK_TASK_TYPES.has('accept_proposal'));
+    assert.ok(SPEC_WEBHOOK_TASK_TYPES.has('sync_agent_notification_configs'));
     assert.ok(!SPEC_WEBHOOK_TASK_TYPES.has('si_initiate_session'));
   });
 });

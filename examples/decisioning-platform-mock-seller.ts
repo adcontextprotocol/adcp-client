@@ -50,15 +50,17 @@ import {
   type GetProductsHandlerResult,
   type SyncCreativesRow,
 } from '@adcp/sdk/server';
-import type { GetProductsRequest } from '@adcp/sdk';
 import type {
+  CanonicalSyncCreativeAsset,
   CreateMediaBuyRequest,
-  CreateMediaBuySuccess,
+  GetProductsRequest,
   UpdateMediaBuyRequest,
+} from '@adcp/sdk';
+import type {
+  CreateMediaBuySuccess,
   UpdateMediaBuySuccess,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
-  CreativeAsset,
   AccountReference,
 } from '@adcp/sdk/types';
 
@@ -179,9 +181,9 @@ const SHARED_GET_PRODUCTS = async (_req: GetProductsRequest): Promise<GetProduct
   ],
 });
 
-const SHARED_SYNC_CREATIVES = async (creatives: CreativeAsset[]): Promise<SyncCreativesRow[]> => {
+const SHARED_SYNC_CREATIVES = async (creatives: CanonicalSyncCreativeAsset[]): Promise<SyncCreativesRow[]> => {
   return creatives.map(c => {
-    const id = (c as { creative_id?: string }).creative_id ?? `cr_${Math.random()}`;
+    const id = c.creative_id;
     const needsReview = c.format_kind === 'video_hosted' || c.format_kind === 'video_vast';
     return {
       creative_id: id,
@@ -261,7 +263,7 @@ export class MockHybridSeller implements DecisioningPlatform<MockSellerConfig, M
         const buyId = `mb_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
         const buy: MockMediaBuy = {
           media_buy_id: buyId,
-          status: 'pending_creatives',
+          media_buy_status: 'pending_creatives',
           confirmed_at: new Date().toISOString(),
           revision: 1,
           packages: [],
@@ -280,7 +282,7 @@ export class MockHybridSeller implements DecisioningPlatform<MockSellerConfig, M
           const buyId = `mb_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
           const buy: MockMediaBuy = {
             media_buy_id: buyId,
-            status: 'active',
+            media_buy_status: 'active',
             confirmed_at: new Date().toISOString(),
             revision: 1,
             packages: [],
@@ -300,10 +302,14 @@ export class MockHybridSeller implements DecisioningPlatform<MockSellerConfig, M
           field: 'media_buy_id',
         });
       }
-      if (patch.paused === true) existing.status = 'paused';
-      if (patch.paused === false && existing.status === 'paused') existing.status = 'active';
+      if (patch.paused === true) existing.media_buy_status = 'paused';
+      if (patch.paused === false && existing.media_buy_status === 'paused') existing.media_buy_status = 'active';
       existing.revision = (existing.revision ?? 0) + 1;
-      return { media_buy_id: existing.media_buy_id, status: existing.status, revision: existing.revision };
+      return {
+        media_buy_id: existing.media_buy_id,
+        media_buy_status: existing.media_buy_status,
+        revision: existing.revision,
+      };
     },
 
     syncCreatives: SHARED_SYNC_CREATIVES,

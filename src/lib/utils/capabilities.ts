@@ -168,6 +168,9 @@ export interface AdcpCapabilities {
   /** Media buy specific features */
   features: MediaBuyFeatures;
 
+  /** Compact media-buy lifecycle tools advertised by AdCP 3.2+ sellers. */
+  mediaBuyLifecycleTools?: string[];
+
   /** Account management capabilities */
   account?: AccountCapabilities;
 
@@ -255,6 +258,13 @@ export interface ToolInfo {
  * view. See PR #1298 for the design rationale.
  */
 export const MEDIA_BUY_TOOLS = [
+  'list_products',
+  'request_proposals',
+  'refine_proposals',
+  'decline_proposals',
+  'buy_products',
+  'accept_proposal',
+  'control_media_buy',
   'get_products',
   'list_creative_formats', // Also in CREATIVE_TOOLS - serves both domains
   'create_media_buy',
@@ -296,6 +306,7 @@ export const GOVERNANCE_TOOLS = [
   'sync_plans',
   'check_governance',
   'report_plan_outcome',
+  'report_plan_adjustment',
   'get_plan_audit_logs',
   // Creative governance
   'get_creative_features',
@@ -337,7 +348,12 @@ export const EVENT_TRACKING_TOOLS = ['sync_event_sources', 'log_event'] as const
 
 export const ACCOUNT_TOOLS = ['list_accounts', 'sync_accounts'] as const;
 
-export const PROTOCOL_TOOLS = ['get_adcp_capabilities', 'get_task_status', 'list_tasks'] as const;
+export const PROTOCOL_TOOLS = [
+  'get_adcp_capabilities',
+  'get_task_status',
+  'list_tasks',
+  'sync_agent_notification_configs',
+] as const;
 
 /**
  * Build synthetic capabilities from a list of available tools.
@@ -614,6 +630,9 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
     protocols,
     specialisms,
     features,
+    mediaBuyLifecycleTools: Array.isArray(response.media_buy?.lifecycle_tools)
+      ? response.media_buy.lifecycle_tools.filter((tool: unknown): tool is string => typeof tool === 'string')
+      : undefined,
     account,
     creative,
     idempotency,

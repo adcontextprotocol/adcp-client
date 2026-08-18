@@ -51,19 +51,22 @@ import {
   type ProposalManager,
   type SalesCorePlatform,
 } from '@adcp/sdk/server';
-import type { CanonicalProduct, GetProductsRequest } from '@adcp/sdk';
+import type {
+  CanonicalCreateMediaBuyRequest,
+  CanonicalProduct,
+  CanonicalUpdateMediaBuyRequest,
+  GetProductsRequest,
+} from '@adcp/sdk';
 import { toCanonicalFormatOptionsWithRoutes, type V2ProductFormatDeclaration } from '@adcp/sdk/v2/projection';
 import { buildGAMLikeRecipe, GAM_LIKE_OVERLAP, type GAMLikeRecipe } from '@adcp/sdk/mock-server';
 import type {
   AccountReference,
-  CreateMediaBuyRequest,
   CreateMediaBuySuccess,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
   GetMediaBuysRequest,
   GetMediaBuysResponse,
   GetProductsResponse,
-  UpdateMediaBuyRequest,
   UpdateMediaBuySuccess,
 } from '@adcp/sdk/types';
 
@@ -81,6 +84,7 @@ const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use
 const PUBLIC_AGENT_URL = process.env['PUBLIC_AGENT_URL'] ?? `http://127.0.0.1:${PORT}`;
 
 const KNOWN_PUBLISHERS = ['premium-sports.example', 'acmeoutdoor.example', 'pinnacle-agency.example'];
+const PRICING_OPTION_ID = 'cpm_guaranteed_fixed';
 
 // ---------------------------------------------------------------------------
 // Upstream client
@@ -326,7 +330,7 @@ function projectProduct(p: UpstreamProduct, publisherDomain: string, recipe: GAM
     delivery_type: p.delivery_type,
     pricing_options: [
       {
-        pricing_option_id: 'cpm_guaranteed_fixed',
+        pricing_option_id: PRICING_OPTION_ID,
         pricing_model: 'cpm',
         currency: p.pricing.currency,
         fixed_price: p.pricing.cpm,
@@ -348,18 +352,27 @@ function projectProduct(p: UpstreamProduct, publisherDomain: string, recipe: GAM
 }
 
 function projectProposal(up: UpstreamProposal, total_budget?: { amount: number; currency: string }): Proposal {
+  const projectedAllocations = up.allocations.map(a => ({
+    product_id: a.product_id,
+    pricing_option_id: PRICING_OPTION_ID,
+    allocation_percentage: a.allocation_percentage,
+    rationale: a.locked_cpm
+      ? `Locked at ${a.locked_cpm} ${total_budget?.currency ?? 'USD'} CPM.`
+      : `Indicative pricing ${a.indicative_cpm} CPM.`,
+  }));
+  const firstAllocation = projectedAllocations[0];
+  if (!firstAllocation) {
+    throw new AdcpError('SERVICE_UNAVAILABLE', {
+      message: `Upstream proposal ${up.proposal_id} did not contain any product allocations.`,
+    });
+  }
+  const allocations: Proposal['allocations'] = [firstAllocation, ...projectedAllocations.slice(1)];
   return {
     proposal_id: up.proposal_id,
     name: up.brief ? `Plan: ${up.brief.slice(0, 60)}` : `Plan ${up.proposal_id}`,
     description: 'Curated media plan generated from the buyer brief.',
     proposal_status: up.status === 'committed' ? 'committed' : 'draft',
-    allocations: up.allocations.map(a => ({
-      product_id: a.product_id,
-      allocation_percentage: a.allocation_percentage,
-      rationale: a.locked_cpm
-        ? `Locked at ${a.locked_cpm} ${total_budget?.currency ?? 'USD'} CPM.`
-        : `Indicative pricing ${a.indicative_cpm} CPM.`,
-    })),
+    allocations,
     ...(up.status === 'committed' && {
       insertion_order: {
         io_id: `io_${up.proposal_id}`,
@@ -499,7 +512,7 @@ const sales: SalesCorePlatform<NetworkMeta> = {
   // never reaches it.
   getProducts: async () => ({ products: [], cache_scope: 'account' }),
 
-  async createMediaBuy(req: CreateMediaBuyRequest, ctx): Promise<CreateMediaBuySuccess> {
+  async createMediaBuy(req: CanonicalCreateMediaBuyRequest, ctx): Promise<CreateMediaBuySuccess> {
     const networkCode = ctx.account.ctx_metadata.network_code;
     const recipes = ctx.recipes as ReadonlyMap<string, GAMLikeRecipe> | undefined;
     if (!recipes || recipes.size === 0) {
@@ -537,13 +550,13 @@ const sales: SalesCorePlatform<NetworkMeta> = {
       packages.push({
         package_id: lineItem.line_item_id,
         product_id: productId,
+        pricing_option_id: PRICING_OPTION_ID,
         budget: perPackageBudget,
       });
     }
     localBuyRevisions.set(order.order_id, 1);
     return {
       media_buy_id: order.order_id,
-      status: 'completed',
       media_buy_status: 'pending_creatives',
       confirmed_at: '2026-01-01T00:00:00Z',
       revision: 1,
@@ -551,7 +564,7 @@ const sales: SalesCorePlatform<NetworkMeta> = {
     };
   },
 
-  async updateMediaBuy(buyId: string, _patch: UpdateMediaBuyRequest, _ctx): Promise<UpdateMediaBuySuccess> {
+  async updateMediaBuy(buyId: string, _patch: CanonicalUpdateMediaBuyRequest, _ctx): Promise<UpdateMediaBuySuccess> {
     // Pass-through; the proposal-mode demo doesn't drive update logic.
     // Production adapters branch on the patch shape and PATCH the
     // upstream order, returning `affected_packages[]` for the modified
@@ -560,7 +573,7 @@ const sales: SalesCorePlatform<NetworkMeta> = {
     localBuyRevisions.set(buyId, nextRevision);
     return {
       media_buy_id: buyId,
-      status: 'active',
+      media_buy_status: 'active',
       revision: nextRevision,
     };
   },

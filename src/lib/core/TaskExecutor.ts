@@ -19,7 +19,7 @@ import {
 import { formatIssues } from '../validation/schema-validator';
 import { unwrapProtocolResponse, isAdcpError, isTerminalAdcpError } from '../utils/response-unwrapper';
 import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
-import { generateIdempotencyKey, isMutatingTask, redactIdempotencyKeyInArgs } from '../utils/idempotency';
+import { generateIdempotencyKey, requestUsesIdempotency, redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
 import { normalizeLegacyMediaBuyStatusForReturn } from '../utils/envelope-status-compat';
 import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
@@ -249,7 +249,7 @@ function resolveIdempotencyKey(taskName: string, params: any): string | undefine
       ? params.idempotency_key
       : undefined;
   if (callerSupplied) return callerSupplied;
-  if (isMutatingTask(taskName)) return generateIdempotencyKey();
+  if (requestUsesIdempotency(taskName, params)) return generateIdempotencyKey();
   return undefined;
 }
 

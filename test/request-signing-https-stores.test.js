@@ -8,11 +8,14 @@ const {
   HttpsJwksResolver,
   HttpsRevocationStore,
   RequestSignatureError,
-  verifyRequestSignature,
+  verifyRequestSignature: verifyRequestSignatureForProfile,
   signRequest,
   InMemoryReplayStore,
 } = require('../dist/lib/signing');
 const { SsrfRefusedError } = require('../dist/lib/net');
+
+const verifyRequestSignature = (request, options) =>
+  verifyRequestSignatureForProfile(request, { adcpVersion: '3.1', ...options });
 
 // ────────────────────────────────────────────────────────────
 // Test key material (public + private pair shipped with compliance vectors).
