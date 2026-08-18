@@ -182,7 +182,6 @@ describe('AdCP 3.2 strict compact request envelopes', () => {
 
   test('A2A removes only the SDK-injected major from strict compact schemas', () => {
     const { prepareProtocolToolCall } = require('../../dist/lib/protocols/index.js');
-    const { validateRequest } = require('../../dist/lib/validation/schema-validator.js');
     const agent = { id: 'strict-a2a', name: 'strict-a2a', agent_uri: 'https://seller.example/a2a', protocol: 'a2a' };
 
     for (const [toolName, request] of Object.entries(compactRequests)) {
@@ -193,7 +192,19 @@ describe('AdCP 3.2 strict compact request envelopes', () => {
         false,
         `${toolName} omits the SDK-injected deprecated integer`
       );
-      const validation = validateRequest(toolName, prepared, '3.2.0-beta.0');
+    }
+  });
+
+  test('A2A preserves the SDK-injected major restored by the beta.1 compact schemas', () => {
+    const { prepareProtocolToolCall } = require('../../dist/lib/protocols/index.js');
+    const { validateRequest } = require('../../dist/lib/validation/schema-validator.js');
+    const agent = { id: 'beta1-a2a', name: 'beta1-a2a', agent_uri: 'https://seller.example/a2a', protocol: 'a2a' };
+
+    for (const [toolName, request] of Object.entries(compactRequests)) {
+      const prepared = prepareProtocolToolCall(agent, request, { toolName, adcpVersion: '3.2.0-beta.1' }).args;
+      assert.strictEqual(prepared.adcp_version, '3.2-beta.1', `${toolName} keeps the release pin`);
+      assert.strictEqual(prepared.adcp_major_version, 3, `${toolName} keeps the SDK-injected major`);
+      const validation = validateRequest(toolName, prepared, '3.2.0-beta.1');
       assert.strictEqual(validation.valid, true, `${toolName}: ${JSON.stringify(validation.issues)}`);
     }
   });

@@ -458,6 +458,8 @@
     "skills/**/*",
     ".claude-plugin/**/*",
     "compliance/cache/**/*",
+    "!compliance/cache/*.previous/**/*",
+    "!compliance/cache/3.2.0-beta.0/**/*",
     "ADCP_VERSION",
     "docs/llms.txt",
     "docs/releases/**/*.md",
@@ -668,7 +670,7 @@
     },
     "minimatch": "^10.2.1"
   },
-  "adcp_version": "3.2.0-beta.0",
+  "adcp_version": "3.2.0-beta.1",
   "sideEffects": [
     "**/default-invariants.*"
   ]

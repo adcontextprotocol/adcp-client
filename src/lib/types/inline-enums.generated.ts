@@ -438,6 +438,11 @@ export const ImageAssetRequirements_ColorSpaceValues = ["rgb", "cmyk", "grayscal
 /** array of | ImageAssetRequirements.formats */
 export const ImageAssetRequirements_FormatsValues = ["jpg", "jpeg", "png", "gif", "webp", "svg", "avif", "tiff", "pdf", "eps"] as const;
 
+// ====== ImageDecoration ======
+
+/** single | ImageDecoration.fit */
+export const ImageDecoration_FitValues = ["contain", "cover", "stretch"] as const;
+
 // ====== Impact ======
 
 /** single | Impact.area */
@@ -529,6 +534,11 @@ export const PolicyEntry_SourceValues = ["registry", "inline"] as const;
 
 /** single | PreviewCreativeRequest.request_type */
 export const PreviewCreativeRequest_RequestTypeValues = ["single", "batch", "variant"] as const;
+
+// ====== PreviewRendererMetadata ======
+
+/** single | PreviewRendererMetadata.rendering_origin */
+export const PreviewRendererMetadata_RenderingOriginValues = ["platform_native", "agent_approximation"] as const;
 
 // ====== Price ======
 

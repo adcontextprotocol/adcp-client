@@ -9767,6 +9767,11 @@ export interface BuyProductsRequest {
    */
   adcp_version?: string;
   /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * @minLength 16
    * @maxLength 255
    * @pattern ^[A-Za-z0-9_.:-]{16,255}$
@@ -10044,6 +10049,11 @@ export interface AcceptProposalRequest {
    */
   adcp_version?: string;
   /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * @minLength 16
    * @maxLength 255
    * @pattern ^[A-Za-z0-9_.:-]{16,255}$
@@ -10187,6 +10197,11 @@ export interface ControlMediaBuyRequest {
    * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
    */
   adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * @minLength 16
    * @maxLength 255
@@ -11054,7 +11069,11 @@ export type CreateMediaBuyRequest = (
   ext?: ExtensionObject;
 };
 /**
- * Package configuration for media buy creation
+ * Package configuration for media buy creation.
+ *
+ * **Format selector contract (normative).** New 3.2 buyers author at most one canonical selector route: `format_option_refs`, or `format_kind` with optional `params`; omitting both selects all formats supported by the product. New buyers MUST NOT emit deprecated `format_ids`. During the 3.x compatibility window, receivers MUST continue to accept legacy-only `format_ids` and older requests that carry more than one selector route.
+ *
+ * Receivers process selectors in this order: (1) independently resolve each present route to canonical declarations, without applying route precedence; an unresolved `format_option_ref` or a legacy `format_id` that cannot be normalized through the canonical mapping path MUST be rejected with `UNSUPPORTED_FEATURE`; (2) when every route resolves, derive the product `format_options[]` entries selected by each route using directional product satisfaction, and require the selected option sets to match; legacy-to-canonical parameter compatibility uses the asymmetric [v2 narrows v1](/docs/creative/canonical-formats#narrows-formal-definition-normative) relation, not raw object equality; (3) reject different format shapes, selected option sets, or incompatible dimensions with `CONFLICTING_SELECTORS`; and only then (4) apply precedence: `format_option_refs`, then `format_kind` plus `params`, then `format_ids`. Equivalent legacy dual emission remains valid. A single resolved route that does not satisfy the product is rejected with `UNSUPPORTED_FEATURE`. `params` requires `format_kind`; for fixed-size image selectors, `width` and `height` MUST either both be present or both be absent.
  */
 export type PackageRequest = AdCPVersionEnvelope & {
 } & {
@@ -11064,20 +11083,20 @@ export type PackageRequest = AdCPVersionEnvelope & {
   product_id: string;
   /**
    * @deprecated
-   * Deprecated in AdCP 3.2; removed in AdCP 4.0. Legacy named-format selector retained for older 3.x peers. New buyers select canonical product contracts with `format_option_refs` or `format_kind` plus `params`. Sellers MUST normalize this field through the canonical mapping path before product satisfaction checks. If omitted and no canonical selector is present, it defaults to all formats supported by the product.
+   * Deprecated in AdCP 3.2; removed in AdCP 4.0. Legacy named-format selector retained for older 3.x peers. New buyers MUST NOT emit this field. Sellers MUST normalize every entry through the canonical mapping path before product satisfaction checks; an entry that cannot be normalized is rejected with `UNSUPPORTED_FEATURE` before any equivalence check. When this field coexists with `format_option_refs` or `format_kind` plus `params`, sellers MUST compare the product option sets selected by each resolved route. Legacy parameter compatibility follows the asymmetric v2-narrows-v1 relation defined by canonical formats, not raw object equality. Different format shapes, selected option sets, or incompatible dimensions are rejected with `CONFLICTING_SELECTORS`; sellers MUST NOT silently ignore the legacy projection. Equivalent dual emission remains valid during the 3.x compatibility window. If omitted and no canonical selector is present, all formats supported by the product are active.
    *
    * @minItems 1
    */
   format_ids?: [FormatReferenceStructuredObject, ...FormatReferenceStructuredObject[]];
   /**
-   * Canonical 3.2 format-option selector. Each reference matches one target product `format_options[]` entry. Publisher-backed options match `{ scope: "publisher", publisher_domain, format_option_id }`; product-local options match `{ scope: "product", format_option_id }`. If omitted with direct `format_kind`, all product options are active. Sellers reject unresolved options with `UNSUPPORTED_FEATURE` and a field path to the failing entry. New buyers do not dual-emit deprecated named-format selectors.
+   * Canonical 3.2 format-option selector. Each reference matches one target product `format_options[]` entry. Publisher-backed options match `{ scope: "publisher", publisher_domain, format_option_id }`; product-local options match `{ scope: "product", format_option_id }`. Sellers reject unresolved options with `UNSUPPORTED_FEATURE` and a field path to the failing entry before comparing co-present routes. New buyers MUST use this route by itself and MUST NOT dual-emit either a direct canonical selector or deprecated `format_ids`. Receivers handling older 3.x multi-route requests MUST resolve every present route, require each route to select the same product option set, and reject disagreement with `CONFLICTING_SELECTORS` before treating `format_option_refs` as authoritative.
    *
    * @minItems 1
    */
   format_option_refs?: [FormatOptionReference, ...FormatOptionReference[]];
   format_kind?: CanonicalFormatKind;
   /**
-   * Parameters for the direct canonical selector in `format_kind`. Shape follows the selected canonical's parameter vocabulary: dimensions (`width`, `height`, `sizes`), duration (`duration_ms_exact`, `duration_ms_range`), codecs, asset-source and slot narrowing, or other canonical-specific constraints. Omit when selecting by `format_option_refs` or `format_ids`; those selectors resolve their parameters from the product declaration or legacy catalog projection.
+   * Parameters for the direct canonical selector in `format_kind`. Shape follows the selected canonical's parameter vocabulary: dimensions (`width`, `height`, `sizes`), duration (`duration_ms_exact`, `duration_ms_range`), codecs, asset-source and slot narrowing, or other canonical-specific constraints. Requires `format_kind`. For fixed-size image selectors, `width` and `height` MUST co-occur; a selector containing only one dimension is schema-invalid. New buyers omit `params` when selecting by `format_option_refs` or `format_ids`; older multi-route requests are accepted only when every route selects the same product option set.
    */
   params?: {
   };
@@ -17913,7 +17932,7 @@ export type PreviewRender =
        */
       output_format: 'url';
       /**
-       * URL to an HTML page that renders this piece. Can be embedded in an iframe.
+       * Untrusted URL to an HTML page that renders this piece. Consumers MUST load it only in a cross-origin iframe with an empty sandbox token set and a caller-enforced restrictive CSP. Provider embedding metadata is advisory and MUST NOT loosen that policy.
        */
       preview_url: string;
       /**
@@ -17932,9 +17951,9 @@ export type PreviewRender =
        */
       embedding?: {
         /**
-         * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
+         * Empty iframe sandbox token set. Provider metadata MUST NOT grant scripts, same-origin, navigation, popups, forms, downloads, or other capabilities.
          */
-        recommended_sandbox?: string;
+        recommended_sandbox?: '';
         /**
          * Whether this output requires HTTPS for secure embedding
          */
@@ -17948,6 +17967,7 @@ export type PreviewRender =
          */
         csp_policy?: string;
       };
+      renderer?: PreviewRendererMetadata;
     }
   | {
       /**
@@ -17959,7 +17979,7 @@ export type PreviewRender =
        */
       output_format: 'html';
       /**
-       * Raw HTML for this rendered piece. Can be embedded directly in the page without iframe. Security warning: Only use with trusted creative agents as this bypasses iframe sandboxing.
+       * Untrusted HTML. Consumers MUST NOT inject it into the host DOM. Render only as iframe srcdoc with an empty sandbox token set and a caller-enforced restrictive CSP; provider embedding metadata is advisory and MUST NOT loosen that policy.
        */
       preview_html: string;
       /**
@@ -17978,9 +17998,9 @@ export type PreviewRender =
        */
       embedding?: {
         /**
-         * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
+         * Empty iframe sandbox token set. Provider metadata MUST NOT grant scripts, same-origin, navigation, popups, forms, downloads, or other capabilities.
          */
-        recommended_sandbox?: string;
+        recommended_sandbox?: '';
         /**
          * Whether this output requires HTTPS for secure embedding
          */
@@ -17994,6 +18014,7 @@ export type PreviewRender =
          */
         csp_policy?: string;
       };
+      renderer?: PreviewRendererMetadata;
     }
   | {
       /**
@@ -18005,11 +18026,11 @@ export type PreviewRender =
        */
       output_format: 'both';
       /**
-       * URL to an HTML page that renders this piece. Can be embedded in an iframe.
+       * Untrusted URL to an HTML page that renders this piece. Consumers MUST load it only in a cross-origin iframe with an empty sandbox token set and a caller-enforced restrictive CSP. Provider embedding metadata is advisory and MUST NOT loosen that policy.
        */
       preview_url: string;
       /**
-       * Raw HTML for this rendered piece. Can be embedded directly in the page without iframe. Security warning: Only use with trusted creative agents as this bypasses iframe sandboxing.
+       * Untrusted HTML. Consumers MUST NOT inject it into the host DOM. Render only as iframe srcdoc with an empty sandbox token set and a caller-enforced restrictive CSP; provider embedding metadata is advisory and MUST NOT loosen that policy.
        */
       preview_html: string;
       /**
@@ -18028,9 +18049,9 @@ export type PreviewRender =
        */
       embedding?: {
         /**
-         * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
+         * Empty iframe sandbox token set. Provider metadata MUST NOT grant scripts, same-origin, navigation, popups, forms, downloads, or other capabilities.
          */
-        recommended_sandbox?: string;
+        recommended_sandbox?: '';
         /**
          * Whether this output requires HTTPS for secure embedding
          */
@@ -18044,6 +18065,7 @@ export type PreviewRender =
          */
         csp_policy?: string;
       };
+      renderer?: PreviewRendererMetadata;
     };
 /**
  * Single-capability success response. Returned when the request used target_capability_id (or deprecated target_format_id) without fan-out. The returned creative_manifest uses canonical format_kind on the 3.2 path.
@@ -18131,6 +18153,31 @@ export interface BuildCreativeSuccess {
   consumption?: CreativeConsumption;
   context?: ContextObject;
   ext?: ExtensionObject;
+}
+/**
+ * Optional renderer implementation and safety metadata for audit and reproducibility. Authority is still resolved from capability discovery and placement delegation.
+ */
+export interface PreviewRendererMetadata {
+  /**
+   * Stable implementation identifier.
+   */
+  renderer_id: string;
+  /**
+   * Exact semantic version of the renderer implementation.
+   */
+  version: string;
+  /**
+   * Renderer export or entry-point name used for this render.
+   */
+  export: string;
+  /**
+   * Informational implementation origin copied from the selected route. It does not grant authority.
+   */
+  rendering_origin: 'platform_native' | 'agent_approximation';
+  /**
+   * True only when the produced output cannot initiate impression, click, billing, conversion, viewability, or asset-fetch side effects. Renderers that retain any remote asset URL or navigation MUST emit false.
+   */
+  tracking_suppressed: boolean;
 }
 /**
  * Structured consumption details for this build. Informational — lets the buyer verify that vendor_cost is consistent with the rate card. vendor_cost is the billing source of truth.
@@ -28619,6 +28666,25 @@ export interface GetAdCPCapabilitiesResponse {
       operations?: ('build' | 'validate' | 'preview')[];
     }[];
     /**
+     * Per-route preview_creative capability metadata. New 3.2 producers whose supported_formats[] explicitly advertises a routable preview operation MUST emit this block. rendering_origin describes how each route is implemented but is informational and never grants presentation authority: only a matching publisher-origin placement preview_provider delegation can do that. routes[].capability_id MUST equal the set of capability IDs on supported_formats[] entries whose operations contains preview.
+     */
+    preview?: {
+      /**
+       * Agent-local preview routes and their implementation origin. Authority is resolved from publisher placement delegation, never from this self-description.
+       */
+      routes: {
+        /**
+         * Agent-local creative.supported_formats[].capability_id accepted by preview_creative.
+         * @pattern ^[a-zA-Z0-9_-]+$
+         */
+        capability_id: string;
+        /**
+         * Informational implementation origin. platform_native means the route uses the serving platform's preview machinery; agent_approximation means the agent renders an approximation. Neither value grants authority without a publisher preview_provider delegation.
+         */
+        rendering_origin: 'platform_native' | 'agent_approximation';
+      }[];
+    };
+    /**
      * Materialized creative-localization support for sync_creatives/list_creatives, including source-only monolingual topology. Presence opts the agent into exact locale-variant round-trip, strict RFC 4647 Lookup, optional buyer-declared language-family fallback rules, explicit final default/unmatched behavior, creative-wide review, transactional replacement, seller product-format locale-policy enforcement, and delivery attribution. This is a coarse structural capability, not a promise that every locale/format/account combination is accepted; sellers publish accepted ranges on product format declarations and validate each write before mutation. Omit this object when localization is unsupported.
      */
     localization?: {
@@ -31508,7 +31574,7 @@ export interface ComplyTestControllerRequest {
    */
   adcp_major_version?: number;
   /**
-   * Test scenario to execute. 'list_scenarios' discovers supported scenarios. 'force_*' and 'simulate_*' trigger state transitions. 'catalog_item_availability_probe' provides deterministic sandbox operations for cross-principal reference seeding, actual eligibility observation, clock advancement, and catalog delete/recreate generation tests. 'force_creative_purge' destroys or tombstones a sandbox creative so account-level `creative.purged` webhooks can be observed where the seller supports the lifecycle surface. 'force_create_media_buy_arm', 'force_get_products_arm', and 'force_get_signals_arm' register one-shot response-arm directives for the next matching operation from the caller's authenticated sandbox account + principal pair. 'seed_*' scenarios pre-populate fixtures (account, product, pricing option, creative, plan, media buy, rights grant, creative format, measurement catalog) so storyboards can reference fixture IDs and external-catalog facts without implementers guessing which fixtures the conformance suite expects. 'query_upstream_traffic' returns outbound HTTP calls the agent has made since session start (or since a caller-supplied timestamp), so storyboard runners can assert upstream side-effects via `check: upstream_traffic`. 'query_provenance_audit_observations' returns sandbox-only audit observations recorded for a submitted creative so storyboards can assert non-blocking governance observations without exposing an internal audit log on public seller responses. 'force_upstream_unavailable' marks a named upstream dependency as unreachable for the duration of the compliance session (or until the seller resets it), so storyboards can exercise stale-cache fallback paths - see the `stale_response_advisory` universal storyboard. The contract raises the bar against unintentional facades - adapters that satisfy AdCP schema requirements with synthetic placeholders. It is NOT an adversarial integrity check: adopters self-report their own traffic. Adopters MUST scope the response to traffic caused by the requesting principal's session/auth context - cross-caller traffic MUST NOT be returned, regardless of the supplied since_timestamp. Multi-tenant sandboxes MUST key the recording buffer on the comply_test_controller invocation's auth principal. Runners and sellers MUST accept unknown scenario strings - new scenarios may be added in additive releases.
+   * Test scenario to execute. 'list_scenarios' discovers supported scenarios. 'force_*' and 'simulate_*' trigger state transitions. 'catalog_item_availability_probe' provides deterministic sandbox operations for cross-principal reference seeding, actual eligibility observation, clock advancement, and catalog delete/recreate generation tests. 'compact_product_lifecycle_probe' prepares deterministic synchronous compact proposal behavior and expires a committed proposal strictly after its hold deadline. 'force_creative_purge' destroys or tombstones a sandbox creative so account-level `creative.purged` webhooks can be observed where the seller supports the lifecycle surface. 'force_create_media_buy_arm', 'force_get_products_arm', and 'force_get_signals_arm' register one-shot response-arm directives for the next matching operation from the caller's authenticated sandbox account + principal pair. 'seed_*' scenarios pre-populate fixtures (account, product, pricing option, creative, plan, media buy, rights grant, creative format, measurement catalog) so storyboards can reference fixture IDs and external-catalog facts without implementers guessing which fixtures the conformance suite expects. 'query_upstream_traffic' returns outbound HTTP calls the agent has made since session start (or since a caller-supplied timestamp), so storyboard runners can assert upstream side-effects via `check: upstream_traffic`. 'query_provenance_audit_observations' returns sandbox-only audit observations recorded for a submitted creative so storyboards can assert non-blocking governance observations without exposing an internal audit log on public seller responses. 'force_upstream_unavailable' marks a named upstream dependency as unreachable for the duration of the compliance session (or until the seller resets it), so storyboards can exercise stale-cache fallback paths - see the `stale_response_advisory` universal storyboard. The contract raises the bar against unintentional facades - adapters that satisfy AdCP schema requirements with synthetic placeholders. It is NOT an adversarial integrity check: adopters self-report their own traffic. Adopters MUST scope the response to traffic caused by the requesting principal's session/auth context - cross-caller traffic MUST NOT be returned, regardless of the supplied since_timestamp. Multi-tenant sandboxes MUST key the recording buffer on the comply_test_controller invocation's auth principal. Runners and sellers MUST accept unknown scenario strings - new scenarios may be added in additive releases.
    */
   scenario: string;
   /**
@@ -31532,9 +31598,14 @@ export interface ComplyTestControllerRequest {
      */
     session_id?: string;
     /**
-     * Product to seed. Used by seed_product and seed_pricing_option.
+     * Product to seed or prepare for deterministic compact lifecycle testing. Used by seed_product, seed_pricing_option, and compact_product_lifecycle_probe prepare.
      */
     product_id?: string;
+    /**
+     * Committed proposal whose hold the compact_product_lifecycle_probe expires.
+     * @minLength 1
+     */
+    proposal_id?: string;
     /**
      * Pricing option to seed, scoped to a product. Used by seed_pricing_option.
      */
@@ -31552,9 +31623,15 @@ export interface ComplyTestControllerRequest {
      */
     fixture?: {};
     /**
-     * Operation for catalog_item_availability_probe. seed_inaccessible_item creates the named catalog/item under a distinct synthetic principal and returns its generation without granting the caller access. query_eligibility observes the seller's actual selection, dynamic-rendering, and lineage-known derived-creative gates. advance_time processes automatic expiry through target_time. recreate_catalog deletes and recreates the named catalog with the same item content and returns a new generation and initial revision.
+     * Scenario-specific probe operation. catalog_item_availability_probe uses seed_inaccessible_item, query_eligibility, advance_time, and recreate_catalog. compact_product_lifecycle_probe uses prepare to make one seeded product's compact proposal path deterministic and expire_proposal to advance strictly beyond a committed proposal's stored expires_at and process the hold lapse.
      */
-    operation?: 'seed_inaccessible_item' | 'query_eligibility' | 'advance_time' | 'recreate_catalog';
+    operation?:
+      | 'seed_inaccessible_item'
+      | 'query_eligibility'
+      | 'advance_time'
+      | 'recreate_catalog'
+      | 'prepare'
+      | 'expire_proposal';
     /**
      * Catalog operated on by catalog_item_availability_probe.
      * @minLength 1
@@ -31872,7 +31949,7 @@ export type ComplyTestControllerResponse = {
 export interface ListScenariosSuccess {
   success: true;
   /**
-   * Scenarios this seller has implemented. Runners and sellers MUST accept unknown scenario strings (open-for-extension) — new scenarios may be added in additive releases. Adopters who advertise `catalog_item_availability_probe` support deterministic cross-principal reference, eligibility-gate, expiry-clock, and catalog-generation tests for the catalog availability storyboard. Adopters who advertise `force_creative_purge` opt in to deterministic creative purge coverage for account-level lifecycle webhooks. Adopters who advertise `seed_measurement_catalog` opt in to deterministic measurement-catalog fixtures used by vendor_metric precondition storyboards. Adopters who advertise `query_upstream_traffic` opt in to the upstream-traffic conformance contract; storyboards that declare `check: upstream_traffic` grade `not_applicable` against adopters who do not advertise it. Adopters who advertise `query_provenance_audit_observations` opt in to sandbox-only audit-observation assertions for accepted creatives. Adopters who advertise `force_upstream_unavailable` opt in to stale-cache conformance testing via the `stale_response_advisory` storyboard.
+   * Scenarios this seller has implemented. Runners and sellers MUST accept unknown scenario strings (open-for-extension) — new scenarios may be added in additive releases. Adopters who advertise `catalog_item_availability_probe` support deterministic cross-principal reference, eligibility-gate, expiry-clock, and catalog-generation tests for the catalog availability storyboard. Adopters who advertise `compact_product_lifecycle_probe` support deterministic synchronous list/request/finalize/decline/accept behavior for a prepared product and strict post-deadline expiry of a committed proposal. Adopters who advertise `force_creative_purge` opt in to deterministic creative purge coverage for account-level lifecycle webhooks. Adopters who advertise `seed_measurement_catalog` opt in to deterministic measurement-catalog fixtures used by vendor_metric precondition storyboards. Adopters who advertise `query_upstream_traffic` opt in to the upstream-traffic conformance contract; storyboards that declare `check: upstream_traffic` grade not_applicable against adopters who do not advertise it. Adopters who advertise `query_provenance_audit_observations` opt in to sandbox-only audit-observation assertions for accepted creatives. Adopters who advertise `force_upstream_unavailable` opt in to stale-cache conformance testing via the `stale_response_advisory` storyboard.
    */
   scenarios: string[];
   context?: ContextObject;
@@ -31899,7 +31976,7 @@ export interface StateTransitionSuccess {
   ext?: ExtensionObject;
 }
 /**
- * A simulate_delivery, simulate_budget_spend, or catalog_item_availability_probe operation succeeded. For delivery: simulated contains the metrics injected by this call (impressions/clicks/reported_spend/conversions plus optional reach/frequency/reach_window/viewability values) and cumulative contains running totals or latest non-additive metric state. For budget: simulated contains spend_percentage/computed_spend/budget. For catalog availability: simulated reports seeded foreign identity, actual eligibility gates, processed expiry time, or delete/recreate generation rotation according to params.operation.
+ * A simulate_delivery, simulate_budget_spend, catalog_item_availability_probe, or compact_product_lifecycle_probe operation succeeded. For delivery: simulated contains the metrics injected by this call (impressions/clicks/reported_spend/conversions plus optional reach/frequency/reach_window/viewability values) and cumulative contains running totals or latest non-additive metric state. For budget: simulated contains spend_percentage/computed_spend/budget. For catalog availability: simulated reports seeded foreign identity, actual eligibility gates, processed expiry time, or delete/recreate generation rotation according to params.operation. For compact product lifecycle: simulated reports deterministic preparation or strict post-deadline proposal expiry.
  */
 export interface SimulationSuccess {
   success: true;

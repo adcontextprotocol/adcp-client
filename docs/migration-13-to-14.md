@@ -1,6 +1,13 @@
 # Migrating from 13.x to 14 beta
 
-SDK 14 adopts AdCP `3.2.0-beta.0` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the beta and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
+SDK 14 adopts AdCP `3.2.0-beta.1` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the beta and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
+
+AdCP 3.2 prereleases are exact protocol pins: beta.1 replaces beta.0 in the
+SDK's compatible-version list rather than extending a rolling 3.2-beta range.
+Beta.1 also restores `adcp_major_version` on `buy_products`,
+`accept_proposal`, and `control_media_buy`; the SDK now sends that field again
+for beta.1 while retaining its omission only for an explicitly configured
+beta.0 peer.
 
 ```bash
 npm install @adcp/sdk@beta

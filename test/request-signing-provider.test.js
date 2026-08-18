@@ -117,7 +117,7 @@ describe('AdCP 3.2 empty-body request signing', () => {
         replayStore: new InMemoryReplayStore(),
         revocationStore: new InMemoryRevocationStore(),
         now: options.now,
-        adcpVersion: '3.2.0-beta.0',
+        adcpVersion: '3.2.0-beta.1',
       }
     );
   }

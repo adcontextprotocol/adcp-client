@@ -1,6 +1,6 @@
 # Migrating from 12.x to 14 beta
 
-This is the direct upgrade path for applications skipping SDK 13. SDK 14 includes both SDK 13's canonical-creative and security boundary changes and the AdCP `3.2.0-beta.0` preview surface. Treat it as two review checkpoints even if you deploy one package update.
+This is the direct upgrade path for applications skipping SDK 13. SDK 14 includes both SDK 13's canonical-creative and security boundary changes and the AdCP `3.2.0-beta.1` preview surface. Treat it as two review checkpoints even if you deploy one package update.
 
 Install the beta explicitly:
 

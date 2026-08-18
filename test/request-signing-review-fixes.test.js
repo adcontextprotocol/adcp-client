@@ -209,8 +209,8 @@ describe('AdCP 3.2 RFC 8941 binary profile', () => {
   test('version selection keeps 3.0/3.1 legacy and makes 3.2 standards-compliant', () => {
     assert.strictEqual(requestSigningEncodingForVersion('3.0.24'), 'legacy-base64url');
     assert.strictEqual(requestSigningEncodingForVersion('3.1.15'), 'legacy-base64url');
-    assert.strictEqual(requestSigningEncodingForVersion('3.2-beta.0'), 'rfc8941-base64');
-    assert.strictEqual(requestSigningEncodingForVersion('3.2.0-beta.0'), 'rfc8941-base64');
+    assert.strictEqual(requestSigningEncodingForVersion('3.2-beta.1'), 'rfc8941-base64');
+    assert.strictEqual(requestSigningEncodingForVersion('3.2.0-beta.1'), 'rfc8941-base64');
   });
 
   test('an explicitly pinned 3.2 verifier uses padded Base64 and mandatory Content-Digest', async () => {
@@ -241,7 +241,7 @@ describe('AdCP 3.2 RFC 8941 binary profile', () => {
         revocationStore: new InMemoryRevocationStore(),
         now: () => now,
         operation: 'create_media_buy',
-        adcpVersion: '3.2-beta.0',
+        adcpVersion: '3.2-beta.1',
       }
     );
     assert.strictEqual(result.keyid, 'test-ed25519-2026');
@@ -289,7 +289,7 @@ describe('AdCP 3.2 RFC 8941 binary profile', () => {
         coverContentDigest: false,
       }
     );
-    for (const adcpVersion of ['3.2-beta.0', '']) {
+    for (const adcpVersion of ['3.2-beta.1', '']) {
       await assert.rejects(
         () =>
           verifyRequestSignature(
@@ -379,7 +379,7 @@ describe('AdCP 3.2 RFC 8941 binary profile', () => {
         revocationStore: new InMemoryRevocationStore(),
         now: () => now,
         operation: 'create_media_buy',
-        adcpVersion: '3.2-beta.0',
+        adcpVersion: '3.2-beta.1',
       }
     );
     assert.strictEqual(result.keyid, 'test-ed25519-2026');

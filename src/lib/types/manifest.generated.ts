@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.2.0-beta.0/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.2.0-beta.1/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.2.0-beta.0.
+ * Manifest-derived constants for AdCP 3.2.0-beta.1.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.2.0-beta.0/manifest.json` (adcp_version: 3.2.0-beta.0, generated_at:
- * 2026-08-17T20:29:51.285Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.2.0-beta.1/manifest.json` (adcp_version: 3.2.0-beta.1, generated_at:
+ * 2026-08-18T22:12:34.381Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -197,6 +197,11 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     description: "Concurrent modification detected. The resource was modified by another request between read and write.",
     recovery: "transient",
     suggestion: "re-read the resource and retry with current state"
+  },
+  "CONFLICTING_SELECTORS": {
+    description: "A 3.x package request carries multiple resolvable format selector routes that select different canonical product format declaration sets. Sellers MUST first resolve every present route independently (`format_option_refs`, direct `format_kind` plus `params`, and deprecated `format_ids`) without applying precedence. An unresolved option reference or an unprojectable legacy ID is rejected with `UNSUPPORTED_FEATURE`, not this code. Once all routes resolve, sellers derive the product `format_options[]` entries selected by each route using directional product satisfaction and require those sets to match. Legacy parameter compatibility uses the asymmetric v2-narrows-v1 relation defined by canonical formats, not raw object equality. For fixed-size image selectors, both width and height participate in compatibility. Sellers MUST reject different format shapes, selected option sets, or incompatible dimensions rather than silently choosing the canonical route. `error.field` SHOULD point at the conflicting package, and `error.details` SHOULD identify the supplied selector routes and their normalized canonical summaries.",
+    recovery: "correctable",
+    suggestion: "emit one canonical format selector route, or make every required legacy 3.x compatibility projection select the same product format contract under the canonical v2-narrows-v1 comparison"
   },
   "CREATIVE_DEADLINE_EXCEEDED": {
     description: "Creative change submitted after the package's creative_deadline. Distinct from CREATIVE_REJECTED (content-policy, brand-safety, or accessibility-review failure).",
