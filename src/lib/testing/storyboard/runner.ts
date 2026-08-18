@@ -220,7 +220,10 @@ export function applyStoryboardVersionOptions(
   storyboard: Storyboard,
   options: StoryboardRunOptions
 ): StoryboardRunOptions {
-  return applyAdcpVersionRunOptions(storyboard.adcp_version, options);
+  const versioned = applyAdcpVersionRunOptions(storyboard.adcp_version, options);
+  const mayInheritStoryboardDir = options.adcpVersion === undefined || options.adcpVersion === storyboard.adcp_version;
+  const complianceDir = versioned.complianceDir ?? (mayInheritStoryboardDir ? storyboard.compliance_dir : undefined);
+  return complianceDir && versioned.complianceDir !== complianceDir ? { ...versioned, complianceDir } : versioned;
 }
 
 export function applyAdcpVersionRunOptions(
@@ -6670,7 +6673,7 @@ function webhookVectorFileCandidates(refPath: string, options: StoryboardRunOpti
     candidates.push(join(options.webhook_replay_receiver.vectorsRoot, withoutStatic));
     candidates.push(join(options.webhook_replay_receiver.vectorsRoot, baseName));
   }
-  const complianceDir = getComplianceCacheDir({ version: options.adcpVersion });
+  const complianceDir = getComplianceCacheDir({ version: options.adcpVersion, complianceDir: options.complianceDir });
   candidates.push(join(complianceDir, withoutStatic));
   candidates.push(join(complianceDir, refPath));
   candidates.push(join(process.cwd(), refPath));
