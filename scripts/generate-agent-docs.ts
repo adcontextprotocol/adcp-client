@@ -800,7 +800,7 @@ function generateLlmsTxt(
   ln('```');
   ln();
   ln(
-    `2. **Agent re-plan vs. network retry.** A network retry (same bytes, socket timeout) reuses the same key — the SDK handles this. An agent re-plan (LLM re-ran its planner and produced a different payload) means a NEW intent — mint a fresh key by calling the method again without passing one. Reusing the prior key with a different payload returns \`IdempotencyConflictError\`.`
+    `2. **Agent re-plan vs. network retry.** A network retry (same bytes, socket timeout) reuses the same key — the SDK handles this. Reusing a key with a different canonical payload returns \`IdempotencyConflictError\`. Treat that as a reconciliation stop: look up the prior operation by your natural key before deciding whether the new payload is a genuinely new intent. This is also safe across SDK upgrades that strengthen replay identity after the original operation may already have succeeded.`
   );
   ln();
   ln(
@@ -811,7 +811,8 @@ function generateLlmsTxt(
   ln("import { IdempotencyConflictError, IdempotencyExpiredError } from '@adcp/sdk';");
   ln();
   ln('if (result.errorInstance instanceof IdempotencyConflictError) {');
-  ln('  // Agent re-planned with different payload. Retry with a fresh key.');
+  ln('  // Reconcile the prior operation by natural key before deciding whether');
+  ln('  // this payload is a genuinely new intent. Do not blindly rotate keys.');
   ln('  // result.errorInstance.idempotencyKey carries the key the server omitted.');
   ln('}');
   ln('if (result.errorInstance instanceof IdempotencyExpiredError) {');

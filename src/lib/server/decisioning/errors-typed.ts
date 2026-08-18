@@ -162,7 +162,9 @@ export class IdempotencyConflictError extends AdcpError {
     super('IDEMPOTENCY_CONFLICT', {
       message: opts.message ?? 'Same idempotency_key with different payload.',
       field: 'idempotency_key',
-      suggestion: opts.suggestion ?? 'Use a fresh idempotency_key for the new payload.',
+      suggestion:
+        opts.suggestion ??
+        'Reconcile the prior operation by natural key before deciding whether a new intent needs a fresh idempotency_key.',
       ...(opts.details !== undefined && { details: opts.details }),
     });
   }

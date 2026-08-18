@@ -102,6 +102,21 @@ SDK 14 adds convenience methods and generated server/type/schema support for:
 
 These do not replace the established tools for older agents. Discover `lifecycle_tools` and branch. Keep `getProducts()`/`createMediaBuy()`/`updateMediaBuy()` available for AdCP 3.0 and 3.1. Preserve the same idempotency key only for an exact retry; changed commercial intent requires a fresh key.
 
+For the established proposal path, treat only `get_products` refinements with
+`scope: 'proposal'` and `action: 'finalize'` as mutations. SDK 14 clients attach
+an idempotency key and exact retries must reuse it; SDK 14 servers replay a
+keyed committed proposal rather than creating a second inventory hold. The
+compatibility schema permits an older caller to omit the key, but that call has
+no cache-backed replay protection. Catalog, brief, and non-finalizing
+refinement calls remain read-only.
+
+SDK 14 includes tool and trusted resolved session/account identity in replay
+comparison. If a durable cache still contains an SDK 12 entry, the stronger
+identity returns `IDEMPOTENCY_CONFLICT` rather than re-executing the mutation;
+reconcile by natural key until the original replay TTL expires. SDK 14's buyer
+retry policy escalates conflicts for this check and never automatically mints
+a replacement key.
+
 For `refine_proposals`, respect the advertised batch, alternative, and dimension limits; keep hard constraints distinct from the soft filters used by legacy `get_products`. Verify proposal expiry immediately before acceptance. See [AdCP 3.2 proposal negotiation](migration-adcp-3.1-to-3.2-proposals.md).
 
 ## Adopt version-aware request signing

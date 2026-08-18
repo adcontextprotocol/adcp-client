@@ -59,6 +59,7 @@ function sellerConfig({
   withSpecialism = true,
   capabilityRequestSigning,
   signedRequestsRequiredFor = ['create_media_buy'],
+  omitSignedRequestsRequiredFor = false,
 } = {}) {
   const defaultRequestSigning = {
     supported: true,
@@ -97,7 +98,7 @@ function sellerConfig({
   };
   if (withSignedRequests) {
     config.signedRequests = makeStores();
-    if (signedRequestsRequiredFor !== undefined) {
+    if (!omitSignedRequestsRequiredFor && signedRequestsRequiredFor !== undefined) {
       config.signedRequests.required_for = signedRequestsRequiredFor;
     }
   }
@@ -137,6 +138,22 @@ function mcpGetProductsBody() {
     params: {
       name: 'get_products',
       arguments: { brief: 'test' },
+    },
+  });
+}
+
+function mcpFinalizeProposalBody() {
+  return JSON.stringify({
+    jsonrpc: '2.0',
+    id: 4,
+    method: 'tools/call',
+    params: {
+      name: 'get_products',
+      arguments: {
+        buying_mode: 'refine',
+        refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'proposal-1' }],
+        idempotency_key: 'proposal-finalize-signing-test-0001',
+      },
     },
   });
 }
@@ -441,7 +458,7 @@ describe('createAdcpServer: signedRequests auto-wiring', () => {
               covers_content_digest: 'either',
               required_for: ['create_media_buy'],
             },
-            signedRequestsRequiredFor: undefined,
+            omitSignedRequestsRequiredFor: true,
           })
         )
       );
@@ -472,6 +489,93 @@ describe('createAdcpServer: signedRequests auto-wiring', () => {
       assert.strictEqual(res.status, 401, 'create_media_buy must reject unsigned traffic');
       const payload = await res.json();
       assert.strictEqual(payload.error, 'request_signature_required');
+    });
+  });
+
+  describe('required_for fallback protects request-aware proposal finalization', () => {
+    let started;
+
+    before(async () => {
+      started = await startServer(() =>
+        createAdcpServer(
+          sellerConfig({
+            withSignedRequests: true,
+            withSpecialism: true,
+            capabilityRequestSigning: {
+              supported: true,
+              covers_content_digest: 'either',
+            },
+            omitSignedRequestsRequiredFor: true,
+          })
+        )
+      );
+    });
+
+    after(async () => {
+      if (started?.server) await new Promise(resolve => started.server.close(resolve));
+    });
+
+    it('rejects unsigned get_products proposal finalization under the default signing policy', async () => {
+      const res = await postSigned({ url: started.url, body: mcpFinalizeProposalBody(), sign: false });
+      assert.strictEqual(res.status, 401, 'state-changing proposal finalize must require signing');
+      const payload = await res.json();
+      assert.strictEqual(payload.error, 'request_signature_required');
+    });
+
+    it('requires ordinary get_products reads to be signed because required_for is tool-level', async () => {
+      const res = await postSigned({ url: started.url, body: mcpGetProductsBody(), sign: false });
+      assert.strictEqual(res.status, 401, 'tool-level policy cannot distinguish ordinary reads from finalize');
+    });
+
+    it('advertises get_products in the effective required_for list so buyers know to sign it', async () => {
+      const agent = createAdcpServer(
+        sellerConfig({
+          withSignedRequests: true,
+          withSpecialism: true,
+          capabilityRequestSigning: { supported: true, covers_content_digest: 'either' },
+          omitSignedRequestsRequiredFor: true,
+        })
+      );
+      const response = await agent.dispatchTestRequest({
+        method: 'tools/call',
+        params: { name: 'get_adcp_capabilities', arguments: {} },
+      });
+      assert.ok(response.structuredContent.request_signing.required_for.includes('get_products'));
+    });
+  });
+
+  describe('capability overrides and verifier enforcement share one effective policy', () => {
+    let started;
+
+    before(async () => {
+      started = await startServer(() => {
+        const config = sellerConfig({
+          withSignedRequests: true,
+          withSpecialism: true,
+          capabilityRequestSigning: {
+            supported: true,
+            covers_content_digest: 'either',
+            required_for: ['create_media_buy'],
+          },
+          omitSignedRequestsRequiredFor: true,
+        });
+        config.capabilities.overrides = {
+          request_signing: { required_for: ['get_products'] },
+        };
+        return createAdcpServer(config);
+      });
+    });
+
+    after(async () => {
+      if (started?.server) await new Promise(resolve => started.server.close(resolve));
+    });
+
+    it('enforces the post-override required_for list instead of the raw capability config', async () => {
+      const read = await postSigned({ url: started.url, body: mcpGetProductsBody(), sign: false });
+      assert.strictEqual(read.status, 401, 'advertised override must also control verifier enforcement');
+
+      const create = await postSigned({ url: started.url, body: mcpCreateMediaBuyBody(), sign: false });
+      assert.strictEqual(create.status, 200, 'tool removed by the override must not remain signature-required');
     });
   });
 

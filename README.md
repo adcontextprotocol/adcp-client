@@ -420,7 +420,8 @@ result.metadata.replayed;
 import { IdempotencyConflictError, IdempotencyExpiredError } from '@adcp/sdk';
 
 if (result.errorInstance instanceof IdempotencyConflictError) {
-  // Agent re-planned with a different payload. Mint a fresh key and retry.
+  // Reconcile by natural key before deciding whether this is a new intent.
+  // Do not blindly mint a fresh key: the prior operation may have succeeded.
 }
 if (result.errorInstance instanceof IdempotencyExpiredError) {
   // Key past the seller's replay window. Look up by natural key before retrying.

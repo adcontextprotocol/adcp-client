@@ -64,6 +64,29 @@ export function isMutatingTask(toolName: string): boolean {
 }
 
 /**
+ * Whether this concrete request can change seller state and should therefore
+ * carry an idempotency key. Most mutations are classified by their tool's
+ * required request field. AdCP 3.2's legacy-compatible proposal finalization
+ * is the exception: it is a state-changing variant of otherwise read-only
+ * `get_products`, whose compatibility schema keeps the key optional.
+ */
+export function requestUsesIdempotency(toolName: string, params: unknown): boolean {
+  if (isMutatingTask(toolName)) return true;
+  if (toolName !== 'get_products' || !isRecord(params)) return false;
+  // Classify finalize intent before schema validation. A malformed finalize
+  // request must not fall through as a read merely because proposal_id or
+  // scope is invalid; validation/handler logic reports those details later.
+  if (isRecord(params.refine)) return params.refine.action === 'finalize';
+  return Array.isArray(params.refine)
+    ? params.refine.some(entry => isRecord(entry) && entry.action === 'finalize')
+    : false;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
  * Generate a fresh idempotency key for a mutating request.
  *
  * Returns a UUID v4, which satisfies the spec's

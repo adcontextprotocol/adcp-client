@@ -1446,6 +1446,14 @@ describe('normalizeRequestParams: idempotency_key auto-inject (MUTATING_TASKS co
     }
   });
 
+  test('the proposal-finalize get_products variant receives an auto-injected key', () => {
+    const result = normalizeRequestParams('get_products', {
+      buying_mode: 'refine',
+      refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'proposal_1' }],
+    });
+    assert.match(String(result?.idempotency_key), UUID_V4_PATTERN);
+  });
+
   test('preserves a caller-supplied idempotency_key (BYOK)', () => {
     const result = normalizeRequestParams('create_media_buy', {
       account: { account_id: 'test-acc' },

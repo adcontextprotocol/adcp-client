@@ -61,7 +61,7 @@ import {
   type CreativeAssetExpansionFailure,
 } from './creative-assets';
 import { resolveAccount, resolveBrand } from '../client';
-import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
+import { requestUsesIdempotency, generateIdempotencyKey } from '../../utils/idempotency';
 import {
   getSchemaDefaultByPath,
   getSchemaValidatorByRef,
@@ -4660,7 +4660,7 @@ async function executeStep(
   // yamls generally omit it so authors don't have to remember it on every
   // mutating step — mint one here on the runner's behalf, matching how a
   // real buyer would operate. Suppressed when the step expects a missing-key
-  // error (see `testsMissingIdempotencyKey` below) so that compliance
+  // error (see `testsIdempotencyKeyOmission` below) so that compliance
   // surfaces can still exercise the server's required-field check.
   request = applyIdempotencyInvariant(request, effectiveStep.task, step);
 
@@ -4814,15 +4814,16 @@ async function executeStep(
   // (which the SDK transport doesn't expose), and (b) capture the HTTP status
   // + `WWW-Authenticate` header for http_* validations.
   //
-  // Tests for envelope validation on mutating tasks (e.g., "missing
-  // idempotency_key returns INVALID_REQUEST") set `step.omit_idempotency_key`
-  // to suppress both the runner's `applyIdempotencyInvariant` (above) and the
-  // AdCP client's auto-inject — otherwise the SDK helpfully generates a UUID
-  // and the server never sees a missing-key request. Paired flags so the two
-  // layers agree; see `applyIdempotencyInvariant` for the runner-level skip.
-  const testsMissingIdempotencyKey = step.omit_idempotency_key === true && isMutatingTask(effectiveStep.task);
+  // Idempotency omission scenarios set `step.omit_idempotency_key` to suppress
+  // both the runner's `applyIdempotencyInvariant` (above) and the AdCP client's
+  // auto-inject. This covers statically mutating tasks (where omission tests
+  // rejection) and the request-aware get_products proposal-finalize variant
+  // (where omission verifies the 3.2 compatibility path). Paired flags keep
+  // the two layers aligned; see `applyIdempotencyInvariant` for the runner skip.
+  const testsIdempotencyKeyOmission =
+    step.omit_idempotency_key === true && requestUsesIdempotency(effectiveStep.task, request);
 
-  // Analogous to `testsMissingIdempotencyKey`: when a step sets
+  // Analogous to `testsIdempotencyKeyOmission`: when a step sets
   // `omit_account: true` the runner has already suppressed account synthesis
   // in `applyBrandInvariant` (above — ordering is load-bearing: this must
   // come after `applyBrandInvariant` so the comment "above" stays accurate
@@ -5040,7 +5041,7 @@ async function executeStep(
     } else {
       const dispatch = () =>
         executeStoryboardTask(client, effectiveStep.task, request, {
-          skipIdempotencyAutoInject: testsMissingIdempotencyKey,
+          skipIdempotencyAutoInject: testsIdempotencyKeyOmission,
           skipAccountValidation: testsMissingAccount,
           responseProjection:
             effectiveStep.response_projection ??
@@ -7514,7 +7515,7 @@ export function applyDisableSandboxHint(request: Record<string, unknown>, taskNa
  * Skipped when:
  *   - `step.omit_idempotency_key === true` — the scenario is explicitly
  *     exercising the server's missing-key rejection path.
- *   - the task isn't mutating per {@link MUTATING_TASKS}.
+ *   - the concrete request is not state-changing per `requestUsesIdempotency`.
  *   - the request already carries a key — typically a
  *     `$generate:uuid_v4#alias` the context injector has resolved to a
  *     concrete UUID for replay scenarios, or a BYOK key supplied inline.
@@ -7525,7 +7526,7 @@ export function applyIdempotencyInvariant(
   step: StoryboardStep
 ): Record<string, unknown> {
   if (step.omit_idempotency_key === true) return request;
-  if (!isMutatingTask(taskName)) return request;
+  if (!requestUsesIdempotency(taskName, request)) return request;
   if (typeof request.idempotency_key === 'string' && request.idempotency_key.length > 0) return request;
   return { ...request, idempotency_key: generateIdempotencyKey() };
 }

@@ -200,14 +200,11 @@ const EXPLICIT_CODE_POLICY: Partial<Record<ErrorCode, CodePolicy>> = {
   INVALID_STATE: { action: 'mutate-and-retry', attemptCap: 2, reason: 'state', baseDelayMs: 250 },
   NOT_CANCELLABLE: { action: 'mutate-and-retry', attemptCap: 2, reason: 'state', baseDelayMs: 250 },
 
-  // Idempotency:
-  // - CONFLICT (different payload, same key in window) — fresh key + retry is safe;
-  //   the seller already rejected the new payload before doing any work.
-  // - EXPIRED (cached response evicted past replay_ttl) — DO NOT auto-retry. The
-  //   spec explicitly warns: if the prior call may have succeeded, the buyer
-  //   MUST do a natural-key check (e.g., get_media_buys by buyer_ref) BEFORE
-  //   minting a new key. Otherwise this is exactly how double-creation happens.
-  IDEMPOTENCY_CONFLICT: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+  // Idempotency conflicts and expiry both require natural-key reconciliation.
+  // A conflict can represent an SDK-version identity boundary as well as a
+  // genuinely changed payload, so automatically minting a fresh key can
+  // duplicate an operation that succeeded before an upgrade.
+  IDEMPOTENCY_CONFLICT: { action: 'escalate', escalateReason: 'idempotency_check_required' },
   IDEMPOTENCY_EXPIRED: { action: 'escalate', escalateReason: 'idempotency_check_required' },
 
   // Creative deadline — buyer can re-negotiate or surface to user.

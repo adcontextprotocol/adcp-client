@@ -145,11 +145,11 @@ function hasIdempotencyClearAll(store: IdempotencyStore): boolean {
   // configured backend opts in (memory backend does; pg backend does not).
   return typeof store.clearAll === 'function';
 }
-import { isMutatingTask, IDEMPOTENCY_KEY_PATTERN, MUTATING_TASKS } from '../utils/idempotency';
+import { isMutatingTask, requestUsesIdempotency, IDEMPOTENCY_KEY_PATTERN, MUTATING_TASKS } from '../utils/idempotency';
 import { STATUS_FREE_SYNC_RESPONSE_TOOLS } from '../utils/envelope-status-compat';
 import { validateRequest, validateResponse, formatIssues, type ValidationIssue } from '../validation/schema-validator';
 import { buildAdcpValidationErrorPayload } from '../validation/schema-errors';
-import type { IdempotencyStore } from './idempotency';
+import { hashPayload, type IdempotencyStore } from './idempotency';
 import {
   createWebhookEmitter,
   type WebhookEmitParams,
@@ -1255,10 +1255,11 @@ export interface SignedRequestsConfig {
   /** Consulted for revoked `kid` / `jti` before accepting a signature. */
   revocationStore: RevocationStore;
   /**
-   * Operation names that MUST arrive signed. Defaults to every mutating
-   * AdCP tool (per the framework's {@link MUTATING_TASKS}). Read-only tools
-   * are optional — callers can sign them for authenticity but the verifier
-   * accepts unsigned traffic outside this list.
+   * Operation names that MUST arrive signed. Defaults to every statically
+   * mutating AdCP tool (per the framework's {@link MUTATING_TASKS}) plus
+   * `get_products`, whose AdCP 3.2 proposal-finalize variant is state-changing.
+   * Because signing policy is advertised at tool granularity, enabling that
+   * protection also requires signatures on ordinary `get_products` reads.
    */
   required_for?: string[];
   /**
@@ -2065,6 +2066,25 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
+function hasInvalidGetProductsFinalizeIntent(toolName: string, params: Record<string, unknown>): boolean {
+  if (toolName !== 'get_products') return false;
+  if (isPlainObject(params.refine)) return params.refine.action === 'finalize';
+  if (!Array.isArray(params.refine)) return false;
+  const containsFinalize = params.refine.some(entry => isPlainObject(entry) && entry.action === 'finalize');
+  if (!containsFinalize) return false;
+  if (params.buying_mode !== 'refine') return true;
+  // Finalize is exclusive: every entry must finalize a proposal. Multiple
+  // proposal entries are valid and carry atomic multi-finalize semantics.
+  return params.refine.some(
+    entry =>
+      !isPlainObject(entry) ||
+      entry.action !== 'finalize' ||
+      entry.scope !== 'proposal' ||
+      typeof entry.proposal_id !== 'string' ||
+      entry.proposal_id.length === 0
+  );
+}
+
 function deepMergePlainObjects(target: unknown, source: unknown): unknown {
   if (source === undefined) return target;
   if (source === null) return null;
@@ -2332,19 +2352,36 @@ function isThrownAdcpError(value: unknown): value is McpToolResponse {
 }
 
 /**
- * Resolve the extra scope segment for tools with per-session semantics.
+ * Resolve the framework-owned cache namespace for a concrete mutation.
  *
- * For `si_send_message`, the request `session_id` enters the scope so
- * the same idempotency_key used across two sessions doesn't false-replay
- * (or false-conflict) across them. Other tools return `undefined` and
- * use the default `(principal, key)` scope.
+ * Existing tools retain their SDK 13 scope so an in-flight mutation cannot
+ * miss its replay record during a rolling upgrade. The new get_products
+ * finalize path adds trusted session/account identity; other tool/session
+ * special cases preserve their established scopes.
  */
 function resolveExtraScope(
   toolName: string,
   params: Record<string, unknown>,
+  account?: unknown,
+  sessionKey?: string,
   proposalScope?: Readonly<ProposalRefinementScope>,
   callerMutationScope?: Readonly<CallerMutationScope>
 ): string | undefined {
+  const accountLike = account as
+    | { id?: unknown; account_id?: unknown; tenant_id?: unknown; tenantId?: unknown }
+    | undefined;
+  const accountId =
+    typeof accountLike?.id === 'string'
+      ? accountLike.id
+      : typeof accountLike?.account_id === 'string'
+        ? accountLike.account_id
+        : undefined;
+  const tenantId =
+    typeof accountLike?.tenant_id === 'string'
+      ? accountLike.tenant_id
+      : typeof accountLike?.tenantId === 'string'
+        ? accountLike.tenantId
+        : undefined;
   if (CALLER_SCOPED_MUTATION_TOOLS.has(toolName) && callerMutationScope) {
     return JSON.stringify([
       callerMutationScope.tenant_id,
@@ -2362,7 +2399,46 @@ function resolveExtraScope(
     // cannot replay a response across tenant or account boundaries.
     return JSON.stringify([proposalScope.tenant_id, proposalScope.principal_id, proposalScope.account_id ?? null]);
   }
+  if (toolName === 'get_products') {
+    return JSON.stringify([sessionKey ?? null, tenantId ?? null, accountId ?? null]);
+  }
   return undefined;
+}
+
+function buildIdempotencyPayload(
+  toolName: string,
+  params: Record<string, unknown>,
+  account?: unknown,
+  sessionKey?: string
+): readonly unknown[] {
+  const accountLike = account as
+    | { id?: unknown; account_id?: unknown; tenant_id?: unknown; tenantId?: unknown }
+    | undefined;
+  const accountId =
+    typeof accountLike?.id === 'string'
+      ? accountLike.id
+      : typeof accountLike?.account_id === 'string'
+        ? accountLike.account_id
+        : undefined;
+  const tenantId =
+    typeof accountLike?.tenant_id === 'string'
+      ? accountLike.tenant_id
+      : typeof accountLike?.tenantId === 'string'
+        ? accountLike.tenantId
+        : undefined;
+  // Keep framework identity in the canonical payload hash rather than
+  // changing the established cache key. The tuple root is deliberately
+  // impossible for an SDK 13 entry: legacy dispatch always hashed the
+  // object-shaped tool arguments directly. Unknown request fields therefore
+  // cannot forge these trusted discriminators. A legacy entry yields
+  // IDEMPOTENCY_CONFLICT after upgrade instead of a cache miss and duplicate
+  // execution; new entries cannot replay across tools or tenants.
+  return [
+    '@adcp/sdk-idempotency/v2',
+    toolName,
+    [sessionKey ?? null, tenantId ?? null, accountId ?? null],
+    hashPayload(params),
+  ] as const;
 }
 
 function genericResponse(toolName: string, data: object, summary?: string): McpToolResponse {
@@ -3475,6 +3551,35 @@ function injectVersionIntoResponse(response: McpToolResponse, servedVersion: str
 // Signed-requests preTransport builder
 // ---------------------------------------------------------------------------
 
+type EffectiveSignedRequestPolicy = NonNullable<GetAdCPCapabilitiesResponse['request_signing']> & {
+  supported: true;
+  covers_content_digest: ContentDigestPolicy;
+  required_for: string[];
+};
+
+function resolveEffectiveSignedRequestPolicy(
+  signedRequests: SignedRequestsConfig,
+  capabilityRequestSigning: GetAdCPCapabilitiesResponse['request_signing'] | undefined,
+  adcpVersion?: string
+): EffectiveSignedRequestPolicy {
+  const signingRelease = adcpVersion ? parseAdcpRelease(adcpVersion) : undefined;
+  const requiredFor = signedRequests.required_for ??
+    capabilityRequestSigning?.required_for ?? [...MUTATING_TASKS, 'get_products'];
+  const protocolMethodsRequiredFor =
+    signedRequests.protocol_methods_required_for ?? capabilityRequestSigning?.protocol_methods_required_for;
+  const coversContentDigest: ContentDigestPolicy =
+    signedRequests.covers_content_digest ??
+    capabilityRequestSigning?.covers_content_digest ??
+    (signingRelease?.major === 3 && signingRelease.minor >= 2 ? 'required' : 'either');
+  return {
+    ...capabilityRequestSigning,
+    supported: true,
+    covers_content_digest: coversContentDigest,
+    required_for: requiredFor,
+    ...(protocolMethodsRequiredFor ? { protocol_methods_required_for: protocolMethodsRequiredFor } : {}),
+  };
+}
+
 /**
  * Build a `preTransport` middleware that runs `createExpressVerifier` against
  * the incoming Node request/response. The returned function matches the shape
@@ -3490,29 +3595,18 @@ function injectVersionIntoResponse(response: McpToolResponse, servedVersion: str
  */
 function buildSignedRequestsPreTransport(
   signedRequests: SignedRequestsConfig,
-  capabilityRequestSigning?: NonNullable<GetAdCPCapabilitiesResponse['request_signing']>,
+  effectiveRequestSigning: EffectiveSignedRequestPolicy,
   adcpVersion?: string
 ): AdcpPreTransport {
-  // Precedence: explicit signedRequests.required_for > capabilities.request_signing.required_for
-  // > fallback to every mutating task. Buyers read required_for from
-  // get_adcp_capabilities to decide which calls to sign — defaulting to
-  // MUTATING_TASKS when the seller advertised a narrower list would cause
-  // buyers to get request_signature_required on tools they had no contractual
-  // duty to sign.
-  const requiredFor = signedRequests.required_for ?? capabilityRequestSigning?.required_for ?? [...MUTATING_TASKS];
-  const protocolMethodsRequiredFor =
-    signedRequests.protocol_methods_required_for ?? capabilityRequestSigning?.protocol_methods_required_for;
-  const signingRelease = adcpVersion ? parseAdcpRelease(adcpVersion) : undefined;
-  const configuredDigestPolicy =
-    signedRequests.covers_content_digest ?? capabilityRequestSigning?.covers_content_digest;
-  const coversContentDigest =
-    configuredDigestPolicy ?? (signingRelease?.major === 3 && signingRelease.minor >= 2 ? 'required' : 'either');
+  const requiredFor = effectiveRequestSigning.required_for ?? [];
   const verifier = createExpressVerifier({
     capability: {
       supported: true,
-      covers_content_digest: coversContentDigest,
+      covers_content_digest: effectiveRequestSigning.covers_content_digest,
       required_for: requiredFor,
-      ...(protocolMethodsRequiredFor ? { protocol_methods_required_for: protocolMethodsRequiredFor } : {}),
+      ...(effectiveRequestSigning.protocol_methods_required_for
+        ? { protocol_methods_required_for: effectiveRequestSigning.protocol_methods_required_for }
+        : {}),
     },
     jwks: signedRequests.jwks,
     replayStore: signedRequests.replayStore,
@@ -4465,6 +4559,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   }
 
   const registeredToolNames = new Set<string>();
+  let warnedAboutOptionalReplayWithoutIdempotency = false;
 
   const applyResponseEnhancer = (response: McpToolResponse): McpToolResponse => {
     responseEnhancer?.(response);
@@ -5068,6 +5163,40 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         }
 
         const toolIsMutating = isMutatingTask(toolName);
+        const requestIsStateChanging = requestUsesIdempotency(toolName, params);
+        const hasIdempotencyKeyField = Object.prototype.hasOwnProperty.call(params, 'idempotency_key');
+        const requestUsesOptionalIdempotency = toolName === 'get_products' && hasIdempotencyKeyField;
+        const suppliedIdempotencyKey = typeof params.idempotency_key === 'string' ? params.idempotency_key : undefined;
+        // The 3.2 compatibility schema deliberately leaves the finalize key
+        // optional. Replay a supplied key, but do not reject older callers
+        // that omit it. SDK 14 buyers auto-inject one on this path.
+        const requestUsesReplay = toolIsMutating || requestUsesOptionalIdempotency;
+        if (hasInvalidGetProductsFinalizeIntent(toolName, params)) {
+          return finalize(
+            adcpError('INVALID_REQUEST', {
+              message:
+                'get_products finalize requires buying_mode refine and an exclusive array of proposal-scoped finalize entries with non-empty proposal_id values',
+              field: 'refine',
+            })
+          );
+        }
+        if (
+          (requestIsStateChanging || requestUsesOptionalIdempotency) &&
+          !toolIsMutating &&
+          !idempotency &&
+          !idempotencyDisabled &&
+          !capConfig?.idempotency?.replay_ttl_seconds &&
+          !warnedAboutOptionalReplayWithoutIdempotency
+        ) {
+          warnedAboutOptionalReplayWithoutIdempotency = true;
+          logger.error(
+            requestIsStateChanging
+              ? 'createAdcpServer: get_products proposal finalization was called without an idempotency store. ' +
+                  'Exact retries can create duplicate holds; configure idempotency or explicitly disable it.'
+              : 'createAdcpServer: get_products was called with idempotency_key but no idempotency store is configured. ' +
+                  'Replay protection is unavailable; configure idempotency or explicitly disable it.'
+          );
+        }
 
         // Field-disagreement detection per spec PR `adcontextprotocol/adcp#3493`:
         // when the request carries both `adcp_version` (string, AdCP 3.1+)
@@ -5326,7 +5455,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             // strict-mode failure will correctly bubble up — drift is
             // surfaced rather than silently swallowed.
             const issues =
-              idempotencyDisabled && toolIsMutating
+              idempotencyDisabled && requestIsStateChanging
                 ? outcome.issues.filter(i => !(i.keyword === 'required' && i.pointer === '/idempotency_key'))
                 : outcome.issues;
             if (issues.length > 0) {
@@ -5556,9 +5685,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // so disabled mode tolerates absence per the schema-filter
         // contract earlier in this dispatcher.
         if (
-          toolIsMutating &&
-          typeof params.idempotency_key === 'string' &&
-          !IDEMPOTENCY_KEY_PATTERN.test(params.idempotency_key)
+          (requestIsStateChanging || requestUsesOptionalIdempotency) &&
+          hasIdempotencyKeyField &&
+          (typeof params.idempotency_key !== 'string' || !IDEMPOTENCY_KEY_PATTERN.test(params.idempotency_key))
         ) {
           return finalize(
             adcpError('INVALID_REQUEST', {
@@ -5568,14 +5697,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           );
         }
 
-        // --- Idempotency (mutating tools only) ---
+        // --- Idempotency (mutating tools + get_products proposal finalize) ---
         let idempotencyCheck: { key: string; principal: string; payloadHash: string; extraScope?: string } | undefined;
-        if (idempotency && toolIsMutating) {
-          const key = typeof params.idempotency_key === 'string' ? params.idempotency_key : undefined;
+        if (idempotency && requestUsesReplay) {
+          const key = suppliedIdempotencyKey;
           if (!key) {
             return finalize(
               adcpError('INVALID_REQUEST', {
-                message: 'idempotency_key is required on mutating requests',
+                message: 'idempotency_key is required on state-changing requests',
                 field: 'idempotency_key',
               })
             );
@@ -5606,10 +5735,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // two different sessions must not replay into each other. The
           // caller's session_id enters the scope tuple so each session has
           // its own idempotency namespace.
-          const extraScope = resolveExtraScope(toolName, params, ctx.proposalRefinementScope, ctx.callerMutationScope);
+          const extraScope = resolveExtraScope(
+            toolName,
+            params,
+            ctx.account,
+            ctx.sessionKey,
+            ctx.proposalRefinementScope,
+            ctx.callerMutationScope
+          );
+          const idempotencyPayload = buildIdempotencyPayload(toolName, params, ctx.account, ctx.sessionKey);
 
           try {
-            const checkResult = await idempotency.check({ principal, key, payload: params, extraScope });
+            const checkResult = await idempotency.check({ principal, key, payload: idempotencyPayload, extraScope });
             if (checkResult.kind === 'replay') {
               // The cache stores the already-formatted envelope (so
               // non-deterministic wrap fields like `confirmed_at` are
@@ -5632,7 +5769,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               return finalize(
                 adcpError('IDEMPOTENCY_CONFLICT', {
                   message:
-                    'idempotency_key was used earlier with a different canonical payload. Use a fresh UUID v4, or resend the exact original payload.',
+                    'idempotency_key was used earlier with a different canonical payload. Do not blindly retry with a fresh key: reconcile the prior operation by natural key, then continue only after confirming whether it succeeded.',
                 })
               );
             }
@@ -6939,6 +7076,19 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     applyCapabilityOverrides(capabilitiesData, capConfig.overrides);
   }
 
+  // Resolve signing once, after capability overrides, then use this exact
+  // policy for both discovery and transport enforcement. Explicit verifier
+  // config remains authoritative over a conflicting capability override;
+  // otherwise the post-override advertised list controls enforcement.
+  const enforcedRequestSigningPolicy = signedRequests
+    ? resolveEffectiveSignedRequestPolicy(
+        signedRequests,
+        capabilitiesData.request_signing ?? capConfig?.request_signing,
+        adcpVersion
+      )
+    : undefined;
+  if (enforcedRequestSigningPolicy) capabilitiesData.request_signing = enforcedRequestSigningPolicy;
+
   if (proposalRefinementCapabilities) {
     const mediaBuy = (capabilitiesData.media_buy ??= {
       features: {
@@ -7244,7 +7394,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // on the wrapper — it's a private contract between this function and
   // `serve()` for wiring, not part of the AdcpServer public API.
   if (signedRequests) {
-    const preTransport = buildSignedRequestsPreTransport(signedRequests, capConfig?.request_signing, adcpVersion);
+    const preTransport = buildSignedRequestsPreTransport(signedRequests, enforcedRequestSigningPolicy!, adcpVersion);
     Object.defineProperty(wrapped, ADCP_PRE_TRANSPORT, {
       value: preTransport,
       enumerable: false,

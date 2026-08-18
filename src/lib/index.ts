@@ -604,6 +604,7 @@ export { InputRequiredError } from './core/TaskExecutor';
 export {
   generateIdempotencyKey,
   isMutatingTask,
+  requestUsesIdempotency,
   isValidIdempotencyKey,
   useIdempotencyKey,
   redactIdempotencyKey,

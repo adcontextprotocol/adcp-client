@@ -33,6 +33,26 @@ await agent.createMediaBuy(/* canonical SDK 13 request */);
 
 SDK 14 retains the canonical/legacy projection layer and the exact compatible-version list for released AdCP 3.0 and 3.1 versions. Keep using the explicit `*Legacy()` methods only for raw wire migration or conformance tooling, just as in SDK 13.
 
+One already state-changing established-tool variant gains optional-key replay
+semantics under 3.2:
+`get_products({ buying_mode: 'refine', refine: [{ scope: 'proposal', action:
+'finalize', ... }] })`. SDK 14 clients attach an `idempotency_key`; preserve it
+for an exact retry. SDK 14 servers cache the finalize variant when a valid key
+is supplied. The compatibility schema still permits older callers to omit the
+key, but those calls cannot receive cache-backed replay protection. Ordinary
+discovery and non-finalizing refinement remain read-only. Sellers using the
+proposal-manager framework must wire the same durable idempotency store used
+by their other commercial mutations.
+
+SDK 14 also hardens replay-cache isolation by including the tool and trusted
+resolved session/account identity in canonical replay identity. Existing-tool
+cache keys retain their SDK 13 scope so an older durable entry cannot be
+missed and executed twice. Because SDK 14's stronger payload identity differs,
+a retry against an SDK 13 entry returns `IDEMPOTENCY_CONFLICT` instead of the
+old cached body; reconcile by natural key rather than minting a replacement
+key until the original replay TTL expires. New entries cannot replay a body
+across tenants or tools.
+
 ## Adopt the compact lifecycle by capability
 
 The compact flow is not a rename of the established tools. It has different commercial semantics, so branch on the seller's advertised lifecycle tools:

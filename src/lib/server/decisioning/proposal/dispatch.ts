@@ -134,9 +134,9 @@ export async function maybeInterceptFinalize<TRecipe extends Recipe, TCtxMeta>(a
   ctx: { account: { id: string } } & Record<string, unknown>;
 }): Promise<FinalizeInterceptResult<TRecipe>> {
   const { request, manager, store, ctx } = args;
+  if (!hasFinalizeCapability(manager) || !store) return { kind: 'pass' };
   const finalizeEntry = detectFinalizeAction(request);
   if (!finalizeEntry) return { kind: 'pass' };
-  if (!hasFinalizeCapability(manager) || !store) return { kind: 'pass' };
 
   const fieldPath = `refine[${finalizeEntry.index}].proposal_id`;
   const accountId = ctx.account.id;
