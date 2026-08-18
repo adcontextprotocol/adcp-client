@@ -933,7 +933,54 @@ export function hasSchemaBundle(version: string): boolean {
   }
 }
 
-const mcpProfileInputSchemaCache = new Map<string, Readonly<Record<string, unknown>> | null>();
+const mcpToolSchemaCache = new Map<string, Readonly<Record<string, unknown>> | null>();
+
+/** Load an exact self-contained tool projection from an MCP manifest. @internal */
+export function getMcpToolSchema(
+  toolName: string,
+  direction: 'input' | 'output',
+  options: { profile?: string; protocolVersion?: string } = {},
+  version: string = ADCP_VERSION
+): Readonly<Record<string, unknown>> | undefined {
+  const root = resolveSchemaRoot(version);
+  const profile = options.profile ?? 'all';
+  const cacheKey = `${root}\u001f${options.protocolVersion ?? 'latest'}\u001f${profile}\u001f${direction}\u001f${toolName}`;
+  const cached = mcpToolSchemaCache.get(cacheKey);
+  if (cached !== undefined) return cached ?? undefined;
+
+  const mcpRoot = path.join(root, 'mcp');
+  if (!existsSync(mcpRoot)) {
+    mcpToolSchemaCache.set(cacheKey, null);
+    return undefined;
+  }
+  const protocolVersions = options.protocolVersion
+    ? [options.protocolVersion]
+    : readdirSync(mcpRoot, { withFileTypes: true })
+        .filter(entry => entry.isDirectory())
+        .map(entry => entry.name)
+        .sort()
+        .reverse();
+  for (const protocolVersion of protocolVersions) {
+    const manifestRoot =
+      profile === 'all'
+        ? path.resolve(mcpRoot, protocolVersion)
+        : path.resolve(mcpRoot, protocolVersion, 'profiles', profile);
+    const manifestFile = path.join(manifestRoot, 'manifest.json');
+    if (!existsSync(manifestFile)) continue;
+    const manifest = loadJson(manifestFile) as {
+      tools?: Record<string, { inputSchema?: unknown; outputSchema?: unknown }>;
+    };
+    const schemaRef = manifest.tools?.[toolName]?.[direction === 'input' ? 'inputSchema' : 'outputSchema'];
+    if (typeof schemaRef !== 'string') continue;
+    const schemaFile = path.resolve(manifestRoot, schemaRef);
+    if (!schemaFile.startsWith(`${manifestRoot}${path.sep}`) || !existsSync(schemaFile)) continue;
+    const schema = Object.freeze(loadJson(schemaFile));
+    mcpToolSchemaCache.set(cacheKey, schema);
+    return schema;
+  }
+  mcpToolSchemaCache.set(cacheKey, null);
+  return undefined;
+}
 
 /** Load the exact self-contained request projection from an MCP role profile. */
 export function getMcpProfileInputSchema(
@@ -941,38 +988,7 @@ export function getMcpProfileInputSchema(
   profile: string,
   version: string = ADCP_VERSION
 ): Readonly<Record<string, unknown>> | undefined {
-  const root = resolveSchemaRoot(version);
-  const cacheKey = `${root}\u001f${profile}\u001f${toolName}`;
-  const cached = mcpProfileInputSchemaCache.get(cacheKey);
-  if (cached !== undefined) return cached ?? undefined;
-
-  const mcpRoot = path.join(root, 'mcp');
-  if (!existsSync(mcpRoot)) {
-    mcpProfileInputSchemaCache.set(cacheKey, null);
-    return undefined;
-  }
-  const protocolVersions = readdirSync(mcpRoot, { withFileTypes: true })
-    .filter(entry => entry.isDirectory())
-    .map(entry => entry.name)
-    .sort()
-    .reverse();
-  for (const protocolVersion of protocolVersions) {
-    const profileRoot = path.resolve(mcpRoot, protocolVersion, 'profiles', profile);
-    const manifestFile = path.join(profileRoot, 'manifest.json');
-    if (!existsSync(manifestFile)) continue;
-    const manifest = loadJson(manifestFile) as {
-      tools?: Record<string, { inputSchema?: unknown }>;
-    };
-    const schemaRef = manifest.tools?.[toolName]?.inputSchema;
-    if (typeof schemaRef !== 'string') continue;
-    const schemaFile = path.resolve(profileRoot, schemaRef);
-    if (!schemaFile.startsWith(`${profileRoot}${path.sep}`) || !existsSync(schemaFile)) continue;
-    const schema = Object.freeze(loadJson(schemaFile));
-    mcpProfileInputSchemaCache.set(cacheKey, schema);
-    return schema;
-  }
-  mcpProfileInputSchemaCache.set(cacheKey, null);
-  return undefined;
+  return getMcpToolSchema(toolName, 'input', { profile }, version);
 }
 
 /**
@@ -982,7 +998,7 @@ export function getMcpProfileInputSchema(
  * bundle).
  */
 export function _resetValidationLoader(version?: string): void {
-  mcpProfileInputSchemaCache.clear();
+  mcpToolSchemaCache.clear();
   if (version === undefined) {
     states.clear();
   } else {

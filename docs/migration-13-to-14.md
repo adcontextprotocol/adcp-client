@@ -110,6 +110,12 @@ to `required` after legacy callers are gone.
 
 Do not select a signing profile from a version value inside an unverified request body or header. On the server, bind the version to the endpoint, tenant, or authenticated agent configuration. Webhook signatures do not move to the 3.2 request profile.
 
+Low-level `verifyRequestSignature()` calls that omit `adcpVersion` tolerate both
+the legacy Base64URL and 3.2 RFC 8941 Base64 serialization so frozen 3.0/3.1
+integrations do not inherit the SDK's own protocol pin. This does not relax
+digest policy: `capability.covers_content_digest` remains authoritative. Pass a
+trusted `adcpVersion` whenever one is available for deterministic diagnostics.
+
 ## Cross-role governance is capability-gated
 
 AdCP 3.2 governance authorizes one exact downstream action. A buyer-side

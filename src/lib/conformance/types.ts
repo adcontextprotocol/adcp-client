@@ -5,6 +5,7 @@ import type { SignerKey } from '../signing/client';
 export type ConformanceToolName =
   // Tier 1: no required IDs, discovery-like
   | 'get_products'
+  | 'list_products'
   | 'list_creative_formats'
   | 'list_creatives'
   | 'get_media_buys'
@@ -28,7 +29,16 @@ export type ConformanceToolName =
   // `autoSeed: true`. Excluded from DEFAULT_TOOLS when neither is active.
   | 'update_media_buy'
   | 'update_property_list'
-  | 'update_content_standards';
+  | 'update_content_standards'
+  // AdCP 3.2 compact lifecycle mutations. These stay in the stateful tier:
+  // request/refine/decline create proposal state, while buy/accept/control
+  // create or change a MediaBuy.
+  | 'request_proposals'
+  | 'refine_proposals'
+  | 'decline_proposals'
+  | 'buy_products'
+  | 'accept_proposal'
+  | 'control_media_buy';
 
 export const STATELESS_TIER_TOOLS: readonly ConformanceToolName[] = [
   'get_products',
@@ -60,7 +70,7 @@ export const REFERENTIAL_STATELESS_TOOLS: readonly ConformanceToolName[] = [
 ] as const;
 
 /**
- * Tier-3 mutating updates. Only meaningful when the fuzzer has real
+ * Tier-3 stateful mutations. Only meaningful when the fuzzer has real
  * entity IDs to target — either pre-seeded via
  * {@link RunConformanceOptions.fixtures} or auto-seeded via
  * {@link RunConformanceOptions.autoSeed}. {@link runConformance}
@@ -73,6 +83,25 @@ export const UPDATE_TIER_TOOLS: readonly ConformanceToolName[] = [
   'update_media_buy',
   'update_property_list',
   'update_content_standards',
+] as const;
+
+/** AdCP 3.2 compact discovery tools, enabled only with a matching schema bundle. */
+export const COMPACT_STATELESS_TIER_TOOLS: readonly ConformanceToolName[] = ['list_products'] as const;
+
+/** AdCP 3.2 compact stateful tools, enabled only with a matching schema bundle and fixtures. */
+export const COMPACT_UPDATE_TIER_TOOLS: readonly ConformanceToolName[] = [
+  'request_proposals',
+  'refine_proposals',
+  'decline_proposals',
+  'buy_products',
+  'accept_proposal',
+  'control_media_buy',
+] as const;
+
+/** Complete compact media-buy lifecycle in discovery-first order. */
+export const COMPACT_LIFECYCLE_TOOLS: readonly ConformanceToolName[] = [
+  ...COMPACT_STATELESS_TIER_TOOLS,
+  ...COMPACT_UPDATE_TIER_TOOLS,
 ] as const;
 
 /** Tier 1 + Tier 2 combined. Default tool set for {@link runConformance}. */
@@ -102,6 +131,12 @@ export interface RunConformanceOptions {
   agentConfig?: Partial<AgentConfig>;
   /** AdCP schema/cache version to use for conformance request/response schemas. */
   version?: string;
+  /**
+   * Trusted AdCP wire-version pin. Defaults to `version` when that value is
+   * an AdCP version; custom schema labels such as `external-test` leave the
+   * client on the SDK default unless this is set explicitly.
+   */
+  adcpVersion?: string;
   /** External schema-data root to use for conformance request/response schemas. */
   schemaRoot?: string;
   /** Skip runs where the agent returns UNSUPPORTED/NOT_IMPLEMENTED. Default true. */
@@ -136,7 +171,8 @@ export interface RunConformanceOptions {
    * When true, `runConformance` calls `seedFixtures` before fuzzing: it
    * creates a property list, a content-standards config, and (if the
    * agent returns at least one product from `get_products`) a media
-   * buy. The returned IDs are merged into `fixtures` (explicit fixtures
+   * buy through both the legacy and compact 3.2 lifecycles. The returned
+   * IDs are merged into `fixtures` (explicit fixtures
    * win on conflict) and Tier-3 update tools are added to the default
    * tool list.
    *
@@ -191,6 +227,44 @@ export interface ConformanceFixtures {
   package_ids?: readonly string[];
   /** Pool for `format_id` / `format.id` properties. */
   format_ids?: readonly string[];
+  /**
+   * Published compact offers captured from `list_products`. Keep the related
+   * product, pricing option, feed/pricing versions, and account together so a
+   * `buy_products` probe never combines values from different snapshots.
+   */
+  products?: readonly ConformanceProductFixture[];
+  /**
+   * Immutable compact proposal snapshots. Callers should supply distinct
+   * entries when refine/decline/accept are all enabled because those probes
+   * may terminally change seller-side eligibility for later operations.
+   */
+  proposals?: readonly ConformanceProposalFixture[];
+  /** Compact media-buy snapshots with the revision required by `control_media_buy`. */
+  media_buys?: readonly ConformanceMediaBuyFixture[];
+}
+
+/** Account reference preserved with compact lifecycle fixtures. */
+export type ConformanceAccountFixture = Record<string, unknown>;
+
+export interface ConformanceProductFixture {
+  product_id: string;
+  pricing_option_id: string;
+  feed_version: string;
+  pricing_version?: string;
+  account: ConformanceAccountFixture;
+}
+
+export interface ConformanceProposalFixture {
+  proposal_id: string;
+  terms_digest: string;
+  proposal_status: 'draft' | 'committed' | 'accepted';
+  account: ConformanceAccountFixture;
+}
+
+export interface ConformanceMediaBuyFixture {
+  media_buy_id: string;
+  revision: number;
+  account: ConformanceAccountFixture;
 }
 
 export type OracleVerdict = 'accepted' | 'rejected' | 'invalid';

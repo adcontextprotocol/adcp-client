@@ -681,7 +681,7 @@ function resolvePoolForKey(key: string, fixtures: ConformanceFixtures): readonly
   const poolName = PROPERTY_TO_POOL[key];
   if (!poolName) return null;
   const pool = fixtures[poolName];
-  return pool && pool.length > 0 ? pool : null;
+  return pool && pool.length > 0 && pool.every(value => typeof value === 'string') ? pool : null;
 }
 
 /**

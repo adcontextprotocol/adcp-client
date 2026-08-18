@@ -58,6 +58,7 @@ import {
   wrapMcpServer,
   setSdkServerInstructions,
   setMcpAppResources,
+  setMcpToolProfile,
   wrapInitializeHandler,
   wrapSdkRequestHandler,
   type AdcpServer,
@@ -7560,6 +7561,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     },
   };
   const wrapped: AdcpServerInternal = wrapMcpServer(server, compliance, adcpVersion);
+  setMcpToolProfile(wrapped, activeMcpToolProfile);
   setMcpAppResources(wrapped, mcpAppResources);
 
   // Attach the auto-wired preTransport so `serve()` mounts the verifier

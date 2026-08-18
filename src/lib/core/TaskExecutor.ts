@@ -811,6 +811,7 @@ export class TaskExecutor {
         // payload and must not receive SDK-injected callback credentials.
         const governableParams = modernGovernance
           ? prepareProtocolToolCall(agent, params, {
+              toolName: taskName,
               webhookUrl,
               webhookSecret: this.config.webhookSecret,
               serverVersion,
@@ -880,6 +881,7 @@ export class TaskExecutor {
       // request, so the registration write must complete before the network
       // boundary is crossed.
       const preparedCall = prepareProtocolToolCall(agent, effectiveParams, {
+        toolName: taskName,
         webhookUrl,
         webhookSecret: this.config.webhookSecret,
         serverVersion,

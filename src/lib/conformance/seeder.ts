@@ -10,13 +10,23 @@ export interface SeedOptions {
   authToken?: string;
   /** Full AgentConfig override. `id`/`agent_uri`/`protocol` are filled in from the other options. */
   agentConfig?: Partial<AgentConfig>;
+  /** Trusted AdCP wire-version pin for requests sent by the seeder. */
+  adcpVersion?: string;
   /**
    * Subset of seeders to run. Default: all.
    * `'create_media_buy'` implicitly runs `get_products` first to discover
-   * a real product_id. `'sync_creatives'` implicitly runs
+   * a real product_id. `'buy_products'` does the equivalent through the
+   * compact 3.2 `list_products` → `buy_products` lifecycle.
+   * `'sync_creatives'` implicitly runs
    * `list_creative_formats` first to pick a usable format.
    */
   seeders?: readonly SeederName[];
+  /**
+   * Also run the compact 3.2 `list_products` → `buy_products` seeder when
+   * `seeders` is omitted. Defaults to false so legacy callers keep their
+   * original seed set; `runConformance` enables it for a 3.2 schema bundle.
+   */
+  includeCompactMediaBuy?: boolean;
   /**
    * Brand reference for mutating seeders that require one. Default
    * `{ domain: 'conformance.example' }`. Sellers that enforce brand
@@ -26,7 +36,12 @@ export interface SeedOptions {
   brand?: { domain: string; brand_id?: string };
 }
 
-export type SeederName = 'create_property_list' | 'create_content_standards' | 'create_media_buy' | 'sync_creatives';
+export type SeederName =
+  | 'create_property_list'
+  | 'create_content_standards'
+  | 'create_media_buy'
+  | 'buy_products'
+  | 'sync_creatives';
 
 export interface SeedResult {
   fixtures: ConformanceFixtures;
@@ -61,7 +76,15 @@ export async function seedFixtures(agentUrl: string, options: SeedOptions = {}):
   const agent = buildAgent(agentUrl, options);
   const seeders =
     options.seeders ??
-    (['create_property_list', 'create_content_standards', 'create_media_buy', 'sync_creatives'] as const);
+    (options.includeCompactMediaBuy
+      ? ([
+          'create_property_list',
+          'create_content_standards',
+          'create_media_buy',
+          'buy_products',
+          'sync_creatives',
+        ] as const)
+      : (['create_property_list', 'create_content_standards', 'create_media_buy', 'sync_creatives'] as const));
 
   const ctx: SeederContext = {
     agent,
@@ -94,6 +117,11 @@ interface SeederContext {
   brand: { domain: string; brand_id?: string };
 }
 
+type CompactSeedAccount = {
+  brand: { domain: string; brand_id?: string };
+  operator: string;
+};
+
 function buildAgent(agentUrl: string, options: SeedOptions): AgentClient {
   const config: AgentConfig = {
     id: options.agentConfig?.id ?? 'conformance-seeder',
@@ -113,22 +141,27 @@ function buildAgent(agentUrl: string, options: SeedOptions): AgentClient {
   //     the ID if it's present; the fuzzer itself will do the strict
   //     validation on downstream tools that actually care.
   return new AgentClient(config, {
+    ...(options.adcpVersion ? { adcpVersion: options.adcpVersion } : {}),
     validateFeatures: false,
     validation: { responses: 'warn' },
   });
 }
 
-function mergePool(dest: ConformanceFixtures, src: Partial<Record<keyof ConformanceFixtures, string[]>>): void {
+type MutableFixturePools = {
+  [K in keyof ConformanceFixtures]?: Array<NonNullable<ConformanceFixtures[K]>[number]>;
+};
+
+function mergePool(dest: ConformanceFixtures, src: MutableFixturePools): void {
+  const mutableDest = dest as unknown as Record<string, unknown[] | undefined>;
   for (const [key, values] of Object.entries(src)) {
     if (!values || values.length === 0) continue;
-    const k = key as keyof ConformanceFixtures;
-    const existing = dest[k] ?? [];
-    dest[k] = [...existing, ...values];
+    const existing = mutableDest[key] ?? [];
+    mutableDest[key] = [...existing, ...values];
   }
 }
 
 interface SeederOutput {
-  ids: Partial<Record<keyof ConformanceFixtures, string[]>>;
+  ids: MutableFixturePools;
   warnings: SeedWarning[];
 }
 type Seeder = (ctx: SeederContext) => Promise<SeederOutput>;
@@ -137,6 +170,7 @@ const SEEDERS: Record<SeederName, Seeder> = {
   create_property_list: seedPropertyList,
   create_content_standards: seedContentStandards,
   create_media_buy: seedMediaBuy,
+  buy_products: seedMediaBuyCompact,
   sync_creatives: seedSyncCreatives,
 };
 
@@ -263,7 +297,7 @@ async function seedMediaBuy({ agent, brand }: SeederContext): Promise<SeederOutp
     media_buy_id?: unknown;
     packages?: Array<{ package_id?: unknown }>;
   };
-  const ids: Partial<Record<keyof ConformanceFixtures, string[]>> = {};
+  const ids: MutableFixturePools = {};
   if (typeof data.media_buy_id === 'string' && data.media_buy_id.length > 0) {
     ids.media_buy_ids = [data.media_buy_id];
   } else {
@@ -275,6 +309,193 @@ async function seedMediaBuy({ agent, brand }: SeederContext): Promise<SeederOutp
   if (packageIds.length > 0) ids.package_ids = packageIds;
 
   return { ids, warnings };
+}
+
+/**
+ * Creates a media buy through the compact AdCP 3.2 lifecycle. Keeping this
+ * separate from the legacy seeder makes auto-seeding exercise both buyer
+ * surfaces and lets legacy-only sellers skip this path without losing their
+ * `create_media_buy` fixture.
+ */
+async function seedMediaBuyCompact({ agent, brand }: SeederContext): Promise<SeederOutput> {
+  const warnings: SeedWarning[] = [];
+  const ids: MutableFixturePools = {};
+  const brandRef = { domain: brand.domain, ...(brand.brand_id ? { brand_id: brand.brand_id } : {}) };
+  const account = { brand: brandRef, operator: brand.domain };
+  const products = await agent.listProducts({
+    brand: brandRef,
+    max_results: 1,
+  });
+  if (!products.success || products.status !== 'completed' || !products.data) {
+    return {
+      ids: {},
+      warnings: [{ seeder: 'buy_products', reason: 'list_products preflight: ' + summarizeResult(products) }],
+    };
+  }
+
+  const data = products.data as {
+    products?: unknown;
+    feed_version?: unknown;
+    pricing_version?: unknown;
+  };
+  if (typeof data.feed_version !== 'string' || data.feed_version.length === 0) {
+    return { ids: {}, warnings: [{ seeder: 'buy_products', reason: 'list_products response missing feed_version' }] };
+  }
+  if (!Array.isArray(data.products) || data.products.length === 0) {
+    return { ids: {}, warnings: [{ seeder: 'buy_products', reason: 'list_products returned no products' }] };
+  }
+  const product = data.products[0] as {
+    product_id?: unknown;
+    pricing_options?: Array<{ pricing_option_id?: unknown }>;
+  };
+  const pricingOptionId = product.pricing_options?.[0]?.pricing_option_id;
+  if (typeof product.product_id !== 'string' || typeof pricingOptionId !== 'string') {
+    return {
+      ids: {},
+      warnings: [{ seeder: 'buy_products', reason: 'first product missing product_id or pricing_option_id' }],
+    };
+  }
+
+  ids.products = [
+    {
+      product_id: product.product_id,
+      pricing_option_id: pricingOptionId,
+      feed_version: data.feed_version,
+      ...(typeof data.pricing_version === 'string' && { pricing_version: data.pricing_version }),
+      account,
+    },
+  ];
+
+  const now = new Date();
+  const start = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const end = new Date(now.getTime() + 8 * 24 * 60 * 60 * 1000);
+  const result = await agent.buyProducts({
+    idempotency_key: generateIdempotencyKey(),
+    account,
+    feed_version: data.feed_version,
+    ...(typeof data.pricing_version === 'string' && { pricing_version: data.pricing_version }),
+    start_time: start.toISOString(),
+    end_time: end.toISOString(),
+    purchases: [{ product_id: product.product_id, pricing_option_id: pricingOptionId }],
+  });
+  if (!result.success || result.status !== 'completed' || !result.data) {
+    warnings.push({ seeder: 'buy_products', reason: summarizeResult(result) });
+  } else {
+    const buyData = result.data as { media_buy_id?: unknown; revision?: unknown };
+    if (typeof buyData.media_buy_id !== 'string' || buyData.media_buy_id.length === 0) {
+      warnings.push({ seeder: 'buy_products', reason: 'response missing media_buy_id (may be submitted async)' });
+    } else {
+      ids.media_buy_ids = [buyData.media_buy_id];
+      if (typeof buyData.revision === 'number' && Number.isInteger(buyData.revision) && buyData.revision >= 1) {
+        ids.media_buys = [{ media_buy_id: buyData.media_buy_id, revision: buyData.revision, account }];
+      } else {
+        warnings.push({ seeder: 'buy_products', reason: 'response missing positive integer revision' });
+      }
+    }
+  }
+
+  try {
+    const proposalSeed = await seedCompactProposals(agent, account);
+    ids.proposals = proposalSeed.proposals;
+    warnings.push(...proposalSeed.warnings);
+  } catch (err) {
+    // Proposal support is independent from direct published-offer buying.
+    // Preserve the real product/media-buy fixtures even when this seller
+    // exposes only list_products + buy_products.
+    warnings.push({
+      seeder: 'buy_products',
+      reason: `proposal lifecycle seed threw: ${(err as Error)?.message ?? String(err)}`,
+    });
+  }
+  return { ids, warnings };
+}
+
+async function seedCompactProposals(
+  agent: AgentClient,
+  account: CompactSeedAccount
+): Promise<{ proposals: NonNullable<ConformanceFixtures['proposals']>[number][]; warnings: SeedWarning[] }> {
+  const warnings: SeedWarning[] = [];
+  const drafts: NonNullable<ConformanceFixtures['proposals']>[number][] = [];
+
+  // Two independent drafts let refine and decline probes mutate distinct
+  // references. Finalizing the first also leaves a committed snapshot for
+  // accept_proposal without sacrificing the second draft.
+  for (let attempt = 0; attempt < 2 && drafts.length < 2; attempt++) {
+    const requested = await agent.requestProposals({
+      idempotency_key: generateIdempotencyKey(),
+      account,
+      brief: `Conformance proposal seed ${attempt + 1}`,
+    });
+    if (!requested.success || requested.status !== 'completed' || !requested.data) {
+      warnings.push({
+        seeder: 'buy_products',
+        reason: `request_proposals seed ${attempt + 1}: ${summarizeResult(requested)}`,
+      });
+      continue;
+    }
+    for (const proposal of extractProposalFixtures(requested.data, account)) {
+      if (proposal.proposal_status !== 'draft') continue;
+      if (!drafts.some(existing => existing.proposal_id === proposal.proposal_id)) drafts.push(proposal);
+    }
+  }
+
+  if (drafts.length === 0) {
+    warnings.push({ seeder: 'buy_products', reason: 'request_proposals returned no usable draft proposals' });
+    return { proposals: [], warnings };
+  }
+
+  const sourceDraft = drafts[0]!;
+  const finalized = await agent.executeTaskLegacy('refine_proposals', {
+    idempotency_key: generateIdempotencyKey(),
+    refinements: [{ proposal_id: sourceDraft.proposal_id, action: 'finalize' }],
+  });
+  if (!finalized.success || finalized.status !== 'completed' || !finalized.data) {
+    warnings.push({ seeder: 'buy_products', reason: 'refine_proposals finalize: ' + summarizeResult(finalized) });
+    return { proposals: drafts, warnings };
+  }
+
+  const committed = extractProposalFixtures(finalized.data, account).filter(
+    proposal => proposal.proposal_status === 'committed'
+  );
+  if (committed.length === 0) {
+    warnings.push({ seeder: 'buy_products', reason: 'refine_proposals returned no committed proposal' });
+  }
+  return { proposals: [...drafts, ...committed], warnings };
+}
+
+function extractProposalFixtures(
+  value: unknown,
+  account: Record<string, unknown>
+): NonNullable<ConformanceFixtures['proposals']>[number][] {
+  const found: NonNullable<ConformanceFixtures['proposals']>[number][] = [];
+  const seen = new Set<unknown>();
+
+  const visit = (candidate: unknown): void => {
+    if (candidate === null || typeof candidate !== 'object' || seen.has(candidate)) return;
+    seen.add(candidate);
+    const record = candidate as Record<string, unknown>;
+    const status = record.proposal_status;
+    if (
+      typeof record.proposal_id === 'string' &&
+      typeof record.terms_digest === 'string' &&
+      (status === 'draft' || status === 'committed' || status === 'accepted')
+    ) {
+      found.push({
+        proposal_id: record.proposal_id,
+        terms_digest: record.terms_digest,
+        proposal_status: status,
+        account,
+      });
+    }
+    for (const key of ['proposals', 'proposal', 'results']) {
+      const nested = record[key];
+      if (Array.isArray(nested)) nested.forEach(visit);
+      else visit(nested);
+    }
+  };
+
+  visit(value);
+  return found;
 }
 
 function summarizeResult(result: {

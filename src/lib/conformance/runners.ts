@@ -8,7 +8,7 @@ import type {
   SkipReason,
 } from './types';
 import { schemaToArbitrary } from './schemaArbitrary';
-import { ADCP_MAJOR_VERSION, ADCP_VERSION, toReleasePrecisionVersion } from '../version';
+import { ADCP_VERSION, parseAdcpMajorVersion, toReleasePrecisionVersion } from '../version';
 import { loadRequestSchema, type ConformanceSchemaOptions } from './schemaLoader';
 import { evaluate, prepareResponseValidator } from './oracle';
 
@@ -22,6 +22,8 @@ export interface RunnerOptions {
   fixtures?: ConformanceFixtures;
   /** Schema bundle override for same-PR / external conformance runs. */
   schemas?: ConformanceSchemaOptions;
+  /** Trusted wire-version pin. Defaults to the SDK's current AdCP version. */
+  adcpVersion?: string;
 }
 
 export interface RunnerResult {
@@ -83,14 +85,7 @@ export async function runToolFuzz(
     // every probe before the handler runs, masking handler bugs the
     // fuzzer is meant to catch. Version negotiation is exercised
     // separately by storyboards (`error_compliance/unsupported_major_version`).
-    const probeRequest =
-      'adcp_major_version' in request || 'adcp_version' in request
-        ? {
-            ...request,
-            ...('adcp_version' in request && { adcp_version: toReleasePrecisionVersion(ADCP_VERSION) }),
-            adcp_major_version: ADCP_MAJOR_VERSION,
-          }
-        : request;
+    const probeRequest = prepareConformanceProbeRequest(tool, request, options);
 
     let result;
     try {
@@ -109,7 +104,13 @@ export async function runToolFuzz(
       ]);
     }
 
-    const verdict = evaluate({ tool, request, result, authToken: options.authToken, schemas: options.schemas });
+    const verdict = evaluate({
+      tool,
+      request: probeRequest,
+      result,
+      authToken: options.authToken,
+      schemas: options.schemas,
+    });
     if (isFreshSample) {
       if (verdict.verdict === 'accepted') stats.accepted++;
       else if (verdict.verdict === 'rejected') stats.rejected++;
@@ -158,6 +159,91 @@ export async function runToolFuzz(
       },
     ],
   };
+}
+
+/**
+ * Normalize the generated sample into a coherent, exact-schema probe.
+ * Exported for focused conformance regression tests; not part of the public
+ * package barrel.
+ *
+ * @internal
+ */
+export function prepareConformanceProbeRequest(
+  tool: ConformanceToolName,
+  request: Record<string, unknown>,
+  options: Pick<RunnerOptions, 'adcpVersion' | 'fixtures'>
+): Record<string, unknown> {
+  const adcpVersion = options.adcpVersion ?? ADCP_VERSION;
+  const versionedRequest = {
+    ...request,
+    ...('adcp_version' in request && { adcp_version: toReleasePrecisionVersion(adcpVersion) }),
+    ...('adcp_major_version' in request && { adcp_major_version: parseAdcpMajorVersion(adcpVersion) }),
+  };
+  return applyCompactFixtures(tool, versionedRequest, options.fixtures);
+}
+
+function applyCompactFixtures(
+  tool: ConformanceToolName,
+  request: Record<string, unknown>,
+  fixtures: ConformanceFixtures | undefined
+): Record<string, unknown> {
+  if (!fixtures) return request;
+
+  if (tool === 'buy_products') {
+    const product = fixtures.products?.[0];
+    if (!product) return request;
+    const { pricing_version: _generatedPricingVersion, ...withoutPricingVersion } = request;
+    return {
+      ...withoutPricingVersion,
+      account: product.account,
+      feed_version: product.feed_version,
+      ...(product.pricing_version !== undefined && { pricing_version: product.pricing_version }),
+      purchases: [{ product_id: product.product_id, pricing_option_id: product.pricing_option_id }],
+    };
+  }
+
+  if (tool === 'refine_proposals') {
+    const proposal = fixtures.proposals?.[0];
+    if (!proposal) return request;
+    return {
+      ...request,
+      refinements: [{ proposal_id: proposal.proposal_id, action: 'revise', ask: 'Conformance refinement probe' }],
+    };
+  }
+
+  if (tool === 'decline_proposals') {
+    const proposals = fixtures.proposals?.filter(proposal => proposal.proposal_status !== 'accepted') ?? [];
+    const proposal = proposals[1] ?? proposals[0];
+    if (!proposal) return request;
+    return {
+      ...request,
+      declines: [{ proposal_id: proposal.proposal_id, reason: 'other', detail: 'Conformance decline probe' }],
+    };
+  }
+
+  if (tool === 'accept_proposal') {
+    const proposal = fixtures.proposals?.find(candidate => candidate.proposal_status === 'committed');
+    if (!proposal) return request;
+    return {
+      ...request,
+      account: proposal.account,
+      proposal_id: proposal.proposal_id,
+      proposal_terms_digest: proposal.terms_digest,
+    };
+  }
+
+  if (tool === 'control_media_buy') {
+    const mediaBuy = fixtures.media_buys?.[0];
+    if (!mediaBuy) return request;
+    return {
+      ...request,
+      account: mediaBuy.account,
+      media_buy_id: mediaBuy.media_buy_id,
+      revision: mediaBuy.revision,
+    };
+  }
+
+  return request;
 }
 
 function skipStats(reason: SkipReason, detail?: string): ConformanceToolStats {

@@ -131,6 +131,11 @@ For `refine_proposals`, respect the advertised batch, alternative, and dimension
 
 SDK 14 retains the AdCP 3.0/3.1 unpadded Base64URL request profile and adds the AdCP 3.2 padded standard-Base64 profile with mandatory `Content-Digest`. High-level clients propagate their configured agent version. Low-level callers and server verifiers must bind a trusted negotiated/configured version to signing options.
 
+For compatibility, an unpinned low-level verifier accepts either binary
+serialization and enforces the caller-provided `covers_content_digest`
+capability unchanged; it never infers a profile from request fields. Treat
+that as a migration bridge, not a replacement for an endpoint or tenant pin.
+
 Never select the profile from an unverified request field. Webhook signing remains on the existing legacy profile.
 
 ## Separate task state from media-buy state

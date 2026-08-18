@@ -10,8 +10,16 @@ const Ajv = require('ajv').default;
 const addFormats = require('ajv-formats').default;
 
 const { schemaToArbitrary } = require('../../dist/lib/conformance/schemaArbitrary.js');
-const { loadRequestSchema } = require('../../dist/lib/conformance/schemaLoader.js');
-const { STATELESS_TIER_TOOLS } = require('../../dist/lib/conformance/types.js');
+const { hasSchemas, loadRequestSchema } = require('../../dist/lib/conformance/schemaLoader.js');
+const { prepareConformanceProbeRequest } = require('../../dist/lib/conformance/runners.js');
+const { toolHasConformanceFixtures } = require('../../dist/lib/conformance/runConformance.js');
+const {
+  COMPACT_LIFECYCLE_TOOLS,
+  COMPACT_STATELESS_TIER_TOOLS,
+  COMPACT_UPDATE_TIER_TOOLS,
+  STATELESS_TIER_TOOLS,
+  UPDATE_TIER_TOOLS,
+} = require('../../dist/lib/conformance/types.js');
 
 function makeAjv() {
   const ajv = new Ajv({ allErrors: false, strict: false });
@@ -25,6 +33,7 @@ describe('conformance: schemaToArbitrary', { concurrency: false }, () => {
   // out of scope — their imperfect validity is compensated by the two-path
   // oracle (validly-rejected counts as a pass).
   const RELIABLE = new Set([
+    'list_products',
     'list_creative_formats',
     'list_creatives',
     'get_media_buys',
@@ -36,6 +45,143 @@ describe('conformance: schemaToArbitrary', { concurrency: false }, () => {
     'list_content_standards',
     'get_creative_features',
   ]);
+
+  test('the complete compact 3.2 lifecycle is wired to bundled conformance schemas', () => {
+    const compactTools = [
+      'list_products',
+      'request_proposals',
+      'refine_proposals',
+      'decline_proposals',
+      'buy_products',
+      'accept_proposal',
+      'control_media_buy',
+    ];
+    assert.deepEqual(COMPACT_LIFECYCLE_TOOLS, compactTools);
+    assert.deepEqual(COMPACT_STATELESS_TIER_TOOLS, ['list_products']);
+    assert.deepEqual(COMPACT_UPDATE_TIER_TOOLS, compactTools.slice(1));
+    assert.ok(!STATELESS_TIER_TOOLS.includes('list_products'), 'legacy stateless defaults stay unchanged');
+    for (const tool of compactTools.slice(1)) {
+      assert.ok(!UPDATE_TIER_TOOLS.includes(tool), `${tool} is not forced into legacy defaults`);
+    }
+    for (const tool of compactTools) {
+      assert.equal(hasSchemas(tool, { version: '3.2.0-beta.0' }), true, `${tool} 3.2 schemas are loadable`);
+      assert.equal(hasSchemas(tool, { version: '3.1.15' }), false, `${tool} is gated out of 3.1`);
+      assert.equal(hasSchemas(tool, { version: '3.0.24' }), false, `${tool} is gated out of 3.0`);
+    }
+  });
+
+  test('probe version normalization preserves exact schema field presence', () => {
+    const versionOnly = prepareConformanceProbeRequest(
+      'list_products',
+      { adcp_version: '99.99' },
+      { adcpVersion: '3.2.0-beta.0' }
+    );
+    assert.equal(versionOnly.adcp_version, '3.2-beta.0');
+    assert.equal(Object.hasOwn(versionOnly, 'adcp_major_version'), false);
+
+    const majorOnly = prepareConformanceProbeRequest(
+      'get_products',
+      { adcp_major_version: 99 },
+      { adcpVersion: '3.1.15' }
+    );
+    assert.equal(majorOnly.adcp_major_version, 3);
+    assert.equal(Object.hasOwn(majorOnly, 'adcp_version'), false);
+  });
+
+  test('compact fixture overlays preserve real reference tuples and exact request schemas', () => {
+    const account = { brand: { domain: 'conformance.example' }, operator: 'conformance.example' };
+    const digest = 'sha256:' + 'A'.repeat(43);
+    const fixtures = {
+      products: [
+        {
+          product_id: 'product-real',
+          pricing_option_id: 'price-real',
+          feed_version: 'feed-real',
+          pricing_version: 'pricing-real',
+          account,
+        },
+      ],
+      proposals: [
+        { proposal_id: 'proposal-draft-a', terms_digest: digest, proposal_status: 'draft', account },
+        { proposal_id: 'proposal-draft-b', terms_digest: digest, proposal_status: 'draft', account },
+        { proposal_id: 'proposal-committed', terms_digest: digest, proposal_status: 'committed', account },
+      ],
+      media_buys: [{ media_buy_id: 'media-buy-real', revision: 7, account }],
+    };
+    const idempotency_key = '00000000-0000-4000-8000-000000000001';
+    const samples = {
+      buy_products: {
+        idempotency_key,
+        account,
+        feed_version: 'generated',
+        pricing_version: 'generated',
+        purchases: [{ product_id: 'generated', pricing_option_id: 'generated' }],
+        start_time: '2026-09-01T00:00:00Z',
+        end_time: '2026-09-02T00:00:00Z',
+      },
+      refine_proposals: { idempotency_key, refinements: [{ proposal_id: 'generated' }] },
+      decline_proposals: {
+        idempotency_key,
+        declines: [{ proposal_id: 'generated', reason: 'price' }],
+      },
+      accept_proposal: {
+        idempotency_key,
+        account,
+        proposal_id: 'generated',
+        proposal_terms_digest: digest,
+      },
+      control_media_buy: {
+        idempotency_key,
+        account,
+        media_buy_id: 'generated',
+        revision: 1,
+        paused: true,
+      },
+    };
+
+    for (const [tool, sample] of Object.entries(samples)) {
+      const probe = prepareConformanceProbeRequest(tool, sample, { fixtures, adcpVersion: '3.2.0-beta.0' });
+      const validate = makeAjv().compile(loadRequestSchema(tool, { version: '3.2.0-beta.0' }));
+      assert.equal(validate(probe), true, `${tool}: ${JSON.stringify(validate.errors)}`);
+    }
+
+    assert.deepEqual(prepareConformanceProbeRequest('buy_products', samples.buy_products, { fixtures }).purchases, [
+      { product_id: 'product-real', pricing_option_id: 'price-real' },
+    ]);
+    assert.equal(
+      prepareConformanceProbeRequest('decline_proposals', samples.decline_proposals, { fixtures }).declines[0]
+        .proposal_id,
+      'proposal-draft-b'
+    );
+    assert.equal(
+      prepareConformanceProbeRequest('accept_proposal', samples.accept_proposal, { fixtures }).proposal_terms_digest,
+      digest
+    );
+  });
+
+  test('stateful defaults use tool-specific fixture readiness', () => {
+    assert.equal(toolHasConformanceFixtures('update_property_list', { list_ids: ['list-real'] }), true);
+    assert.equal(toolHasConformanceFixtures('update_media_buy', { list_ids: ['list-real'] }), false);
+    assert.equal(toolHasConformanceFixtures('buy_products', { list_ids: ['list-real'] }, true), false);
+    assert.equal(toolHasConformanceFixtures('request_proposals', {}, true), true);
+    assert.equal(
+      toolHasConformanceFixtures(
+        'accept_proposal',
+        {
+          proposals: [
+            {
+              proposal_id: 'proposal-draft',
+              terms_digest: 'sha256:' + 'A'.repeat(43),
+              proposal_status: 'draft',
+              account: {},
+            },
+          ],
+        },
+        true
+      ),
+      false
+    );
+  });
 
   // Threshold splits by whether the tool's request schema permits extras.
   // Tools with `additionalProperties: true` at the root are subject to the

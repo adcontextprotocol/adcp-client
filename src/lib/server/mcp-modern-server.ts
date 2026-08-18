@@ -10,8 +10,10 @@
 import {
   McpServer as ModernMcpServer,
   createMcpHandler,
+  fromJsonSchema,
   isLegacyRequest,
   type AuthInfo as ModernAuthInfo,
+  type JsonSchemaType,
   type ResourceMetadata,
   type StandardSchemaWithJSON,
   type ServerContext,
@@ -23,14 +25,17 @@ import {
   getSdkServer,
   getSdkServerInfo,
   getSdkServerInstructions,
+  getMcpToolProfile,
   isRegisteredToolVisible,
   listMcpAppResources,
   listRegisteredToolDefinitions,
   type AdcpAuthInfo,
   type AdcpServer,
+  type RegisteredToolDefinition,
 } from './adcp-server';
-import { ADCP_INSTRUCTIONS_RESOLVER } from './create-adcp-server';
+import { ADCP_INSTRUCTIONS_RESOLVER, MEDIA_BUY_MCP_TOOL_PROFILE } from './create-adcp-server';
 import { mcpAppResourceMetadata, readMcpAppResource } from './mcp-app';
+import { getMcpToolSchema } from '../validation/schema-loader';
 
 export interface ModernMcpServerAdapter {
   handle: NodeMcpRequestHandler;
@@ -56,6 +61,67 @@ function linkedMcpAppResourceUri(tool: { _meta?: Record<string, unknown> }): str
   return typeof resourceUri === 'string' ? resourceUri : undefined;
 }
 
+let warnedAboutCustomSchemaJsonConversion = false;
+
+function hasStandardJsonSchema(schema: unknown): boolean {
+  if (schema === null || typeof schema !== 'object') return false;
+  const standard = (schema as Record<string, unknown>)['~standard'];
+  if (standard === null || typeof standard !== 'object') return false;
+  const jsonSchema = (standard as Record<string, unknown>)['jsonSchema'];
+  return jsonSchema !== null && typeof jsonSchema === 'object';
+}
+
+function hasJsonConversionForSchemaOrRawShape(schema: unknown): boolean {
+  if (hasStandardJsonSchema(schema)) return true;
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return false;
+  const entries = Object.values(schema as Record<string, unknown>);
+  return entries.length > 0 && entries.every(hasStandardJsonSchema);
+}
+
+function officialAdcpInputSchema(
+  toolName: string,
+  adcpVersion: string,
+  profile: 'media-buy' | 'all'
+): Readonly<Record<string, unknown>> | undefined {
+  // Use the exact manifest for the negotiated MCP era. The compact catalog
+  // resolves through its role profile; `all` resolves through the generic
+  // transport manifest and never borrows constraints from a narrower role.
+  const projection = getMcpToolSchema(
+    toolName,
+    'input',
+    {
+      protocolVersion: '2026-07-28',
+      ...(profile === 'media-buy' && { profile: 'media-buy' }),
+    },
+    adcpVersion
+  );
+  return projection;
+}
+
+function schemaForModernMcp(
+  toolName: string,
+  schema: unknown,
+  adcpVersion: string,
+  profile: 'media-buy' | 'all'
+): StandardSchemaWithJSON {
+  const officialSchema = officialAdcpInputSchema(toolName, adcpVersion, profile);
+  if (officialSchema) {
+    // This official MCP bridge supplies both validation and the JSON
+    // conversion hook that Zod versions before 4.2 do not implement.
+    return fromJsonSchema(officialSchema as JsonSchemaType);
+  }
+
+  if (!hasJsonConversionForSchemaOrRawShape(schema) && !warnedAboutCustomSchemaJsonConversion) {
+    warnedAboutCustomSchemaJsonConversion = true;
+    console.warn(
+      '[adcp/serve] A custom MCP tool schema does not expose ~standard.jsonSchema. ' +
+        'With Zod, complete modern tools/list schemas require zod >=4.2.0. ' +
+        'Current AdCP tools use bundled official JSON Schemas, but this custom or legacy tool may be advertised with an empty schema.'
+    );
+  }
+  return schema as StandardSchemaWithJSON;
+}
+
 /** Build a strict 2026-07-28 handler around one configured AdCP server. @internal */
 export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcpServerAdapter {
   const sdkServer = getSdkServer(agentServer);
@@ -65,6 +131,30 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
 
   const serverInfo = getSdkServerInfo(sdkServer);
   const toolDefinitions = listRegisteredToolDefinitions(sdkServer);
+  const adcpVersion = agentServer.getAdcpVersion();
+  const activeMcpToolProfile = getMcpToolProfile(agentServer);
+  const mediaBuyProfileTools = new Set<string>(MEDIA_BUY_MCP_TOOL_PROFILE);
+  const modernToolDefinitions: Array<
+    Omit<RegisteredToolDefinition, 'inputSchema' | 'outputSchema'> & {
+      inputSchema?: StandardSchemaWithJSON;
+      outputSchema?: StandardSchemaWithJSON;
+    }
+  > = toolDefinitions
+    .filter(tool => activeMcpToolProfile === 'all' || mediaBuyProfileTools.has(tool.name))
+    .map(tool => {
+      const { inputSchema, outputSchema, ...definition } = tool;
+      return {
+        ...definition,
+        ...(inputSchema !== undefined && {
+          inputSchema: schemaForModernMcp(tool.name, inputSchema, adcpVersion, activeMcpToolProfile),
+        }),
+        // Output schemas can dwarf the input discovery surface and are not
+        // required for clients to form tool calls. Preserve an adopter's
+        // explicitly registered schema, but do not replace it with a bundled
+        // full AdCP response projection.
+        ...(outputSchema !== undefined && { outputSchema: outputSchema as StandardSchemaWithJSON }),
+      };
+    });
   const handler = createMcpHandler(
     async requestContext => {
       if (requestContext.requestInfo?.headers.get('mcp-method') === 'server/discover') {
@@ -80,7 +170,7 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
 
       const authInfo = toAdcpAuthInfo(requestContext.authInfo);
       const toolVisibility = new Map<string, boolean>();
-      for (const tool of toolDefinitions) {
+      for (const tool of modernToolDefinitions) {
         const visible = await isRegisteredToolVisible(agentServer, { toolName: tool.name, authInfo });
         toolVisibility.set(tool.name, visible);
         if (!visible) continue;
@@ -88,7 +178,7 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
           ...(tool.title !== undefined && { title: tool.title }),
           ...(tool.description !== undefined && { description: tool.description }),
           ...(tool.outputSchema !== undefined && {
-            outputSchema: tool.outputSchema as StandardSchemaWithJSON,
+            outputSchema: tool.outputSchema,
           }),
           ...(tool.annotations !== undefined && { annotations: tool.annotations as ToolAnnotations }),
           ...(tool._meta !== undefined && { _meta: tool._meta }),
@@ -102,10 +192,8 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
           });
 
         if (tool.inputSchema !== undefined) {
-          modern.registerTool(
-            tool.name,
-            { ...config, inputSchema: tool.inputSchema as StandardSchemaWithJSON },
-            async (args, ctx) => invoke((args ?? {}) as Record<string, unknown>, ctx)
+          modern.registerTool(tool.name, { ...config, inputSchema: tool.inputSchema }, async (args, ctx) =>
+            invoke((args ?? {}) as Record<string, unknown>, ctx)
           );
         } else {
           modern.registerTool(tool.name, config, async ctx => invoke({}, ctx));

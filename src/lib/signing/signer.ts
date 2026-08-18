@@ -225,7 +225,10 @@ export function prepareRequestSignature(
   // Keep the low-level helper backward compatible for callers that do not
   // select a profile. SDK transport wrappers always pass the trusted pin.
   const binaryEncoding = options.binaryEncoding ?? 'legacy-base64url';
-  const coverDigest = hasBody && (binaryEncoding === 'rfc8941-base64' || options.coverContentDigest === true);
+  // 3.2 defaults to covering the digest, but an explicitly negotiated
+  // `covers_content_digest: forbidden` policy must still win. Encoding and
+  // digest coverage are independent parts of the signing profile.
+  const coverDigest = hasBody && (options.coverContentDigest ?? binaryEncoding === 'rfc8941-base64');
   const headers: Record<string, string> = { ...flattenHeaders(request.headers) };
   if (coverDigest) {
     headers['Content-Digest'] = computeContentDigest(request.body ?? '', binaryEncoding);
@@ -267,9 +270,24 @@ export function finalizeRequestSignature(prepared: PreparedRequestSignature, sig
 
 export function signRequest(request: RequestLike, key: SignerKey, options: SignRequestOptions = {}): SignedRequest {
   assertKeyPurpose(key, 'request-signing');
+  assertSafeHighLevelRequestProfile(request, options);
   const prepared = prepareRequestSignature(request, { keyid: key.keyid, alg: key.alg }, options);
   const signature = produceSignature(key, Buffer.from(prepared.base, 'utf8'));
   return finalizeRequestSignature(prepared, signature);
+}
+
+/** @internal Guard the convenience signer while leaving low-level vector authoring available. */
+export function assertSafeHighLevelRequestProfile(request: RequestLike, options: SignRequestOptions): void {
+  if (
+    (request.body ?? '').length > 0 &&
+    options.binaryEncoding === 'rfc8941-base64' &&
+    options.coverContentDigest === false
+  ) {
+    throw new TypeError(
+      'AdCP 3.2 request signing requires Content-Digest coverage. ' +
+        'Use prepareRequestSignature()/finalizeRequestSignature() only when authoring an intentional negative test vector.'
+    );
+  }
 }
 
 export interface SignWebhookOptions {

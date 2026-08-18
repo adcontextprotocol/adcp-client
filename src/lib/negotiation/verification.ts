@@ -13,6 +13,11 @@ import type {
   RefineProposalsResponse,
 } from './types';
 
+// Release-precision wire version: `3.2` or a non-empty, dot/hyphen-separated
+// prerelease whose segments are alphanumeric. Reject dangling separators such
+// as `3.2-.` and `3.2-rc.` even though they begin with the right release.
+const ADCP_32_RELEASE = /^3\.2(?:-[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)?$/;
+
 export class ProposalResponseVerificationError extends Error {
   readonly issues: ProposalVerificationIssue[];
 
@@ -139,8 +144,17 @@ function validateResponseShape(value: unknown, issues: ProposalVerificationIssue
     return false;
   }
   let valid = allowedKeys(value, RESPONSE_KEYS, 'response', issues);
-  if (value.adcp_version !== undefined && value.adcp_version !== '3.2') {
-    valid = shape(issues, 'adcp_version', 'refine_proposals response adcp_version must be 3.2');
+  if (
+    value.adcp_version !== undefined &&
+    (typeof value.adcp_version !== 'string' || !ADCP_32_RELEASE.test(value.adcp_version))
+  ) {
+    valid = shape(
+      issues,
+      'adcp_version',
+      `refine_proposals response adcp_version must be on the 3.2 release line; received ${describeReceived(
+        value.adcp_version
+      )}`
+    );
   }
   if (value.message !== undefined && (typeof value.message !== 'string' || value.message.length > 2000)) {
     valid = shape(issues, 'message', 'message must be a string of at most 2000 characters');
@@ -947,6 +961,14 @@ function assertIJsonString(value: string): void {
 function shape(issues: ProposalVerificationIssue[], path: string, message: string): false {
   push(issues, 'shape', path, message);
   return false;
+}
+
+function describeReceived(value: unknown): string {
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'an array';
+  if (typeof value === 'object') return 'an object';
+  return String(value);
 }
 
 function daysInMonth(year: number, month: number): number {

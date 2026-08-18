@@ -341,8 +341,14 @@ export const ADCP_CAPABILITIES: unique symbol = Symbol.for('@adcp/client.capabil
 /** Per-request tool visibility policy consumed by transport adapters. @internal */
 export const ADCP_TOOL_VISIBILITY: unique symbol = Symbol.for('@adcp/client.toolVisibility');
 
+/** Resolved MCP tool catalog attached by createAdcpServer. @internal */
+export const ADCP_MCP_TOOL_PROFILE: unique symbol = Symbol.for('@adcp/client.mcpToolProfile');
+
 /** Configured MCP App resources mirrored into modern per-request servers. @internal */
 export const ADCP_MCP_APP_RESOURCES: unique symbol = Symbol.for('@adcp/client.mcpAppResources');
+
+/** The concrete profile after createAdcpServer resolves `mcpToolProfile: "auto"`. @internal */
+export type ResolvedAdcpMcpToolProfile = 'media-buy' | 'all';
 
 /** @internal */
 export type AdcpToolVisibilityResolver = (options: {
@@ -355,6 +361,7 @@ export type AdcpToolVisibilityResolver = (options: {
 export interface AdcpServerInternal extends AdcpServer {
   readonly [ADCP_SDK_SERVER]: McpServer;
   [ADCP_TOOL_VISIBILITY]?: AdcpToolVisibilityResolver;
+  [ADCP_MCP_TOOL_PROFILE]?: ResolvedAdcpMcpToolProfile;
   [ADCP_MCP_APP_RESOURCES]?: readonly AdcpMcpResourceDefinition[];
 }
 
@@ -373,6 +380,21 @@ export function getSdkServer(server: AdcpServer | McpServer): McpServer | undefi
 /** Attach a transport-independent per-request tool visibility policy. @internal */
 export function setToolVisibilityResolver(server: AdcpServer, resolver: AdcpToolVisibilityResolver): void {
   (server as AdcpServerInternal)[ADCP_TOOL_VISIBILITY] = resolver;
+}
+
+/** Attach the resolved static MCP catalog for transport adapters. @internal */
+export function setMcpToolProfile(server: AdcpServer, profile: ResolvedAdcpMcpToolProfile): void {
+  Object.defineProperty(server, ADCP_MCP_TOOL_PROFILE, {
+    value: profile,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+}
+
+/** Read the resolved MCP catalog; hand-wrapped servers retain the full surface. @internal */
+export function getMcpToolProfile(server: AdcpServer): ResolvedAdcpMcpToolProfile {
+  return (server as AdcpServerInternal)[ADCP_MCP_TOOL_PROFILE] ?? 'all';
 }
 
 /** Attach validated resource definitions for transport adapters. @internal */

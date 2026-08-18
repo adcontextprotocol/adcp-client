@@ -46,6 +46,8 @@ import { TOOL_REQUEST_SCHEMAS } from '../utils/tool-request-schemas';
 import type { KnownToolRequestSchemas } from '../utils/tool-request-schemas';
 
 export * from '../types/schemas.generated';
+export { BiddingPolicySchema } from '../validation/bidding-policy';
+export { CanonicalBudgetAllocationSchema } from '../validation/budget-allocation';
 export { TOOL_REQUEST_SCHEMAS } from '../utils/tool-request-schemas';
 export { TOOL_RESPONSE_SCHEMAS } from '../utils/response-schemas';
 export {
