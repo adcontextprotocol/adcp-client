@@ -214,6 +214,7 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
   const start = Date.now();
   const loaded = loadRequestSigningVectors(options);
   const contract = loadSignedRequestsRunnerContract(options);
+  const transport = options.transport ?? 'mcp';
 
   // Auto-initialize MCP session once before all vectors. A single session
   // covers the full batch — the session ID is injected post-signing so
@@ -221,7 +222,7 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
   // the verifier before MCP session dispatch (the signature check fires at
   // the HTTP middleware layer, ahead of session routing).
   let mcpSessionId: string | undefined = options.mcpSessionId;
-  if (options.transport === 'mcp' && mcpSessionId === undefined) {
+  if (transport === 'mcp' && mcpSessionId === undefined) {
     const init = await initializeMcpSession(
       agentUrl,
       {
@@ -242,7 +243,7 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
     mcpSessionId,
   };
 
-  const buildOpts: BuildOptions = { baseUrl: agentUrl, transport: options.transport ?? 'mcp' };
+  const buildOpts: BuildOptions = { baseUrl: agentUrl, transport };
 
   const positive: VectorGradeResult[] = [];
   for (const vector of loaded.positive) {
@@ -381,7 +382,7 @@ function preflightSkip(
   // indistinguishable from vector 001 — passing under MCP is not evidence
   // the edge was tested. Skip with a distinct reason so the report doesn't
   // claim coverage it didn't deliver.
-  if (kind === 'positive' && options.transport === 'mcp' && MCP_FLATTENED_VECTORS.has(vector.id)) {
+  if (kind === 'positive' && (options.transport ?? 'mcp') === 'mcp' && MCP_FLATTENED_VECTORS.has(vector.id)) {
     return {
       ...base,
       skipped: true,
@@ -441,13 +442,21 @@ export async function gradeOneVector(
 ): Promise<VectorGradeResult> {
   const loaded = loadRequestSigningVectors(options);
   const contract = loadSignedRequestsRunnerContract(options);
+  const transport = options.transport ?? 'mcp';
+
+  const vector =
+    kind === 'positive' ? loaded.positive.find(v => v.id === vectorId) : loaded.negative.find(v => v.id === vectorId);
+  if (!vector) throw new Error(`Unknown ${kind} vector "${vectorId}"`);
+
+  const skip = preflightSkip(vector, kind, contract, options);
+  if (skip) return skip;
 
   // Per-vector session initialization for the storyboard-runner path.
   // Callers that dispatch many vectors in sequence (e.g., storyboard runner)
   // should pre-initialize once with initializeMcpSession() and pass the ID
   // via options.mcpSessionId to avoid per-call round-trips.
   let mcpSessionId: string | undefined = options.mcpSessionId;
-  if (options.transport === 'mcp' && mcpSessionId === undefined) {
+  if (transport === 'mcp' && mcpSessionId === undefined) {
     const init = await initializeMcpSession(
       agentUrl,
       {
@@ -467,14 +476,7 @@ export async function gradeOneVector(
     timeoutMs: options.timeoutMs,
     mcpSessionId,
   };
-  const buildOpts: BuildOptions = { baseUrl: agentUrl, transport: options.transport ?? 'mcp' };
-
-  const vector =
-    kind === 'positive' ? loaded.positive.find(v => v.id === vectorId) : loaded.negative.find(v => v.id === vectorId);
-  if (!vector) throw new Error(`Unknown ${kind} vector "${vectorId}"`);
-
-  const skip = preflightSkip(vector, kind, contract, options);
-  if (skip) return skip;
+  const buildOpts: BuildOptions = { baseUrl: agentUrl, transport };
 
   if (kind === 'positive') {
     const signed = buildPositiveRequest(vector as PositiveVector, loaded.keys, buildOpts);
