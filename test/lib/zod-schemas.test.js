@@ -94,6 +94,62 @@ describe('Zod Schema Validation', () => {
     }
   });
 
+  test('placement presentation documents preserve their closed declarative boundary', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const valid = {
+      schema_version: '1.0',
+      canvas: { width: 300, height: 250, background_color: '#ffffff' },
+      creative_slot: { x: 0, y: 0, width: 300, height: 200, fit: 'contain', clip: true },
+      decorations: [
+        {
+          kind: 'text',
+          layer: 'in_front_of_creative',
+          bounds: { x: 0, y: 200, width: 300, height: 50 },
+          text: 'Sponsored',
+          text_color: '#000000',
+          font_size: 14,
+        },
+      ],
+    };
+    assert.strictEqual(schemas.PlacementPresentationDocumentSchema.safeParse(valid).success, true);
+
+    const invalidDocuments = [
+      { ...valid, html: '<script>alert(1)</script>' },
+      { ...valid, canvas: { ...valid.canvas, width: 300.5 } },
+      { ...valid, creative_slot: { ...valid.creative_slot, x: 1 } },
+      { ...valid, decorations: Array.from({ length: 101 }, () => valid.decorations[0]) },
+      {
+        ...valid,
+        decorations: [{ ...valid.decorations[0], bounds: { x: 0, y: 201, width: 300, height: 50 } }],
+      },
+      {
+        ...valid,
+        decorations: [{ ...valid.decorations[0], event_handler: 'alert(1)' }],
+      },
+    ];
+
+    for (const document of invalidDocuments) {
+      assert.strictEqual(schemas.PlacementPresentationDocumentSchema.safeParse(document).success, false);
+    }
+  });
+
+  test('asset size constraints retain integer and positive-number semantics', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const image = { asset_type: 'image', url: 'https://cdn.example/image.png', width: 300, height: 250 };
+    assert.strictEqual(schemas.ImageAssetSchema.safeParse({ ...image, file_size_bytes: 1 }).success, true);
+    assert.strictEqual(schemas.ImageAssetSchema.safeParse({ ...image, file_size_bytes: 0.5 }).success, false);
+    assert.strictEqual(schemas.CanonicalFormatHostedVideoSchema.safeParse({ max_file_size_mb: 1 }).success, true);
+    assert.strictEqual(schemas.CanonicalFormatHostedVideoSchema.safeParse({ max_file_size_mb: 1.5 }).success, false);
+    assert.strictEqual(schemas.CanonicalFormatHostedAudioSchema.safeParse({ max_file_size_mb: 0.5 }).success, true);
+    assert.strictEqual(schemas.CanonicalFormatHostedAudioSchema.safeParse({ max_file_size_mb: 0 }).success, false);
+  });
+
   test('CreativeBriefSchema requires at least one required disclosure when present', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');

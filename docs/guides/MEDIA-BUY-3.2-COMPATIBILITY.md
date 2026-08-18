@@ -68,7 +68,7 @@ const platform = {
 createAdcpServerFromPlatform(platform, {
   name: 'seller',
   version: '1.0.0',
-  adcpVersion: '3.2.0-beta.0',
+  adcpVersion: '3.2.0-beta.1',
 });
 ```
 

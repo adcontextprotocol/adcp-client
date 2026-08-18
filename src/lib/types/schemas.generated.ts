@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-18T18:52:10.343Z
+// Generated at: 2026-08-18T22:54:33.093Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -155,7 +155,7 @@ export const DistributionIdentifierTypeSchema = z.union([z.literal("apple_podcas
 
 export const EmbeddedProvenanceMethodSchema = z.union([z.literal("manifest_wrapper"), z.literal("provenance_markers")]);
 
-export const ErrorCodeSchema = z.union([z.literal("INVALID_REQUEST"), z.literal("AUTH_REQUIRED"), z.literal("AUTH_MISSING"), z.literal("AUTH_INVALID"), z.literal("AUTHORIZATION_REQUIRED"), z.literal("RATE_LIMITED"), z.literal("SERVICE_UNAVAILABLE"), z.literal("CONFIGURATION_ERROR"), z.literal("POLICY_VIOLATION"), z.literal("PRODUCT_NOT_FOUND"), z.literal("PRODUCT_UNAVAILABLE"), z.literal("PROPOSAL_EXPIRED"), z.literal("BUDGET_TOO_LOW"), z.literal("CREATIVE_REJECTED"), z.literal("CREATIVE_LOCALE_NOT_ACCEPTED"), z.literal("CREATIVE_VALUE_NOT_ALLOWED"), z.literal("UNSUPPORTED_FEATURE"), z.literal("UNPRICEABLE_OUTPUT"), z.literal("UNSUPPORTED_GRANULARITY"), z.literal("UNSUPPORTED_PROVISIONING"), z.literal("AUDIENCE_TOO_SMALL"), z.literal("ACCOUNT_REQUIRED"), z.literal("ACCOUNT_NOT_FOUND"), z.literal("ACCOUNT_MOVED"), z.literal("ACCOUNT_IDENTITY_CONFLICT"), z.literal("ACCOUNT_SETUP_REQUIRED"), z.literal("ACCOUNT_AMBIGUOUS"), z.literal("ACCOUNT_PAYMENT_REQUIRED"), z.literal("ACCOUNT_SUSPENDED"), z.literal("COMPLIANCE_UNSATISFIED"), z.literal("GOVERNANCE_DENIED"), z.literal("BUDGET_EXHAUSTED"), z.literal("BUDGET_EXCEEDED"), z.literal("BUDGET_CAP_REACHED"), z.literal("CONFLICT"), z.literal("IDEMPOTENCY_CONFLICT"), z.literal("IDEMPOTENCY_EXPIRED"), z.literal("IDEMPOTENCY_IN_FLIGHT"), z.literal("CREATIVE_DEADLINE_EXCEEDED"), z.literal("CREATIVE_INACCESSIBLE"), z.literal("INVALID_STATE"), z.literal("MEDIA_BUY_NOT_FOUND"), z.literal("NOT_CANCELLABLE"), z.literal("PACKAGE_NOT_FOUND"), z.literal("PLACE_TARGET_UNAVAILABLE"), z.literal("CREATIVE_NOT_FOUND"), z.literal("SIGNAL_NOT_FOUND"), z.literal("SIGNAL_TARGETING_INCOMPATIBLE"), z.literal("SESSION_NOT_FOUND"), z.literal("PLAN_NOT_FOUND"), z.literal("REFERENCE_NOT_FOUND"), z.literal("SESSION_TERMINATED"), z.literal("VALIDATION_ERROR"), z.literal("PRODUCT_EXPIRED"), z.literal("PROPOSAL_NOT_COMMITTED"), z.literal("PROPOSAL_NOT_FOUND"), z.literal("MULTI_FINALIZE_UNSUPPORTED"), z.literal("IO_REQUIRED"), z.literal("TERMS_REJECTED"), z.literal("BIDDING_PLACEMENT_CONFLICT"), z.literal("AMBIGUOUS_BIDDING_POLICY"), z.literal("REQUOTE_REQUIRED"), z.literal("VERSION_UNSUPPORTED"), z.literal("CAMPAIGN_SUSPENDED"), z.literal("GOVERNANCE_UNAVAILABLE"), z.literal("PERMISSION_DENIED"), z.literal("SCOPE_INSUFFICIENT"), z.literal("READ_ONLY_SCOPE"), z.literal("FIELD_NOT_PERMITTED"), z.literal("PROVENANCE_REQUIRED"), z.literal("PROVENANCE_DIGITAL_SOURCE_TYPE_MISSING"), z.literal("PROVENANCE_SYNTHETIC_DEPICTION_MISSING"), z.literal("PROVENANCE_DISCLOSURE_MISSING"), z.literal("PROVENANCE_EMBEDDED_MISSING"), z.literal("PROVENANCE_VERIFIER_NOT_ACCEPTED"), z.literal("PROVENANCE_CLAIM_CONTRADICTED"), z.literal("EVALUATOR_AGENT_NOT_ACCEPTED"), z.literal("BILLING_NOT_SUPPORTED"), z.literal("BILLING_NOT_PERMITTED_FOR_AGENT"), z.literal("BILLING_OUT_OF_BAND"), z.literal("PAYMENT_TERMS_NOT_SUPPORTED"), z.literal("BRAND_REQUIRED"), z.literal("AGENT_SUSPENDED"), z.literal("AGENT_BLOCKED"), z.literal("CREDENTIAL_IN_ARGS"), z.literal("ACTION_NOT_ALLOWED"), z.literal("PRIVATE_FIELD_IN_PUBLIC_PLACEMENT"), z.literal("FORMAT_PROJECTION_FAILED"), z.literal("FORMAT_DECLARATION_DIVERGENT"), z.literal("FORMAT_DECLARATION_V1_AMBIGUOUS"), z.literal("FORMAT_OPTION_UNRESOLVED"), z.literal("FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE"), z.literal("FORMAT_NOT_SUPPORTED"), z.literal("PIXEL_TRACKER_LOSSY_DOWNGRADE"), z.literal("PIXEL_TRACKER_UPGRADE_INFERRED"), z.literal("STALE_RESPONSE"), z.literal("FEED_FETCH_FAILED"), z.literal("INVALID_FEED_FORMAT"), z.literal("ITEM_VALIDATION_FAILED"), z.literal("CATALOG_LIMIT_EXCEEDED"), z.literal("INVALID_PRICING_OPTION"), z.literal("INVALID_USAGE_DATA"), z.literal("SIGNED_RESPONSE_ENVELOPE_EXPIRED"), z.literal("SIGNED_RESPONSE_REQUEST_HASH_MISMATCH"), z.literal("SIGNED_RESPONSE_TENANT_MISMATCH"), z.literal("VAST_PARSE_FAILED"), z.literal("VAST_VERSION_MISMATCH"), z.literal("VAST_WRAPPER_DEPTH_EXCEEDED")]);
+export const ErrorCodeSchema = z.union([z.literal("INVALID_REQUEST"), z.literal("AUTH_REQUIRED"), z.literal("AUTH_MISSING"), z.literal("AUTH_INVALID"), z.literal("AUTHORIZATION_REQUIRED"), z.literal("RATE_LIMITED"), z.literal("SERVICE_UNAVAILABLE"), z.literal("CONFIGURATION_ERROR"), z.literal("POLICY_VIOLATION"), z.literal("PRODUCT_NOT_FOUND"), z.literal("PRODUCT_UNAVAILABLE"), z.literal("PROPOSAL_EXPIRED"), z.literal("BUDGET_TOO_LOW"), z.literal("CREATIVE_REJECTED"), z.literal("CREATIVE_LOCALE_NOT_ACCEPTED"), z.literal("CREATIVE_VALUE_NOT_ALLOWED"), z.literal("UNSUPPORTED_FEATURE"), z.literal("UNPRICEABLE_OUTPUT"), z.literal("UNSUPPORTED_GRANULARITY"), z.literal("UNSUPPORTED_PROVISIONING"), z.literal("AUDIENCE_TOO_SMALL"), z.literal("ACCOUNT_REQUIRED"), z.literal("ACCOUNT_NOT_FOUND"), z.literal("ACCOUNT_MOVED"), z.literal("ACCOUNT_IDENTITY_CONFLICT"), z.literal("ACCOUNT_SETUP_REQUIRED"), z.literal("ACCOUNT_AMBIGUOUS"), z.literal("ACCOUNT_PAYMENT_REQUIRED"), z.literal("ACCOUNT_SUSPENDED"), z.literal("COMPLIANCE_UNSATISFIED"), z.literal("GOVERNANCE_DENIED"), z.literal("BUDGET_EXHAUSTED"), z.literal("BUDGET_EXCEEDED"), z.literal("BUDGET_CAP_REACHED"), z.literal("CONFLICT"), z.literal("IDEMPOTENCY_CONFLICT"), z.literal("IDEMPOTENCY_EXPIRED"), z.literal("IDEMPOTENCY_IN_FLIGHT"), z.literal("CREATIVE_DEADLINE_EXCEEDED"), z.literal("CREATIVE_INACCESSIBLE"), z.literal("INVALID_STATE"), z.literal("MEDIA_BUY_NOT_FOUND"), z.literal("NOT_CANCELLABLE"), z.literal("PACKAGE_NOT_FOUND"), z.literal("PLACE_TARGET_UNAVAILABLE"), z.literal("CREATIVE_NOT_FOUND"), z.literal("SIGNAL_NOT_FOUND"), z.literal("SIGNAL_TARGETING_INCOMPATIBLE"), z.literal("SESSION_NOT_FOUND"), z.literal("PLAN_NOT_FOUND"), z.literal("REFERENCE_NOT_FOUND"), z.literal("SESSION_TERMINATED"), z.literal("VALIDATION_ERROR"), z.literal("PRODUCT_EXPIRED"), z.literal("PROPOSAL_NOT_COMMITTED"), z.literal("PROPOSAL_NOT_FOUND"), z.literal("MULTI_FINALIZE_UNSUPPORTED"), z.literal("IO_REQUIRED"), z.literal("TERMS_REJECTED"), z.literal("BIDDING_PLACEMENT_CONFLICT"), z.literal("AMBIGUOUS_BIDDING_POLICY"), z.literal("CONFLICTING_SELECTORS"), z.literal("REQUOTE_REQUIRED"), z.literal("VERSION_UNSUPPORTED"), z.literal("CAMPAIGN_SUSPENDED"), z.literal("GOVERNANCE_UNAVAILABLE"), z.literal("PERMISSION_DENIED"), z.literal("SCOPE_INSUFFICIENT"), z.literal("READ_ONLY_SCOPE"), z.literal("FIELD_NOT_PERMITTED"), z.literal("PROVENANCE_REQUIRED"), z.literal("PROVENANCE_DIGITAL_SOURCE_TYPE_MISSING"), z.literal("PROVENANCE_SYNTHETIC_DEPICTION_MISSING"), z.literal("PROVENANCE_DISCLOSURE_MISSING"), z.literal("PROVENANCE_EMBEDDED_MISSING"), z.literal("PROVENANCE_VERIFIER_NOT_ACCEPTED"), z.literal("PROVENANCE_CLAIM_CONTRADICTED"), z.literal("EVALUATOR_AGENT_NOT_ACCEPTED"), z.literal("BILLING_NOT_SUPPORTED"), z.literal("BILLING_NOT_PERMITTED_FOR_AGENT"), z.literal("BILLING_OUT_OF_BAND"), z.literal("PAYMENT_TERMS_NOT_SUPPORTED"), z.literal("BRAND_REQUIRED"), z.literal("AGENT_SUSPENDED"), z.literal("AGENT_BLOCKED"), z.literal("CREDENTIAL_IN_ARGS"), z.literal("ACTION_NOT_ALLOWED"), z.literal("PRIVATE_FIELD_IN_PUBLIC_PLACEMENT"), z.literal("FORMAT_PROJECTION_FAILED"), z.literal("FORMAT_DECLARATION_DIVERGENT"), z.literal("FORMAT_DECLARATION_V1_AMBIGUOUS"), z.literal("FORMAT_OPTION_UNRESOLVED"), z.literal("FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE"), z.literal("FORMAT_NOT_SUPPORTED"), z.literal("PIXEL_TRACKER_LOSSY_DOWNGRADE"), z.literal("PIXEL_TRACKER_UPGRADE_INFERRED"), z.literal("STALE_RESPONSE"), z.literal("FEED_FETCH_FAILED"), z.literal("INVALID_FEED_FORMAT"), z.literal("ITEM_VALIDATION_FAILED"), z.literal("CATALOG_LIMIT_EXCEEDED"), z.literal("INVALID_PRICING_OPTION"), z.literal("INVALID_USAGE_DATA"), z.literal("SIGNED_RESPONSE_ENVELOPE_EXPIRED"), z.literal("SIGNED_RESPONSE_REQUEST_HASH_MISMATCH"), z.literal("SIGNED_RESPONSE_TENANT_MISMATCH"), z.literal("VAST_PARSE_FAILED"), z.literal("VAST_VERSION_MISMATCH"), z.literal("VAST_WRAPPER_DEPTH_EXCEEDED")]);
 
 export const ErrorScopeSchema = z.union([z.literal("capability"), z.literal("account"), z.literal("agent")]);
 
@@ -929,6 +929,7 @@ export const ImageAssetSchema = z.object({
     url: z.string(),
     width: z.number(),
     height: z.number(),
+    file_size_bytes: z.number().int().min(1).optional(),
     pixel_ratio: z.number().optional(),
     format: z.string().optional(),
     alt_text: z.string().optional(),
@@ -1498,7 +1499,7 @@ export const CanonicalFormatHostedVideoSchema = z.object({
     containers: z.array(z.union([z.literal("mp4"), z.literal("webm"), z.literal("mov")])).optional(),
     min_bitrate_kbps: z.number().min(1).optional(),
     max_bitrate_kbps: z.number().min(1).optional(),
-    max_file_size_mb: z.number().min(1).optional(),
+    max_file_size_mb: z.number().int().min(1).optional(),
     frame_rates: z.array(z.number()).optional(),
     captions: z.union([z.literal("required"), z.literal("recommended"), z.literal("not_required")]).optional(),
     om_sdk_required: z.boolean().optional(),
@@ -1593,6 +1594,7 @@ export const CanonicalFormatHostedAudioSchema = z.object({
     audio_channels: z.array(z.union([z.literal("mono"), z.literal("stereo")])).optional(),
     min_bitrate_kbps: z.number().min(1).optional(),
     max_bitrate_kbps: z.number().min(1).optional(),
+    max_file_size_mb: z.number().gt(0).optional(),
     loudness_lufs: z.number().optional(),
     loudness_tolerance_db: z.number().min(0).optional(),
     true_peak_dbfs: z.number().optional(),
@@ -3583,70 +3585,12 @@ export const NamedFormatManifestSchema = z.object({}).passthrough();
 
 export const CanonicalFormatManifestSchema = z.object({}).passthrough();
 
-export const PreviewRenderSchema = z.union([z.object({
-        render_id: z.string(),
-        output_format: z.literal("url"),
-        preview_url: z.string(),
-        role: z.string(),
-        dimensions: z.object({
-            width: z.number(),
-            height: z.number()
-        }).passthrough().optional(),
-        embedding: z.object({
-            recommended_sandbox: z.string().optional(),
-            requires_https: z.boolean().optional(),
-            supports_fullscreen: z.boolean().optional(),
-            csp_policy: z.string().optional()
-        }).passthrough().optional()
-    }).passthrough(), z.object({
-        render_id: z.string(),
-        output_format: z.literal("html"),
-        preview_html: z.string(),
-        role: z.string(),
-        dimensions: z.object({
-            width: z.number(),
-            height: z.number()
-        }).passthrough().optional(),
-        embedding: z.object({
-            recommended_sandbox: z.string().optional(),
-            requires_https: z.boolean().optional(),
-            supports_fullscreen: z.boolean().optional(),
-            csp_policy: z.string().optional()
-        }).passthrough().optional()
-    }).passthrough(), z.object({
-        render_id: z.string(),
-        output_format: z.literal("both"),
-        preview_url: z.string(),
-        preview_html: z.string(),
-        role: z.string(),
-        dimensions: z.object({
-            width: z.number(),
-            height: z.number()
-        }).passthrough().optional(),
-        embedding: z.object({
-            recommended_sandbox: z.string().optional(),
-            requires_https: z.boolean().optional(),
-            supports_fullscreen: z.boolean().optional(),
-            csp_policy: z.string().optional()
-        }).passthrough().optional()
-    }).passthrough()]);
-
-export const PreviewCreativeSingleResponseSchema = z.object({
-    response_type: z.literal("single"),
-    previews: z.array(z.object({
-        preview_id: z.string(),
-        renders: z.array(PreviewRenderSchema),
-        input: z.object({
-            name: z.string(),
-            macros: z.record(z.string(), z.string()).optional(),
-            context_description: z.string().optional()
-        }).passthrough()
-    }).passthrough()),
-    quality_used: CreativeQualitySchema.optional(),
-    interactive_url: z.string().optional(),
-    expires_at: z.iso.datetime().optional(),
-    context: ContextObjectSchema.optional(),
-    ext: ExtensionObjectSchema.optional()
+export const PreviewRendererMetadataSchema = z.object({
+    renderer_id: z.string(),
+    version: z.string(),
+    export: z.string(),
+    rendering_origin: z.union([z.literal("platform_native"), z.literal("agent_approximation")]),
+    tracking_suppressed: z.boolean()
 }).passthrough();
 
 export const PreviewCreativeSubmittedSchema = z.object({
@@ -3836,6 +3780,57 @@ export const BrandReference9Schema = BrandReferenceSchema;
 
 export const BrandReference10Schema = BrandReferenceSchema;
 
+export const PreviewRenderSchema = z.union([z.object({
+        render_id: z.string(),
+        output_format: z.literal("url"),
+        preview_url: z.string(),
+        role: z.string(),
+        dimensions: z.object({
+            width: z.number(),
+            height: z.number()
+        }).passthrough().optional(),
+        embedding: z.object({
+            recommended_sandbox: z.literal("").optional(),
+            requires_https: z.boolean().optional(),
+            supports_fullscreen: z.boolean().optional(),
+            csp_policy: z.string().optional()
+        }).passthrough().optional(),
+        renderer: PreviewRendererMetadataSchema.optional()
+    }).passthrough(), z.object({
+        render_id: z.string(),
+        output_format: z.literal("html"),
+        preview_html: z.string(),
+        role: z.string(),
+        dimensions: z.object({
+            width: z.number(),
+            height: z.number()
+        }).passthrough().optional(),
+        embedding: z.object({
+            recommended_sandbox: z.literal("").optional(),
+            requires_https: z.boolean().optional(),
+            supports_fullscreen: z.boolean().optional(),
+            csp_policy: z.string().optional()
+        }).passthrough().optional(),
+        renderer: PreviewRendererMetadataSchema.optional()
+    }).passthrough(), z.object({
+        render_id: z.string(),
+        output_format: z.literal("both"),
+        preview_url: z.string(),
+        preview_html: z.string(),
+        role: z.string(),
+        dimensions: z.object({
+            width: z.number(),
+            height: z.number()
+        }).passthrough().optional(),
+        embedding: z.object({
+            recommended_sandbox: z.literal("").optional(),
+            requires_https: z.boolean().optional(),
+            supports_fullscreen: z.boolean().optional(),
+            csp_policy: z.string().optional()
+        }).passthrough().optional(),
+        renderer: PreviewRendererMetadataSchema.optional()
+    }).passthrough()]);
+
 export const CreativeConsumptionSchema = z.object({
     tokens: z.number().optional(),
     images_generated: z.number().optional(),
@@ -3867,6 +3862,24 @@ export const BuildCreativeEstimateSchema = z.object({
             consumption_estimate: CreativeConsumptionSchema.optional()
         }).passthrough()).optional()
     }).passthrough(),
+    expires_at: z.iso.datetime().optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const PreviewCreativeSingleResponseSchema = z.object({
+    response_type: z.literal("single"),
+    previews: z.array(z.object({
+        preview_id: z.string(),
+        renders: z.array(PreviewRenderSchema),
+        input: z.object({
+            name: z.string(),
+            macros: z.record(z.string(), z.string()).optional(),
+            context_description: z.string().optional()
+        }).passthrough()
+    }).passthrough()),
+    quality_used: CreativeQualitySchema.optional(),
+    interactive_url: z.string().optional(),
     expires_at: z.iso.datetime().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
@@ -5854,6 +5867,27 @@ export const PerformanceFeedbackSchema = z.object({
     applied_at: z.iso.datetime().optional()
 }).passthrough();
 
+export const PlacementPresentationReferenceSchema = z.object({
+    uri: z.string(),
+    digest: z.string(),
+    media_type: z.literal("application/vnd.adcp.placement-presentation+json"),
+    schema_version: z.literal("1.0")
+}).passthrough();
+
+export const PublisherDesignatedPreviewProviderSchema = z.object({
+    agent_url: z.string(),
+    authority: z.literal("publisher_designated"),
+    routes: z.tuple([z.object({
+            format_option_id: z.string(),
+            capability_id: z.string(),
+            covers_placement_presentation: z.boolean().optional()
+        }).passthrough()]).rest(z.object({
+        format_option_id: z.string(),
+        capability_id: z.string(),
+        covers_placement_presentation: z.boolean().optional()
+    }).passthrough())
+}).passthrough();
+
 export const ImageFormatDeclarationSchema = z.object({
     format_kind: z.literal("image"),
     params: CanonicalFormatImageSchema
@@ -5863,6 +5897,37 @@ export const HTML5FormatDeclarationSchema = z.object({
     format_kind: z.literal("html5"),
     params: CanonicalFormatHTML5BannerSchema
 }).passthrough();
+
+export const LayerSchema = z.union([z.literal("behind_creative"), z.literal("in_front_of_creative")]);
+
+export const ColorSchema = z.string().regex(/^#[0-9A-Fa-f]{6}$/);
+
+export const RectangleSchema = z.object({
+    x: z.number().int().min(0).max(8192),
+    y: z.number().int().min(0).max(8192),
+    width: z.number().int().min(1).max(8192),
+    height: z.number().int().min(1).max(8192)
+}).strict();
+
+export const TextDecorationSchema = z.object({
+    kind: z.literal("text"),
+    layer: LayerSchema,
+    bounds: RectangleSchema,
+    text: z.string().max(4096),
+    text_color: ColorSchema,
+    font_size: z.number().int().min(6).max(256)
+}).strict();
+
+export const ImageDecorationSchema = z.object({
+    kind: z.literal("image"),
+    layer: LayerSchema,
+    bounds: RectangleSchema,
+    image_ref: z.object({
+        uri: z.string().regex(/^https:\/\//).url(),
+        digest: z.string().regex(/^sha256:[a-f0-9]{64}$/)
+    }).strict(),
+    fit: z.union([z.literal("contain"), z.literal("cover"), z.literal("stretch")])
+}).strict();
 
 export const PlannedDeliverySchema = z.object({}).passthrough().merge(z.object({
     media_buy_id: z.string().optional(),
@@ -5922,6 +5987,19 @@ export const RealEstateItemSchema = z.object({
     tags: z.array(z.string()).optional(),
     assets: z.array(OfferingAssetGroupSchema).optional(),
     ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const ReferenceRendererSchema = z.object({
+    runtime: z.literal("browser-esm"),
+    package: z.string().regex(/^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/),
+    version: z.string().regex(/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/),
+    export: z.string().min(1),
+    format_revision: z.string().regex(/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/),
+    integrity: z.string().regex(/^(?:sha256-[A-Za-z0-9+\/]{43}=|sha384-[A-Za-z0-9+\/]{64}|sha512-[A-Za-z0-9+\/]{86}==)$/),
+    provenance: z.object({
+        source_repository: z.string().regex(/^https:\/\/github\.com\//),
+        workflow_path: z.string().regex(/^\.github\/workflows\/[A-Za-z0-9._\/-]+\.ya?ml$/)
+    }).passthrough()
 }).passthrough();
 
 export const DomainSchema = z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/);
@@ -7660,6 +7738,7 @@ export const DeclineProposalsRequestSchema = z.object({
 
 export const AcceptProposalRequestSchema = z.object({
     adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     account: CanonicalAccountReferenceSchema,
     proposal_id: z.string().min(1),
@@ -13545,6 +13624,13 @@ export const InlineDeclarationSchema = z.object({}).passthrough().merge(z.object
     format_schema: PlatformExtensionReferenceSchema.optional()
 }).passthrough()).and(z.union([ImageFormatDeclarationSchema, HTML5FormatDeclarationSchema, DisplayTagFormatDeclarationSchema, ImageCarouselFormatDeclarationSchema, HostedVideoFormatDeclarationSchema, VASTVideoFormatDeclarationSchema, HostedAudioFormatDeclarationSchema, DAASTAudioFormatDeclarationSchema, SponsoredPlacementFormatDeclarationSchema, NativeInFeedFormatDeclarationSchema, ResponsiveCreativeFormatDeclarationSchema, AgentPlacementFormatDeclarationSchema, CustomFormatDeclarationSchema]));
 
+export const BoxDecorationSchema = z.object({
+    kind: z.literal("box"),
+    layer: LayerSchema,
+    bounds: RectangleSchema,
+    fill_color: ColorSchema
+}).strict();
+
 export const ProductFiltersSchema = z.object({
     delivery_type: DeliveryTypeSchema.optional(),
     exclusivity: ExclusivitySchema.optional(),
@@ -14294,6 +14380,7 @@ export const RefineProposalsResponseSchema = z.union([z.object({
 
 export const BuyProductsRequestSchema = z.object({
     adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     account: CanonicalAccountReferenceSchema,
     brand: BrandKeySchema.optional(),
@@ -14346,6 +14433,7 @@ export const CanonicalProposalSchema = z.object({}).passthrough().merge(z.object
 
 export const ControlMediaBuyRequestSchema = z.object({
     adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     account: CanonicalAccountReferenceSchema,
     media_buy_id: z.string().min(1),
@@ -15554,6 +15642,12 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
             format: ProductFormatDeclarationSchema,
             operations: z.array(z.union([z.literal("build"), z.literal("validate"), z.literal("preview")])).optional()
         }).passthrough()).optional(),
+        preview: z.object({
+            routes: z.array(z.object({
+                capability_id: z.string().regex(/^[a-zA-Z0-9_-]+$/),
+                rendering_origin: z.union([z.literal("platform_native"), z.literal("agent_approximation")])
+            }).passthrough())
+        }).passthrough().optional(),
         localization: z.object({
             max_target_variants: z.number().min(0).max(50).optional(),
             locale_matching: z.literal("rfc4647_lookup")
@@ -16075,6 +16169,8 @@ export const PlacementDefinitionSchema = z.object({}).passthrough().merge(z.obje
     property_tags: z.array(PropertyTagSchema).optional(),
     collection_ids: z.array(z.string()).optional(),
     channels: z.array(MediaChannelSchema).optional(),
+    presentation_ref: PlacementPresentationReferenceSchema.optional(),
+    preview_provider: PublisherDesignatedPreviewProviderSchema.optional(),
     format_options: z.array(z.union([FormatOptionReferenceSchema, InlineDeclarationSchema])).optional(),
     video_placement_types: z.array(VideoPlacementTypeSchema).optional(),
     audio_distribution_types: z.array(AudioDistributionTypeSchema).optional(),
@@ -16082,6 +16178,35 @@ export const PlacementDefinitionSchema = z.object({}).passthrough().merge(z.obje
     social_placement_surfaces: z.array(SocialPlacementSurfaceSchema).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
+
+export const PlacementPresentationDocumentSchema = z.object({
+    schema_version: z.literal("1.0"),
+    canvas: z.object({
+        width: z.number().int().min(1).max(8192),
+        height: z.number().int().min(1).max(8192),
+        background_color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional()
+    }).strict(),
+    creative_slot: z.object({
+        x: z.number().int().min(0).max(8192),
+        y: z.number().int().min(0).max(8192),
+        width: z.number().int().min(1).max(8192),
+        height: z.number().int().min(1).max(8192),
+        fit: z.union([z.literal("contain"), z.literal("cover"), z.literal("stretch")]),
+        clip: z.literal(true)
+    }).strict(),
+    decorations: z.array(z.union([BoxDecorationSchema, TextDecorationSchema, ImageDecorationSchema])).max(100).optional()
+}).strict().superRefine((value, ctx) => {
+    const fitsCanvas = (rectangle: { x: number; y: number; width: number; height: number }): boolean =>
+        rectangle.x + rectangle.width <= value.canvas.width && rectangle.y + rectangle.height <= value.canvas.height;
+    if (!fitsCanvas(value.creative_slot)) {
+        ctx.addIssue({ code: "custom", path: ["creative_slot"], message: "creative_slot must fit within canvas" });
+    }
+    value.decorations?.forEach((decoration, index) => {
+        if (!fitsCanvas(decoration.bounds)) {
+            ctx.addIssue({ code: "custom", path: ["decorations", index, "bounds"], message: "decoration bounds must fit within canvas" });
+        }
+    });
+});
 
 export const RegistryFeedResponseSchema = z.object({
     events: z.array(RegistryEventSchema),
@@ -16461,11 +16586,12 @@ export const ComplyTestControllerRequestSchema: z.ZodObject<Record<string, z.Zod
         media_buy_id: z.string().optional(),
         session_id: z.string().optional(),
         product_id: z.string().optional(),
+        proposal_id: z.string().min(1).optional(),
         pricing_option_id: z.string().optional(),
         plan_id: z.string().optional(),
         rights_id: z.string().optional(),
         fixture: z.object({}).passthrough().optional(),
-        operation: z.union([z.literal("seed_inaccessible_item"), z.literal("query_eligibility"), z.literal("advance_time"), z.literal("recreate_catalog")]).optional(),
+        operation: z.union([z.literal("seed_inaccessible_item"), z.literal("query_eligibility"), z.literal("advance_time"), z.literal("recreate_catalog"), z.literal("prepare"), z.literal("expire_proposal")]).optional(),
         catalog_id: z.string().min(1).max(255).optional(),
         catalog_generation: z.string().min(1).max(255).optional(),
         item_id: z.string().min(1).max(255).optional(),

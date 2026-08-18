@@ -51,6 +51,10 @@ export function checkPackageSize(repoRoot) {
     cwd: repoRoot,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit'],
+    // npm includes one metadata entry per packed file in its JSON response.
+    // Keep this above the package's own file-count budget so the audit can
+    // report a useful size failure instead of terminating with ENOBUFS.
+    maxBuffer: 64 * 1024 * 1024,
   });
   const [packageInfo] = parseNpmPackOutput(output);
   if (!packageInfo || !Array.isArray(packageInfo.files)) {

@@ -391,8 +391,9 @@ export interface CallToolOptions {
 
 // AdCP 3.2.0-beta.0's published request schemas accidentally dropped the
 // deprecated integer from these otherwise release-versioned requests
-// (adcontextprotocol/adcp#6649). Omit only the SDK-injected field; an
-// explicit caller value must still reach the seller for conformance probes.
+// (adcontextprotocol/adcp#6649). Beta.1 restored it, so this exception must
+// remain pinned to beta.0. Omit only the SDK-injected field; an explicit
+// caller value must still reach the seller for conformance probes.
 const COMPACT_SCHEMAS_WITHOUT_MAJOR = new Set(['buy_products', 'accept_proposal', 'control_media_buy']);
 
 function applyPublishedSchemaCompatibility(
@@ -404,7 +405,7 @@ function applyPublishedSchemaCompatibility(
     toolName &&
     COMPACT_SCHEMAS_WITHOUT_MAJOR.has(toolName) &&
     !Object.prototype.hasOwnProperty.call(callerArgs, 'adcp_major_version') &&
-    typeof argsWithVersion.adcp_version === 'string'
+    argsWithVersion.adcp_version === '3.2-beta.0'
   ) {
     delete argsWithVersion.adcp_major_version;
   }

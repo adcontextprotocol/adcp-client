@@ -10,7 +10,7 @@ const { adcpError } = require('../../dist/lib/server/errors');
 
 async function withDualSurfaceSeller(serverAdcpVersion, buyerAdcpVersion, run) {
   const calls = [];
-  const supportedVersions = ['3.0.24', '3.1.15', '3.2.0-beta.0'].filter(version => {
+  const supportedVersions = ['3.0.24', '3.1.15', '3.2.0-beta.1'].filter(version => {
     if (serverAdcpVersion.startsWith('3.0.')) return version.startsWith('3.0.');
     if (serverAdcpVersion.startsWith('3.1.')) return !version.startsWith('3.2.');
     return true;
@@ -54,7 +54,7 @@ async function withDualSurfaceSeller(serverAdcpVersion, buyerAdcpVersion, run) {
 }
 
 test('SDK buyer uses the compact lifecycle against a 3.2 seller profile', async () => {
-  await withDualSurfaceSeller('3.2.0-beta.0', '3.2.0-beta.0', async ({ buyer, mcpClient, calls }) => {
+  await withDualSurfaceSeller('3.2.0-beta.1', '3.2.0-beta.1', async ({ buyer, mcpClient, calls }) => {
     const listed = await mcpClient.listTools();
     assert.ok(listed.tools.some(tool => tool.name === 'list_products'));
     assert.ok(!listed.tools.some(tool => tool.name === 'get_products'));
@@ -62,7 +62,7 @@ test('SDK buyer uses the compact lifecycle against a 3.2 seller profile', async 
     const result = await buyer.listProducts({ max_results: 10 });
     assert.strictEqual(result.success, true, JSON.stringify(result));
     assert.strictEqual(result.data.feed_version, 'feed-modern');
-    assert.deepStrictEqual(calls, [['list_products', '3.2-beta.0', 3]]);
+    assert.deepStrictEqual(calls, [['list_products', '3.2-beta.1', 3]]);
 
     const rejected = await mcpClient.callTool({
       name: 'request_proposals',
@@ -79,7 +79,7 @@ test('SDK buyer uses the compact lifecycle against a 3.2 seller profile', async 
 
 for (const adcpVersion of ['3.1.15', '3.0.24']) {
   test(`SDK buyer pinned to ${adcpVersion} can call a 3.2 seller's hidden legacy facade`, async () => {
-    await withDualSurfaceSeller('3.2.0-beta.0', adcpVersion, async ({ buyer, mcpClient, calls }) => {
+    await withDualSurfaceSeller('3.2.0-beta.1', adcpVersion, async ({ buyer, mcpClient, calls }) => {
       const listed = await mcpClient.listTools();
       assert.ok(!listed.tools.some(tool => tool.name === 'get_products'));
 

@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.2.0-beta.0
-// Generated at: 2026-08-18T18:23:32.275Z
+// Generated AdCP core types from official schemas v3.2.0-beta.1
+// Generated at: 2026-08-18T22:39:59.561Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -868,6 +868,7 @@ export type ErrorCode =
   | 'TERMS_REJECTED'
   | 'BIDDING_PLACEMENT_CONFLICT'
   | 'AMBIGUOUS_BIDDING_POLICY'
+  | 'CONFLICTING_SELECTORS'
   | 'REQUOTE_REQUIRED'
   | 'VERSION_UNSUPPORTED'
   | 'CAMPAIGN_SUSPENDED'
@@ -2280,6 +2281,10 @@ export interface ImageAsset {
    * Height in pixels
    */
   height: number;
+  /**
+   * Image file size in bytes. Required by agents that advertise a max_file_size_kb constraint.
+   */
+  file_size_bytes?: number;
   /**
    * Intrinsic pixels per logical render pixel (for example `2` for a 600×500 image intended to render at 300×250). Optional because a validator can infer the ratio when the target format declares logical dimensions. When supplied, it MUST agree with both `width / logical_width` and `height / logical_height`; it is never a substitute for the intrinsic `width` and `height` fields.
    */
@@ -8637,6 +8642,10 @@ export interface CanonicalFormatHostedAudio {
    * @minimum 1
    */
   max_bitrate_kbps?: number;
+  /**
+   * Maximum hosted audio file size in decimal megabytes. Agents that proxy or cache media SHOULD advertise their effective transport ceiling here.
+   */
+  max_file_size_mb?: number;
   /**
    * Required integrated loudness in LUFS (typical: -16 for streaming/podcast, -23 for broadcast). Negative values.
    */
@@ -17625,7 +17634,7 @@ export type PreviewRender =
        */
       output_format: 'url';
       /**
-       * URL to an HTML page that renders this piece. Can be embedded in an iframe.
+       * Untrusted URL to an HTML page that renders this piece. Consumers MUST load it only in a cross-origin iframe with an empty sandbox token set and a caller-enforced restrictive CSP. Provider embedding metadata is advisory and MUST NOT loosen that policy.
        */
       preview_url: string;
       /**
@@ -17644,9 +17653,9 @@ export type PreviewRender =
        */
       embedding?: {
         /**
-         * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
+         * Empty iframe sandbox token set. Provider metadata MUST NOT grant scripts, same-origin, navigation, popups, forms, downloads, or other capabilities.
          */
-        recommended_sandbox?: string;
+        recommended_sandbox?: '';
         /**
          * Whether this output requires HTTPS for secure embedding
          */
@@ -17660,6 +17669,7 @@ export type PreviewRender =
          */
         csp_policy?: string;
       };
+      renderer?: PreviewRendererMetadata;
     }
   | {
       /**
@@ -17671,7 +17681,7 @@ export type PreviewRender =
        */
       output_format: 'html';
       /**
-       * Raw HTML for this rendered piece. Can be embedded directly in the page without iframe. Security warning: Only use with trusted creative agents as this bypasses iframe sandboxing.
+       * Untrusted HTML. Consumers MUST NOT inject it into the host DOM. Render only as iframe srcdoc with an empty sandbox token set and a caller-enforced restrictive CSP; provider embedding metadata is advisory and MUST NOT loosen that policy.
        */
       preview_html: string;
       /**
@@ -17690,9 +17700,9 @@ export type PreviewRender =
        */
       embedding?: {
         /**
-         * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
+         * Empty iframe sandbox token set. Provider metadata MUST NOT grant scripts, same-origin, navigation, popups, forms, downloads, or other capabilities.
          */
-        recommended_sandbox?: string;
+        recommended_sandbox?: '';
         /**
          * Whether this output requires HTTPS for secure embedding
          */
@@ -17706,6 +17716,7 @@ export type PreviewRender =
          */
         csp_policy?: string;
       };
+      renderer?: PreviewRendererMetadata;
     }
   | {
       /**
@@ -17717,11 +17728,11 @@ export type PreviewRender =
        */
       output_format: 'both';
       /**
-       * URL to an HTML page that renders this piece. Can be embedded in an iframe.
+       * Untrusted URL to an HTML page that renders this piece. Consumers MUST load it only in a cross-origin iframe with an empty sandbox token set and a caller-enforced restrictive CSP. Provider embedding metadata is advisory and MUST NOT loosen that policy.
        */
       preview_url: string;
       /**
-       * Raw HTML for this rendered piece. Can be embedded directly in the page without iframe. Security warning: Only use with trusted creative agents as this bypasses iframe sandboxing.
+       * Untrusted HTML. Consumers MUST NOT inject it into the host DOM. Render only as iframe srcdoc with an empty sandbox token set and a caller-enforced restrictive CSP; provider embedding metadata is advisory and MUST NOT loosen that policy.
        */
       preview_html: string;
       /**
@@ -17740,9 +17751,9 @@ export type PreviewRender =
        */
       embedding?: {
         /**
-         * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
+         * Empty iframe sandbox token set. Provider metadata MUST NOT grant scripts, same-origin, navigation, popups, forms, downloads, or other capabilities.
          */
-        recommended_sandbox?: string;
+        recommended_sandbox?: '';
         /**
          * Whether this output requires HTTPS for secure embedding
          */
@@ -17756,6 +17767,7 @@ export type PreviewRender =
          */
         csp_policy?: string;
       };
+      renderer?: PreviewRendererMetadata;
     };
 /**
  * Terminal response for completed preview_creative
@@ -19473,6 +19485,31 @@ export interface NamedFormatManifest {
  * Manifest declares which canonical format it targets via `format_kind` (e.g., `image`). This 3.1+ canonical-format path was introduced by RFC #3305.
  */
 export interface CanonicalFormatManifest {
+}
+/**
+ * Optional renderer implementation and safety metadata for audit and reproducibility. Authority is still resolved from capability discovery and placement delegation.
+ */
+export interface PreviewRendererMetadata {
+  /**
+   * Stable implementation identifier.
+   */
+  renderer_id: string;
+  /**
+   * Exact semantic version of the renderer implementation.
+   */
+  version: string;
+  /**
+   * Renderer export or entry-point name used for this render.
+   */
+  export: string;
+  /**
+   * Informational implementation origin copied from the selected route. It does not grant authority.
+   */
+  rendering_origin: 'platform_native' | 'agent_approximation';
+  /**
+   * True only when the produced output cannot initiate impression, click, billing, conversion, viewability, or asset-fetch side effects. Renderers that retain any remote asset URL or navigation MUST emit false.
+   */
+  tracking_suppressed: boolean;
 }
 /**
  * Structured consumption details for this build. Informational — lets the buyer verify that vendor_cost is consistent with the rate card. vendor_cost is the billing source of truth.
@@ -27564,6 +27601,8 @@ export type PlacementDefinition = {
    * Advertising channels where this placement can run. Products that reference the placement may narrow this set but should not broaden it.
    */
   channels?: MediaChannel[];
+  presentation_ref?: PlacementPresentationReference;
+  preview_provider?: PublisherDesignatedPreviewProvider;
   /**
    * Optional 3.1+ canonical format-option declarations supported by this placement. This `adagents.json` placement surface supports two entry shapes: (1) reference an entry in the same file's top-level `formats[]` by `format_option_id` only — buyers resolve the full declaration from `formats[]` by matching `format_option_id` (recommended; avoids duplication). Top-level formats may be publisher-owned custom formats or narrowed canonical formats; their `format_kind` is the canonical anchor that the placement reference inherits. (2) carry an inline `ProductFormatDeclaration` directly — for placement-specific canonical narrowing that doesn't fit a reusable catalog entry. This bare-reference shape is placement-catalog specific; Product `format_options[]` entries are always full `ProductFormatDeclaration` objects with required `format_kind` and `params`.
    *
@@ -27676,6 +27715,199 @@ export type InlineDeclaration = {
     | AgentPlacementFormatDeclaration
     | CustomFormatDeclaration
   );
+/**
+ * Optional publisher-specific declarative frame for representing this placement's real chrome offline. It composes around the selected creative rendering unless the publisher-delegated preview_provider route explicitly covers placement presentation. It MUST NOT be promoted to or copied onto a shared format entry.
+ */
+export interface PlacementPresentationReference {
+  /**
+   * Publisher-controlled HTTPS URL for the presentation metadata. Consumers MUST apply the same SSRF, redirect, response-size, timeout, and DNS-rebinding protections used for format_schema fetches.
+   */
+  uri: string;
+  /**
+   * SHA-256 content digest. Consumers cache by uri@digest and MUST fail closed on a digest mismatch.
+   */
+  digest: string;
+  /**
+   * Media type of the referenced declarative presentation document.
+   */
+  media_type: 'application/vnd.adcp.placement-presentation+json';
+  /**
+   * Version of /schemas/core/placement-presentation.json used to validate and compose the referenced document.
+   */
+  schema_version: '1.0';
+}
+/**
+ * Optional publisher delegation to a callable AdCP preview provider for specific format options on this placement. This publisher-origin route is the only mechanism that grants preview authority inside the placement's scope; an agent's own rendering_origin description does not.
+ */
+export interface PublisherDesignatedPreviewProvider {
+  /**
+   * HTTPS URL of the delegated creative-agent endpoint. Buyers call get_adcp_capabilities and preview_creative on this endpoint. They MUST allow only public IPs, pin DNS resolution through connection, refuse redirects, cap time and response size, and attach provider credentials only after exact normalized-origin binding.
+   */
+  agent_url: string;
+  /**
+   * Explicitly states that authority comes from the publisher-hosted placement declaration. The provider's rendering_origin metadata is informational and remains non-authoritative elsewhere.
+   */
+  authority: 'publisher_designated';
+  /**
+   * @minItems 1
+   */
+  routes: [
+    {
+      /**
+       * Format option in this adagents.json placement for which the delegation applies. It MUST resolve through the same-file top-level formats[] catalog or an inline placement format declaration.
+       */
+      format_option_id: string;
+      /**
+       * Agent-local preview capability advertised by the delegated provider. The provider's canonical format declaration MUST satisfy the resolved placement format option.
+       */
+      capability_id: string;
+      /**
+       * True only when the publisher delegates both creative rendering and the complete placement-specific frame to this route. When false or omitted, consumers compose any presentation_ref around the provider's creative render.
+       */
+      covers_placement_presentation?: boolean;
+    },
+    ...{
+      /**
+       * Format option in this adagents.json placement for which the delegation applies. It MUST resolve through the same-file top-level formats[] catalog or an inline placement format declaration.
+       */
+      format_option_id: string;
+      /**
+       * Agent-local preview capability advertised by the delegated provider. The provider's canonical format declaration MUST satisfy the resolved placement format option.
+       */
+      capability_id: string;
+      /**
+       * True only when the publisher delegates both creative rendering and the complete placement-specific frame to this route. When false or omitted, consumers compose any presentation_ref around the provider's creative render.
+       */
+      covers_placement_presentation?: boolean;
+    }[]
+  ];
+}
+
+// core/placement-presentation.json
+export type Layer = 'behind_creative' | 'in_front_of_creative';
+/**
+ * @pattern ^#[0-9A-Fa-f]{6}$
+ */
+export type Color = string;
+
+/**
+ * Declarative, non-executable placement frame. Consumers create the canvas, paint behind_creative decorations in array order, fit and clip the selected creative render into creative_slot, then paint in_front_of_creative decorations in array order. Text is plain text and image assets are immutable, digest-pinned resources; scripts, HTML, CSS, event handlers, and arbitrary style properties are forbidden.
+ */
+export interface PlacementPresentationDocument {
+  schema_version: '1.0';
+  canvas: {
+    /**
+     * @minimum 1
+     * @maximum 8192
+     */
+    width: number;
+    /**
+     * @minimum 1
+     * @maximum 8192
+     */
+    height: number;
+    /**
+     * @pattern ^#[0-9A-Fa-f]{6}$
+     */
+    background_color?: string;
+  };
+  /**
+   * Rectangle into which the selected creative render is fitted and clipped without changing its manifest or renderer.
+   */
+  creative_slot: {
+    /**
+     * @minimum 0
+     * @maximum 8192
+     */
+    x: number;
+    /**
+     * @minimum 0
+     * @maximum 8192
+     */
+    y: number;
+    /**
+     * @minimum 1
+     * @maximum 8192
+     */
+    width: number;
+    /**
+     * @minimum 1
+     * @maximum 8192
+     */
+    height: number;
+    /**
+     * How the creative render is scaled into the slot. contain preserves the whole render, cover fills and crops, and stretch fills without preserving aspect ratio.
+     */
+    fit: 'contain' | 'cover' | 'stretch';
+    /**
+     * Slot overflow is always clipped so composition is deterministic.
+     */
+    clip: true;
+  };
+  decorations?: (BoxDecoration | TextDecoration | ImageDecoration)[];
+}
+export interface BoxDecoration {
+  kind: 'box';
+  layer: Layer;
+  bounds: Rectangle;
+  fill_color: Color;
+}
+export interface Rectangle {
+  /**
+   * @minimum 0
+   * @maximum 8192
+   */
+  x: number;
+  /**
+   * @minimum 0
+   * @maximum 8192
+   */
+  y: number;
+  /**
+   * @minimum 1
+   * @maximum 8192
+   */
+  width: number;
+  /**
+   * @minimum 1
+   * @maximum 8192
+   */
+  height: number;
+}
+export interface TextDecoration {
+  kind: 'text';
+  layer: Layer;
+  bounds: Rectangle;
+  /**
+   * @maxLength 4096
+   */
+  text: string;
+  text_color: Color;
+  /**
+   * @minimum 6
+   * @maximum 256
+   */
+  font_size: number;
+}
+export interface ImageDecoration {
+  kind: 'image';
+  layer: Layer;
+  bounds: Rectangle;
+  image_ref: {
+    /**
+     * Untrusted image asset. Fetch with public-address-only SSRF protection, no redirects, DNS pinning, and body/time limits; do not attach ambient credentials.
+     * @pattern ^https:\/\/
+     */
+    uri: string;
+    /**
+     * SHA-256 digest of the exact image bytes. Consumers MUST fail closed on mismatch.
+     * @pattern ^sha256:[a-f0-9]{64}$
+     */
+    digest: string;
+  };
+  fit: 'contain' | 'cover' | 'stretch';
+}
+
 
 // core/planned-delivery.json
 /**
@@ -28270,6 +28502,55 @@ export interface RealEstateItem {
   assets?: OfferingAssetGroup[];
   ext?: ExtensionObject;
 }
+
+// core/reference-renderer.json
+/**
+ * Pinned npm package export for a community-maintained reference presentation of a canonical format. The registry references the package but never serves or executes it. A reference renderer is non-authoritative: it demonstrates one interoperable presentation of the format contract and is not evidence of seller, publisher, or serving-platform output. Consumers MUST verify the exact tarball integrity and npm provenance, bind the attestation source repository/workflow and subject digest to this entry, and execute the module in a separate opaque-origin or worker realm with no ambient credentials or network access, a timeout, and input/output size limits. Consumers MUST NOT bundle or import registry-selected code into the host application realm. On confirmation that a pinned renderer version is vulnerable, the community-registry maintainer MUST replace the version and integrity in a reviewed registry update and rotate the enclosing catalog's cache validator. A consumer whose vulnerability policy marks the pin unsafe MUST fail closed for renderer execution, MUST NOT load the package, and MUST continue with the normal rendering fallback order.
+ */
+export interface ReferenceRenderer {
+  /**
+   * Execution contract for the referenced package. browser-esm means a browser-safe ECMAScript module that accepts canonical manifest data and returns an inert presentation without Node.js APIs, ambient credentials, delivery tracking, or undeclared network access. Non-JavaScript clients use a hosted preview_creative provider or display the manifest.
+   */
+  runtime: 'browser-esm';
+  /**
+   * npm package name, scoped or unscoped. The package is resolved from the npm registry; the AdCP registry does not proxy its executable contents.
+   * @pattern ^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$
+   */
+  package: string;
+  /**
+   * Exact semantic version. Ranges and tags such as latest are forbidden so the registry entry is reproducible. Package semantic versioning identifies the pinned distribution artifact; it is independent of any one format revision because one package may expose renderers for multiple formats.
+   * @pattern ^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$
+   */
+  version: string;
+  /**
+   * Named package export that implements the renderer contract for this enclosing format entry. Compatibility is bound at the export-to-entry edge, not to the package major: the export's documented input/output contract MUST implement the enclosing format entry's revision. When that format entry moves to a new major revision, the registry MUST point it to a compatible export, rotating package version and integrity only when the selected artifact changes. One package version MAY expose different named exports for different formats or format revisions.
+   * @minLength 1
+   */
+  export: string;
+  /**
+   * Exact canonical format-entry revision implemented by this named export. It MUST equal the enclosing community format entry's format_revision; compatibility binds to this export edge, not the package major.
+   * @pattern ^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$
+   */
+  format_revision: string;
+  /**
+   * Subresource Integrity value for the exact npm package tarball. Consumers MUST compare this value before loading code, require the provenance subject digest to match the same tarball, and fail closed on mismatch.
+   * @pattern ^(?:sha256-[A-Za-z0-9+\/]{43}=|sha384-[A-Za-z0-9+\/]{64}|sha512-[A-Za-z0-9+\/]{86}==)$
+   */
+  integrity: string;
+  provenance: {
+    /**
+     * Allowlisted source repository that the npm provenance attestation MUST identify.
+     * @pattern ^https:\/\/github\.com\/
+     */
+    source_repository: string;
+    /**
+     * Repository-relative GitHub Actions workflow path that npm provenance buildDefinition.externalParameters.workflow.path MUST identify.
+     * @pattern ^\.github\/workflows\/[A-Za-z0-9._\/-]+\.ya?ml$
+     */
+    workflow_path: string;
+  };
+}
+
 
 // core/registry-event.json
 /**

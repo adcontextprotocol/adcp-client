@@ -19,6 +19,7 @@
  * Skipped from copy:
  *   - `latest` symlink — duplicates a real version directory
  *   - `*.previous` backup snapshots from `sync-schemas` replaceTree
+ *   - superseded prerelease bundles that are not the current ADCP_VERSION
  *   - older patch versions of stable releases — collapsed into the
  *     highest-patch sibling
  *   - `tmp/`, `compliance/`, and most transport-projection (`mcp/`)
@@ -306,10 +307,23 @@ function main(): void {
     candidates.push(parsed);
   }
 
-  const selected = selectVersionsToCopy(candidates);
+  const currentProtocolVersion = readFileSync(path.join(repoRoot, 'ADCP_VERSION'), 'utf8').trim();
+  const publishableCandidates = candidates.filter(
+    candidate =>
+      candidate.prerelease === undefined ||
+      candidate.prerelease === 'legacy' ||
+      candidate.version === currentProtocolVersion
+  );
+  const selected = selectVersionsToCopy(publishableCandidates);
   const collapsed = candidates.filter(c => !selected.some(s => s.source.version === c.version));
 
   const destBase = path.join(repoRoot, 'dist', 'lib', 'schemas-data');
+  // A normal incremental build must produce the same publish payload as a
+  // clean build. Remove bundle keys selected by an earlier protocol pin (for
+  // example 3.2.0-beta.0 after moving to beta.1) before copying the current
+  // supported set.
+  rmSync(destBase, { recursive: true, force: true });
+  mkdirSync(destBase, { recursive: true });
 
   for (const { source, key } of selected) {
     const srcRoot = path.join(cacheRoot, source.version);
@@ -339,7 +353,10 @@ function main(): void {
   }
 
   for (const v of collapsed) {
-    console.log(`[copy-schemas-to-dist] collapsed ${v.version} (older patch in ${v.major}.${v.minor}.x; not bundled)`);
+    const reason = v.prerelease
+      ? `superseded prerelease; current pin is ${currentProtocolVersion}`
+      : `older patch in ${v.major}.${v.minor}.x`;
+    console.log(`[copy-schemas-to-dist] skipped ${v.version} (${reason}; not bundled)`);
   }
 
   for (const name of skipped) {

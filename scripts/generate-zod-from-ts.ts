@@ -783,6 +783,130 @@ const CreativeAssetsSchema: z.ZodType<Record<string, unknown>> = z.record(z.stri
   return content.slice(0, formatReference.start) + strictFormatReference + content.slice(formatReference.end);
 }
 
+/**
+ * Preserve closed, declarative presentation-document constraints that cannot
+ * survive the JSON Schema -> TypeScript -> Zod projection. Unlike ordinary
+ * protocol payloads, placement-presentation documents deliberately forbid
+ * extensions because HTML, scripts, CSS, and arbitrary style properties are
+ * outside the non-executable rendering contract.
+ */
+function postProcessPlacementPresentationRuntimeConstraints(content: string): string {
+  const replaceSchema = (schemaName: string, replacement: string): void => {
+    const start = content.indexOf(`export const ${schemaName} = `);
+    const end = content.indexOf('\n\nexport const ', start + 1);
+    if (start === -1 || end === -1) {
+      throw new Error(`Unable to locate generated ${schemaName} boundary.`);
+    }
+    content = content.slice(0, start) + replacement.trim() + content.slice(end);
+  };
+
+  replaceSchema(
+    'RectangleSchema',
+    `export const RectangleSchema = z.object({
+    x: z.number().int().min(0).max(8192),
+    y: z.number().int().min(0).max(8192),
+    width: z.number().int().min(1).max(8192),
+    height: z.number().int().min(1).max(8192)
+}).strict();`
+  );
+
+  replaceSchema(
+    'TextDecorationSchema',
+    `export const TextDecorationSchema = z.object({
+    kind: z.literal("text"),
+    layer: LayerSchema,
+    bounds: RectangleSchema,
+    text: z.string().max(4096),
+    text_color: ColorSchema,
+    font_size: z.number().int().min(6).max(256)
+}).strict();`
+  );
+
+  replaceSchema(
+    'ImageDecorationSchema',
+    `export const ImageDecorationSchema = z.object({
+    kind: z.literal("image"),
+    layer: LayerSchema,
+    bounds: RectangleSchema,
+    image_ref: z.object({
+        uri: z.string().regex(/^https:\\/\\//).url(),
+        digest: z.string().regex(/^sha256:[a-f0-9]{64}$/)
+    }).strict(),
+    fit: z.union([z.literal("contain"), z.literal("cover"), z.literal("stretch")])
+}).strict();`
+  );
+
+  replaceSchema(
+    'BoxDecorationSchema',
+    `export const BoxDecorationSchema = z.object({
+    kind: z.literal("box"),
+    layer: LayerSchema,
+    bounds: RectangleSchema,
+    fill_color: ColorSchema
+}).strict();`
+  );
+
+  replaceSchema(
+    'PlacementPresentationDocumentSchema',
+    `export const PlacementPresentationDocumentSchema = z.object({
+    schema_version: z.literal("1.0"),
+    canvas: z.object({
+        width: z.number().int().min(1).max(8192),
+        height: z.number().int().min(1).max(8192),
+        background_color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional()
+    }).strict(),
+    creative_slot: z.object({
+        x: z.number().int().min(0).max(8192),
+        y: z.number().int().min(0).max(8192),
+        width: z.number().int().min(1).max(8192),
+        height: z.number().int().min(1).max(8192),
+        fit: z.union([z.literal("contain"), z.literal("cover"), z.literal("stretch")]),
+        clip: z.literal(true)
+    }).strict(),
+    decorations: z.array(z.union([BoxDecorationSchema, TextDecorationSchema, ImageDecorationSchema])).max(100).optional()
+}).strict().superRefine((value, ctx) => {
+    const fitsCanvas = (rectangle: { x: number; y: number; width: number; height: number }): boolean =>
+        rectangle.x + rectangle.width <= value.canvas.width && rectangle.y + rectangle.height <= value.canvas.height;
+    if (!fitsCanvas(value.creative_slot)) {
+        ctx.addIssue({ code: "custom", path: ["creative_slot"], message: "creative_slot must fit within canvas" });
+    }
+    value.decorations?.forEach((decoration, index) => {
+        if (!fitsCanvas(decoration.bounds)) {
+            ctx.addIssue({ code: "custom", path: ["decorations", index, "bounds"], message: "decoration bounds must fit within canvas" });
+        }
+    });
+});`
+  );
+
+  const constrainField = (schemaName: string, before: string, after: string): void => {
+    const start = content.indexOf(`export const ${schemaName} = `);
+    const end = content.indexOf('\n\nexport const ', start + 1);
+    if (start === -1 || end === -1) throw new Error(`Unable to locate generated ${schemaName} boundary.`);
+    const block = content.slice(start, end);
+    const constrained = block.replace(before, after);
+    if (constrained === block) throw new Error(`Unable to preserve numeric constraints on ${schemaName}.`);
+    content = content.slice(0, start) + constrained + content.slice(end);
+  };
+
+  constrainField(
+    'ImageAssetSchema',
+    'file_size_bytes: z.number().optional()',
+    'file_size_bytes: z.number().int().min(1).optional()'
+  );
+  constrainField(
+    'CanonicalFormatHostedVideoSchema',
+    'max_file_size_mb: z.number().min(1).optional()',
+    'max_file_size_mb: z.number().int().min(1).optional()'
+  );
+  constrainField(
+    'CanonicalFormatHostedAudioSchema',
+    'max_file_size_mb: z.number().optional()',
+    'max_file_size_mb: z.number().gt(0).optional()'
+  );
+
+  return content;
+}
+
 function postProcessTrustedMatchResponseSchemas(content: string): string {
   const replaceSchema = (schemaName: string, _nextSchemaName: string, replacement: string): void => {
     const start = content.indexOf(`export const ${schemaName} = `);
@@ -2329,6 +2453,11 @@ async function generateZodSchemas() {
     // TypeScript cannot retain JSON Schema `format: uri` or root oneOf
     // exclusivity. Restore both for legacy/canonical creative identity.
     zodSchemas = postProcessCreativeRuntimeConstraints(zodSchemas);
+
+    // Placement presentation is a closed, non-executable document boundary.
+    // Restore strictness, integer/cardinality rules, and canvas geometry lost
+    // in the TypeScript projection, plus adjacent asset-size constraints.
+    zodSchemas = postProcessPlacementPresentationRuntimeConstraints(zodSchemas);
 
     // Trusted Match request schemas are closed privacy-boundary contracts.
     // Unlike ordinary AdCP tool payloads, accepting unknown root/nested fields
