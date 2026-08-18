@@ -84,6 +84,7 @@ npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --json > report.
 - `--storyboards <id1,id2>` — limit to specific storyboard IDs
 - `--compliance-version <version>` — select the compliance cache/spec line used for resolution and request version intent; pass the same flag to `storyboard list`, `show`, and `step` when reproducing a pinned run
 - `--compliance-dir <path>` — use a specific compliance cache directory for local protocol/cache development
+- `--schema-root <path>` — use a matching external schema bundle for request/response validation; pair it with `--compliance-dir` when the two directories are not co-located
 - `--webhook-receiver [loopback|proxy]` — host a webhook sink so async steps grade instead of skip
 - `--webhook-receiver-auto-tunnel` — autodetect `ngrok`/`cloudflared` on `PATH`, spawn and plug into proxy mode
 - `--invariants <mod1,mod2>` — load custom cross-step assertion modules
@@ -117,9 +118,25 @@ All `expect_webhook*` steps require `webhook_receiver` runner support. If the
 `triggered_by` step is missing, skipped, or failed, the assertion skips with
 `prerequisite_failed` instead of treating the absence as a passing result.
 
-**Hosted compliance bundles.** Programmatic runners that mount compliance
-assets outside the installed SDK can pair the storyboard cache and schema cache
-explicitly:
+### Running against pre-publish artifacts
+
+Use a matching compliance bundle and schema root to validate a protocol build
+before its matching SDK package is published:
+
+```bash
+adcp storyboard run https://agent.example.com/mcp \
+  --compliance-dir /app/dist/compliance/latest \
+  --schema-root /app/dist/schemas/latest
+```
+
+The supplied JSON Schema bundle is authoritative for storyboard request and
+response validation. Same-change tools, fields, and controller scenarios do
+not need to exist in the SDK's generated validator snapshot, and the workflow
+does not write into `node_modules/@adcp/sdk`. A `schemas/latest` bundle may
+retain `/schemas/latest/...` IDs when its root `index.json` declares the real
+`adcp_version`; the index preserves cross-version validation fencing.
+
+Programmatic runners can pair the two directories explicitly as well:
 
 ```ts
 import { comply } from '@adcp/sdk/testing';

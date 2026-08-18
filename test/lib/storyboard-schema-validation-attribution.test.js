@@ -20,9 +20,14 @@
 
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const { runStoryboard, runStoryboardStep } = require('../../dist/lib/testing/storyboard/index.js');
+const { createTestClient } = require('../../dist/lib/testing/client.js');
 const { ResponseSchemaValidationError } = require('../../dist/lib/utils/response-unwrapper.js');
+const { ADCP_VERSION } = require('../../dist/lib/version.js');
 
 /**
  * Build a minimal stub client that throws `ResponseSchemaValidationError`
@@ -105,6 +110,76 @@ function buildStoryboard(overrides = {}) {
 }
 
 describe('adcp-client#1709 — Zod-reject error attribution', () => {
+  test('external schemaRoot overrides a stale packaged-Zod rejection end to end', async () => {
+    const externalVersion = ADCP_VERSION;
+    const schemaRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-runner-external-authority-'));
+    const bundled = path.join(schemaRoot, 'bundled');
+    fs.mkdirSync(bundled, { recursive: true });
+    fs.writeFileSync(
+      path.join(bundled, 'get-products-response.json'),
+      JSON.stringify({
+        $schema: 'http://json-schema.org/draft-07/schema#',
+        $id: `/schemas/${externalVersion}/media-buy/get-products-response.json`,
+        type: 'object',
+        required: ['current_source_marker'],
+        properties: { current_source_marker: { const: true } },
+        additionalProperties: false,
+      })
+    );
+
+    const client = createTestClient('https://stub.example/mcp', 'mcp', {
+      adcpVersion: externalVersion,
+      versionEnvelope: 'auto',
+    });
+    Object.assign(client, buildSchemaRejectingClient('get_products', { current_source_marker: true }));
+    const storyboard = buildStoryboard({ adcp_version: externalVersion });
+    storyboard.phases[0].steps[0].response_schema_ref = 'media-buy/get-products-response.json';
+    storyboard.phases[0].steps[0].validations = [
+      { check: 'response_schema', description: 'Current-source response is valid' },
+    ];
+    storyboard.phases[0].steps[0].context_outputs = [{ key: 'current_source_marker', path: 'current_source_marker' }];
+
+    try {
+      const result = await runStoryboardStep('https://stub.example/mcp', storyboard, 'fetch_products', {
+        protocol: 'mcp',
+        schemaRoot,
+        _serverAdcpVersion: '3.1',
+        _client: client,
+        _profile: stubProfile,
+      });
+
+      const schemaValidation = result.validations.find(v => v.check === 'response_schema');
+      assert.equal(schemaValidation?.passed, true, schemaValidation?.error ?? JSON.stringify(result));
+      assert.equal(schemaValidation?.strict?.valid, true);
+      assert.equal(result.passed, true);
+      assert.equal(result.error, undefined);
+      assert.deepEqual(result.response, { current_source_marker: true });
+      assert.equal(result.context.current_source_marker, true, 'accepted payload remains available for extraction');
+
+      const expectErrorStoryboard = structuredClone(storyboard);
+      expectErrorStoryboard.phases[0].steps[0].expect_error = true;
+      const expectErrorResult = await runStoryboardStep(
+        'https://stub.example/mcp',
+        expectErrorStoryboard,
+        'fetch_products',
+        {
+          protocol: 'mcp',
+          schemaRoot,
+          _serverAdcpVersion: '3.1',
+          _client: client,
+          _profile: stubProfile,
+        }
+      );
+      assert.equal(
+        expectErrorResult.passed,
+        false,
+        'an externally valid success must not satisfy an expect_error step'
+      );
+    } finally {
+      fs.rmSync(schemaRoot, { recursive: true, force: true });
+    }
+  });
+
   test('synthesizes response_schema ValidationResult on the step when unwrapper rejects', async () => {
     const client = buildSchemaRejectingClient('get_products');
     const result = await runStoryboardStep('https://stub.example/mcp', buildStoryboard(), 'fetch_products', {
