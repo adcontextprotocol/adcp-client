@@ -48,6 +48,8 @@ test('transport diagnostics emits sanitized request and response events', async 
         body: JSON.stringify({
           idempotency_key: 'idem-1',
           access_token: 'request-token',
+          governance_context: 'signed-governance-token',
+          consultation_context: 'consultation-handle',
           push_notification_config: {
             token: 'webhook-token',
             authentication: { credentials: 'webhook-secret' },
@@ -84,6 +86,8 @@ test('transport diagnostics emits sanitized request and response events', async 
   });
   assert.equal(JSON.parse(started.requestBody).idempotency_key, '[redacted]');
   assert.equal(JSON.parse(started.requestBody).access_token, '[redacted]');
+  assert.equal(JSON.parse(started.requestBody).governance_context, '[redacted]');
+  assert.equal(JSON.parse(started.requestBody).consultation_context, '[redacted]');
   assert.equal(JSON.parse(started.requestBody).push_notification_config.token, '[redacted]');
   assert.equal(JSON.parse(started.requestBody).push_notification_config.authentication.credentials, '[redacted]');
   assert.equal(started.requestBodyTruncated, false);

@@ -95,7 +95,7 @@ import { attachMatch } from './match';
 import { withTaskDeadline } from './task-deadline';
 import { createMCPRequestHeaders } from '../auth';
 import { isAbortOrTimeoutError } from '../protocols/abort';
-import { normalizeTransportOptions } from '../protocols';
+import { ProtocolClient, normalizeTransportOptions } from '../protocols';
 import {
   AuthenticationRequiredError,
   ConfigurationError,
@@ -126,6 +126,24 @@ import type { AdcpTaskName, TaskRequestFor, TaskResponseTypeMap } from './AgentC
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
 import { verifyWebhookRequest, type WebhookHeaderValue, type WebhookHeadersLike } from '../webhooks';
+import {
+  InMemoryWebhookRegistrationStore,
+  type WebhookRegistration,
+  type WebhookRegistrationStore,
+} from './webhook-registration';
+import {
+  InMemoryReplayStore,
+  type ReplayStore,
+  InMemoryRevocationStore,
+  type RevocationStore,
+  type JwksResolver,
+  WebhookSignatureError,
+  type WebhookSignatureErrorCode,
+  verifyWebhookSignature as verifyRfc9421WebhookSignature,
+  ResolvedAgentJwksResolver,
+  type ResolvedAgentJwksResolverOptions,
+  canonicalTargetUri,
+} from '../signing/server';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
 import {
   isWellKnownAgentCardUrl as isWellKnownCardUrl,
@@ -858,20 +876,40 @@ export interface ClientProductPropertyPolicy extends BuyerPropertyPolicy {
 }
 
 export type WebhookParseErrorCode =
+  | WebhookSignatureErrorCode
   | 'webhook_signature_invalid'
   | 'webhook_timestamp_invalid'
   | 'webhook_unsupported_payload'
   | 'webhook_envelope_invalid'
   | 'webhook_result_invalid'
   /**
-   * The receiver has no way to authenticate this webhook: no `webhookSecret` is
-   * configured, so the legacy HMAC profile has nothing to verify against, and
-   * this client does not yet verify the RFC 9421 webhook profile that an
-   * omitted `authentication` block selects. Distinct from
-   * `webhook_signature_invalid` — nothing was checked and found wrong; there was
-   * no check to perform.
+   * The receiver has no trusted registration or legacy HMAC configuration, so
+   * no authentication check can be selected safely.
    */
-  | 'webhook_unverifiable';
+  | 'webhook_unverifiable'
+  | 'webhook_registration_not_found'
+  | 'webhook_registration_mismatch'
+  | 'webhook_verification_context_missing'
+  | 'webhook_registration_store_unavailable'
+  | 'webhook_verification_unavailable';
+
+export interface WebhookVerificationConfig {
+  /** Deterministic/custom key source. Defaults to resolveAgent brand.json discovery. */
+  jwks?: JwksResolver;
+  /** Shared nonce replay store. Defaults to one process-local store per client. */
+  replayStore?: ReplayStore;
+  /** Key revocation source. Defaults to one process-local store per client. */
+  revocationStore?: RevocationStore;
+  /** Clock in epoch seconds. */
+  now?: () => number;
+  /** Safe discovery/cache tuning for the default seller-pinned JWK resolver. */
+  resolverOptions?: Omit<ResolvedAgentJwksResolverOptions, 'fetchCapabilities'>;
+  /**
+   * Fetch capabilities for seller key discovery. The callback must authenticate
+   * only to the supplied, already-pinned seller URL and protocol.
+   */
+  fetchCapabilities?: (agentUrl: string, protocol: 'mcp' | 'a2a') => Promise<unknown>;
+}
 
 export interface VerifyAndParseWebhookOptions {
   /** Raw HTTP body bytes captured before JSON parsing. Required when `webhookSecret` is configured. */
@@ -886,10 +924,32 @@ export interface VerifyAndParseWebhookOptions {
   taskType?: string;
   /** Operation id from trusted routing context. Used as an A2A fallback. */
   operationId?: string;
+  /** Actual HTTP method from trusted server context. Required for RFC 9421. */
+  requestMethod?: string;
+  /** Externally visible absolute request URL from trusted server/proxy configuration. Required for RFC 9421. */
+  requestUrl?: string;
   /** Explicit legacy HMAC signature header value. */
   signature?: WebhookHeaderValue;
   /** Explicit legacy HMAC timestamp header value. */
   timestamp?: WebhookHeaderValue;
+}
+
+export interface WebhookHandlerRequest {
+  headers: Record<string, WebhookHeaderValue>;
+  body: unknown;
+  rawBody?: string | Buffer | Uint8Array;
+  params?: Record<string, string>;
+  method?: string;
+  /** Trusted externally visible absolute URL supplied by the application. */
+  publicUrl?: string;
+}
+
+export interface WebhookHandlerAdapter {
+  getOperationId?: (request: WebhookHandlerRequest) => string | undefined | Promise<string | undefined>;
+  getTaskType?: (request: WebhookHandlerRequest) => string | undefined | Promise<string | undefined>;
+  getRequestMethod?: (request: WebhookHandlerRequest) => string | undefined | Promise<string | undefined>;
+  /** Must return a trusted externally visible URL; never derive it from untrusted forwarding headers. */
+  getRequestUrl?: (request: WebhookHandlerRequest) => string | undefined | Promise<string | undefined>;
 }
 
 export type WebhookParseResult = WebhookParseSuccess | WebhookParseFailure;
@@ -1014,17 +1074,20 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    * `docs/guides/PUSH-NOTIFICATION-CONFIG.md#deduplication`.
    */
   handlers?: AsyncHandlerConfig;
-  /** Webhook secret for signature verification (recommended for production) */
+  /** Select legacy HMAC-SHA256 push verification. Omit to use RFC 9421. */
   webhookSecret?: string;
+  /** Durable provenance for outbound push registrations. Defaults to process-local memory. */
+  webhookRegistrationStore?: WebhookRegistrationStore;
+  /** Registration retention in seconds. Defaults to seven days. */
+  webhookRegistrationTtlSeconds?: number;
+  /** RFC 9421 key, replay, revocation, and discovery configuration. */
+  webhookVerification?: WebhookVerificationConfig;
   /**
    * Accept inbound webhooks that carry no verifiable authenticity at all.
    *
-   * Without `webhookSecret` the legacy HMAC profile has nothing to verify
-   * against, and this client does not yet verify the RFC 9421 webhook profile
-   * that an omitted `authentication` block selects. `verifyAndParseWebhook`
-   * therefore refuses such webhooks with `webhook_unverifiable` by default:
-   * anyone who can reach the receiver route could otherwise forge task
-   * completions and status changes.
+   * This bypass applies only when no trusted push registration exists and no
+   * HMAC secret is configured. It never bypasses a failed RFC 9421 or HMAC
+   * verification for a known registration.
    *
    * Set this only when the receiver is genuinely unreachable from outside your
    * network (in-process test harnesses, a route bound to loopback). It is not a
@@ -1350,6 +1413,10 @@ export class SingleAgentClient {
   private readonly canonicalCreativeTaskAssociations = new Map<string, CanonicalCreativeTaskAssociation>();
   private readonly canonicalLegacyRoutes = new Map<string, CanonicalLegacyRoute>();
   private readonly resolvedAdcpVersion: string;
+  private readonly webhookRegistrationStore: WebhookRegistrationStore;
+  private readonly webhookReplayStore: ReplayStore;
+  private readonly webhookRevocationStore: RevocationStore;
+  private readonly webhookJwksResolvers = new Map<string, JwksResolver>();
 
   constructor(
     private agent: AgentConfig,
@@ -1361,6 +1428,13 @@ export class SingleAgentClient {
     // ConfigurationError if the pin's major differs from ADCP_MAJOR_VERSION
     // — cross-major support lands in Stage 3 of the multi-version refactor.
     this.resolvedAdcpVersion = resolveAdcpVersion(config.adcpVersion);
+    this.webhookRegistrationStore = config.webhookRegistrationStore ?? new InMemoryWebhookRegistrationStore();
+    this.webhookReplayStore = config.webhookVerification?.replayStore ?? new InMemoryReplayStore();
+    this.webhookRevocationStore = config.webhookVerification?.revocationStore ?? new InMemoryRevocationStore();
+    const registrationTtl = config.webhookRegistrationTtlSeconds ?? 7 * 24 * 60 * 60;
+    if (!Number.isSafeInteger(registrationTtl) || registrationTtl < 1) {
+      throw new ConfigurationError('webhookRegistrationTtlSeconds must be a positive safe integer.');
+    }
 
     // Inject userAgent into agent headers so it flows through both MCP and A2A transports
     if (config.userAgent) {
@@ -1381,6 +1455,7 @@ export class SingleAgentClient {
       webhookUrlTemplate: config.webhookUrlTemplate,
       agentId: agent.id,
       webhookSecret: config.webhookSecret,
+      onWebhookRegistration: registration => this.persistWebhookRegistration(registration),
       strictSchemaValidation: config.validation?.strictSchemaValidation !== false, // Default: true
       logSchemaViolations: config.validation?.logSchemaViolations !== false, // Default: true
       filterInvalidProducts: config.validation?.filterInvalidProducts === true, // Default: false
@@ -1403,6 +1478,78 @@ export class SingleAgentClient {
     if (config.handlers) {
       this.asyncHandler = new AsyncHandler(config.handlers);
     }
+  }
+
+  private async persistWebhookRegistration(args: {
+    agent: AgentConfig;
+    taskType: string;
+    operationId: string;
+    callbackUrl: string;
+    mode: WebhookRegistration['mode'];
+  }): Promise<void> {
+    const nowMs = this.config.webhookVerification?.now
+      ? Math.floor(this.config.webhookVerification.now() * 1000)
+      : Date.now();
+    const ttlSeconds = this.config.webhookRegistrationTtlSeconds ?? 7 * 24 * 60 * 60;
+    try {
+      await this.webhookRegistrationStore.putIfAbsent({
+        agentId: args.agent.id,
+        agentUrl: args.agent.agent_uri,
+        protocol: args.agent.protocol,
+        operationId: args.operationId,
+        taskType: args.taskType,
+        callbackUrl: args.callbackUrl,
+        method: 'POST',
+        mode: args.mode,
+        createdAt: nowMs,
+        expiresAt: nowMs + ttlSeconds * 1000,
+      });
+    } catch (cause) {
+      // RFC 9421 has no safe fallback without seller-pinned provenance. Legacy
+      // HMAC remains verifiable from the configured global secret, preserving
+      // pre-registration behavior across restarts and replicas.
+      if (args.mode === 'rfc9421') throw cause;
+    }
+  }
+
+  private webhookJwksFor(registration: Readonly<WebhookRegistration>): JwksResolver {
+    const configured = this.config.webhookVerification?.jwks;
+    if (configured) return configured;
+    const key = `${registration.protocol}\x00${registration.agentUrl}`;
+    const existing = this.webhookJwksResolvers.get(key);
+    if (existing) return existing;
+
+    const resolver = new ResolvedAgentJwksResolver(registration.agentUrl, registration.protocol, {
+      ...this.config.webhookVerification?.resolverOptions,
+      fetchCapabilities: agentUrl => {
+        const configuredFetch = this.config.webhookVerification?.fetchCapabilities;
+        if (configuredFetch) return configuredFetch(agentUrl, registration.protocol);
+        return ProtocolClient.callTool(
+          {
+            id: registration.agentId,
+            name: registration.agentId,
+            agent_uri: agentUrl,
+            protocol: registration.protocol,
+          },
+          'get_adcp_capabilities',
+          {},
+          {
+            adcpVersion: this.resolvedAdcpVersion,
+            ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
+            ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
+            transport: {
+              ...this.config.transport,
+              requestTimeoutMs:
+                this.config.transport?.requestTimeoutMs ??
+                this.config.webhookVerification?.resolverOptions?.timeoutMs ??
+                10_000,
+            },
+          }
+        );
+      },
+    });
+    this.webhookJwksResolvers.set(key, resolver);
+    return resolver;
   }
 
   private resolveLegacyFormatConverter(
@@ -2292,16 +2439,159 @@ export class SingleAgentClient {
    * Verify and normalize an inbound webhook without dispatching handlers.
    *
    * This is the lower-level receiver primitive for integrations that need to
-   * map malformed webhooks to precise HTTP responses. It verifies the legacy
-   * HMAC profile when `webhookSecret` is configured, parses raw JSON bodies,
+   * map malformed webhooks to precise HTTP responses. It verifies the mode
+   * selected by the trusted outbound registration (RFC 9421 by default, or
+   * legacy HMAC when `webhookSecret` was used), parses raw JSON bodies,
    * validates the transport envelope shape, and returns the canonicalized
    * AdCP result plus routing metadata. Legacy wire inspection is intentionally
    * confined to the transport adapter and is not returned by this primary API.
    */
   async verifyAndParseWebhook(options: VerifyAndParseWebhookOptions): Promise<WebhookParseResult> {
     const rawBody = options.rawBody ?? rawBodyFromUnknown(options.body);
+    const authHeaders = inspectWebhookAuthenticationHeaders(options.headers, options.signature, options.timestamp);
+    const trustedOperationId =
+      options.operationId && options.operationId !== 'unknown' ? options.operationId : undefined;
+    let registration: Readonly<WebhookRegistration> | undefined;
+    if (trustedOperationId) {
+      try {
+        registration = await this.webhookRegistrationStore.get(this.agent.id, trustedOperationId);
+      } catch (cause) {
+        if (!this.config.webhookSecret) {
+          return {
+            ok: false,
+            code: 'webhook_registration_store_unavailable',
+            message: 'Webhook registration state is temporarily unavailable.',
+            cause,
+          };
+        }
+      }
+    }
+    if (registration && (registration.agentId !== this.agent.id || registration.operationId !== trustedOperationId)) {
+      return {
+        ok: false,
+        code: 'webhook_registration_store_unavailable',
+        message: 'Webhook registration state is inconsistent with the trusted route.',
+      };
+    }
+    if (registration) {
+      const nowMs = this.config.webhookVerification?.now
+        ? Math.floor(this.config.webhookVerification.now() * 1000)
+        : Date.now();
+      if (!Number.isFinite(registration.createdAt) || !Number.isFinite(registration.expiresAt)) {
+        return {
+          ok: false,
+          code: 'webhook_registration_store_unavailable',
+          message: 'Webhook registration state contains invalid timestamps.',
+        };
+      }
+      if (registration.expiresAt <= nowMs) registration = undefined;
+    }
 
-    if (this.config.webhookSecret) {
+    if (authHeaders.hasRfc9421 && !trustedOperationId) {
+      return {
+        ok: false,
+        code: 'webhook_verification_context_missing',
+        message: 'RFC 9421 verification requires a trusted route operation id.',
+      };
+    }
+    if (registration) {
+      const routedTaskType = options.taskType === 'unknown' ? undefined : options.taskType;
+      if (routedTaskType !== undefined && routedTaskType !== registration.taskType) {
+        return {
+          ok: false,
+          code: 'webhook_registration_mismatch',
+          message: 'Trusted webhook route does not match the registered task type.',
+        };
+      }
+      const oppositeMode =
+        (registration.mode === 'rfc9421' && authHeaders.hasLegacy) ||
+        (registration.mode === 'hmac-sha256' && authHeaders.hasRfc9421);
+      if (oppositeMode) {
+        const cause = new WebhookSignatureError(
+          'webhook_mode_mismatch',
+          1,
+          'Received webhook authentication mode does not match the registered callback mode.'
+        );
+        return { ok: false, code: cause.code, message: cause.message, cause };
+      }
+    }
+    if (!registration && this.config.webhookSecret && authHeaders.hasRfc9421) {
+      const cause = new WebhookSignatureError(
+        'webhook_mode_mismatch',
+        1,
+        'RFC 9421 signature headers do not match the configured legacy HMAC receiver mode.'
+      );
+      return { ok: false, code: cause.code, message: cause.message, cause };
+    }
+    if (registration?.mode === 'rfc9421') {
+      if (
+        rawBody === undefined ||
+        !options.headers ||
+        !trustedOperationId ||
+        !options.requestMethod ||
+        !options.requestUrl
+      ) {
+        return {
+          ok: false,
+          code: 'webhook_verification_context_missing',
+          message:
+            'RFC 9421 verification requires raw body bytes, all headers, POST method, an absolute trusted public URL, and a trusted route operation id.',
+        };
+      }
+      if (options.requestMethod.toUpperCase() !== 'POST') {
+        return {
+          ok: false,
+          code: 'webhook_verification_context_missing',
+          message: 'Webhook request method must be POST.',
+        };
+      }
+      try {
+        if (canonicalTargetUri(options.requestUrl) !== canonicalTargetUri(registration.callbackUrl)) {
+          const cause = new WebhookSignatureError(
+            'webhook_signature_invalid',
+            10,
+            'Trusted request URL does not match the registered callback URL.'
+          );
+          return { ok: false, code: cause.code, message: cause.message, cause };
+        }
+      } catch (cause) {
+        return {
+          ok: false,
+          code: 'webhook_verification_context_missing',
+          message: 'Webhook request URL must be a valid absolute public URL.',
+          cause,
+        };
+      }
+      const normalizedHeaders = normalizeRfc9421WebhookHeaders(options.headers);
+      if (!normalizedHeaders.ok) return normalizedHeaders.failure;
+      try {
+        await verifyRfc9421WebhookSignature(
+          {
+            method: options.requestMethod,
+            url: options.requestUrl,
+            headers: normalizedHeaders.headers,
+            body: rawBody,
+          },
+          {
+            jwks: this.webhookJwksFor(registration),
+            replayStore: this.webhookReplayStore,
+            revocationStore: this.webhookRevocationStore,
+            ...(this.config.webhookVerification?.now && { now: this.config.webhookVerification.now }),
+            agentUrlForKeyid: () => registration.agentUrl,
+          }
+        );
+      } catch (cause) {
+        if (cause instanceof WebhookSignatureError) {
+          return { ok: false, code: cause.code, message: cause.message, cause };
+        }
+        return {
+          ok: false,
+          code: 'webhook_verification_unavailable',
+          message: 'Seller signing keys could not be resolved for webhook verification.',
+          cause,
+        };
+      }
+    } else if (registration?.mode === 'hmac-sha256' || (!registration && this.config.webhookSecret)) {
       if (rawBody === undefined) {
         return {
           ok: false,
@@ -2309,9 +2599,27 @@ export class SingleAgentClient {
           message: 'Raw webhook body required for HMAC signature verification; capture bytes before JSON parsing.',
         };
       }
+      let hmacSecret: string | undefined;
+      try {
+        hmacSecret = this.config.webhookSecret;
+      } catch (cause) {
+        return {
+          ok: false,
+          code: 'webhook_verification_unavailable',
+          message: 'Legacy webhook key material is temporarily unavailable.',
+          cause,
+        };
+      }
+      if (!hmacSecret) {
+        return {
+          ok: false,
+          code: 'webhook_verification_unavailable',
+          message: 'Legacy webhook key material is unavailable for this registration.',
+        };
+      }
       const check = verifyWebhookRequest({
         rawBody,
-        secret: this.config.webhookSecret,
+        secret: hmacSecret,
         headers: options.headers,
         signature: options.signature,
         timestamp: options.timestamp,
@@ -2326,28 +2634,25 @@ export class SingleAgentClient {
           message: check.message,
         };
       }
-    } else if (this.config.allowUnauthenticatedWebhooks === true) {
+    } else if (
+      this.config.allowUnauthenticatedWebhooks === true &&
+      !registration &&
+      !authHeaders.hasRfc9421 &&
+      !authHeaders.hasLegacy
+    ) {
       warnUnverifiedWebhookReceive();
     } else {
-      // Fail closed. With no secret the legacy HMAC profile has nothing to
-      // verify against, and this client does not yet verify the RFC 9421 profile
-      // that an omitted `authentication` block selects (tracked separately), so
-      // accepting here would dispatch a caller-supplied payload to async and
-      // activity handlers and update external task status on nothing but its
-      // shape.
       return {
         ok: false,
-        code: 'webhook_unverifiable',
-        message:
-          'Refusing an unauthenticated webhook: no `webhookSecret` is configured, so there is no ' +
-          'signature to verify. Configure `webhookSecret` to enable HMAC verification, or set ' +
-          '`allowUnauthenticatedWebhooks: true` to accept unverified webhooks (only safe when the ' +
-          'receiver route is unreachable from outside your network).',
+        code: authHeaders.hasRfc9421 ? 'webhook_registration_not_found' : 'webhook_unverifiable',
+        message: 'Refusing a webhook without trusted registration provenance or a configured legacy HMAC secret.',
       };
     }
 
     const payloadSource =
-      this.config.webhookSecret && rawBody !== undefined ? rawBody : (options.payload ?? options.body ?? rawBody);
+      (registration || this.config.webhookSecret) && rawBody !== undefined
+        ? rawBody
+        : (options.payload ?? options.body ?? rawBody);
     const parsedPayload = parseWebhookBody(payloadSource);
     if (!parsedPayload.ok) {
       return parsedPayload;
@@ -2358,6 +2663,18 @@ export class SingleAgentClient {
         ? parsedPayload.payload.task_type
         : undefined;
     const payloadRecord = isObjectRecord(parsedPayload.payload) ? parsedPayload.payload : undefined;
+    if (
+      registration &&
+      ((typeof payloadRecord?.operation_id === 'string' && payloadRecord.operation_id !== registration.operationId) ||
+        (parsedTaskType !== undefined && parsedTaskType !== registration.taskType) ||
+        (typeof payloadRecord?.agent_id === 'string' && payloadRecord.agent_id !== registration.agentId))
+    ) {
+      return {
+        ok: false,
+        code: 'webhook_envelope_invalid',
+        message: 'Authenticated webhook routing fields do not match the trusted registration.',
+      };
+    }
     const associatedTaskTypes = new Set(
       [
         options.operationId,
@@ -2390,6 +2707,13 @@ export class SingleAgentClient {
         options.operationId ?? 'unknown'
       );
       normalizedTaskType = normalizedPayload.task_type;
+      if (registration && (normalizedPayload.protocol ?? 'mcp') !== registration.protocol) {
+        return {
+          ok: false,
+          code: 'webhook_envelope_invalid',
+          message: 'Authenticated webhook protocol does not match the trusted registration.',
+        };
+      }
       if (associatedTaskType !== undefined && normalizedPayload.task_type !== associatedTaskType) {
         return {
           ok: false,
@@ -2754,16 +3078,16 @@ export class SingleAgentClient {
    *
    * This helper creates a standard HTTP handler (Express/Next.js/etc.) that:
    * - Reads the full header bag so duplicate/conflicting signature headers are rejected
-   * - Verifies HMAC signature (if webhookSecret configured)
-   * - Validates timestamp freshness
+   * - Verifies the registered RFC 9421 or legacy HMAC signature mode
+   * - Validates signature freshness and RFC 9421 nonce replay
    * - Calls handleWebhook() with proper error handling
    *
-   * @returns HTTP handler function compatible with Express, Next.js, etc.
+   * @returns HTTP handler function compatible with Express-style adapters.
    *
    * @example Express
    * ```typescript
-   * const client = new ADCPClient(agent, {
-   *   webhookSecret: 'your-secret-key',
+   * const client = new SingleAgentClient(agent, {
+   *   webhookUrlTemplate: 'https://buyer.example/webhook/{task_type}/{operation_id}',
    *   handlers: {
    *     onSyncCreativesStatusChange: async (result) => {
    *       console.log('Creative synced:', result);
@@ -2771,22 +3095,18 @@ export class SingleAgentClient {
    *   }
    * });
    *
-   * app.post('/webhook', client.createWebhookHandler());
-   * ```
-   *
-   * @example Next.js API Route
-   * ```typescript
-   * export default client.createWebhookHandler();
+   * app.post(
+   *   '/webhook/:task_type/:operation_id',
+   *   express.raw({ type: 'application/json' }),
+   *   client.createWebhookHandler({
+   *     getRequestUrl: req => `https://buyer.example${req.originalUrl}`,
+   *   }),
+   * );
    * ```
    */
-  createWebhookHandler() {
+  createWebhookHandler(adapter: WebhookHandlerAdapter = {}) {
     return async (
-      req: {
-        headers: Record<string, WebhookHeaderValue>;
-        body: unknown;
-        rawBody?: string | Buffer | Uint8Array;
-        params?: Record<string, string>;
-      },
+      req: WebhookHandlerRequest,
       res: {
         status: (code: number) => { json: (body: unknown) => void };
         json?: unknown;
@@ -2813,8 +3133,12 @@ export class SingleAgentClient {
             : req.body;
 
         // Extract routing params if available (e.g., Express route params)
-        const taskType = req.params?.task_type || req.params?.taskType || 'unknown';
-        const operationId = req.params?.operation_id || req.params?.operationId || 'unknown';
+        const taskType =
+          (await adapter.getTaskType?.(req)) || req.params?.task_type || req.params?.taskType || 'unknown';
+        const operationId =
+          (await adapter.getOperationId?.(req)) || req.params?.operation_id || req.params?.operationId || 'unknown';
+        const requestMethod = (await adapter.getRequestMethod?.(req)) || req.method;
+        const requestUrl = (await adapter.getRequestUrl?.(req)) || req.publicUrl;
 
         const parsed = await this.verifyAndParseWebhook({
           payload,
@@ -2823,6 +3147,8 @@ export class SingleAgentClient {
           headers: req.headers,
           taskType,
           operationId,
+          requestMethod,
+          requestUrl,
         });
         if (!parsed.ok) {
           throw new WebhookDispatchError(parsed.code, parsed.message, parsed.cause);
@@ -3048,7 +3374,8 @@ export class SingleAgentClient {
           adaptedParams,
           canonicalInputHandler,
           effectiveOptions,
-          serverVersion
+          serverVersion,
+          capabilityDiscoveryContext.capabilities
         )
     );
     throwIfAborted(effectiveOptions?.signal);
@@ -5498,7 +5825,8 @@ export class SingleAgentClient {
         adaptedParams,
         inputHandler,
         effectiveOptions,
-        serverVersion
+        serverVersion,
+        capabilityDiscoveryContext.capabilities
       );
 
       const postAdapterLogs = [...inputSchemaStripLogs, ...v25DriftLogs];
@@ -6970,21 +7298,17 @@ let hasWarnedAboutUnverifiedWebhookReceive = false;
 /**
  * Warn once when a webhook is accepted with no authenticity check at all.
  *
- * Without `webhookSecret` the legacy HMAC profile has nothing to verify against,
- * so a structurally valid payload from any caller who can reach the receiver
- * route is dispatched to async/activity handlers and updates task status. The
- * spec's answer for a registration that omits `authentication` is the RFC 9421
- * webhook profile; until this receiver verifies that profile, an operator
- * running without a secret needs to know the check is absent rather than passing.
+ * This path is available only through the explicit
+ * `allowUnauthenticatedWebhooks` escape hatch and only when no trusted push
+ * registration or legacy HMAC secret is available.
  */
 function warnUnverifiedWebhookReceive(): void {
   if (hasWarnedAboutUnverifiedWebhookReceive) return;
   hasWarnedAboutUnverifiedWebhookReceive = true;
   console.warn(
-    '[adcp] Webhook accepted WITHOUT authenticity verification: no `webhookSecret` is configured, ' +
-      'so any caller able to reach this receiver can forge task completions and status changes. ' +
-      'Configure `webhookSecret` to enable HMAC verification, and restrict network access to the ' +
-      'receiver route.'
+    '[adcp] Webhook accepted WITHOUT authenticity verification because ' +
+      '`allowUnauthenticatedWebhooks` is enabled and no trusted registration was found. ' +
+      'Any caller able to reach this receiver can forge task completions and status changes.'
   );
 }
 
@@ -7039,6 +7363,67 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function inspectWebhookAuthenticationHeaders(
+  headers: WebhookHeadersLike | undefined,
+  explicitSignature: WebhookHeaderValue,
+  explicitTimestamp: WebhookHeaderValue
+): { hasLegacy: boolean; hasRfc9421: boolean } {
+  const hasHeader = (name: string): boolean => {
+    if (!headers) return false;
+    if (typeof (headers as Headers).get === 'function') return (headers as Headers).get(name) !== null;
+    return Object.entries(headers).some(
+      ([key, value]) => key.toLowerCase() === name && value !== null && value !== undefined
+    );
+  };
+  return {
+    hasLegacy:
+      explicitSignature != null ||
+      explicitTimestamp != null ||
+      hasHeader('x-adcp-signature') ||
+      hasHeader('x-adcp-timestamp'),
+    hasRfc9421: hasHeader('signature') || hasHeader('signature-input'),
+  };
+}
+
+function normalizeRfc9421WebhookHeaders(
+  headers: WebhookHeadersLike
+): { ok: true; headers: Record<string, string | string[] | undefined> } | { ok: false; failure: WebhookParseFailure } {
+  const normalized: Record<string, string | string[] | undefined> = {};
+  if (typeof (headers as Headers).forEach === 'function') {
+    (headers as Headers).forEach((value, key) => {
+      normalized[key] = value;
+    });
+    return { ok: true, headers: normalized };
+  }
+
+  const singletonHeaders = new Set([
+    'signature',
+    'signature-input',
+    'content-digest',
+    'content-type',
+    'x-adcp-signature',
+    'x-adcp-timestamp',
+  ]);
+  const seen = new Set<string>();
+  for (const [key, value] of Object.entries(headers)) {
+    const lower = key.toLowerCase();
+    if (singletonHeaders.has(lower)) {
+      if (seen.has(lower) || Array.isArray(value)) {
+        const cause = new WebhookSignatureError(
+          'webhook_signature_header_malformed',
+          1,
+          `Webhook header ${lower} must have exactly one unambiguous value.`
+        );
+        return { ok: false, failure: { ok: false, code: cause.code, message: cause.message, cause } };
+      }
+      seen.add(lower);
+    }
+    if (value === null || value === undefined) continue;
+    normalized[key] = Array.isArray(value) ? value.map(String) : String(value);
+  }
+  return { ok: true, headers: normalized };
+}
+
 function isBareDeliveryReport(payload: Record<string, unknown>): boolean {
   return (
     typeof payload.notification_type === 'string' &&
@@ -7066,7 +7451,24 @@ function missingMcpWebhookFields(payload: Record<string, unknown>): string[] {
 
 function webhookErrorHttpStatus(error: unknown): number {
   if (error instanceof WebhookDispatchError) {
-    if (error.code === 'webhook_signature_invalid' || error.code === 'webhook_timestamp_invalid') {
+    if (error.code === 'webhook_signature_replayed') return 409;
+    if (error.code === 'webhook_signature_rate_abuse') return 429;
+    if (
+      error.code === 'webhook_registration_store_unavailable' ||
+      error.code === 'webhook_verification_unavailable' ||
+      error.code === 'webhook_signature_revocation_stale'
+    ) {
+      return 503;
+    }
+    if (error.code === 'webhook_verification_context_missing') return 500;
+    if (
+      error.code.startsWith('webhook_signature_') ||
+      error.code === 'webhook_timestamp_invalid' ||
+      error.code === 'webhook_mode_mismatch' ||
+      error.code === 'webhook_registration_not_found' ||
+      error.code === 'webhook_registration_mismatch' ||
+      error.code === 'webhook_unverifiable'
+    ) {
       return 401;
     }
     return 400;

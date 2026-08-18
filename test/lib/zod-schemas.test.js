@@ -422,6 +422,32 @@ describe('Zod Schema Validation', () => {
       }).success,
       false
     );
+    for (const agent_url of [
+      'https://legacy.example/a b',
+      'https://legacy.example/a\tb',
+      'https://legacy.example/%ZZ',
+      'https://münich.example',
+    ]) {
+      assert.strictEqual(
+        schemas.CreativeAssetSchema.safeParse({
+          ...base,
+          format_id: { agent_url, id: 'display_image' },
+        }).success,
+        false,
+        `agent_url must reject whitespace: ${JSON.stringify(agent_url)}`
+      );
+    }
+    for (const forbiddenIdentity of ['capability_id', 'capability_ref']) {
+      assert.strictEqual(
+        schemas.CreativeAssetSchema.safeParse({
+          ...base,
+          format_kind: 'image',
+          [forbiddenIdentity]: 'legacy-capability',
+        }).success,
+        false,
+        `${forbiddenIdentity} is forbidden by the creative schema`
+      );
+    }
   });
 
   test('creative schemas validate slot assets and canonical manifest identity', async () => {
@@ -465,6 +491,56 @@ describe('Zod Schema Validation', () => {
       }).success,
       false,
       'legacy and canonical identities are mutually exclusive'
+    );
+    assert.strictEqual(
+      schemas.CreativeManifestSchema.safeParse({
+        format_kind: 'display_tag',
+        assets: { 'x-vendor-extension': { vendor_payload: true } },
+      }).success,
+      true,
+      'nonmatching extension keys remain allowed by additionalProperties'
+    );
+
+    const assetBase = { creative_id: 'creative_1', name: 'Creative', format_kind: 'display_tag' };
+    assert.strictEqual(
+      schemas.CreativeAssetSchema.safeParse({
+        ...assetBase,
+        assets: { tag_url: { asset_type: 'url' } },
+      }).success,
+      false,
+      'creative library assets apply the same slot validation'
+    );
+    assert.strictEqual(
+      schemas.CreativeAssetSchema.safeParse({
+        ...assetBase,
+        assets: {
+          tag_url: [
+            { asset_type: 'url', url: 'https://creative.example/one.js' },
+            { asset_type: 'url', url: 'https://creative.example/two.js' },
+          ],
+        },
+      }).success,
+      true,
+      'creative library assets accept populated variant arrays'
+    );
+    assert.strictEqual(
+      schemas.CreativeAssetSchema.safeParse({
+        ...assetBase,
+        assets: { 'x-vendor-extension': { vendor_payload: true } },
+      }).success,
+      true,
+      'creative library assets preserve extension keys'
+    );
+  });
+
+  test('creative runtime validation does not inflate MCP JSON schemas', async () => {
+    const schemas = await import('../../dist/lib/types/schemas.generated.mjs');
+    const inputSchema = z.toJSONSchema(schemas.CreativeManifestSchema);
+
+    assert.deepStrictEqual(
+      inputSchema.properties.assets.additionalProperties,
+      {},
+      'runtime-only slot validation must not expand AssetVariant into MCP discovery schemas'
     );
   });
 

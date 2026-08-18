@@ -467,14 +467,47 @@ export type { SigningProvider } from '../signing/provider';
 export { createPinAndBindFetch, WEBHOOK_SSRF_POLICY, LOOPBACK_OK_WEBHOOK_SSRF_POLICY } from './pin-and-bind-fetch';
 export type { PinAndBindFetchOptions, DnsLookupAll } from './pin-and-bind-fetch';
 
-export { checkGovernance, governanceDeniedError } from './governance';
+export {
+  checkGovernance,
+  createAdcpGovernanceEnforcementMiddleware,
+  governanceDeniedError,
+  governanceUnavailableError,
+} from './governance';
 export type {
+  AdcpGovernanceEnforcementMiddleware,
   CheckGovernanceOptions,
   GovernanceCallResult,
   GovernanceApproved,
   GovernanceDenied,
   GovernanceConditions,
 } from './governance';
+
+export {
+  GovernanceAuthorizationError,
+  GovernanceReplayStoreAdapter,
+  InMemoryGovernanceReplayStore,
+  buildGovernanceExecutionCommitment,
+  buildGovernanceExecutionRequest,
+  computeGovernedPayloadHash,
+  createGovernanceEnforcementMiddleware,
+  verifyGovernanceAuthorization,
+} from '../governance';
+export type {
+  BuildGovernanceExecutionRequestInput,
+  GovernanceAuthorizationClaims,
+  GovernanceAuthorizationErrorCode,
+  GovernanceAuthorizationResult,
+  GovernanceAuthorizationSuccess,
+  GovernanceCommitment,
+  GovernanceEnforcementMiddleware,
+  GovernanceEnforcementMiddlewareConfig,
+  GovernanceEnforcementMiddlewareInput,
+  GovernanceReplayStore,
+  GovernanceReplayBinding,
+  GovernanceRevocationResolver,
+  GovernanceRevocationStatus,
+  VerifyGovernanceAuthorizationOptions,
+} from '../governance';
 
 export {
   clearDefaultResolvedListCache,

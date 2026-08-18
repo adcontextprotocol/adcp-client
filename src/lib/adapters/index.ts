@@ -40,6 +40,9 @@ export {
   type GovernanceAdapterConfig,
   type GovernanceAdapterErrorCode,
   type CommittedCheckRequest,
+  type LegacyCommittedCheckRequest,
+  type ModernCommittedCheckRequest,
+  GovernanceAdapterError,
   GovernanceAdapterErrorCodes,
   isGovernanceAdapterError,
 } from './governance-adapter';

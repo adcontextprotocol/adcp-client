@@ -6,5 +6,5 @@
     "@adcp/client": "6.0.0",
     "@adcp/eslint-plugin": "0.1.7"
   },
-  "changesets": ["brave-owls-negotiate", "fix-k8s-cluster-local-private-url"]
+  "changesets": ["brave-owls-negotiate", "bright-ravens-profile", "fix-k8s-cluster-local-private-url"]
 }

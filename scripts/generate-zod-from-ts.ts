@@ -586,17 +586,24 @@ function postProcessCreativeRuntimeConstraints(content: string): string {
             message: "creative identity requires exactly one of format_id or format_kind"
         });
     }
+    if ("capability_id" in value || "capability_ref" in value) {
+        ctx.addIssue({
+            code: "custom",
+            path: [],
+            message: "creative identity does not allow capability_id or capability_ref"
+        });
+    }
 })`;
 
   const preserveCreativeConstraints = (schemaName: 'CreativeAssetSchema' | 'CreativeManifestSchema'): void => {
     const schema = schemaBlock(schemaName);
     const constrainedAssets = schema.block
       // `patternProperties` is lost when json-schema-to-typescript combines it
-      // with `additionalProperties: true`. Runtime validation still needs every
-      // creative slot to be an AssetVariant (or a non-empty array of variants).
+      // with `additionalProperties: true`. Preserve validation for canonical
+      // slot keys while continuing to allow forward-compatible extension keys.
       // AssetVariantSchema is declared later in the generated module, so defer
       // resolving it until parse time to avoid a top-level TDZ reference.
-      .replace('assets: z.record(z.string(), z.unknown())', 'assets: z.record(z.string(), CreativeAssetValueSchema)');
+      .replace('assets: z.record(z.string(), z.unknown())', 'assets: CreativeAssetsSchema');
     if (constrainedAssets === schema.block) {
       throw new Error(`Unable to preserve creative asset constraints on ${schemaName}.`);
     }
@@ -626,10 +633,27 @@ function postProcessCreativeRuntimeConstraints(content: string): string {
   preserveCreativeConstraints('CreativeManifestSchema');
 
   const creativeManifest = schemaBlock('CreativeManifestSchema');
-  const assetValueSchema = `const CreativeAssetValueSchema: z.ZodType = z.union([
-    z.lazy(() => AssetVariantSchema),
-    z.array(z.lazy(() => AssetVariantSchema)).min(1)
-]);
+  const assetValueSchema = `const CreativeAssetValueSchema: z.ZodType = z.unknown().superRefine((value, ctx) => {
+    const variants = Array.isArray(value) ? value : [value];
+    if (variants.length === 0 || variants.some(variant => !AssetVariantSchema.safeParse(variant).success)) {
+        ctx.addIssue({
+            code: "custom",
+            message: "creative slot must contain an asset or non-empty array of assets"
+        });
+    }
+});
+
+const CreativeAssetsSchema: z.ZodType<Record<string, unknown>> = z.record(z.string(), z.unknown()).superRefine((assets, ctx) => {
+    for (const [slotKey, assetValue] of Object.entries(assets)) {
+        if (/^[a-z0-9_]+$/.test(slotKey) && !CreativeAssetValueSchema.safeParse(assetValue).success) {
+            ctx.addIssue({
+                code: "custom",
+                path: [slotKey],
+                message: "creative slot must contain an asset or non-empty array of assets"
+            });
+        }
+    }
+});
 
 `;
   content = content.slice(0, creativeManifest.start) + assetValueSchema + content.slice(creativeManifest.start);
@@ -637,7 +661,7 @@ function postProcessCreativeRuntimeConstraints(content: string): string {
   const formatReference = schemaBlock('FormatReferenceStructuredObjectSchema');
   const strictFormatReference = formatReference.block.replace(
     'agent_url: z.string()',
-    'agent_url: z.string().regex(/^\\S(?:.*\\S)?$/).url()'
+    'agent_url: z.string().regex(/^[\\x21-\\x7E]+$/).regex(/^(?:[^%]|%[0-9A-Fa-f]{2})*$/).url()'
   );
   if (strictFormatReference === formatReference.block) {
     throw new Error('Unable to apply URI validation to FormatReferenceStructuredObjectSchema.agent_url.');

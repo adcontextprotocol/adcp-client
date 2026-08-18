@@ -17,6 +17,9 @@ import type {
 import { ProtocolClient } from '../protocols';
 import type { AgentConfig } from '../types';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
+import type { GovernanceCommitment } from '../governance';
+import { buildGovernanceExecutionCommitment, buildGovernanceExecutionRequest } from '../governance';
+import { normalizeGovernanceVerdict } from '../core/GovernanceTypes';
 
 /**
  * Configuration for the seller-side governance adapter.
@@ -42,13 +45,9 @@ export interface GovernanceAdapterConfig {
 /**
  * Committed governance check request from the seller's perspective.
  */
-export interface CommittedCheckRequest {
-  /** Campaign governance plan ID */
-  planId: string;
-  /** @deprecated No longer sent to governance agent — use governanceContext instead */
+interface CommittedCheckRequestBase {
+  /** @deprecated Put the durable ID on plannedDelivery.media_buy_id. */
   mediaBuyId?: string;
-  /** Opaque governance context from the buyer's protocol envelope. Pass through verbatim. */
-  governanceContext?: string;
   /** What the seller will actually deliver */
   plannedDelivery: PlannedDelivery;
   /** Lifecycle phase of the check */
@@ -58,6 +57,23 @@ export interface CommittedCheckRequest {
   /** Summary of changes for modification-phase checks */
   modificationSummary?: string;
 }
+
+/** Deprecated plan-addressed request retained for existing seller adopters. */
+export interface LegacyCommittedCheckRequest extends CommittedCheckRequestBase {
+  planId: string;
+  governanceContext?: string;
+  executionCommitment?: GovernanceCommitment;
+}
+
+/** AdCP 3.2 context-addressed execution request. */
+export interface ModernCommittedCheckRequest extends CommittedCheckRequestBase {
+  /** Opaque governance context from the buyer's protocol envelope. */
+  governanceContext: string;
+  /** Required authoritative positive delta for modification checks. */
+  executionCommitment?: GovernanceCommitment;
+}
+
+export type CommittedCheckRequest = LegacyCommittedCheckRequest | ModernCommittedCheckRequest;
 
 /**
  * Interface for seller-side governance adapters.
@@ -81,12 +97,24 @@ export const GovernanceAdapterErrorCodes = {
 
 export type GovernanceAdapterErrorCode = (typeof GovernanceAdapterErrorCodes)[keyof typeof GovernanceAdapterErrorCodes];
 
+export class GovernanceAdapterError extends Error {
+  constructor(
+    readonly code: GovernanceAdapterErrorCode,
+    message: string,
+    options?: ErrorOptions
+  ) {
+    super(message, options);
+    this.name = 'GovernanceAdapterError';
+  }
+}
+
 /**
  * Type guard: check if a response is a governance adapter error.
  */
 export function isGovernanceAdapterError(
   response: unknown
-): response is { error: { code: GovernanceAdapterErrorCode; message?: string } } {
+): response is GovernanceAdapterError | { error: { code: GovernanceAdapterErrorCode; message?: string } } {
+  if (response instanceof GovernanceAdapterError) return true;
   if (!response || typeof response !== 'object') return false;
   const r = response as Record<string, any>;
   return r.error?.code && Object.values(GovernanceAdapterErrorCodes).includes(r.error.code);
@@ -113,27 +141,59 @@ export class GovernanceAdapter implements IGovernanceAdapter {
 
   async checkCommitted(request: CommittedCheckRequest): Promise<CheckGovernanceResponse> {
     if (!this.agentConfig) {
-      return {
-        status: 'failed',
-        check_id: '',
-        verdict: 'denied',
-        binding: 'committed',
-        plan_id: request.planId,
-        explanation: 'Governance not configured on this server',
-        error_code: GovernanceAdapterErrorCodes.NOT_SUPPORTED,
-      } as unknown as CheckGovernanceResponse;
+      return adapterDenial('Governance not configured on this server', GovernanceAdapterErrorCodes.NOT_SUPPORTED);
     }
 
-    const checkRequest: CheckGovernanceRequest = {
-      plan_id: request.planId,
-      caller: this.agentConfig.callerUrl,
-      governance_context: request.governanceContext,
-      planned_delivery: request.plannedDelivery,
-      phase: request.phase,
-      delivery_metrics: request.deliveryMetrics,
-      ...(request.mediaBuyId && { payload: { media_buy_id: request.mediaBuyId } }),
-      ...(request.modificationSummary && { payload: { modification_summary: request.modificationSummary } }),
-    };
+    const plannedDelivery =
+      request.mediaBuyId && !request.plannedDelivery.media_buy_id
+        ? { ...request.plannedDelivery, media_buy_id: request.mediaBuyId }
+        : request.plannedDelivery;
+    // `planId` identifies the published pre-3.2 request arm. Legacy callers
+    // commonly supplied both it and governanceContext, so plan addressing
+    // must take precedence; otherwise an SDK upgrade silently drops plan_id.
+    const planId = 'planId' in request ? request.planId : undefined;
+    const legacy = typeof planId === 'string' && planId.length > 0;
+    const modern = !legacy && typeof request.governanceContext === 'string' && request.governanceContext.length > 0;
+    const phase = request.phase ?? 'purchase';
+    let checkRequest: CheckGovernanceRequest;
+    if (modern) {
+      let executionCommitment = request.executionCommitment;
+      if (phase === 'modification' && !executionCommitment) {
+        throw new TypeError('Modern modification governance checks require an authoritative executionCommitment');
+      }
+      if (
+        phase === 'purchase' &&
+        !executionCommitment &&
+        typeof plannedDelivery.total_budget === 'number' &&
+        typeof plannedDelivery.currency === 'string'
+      ) {
+        executionCommitment = buildGovernanceExecutionCommitment(
+          plannedDelivery.total_budget,
+          plannedDelivery.currency
+        );
+      }
+      checkRequest = buildGovernanceExecutionRequest({
+        caller: this.agentConfig.callerUrl,
+        governanceContext: request.governanceContext!,
+        plannedDelivery,
+        phase,
+        executionCommitment,
+        deliveryMetrics: request.deliveryMetrics,
+        modificationSummary: request.modificationSummary,
+      });
+    } else {
+      // Preserve the published pre-3.2 plan-addressed request shape.
+      checkRequest = {
+        plan_id: planId,
+        caller: this.agentConfig.callerUrl,
+        governance_context: request.governanceContext,
+        planned_delivery: plannedDelivery,
+        phase: request.phase,
+        delivery_metrics: request.deliveryMetrics,
+        ...(request.mediaBuyId && { payload: { media_buy_id: request.mediaBuyId } }),
+        ...(request.modificationSummary && { payload: { modification_summary: request.modificationSummary } }),
+      } as CheckGovernanceRequest;
+    }
 
     try {
       const response = await ProtocolClient.callTool(
@@ -143,19 +203,43 @@ export class GovernanceAdapter implements IGovernanceAdapter {
         { adcpVersion: this.agentConfig.adcpVersion }
       );
 
-      return unwrapProtocolResponse(response) as unknown as CheckGovernanceResponse;
+      const unwrapped = unwrapProtocolResponse(response) as unknown as CheckGovernanceResponse;
+      if (!modern) return unwrapped;
+      const verdict = normalizeGovernanceVerdict(unwrapped);
+      if (!verdict || verdict.verdict === 'conditions' || verdict.checkType !== 'execution') {
+        throw new GovernanceAdapterError(
+          GovernanceAdapterErrorCodes.CHECK_FAILED,
+          'Governance execution check returned an invalid non-binary verdict'
+        );
+      }
+      return unwrapped;
     } catch (err) {
-      return {
-        status: 'failed',
-        check_id: '',
-        verdict: 'denied',
-        binding: 'committed',
-        plan_id: request.planId,
-        explanation: `Governance agent unreachable: ${(err as Error).message}`,
-        error_code: GovernanceAdapterErrorCodes.AGENT_UNREACHABLE,
-      } as unknown as CheckGovernanceResponse;
+      if (err instanceof GovernanceAdapterError) throw err;
+      throw new GovernanceAdapterError(
+        GovernanceAdapterErrorCodes.AGENT_UNREACHABLE,
+        `Governance agent unavailable: ${(err as Error).message}`,
+        { cause: err }
+      );
     }
   }
+}
+
+function adapterDenial(message: string, code: GovernanceAdapterErrorCode): CheckGovernanceResponse {
+  return {
+    check_id: '',
+    verdict: 'denied',
+    check_type: 'execution',
+    explanation: message,
+    findings: [
+      {
+        category_id: 'governance_execution',
+        severity: 'critical',
+        explanation: message,
+        details: { adapter_error_code: code },
+      },
+    ],
+    error_code: code,
+  } as unknown as CheckGovernanceResponse;
 }
 
 /**

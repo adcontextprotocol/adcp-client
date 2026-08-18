@@ -69,6 +69,7 @@ import { ConfigurationError } from '../errors';
 import { resolveBundleKey, toReleasePrecisionWire, validateAdcpVersionWire } from '../validation/schema-loader';
 import { buildAgentSigningContext, CAPABILITY_OP, ensureCapabilityLoaded } from '../signing/client';
 import { withResponseSizeLimit } from './responseSizeLimit';
+import { preparedProtocolToolCallFor } from './prepared-call-context';
 import {
   withTransportDiagnostics,
   type TransportActivityHandler as TransportActivityHandlerFn,
@@ -388,6 +389,79 @@ export interface CallToolOptions {
   };
 }
 
+export interface PreparedProtocolToolCall {
+  /** Exact AdCP tool arguments that the target service will receive. */
+  args: Record<string, unknown>;
+  /** A2A carries task-status webhook registration outside tool arguments. */
+  pushNotificationConfig?: PushNotificationConfig;
+}
+
+/**
+ * Materialize protocol-owned request fields before a tool call is authorized.
+ *
+ * Governance binds the complete downstream AdCP argument object, including
+ * version fields and (for MCP) `push_notification_config`. Keeping this pure
+ * preparation step shared with {@link ProtocolClient.callTool} prevents the
+ * authorized payload from drifting from the payload that reaches the service.
+ */
+export function prepareProtocolToolCall(
+  agent: AgentConfig,
+  args: Record<string, unknown>,
+  options: Pick<
+    CallToolOptions,
+    | 'webhookUrl'
+    | 'webhookSecret'
+    | 'webhookToken'
+    | 'serverVersion'
+    | 'adcpVersion'
+    | 'wireAdcpVersion'
+    | 'versionEnvelope'
+  > = {}
+): PreparedProtocolToolCall {
+  const envelope = buildVersionEnvelopeForMode(
+    options.versionEnvelope ?? 'auto',
+    options.wireAdcpVersion ?? options.adcpVersion,
+    options.serverVersion
+  );
+  const argsWithVersion = applyVersionEnvelope(args, envelope);
+
+  // The in-process MCP client has historically had no protocol webhook
+  // registration path. Preserve that behavior and, crucially, describe the
+  // exact arguments that path will receive.
+  if (agent.protocol === 'mcp' && agent._inProcessMcpClient) {
+    return { args: argsWithVersion };
+  }
+
+  let pushNotificationConfig: PushNotificationConfig | undefined;
+  if (options.webhookUrl) {
+    if (options.webhookSecret) {
+      pushNotificationConfig = {
+        url: options.webhookUrl,
+        ...(options.webhookToken && { token: options.webhookToken }),
+        authentication: {
+          schemes: ['HMAC-SHA256' as const],
+          credentials: options.webhookSecret,
+        },
+      };
+    } else if (options.serverVersion === 'v2') {
+      warnV2PushNotificationNeedsSecret();
+    } else {
+      pushNotificationConfig = {
+        url: options.webhookUrl,
+        ...(options.webhookToken && { token: options.webhookToken }),
+      };
+    }
+  }
+
+  return {
+    args:
+      agent.protocol === 'mcp' && pushNotificationConfig
+        ? { ...argsWithVersion, push_notification_config: pushNotificationConfig }
+        : argsWithVersion,
+    ...(pushNotificationConfig ? { pushNotificationConfig } : {}),
+  };
+}
+
 /**
  * Universal protocol client - automatically routes to the correct protocol implementation
  */
@@ -422,17 +496,17 @@ export class ProtocolClient {
       transportActivityContext,
     } = options;
     const transport = normalizeTransportOptions(requestedTransport);
-    // Per-instance version envelope. Throws on unparseable pins via
-    // `resolveWireMajor`; construction-time `resolveAdcpVersion` is the
-    // primary gate but this is the failsafe for callers reaching
-    // `ProtocolClient.callTool` directly (test harnesses, the in-process
-    // MCP path). Returns `{ adcp_major_version }` for 3.0 pins and
-    // `{ adcp_major_version, adcp_version }` for 3.1+ pins.
-    const versionEnvelope = buildVersionEnvelopeForMode(
-      versionEnvelopeMode,
-      wireAdcpVersion ?? adcpVersion,
-      serverVersion
-    );
+    const preparedCall =
+      preparedProtocolToolCallFor(agent, toolName, args) ??
+      prepareProtocolToolCall(agent, args, {
+        webhookUrl,
+        webhookSecret,
+        webhookToken,
+        serverVersion,
+        adcpVersion,
+        wireAdcpVersion,
+        versionEnvelope: versionEnvelopeMode,
+      });
     // Enter the response-size-limit ALS slot once for this call. The slot is
     // read by `wrapFetchWithSizeLimit` in both protocol transports, so the
     // cap applies regardless of which path (MCP / A2A / OAuth refresh) the
@@ -462,8 +536,7 @@ export class ProtocolClient {
               // still apply (they run in SingleAgentClient above this call). We skip
               // URL validation, OAuth refresh, and signing — none apply in-process.
               if (agent.protocol === 'mcp' && agent._inProcessMcpClient) {
-                const inProcArgs = applyVersionEnvelope(args, versionEnvelope);
-                return callMCPToolWithClient(agent._inProcessMcpClient, toolName, inProcArgs, debugLogs, {
+                return callMCPToolWithClient(agent._inProcessMcpClient, toolName, preparedCall.args, debugLogs, {
                   ...(signal && { signal }),
                   ...(transport?.requestTimeoutMs !== undefined && { requestTimeoutMs: transport.requestTimeoutMs }),
                 });
@@ -526,61 +599,7 @@ export class ProtocolClient {
                 );
               }
 
-              // Inject the version envelope on every request so sellers can validate
-              // compatibility. Skip for v2 servers — they don't recognise the
-              // version fields and strict-schema agents reject them. The envelope
-              // shape is per-pin: 3.0 pins get the integer `adcp_major_version`
-              // alone; 3.1+ pins get both that and the release-precision string
-              // `adcp_version` (`'3.1'` / `'3.1.0-beta.1'`) per spec PR
-              // `adcontextprotocol/adcp#3493`.
-              const argsWithVersion = applyVersionEnvelope(args, versionEnvelope);
-
-              // Build push_notification_config for ASYNC TASK STATUS notifications
-              // (NOT for reporting_webhook - that stays in args)
-              // Schema: https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
-              // `authentication` is a scheme SELECTOR, not a fallback: from AdCP
-              // 3.0 on, push-notification-config.json makes its presence opt the
-              // seller into legacy HMAC-SHA256 and its absence select the RFC
-              // 9421 webhook profile, with `required: ["url"]` only. Emitting it
-              // with a placeholder credential would therefore downgrade every
-              // webhook to legacy HMAC keyed by a constant that ships in this
-              // file, so the block is omitted unless a real secret backs it.
-              //
-              // v2.5 predates the selector: there `required` is
-              // `["url", "authentication"]` and there is no 9421 path, so an
-              // omitted block is schema-invalid rather than a mode selection.
-              // With no secret there is nothing honest to send a v2 seller, so
-              // suppress the registration instead of fabricating a credential.
-              const pushNotificationConfig: PushNotificationConfig | undefined = (():
-                | PushNotificationConfig
-                | undefined => {
-                if (!webhookUrl) return undefined;
-                if (webhookSecret) {
-                  return {
-                    url: webhookUrl,
-                    ...(webhookToken && { token: webhookToken }),
-                    authentication: {
-                      schemes: ['HMAC-SHA256' as const],
-                      credentials: webhookSecret,
-                    },
-                  };
-                }
-                if (serverVersion === 'v2') {
-                  warnV2PushNotificationNeedsSecret();
-                  return undefined;
-                }
-                return {
-                  url: webhookUrl,
-                  ...(webhookToken && { token: webhookToken }),
-                };
-              })();
-
               if (agent.protocol === 'mcp') {
-                // For MCP, include push_notification_config in tool arguments (MCP spec)
-                const argsWithWebhook = pushNotificationConfig
-                  ? { ...argsWithVersion, push_notification_config: pushNotificationConfig }
-                  : argsWithVersion;
-
                 // If the agent config carries authorization-code OAuth tokens,
                 // route through the OAuth provider path so the MCP SDK can refresh
                 // on 401 instead of hard-failing. Excludes client-credentials
@@ -597,7 +616,7 @@ export class ProtocolClient {
                     return await callMCPToolWithOAuth({
                       agentUrl: agent.agent_uri,
                       toolName,
-                      args: argsWithWebhook,
+                      args: preparedCall.args,
                       authProvider,
                       debugLogs,
                       customHeaders: agent.headers,
@@ -628,7 +647,7 @@ export class ProtocolClient {
                   return await callMCPToolWithTasks(
                     agent.agent_uri,
                     toolName,
-                    argsWithWebhook,
+                    preparedCall.args,
                     authToken,
                     debugLogs,
                     agent.headers,
@@ -662,7 +681,7 @@ export class ProtocolClient {
                       return await callMCPToolWithTasks(
                         agent.agent_uri,
                         toolName,
-                        argsWithWebhook,
+                        preparedCall.args,
                         retryAuthToken,
                         debugLogs,
                         agent.headers,
@@ -704,10 +723,10 @@ export class ProtocolClient {
                   return await callA2ATool(
                     agent.agent_uri,
                     toolName,
-                    argsWithVersion,
+                    preparedCall.args,
                     authToken,
                     debugLogs,
-                    pushNotificationConfig,
+                    preparedCall.pushNotificationConfig,
                     agent.headers,
                     signingContext,
                     session,
@@ -736,10 +755,10 @@ export class ProtocolClient {
                       return await callA2ATool(
                         agent.agent_uri,
                         toolName,
-                        argsWithVersion,
+                        preparedCall.args,
                         retryAuthToken,
                         debugLogs,
-                        pushNotificationConfig,
+                        preparedCall.pushNotificationConfig,
                         agent.headers,
                         signingContext,
                         session,
