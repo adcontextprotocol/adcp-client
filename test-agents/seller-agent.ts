@@ -196,7 +196,7 @@ function createAgent({ taskStore }: ServeContext) {
             product_id: pkg.product_id,
             pricing_option_id: pkg.pricing_option_id,
             budget: pkg.budget,
-            buyer_ref: pkg.buyer_ref,
+            context: pkg.context,
           })),
           context: params.context,
         };
