@@ -550,32 +550,33 @@ function loadJson(file: string): LoadedSchema {
  * tools (the property-list family), which rejects envelope fields like
  * `replayed` that aren't declared in the tool-specific body.
  *
- * Scope is deliberately narrow: only the top-level object, plus each
- * direct branch of a root-level `oneOf` / `anyOf` / `allOf`. Nested
- * bodies stay strict so response-side drift detection still catches
- * typos inside `Product`, `Package`, `MediaBuy` etc. Applied only to
- * response variants; request schemas stay strict so outgoing drift
- * fails at the edge.
+ * Scope is deliberately narrow: only the top-level composition chain and
+ * its `oneOf` / `anyOf` / `allOf` branches. Composition wrappers may be
+ * nested (for example, `buy_products` is an `allOf` alias around the shared
+ * commitment response's `oneOf`), so recurse through combinators without
+ * descending into `properties`. Nested bodies therefore stay strict and
+ * response-side drift detection still catches typos inside `Product`,
+ * `Package`, `MediaBuy`, etc. Applied only to response variants; request
+ * schemas stay strict so outgoing drift fails at the edge.
  */
 function relaxResponseRoot(schema: LoadedSchema): LoadedSchema {
-  const clone = { ...schema };
-  if (clone.additionalProperties === false) {
-    clone.additionalProperties = true;
-  }
-  for (const key of ['oneOf', 'anyOf', 'allOf'] as const) {
-    const branches = clone[key];
-    if (Array.isArray(branches)) {
-      clone[key] = branches.map(branch => {
-        if (!branch || typeof branch !== 'object') return branch;
-        const branchClone = { ...(branch as Record<string, unknown>) };
-        if (branchClone.additionalProperties === false) {
-          branchClone.additionalProperties = true;
-        }
-        return branchClone;
-      });
+  const relaxCompositionNode = (node: Record<string, unknown>): Record<string, unknown> => {
+    const clone = { ...node };
+    if (clone.additionalProperties === false) {
+      clone.additionalProperties = true;
     }
-  }
-  return clone;
+    for (const key of ['oneOf', 'anyOf', 'allOf'] as const) {
+      const branches = clone[key];
+      if (Array.isArray(branches)) {
+        clone[key] = branches.map(branch =>
+          branch && typeof branch === 'object' ? relaxCompositionNode(branch as Record<string, unknown>) : branch
+        );
+      }
+    }
+    return clone;
+  };
+
+  return relaxCompositionNode(schema) as LoadedSchema;
 }
 
 function getAjvRegisteredIds(ajv: Ajv): Set<string> {
