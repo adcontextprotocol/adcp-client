@@ -65,8 +65,16 @@ const DEFAULT_SANDBOX_ACCOUNT = { brand: { domain: 'test.example' }, operator: '
 function buildAccount(options?: TestOptions): Record<string, unknown> {
   if (options) {
     const account = resolveAccount(options);
-    // Ensure sandbox is set — controller requires it
-    return { ...account, sandbox: true };
+    // Default sandbox to true (the controller requires the field) but let an
+    // explicit kit value win: the comply_controller_mode_gate storyboard's
+    // live-mode kit (acme-outdoor-live) sets `sandbox: false`, and the old
+    // `{ ...account, sandbox: true }` spread clobbered it — no seller could
+    // ever see the live-mode principal the storyboard exists to test (#2580).
+    // A bare spread-flip would regress the other way (resolveAccount always
+    // emits the key, so an unset kit flag would spread `undefined` over the
+    // default), hence the explicit coalesce.
+    const sandbox = 'sandbox' in account ? (account.sandbox ?? true) : true;
+    return { ...account, sandbox };
   }
   return DEFAULT_SANDBOX_ACCOUNT;
 }
