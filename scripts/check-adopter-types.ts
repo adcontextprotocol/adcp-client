@@ -214,7 +214,13 @@ const _payloadResults: [
   ok({ deployments: [] }),
   ok({ brand_id: 'brand_1', house: { domain: 'acme.com', name: 'Acme' }, names: [{ en: 'Acme' }] }),
   ok({ rights: [] }),
-  ok({ rights_id: 'rights_1', terms: rightsTerms }),
+  ok({
+    rights_id: 'rights_1',
+    terms: rightsTerms,
+    generation_credentials: [],
+    rights_constraint: {} as LegacyUpdateRightsPayload['rights_constraint'],
+    implementation_date: null,
+  }),
   ok({ approval_status: 'approved', rights_id: 'rights_1' }),
   ok(_createMediaBuyPayload),
   ok([]),
@@ -298,7 +304,7 @@ const _serverPayload: ServerPayload<CreateMediaBuySuccess> = {
   confirmed_at: '2026-01-01T00:00:00Z',
   revision: 1,
   packages: [],
-  status: 'active',
+  media_buy_status: 'active',
 };
 const _typesPayload: ServerPayloadFromTypes<CreateMediaBuySuccess> = _serverPayload;
 void _typesPayload;

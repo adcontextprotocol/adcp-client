@@ -178,7 +178,7 @@ import {
 } from '../../../v2/projection/creative-delivery';
 import { projectV1ProductToV2, type LegacyFormatConverter } from '../../../v2/projection/v1-to-v2';
 import type {
-  CanonicalCreativeAsset,
+  CanonicalSyncCreativeAsset,
   CanonicalCreateMediaBuyRequest,
   CanonicalGetProductsRequest,
   CanonicalListCreativesRequest,
@@ -5711,7 +5711,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
         params = asCanonicalSemanticServerRequest(params, 'sync_creatives', legacyFormatConverter);
         const reqCtx = ctxFor(ctx, params);
-        const creatives = (params.creatives ?? []) as CanonicalCreativeAsset[];
+        const creatives = (params.creatives ?? []) as CanonicalSyncCreativeAsset[];
         return projectSync(
           async () => {
             const push = extractPushConfig(params, logger, {
@@ -6039,7 +6039,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
         const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
         params = asCanonicalSemanticServerRequest(params, 'sync_creatives', legacyFormatConverter);
         const reqCtx = ctxFor(ctx, params);
-        const creatives = (params.creatives ?? []) as CanonicalCreativeAsset[];
+        const creatives = (params.creatives ?? []) as CanonicalSyncCreativeAsset[];
         return projectSync(
           async () => {
             const push = extractPushConfig(params, logger, {

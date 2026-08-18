@@ -159,6 +159,7 @@ export {
   type CanonicalCreativeFormatSelectorContainer,
   type CreativeFormatWireMode,
   type CanonicalCreativeAsset,
+  type CanonicalSyncCreativeAsset,
   type CanonicalCreativeResponse,
   type CanonicalGetProductsResponse,
   type CanonicalGetProductsRequest,

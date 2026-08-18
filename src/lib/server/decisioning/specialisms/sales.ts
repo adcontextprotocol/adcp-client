@@ -91,7 +91,7 @@ import type {
   SyncCreativesSuccess,
 } from '../../../types/tools.generated';
 import type {
-  CanonicalCreativeAsset,
+  CanonicalSyncCreativeAsset,
   CanonicalCreateMediaBuyRequest,
   CanonicalCreativeResponse,
   CanonicalGetProductsRequest,
@@ -101,7 +101,7 @@ import type {
   CanonicalUpdateMediaBuyRequest,
 } from '../../../v2/projection/creative-delivery';
 
-type Creative = CanonicalCreativeAsset;
+type SyncCreative = CanonicalSyncCreativeAsset;
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 type ExclusivePayload<TLeft, TRight> =
   | (TLeft & { [K in Exclude<keyof TRight, keyof TLeft>]?: never })
@@ -279,7 +279,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
    * }
    * ```
    */
-  syncCreatives?(creatives: Creative[], ctx: Ctx<TCtxMeta>): Promise<SyncCreativesHandlerResult>;
+  syncCreatives?(creatives: SyncCreative[], ctx: Ctx<TCtxMeta>): Promise<SyncCreativesHandlerResult>;
 
   // ── get_media_buy_delivery: sync only ───────────────────────────────
 

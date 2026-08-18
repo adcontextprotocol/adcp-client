@@ -1598,6 +1598,7 @@ export {
   type CanonicalOnlyProduct,
   type CanonicalCreativeAsset,
   type CanonicalCreativeAsset as CreativeAsset,
+  type CanonicalSyncCreativeAsset,
   type CanonicalCreateMediaBuyRequest,
   type CanonicalCreateMediaBuyRequest as CreateMediaBuyRequest,
   type CanonicalCreateMediaBuyResponse,

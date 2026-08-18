@@ -57,10 +57,10 @@ import type {
   CreativeManifest,
   PreviewCreativeRequest,
   PreviewCreativeResponse,
-  CreativeAsset,
   AccountReference,
   ImageAsset,
 } from '@adcp/sdk/types';
+import type { CanonicalSyncCreativeAsset } from '@adcp/sdk';
 import { serve } from '@adcp/sdk/server';
 
 interface WatermarkConfig {
@@ -167,9 +167,9 @@ class WatermarkPlatform implements DecisioningPlatform<WatermarkConfig, Watermar
      * state). Stateless transforms use `action: 'unchanged'` since they
      * don't persist; review state is `'approved'` since auto-approving.
      */
-    syncCreatives: async (creatives: CreativeAsset[]) => {
+    syncCreatives: async (creatives: CanonicalSyncCreativeAsset[]) => {
       return creatives.map(c => ({
-        creative_id: c.creative_id ?? `cr_${Math.random()}`,
+        creative_id: c.creative_id,
         action: 'unchanged' as const,
         status: 'approved' as const,
       }));
