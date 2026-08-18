@@ -1,6 +1,6 @@
 {
   "name": "@adcp/sdk",
-  "version": "14.0.0-beta.0",
+  "version": "14.0.0-beta.1",
   "description": "AdCP SDK — client, server, and compliance harnesses for the AdContext Protocol (MCP + A2A)",
   "workspaces": [
     ".",
@@ -451,6 +451,7 @@
     "docs/migration-*.md",
     "MIGRATION-*.md",
     "docs/guides/BUILD-AN-AGENT.md",
+    "docs/guides/MEDIA-BUY-3.2-COMPATIBILITY.md",
     "docs/guides/CANONICAL-REFERENCE-RESOLVER.md",
     "docs/guides/PREVIEW-ASSET-DURABILITY.md",
     "examples/**/*",
