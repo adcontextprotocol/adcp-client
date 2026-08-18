@@ -10,6 +10,8 @@
  * remain for legacy projection APIs and diagnostics.
  */
 
+import type { ProductFormatDeclaration } from '../../types/tools.generated';
+
 /** v1 format_id (`{ agent_url, id }`). Same shape in 3.0 and 3.1. */
 export interface V1FormatId {
   agent_url: string;
@@ -59,6 +61,13 @@ export interface V2ProductFormatDeclaration {
   canonical_formats_only?: boolean;
   experimental?: boolean;
   format_shape?: string;
+  /** Public HTTPS page showing an informational sample render. */
+  sample_render_url?: ProductFormatDeclaration['sample_render_url'];
+  /**
+   * Seller-enforced AdCP 3.2 creative-locale eligibility constraint. Protocol-valid
+   * declarations set `canonical_formats_only: true` and omit `v1_format_ref`.
+   */
+  locale_policy?: ProductFormatDeclaration['locale_policy'];
   /**
    * Authoritative v2 → v1 link. Always an array (3.1-beta normative): single-ref
    * is `[{...}]`, multi-size carries one entry per size. v1-only buyers see
