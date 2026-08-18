@@ -3,6 +3,7 @@
 import {
   readFileSync,
   writeFileSync,
+  appendFileSync,
   mkdirSync,
   existsSync,
   readdirSync,
@@ -690,7 +691,7 @@ async function sync(version?: string, options: { includeSharedSurfaces?: boolean
       (includeSharedSurfaces ? '' : ' (schemas only — skills + latest pointer stay at the primary pin)')
   );
 
-  await syncSchemasWithFallbacks(
+  const syncSource = await syncSchemasWithFallbacks(
     {
       version: adcpVersion,
       primaryBaseUrl: ADCP_BASE_URL,
@@ -700,6 +701,10 @@ async function sync(version?: string, options: { includeSharedSurfaces?: boolean
     },
     { syncFromTarball, syncSchemasPerFile, warn: message => console.warn(message) }
   );
+
+  if (includeSharedSurfaces && process.env.GITHUB_OUTPUT) {
+    appendFileSync(process.env.GITHUB_OUTPUT, `primary_schema_source=${syncSource}\n`);
+  }
 
   console.log(`✅ Sync complete for AdCP ${adcpVersion}`);
 }
@@ -721,12 +726,12 @@ interface SchemaSyncFallbackOptions {
 async function syncSchemasWithFallbacks(
   options: SchemaSyncFallbackOptions,
   operations: SchemaSyncOperations
-): Promise<void> {
+): Promise<'primary' | 'github'> {
   const { version, primaryBaseUrl, includeSharedSurfaces, githubFallbackEnabled, requireSignature } = options;
 
   let primaryUnavailable = false;
   try {
-    if (await operations.syncFromTarball(version, primaryBaseUrl, includeSharedSurfaces)) return;
+    if (await operations.syncFromTarball(version, primaryBaseUrl, includeSharedSurfaces)) return 'primary';
   } catch (error) {
     if (!(error instanceof SchemaSyncAvailabilityError)) throw error;
     primaryUnavailable = true;
@@ -746,7 +751,7 @@ async function syncSchemasWithFallbacks(
     }
     for (const baseUrl of getGithubDistFallbackBaseUrls(version)) {
       try {
-        if (await operations.syncFromTarball(version, baseUrl, includeSharedSurfaces)) return;
+        if (await operations.syncFromTarball(version, baseUrl, includeSharedSurfaces)) return 'github';
       } catch (error) {
         if (!(error instanceof SchemaSyncAvailabilityError)) throw error;
         operations.warn(`⚠️  GitHub bundle fallback unavailable at ${baseUrl}: ${error.message}`);
@@ -767,7 +772,7 @@ async function syncSchemasWithFallbacks(
     for (const baseUrl of getGithubDistFallbackBaseUrls(version)) {
       try {
         await operations.syncSchemasPerFile(version, baseUrl, includeSharedSurfaces);
-        return;
+        return 'github';
       } catch (error) {
         if (!(error instanceof SchemaSyncAvailabilityError)) throw error;
         lastAvailabilityError = error;
@@ -779,6 +784,7 @@ async function syncSchemasWithFallbacks(
 
   // A clean primary tarball 404 retains the primary host's per-file fallback.
   await operations.syncSchemasPerFile(version, primaryBaseUrl, includeSharedSurfaces);
+  return 'primary';
 }
 
 if (require.main === module) {

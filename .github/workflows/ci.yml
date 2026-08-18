@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -42,21 +44,76 @@ jobs:
         run: npm run lint:workflows
 
       - name: Sync schemas from AdCP
+        id: schema-sync
         run: npm run sync-schemas:all
 
       - name: Validate generated files are in sync
+        env:
+          ADCP_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          ADCP_PRIMARY_SCHEMA_SOURCE: ${{ steps.schema-sync.outputs.primary_schema_source }}
         run: |
-          npm run generate-types
+          generated_paths=(
+            ':(glob)src/lib/types/*.generated.ts'
+            src/lib/types/v2-5/tools.generated.ts
+            src/lib/agents/index.generated.ts
+            src/lib/media-buy/update-fields.generated.ts
+            src/lib/server/decisioning/runtime/entity-hydration.generated.ts
+            src/lib/registry/types.generated.ts
+            schemas/registry/registry.yaml
+          )
+          primary_generated_paths=(
+            ':(glob)src/lib/types/*.generated.ts'
+            src/lib/agents/index.generated.ts
+            src/lib/media-buy/update-fields.generated.ts
+            src/lib/server/decisioning/runtime/entity-hydration.generated.ts
+          )
+
+          primary_schema_version="$(tr -d '[:space:]' < ADCP_VERSION)"
+          if [[ "$ADCP_PRIMARY_SCHEMA_SOURCE" == "github" && "$primary_schema_version" == "3.2.0-beta.0" ]]; then
+            echo "::warning::Primary AdCP schema host was unavailable; skipping primary codegen drift assertion against the known non-equivalent v3.2.0-beta.0 fallback bundle."
+            if [[ -z "$ADCP_BASE_SHA" ]] || ! git cat-file -e "$ADCP_BASE_SHA^{commit}"; then
+              echo "::error::Cannot verify the primary-codegen fallback scope against base commit '$ADCP_BASE_SHA'."
+              exit 1
+            fi
+            if ! git diff --quiet "$ADCP_BASE_SHA" HEAD -- \
+              "${primary_generated_paths[@]}" \
+              ':(glob)scripts/generate-*.ts' \
+              scripts/schema-utils.ts \
+              scripts/schema-cache-ref.ts \
+              scripts/lib/error-code-prose-overlays.ts \
+              ADCP_VERSION \
+              package.json \
+              package-lock.json; then
+              echo "::error::Primary generated files or codegen inputs changed while their canonical schema source was unavailable."
+              git diff --name-only "$ADCP_BASE_SHA" HEAD -- \
+                "${primary_generated_paths[@]}" \
+                ':(glob)scripts/generate-*.ts' \
+                scripts/schema-utils.ts \
+                scripts/schema-cache-ref.ts \
+                scripts/lib/error-code-prose-overlays.ts \
+                ADCP_VERSION \
+                package.json \
+                package-lock.json
+              exit 1
+            fi
+            generated_paths=(
+              src/lib/types/v2-5/tools.generated.ts
+              src/lib/registry/types.generated.ts
+              schemas/registry/registry.yaml
+            )
+          else
+            npm run generate-types
+            npm run generate-wellknown-schemas
+          fi
           npm run generate-types:v2.5
-          npm run generate-wellknown-schemas
           npm run generate-registry-types -- --sync
 
-          if ! git diff --exit-code -I '// Generated at:' src/lib/types/*.generated.ts src/lib/types/v2-5/tools.generated.ts src/lib/agents/index.generated.ts src/lib/registry/types.generated.ts schemas/registry/registry.yaml 2>/dev/null; then
+          if ! git diff --exit-code -I '// Generated at:' "${generated_paths[@]}" 2>/dev/null; then
             echo ""
             echo "❌ Generated TypeScript files are out of sync with AdCP schemas or registry OpenAPI!"
             echo ""
             echo "📋 Changes detected in:"
-            git diff --name-only src/lib/types/*.generated.ts src/lib/types/v2-5/tools.generated.ts src/lib/agents/index.generated.ts src/lib/registry/types.generated.ts schemas/registry/registry.yaml 2>/dev/null || true
+            git diff --name-only "${generated_paths[@]}" 2>/dev/null || true
             echo ""
             echo "🔧 To fix, run locally:"
             echo "  npm run sync-schemas:all"

@@ -31,10 +31,12 @@ type Outcome = boolean | 'unavailable' | 'integrity-error';
 async function scenario(
   outcomes: Record<string, Outcome>,
   overrides: Partial<Parameters<typeof syncSchemasWithFallbacks>[0]> = {},
-  perFileOutcomes: Record<string, Outcome> = {}
+  perFileOutcomes: Record<string, Outcome> = {},
+  includeSource = false
 ) {
   const calls: string[] = [];
   let error: string | undefined;
+  let source: 'primary' | 'github' | undefined;
   const options = {
     version: '3.0.24',
     primaryBaseUrl: 'https://primary.example',
@@ -44,7 +46,7 @@ async function scenario(
     ...overrides,
   };
   try {
-    await syncSchemasWithFallbacks(options, {
+    source = await syncSchemasWithFallbacks(options, {
       async syncFromTarball(_version, baseUrl) {
         calls.push('tarball:' + baseUrl);
         const outcome = outcomes[baseUrl] ?? false;
@@ -63,7 +65,7 @@ async function scenario(
   } catch (caught) {
     error = caught instanceof Error ? caught.message : String(caught);
   }
-  return { calls, error };
+  return includeSource ? { calls, error, source } : { calls, error };
 }
 
 async function main() {
@@ -90,6 +92,17 @@ async function main() {
     integrityFailure: await scenario({ [primary]: false, [tag]: 'integrity-error', [main]: true }),
     invalidVersion: undefined as string | undefined,
     versionMismatch: undefined as string | undefined,
+    sourceSelection: {
+      primary: await scenario({ [primary]: true }, {}, {}, true),
+      github: await scenario({ [primary]: 'unavailable', [tag]: true }, {}, {}, true),
+      primaryPerFile: await scenario({ [primary]: false, [tag]: false, [main]: false }, {}, {}, true),
+      githubPerFile: await scenario(
+        { [primary]: 'unavailable', [tag]: false, [main]: false },
+        {},
+        {},
+        true
+      ),
+    },
   };
 
   try {
@@ -300,6 +313,10 @@ test('schema sync coordinates tagged, moving, per-file, and signed fallbacks', (
   assert.deepEqual(results.primaryError, {
     calls: [`tarball:${primary}`, `tarball:${tag}`, `tarball:${main}`, `per-file:${tag}`],
   });
+  assert.equal(results.sourceSelection.primary.source, 'primary');
+  assert.equal(results.sourceSelection.github.source, 'github');
+  assert.equal(results.sourceSelection.primaryPerFile.source, 'primary');
+  assert.equal(results.sourceSelection.githubPerFile.source, 'github');
   assert.deepEqual(results.perFileMainSuccess, {
     calls: [`tarball:${primary}`, `tarball:${tag}`, `tarball:${main}`, `per-file:${tag}`, `per-file:${main}`],
   });
