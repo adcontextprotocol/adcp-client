@@ -8,10 +8,12 @@
  * protocol version.
  */
 
-import type { V1FormatId, V2ProductFormatDeclaration } from './types';
+import type { CanonicalFormatKind, V1FormatId, V2ProductFormatDeclaration } from './types';
 import { warnOnce } from '../../utils/deprecation';
 import { concealLegacyFormatRefs, concealSelectedFormatOptions } from './legacy-metadata';
 import type { CanonicalFormatDeclaration } from './legacy-metadata';
+import { projectV1ProductToV2, type LegacyFormatConverter } from './v1-to-v2';
+import type { ProjectionCatalogSnapshot } from './catalog-snapshot';
 
 export type FormatOptionRef =
   | {
@@ -63,6 +65,194 @@ export type CapabilityIdsLookupErrorCode =
   | 'capability_ids_not_published'
   | 'empty_input'
   | 'invalid_product';
+
+/** Package selector fields inspected by {@link lintPackageFormatSelectorDimensions}. */
+export interface PackageFormatSelectorInput {
+  format_kind?: CanonicalFormatKind;
+  params?: Readonly<Record<string, unknown>>;
+  format_ids?: readonly V1FormatId[];
+}
+
+/** Optional seller-specific catalogs used to resolve legacy format IDs. */
+export interface PackageFormatSelectorDimensionOptions {
+  legacyFormatConverter?: LegacyFormatConverter;
+  projectionCatalogs?: readonly ProjectionCatalogSnapshot[];
+}
+
+export interface FixedSizeDimensions {
+  width: number;
+  height: number;
+}
+
+export type PackageFormatSelectorDimensionDiagnosticCode =
+  | 'FORMAT_SELECTOR_DIMENSIONS_INCOMPLETE'
+  | 'FORMAT_SELECTOR_DIMENSIONS_INVALID'
+  | 'FORMAT_SELECTOR_DIMENSIONS_MISMATCH';
+
+/**
+ * SDK-local, non-wire diagnostic returned by
+ * {@link lintPackageFormatSelectorDimensions}.
+ */
+export interface PackageFormatSelectorDimensionDiagnostic {
+  code: PackageFormatSelectorDimensionDiagnosticCode;
+  field: string;
+  selector: 'canonical' | 'legacy' | 'cross_projection';
+  message: string;
+  format_id_index?: number;
+  canonical_dimensions?: FixedSizeDimensions;
+  legacy_dimensions?: FixedSizeDimensions;
+}
+
+type DimensionInspection =
+  | { kind: 'absent' }
+  | { kind: 'non_fixed' }
+  | { kind: 'incomplete' }
+  | { kind: 'invalid' }
+  | { kind: 'complete'; dimensions: FixedSizeDimensions };
+
+function inspectFixedDimensions(params: Readonly<Record<string, unknown>> | undefined): DimensionInspection {
+  if (!params) return { kind: 'absent' };
+  const widthPresent = params.width !== undefined;
+  const heightPresent = params.height !== undefined;
+  if (widthPresent || heightPresent) {
+    if (widthPresent !== heightPresent) return { kind: 'incomplete' };
+    if (
+      !Number.isInteger(params.width) ||
+      (params.width as number) <= 0 ||
+      !Number.isInteger(params.height) ||
+      (params.height as number) <= 0
+    ) {
+      return { kind: 'invalid' };
+    }
+    return { kind: 'complete', dimensions: { width: params.width as number, height: params.height as number } };
+  }
+
+  if (Array.isArray(params.sizes)) {
+    if (params.sizes.length !== 1) return { kind: 'non_fixed' };
+    const only = params.sizes[0];
+    if (only === null || typeof only !== 'object' || Array.isArray(only)) return { kind: 'invalid' };
+    return inspectFixedDimensions(only as Readonly<Record<string, unknown>>);
+  }
+
+  if (
+    params.min_width !== undefined ||
+    params.max_width !== undefined ||
+    params.min_height !== undefined ||
+    params.max_height !== undefined
+  ) {
+    return { kind: 'non_fixed' };
+  }
+  return { kind: 'absent' };
+}
+
+function addInspectionDiagnostic(
+  diagnostics: PackageFormatSelectorDimensionDiagnostic[],
+  inspection: DimensionInspection,
+  selector: 'canonical' | 'legacy',
+  field: string,
+  formatIdIndex?: number
+): boolean {
+  if (inspection.kind !== 'incomplete' && inspection.kind !== 'invalid') return false;
+  diagnostics.push({
+    code:
+      inspection.kind === 'incomplete' ? 'FORMAT_SELECTOR_DIMENSIONS_INCOMPLETE' : 'FORMAT_SELECTOR_DIMENSIONS_INVALID',
+    field,
+    selector,
+    message:
+      inspection.kind === 'incomplete'
+        ? `${field} must provide width and height together for a fixed-size image selector`
+        : `${field} width and height must be positive integers for a fixed-size image selector`,
+    ...(formatIdIndex !== undefined ? { format_id_index: formatIdIndex } : {}),
+  });
+  return true;
+}
+
+/**
+ * Diagnose fixed-size image dimension loss across direct canonical and
+ * deprecated legacy package selectors.
+ *
+ * This helper is deliberately advisory: it does not choose selector
+ * precedence, mutate the package, or reject valid canonical-only,
+ * legacy-only, multi-size, responsive, or inherently canonical-only shapes.
+ * Legacy IDs are normalized through the same catalog/converter path as the
+ * rest of the projection layer.
+ */
+export function lintPackageFormatSelectorDimensions(
+  selector: PackageFormatSelectorInput,
+  options?: PackageFormatSelectorDimensionOptions
+): PackageFormatSelectorDimensionDiagnostic[] {
+  const diagnostics: PackageFormatSelectorDimensionDiagnostic[] = [];
+  const canonicalImage = selector.format_kind === 'image';
+  const canonicalInspection = canonicalImage ? inspectFixedDimensions(selector.params) : { kind: 'non_fixed' as const };
+  const canonicalAlreadyDiagnosed = canonicalImage
+    ? addInspectionDiagnostic(diagnostics, canonicalInspection, 'canonical', 'params')
+    : false;
+
+  const legacyImages: Array<{ index: number; inspection: DimensionInspection }> = [];
+  for (const [index, ref] of (selector.format_ids ?? []).entries()) {
+    const inlineInspection = inspectFixedDimensions(ref as unknown as Readonly<Record<string, unknown>>);
+    if (addInspectionDiagnostic(diagnostics, inlineInspection, 'legacy', `format_ids[${index}]`, index)) continue;
+    if (!canonicalImage || canonicalInspection.kind === 'non_fixed') continue;
+
+    const projected = projectV1ProductToV2(
+      {
+        product_id: `<package-selector:${index}>`,
+        name: 'Package selector',
+        description: 'Package selector dimensional lint',
+        format_ids: [{ ...ref }],
+      },
+      options
+    ).v2.format_options[0];
+    if (projected?.format_kind !== 'image') continue;
+    legacyImages.push({ index, inspection: inspectFixedDimensions(projected.params) });
+  }
+
+  if (!canonicalImage || canonicalInspection.kind === 'non_fixed' || legacyImages.length === 0) {
+    return diagnostics;
+  }
+
+  if (canonicalInspection.kind === 'absent' && !canonicalAlreadyDiagnosed) {
+    diagnostics.push({
+      code: 'FORMAT_SELECTOR_DIMENSIONS_INCOMPLETE',
+      field: 'params',
+      selector: 'canonical',
+      message:
+        'params must provide width and height when a direct image selector is combined with legacy image selectors',
+    });
+  }
+
+  for (const legacy of legacyImages) {
+    if (legacy.inspection.kind === 'absent') {
+      diagnostics.push({
+        code: 'FORMAT_SELECTOR_DIMENSIONS_INCOMPLETE',
+        field: `format_ids[${legacy.index}]`,
+        selector: 'legacy',
+        message: `format_ids[${legacy.index}] does not resolve to width and height for comparison with the direct image selector`,
+        format_id_index: legacy.index,
+      });
+      continue;
+    }
+    if (
+      canonicalInspection.kind === 'complete' &&
+      legacy.inspection.kind === 'complete' &&
+      (canonicalInspection.dimensions.width !== legacy.inspection.dimensions.width ||
+        canonicalInspection.dimensions.height !== legacy.inspection.dimensions.height)
+    ) {
+      diagnostics.push({
+        code: 'FORMAT_SELECTOR_DIMENSIONS_MISMATCH',
+        field: `format_ids[${legacy.index}]`,
+        selector: 'cross_projection',
+        message:
+          `format_ids[${legacy.index}] resolves to ${legacy.inspection.dimensions.width}x${legacy.inspection.dimensions.height}, ` +
+          `but the direct image selector declares ${canonicalInspection.dimensions.width}x${canonicalInspection.dimensions.height}`,
+        format_id_index: legacy.index,
+        canonical_dimensions: canonicalInspection.dimensions,
+        legacy_dimensions: legacy.inspection.dimensions,
+      });
+    }
+  }
+  return diagnostics;
+}
 
 /**
  * Structured error from {@link packageRefsForFormatOptions}. Carries a

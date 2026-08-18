@@ -18,9 +18,108 @@ const {
   tryLegacyFormatIdsFromOptions,
   legacyFormatIdsForFormatOption,
   legacyFormatIdsForCapability,
+  lintPackageFormatSelectorDimensions,
   projectCreativeForDelivery,
   projectMediaBuyCreativesForDelivery,
 } = require('../../dist/lib/v2/projection/index.js');
+
+const AAO_AGENT_URL = 'https://creative.adcontextprotocol.org/';
+
+describe('lintPackageFormatSelectorDimensions', () => {
+  test('accepts equivalent fixed-size canonical and legacy selectors', () => {
+    assert.deepStrictEqual(
+      lintPackageFormatSelectorDimensions({
+        format_kind: 'image',
+        params: { width: 300, height: 250 },
+        format_ids: [{ agent_url: AAO_AGENT_URL, id: 'display_300x250_image' }],
+      }),
+      []
+    );
+  });
+
+  test('reports width/height atomicity failures on either selector', () => {
+    const diagnostics = lintPackageFormatSelectorDimensions({
+      format_kind: 'image',
+      params: { width: 300 },
+      format_ids: [{ agent_url: AAO_AGENT_URL, id: 'display_300x250_image', height: 250 }],
+    });
+
+    assert.deepStrictEqual(
+      diagnostics.map(diagnostic => [diagnostic.code, diagnostic.selector, diagnostic.field]),
+      [
+        ['FORMAT_SELECTOR_DIMENSIONS_INCOMPLETE', 'canonical', 'params'],
+        ['FORMAT_SELECTOR_DIMENSIONS_INCOMPLETE', 'legacy', 'format_ids[0]'],
+      ]
+    );
+  });
+
+  test('reports conflicting canonical and resolved legacy dimensions', () => {
+    const diagnostics = lintPackageFormatSelectorDimensions({
+      format_kind: 'image',
+      params: { width: 300, height: 250 },
+      format_ids: [{ agent_url: AAO_AGENT_URL, id: 'display_728x90_image' }],
+    });
+
+    assert.strictEqual(diagnostics.length, 1);
+    assert.strictEqual(diagnostics[0].code, 'FORMAT_SELECTOR_DIMENSIONS_MISMATCH');
+    assert.deepStrictEqual(diagnostics[0].canonical_dimensions, { width: 300, height: 250 });
+    assert.deepStrictEqual(diagnostics[0].legacy_dimensions, { width: 728, height: 90 });
+  });
+
+  test('reports dimensionless dual image selectors without guessing dimensions', () => {
+    const diagnostics = lintPackageFormatSelectorDimensions(
+      {
+        format_kind: 'image',
+        params: {},
+        format_ids: [{ agent_url: 'https://formats.example/', id: 'display_image' }],
+      },
+      {
+        legacyFormatConverter: () => ({
+          format_kind: 'image',
+          format_option_id: 'generic_image',
+          params: {},
+        }),
+      }
+    );
+
+    assert.deepStrictEqual(
+      diagnostics.map(diagnostic => [diagnostic.code, diagnostic.selector, diagnostic.field]),
+      [
+        ['FORMAT_SELECTOR_DIMENSIONS_INCOMPLETE', 'canonical', 'params'],
+        ['FORMAT_SELECTOR_DIMENSIONS_INCOMPLETE', 'legacy', 'format_ids[0]'],
+      ]
+    );
+  });
+
+  test('accepts valid single-path and inherently canonical-only selectors', () => {
+    for (const selector of [
+      { format_kind: 'image', params: { width: 300, height: 250 } },
+      { format_ids: [{ agent_url: AAO_AGENT_URL, id: 'display_300x250_image' }] },
+      { format_kind: 'sponsored_placement', params: { source_catalog: 'retail' } },
+    ]) {
+      assert.deepStrictEqual(lintPackageFormatSelectorDimensions(selector), []);
+    }
+  });
+
+  test('does not treat multi-size image selectors as one fixed-size projection', () => {
+    assert.deepStrictEqual(
+      lintPackageFormatSelectorDimensions({
+        format_kind: 'image',
+        params: {
+          sizes: [
+            { width: 300, height: 250 },
+            { width: 728, height: 90 },
+          ],
+        },
+        format_ids: [
+          { agent_url: AAO_AGENT_URL, id: 'display_300x250_image' },
+          { agent_url: AAO_AGENT_URL, id: 'display_728x90_image' },
+        ],
+      }),
+      []
+    );
+  });
+});
 
 function legacyWireFormatIds(refs) {
   return projectMediaBuyCreativesForDelivery({ packages: [{ ...refs }] }, 'legacy').packages[0].format_ids;
