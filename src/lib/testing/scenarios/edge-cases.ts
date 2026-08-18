@@ -370,20 +370,12 @@ export async function testPricingEdgeCases(
 
   for (const product of products) {
     for (const po of product.pricing_options || []) {
-      if (
-        !('fixed_price' in po) &&
-        (('floor_price' in po && po.floor_price !== undefined) ||
-          ('price_guidance' in po && po.price_guidance !== undefined))
-      ) {
+      if (!('fixed_price' in po) && (po.floor_price !== undefined || po.price_guidance !== undefined)) {
         auctionProducts.push({ product, pricingOption: po });
       } else if ('fixed_price' in po) {
         fixedProducts.push({ product, pricingOption: po });
       }
-      if (
-        'min_spend_per_package' in po &&
-        typeof po.min_spend_per_package === 'number' &&
-        po.min_spend_per_package > 0
-      ) {
+      if (typeof po.min_spend_per_package === 'number' && po.min_spend_per_package > 0) {
         productsWithMinSpend.push({
           product,
           pricingOption: po,

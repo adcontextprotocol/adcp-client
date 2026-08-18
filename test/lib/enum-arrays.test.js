@@ -16,11 +16,6 @@ describe('Enum value arrays (enums.generated)', () => {
       [...enums.SignalAvailabilityTypeValues],
       'SignalCatalogTypeValues should remain as a compatibility alias'
     );
-    assert.deepEqual(
-      [...enums.TaskStatus2Values],
-      [...enums.GetProductsRejectedStatusValues],
-      'TaskStatus2Values should remain as a compatibility alias'
-    );
   });
 
   it('values are non-empty const arrays of strings', async () => {

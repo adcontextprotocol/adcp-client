@@ -31,11 +31,6 @@ const BACKWARD_COMPAT_ENUM_VALUE_ALIASES: Array<{
     newName: 'SignalAvailabilityType',
     reason: 'AdCP 3.1 renamed SignalCatalogType to SignalAvailabilityType.',
   },
-  {
-    oldName: 'TaskStatus2',
-    newName: 'GetProductsRejectedStatus',
-    reason: 'Use the stable GetProductsRejectedStatus name.',
-  },
 ];
 
 interface ExtractedEnum {

@@ -105,9 +105,6 @@ export const FrameRateTypeValues = ["constant", "variable"] as const;
 export const FrequencyCapScopeValues = ["package"] as const;
 export const GenreTaxonomyValues = ["iab_content_3.0", "iab_content_2.2", "gracenote", "eidr", "apple_genres", "google_genres", "roku", "amazon_genres", "custom"] as const;
 export const GeographicTargetingLevelValues = ["country", "region", "metro", "postal_area"] as const;
-export const GetProductsRejectedStatusValues = ["rejected"] as const;
-/** @deprecated Use the stable GetProductsRejectedStatus name. */
-export const TaskStatus2Values = GetProductsRejectedStatusValues;
 export const GOPTypeValues = ["closed", "open"] as const;
 export const GovernanceDecisionValues = ["approved", "denied", "conditions"] as const;
 export const GovernanceDomainValues = ["campaign", "property", "creative", "content_standards"] as const;

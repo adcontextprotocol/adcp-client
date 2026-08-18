@@ -40,14 +40,9 @@ const syncMissingCreativeId: CanonicalSyncCreativesRequest = {
   ],
 };
 
-const packageWithoutLocalization: CanonicalPackageRequest = {
-  product_id: 'product_1',
-  pricing_option_id: 'pricing_1',
-  creatives: [creative],
-};
+const packageWithoutLocalization: CanonicalPackageRequest = { package_id: 'package_1', creatives: [creative] };
 const packageWithLocalization: CanonicalPackageRequest = {
-  product_id: 'product_2',
-  pricing_option_id: 'pricing_2',
+  package_id: 'package_2',
   creatives: [
     {
       ...creative,
