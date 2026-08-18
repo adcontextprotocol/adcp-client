@@ -158,6 +158,7 @@ import {
   type WebhookEmitterOptions,
 } from './webhook-emitter';
 import { createExpressVerifier, type ExpressLike } from '../signing/middleware';
+import { isSandboxOrMockAccount } from './account-mode';
 import {
   isSandboxRequest as isSandboxRequestForSeeding,
   mergeSeededProductsIntoResponse,
@@ -2041,25 +2042,26 @@ export interface AdcpServerConfig<TAccount = unknown> {
    *
    * ## Security — trust boundary
    *
-   * The bridge is gated by `isSandboxRequest(params) && (ctx.account ===
-   * undefined || ctx.account.sandbox === true)`. The second clause is the
-   * authority boundary; the first is caller-supplied (`account.sandbox` or
-   * `context.sandbox` on the request body) and is NOT a trust boundary on
-   * its own. If you register `testController` WITHOUT configuring
-   * `resolveAccount` (so `ctx.account` stays `undefined`), an attacker who
-   * sets `account.sandbox = true` on production traffic gets seeded
-   * fixtures merged into responses and the `_bridge` marker stamped.
+   * The bridge is gated by `isSandboxRequest(params) &&
+   * isSandboxOrMockAccount(ctx.account)`. The resolved account is the
+   * authority boundary; the first predicate is caller-supplied
+   * (`account.sandbox` or `context.sandbox` on the request body) and is NOT
+   * a trust boundary on its own. Requests without a resolved account fail
+   * closed and never receive seeded fixtures.
    *
    * Production deployments that register `testController` MUST:
-   *   1. Configure `resolveAccount` so the framework can refuse the merge
-   *      when the resolved account is not flagged `sandbox: true`, or
+   *   1. Configure `resolveAccount` for account-bearing tools and
+   *      `resolveAccountFromAuth` for account-less tools so the framework
+   *      can prove the resolved account is `mode: 'sandbox' | 'mock'` (or
+   *      carries the legacy `sandbox: true` flag), or
    *   2. Omit `testController` entirely outside test / staging environments.
    *
    * The `createAdcpServerFromPlatform` flow already enforces this via the
    * sandbox-authority gate (see Phase 2 of #1435 — resolved-account `mode`
-   * is the trust boundary, not buyer-supplied `account.sandbox`). The
-   * direct `createAdcpServer` flow does not; adopters wiring the bridge
-   * here are responsible for the gate. See the top-of-file JSDoc on
+   * is the trust boundary, not buyer-supplied `account.sandbox`). The direct
+   * `createAdcpServer` flow enforces the same resolved-account predicate;
+   * adopters wiring the bridge here are responsible for providing both
+   * resolver paths. See the top-of-file JSDoc on
    * `TestControllerBridge` for the full adopter-responsibility note (#1779).
    *
    * See `src/lib/server/test-controller-bridge.ts` for the sandbox-marker
@@ -2071,6 +2073,8 @@ export interface AdcpServerConfig<TAccount = unknown> {
    *
    * const seedStore = new Map<string, unknown>();
    * const server = createAdcpServer({
+   *   resolveAccount: (ref, ctx) => accounts.resolve(ref, ctx),
+   *   resolveAccountFromAuth: ctx => accounts.resolve(undefined, ctx),
    *   mediaBuy: { getProducts: handleGetProducts },
    *   testController: bridgeFromTestControllerStore(seedStore, {
    *     delivery_type: 'guaranteed',
@@ -4174,26 +4178,27 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   }
 
   // One-shot construction-time warn when `testController` is wired without
-  // any account resolver. The dispatch-time sandbox gate admits requests
-  // where `ctx.account === undefined`, so without a resolver the only
-  // remaining check is buyer-supplied `account.sandbox` / `context.sandbox`
-  // on the request — caller-controlled, not a trust boundary. Storyboard
-  // runners legitimately have no account scoping and should ignore this
-  // warning; production bindings need to wire `resolveAccount` (or
-  // `resolveAccountFromAuth` for OAuth-passthrough setups) so the gate's
-  // account-side check has teeth.
+  // both resolver paths. Account-bearing calls use `resolveAccount`; account-
+  // less calls use `resolveAccountFromAuth`. The dispatch gate fails closed
+  // when either path cannot produce an account, so make partial resolver
+  // wiring diagnosable at construction time.
   //
   // Dual-emit: `process.emitWarning` writes to stderr by default so the
   // signal is visible even when `logger` is the default `noopLogger`
   // (the day-one case where the misconfig is most likely). `logger.warn`
   // also fires so adopters with configured logging pipelines see it in
-  // their normal channel. The `code` lets adopters silence it via
-  // `--no-warnings=ADCP_BRIDGE_NO_RESOLVER` if they're knowingly running
-  // a storyboard-runner config. See `AdcpServerConfig.testController`
+  // their normal channel. The stable warning `code` lets logging pipelines
+  // classify this configuration fault without parsing the message. See
+  // `AdcpServerConfig.testController`
   // JSDoc § "Security — trust boundary" and #1784.
-  if (testControllerBridge != null && resolveAccount === undefined && resolveAccountFromAuth === undefined) {
+  if (testControllerBridge != null && (resolveAccount === undefined || resolveAccountFromAuth === undefined)) {
+    const missingResolvers = [
+      ...(resolveAccount === undefined ? ['resolveAccount'] : []),
+      ...(resolveAccountFromAuth === undefined ? ['resolveAccountFromAuth'] : []),
+    ];
     const message =
-      '[adcp/createAdcpServer] testController is wired but no account resolver — configure resolveAccount (or resolveAccountFromAuth) for production. Storyboard runners without account scoping can ignore. Details: https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/VALIDATE-YOUR-AGENT.md';
+      `[adcp/createAdcpServer] testController is wired without ${missingResolvers.join(' and ')} — ` +
+      'both account-bearing and account-less tools require a trusted resolved sandbox/mock account before seeded fixtures can be merged. Configure both resolver paths. Details: https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/VALIDATE-YOUR-AGENT.md';
     process.emitWarning(message, { type: 'AdcpServerConfigWarning', code: 'ADCP_BRIDGE_NO_RESOLVER' });
     logger.warn(message);
   }
@@ -5990,8 +5995,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           //   1. The bridge is registered AND has the matching callback;
           //   2. The handler returned a success envelope (not an `adcp_error`);
           //   3. The request carries a sandbox marker (account.sandbox === true or
-          //      context.sandbox === true) AND, if `resolveAccount` produced a
-          //      record, that record is flagged `sandbox: true` too.
+          //      context.sandbox === true) AND the applicable resolver produced
+          //      a trusted account in sandbox/mock mode (legacy sandbox:true is
+          //      accepted during migration). Unresolved accounts fail closed.
           // For array-collection tools, seeded entries append to the handler's
           // response with seeded winning on id collision (same as `getSeededProducts`).
           // `get_account_financials` is the exception — singleton response, so the
@@ -6009,11 +6015,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             !isErrorResponse(formatted) &&
             isSandboxRequestForSeeding(params) &&
             ctx.account !== undefined &&
-            !(
-              typeof ctx.account === 'object' &&
-              ctx.account !== null &&
-              (ctx.account as { sandbox?: unknown }).sandbox === true
-            )
+            !isSandboxOrMockAccount(ctx.account)
           ) {
             // Include the resolved account_id so the log line is self-
             // diagnostic — an adopter chasing "why aren't my fixtures
@@ -6037,13 +6039,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             testControllerBridge &&
             !isErrorResponse(formatted) &&
             isSandboxRequestForSeeding(params) &&
-            (ctx.account === undefined ||
-              (typeof ctx.account === 'object' &&
-                ctx.account !== null &&
-                (ctx.account as { sandbox?: unknown }).sandbox === true))
+            isSandboxOrMockAccount(ctx.account)
           ) {
-            const bridgeCtx: TestControllerBridgeContext<TAccount> = { input: params };
-            if (ctx.account !== undefined) bridgeCtx.account = ctx.account;
+            const bridgeCtx: TestControllerBridgeContext<TAccount> = { input: params, account: ctx.account };
 
             // get_products
             if (toolName === 'get_products' && testControllerBridge.getSeededProducts) {

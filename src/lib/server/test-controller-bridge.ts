@@ -40,14 +40,13 @@
  *
  * ## Adopter responsibilities
  *
- * **`resolveAccount` is the trust boundary.** The dispatcher's sandbox
- * gate is "request carries a sandbox marker AND (resolved account is
- * sandbox OR no account was resolved)." If you deploy a server with this
- * bridge registered but no `resolveAccount` configured, a buyer can stamp
- * `context.sandbox: true` on a request and trigger the merge. That's the
- * intended behavior for storyboard runners with no account scoping, but
- * means **production bindings must always configure `resolveAccount`** —
- * otherwise the buyer-supplied sandbox marker is the only gate.
+ * **Trusted account resolution is the trust boundary.** The dispatcher
+ * merges fixtures only when the request carries a sandbox marker **and**
+ * the server-resolved account is sandbox or mock. Unresolved accounts fail
+ * closed; buyer-supplied `context.sandbox`, `account.sandbox`, and similar
+ * fields are never authority. Configure both `resolveAccount` for tools
+ * carrying an account reference and `resolveAccountFromAuth` for account-less
+ * tools, including in storyboard-only deployments.
  *
  * **Multi-tenant isolation is the adopter's job.** Callbacks receive
  * `ctx.account` and must key their fixture store on it. The SDK does no
@@ -213,15 +212,13 @@ export interface TestControllerBridgeContext<TAccount = unknown> {
  * unchanged. The bridge is opt-in via the presence of `getSeededProducts`
  * — omit it to hold seeded state without changing response shape.
  *
- * **Construction-time misconfiguration warn.** `createAdcpServer` emits a
- * one-shot `logger.warn` at construction when this bridge is registered
- * without either `resolveAccount` or `resolveAccountFromAuth` configured —
- * the dispatch-time sandbox gate's account-side check has no teeth in that
- * setup, so caller-supplied `account.sandbox` becomes the only line of
- * defense against fixture leakage. Storyboard runners without account
- * scoping can ignore the warning; production bindings should wire a
- * resolver. See `AdcpServerConfig.testController` JSDoc § "Security —
- * trust boundary" and `adcp-client#1784`.
+ * **Construction-time misconfiguration warning.** `createAdcpServer` emits
+ * a one-shot `logger.warn` when this bridge is registered without either
+ * `resolveAccount` or `resolveAccountFromAuth`. Both paths are required so
+ * account-bearing and account-less tools can resolve trusted account mode.
+ * Dispatch fails closed whenever resolution is unavailable or returns no
+ * account. See `AdcpServerConfig.testController` JSDoc § "Security — trust
+ * boundary" and `adcp-client#1784`.
  */
 export interface TestControllerBridge<TAccount = unknown> {
   /**
@@ -2042,6 +2039,8 @@ export function replaceSiOfferingIfSeeded(
  * ```ts
  * const store = new Map<string, unknown>();
  * const server = createAdcpServer({
+ *   resolveAccount: (ref, ctx) => accounts.resolve(ref, ctx),
+ *   resolveAccountFromAuth: ctx => accounts.resolve(undefined, ctx),
  *   testController: bridgeFromTestControllerStore(store, {
  *     delivery_type: 'guaranteed',
  *     channels: ['display'],
@@ -2299,6 +2298,8 @@ export interface BridgeFromSessionStoreOptions<TSession, TAccount = unknown> {
  * import { bridgeFromSessionStore } from '@adcp/sdk/server';
  *
  * const server = createAdcpServer({
+ *   resolveAccount: (ref, ctx) => accounts.resolve(ref, ctx),
+ *   resolveAccountFromAuth: ctx => accounts.resolve(undefined, ctx),
  *   testController: bridgeFromSessionStore({
  *     loadSession: (input) => loadComplySession(sessionKeyFromInput(input)),
  *     selectSeededProducts: (session) => session.complyExtensions.seededProducts,

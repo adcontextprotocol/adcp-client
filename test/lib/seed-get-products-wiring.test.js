@@ -7,6 +7,8 @@ const { createAdcpServer: _createAdcpServer } = require('../../dist/lib/server/c
 // merge behavior rather than on a full spec-conformant Product.
 function createAdcpServer(config) {
   return _createAdcpServer({
+    resolveAccount: ref => ({ account_id: ref?.account_id ?? 'sandbox-test-account', mode: 'sandbox' }),
+    resolveAccountFromAuth: () => ({ account_id: 'sandbox-test-account', mode: 'sandbox' }),
     ...config,
     validation: { requests: 'off', responses: 'off', ...(config?.validation ?? {}) },
   });
@@ -260,7 +262,7 @@ describe('createAdcpServer — test-controller seeded get_products wiring', () =
       mediaBuy: {
         // Handler declares sandbox: false explicitly. The bridge should not
         // overwrite it — the `sandbox` flag is authoritative from the handler.
-        getProducts: async () => ({ products: [], sandbox: false }),
+        getProducts: async () => ({ products: [], cache_scope: 'account', sandbox: false }),
       },
       testController: {
         getSeededProducts: () => [makeSeededProduct('seed-1')],
@@ -380,6 +382,8 @@ describe('createAdcpServer — seeded get_products under strict response validat
     const server = _createAdcpServer({
       name: 'Test',
       version: '1.0.0',
+      resolveAccount: ref => ({ account_id: ref?.account_id ?? 'sandbox-test-account', mode: 'sandbox' }),
+      resolveAccountFromAuth: () => ({ account_id: 'sandbox-test-account', mode: 'sandbox' }),
       // Strict response validation ON — no opt-out.
       validation: { requests: 'off', responses: 'strict' },
       mediaBuy: {

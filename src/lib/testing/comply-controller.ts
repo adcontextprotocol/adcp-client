@@ -12,7 +12,8 @@
  *   - Seed re-seed idempotency (same id + equivalent fixture =
  *     `SeedSuccess` with `message: "Fixture re-seeded (equivalent)"`;
  *     divergent fixture = `INVALID_PARAMS`)
- *   - Optional sandbox gating at both `tools/list` and per-request level
+ *   - Per-request sandbox gating, plus fail-closed direct registration when
+ *     that gate is omitted
  *
  * The helper does NOT own the state machine. Transition enforcement lives
  * inside your adapters so production and compliance testing share one source
@@ -29,7 +30,8 @@
  * import { createComplyController } from '@adcp/sdk/testing';
  *
  * const controller = createComplyController({
- *   sandboxGate: input => input.auth?.sandbox === true,
+ *   // Server-controlled deployment state; never trust a field in `input`.
+ *   sandboxGate: () => process.env.ADCP_SANDBOX === '1',
  *   seed: {
  *     product: (params) => productRepo.upsert(params.product_id, params.fixture),
  *     creative: (params) => creativeRepo.upsert(params.creative_id, params.fixture),
@@ -338,14 +340,27 @@ export type QueryProvenanceAuditObservationsAdapter = (
 export interface ComplyControllerConfig {
   /** Per-request gate. Return `false` to reject with `FORBIDDEN` — suitable
    * for tenants flagged as production, accounts not marked sandbox, or
-   * missing sandbox headers. When omitted, every request is allowed.
+   * missing sandbox headers. When omitted, direct `register()` calls fail
+   * closed unless the process is explicitly acknowledged as an ungated test
+   * or development environment (see below).
+   *
+   * The callback receives buyer-supplied tool arguments only. Do not treat
+   * any field in `input` as authentication or resolved account state. Close
+   * over trusted server-side deployment/auth state, or use
+   * `createAdcpServerFromPlatform(platform, { complyTest })` for its resolved-account
+   * authority gate.
    *
    * MCP tools/list visibility is controlled by *whether you call*
    * {@link ComplyController.register}. Wrap registration with your own
-   * environment check if you need to hide the tool outside sandbox:
+   * environment check if you need to hide the tool outside sandbox. An
+   * ungated registration is accepted only when `NODE_ENV` is `test` or
+   * `development` AND `ADCP_COMPLY_CONTROLLER_UNGATED=1`:
    *
    * ```ts
-   * if (process.env.ADCP_SANDBOX === '1') controller.register(server);
+   * if (process.env.NODE_ENV === 'test') {
+   *   process.env.ADCP_COMPLY_CONTROLLER_UNGATED = '1';
+   *   controller.register(server);
+   * }
    * ```
    *
    * Called for every request; the helper does NOT invoke adapters when the
@@ -430,16 +445,18 @@ export interface ComplyControllerConfig {
 
   /**
    * Extra Zod fields to merge into the canonical `comply_test_controller`
-   * input schema. Use this when a custom wrapper routes sandbox gating
-   * or tenant scoping through a top-level field (e.g., `account`) that
-   * the spec-canonical {@link TOOL_INPUT_SHAPE} doesn't include.
+   * input schema. Use this when a custom wrapper carries a tenant or account
+   * reference in a top-level field that the spec-canonical
+   * {@link TOOL_INPUT_SHAPE} doesn't include. Treat such fields only as
+   * identifiers for trusted server-side resolution; never use their contents
+   * directly as sandbox authority.
    * Keys override canonical fields if there's a name collision; the
    * resulting shape is what the framework passes to
    * `mcp.registerTool(..., { inputSchema })` at registration.
    *
    * Mirrors the documented `{ ...TOOL_INPUT_SHAPE, account: ... }`
    * pattern from `test-controller.ts` so adopters routed through
-   * `createAdcpServerFromPlatform({ complyTest })` get the same
+   * `createAdcpServerFromPlatform(platform, { complyTest })` get the same
    * extension seam as adopters wiring `registerTestController` directly.
    *
    * Storyboard fixtures that send a top-level `account` or `brand`
@@ -482,7 +499,9 @@ export interface ComplyControllerToolDefinition {
 
 export interface ComplyController {
   /** MCP tool definition — pass to `server.registerTool(name, { description, inputSchema }, handle)`
-   * manually, or use {@link ComplyController.register} to do it for you. */
+   * manually only when your wrapper owns an equivalent authorization gate,
+   * or use {@link ComplyController.register} to retain the built-in
+   * fail-closed registration guard. */
   readonly toolDefinition: ComplyControllerToolDefinition;
 
   /** Protocol-level handler. Returns a {@link ComplyTestControllerResponse}
@@ -493,8 +512,9 @@ export interface ComplyController {
    * `content` + `structuredContent` + `isError`. */
   handle(input: Record<string, unknown>): Promise<McpToolResponse & { isError?: true }>;
 
-  /** Register the tool on an `AdcpServer` or raw `McpServer`. Equivalent to
-   * calling `server.registerTool(name, { description, inputSchema }, handle)`. */
+  /** Register the tool on an `AdcpServer` or raw `McpServer`. Refuses an
+   * omitted `sandboxGate` unless this is an explicitly acknowledged local
+   * test/development harness. */
   register(server: AdcpServer | McpServer): void;
 }
 
@@ -742,30 +762,21 @@ export function createComplyController(config: ComplyControllerConfig): ComplyCo
     inputSchema: { ...TOOL_INPUT_SHAPE, ...(config.inputSchema ?? {}) },
   });
 
-  // Per-controller latch so the "ungated controller" warning fires once even
-  // when serve() invokes the factory (and therefore register) per request.
-  let hasWarnedOnRegister = false;
-
   function register(server: AdcpServer | McpServer): void {
-    // Loud warning when the tool is about to be exposed without any explicit
-    // gate. Sellers who intentionally gate at the transport layer can silence
-    // this by setting ADCP_SANDBOX=1 (or ADCP_COMPLY_CONTROLLER_UNGATED=1 to
-    // opt out entirely). Prevents silent fail-open misuse without breaking
-    // the API's "gate is optional" shape.
-    if (
-      !hasWarnedOnRegister &&
-      !config.sandboxGate &&
-      process.env.ADCP_SANDBOX !== '1' &&
-      process.env.ADCP_COMPLY_CONTROLLER_UNGATED !== '1'
-    ) {
-      hasWarnedOnRegister = true;
-      // eslint-disable-next-line no-console
-      console.warn(
-        '[comply_test_controller] Registered with no sandboxGate and no ' +
-          'ADCP_SANDBOX / ADCP_COMPLY_CONTROLLER_UNGATED env flag. The tool ' +
-          'will accept every request — only correct if your transport layer ' +
-          'enforces sandbox isolation. See createComplyController docs.'
-      );
+    // An env flag must never silently turn into a production authorization
+    // decision. Keep the optional config shape for compatibility, but refuse
+    // to expose an ungated controller unless a non-production process also
+    // carries the dedicated explicit acknowledgement.
+    if (!config.sandboxGate) {
+      const isNonProduction = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development';
+      const explicitlyAcknowledged = process.env.ADCP_COMPLY_CONTROLLER_UNGATED === '1';
+      if (!isNonProduction || !explicitlyAcknowledged) {
+        throw new Error(
+          'createComplyController.register: refusing to register comply_test_controller without sandboxGate. ' +
+            'Ungated registration is allowed only when NODE_ENV is test/development and ' +
+            'ADCP_COMPLY_CONTROLLER_UNGATED=1 is set explicitly.'
+        );
+      }
     }
     const mcp = getSdkServer(server as AdcpServer) ?? (server as McpServer);
     mcp.registerTool(
