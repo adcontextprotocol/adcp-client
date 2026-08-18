@@ -3,10 +3,10 @@
 
 import { randomUUID } from 'crypto';
 import type { AgentConfig } from '../types';
-import { ProtocolClient, normalizeTransportOptions } from '../protocols';
+import { ProtocolClient, normalizeTransportOptions, prepareProtocolToolCall } from '../protocols';
 import { listMCPTasks } from '../protocols/mcp-tasks';
 import { getAuthToken } from '../auth';
-import { is401Error, adcpErrorToTypedError } from '../errors';
+import { is401Error, adcpErrorToTypedError, ConfigurationError } from '../errors';
 import type { ADCPError } from '../errors';
 import type { Storage } from '../storage/interfaces';
 import {
@@ -23,6 +23,7 @@ import { generateIdempotencyKey, requestUsesIdempotency, redactIdempotencyKeyInA
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
 import { normalizeLegacyMediaBuyStatusForReturn } from '../utils/envelope-status-compat';
 import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
+import type { AdcpCapabilities } from '../utils/capabilities';
 import { cancelA2ATask } from '../protocols/a2a';
 import { isAbortOrTimeoutError, throwIfAborted } from '../protocols/abort';
 import type {
@@ -45,6 +46,7 @@ import { ProtocolResponseParser, ADCP_STATUS, type ADCPStatus } from './Protocol
 import type { Activity } from './AsyncHandler';
 import { GovernanceMiddleware } from './GovernanceMiddleware';
 import type { GovernanceConfig, GovernanceCheckResult } from './GovernanceTypes';
+import { targetDeclaresGovernanceEnforcement } from '../governance';
 import { attachMatch } from './match';
 import { resolveWebhookUrl } from './webhook-url';
 import {
@@ -80,6 +82,102 @@ export class InputRequiredError extends Error {
     super(`Server requires input but no handler provided. Question: ${question}`);
     this.name = 'InputRequiredError';
   }
+}
+
+const GOVERNED_CREDENTIAL_SCAN_MAX_NODES = 10_000;
+const GOVERNED_CREDENTIAL_SCAN_MAX_DEPTH = 64;
+const GOVERNED_CALLBACK_FIELDS = new Set(['push_notification_config', 'reporting_webhook', 'artifact_webhook']);
+
+type GovernedCredentialScanResult =
+  | { kind: 'credential'; path: string; callbackField: string }
+  | { kind: 'limit'; limit: 'nodes' | 'depth' };
+
+/**
+ * Find callback authentication credentials before an exact downstream payload
+ * crosses the governance-agent boundary. AdCP 3.2 requires intent payloads to
+ * match the seller arguments byte-for-byte at the JSON-data-model level, so
+ * the SDK cannot safely redact a credential and reinsert it after approval:
+ * doing so would invalidate the seller's authorized_payload_hash check.
+ */
+function findGovernedAuthenticationCredential(value: unknown): GovernedCredentialScanResult | undefined {
+  const stack: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
+  const visited = new WeakSet<object>();
+  let visitedNodes = 0;
+
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (!current.value || typeof current.value !== 'object') continue;
+    if (current.depth > GOVERNED_CREDENTIAL_SCAN_MAX_DEPTH) return { kind: 'limit', limit: 'depth' };
+    if (visited.has(current.value)) continue;
+    visited.add(current.value);
+    if (++visitedNodes > GOVERNED_CREDENTIAL_SCAN_MAX_NODES) return { kind: 'limit', limit: 'nodes' };
+
+    if (!Array.isArray(current.value)) {
+      const record = current.value as Record<string, unknown>;
+      for (const callbackField of GOVERNED_CALLBACK_FIELDS) {
+        const callback = record[callbackField];
+        if (!callback || typeof callback !== 'object' || Array.isArray(callback)) continue;
+        const authentication = (callback as Record<string, unknown>).authentication;
+        if (
+          authentication &&
+          typeof authentication === 'object' &&
+          !Array.isArray(authentication) &&
+          (authentication as Record<string, unknown>).credentials !== undefined
+        ) {
+          return {
+            kind: 'credential',
+            path: `${callbackField}.authentication.credentials`,
+            callbackField,
+          };
+        }
+      }
+    }
+
+    for (const key in current.value) {
+      if (!Object.prototype.hasOwnProperty.call(current.value, key)) continue;
+      const child = (current.value as Record<string, unknown>)[key];
+      if (!child || typeof child !== 'object') continue;
+      if (visitedNodes + stack.length >= GOVERNED_CREDENTIAL_SCAN_MAX_NODES) {
+        return { kind: 'limit', limit: 'nodes' };
+      }
+      stack.push({ value: child, depth: current.depth + 1 });
+    }
+  }
+  return undefined;
+}
+
+function assertGovernedPayloadHasNoCallbackCredentials(
+  taskName: string,
+  payload: Record<string, unknown>,
+  options: { sdkInjectedPushConfig?: boolean } = {}
+): void {
+  const scanResult = findGovernedAuthenticationCredential(payload);
+  if (!scanResult) return;
+  if (scanResult.kind === 'limit') {
+    const limitDescription =
+      scanResult.limit === 'nodes'
+        ? `${GOVERNED_CREDENTIAL_SCAN_MAX_NODES.toLocaleString('en-US')} nested objects`
+        : `${GOVERNED_CREDENTIAL_SCAN_MAX_DEPTH} object levels`;
+    throw new ConfigurationError(
+      `The SDK could not safely inspect the governed ${taskName} payload for callback credentials because it ` +
+        `exceeds the ${limitDescription} safety limit. Simplify the payload or move deeply nested extension data ` +
+        `out of the governed request before retrying.`,
+      'governance.payload'
+    );
+  }
+  const remedy =
+    scanResult.callbackField === 'push_notification_config'
+      ? options.sdkInjectedPushConfig
+        ? 'Retry with task options `{ disableWebhook: true }` and poll for completion, or use A2A task-status notifications.'
+        : 'Remove the credential-bearing push notification config and poll for completion, or use A2A task-status notifications.'
+      : `Remove the credential-bearing ${scanResult.callbackField} from this governed request and use a ` +
+        `non-webhook delivery path.`;
+  throw new ConfigurationError(
+    `Governed ${taskName} cannot forward ${scanResult.path} to the governance agent. ` +
+      `The SDK will not disclose receiver authentication credentials, and redacting modern AdCP 3.2 payloads ` +
+      `would invalidate seller authorization. ${remedy}`,
+    scanResult.path
+  );
 }
 
 /**
@@ -517,10 +615,19 @@ export class TaskExecutor {
     params: any,
     inputHandler?: InputHandler,
     options: TaskOptions = {},
-    serverVersion?: 'v2' | 'v3'
+    serverVersion?: 'v2' | 'v3',
+    targetCapabilities?: AdcpCapabilities
   ): Promise<TaskResult<T>> {
     return withTaskDeadline(options, effectiveOptions =>
-      this.executeTaskWithinDeadline<T>(agent, taskName, params, inputHandler, effectiveOptions, serverVersion)
+      this.executeTaskWithinDeadline<T>(
+        agent,
+        taskName,
+        params,
+        inputHandler,
+        effectiveOptions,
+        serverVersion,
+        targetCapabilities
+      )
     );
   }
 
@@ -530,7 +637,8 @@ export class TaskExecutor {
     params: any,
     inputHandler?: InputHandler,
     options: TaskOptions = {},
-    serverVersion?: 'v2' | 'v3'
+    serverVersion?: 'v2' | 'v3',
+    targetCapabilities?: AdcpCapabilities
   ): Promise<TaskResult<T>> {
     if (serverVersion) this.lastKnownServerVersion = serverVersion;
     // The client-minted `taskId` is a local correlation id for tracking this
@@ -632,41 +740,69 @@ export class TaskExecutor {
       throwIfAborted(options.signal);
 
       // Run governance check if configured for this tool
-      if (this.governanceMiddleware?.requiresCheck(taskName)) {
-        const { result: govResult, params: adjustedParams } = await this.governanceMiddleware.checkProposed(
-          taskName,
-          params,
-          debugLogs,
-          options.signal
-        );
-        throwIfAborted(options.signal);
+      const governanceMiddleware = this.governanceMiddleware;
+      if (governanceMiddleware) {
+        const modernGovernance =
+          targetCapabilities !== undefined && targetDeclaresGovernanceEnforcement(targetCapabilities, taskName);
+        // Modern authorization binds the exact argument object the seller
+        // receives, including protocol-owned fields and MCP webhook
+        // registration. Legacy governance retains its historical application
+        // payload and must not receive SDK-injected callback credentials.
+        const governableParams = modernGovernance
+          ? prepareProtocolToolCall(agent, params, {
+              webhookUrl,
+              webhookSecret: this.config.webhookSecret,
+              serverVersion,
+              adcpVersion: this.config.adcpVersion,
+              wireAdcpVersion: this.config.wireAdcpVersion,
+              versionEnvelope: this.config.versionEnvelope,
+            }).args
+          : params;
+        if (await governanceMiddleware.shouldCheck(taskName, governableParams, targetCapabilities)) {
+          const sdkInjectedPushConfig =
+            modernGovernance &&
+            agent.protocol === 'mcp' &&
+            webhookUrl !== undefined &&
+            this.config.webhookSecret !== undefined;
+          assertGovernedPayloadHasNoCallbackCredentials(taskName, governableParams, { sdkInjectedPushConfig });
+          const { result: govResult, params: adjustedParams } = await governanceMiddleware.checkProposed(
+            agent,
+            targetCapabilities!,
+            taskName,
+            governableParams,
+            debugLogs,
+            options.signal
+          );
+          throwIfAborted(options.signal);
+          assertGovernedPayloadHasNoCallbackCredentials(taskName, adjustedParams, { sdkInjectedPushConfig });
 
-        // Governance always blocks on denial/unapplied conditions.
-        const isBlocking = true;
+          // Governance always blocks on denial/unapplied conditions.
+          const isBlocking = true;
 
-        if (govResult.status === 'denied' && isBlocking) {
-          const denied = this.buildGovernanceResult<T>(govResult, taskId, taskName, agent, startTime, debugLogs);
-          this.updateTaskStatus(taskId, 'governance-denied', undefined, denied.error);
-          return attachMatch(denied);
+          if (govResult.status === 'denied' && isBlocking) {
+            const denied = this.buildGovernanceResult<T>(govResult, taskId, taskName, agent, startTime, debugLogs);
+            this.updateTaskStatus(taskId, 'governance-denied', undefined, denied.error);
+            return attachMatch(denied);
+          }
+
+          if (govResult.status === 'conditions' && !govResult.conditionsApplied && isBlocking) {
+            const denied = this.buildGovernanceResult<T>(govResult, taskId, taskName, agent, startTime, debugLogs);
+            this.updateTaskStatus(taskId, 'governance-denied', undefined, denied.error);
+            return attachMatch(denied);
+          }
+
+          // Approved, or non-blocking mode (advisory/audit) allows execution to proceed
+          governanceCheckId = govResult.checkId;
+          governanceResult = govResult;
+          if (governanceCheckId) {
+            // Preserve the approved check identity as soon as the seller may be
+            // dispatched. If the deadline fires during response processing,
+            // callers can still reconcile the seller mutation against the
+            // original governance decision after restart.
+            attachTaskDeadlineGovernanceRecovery(options, { checkId: governanceCheckId });
+          }
+          effectiveParams = adjustedParams;
         }
-
-        if (govResult.status === 'conditions' && !govResult.conditionsApplied && isBlocking) {
-          const denied = this.buildGovernanceResult<T>(govResult, taskId, taskName, agent, startTime, debugLogs);
-          this.updateTaskStatus(taskId, 'governance-denied', undefined, denied.error);
-          return attachMatch(denied);
-        }
-
-        // Approved, or non-blocking mode (advisory/audit) allows execution to proceed
-        governanceCheckId = govResult.checkId;
-        governanceResult = govResult;
-        if (governanceCheckId) {
-          // Preserve the approved check identity as soon as the seller may be
-          // dispatched. If the deadline fires during response processing,
-          // callers can still reconcile the seller mutation against the
-          // original governance decision after restart.
-          attachTaskDeadlineGovernanceRecovery(options, { checkId: governanceCheckId });
-        }
-        effectiveParams = adjustedParams;
       }
 
       // Create initial message (uses effectiveParams which may have governance-applied conditions)

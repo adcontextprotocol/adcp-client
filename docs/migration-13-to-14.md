@@ -110,6 +110,109 @@ to `required` after legacy callers are gone.
 
 Do not select a signing profile from a version value inside an unverified request body or header. On the server, bind the version to the endpoint, tenant, or authenticated agent configuration. Webhook signatures do not move to the 3.2 request profile.
 
+## Cross-role governance is capability-gated
+
+AdCP 3.2 governance authorizes one exact downstream action. A buyer-side
+`GovernanceMiddleware` now checks only tasks the target advertises under
+`adcp.governance_enforcement.tasks` with `signed_context` mode **and** the
+`governance.campaign` experimental feature marker. Intent checks
+carry `plan_id`, `target_agent`, `tool`, and the exact payload; they never reuse
+`governance_context`. An approved check adds the returned compact JWS to the
+downstream payload. A conditions verdict carries only `consultation_context`
+and must be adjusted and re-checked before it authorizes anything.
+
+Modern buyer configuration needs a stable caller URL. Conditional tasks use
+`resolveApplicability` when deciding whether a stateful change increases a
+commitment, and `resolveIntentDetails` supplies the authoritative ceiling for
+tasks whose amount is not derivable from the request:
+
+```ts
+const client = new AgentClient(seller, {
+  governance: {
+    campaign: {
+      agent: governanceAgent,
+      planId,
+      callerUrl: 'https://buyer.example/mcp',
+      resolveApplicability: async (tool, payload) => {
+        if (tool !== 'update_media_buy') return true;
+        const current = await mediaBuyStore.get(String(payload.media_buy_id));
+        return payload.total_budget != null &&
+          payload.total_budget.amount > current.total_budget;
+      },
+      resolveIntentDetails: async (tool, payload) => {
+        if (tool !== 'update_media_buy') return {};
+        const delta = await computePositiveBudgetDelta(payload);
+        return { proposedCommitment: { amount: delta.amount, currency: delta.currency } };
+      },
+    },
+  },
+});
+```
+
+The SDK handles stateless pause, cancel, deactivate, and creative-estimate
+exemptions itself. If a conditional request needs seller state and no resolver
+is installed, it is governed conservatively. Direct `TaskExecutor` callers
+must pass the target capability result; configured governance fails closed
+when it is absent.
+
+Services verify the token before starting a side effect:
+
+```ts
+import {
+  InMemoryGovernanceReplayStore,
+  createAdcpGovernanceEnforcementMiddleware,
+} from '@adcp/sdk/server';
+import { HttpsJwksResolver } from '@adcp/sdk/signing/server';
+
+const enforceGovernance = createAdcpGovernanceEnforcementMiddleware({
+  expectedIssuer: 'https://governance.example/mcp',
+  expectedAudience: 'https://seller.example/mcp',
+  jwks: new HttpsJwksResolver('https://governance.example/.well-known/jwks.json'),
+  replayStore: new InMemoryGovernanceReplayStore(),
+});
+
+await enforceGovernance(
+  {
+    token: params.governance_context,
+    authenticatedCaller: principal.agentUrl,
+    task: 'create_media_buy',
+    payload: params,
+    actualCommitment: { amount: params.total_budget.amount, currency: params.total_budget.currency },
+  },
+  () => commitMediaBuy(params),
+);
+```
+
+Use a shared atomic `GovernanceReplayStore` in multi-replica production
+services; the in-memory implementation is for a single process. The verifier
+checks critical markers, signature and key purpose, issuer, audience,
+authenticated caller, task, JCS payload hash, currency, amount ceiling, time
+window, revocation, and one-time `jti` consumption. Existing
+`media_buy.governance_aware` online-consultation integrations remain the 3.0/
+3.1 compatibility path; do not infer cross-role enforcement from that legacy
+boolean.
+
+The server-specific middleware returns a structured `PERMISSION_DENIED` AdCP
+response for missing, invalid, expired, or conflicting authorization. The
+framework-neutral `createGovernanceEnforcementMiddleware` throws
+`GovernanceAuthorizationError`; use it only when your framework explicitly
+maps that error to a permission denial. Resolve exact retries from the
+service's idempotency cache before invoking governance verification: a
+consumed authorization is always rejected, and the middleware never invokes
+the side effect twice. Without a fresh combined key-and-JTI revocation
+resolver, intent-token lifetime is capped at 15 minutes.
+
+Seller-side `GovernanceAdapter.checkCommitted()` accepts the legacy
+plan-addressed request shape during 3.x. The modern shape supplies
+`governanceContext`; purchase commitment is derived from
+`plannedDelivery.total_budget` and `currency`, while modification calls must
+supply the seller-computed positive `executionCommitment`. Governance-agent
+transport failure now throws `GovernanceAdapterError` with
+`governance_agent_unreachable` instead of being reported as a policy denial.
+Catch it at the server handler boundary and return
+`governanceUnavailableError()`, which emits the required transient
+`GOVERNANCE_UNAVAILABLE` wire error.
+
 ## Server handler additions
 
 `createAdcpServerFromPlatform()` routes the new compact lifecycle through

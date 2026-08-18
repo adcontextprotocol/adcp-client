@@ -113,6 +113,11 @@ function isInitializeRequest(parsedBody) {
   return messages.some(message => message?.method === 'initialize');
 }
 
+function hasMethod(parsedBody, method) {
+  const messages = Array.isArray(parsedBody) ? parsedBody : [parsedBody];
+  return messages.some(message => message?.method === method);
+}
+
 function registerSessionTools(mcp, state) {
   for (const toolName of ['ping', 'get_products', 'create_media_buy', 'sync_creatives']) {
     mcp.registerTool(toolName, { inputSchema: {} }, async () => {
@@ -159,10 +164,15 @@ async function startStatefulMcpOAuthStub() {
 
     state.authHeaders.push(req.headers.authorization ?? '');
     const sessionHeader = req.headers['mcp-session-id'];
-    if (sessionHeader) state.sessionHeaders.push(sessionHeader);
 
     const parsedBody = req.method === 'POST' ? await readJsonBody(req) : undefined;
     if (parsedBody) countMethod(state, parsedBody);
+    // The session terminator may issue a delayed DELETE after counters are
+    // reset. Track only the tools/call requests this assertion is about, not
+    // lifecycle traffic from a discovery session being cleaned up.
+    if (sessionHeader && parsedBody && hasMethod(parsedBody, 'tools/call')) {
+      state.sessionHeaders.push(sessionHeader);
+    }
 
     const isInit = parsedBody ? isInitializeRequest(parsedBody) : false;
     let session;

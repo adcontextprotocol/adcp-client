@@ -352,10 +352,21 @@ export type {
   GovernanceCheckResult,
   GovernanceOutcome,
   GovernanceFinding,
+  GovernanceIntentDetails,
   GovernanceCondition,
   GovernanceEscalation,
+  NormalizedGovernanceApproved,
+  NormalizedGovernanceConditions,
+  NormalizedGovernanceDenied,
+  NormalizedGovernanceVerdict,
 } from './core/GovernanceTypes';
 export { GovernanceMiddleware } from './core/GovernanceMiddleware';
+export {
+  isGovernanceApproved,
+  isGovernanceConditions,
+  isGovernanceDenied,
+  normalizeGovernanceVerdict,
+} from './core/GovernanceTypes';
 export type { GovernanceDebugEntry } from './core/GovernanceMiddleware';
 
 // ====== GOVERNANCE PLAN HELPERS ======
@@ -363,9 +374,26 @@ export type { GovernanceDebugEntry } from './core/GovernanceMiddleware';
 // typically drop: budget reallocation autonomy and regulated-vertical
 // human review under GDPR Art 22 / EU AI Act Annex III.
 export {
+  GOVERNANCE_AUTHORIZATION_CRITICAL_CLAIMS,
+  GovernanceAuthorizationError,
+  GovernanceReplayStoreAdapter,
+  InMemoryGovernanceReplayStore,
+  buildGovernanceCommitment,
+  buildGovernanceExecutionCommitment,
+  buildGovernanceExecutionRequest,
+  buildGovernanceIntentRequest,
+  buildGovernanceProposedCommitment,
   buildHumanReviewPlan,
   buildHumanOverride,
+  computeGovernedPayloadHash,
+  createGovernanceEnforcementMiddleware,
+  getGovernanceEnforcementTasks,
+  governancePurchaseTypeForTask,
+  governanceTaskRequiresProposedCommitment,
+  targetDeclaresGovernanceEnforcement,
+  targetDeclaresLegacyGovernanceAwareness,
   validateGovernancePlan,
+  verifyGovernanceAuthorization,
   REGULATED_HUMAN_REVIEW_CATEGORIES,
   ANNEX_III_POLICY_IDS,
 } from './governance';
@@ -416,14 +444,34 @@ export {
   type PlatformExtensionsReferenceResult,
 } from './canonical-references';
 export type {
+  BuildGovernanceExecutionRequestInput,
+  BuildGovernanceIntentRequestInput,
   BuildHumanReviewPlanInput,
   BuildHumanOverrideInput,
   DataSubjectContestation,
+  GovernanceAuthorizationClaims,
+  GovernanceAuthorizationCriticalClaim,
+  GovernanceAuthorizationErrorCode,
+  GovernanceAuthorizationFailure,
+  GovernanceAuthorizationResult,
+  GovernanceAuthorizationSuccess,
+  GovernanceCommitment,
+  GovernanceEnforcementMiddleware,
+  GovernanceEnforcementMiddlewareConfig,
+  GovernanceEnforcementMiddlewareInput,
+  GovernanceEnforcementMode,
+  GovernanceEnforcementTask,
   GovernancePlan,
+  GovernanceReplayStore,
+  GovernanceReplayBinding,
+  GovernanceRevocationResolver,
+  GovernanceRevocationStatus,
   GovernanceValidationIssue,
   HumanOverride,
+  InMemoryGovernanceReplayStoreOptions,
   PlanBudget,
   ReallocationAutonomy,
+  VerifyGovernanceAuthorizationOptions,
 } from './governance';
 
 // ====== TASK EVENT TYPES ======
@@ -1912,6 +1960,9 @@ export {
   type GovernanceAdapterConfig,
   type GovernanceAdapterErrorCode,
   type CommittedCheckRequest,
+  type LegacyCommittedCheckRequest,
+  type ModernCommittedCheckRequest,
+  GovernanceAdapterError,
   GovernanceAdapterErrorCodes,
   isGovernanceAdapterError,
   // Implicit Account Store (resolution: 'implicit') — Shape A reference adapter
