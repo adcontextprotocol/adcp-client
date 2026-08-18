@@ -1355,6 +1355,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     const executedStoryboards: Storyboard[] = [];
     const runOptions: StoryboardRunOptions = {
       ...effectiveOptions,
+      ...(complianceDir !== undefined && { complianceDir }),
       agentTools: profile.tools,
       ...(webhook_receiver !== undefined && { webhook_receiver }),
       ...(webhook_replay_receiver !== undefined && { webhook_replay_receiver }),

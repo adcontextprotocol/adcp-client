@@ -533,11 +533,26 @@ function loadStoryboardsFromDir(dir: string): Storyboard[] {
 /** Load storyboards for a single bundle (universal YAML file, domain dir, or specialism dir). */
 export function loadBundleStoryboards(ref: BundleRef): Storyboard[] {
   const raw = ref.kind === 'universal' ? safeLoadUniversal(ref.path) : loadStoryboardsFromDir(ref.path);
-  return raw.map(sb => annotateStoryboardVersion(postProcessStoryboard(sb), ref.adcp_version));
+  const complianceDir = dirname(dirname(ref.path));
+  return raw.map(sb =>
+    annotateStoryboardVersion(
+      postProcessStoryboard(sb, ref.adcp_version, complianceDir),
+      ref.adcp_version,
+      complianceDir
+    )
+  );
 }
 
-function annotateStoryboardVersion(storyboard: Storyboard, adcpVersion: string | undefined): Storyboard {
-  return adcpVersion === undefined ? storyboard : { ...storyboard, adcp_version: adcpVersion };
+function annotateStoryboardVersion(
+  storyboard: Storyboard,
+  adcpVersion: string | undefined,
+  complianceDir: string
+): Storyboard {
+  return {
+    ...storyboard,
+    ...(adcpVersion !== undefined && { adcp_version: adcpVersion }),
+    compliance_dir: complianceDir,
+  };
 }
 
 function safeLoadUniversal(path: string): Storyboard[] {
@@ -554,10 +569,10 @@ function safeLoadUniversal(path: string): Storyboard[] {
  * request-signing test vectors; synthesize them here so downstream callers
  * (the runner, CLI tooling, reporting) see a fully-populated storyboard.
  */
-function postProcessStoryboard(storyboard: Storyboard): Storyboard {
+function postProcessStoryboard(storyboard: Storyboard, adcpVersion?: string, complianceDir?: string): Storyboard {
   if (storyboard.id === 'signed_requests') {
     try {
-      return synthesizeRequestSigningSteps(storyboard);
+      return synthesizeRequestSigningSteps(storyboard, { version: adcpVersion, complianceDir });
     } catch (err) {
       // Synthesis failure = infrastructural problem (cache missing vectors,
       // schema drift, etc.). Emit a synthetic failing phase so the runner's

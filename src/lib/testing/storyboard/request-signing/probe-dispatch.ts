@@ -44,7 +44,10 @@ export async function probeRequestSigningVector(
   // hardcoded vector id. Keeps the dispatch resilient to upstream renames.
   if (parsed.kind === 'negative' && rsOpts.skipRateAbuse) {
     try {
-      const loaded = loadRequestSigningVectors();
+      const loaded = loadRequestSigningVectors({
+        version: options.adcpVersion,
+        complianceDir: options.complianceDir,
+      });
       const vector = loaded.negative.find(v => v.id === parsed.vector_id);
       if (vector?.requires_contract === 'rate_abuse') {
         return skipProbe(agentUrl, 'rate_abuse_opt_out');
@@ -58,6 +61,8 @@ export async function probeRequestSigningVector(
   }
   try {
     const result = await gradeOneVector(parsed.vector_id, parsed.kind, agentUrl, {
+      ...(options.adcpVersion && { version: options.adcpVersion }),
+      ...(options.complianceDir && { complianceDir: options.complianceDir }),
       allowPrivateIp: options.allow_http === true,
       rateAbuseCap: rsOpts.rateAbuseCap,
       allowLiveSideEffects: rsOpts.allowLiveSideEffects,
