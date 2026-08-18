@@ -72,6 +72,7 @@ export async function probeRequestSigningVector(
         ? { initializeHeaders: { authorization: `Bearer ${options.auth.token}` } }
         : {}),
       mcpSessionId: rsOpts.mcpSessionId,
+      mcpProtocolVersion: rsOpts.mcpProtocolVersion,
     });
     if (result.skipped) {
       return skipProbe(agentUrl, (result.skip_reason as RunnerDetailedSkipReason | undefined) ?? 'grader_skipped');

@@ -12,7 +12,7 @@
  * ```ts
  * import { gradeRequestSigning } from '@adcp/sdk/testing/storyboard/request-signing';
  *
- * const report = await gradeRequestSigning('https://sandbox.seller.com/adcp', {
+ * const report = await gradeRequestSigning('https://sandbox.seller.com/mcp', {
  *   skipRateAbuse: true, // skip the 101-request flood in routine runs
  * });
  * if (!report.passed) {

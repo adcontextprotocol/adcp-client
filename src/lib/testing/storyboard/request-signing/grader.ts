@@ -1,6 +1,6 @@
 import { randomBytes } from 'crypto';
 import { buildNegativeRequest, buildPositiveRequest, type BuildOptions, type SignedHttpRequest } from './builder';
-import { initializeMcpSession, probeSignedRequest, type ProbeResult } from './probe';
+import { initializeMcpSession, probeSignedRequest, type ProbeOptions, type ProbeResult } from './probe';
 import { loadRequestSigningVectors, type LoadVectorsOptions } from './vector-loader';
 import { loadSignedRequestsRunnerContract, type SignedRequestsRunnerContract } from './test-kit';
 import {
@@ -123,6 +123,13 @@ export interface GradeOptions extends LoadVectorsOptions {
    */
   mcpSessionId?: string;
   /**
+   * MCP protocol version to attach after signing. Auto-initialization replaces
+   * this with the server-negotiated version. Supply it alongside a
+   * pre-acquired `mcpSessionId`. Omit it only when the server does not require
+   * a protocol-version header.
+   */
+  mcpProtocolVersion?: string;
+  /**
    * Headers for the auto-`initialize` handshake only (typically the agent's
    * `authorization`) — agents that require auth on `initialize` would
    * otherwise 401 the handshake, read as "stateless server", and every
@@ -216,13 +223,20 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
   const contract = loadSignedRequestsRunnerContract(options);
   const transport = options.transport ?? 'mcp';
 
+  // Avoid allocating an MCP session (or making authenticated egress) when
+  // every vector is skipped or handled entirely by the local verifier.
+  const hasRunnableNetworkVector =
+    loaded.positive.some(vector => !preflightSkip(vector, 'positive', contract, options)) ||
+    loaded.negative.some(vector => !vector.jwks_override && !preflightSkip(vector, 'negative', contract, options));
+
   // Auto-initialize MCP session once before all vectors. A single session
   // covers the full batch — the session ID is injected post-signing so
   // Mcp-Session-Id is never a covered component, and negative vectors reach
   // the verifier before MCP session dispatch (the signature check fires at
   // the HTTP middleware layer, ahead of session routing).
   let mcpSessionId: string | undefined = options.mcpSessionId;
-  if (transport === 'mcp' && mcpSessionId === undefined) {
+  let mcpProtocolVersion = options.mcpProtocolVersion;
+  if (transport === 'mcp' && hasRunnableNetworkVector && mcpSessionId === undefined) {
     const init = await initializeMcpSession(
       agentUrl,
       {
@@ -235,12 +249,14 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
       throw new Error(`MCP initialize precondition failed: ${init.error}`);
     }
     mcpSessionId = init.sessionId; // undefined without an error = stateless server
+    mcpProtocolVersion = init.protocolVersion ?? mcpProtocolVersion;
   }
 
-  const probeOpts = {
+  const probeOpts: ProbeOptions = {
     allowPrivateIp: options.allowPrivateIp === true,
     timeoutMs: options.timeoutMs,
     mcpSessionId,
+    mcpProtocolVersion: transport === 'mcp' ? mcpProtocolVersion : undefined,
   };
 
   const buildOpts: BuildOptions = { baseUrl: agentUrl, transport };
@@ -300,6 +316,10 @@ const MCP_FLATTENED_VECTORS = new Set([
   '006-dot-segment-path',
   '007-query-byte-preserved',
   '008-percent-encoded-path',
+  '009-percent-encoded-unreserved-decoded',
+  '010-percent-encoded-slash-preserved',
+  '011-ipv6-authority',
+  '012-ipv6-authority-default-port-stripped',
 ]);
 
 // Vectors whose failure mode can't reach a live agent through HTTP. Document
@@ -456,7 +476,9 @@ export async function gradeOneVector(
   // should pre-initialize once with initializeMcpSession() and pass the ID
   // via options.mcpSessionId to avoid per-call round-trips.
   let mcpSessionId: string | undefined = options.mcpSessionId;
-  if (transport === 'mcp' && mcpSessionId === undefined) {
+  let mcpProtocolVersion = options.mcpProtocolVersion;
+  const requiresNetworkProbe = kind === 'positive' || !(vector as NegativeVector).jwks_override;
+  if (transport === 'mcp' && requiresNetworkProbe && mcpSessionId === undefined) {
     const init = await initializeMcpSession(
       agentUrl,
       {
@@ -469,12 +491,14 @@ export async function gradeOneVector(
       throw new Error(`MCP initialize precondition failed: ${init.error}`);
     }
     mcpSessionId = init.sessionId;
+    mcpProtocolVersion = init.protocolVersion ?? mcpProtocolVersion;
   }
 
-  const probeOpts = {
+  const probeOpts: ProbeOptions = {
     allowPrivateIp: options.allowPrivateIp === true,
     timeoutMs: options.timeoutMs,
     mcpSessionId,
+    mcpProtocolVersion: transport === 'mcp' ? mcpProtocolVersion : undefined,
   };
   const buildOpts: BuildOptions = { baseUrl: agentUrl, transport };
 
@@ -514,7 +538,7 @@ async function gradeNegative(
   vector: NegativeVector,
   loaded: ReturnType<typeof loadRequestSigningVectors>,
   contract: SignedRequestsRunnerContract | undefined,
-  probeOpts: { allowPrivateIp: boolean; timeoutMs?: number },
+  probeOpts: ProbeOptions,
   buildOpts: BuildOptions,
   options: GradeOptions
 ): Promise<VectorGradeResult> {
@@ -587,7 +611,7 @@ async function gradeJwksOverrideNegative(vector: NegativeVector): Promise<Vector
 function gradeStaticNegative(
   vector: NegativeVector,
   loaded: ReturnType<typeof loadRequestSigningVectors>,
-  probeOpts: { allowPrivateIp: boolean; timeoutMs?: number },
+  probeOpts: ProbeOptions,
   buildOpts: BuildOptions
 ): Promise<VectorGradeResult> {
   const signed = buildNegativeRequest(vector, loaded.keys, buildOpts);
@@ -606,7 +630,7 @@ function gradeStaticNegative(
 async function gradeReplayWindow(
   vector: NegativeVector,
   loaded: ReturnType<typeof loadRequestSigningVectors>,
-  probeOpts: { allowPrivateIp: boolean; timeoutMs?: number },
+  probeOpts: ProbeOptions,
   buildOpts: BuildOptions,
   pairCount: number
 ): Promise<VectorGradeResult> {
@@ -708,7 +732,7 @@ async function gradeRateAbuse(
   vector: NegativeVector,
   loaded: ReturnType<typeof loadRequestSigningVectors>,
   contract: SignedRequestsRunnerContract,
-  probeOpts: { allowPrivateIp: boolean; timeoutMs?: number },
+  probeOpts: ProbeOptions,
   buildOpts: BuildOptions,
   options: GradeOptions
 ): Promise<VectorGradeResult> {

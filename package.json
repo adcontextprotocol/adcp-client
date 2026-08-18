@@ -154,6 +154,16 @@
         "default": "./dist/lib/testing/personas/index.js"
       }
     },
+    "./testing/storyboard/request-signing": {
+      "import": {
+        "types": "./dist/lib/testing/storyboard/request-signing/index.d.mts",
+        "default": "./dist/lib/testing/storyboard/request-signing/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/testing/storyboard/request-signing/index.d.ts",
+        "default": "./dist/lib/testing/storyboard/request-signing/index.js"
+      }
+    },
     "./auth": {
       "import": {
         "types": "./dist/lib/auth/index.d.mts",
@@ -427,6 +437,9 @@
       ],
       "testing/personas": [
         "dist/lib/testing/personas/index.d.ts"
+      ],
+      "testing/storyboard/request-signing": [
+        "dist/lib/testing/storyboard/request-signing/index.d.ts"
       ],
       "server/legacy/v5": [
         "dist/lib/server/legacy/v5/index.d.ts"

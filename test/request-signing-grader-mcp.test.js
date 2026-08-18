@@ -178,6 +178,20 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
     assert.ok(report.passed, 'overall grade is PASS');
     assert.strictEqual(report.positive.length, 12);
     assert.strictEqual(report.negative.length, 28);
+    assert.deepStrictEqual(
+      report.positive.filter(vector => vector.skipped).map(vector => vector.vector_id),
+      [
+        '005-default-port-stripped',
+        '006-dot-segment-path',
+        '007-query-byte-preserved',
+        '008-percent-encoded-path',
+        '009-percent-encoded-unreserved-decoded',
+        '010-percent-encoded-slash-preserved',
+        '011-ipv6-authority',
+        '012-ipv6-authority-default-port-stripped',
+      ],
+      'MCP must not claim URL canonicalization coverage after target reshaping'
+    );
   });
 
   test('gradeOneVector defaults to MCP mode against the MCP signed agent', async () => {

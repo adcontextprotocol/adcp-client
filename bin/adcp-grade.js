@@ -47,16 +47,21 @@ Options:
   --json                     Emit the full GradeReport as JSON
   -h, --help                 Show this help
 
+Environment:
+  ADCP_GRADE_INITIALIZE_AUTHORIZATION
+                             Authorization header used only for the MCP
+                             initialize lifecycle (kept out of process argv).
+
 Exit code:
   0   all graded vectors passed (skipped vectors don't count as failures)
   1   at least one vector failed
   2   argument / configuration error
 
 Examples:
-  adcp grade request-signing https://agent.example.com/adcp
-  adcp grade request-signing http://127.0.0.1:3000 --allow-http --skip-rate-abuse
-  adcp grade request-signing https://sandbox.seller.com/adcp --json | jq
-  adcp grade request-signing https://sandbox.seller.com/adcp \\
+  adcp grade request-signing https://agent.example.com/mcp
+  adcp grade request-signing http://127.0.0.1:3000/mcp --allow-http --skip-rate-abuse
+  adcp grade request-signing https://sandbox.seller.com/mcp --json | jq
+  adcp grade request-signing https://sandbox.seller.com/mcp \\
     --covers-content-digest either --skip-rate-abuse
 `;
 
@@ -233,6 +238,10 @@ async function runRequestSigningGrader(args) {
   }
 
   try {
+    const initializeAuthorization = process.env.ADCP_GRADE_INITIALIZE_AUTHORIZATION;
+    if (initializeAuthorization) {
+      options.initializeHeaders = { authorization: initializeAuthorization };
+    }
     const report = await gradeRequestSigning(agentUrl, options);
     if (emitJson) {
       process.stdout.write(JSON.stringify(report, null, 2) + '\n');
