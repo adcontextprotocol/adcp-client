@@ -19,10 +19,13 @@
  *
  * ESM declaration resolution requires explicit relative specifiers, so this is
  * the declaration-layer companion to the runtime import-fixers in
- * `tsup.config.ts`: it copies each `.d.ts` to `.d.mts` and appends the module
- * extension to every relative `from`/`import(...)` specifier — `.mjs` for a
- * file, `/index.mjs` for a directory — resolving each against the built dist
- * tree (the bytes that actually ship).
+ * `tsup.config.ts`: it normally copies each `.d.ts` to `.d.mts` and appends the
+ * module extension to every relative `from`/`import(...)` specifier — `.mjs`
+ * for a file, `/index.mjs` for a directory — resolving each against the built
+ * dist tree (the bytes that actually ship). The generated Zod declaration is
+ * the exception: its exact inferred type graph is tens of MiB, so its ESM file
+ * is a facade over the canonical CJS declaration instead of a byte-for-byte
+ * duplicate.
  */
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
@@ -90,9 +93,29 @@ function main(): void {
 
   const skip = wildcardOnlySlices();
   const declarations = collectDeclarationFiles(DIST_LIB).filter(f => !skip.has(f));
+  const generatedSchemasDeclaration = path.join(DIST_LIB, 'types', 'schemas.generated.d.ts');
   let written = 0;
   for (const file of declarations) {
     const source = readFileSync(file, 'utf8');
+    if (file === generatedSchemasDeclaration) {
+      // This declaration is tens of MiB because TypeScript expands the full
+      // inferred Zod shapes. Keep the exact CJS declaration as the source of
+      // truth and expose it through a tiny ESM declaration facade instead of
+      // copying the same type graph byte-for-byte.
+      const hasDefaultExport =
+        /^\s*export\s+default\b/m.test(source) ||
+        /^\s*export\s*=\s*/m.test(source) ||
+        /\bexport\s*\{[^}]*\bdefault\b[^}]*\}/m.test(source);
+      if (hasDefaultExport) {
+        throw new Error('schemas.generated.d.ts has an export that the ESM facade would omit');
+      }
+      if (!existsSync(file.replace(/\.d\.ts$/, '.js'))) {
+        throw new Error('schemas.generated.js is missing; build runtime files before declarations');
+      }
+      writeFileSync(file.replace(/\.d\.ts$/, '.d.mts'), `export * from './schemas.generated.js';\n`);
+      written++;
+      continue;
+    }
     // The declaration map points at the `.d.ts`; drop the reference rather than
     // ship a `.d.mts` whose sourceMappingURL resolves to the wrong file.
     const withoutMap = source.replace(/\n?\/\/# sourceMappingURL=.*\.d\.ts\.map\s*$/, '\n');
