@@ -451,6 +451,7 @@
     "docs/migration-*.md",
     "MIGRATION-*.md",
     "docs/guides/BUILD-AN-AGENT.md",
+    "docs/guides/MEDIA-BUY-3.2-COMPATIBILITY.md",
     "docs/guides/CANONICAL-REFERENCE-RESOLVER.md",
     "docs/guides/PREVIEW-ASSET-DURABILITY.md",
     "examples/**/*",
