@@ -1012,6 +1012,26 @@ describe('Preview Response Normalizer', () => {
       assert.strictEqual(result.render_id, 'primary');
       assert.strictEqual(result.role, 'primary');
     });
+
+    test('should preserve renderer provenance and safety metadata', () => {
+      const renderer = {
+        renderer_id: '@adcp/reference-renderers',
+        version: '1.1.0',
+        export: 'renderImageResult',
+        fidelity: 'representative',
+        tracking_suppressed: true,
+      };
+
+      const result = normalizePreviewRender({
+        output_id: 'main',
+        output_role: 'primary',
+        output_format: 'html',
+        preview_html: '<div>Preview</div>',
+        renderer,
+      });
+
+      assert.deepStrictEqual(result.renderer, renderer);
+    });
   });
 
   describe('Detection helpers', () => {

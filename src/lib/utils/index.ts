@@ -15,6 +15,15 @@ export {
   type PreviewCacheBackend,
   type PreviewCacheEntry,
 } from './preview-utils';
+export {
+  resolvePreviewAuthority,
+  type PlacementPreviewCandidate,
+  type PreviewAuthorityInput,
+  type PreviewAuthorityResolution,
+  type PreviewFidelity,
+  type SelectedPreviewAuthority,
+  type SellerPreviewCandidate,
+} from './preview-authority';
 
 // Configuration constants
 export const REQUEST_TIMEOUT = parseInt(process.env.REQUEST_TIMEOUT || '30000'); // 30 seconds

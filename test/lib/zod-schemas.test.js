@@ -12,6 +12,62 @@ describe('Zod Schema Validation', () => {
     assert.ok(schemas, 'Schemas should be importable');
   });
 
+  test('reference image and carousel fixtures conform to SDK schemas', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+    const { prepareImageCarouselReference, prepareImageReference } =
+      await import('../../packages/reference-renderers/index.js');
+    const imageManifest = {
+      format_kind: 'image',
+      assets: {
+        image_main: {
+          asset_type: 'image',
+          url: 'https://cdn.example/image.png',
+          width: 300,
+          height: 250,
+        },
+      },
+    };
+    const imageDeclaration = {
+      format_kind: 'image',
+      params: { width: 300, height: 250 },
+    };
+    const carouselManifest = {
+      format_kind: 'image_carousel',
+      assets: {
+        cards: ['one', 'two'].map(id => ({
+          asset_type: 'card',
+          media: {
+            asset_type: 'image',
+            url: `https://cdn.example/${id}.png`,
+            width: 600,
+            height: 600,
+          },
+          headline: `Card ${id}`,
+        })),
+      },
+    };
+    const carouselDeclaration = {
+      format_kind: 'image_carousel',
+      params: {
+        min_cards: 2,
+        max_cards: 4,
+        card_aspect_ratio: '1:1',
+        allowed_card_media_asset_types: ['image'],
+      },
+    };
+
+    for (const [manifest, declaration, prepare] of [
+      [imageManifest, imageDeclaration, prepareImageReference],
+      [carouselManifest, carouselDeclaration, prepareImageCarouselReference],
+    ]) {
+      assert.strictEqual(schemas.CreativeManifestSchema.safeParse(manifest).success, true);
+      assert.strictEqual(schemas.ProductFormatDeclarationSchema.safeParse(declaration).success, true);
+      assert.strictEqual(prepare({ manifest, declaration }).ok, true);
+    }
+  });
+
   test('all canonical-format overlays accept the shared array-valued slots contract', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');

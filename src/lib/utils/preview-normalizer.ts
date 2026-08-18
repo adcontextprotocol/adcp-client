@@ -8,6 +8,20 @@
 /**
  * v3 preview render
  */
+export interface PreviewRendererMetadata {
+  /** Stable identifier for the renderer implementation. */
+  renderer_id: string;
+  /** Exact semantic version of the renderer implementation. */
+  version: string;
+  /** Named package export or implementation entry point used. */
+  export: string;
+  /** Whether this renderer represents serving-platform output or an approximation. */
+  fidelity: 'authoritative' | 'representative';
+  /** True when delivery and measurement side effects were suppressed. */
+  tracking_suppressed: boolean;
+  [key: string]: unknown;
+}
+
 export interface PreviewRenderV3 {
   render_id: string;
   role: string;
@@ -24,6 +38,8 @@ export interface PreviewRenderV3 {
     supports_fullscreen?: boolean;
     csp_policy?: string;
   };
+  /** Renderer provenance and safety metadata; it does not independently grant authority. */
+  renderer?: PreviewRendererMetadata;
 }
 
 /**
@@ -47,6 +63,7 @@ export interface PreviewRenderV2 {
     supports_fullscreen?: boolean;
     csp_policy?: string;
   };
+  renderer?: PreviewRendererMetadata;
 }
 
 /**
@@ -77,6 +94,7 @@ export function normalizePreviewRender(render: PreviewRenderV2): PreviewRenderV3
     preview_html: render.preview_html,
     dimensions: render.dimensions,
     embedding: render.embedding,
+    renderer: render.renderer,
   };
 }
 
