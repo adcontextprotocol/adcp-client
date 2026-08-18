@@ -409,6 +409,63 @@ describe('Zod Schema Validation', () => {
       }).success,
       false
     );
+    assert.doesNotThrow(() =>
+      schemas.CreativeAssetSchema.safeParse({
+        ...base,
+        format_id: { agent_url: ' https://legacy.example ', id: 'display_image' },
+      })
+    );
+    assert.strictEqual(
+      schemas.CreativeAssetSchema.safeParse({
+        ...base,
+        format_id: { agent_url: ' https://legacy.example ', id: 'display_image' },
+      }).success,
+      false
+    );
+  });
+
+  test('creative schemas validate slot assets and canonical manifest identity', async () => {
+    const schemas = await import('../../dist/lib/types/schemas.generated.mjs');
+
+    assert.strictEqual(
+      schemas.CreativeManifestSchema.safeParse({
+        format_kind: 'display_tag',
+        assets: { tag_url: { asset_type: 'url' } },
+      }).success,
+      false,
+      'URL assets must include url'
+    );
+    assert.strictEqual(
+      schemas.CreativeManifestSchema.safeParse({
+        format_kind: 'display_tag',
+        assets: { tag_url: [] },
+      }).success,
+      false,
+      'multi-value asset slots must be non-empty'
+    );
+    assert.strictEqual(
+      schemas.CreativeManifestSchema.safeParse({
+        format_kind: 'display_tag',
+        assets: {
+          tag_url: { asset_type: 'url', url: 'https://creative.example/tag.js' },
+        },
+      }).success,
+      true
+    );
+    assert.strictEqual(
+      schemas.CreativeManifestSchema.safeParse({ assets: {} }).success,
+      false,
+      'a manifest requires exactly one identity branch'
+    );
+    assert.strictEqual(
+      schemas.CreativeManifestSchema.safeParse({
+        format_kind: 'display_tag',
+        format_id: { agent_url: 'https://legacy.example', id: 'display_tag' },
+        assets: {},
+      }).success,
+      false,
+      'legacy and canonical identities are mutually exclusive'
+    );
   });
 
   test('GetMediaBuysRequestSchema validates valid request', async () => {

@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-17T23:09:05.081Z
+// Generated at: 2026-08-18T09:05:07.611Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -791,7 +791,7 @@ export const CreativeAssignmentSchema = z.record(z.string(), z.unknown()).and(z.
 }).passthrough());
 
 export const FormatReferenceStructuredObjectSchema = z.object({
-    agent_url: z.url(),
+    agent_url: z.string().regex(/^\S(?:.*\S)?$/).url(),
     id: z.string(),
     width: z.number().optional(),
     height: z.number().optional(),
@@ -8260,17 +8260,32 @@ export const RightsConstraintSchema = z.record(z.string(), z.unknown()).and(z.ob
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
 
+const CreativeAssetValueSchema: z.ZodType = z.union([
+    z.lazy(() => AssetVariantSchema),
+    z.array(z.lazy(() => AssetVariantSchema)).min(1)
+]);
+
 export const CreativeManifestSchema = z.object({
     format_id: FormatReferenceStructuredObjectSchema.optional(),
     format_kind: CanonicalFormatKindSchema.optional(),
     format_option_ref: FormatOptionReferenceSchema.optional(),
-    assets: z.record(z.string(), z.unknown()),
+    assets: z.record(z.string(), CreativeAssetValueSchema),
     brand: BrandReferenceSchema.optional(),
     rights: z.array(RightsConstraintSchema).optional(),
     industry_identifiers: z.array(IndustryIdentifierSchema).optional(),
     provenance: ProvenanceSchema.optional(),
     ext: ExtensionObjectSchema.optional()
-}).passthrough().and(z.union([NamedFormatManifestSchema, CanonicalFormatManifestSchema]));
+}).passthrough().superRefine((value, ctx) => {
+    const hasFormatId = value.format_id !== undefined;
+    const hasFormatKind = value.format_kind !== undefined;
+    if (hasFormatId === hasFormatKind) {
+        ctx.addIssue({
+            code: "custom",
+            path: [],
+            message: "creative identity requires exactly one of format_id or format_kind"
+        });
+    }
+});
 
 export const BuildCreativeMultiSuccessSchema = z.object({
     creative_manifests: z.array(CreativeManifestSchema),
@@ -8650,7 +8665,7 @@ export const CreativeAssetSchema = z.object({
     format_id: FormatReferenceStructuredObjectSchema.optional(),
     format_kind: CanonicalFormatKindSchema.optional(),
     format_option_ref: FormatOptionReferenceSchema.optional(),
-    assets: z.record(z.string(), z.unknown()),
+    assets: z.record(z.string(), CreativeAssetValueSchema),
     inputs: z.array(z.record(z.string(), z.unknown()).and(z.object({
         name: z.string(),
         macros: z.record(z.string(), z.string()).optional(),
@@ -8664,7 +8679,7 @@ export const CreativeAssetSchema = z.object({
     industry_identifiers: z.array(IndustryIdentifierSchema).optional(),
     provenance: ProvenanceSchema.optional(),
     rights: z.array(RightsConstraintSchema).optional()
-}).passthrough().and(z.union([V1CreativeNamedFormatReferenceSchema, V2CreativeCanonicalFormatKindSchema])).superRefine((value, ctx) => {
+}).passthrough().superRefine((value, ctx) => {
     const hasFormatId = value.format_id !== undefined;
     const hasFormatKind = value.format_kind !== undefined;
     if (hasFormatId === hasFormatKind) {
