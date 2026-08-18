@@ -1190,7 +1190,8 @@ export interface SingleAgentClientConfig extends ConversationConfig {
      */
     strictSchemaValidation?: boolean;
     /**
-     * Log all schema validation violations to debug logs (default: true)
+     * Emit schema validation violations to debug logs and the console (default: true).
+     * Set false when violations are surfaced through another structured channel.
      *
      * @default true
      */
