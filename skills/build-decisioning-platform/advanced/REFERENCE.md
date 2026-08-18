@@ -86,17 +86,21 @@ const platform = {
     }),
     createMediaBuy: async (req, ctx) => ({
       media_buy_id: `mb_${Date.now()}`,
-      status: 'pending_creatives',
+      media_buy_status: 'pending_creatives',
       confirmed_at: new Date().toISOString(),
       revision: 1,
       packages: [],
     }),
     updateMediaBuy: async (mediaBuyId, patch, ctx) => ({
       media_buy_id: mediaBuyId,
-      status: patch.paused === true ? 'paused' : 'active',
+      media_buy_status: patch.paused === true ? 'paused' : 'active',
       revision: 2,
     }),
-    syncCreatives: async (creatives, ctx) => creatives.map(c => ({ creative_id: c.creative_id, action: 'created' })),
+    syncCreatives: async (creatives, ctx) =>
+      creatives.map(c => ({
+        creative_id: c.creative_id,
+        action: 'created' as const,
+      })),
     getMediaBuyDelivery: async (filter, ctx) => ({
       status: 'completed',
       currency: 'USD',

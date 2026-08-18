@@ -79,6 +79,7 @@ const revocationStore = new InMemoryRevocationStore({
 });
 
 const verifier = createExpressVerifier({
+  adcpVersion: '3.1',
   capability: {
     supported: true,
     covers_content_digest: 'either',
@@ -112,6 +113,7 @@ const stateStore = new InMemoryStateStore();
 
 function createAgent({ taskStore }: ServeContext) {
   return createAdcpServer({
+    adcpVersion: '3.1',
     name: 'Signed-Requests MCP Test SSP',
     version: '1.0.0',
     taskStore,

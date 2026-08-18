@@ -80,12 +80,10 @@ import {
   type SyncAccountsResultRow,
 } from '@adcp/sdk/server';
 import { buildGAMLikeRecipe, type GAMLikeRecipe } from '@adcp/sdk/mock-server';
-import type { CanonicalProduct, GetProductsRequest } from '@adcp/sdk';
+import type { CanonicalProduct, CreateMediaBuyRequest, GetProductsRequest, UpdateMediaBuyRequest } from '@adcp/sdk';
 import { toCanonicalFormatOptionsWithRoutes, type V2ProductFormatDeclaration } from '@adcp/sdk/v2/projection';
 import type {
-  CreateMediaBuyRequest,
   CreateMediaBuySuccess,
-  UpdateMediaBuyRequest,
   UpdateMediaBuySuccess,
   GetMediaBuysRequest,
   GetMediaBuyDeliveryRequest,

@@ -339,10 +339,10 @@ function buildAuthRequiredMessage(
  * Error thrown when a request reused an `idempotency_key` with a different
  * canonical payload within the seller's replay window.
  *
- * Recovery: `correctable` — the caller either reused a key by mistake (mint
- * a fresh UUID v4 for the new request) or re-planned with a different payload
- * (an agent whose LLM re-ran and emitted a different request must treat that
- * as a new intent, not a retry).
+ * Recovery: `correctable` — reconcile the prior operation by natural key
+ * before deciding whether this is a genuinely new intent. Do not blindly mint
+ * a fresh key: a conflict may span an SDK replay-identity upgrade after the
+ * original operation already succeeded.
  *
  * @example
  * ```typescript
@@ -350,8 +350,8 @@ function buildAuthRequiredMessage(
  *   await client.createMediaBuy({...});
  * } catch (error) {
  *   if (error instanceof IdempotencyConflictError) {
- *     // Either the key was reused by mistake, or the agent re-planned with
- *     // a different payload. Mint a fresh key and try again.
+ *     // Look up the prior operation by its natural key before deciding
+ *     // whether a new intent should receive a fresh idempotency key.
  *   }
  * }
  * ```
@@ -368,7 +368,7 @@ export class IdempotencyConflictError extends ADCPError {
     super(
       message ||
         'idempotency_key was used earlier with a different canonical payload. ' +
-          'Use a fresh UUID v4 for the new request, or resend the exact original payload to get the cached response.'
+          'Reconcile the prior operation by natural key before creating any new intent; do not blindly retry with a fresh key.'
     );
     Object.defineProperty(this, 'idempotencyKey', {
       value: idempotencyKey,

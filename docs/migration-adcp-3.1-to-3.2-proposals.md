@@ -32,6 +32,17 @@ Exact transport retries reuse the same request and key. A changed refinement is 
 
 If `lifecycle_tools` omits `refine_proposals`, translate supported requests to the legacy `get_products({ buying_mode: 'refine', refine: [...] })` flow. Free-text `ask` maps to the legacy proposal ask. Product include/omit actions map directly. Hard constraints require explicit adapter policy: legacy discovery cannot guarantee the 3.2 hard-constraint semantics, so verify the returned proposal locally or report the dimension as unsupported.
 
+When that fallback sends a proposal refinement with `action: 'finalize'`, it
+remains a commit, as it was in 3.1, and now gains optional-key replay semantics.
+SDK 14 clients attach an `idempotency_key`; reuse the identical request and key
+for transport retries. SDK 14's server dispatcher caches a keyed finalize
+variant before the proposal manager runs. A synchronous replay returns the
+original committed proposal and inventory-hold expiry with `replayed: true`;
+a HITL replay returns the same submitted task envelope, which the buyer polls
+for completion. The compatibility schema permits older callers to omit the
+key, but those calls have no cache-backed replay protection. A changed ask,
+target, or constraint needs a fresh key.
+
 ## Seller migration
 
 Declare support with `defineProposalRefinementCapabilities()` and register the handler as `proposalNegotiation` in the options passed to `createAdcpServerFromPlatform(platform, options)`. Registering this group automatically pins that server instance to the bundled AdCP 3.2 schema when `adcpVersion` is omitted; an explicit version below 3.2 is rejected at construction. This is the transitional 3.2 handler-group seam until proposal negotiation is promoted into the generated schema pin and `DecisioningPlatform`. Existing v5 handler-bag adopters may instead import `createAdcpServer` from `@adcp/sdk/server/legacy/v5`; do not start an otherwise platform-shaped integration on that deprecated constructor.

@@ -2,6 +2,7 @@
 
 import { writeFileSync, readFileSync, existsSync } from 'fs';
 import path from 'path';
+import { resolveSchemaRefInCache } from './schema-cache-ref';
 
 /**
  * Generate the per-tool entity-hydration field map from request schemas.
@@ -42,6 +43,8 @@ interface AdcpManifest {
 interface JsonSchema {
   type?: string;
   properties?: Record<string, JsonSchema>;
+  allOf?: JsonSchema[];
+  $ref?: string;
   'x-entity'?: string;
   [key: string]: unknown;
 }
@@ -84,10 +87,13 @@ function loadManifest(): { manifest: AdcpManifest; version: string; cacheDir: st
  * `create_media_buy.packages[i].product_id`), extend this walker and
  * the runtime helper together.
  */
-function extractTopLevelEntityFields(schema: JsonSchema): EntityField[] {
-  if (!schema.properties) return [];
+function extractTopLevelEntityFields(
+  schema: JsonSchema,
+  cacheDir: string,
+  visitedRefs: Set<string> = new Set()
+): EntityField[] {
   const fields: EntityField[] = [];
-  for (const [field, propSchema] of Object.entries(schema.properties)) {
+  for (const [field, propSchema] of Object.entries(schema.properties ?? {})) {
     if (!propSchema || typeof propSchema !== 'object') continue;
     const xEntity = propSchema['x-entity'];
     if (typeof xEntity !== 'string') continue;
@@ -96,14 +102,29 @@ function extractTopLevelEntityFields(schema: JsonSchema): EntityField[] {
     if (propSchema.type !== 'string') continue;
     fields.push({ field, xEntity });
   }
+
+  // 3.2 composes several requests from canonical assertion/base schemas via
+  // allOf (notably provide_performance_feedback). Those inherited fields are
+  // still top-level on the wire and must participate in hydration.
+  for (const member of schema.allOf ?? []) {
+    let resolved = member;
+    if (typeof member.$ref === 'string') {
+      if (visitedRefs.has(member.$ref)) continue;
+      visitedRefs.add(member.$ref);
+      resolved = loadSchema(cacheDir, member.$ref) ?? member;
+    }
+    fields.push(...extractTopLevelEntityFields(resolved, cacheDir, visitedRefs));
+  }
+
   // Stable order keeps the generated file diff-noise-free across runs.
-  fields.sort((a, b) => a.field.localeCompare(b.field));
-  return fields;
+  return [...new Map(fields.map(field => [`${field.field}\0${field.xEntity}`, field])).values()].sort((a, b) =>
+    a.field.localeCompare(b.field)
+  );
 }
 
 function loadSchema(cacheDir: string, schemaRef: string): JsonSchema | null {
-  const schemaPath = path.join(cacheDir, schemaRef);
-  if (!existsSync(schemaPath)) return null;
+  const schemaPath = resolveSchemaRefInCache(cacheDir, schemaRef);
+  if (!schemaPath || !existsSync(schemaPath)) return null;
   return JSON.parse(readFileSync(schemaPath, 'utf8')) as JsonSchema;
 }
 
@@ -123,7 +144,7 @@ function buildEntityFieldMap(manifest: AdcpManifest, cacheDir: string): Record<s
     if (WEBHOOK_ONLY_TOOLS.has(toolName)) continue;
     const schema = loadSchema(cacheDir, tool.request_schema);
     if (!schema) continue;
-    const fields = extractTopLevelEntityFields(schema);
+    const fields = extractTopLevelEntityFields(schema, cacheDir);
     if (fields.length === 0) continue;
     result[toolName] = fields;
   }

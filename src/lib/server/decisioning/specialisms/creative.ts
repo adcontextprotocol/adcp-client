@@ -29,10 +29,10 @@ import type {
   ListCreativeFormatsRequest,
   ListCreativeFormatsResponse,
 } from '../../../types/tools.generated';
-import type { CanonicalCreativeAsset } from '../../../v2/projection/creative-delivery';
+import type { CanonicalSyncCreativeAsset } from '../../../v2/projection/creative-delivery';
 import type { SyncCreativesRow } from './sales';
 
-type Creative = CanonicalCreativeAsset;
+type SyncCreative = CanonicalSyncCreativeAsset;
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
 export type LegacyBuildCreativePayload = ServerPayload<BuildCreativeSuccess>;
@@ -187,7 +187,7 @@ export interface CreativeBuilderPlatform<TCtxMeta = Record<string, unknown>> {
    * hybrid shape — return rows OR `ctx.handoffToTask(fn)`.
    */
   syncCreatives?(
-    creatives: Creative[],
+    creatives: SyncCreative[],
     ctx: Ctx<TCtxMeta>
   ): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
 }

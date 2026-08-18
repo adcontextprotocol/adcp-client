@@ -85,7 +85,7 @@ function loadAjv() {
     // appears both standalone in core/ AND inlined in every bundled file),
     // which trips AJV's ambiguous-ref check. The flat per-domain tree is
     // canonical for $ref resolution.
-    if (top === 'bundled') continue;
+    if (top === 'bundled' || top === 'mcp') continue;
     let raw;
     try {
       raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
@@ -111,7 +111,7 @@ function collectRequestSchemas() {
   const out = [];
   for (const entry of fs.readdirSync(SCHEMA_ROOT, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    if (entry.name === 'bundled' || entry.name === 'core') continue;
+    if (entry.name === 'bundled' || entry.name === 'core' || entry.name === 'mcp') continue;
     const domainDir = path.join(SCHEMA_ROOT, entry.name);
     for (const file of walkJsonFiles(domainDir)) {
       const base = path.basename(file, '.json');

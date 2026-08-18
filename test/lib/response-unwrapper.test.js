@@ -56,6 +56,29 @@ describe('Response Unwrapper', () => {
       assert.strictEqual(isAdcpSuccess(result, 'get_products'), true);
     });
 
+    test('preserves the status-free list_products success arm', () => {
+      const payload = {
+        outcome: 'listed',
+        products: [],
+        feed_version: 'feed-v1',
+        cache_scope: 'public',
+      };
+      const result = unwrapProtocolResponse({ structuredContent: payload }, 'list_products', 'mcp');
+
+      assert.deepStrictEqual(result, payload);
+      assert.strictEqual(result.status, undefined);
+    });
+
+    test('preserves the status-free decline_proposals success arm', () => {
+      const payload = {
+        results: [{ proposal_id: 'proposal-1', outcome: 'declined' }],
+      };
+      const result = unwrapProtocolResponse({ structuredContent: payload }, 'decline_proposals', 'mcp');
+
+      assert.deepStrictEqual(result, payload);
+      assert.strictEqual(result.status, undefined);
+    });
+
     test('should unwrap A2A result.artifacts response with validation', () => {
       const a2aResponse = {
         result: {

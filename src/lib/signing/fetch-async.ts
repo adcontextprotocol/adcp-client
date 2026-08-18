@@ -1,4 +1,4 @@
-import type { CoverContentDigestPredicate, SigningFetchOptions } from './fetch';
+import type { BinaryEncodingPredicate, CoverContentDigestPredicate, SigningFetchOptions } from './fetch';
 import type { SigningProvider } from './provider';
 import type { SignRequestOptions } from './signer';
 import { signRequestAsync } from './signer-async';
@@ -62,8 +62,12 @@ export function createSigningFetchAsync(
       typeof options.coverContentDigest === 'function'
         ? (options.coverContentDigest as CoverContentDigestPredicate)(url, init)
         : options.coverContentDigest;
-    const { coverContentDigest: _omit, ...signerOptionsBase } = options;
-    const signerOptions: SignRequestOptions = { ...signerOptionsBase, coverContentDigest };
+    const binaryEncoding =
+      typeof options.binaryEncoding === 'function'
+        ? (options.binaryEncoding as BinaryEncodingPredicate)(url, init)
+        : options.binaryEncoding;
+    const { coverContentDigest: _omitDigest, binaryEncoding: _omitEncoding, ...signerOptionsBase } = options;
+    const signerOptions: SignRequestOptions = { ...signerOptionsBase, coverContentDigest, binaryEncoding };
 
     const signed = await signRequestAsync({ method, url, headers, body }, provider, signerOptions);
 

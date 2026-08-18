@@ -25,7 +25,26 @@
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import path from 'path';
 import { ADCP_VERSION } from '../version';
-import { resolveBundleKey } from '../validation/schema-loader';
+import { resolveBundleKey, toReleasePrecisionWire } from '../validation/schema-loader';
+
+function findPrereleaseBundle(root: string, key: string): string | undefined {
+  if (!existsSync(root)) return undefined;
+  const candidates = readdirSync(root, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && !entry.name.endsWith('.previous'))
+    .map(entry => {
+      try {
+        return { name: entry.name, releasePrecision: toReleasePrecisionWire(entry.name) };
+      } catch {
+        return undefined;
+      }
+    })
+    .filter(
+      (entry): entry is { name: string; releasePrecision: string } =>
+        entry !== undefined && (entry.releasePrecision === key || entry.releasePrecision.startsWith(`${key}.`))
+    )
+    .sort((a, b) => b.name.localeCompare(a.name, undefined, { numeric: true, sensitivity: 'base' }));
+  return candidates[0] ? path.join(root, candidates[0].name) : undefined;
+}
 
 /**
  * Resolve the schema-cache root for a given AdCP version.
@@ -43,9 +62,20 @@ import { resolveBundleKey } from '../validation/schema-loader';
  */
 function resolveBundledRoot(version: string): string | undefined {
   const key = resolveBundleKey(version);
+  const distRoot = path.join(__dirname, '..', 'schemas-data');
   // Built layout (dist): dist/lib/schemas-data/<bundle-key>/bundled
-  const distCandidate = path.join(__dirname, '..', 'schemas-data', key, 'bundled');
+  const distCandidate = path.join(distRoot, key, 'bundled');
   if (existsSync(distCandidate)) return distCandidate;
+
+  // Wire envelopes carry release-precision prerelease values such as
+  // `3.2-beta.0`, while published bundles retain the exact full-semver
+  // directory (`3.2.0-beta.0`). Match schema-loader's fuzzy resolution so
+  // error-arm wrapping does not disappear when dispatching a real request.
+  const releasePrecisionMatch = /^\d+\.\d+-/.test(key);
+  if (releasePrecisionMatch) {
+    const distPrerelease = findPrereleaseBundle(distRoot, key);
+    if (distPrerelease) return path.join(distPrerelease, 'bundled');
+  }
 
   // Source-tree layout (dev): schemas/cache/<exact-version>/bundled
   const cacheRoot = path.join(__dirname, '..', '..', '..', 'schemas', 'cache');
@@ -71,6 +101,11 @@ function resolveBundledRoot(version: string): string | undefined {
     if (cached.length > 0) {
       return path.join(cacheRoot, cached[0]!.name, 'bundled');
     }
+  }
+
+  if (releasePrecisionMatch) {
+    const cachePrerelease = findPrereleaseBundle(cacheRoot, key);
+    if (cachePrerelease) return path.join(cachePrerelease, 'bundled');
   }
   return undefined;
 }
@@ -156,6 +191,17 @@ function describeErrorArm(branch: unknown, rootSchema: Record<string, unknown>):
  */
 function scanForErrorArmTools(bundledRoot: string): Map<string, ErrorArmDescriptor> {
   const map = new Map<string, ErrorArmDescriptor>();
+  let manifestTools: ReadonlySet<string> | undefined;
+  try {
+    const manifest = JSON.parse(readFileSync(path.join(path.dirname(bundledRoot), 'manifest.json'), 'utf-8')) as {
+      tools?: Record<string, unknown>;
+    };
+    if (manifest.tools) manifestTools = new Set(Object.keys(manifest.tools));
+  } catch {
+    // Older bundles may not carry a manifest. Preserve the filename-driven
+    // fallback for those versions; current bundles always take the stricter
+    // manifest path below.
+  }
   const files: string[] = [];
   function walk(dir: string): void {
     if (!existsSync(dir)) return;
@@ -190,6 +236,10 @@ function scanForErrorArmTools(bundledRoot: string): Map<string, ErrorArmDescript
     if (!descriptor) continue;
     const base = path.basename(file, '-response.json');
     const toolName = base.replace(/-/g, '_');
+    // Bundles contain helper response schemas (for example
+    // media-buy-commitment-response.json) that are not dispatchable tools.
+    // Only manifest-declared tools belong in the runtime wrapping registry.
+    if (manifestTools && !manifestTools.has(toolName)) continue;
     map.set(toolName, descriptor);
   }
   return map;

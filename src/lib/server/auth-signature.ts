@@ -80,6 +80,8 @@ export interface VerifySignatureAsAuthenticatorOptions {
   revocationStore?: RevocationStore;
   /** Override clock for tests. */
   now?: () => number;
+  /** Trusted endpoint release pin used to select the 3.0/3.1 or 3.2 binary profile. */
+  adcpVersion?: string;
   /**
    * Extract the AdCP operation name from the incoming request. Called with
    * the raw `IncomingMessage`; `req.rawBody` has been buffered by `serve()`
@@ -148,6 +150,7 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
         replayStore,
         revocationStore,
         now: options.now,
+        adcpVersion: options.adcpVersion,
         operation: options.resolveOperation(req as IncomingMessage & { rawBody?: string }),
         agentUrlForKeyid: options.agentUrlForKeyid,
       });

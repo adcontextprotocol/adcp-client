@@ -89,6 +89,7 @@ function startGraderServer({ replayCap, coversContentDigest = 'either' }) {
   });
 
   const middleware = createExpressVerifier({
+    adcpVersion: '3.1',
     capability: {
       supported: true,
       covers_content_digest: coversContentDigest,

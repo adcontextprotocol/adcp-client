@@ -58,6 +58,11 @@ const TOOL_REGISTRATION = {
     },
   },
   update_media_buy: { domain: 'mediaBuy', key: 'updateMediaBuy', args: { media_buy_id: 'mb_1' } },
+  control_media_buy: {
+    domain: 'mediaBuy',
+    key: 'controlMediaBuy',
+    args: { media_buy_id: 'mb_1', action: 'pause' },
+  },
   sync_creatives: {
     domain: 'creative',
     key: 'syncCreatives',
@@ -83,11 +88,11 @@ const TOOL_REGISTRATION = {
 const TOOLS = [...getToolsWithErrorArm().keys()].sort();
 
 describe('two-layer error emission (RFC #1608, issue #1606)', () => {
-  it('schema audit: 18 tools have a top-level Error arm', () => {
+  it('schema audit: 19 tools have a top-level Error arm', () => {
     // Lock the count — drift here means a new AdCP minor changed which
     // tools require two-layer emission. Update this assertion AND the
     // RFC's affected-tools list together.
-    assert.strictEqual(TOOLS.length, 18, `expected 18 Error-arm tools, got ${TOOLS.length}: ${TOOLS.join(', ')}`);
+    assert.strictEqual(TOOLS.length, 19, `expected 19 Error-arm tools, got ${TOOLS.length}: ${TOOLS.join(', ')}`);
   });
 
   it('coverage: every Error-arm tool has a registration entry in this test', () => {

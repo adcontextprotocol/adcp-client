@@ -108,6 +108,7 @@ function startStrictSigningSeller() {
           const result = await verifyRequestSignature(
             { method: req.method, url, headers, body },
             {
+              adcpVersion: '3.1',
               capability: {
                 supported: true,
                 covers_content_digest: 'either',

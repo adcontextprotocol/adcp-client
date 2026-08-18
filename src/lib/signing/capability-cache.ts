@@ -112,8 +112,14 @@ export const defaultCapabilityCache = new CapabilityCache();
  * collision across users would still transmit only the original caller's
  * token (the cache key is not the auth credential itself).
  */
-export function buildCapabilityCacheKey(agentUri: string, authToken?: string, signerFingerprint?: string): string {
+export function buildCapabilityCacheKey(
+  agentUri: string,
+  authToken?: string,
+  signerFingerprint?: string,
+  adcpVersion?: string
+): string {
   const tokenSuffix = authToken ? `::${createHash('sha256').update(authToken).digest('hex').slice(0, 16)}` : '';
   const signerSuffix = signerFingerprint ? `::sig=${signerFingerprint}` : '';
-  return `${agentUri}${tokenSuffix}${signerSuffix}`;
+  const versionSuffix = adcpVersion ? `::adcp=${adcpVersion}` : '';
+  return `${agentUri}${tokenSuffix}${signerSuffix}${versionSuffix}`;
 }

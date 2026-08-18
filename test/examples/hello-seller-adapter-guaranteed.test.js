@@ -84,6 +84,7 @@ runHelloAdapterGates({
           sandbox: true,
         };
         const legacy = await callTool('get_products', {
+          adcp_version: '3.1',
           buying_mode: 'brief',
           brief: 'premium inventory',
           account,
@@ -93,6 +94,7 @@ runHelloAdapterGates({
         assert.equal(legacy.structuredContent.products[0].format_options, undefined);
 
         const canonical = await callTool('get_products', {
+          adcp_version: '3.1',
           buying_mode: 'brief',
           brief: 'premium inventory',
           account,
@@ -102,6 +104,7 @@ runHelloAdapterGates({
         assert.equal(canonical.structuredContent.products[0].format_ids, undefined);
 
         const transitional = await callTool('get_products', {
+          adcp_version: '3.1',
           buying_mode: 'brief',
           brief: 'premium inventory',
           account,

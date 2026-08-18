@@ -178,7 +178,7 @@ import {
 } from '../../../v2/projection/creative-delivery';
 import { projectV1ProductToV2, type LegacyFormatConverter } from '../../../v2/projection/v1-to-v2';
 import type {
-  CanonicalCreativeAsset,
+  CanonicalSyncCreativeAsset,
   CanonicalCreateMediaBuyRequest,
   CanonicalGetProductsRequest,
   CanonicalListCreativesRequest,
@@ -737,6 +737,20 @@ function asCanonicalSemanticServerRequest<T>(
         'Send canonical format_kind values, or configure legacyCreativeFormatConverter for custom legacy formats.',
     });
   }
+}
+
+/**
+ * Bridge the runtime-schema input type to the public domain request type.
+ *
+ * Requests reach this adapter only after validation against the signed AdCP
+ * JSON Schema. JSON-Schema-to-Zod represents `minItems: 1` as a validated
+ * array, while json-schema-to-typescript represents the same field as a
+ * non-empty tuple. The values are equivalent after validation, but TypeScript
+ * cannot prove that structural relationship. Keep the assertion at this
+ * single validation boundary instead of weakening the public request types.
+ */
+function asValidatedDomainRequest<T>(request: unknown): T {
+  return request as T;
 }
 
 function asCanonicalGetProductsRequest(request: Record<string, unknown>): CanonicalGetProductsRequest {
@@ -2193,7 +2207,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // never negotiate protocol behavior. Only the configured AdCP schema pin
   // determines whether this server may advertise the 3.1 feature bit (3.2+
   // makes canonical creatives part of the release contract itself).
-  const configuredAdcpVersion = opts.adcpVersion ?? (opts.proposalNegotiation ? '3.2.0' : ADCP_VERSION);
+  const configuredAdcpVersion = opts.adcpVersion ?? ADCP_VERSION;
   const configuredRelease = parseAdcpRelease(configuredAdcpVersion);
   if (!configuredRelease) {
     throw new PlatformConfigError(
@@ -4932,6 +4946,10 @@ export const INTENTIONALLY_UNHYDRATED_ENTITIES: ReadonlySet<string> = new Set([
   'transformer', // Creative build capability catalog entry; no ctx-metadata ResourceKind yet.
   'build_variant', // Build lineage/refinement handle; no ctx-metadata ResourceKind yet.
   'task', // Protocol task reconciliation id; task registry handles lookup, not ctx_metadata hydration.
+  'proposal', // ProposalStore owns proposal lifecycle/CAS; ctx-metadata hydration would bypass those controls.
+  'governance_adjustment', // Durable governance receipt identifier; no SDK ResourceKind/store yet.
+  'governance_outcome', // Durable governance receipt identifier; no SDK ResourceKind/store yet.
+  'seller_adjustment', // Seller-authored adjustment reference; resolved by governance workflows, not ctx metadata.
 ]);
 
 /**
@@ -5289,10 +5307,14 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   // `METHOD_NOT_FOUND` from `tools/list` for the unsupported tool.
   return {
     ...((sales?.getProducts || proposalManager) && {
-      getProducts: async (params, ctx) => {
-        const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
+      getProducts: async (...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['getProducts']>>) => {
+        const responseWireMode = creativeWireModeForRequest(
+          ctx,
+          creativeWireMode,
+          params as Readonly<Record<string, unknown>>
+        );
         const canonicalParams = asCanonicalGetProductsRequest(params as unknown as Record<string, unknown>);
-        const reqCtx = ctxFor(ctx, params);
+        const reqCtx = ctxFor(ctx, params as Readonly<Record<string, unknown>>);
         // v1.5 seam: intercept refine[i].action='finalize' before
         // dispatching to the manager / sales. When the framework
         // commits the proposal inline, project the response directly.
@@ -5463,10 +5485,16 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     }),
 
     ...(sales?.createMediaBuy && {
-      createMediaBuy: async (params, ctx) => {
-        const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
+      createMediaBuy: async (
+        ...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['createMediaBuy']>>
+      ) => {
+        const responseWireMode = creativeWireModeForRequest(
+          ctx,
+          creativeWireMode,
+          params as Readonly<Record<string, unknown>>
+        );
         params = asCanonicalSemanticServerRequest(params, 'create_media_buy', legacyFormatConverter);
-        const reqCtx = ctxFor(ctx, params);
+        const reqCtx = ctxFor(ctx, params as Readonly<Record<string, unknown>>);
         // Auto-hydrate: walk `params.packages`, attach the full Product object
         // (including `ctx_metadata`) at `pkg.product`. Publisher reads
         // `pkg.product.format_ids`, `pkg.product.ctx_metadata?.gam?.ad_unit_ids`
@@ -5583,7 +5611,9 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     }),
 
     ...(sales?.updateMediaBuy && {
-      updateMediaBuy: async (params, ctx) => {
+      updateMediaBuy: async (
+        ...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['updateMediaBuy']>>
+      ) => {
         const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
         params = asCanonicalSemanticServerRequest(params, 'update_media_buy', legacyFormatConverter);
         const reqCtx = ctxFor(ctx, params);
@@ -5677,11 +5707,11 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     }),
 
     ...(sales?.syncCreatives && {
-      syncCreatives: async (params, ctx) => {
+      syncCreatives: async (...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['syncCreatives']>>) => {
         const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
         params = asCanonicalSemanticServerRequest(params, 'sync_creatives', legacyFormatConverter);
         const reqCtx = ctxFor(ctx, params);
-        const creatives = (params.creatives ?? []) as CanonicalCreativeAsset[];
+        const creatives = (params.creatives ?? []) as CanonicalSyncCreativeAsset[];
         return projectSync(
           async () => {
             const push = extractPushConfig(params, logger, {
@@ -5719,7 +5749,9 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     }),
 
     ...(sales?.getMediaBuyDelivery && {
-      getMediaBuyDelivery: async (params, ctx) => {
+      getMediaBuyDelivery: async (
+        ...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['getMediaBuyDelivery']>>
+      ) => {
         const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
         const reqCtx = ctxFor(ctx, params);
         // v1.5 seam: hydrate ctx.recipes for delivery reads. Per
@@ -5744,7 +5776,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         }
         return projectSync(
           async () => {
-            const result = await sales!.getMediaBuyDelivery!(params, reqCtx);
+            const result = await sales!.getMediaBuyDelivery!(asValidatedDomainRequest(params), reqCtx);
             warnIfTruncatedMultiIdResponse(
               'getMediaBuyDelivery',
               'media_buy_ids',
@@ -5779,12 +5811,12 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     // adopter's custom handler from `opts.legacyHandlers.mediaBuy` instead of throwing
     // `sales.getMediaBuys is not a function`.
     ...(sales?.getMediaBuys && {
-      getMediaBuys: async (params, ctx) => {
+      getMediaBuys: async (...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['getMediaBuys']>>) => {
         const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
         const reqCtx = ctxFor(ctx, params);
         return projectSync(
           async () => {
-            const result = await sales!.getMediaBuys!(params, reqCtx);
+            const result = await sales!.getMediaBuys!(asValidatedDomainRequest(params), reqCtx);
             warnIfTruncatedMultiIdResponse(
               'getMediaBuys',
               'media_buy_ids',
@@ -5824,7 +5856,9 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       },
     }),
     ...(sales?.providePerformanceFeedback && {
-      providePerformanceFeedback: async (params, ctx) => {
+      providePerformanceFeedback: async (
+        ...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['providePerformanceFeedback']>>
+      ) => {
         const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
         params = asCanonicalSemanticServerRequest(params, 'provide_performance_feedback', legacyFormatConverter);
         const reqCtx = ctxFor(ctx, params);
@@ -5845,7 +5879,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           legacyFormatConverter
         );
         return projectSync(
-          () => sales!.providePerformanceFeedback!(params, reqCtx),
+          () => sales!.providePerformanceFeedback!(asValidatedDomainRequest(params), reqCtx),
           result =>
             asSemanticServerResponseForWire(
               result,
@@ -5858,7 +5892,9 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       },
     }),
     ...(sales?.listCreativeFormatsLegacy && {
-      listCreativeFormats: async (params, ctx) => {
+      listCreativeFormats: async (
+        ...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['listCreativeFormats']>>
+      ) => {
         const reqCtx = ctxFor(ctx, params);
         return projectSync(
           () => sales!.listCreativeFormatsLegacy!(params, reqCtx),
@@ -5867,7 +5903,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       },
     }),
     ...(sales?.listCreatives && {
-      listCreatives: async (params, ctx) => {
+      listCreatives: async (...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['listCreatives']>>) => {
         const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
         const canonicalParams = asCanonicalListCreativesRequest(
           params as unknown as Record<string, unknown>,
@@ -5898,7 +5934,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         );
       },
     }),
-  };
+  } as unknown as MediaBuyHandlers<Account>;
 }
 
 /**
@@ -5949,7 +5985,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
     buildCreative: async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => creative.buildCreativeLegacy(params, reqCtx),
+        () => creative.buildCreativeLegacy(asValidatedDomainRequest(params), reqCtx),
         ret => projectBuildCreativeReturn(ret)
       );
     },
@@ -6003,7 +6039,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
         const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
         params = asCanonicalSemanticServerRequest(params, 'sync_creatives', legacyFormatConverter);
         const reqCtx = ctxFor(ctx, params);
-        const creatives = (params.creatives ?? []) as CanonicalCreativeAsset[];
+        const creatives = (params.creatives ?? []) as CanonicalSyncCreativeAsset[];
         return projectSync(
           async () => {
             const push = extractPushConfig(params, logger, {
@@ -6086,7 +6122,10 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
           const reqCtx = ctxFor(ctx, params);
           return projectSync(
             async () => {
-              const result = await (creative as CreativeAdServerPlatform).getCreativeDelivery(params, reqCtx);
+              const result = await (creative as CreativeAdServerPlatform).getCreativeDelivery(
+                asValidatedDomainRequest(params),
+                reqCtx
+              );
               warnIfTruncatedMultiIdResponse(
                 'getCreativeDelivery',
                 'creative_ids',
@@ -6139,7 +6178,7 @@ function buildEventTrackingHandlers<P extends DecisioningPlatform<any, any>>(
     handlers.syncCatalogs = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => sales.syncCatalogs!(params, reqCtx),
+        () => sales.syncCatalogs!(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
@@ -6159,7 +6198,7 @@ function buildEventTrackingHandlers<P extends DecisioningPlatform<any, any>>(
     handlers.syncEventSources = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => sales.syncEventSources!(params, reqCtx),
+        () => sales.syncEventSources!(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
@@ -6197,7 +6236,7 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
           const push = extractPushConfig(params, logger, {
             allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
           });
-          const result = await signals.getSignals(params, reqCtx);
+          const result = await signals.getSignals(asValidatedDomainRequest(params), reqCtx);
           const projectSignals = async (terminalResult: import('../specialisms/signals').GetSignalsPayload) => {
             // signal_ids is `SignalID[]` (`{source, data_provider_domain, id}`
             // objects), not bare strings — but the helper's truncation-detection
@@ -6273,7 +6312,7 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
       // `signal`; attached at `params.signal` per the override table.
       await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'activate_signal', params, logger);
       return projectSync(
-        () => signals.activateSignal(params, reqCtx),
+        () => signals.activateSignal(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     },
@@ -6315,7 +6354,7 @@ function buildSponsoredIntelligenceHandlers<P extends DecisioningPlatform<any, a
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
         async () => {
-          const result = await si.initiateSession(params, reqCtx);
+          const result = await si.initiateSession(asValidatedDomainRequest(params), reqCtx);
           // Auto-store the session record so subsequent `sendMessage` /
           // `terminateSession` calls hydrate `req.session` without a
           // manual lookup. Stored payload preserves the bits the brand
@@ -6368,7 +6407,7 @@ function buildSponsoredIntelligenceHandlers<P extends DecisioningPlatform<any, a
       // convention; `session_id` → `session`).
       await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'si_send_message', params, logger);
       return projectSync(
-        () => si.sendMessage(params, reqCtx),
+        () => si.sendMessage(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     },
@@ -6434,7 +6473,7 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
         async () => {
-          const result = await br.getRightsLegacy(params, reqCtx);
+          const result = await br.getRightsLegacy(asValidatedDomainRequest(params), reqCtx);
           // Auto-store rights offerings so subsequent acquire_rights can
           // hydrate `req.rights` (pricing_options + ctx_metadata) without
           // a separate publisher lookup.
@@ -6467,7 +6506,7 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
       // rename would be wire-visible behavior.
       await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'acquire_rights', params, logger);
       return projectSync(
-        () => br.acquireRightsLegacy(params, reqCtx),
+        () => br.acquireRightsLegacy(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     },
@@ -6485,7 +6524,7 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
       const reqCtx = ctxFor(ctx, params);
       await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'update_rights', params, logger);
       return projectSync(
-        () => br.updateRightsLegacy(params, reqCtx),
+        () => br.updateRightsLegacy(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     },
@@ -6508,21 +6547,21 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
     handlers.checkGovernance = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => cg.checkGovernance(params, reqCtx),
+        () => cg.checkGovernance(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
     handlers.syncPlans = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => cg.syncPlans(params, reqCtx),
+        () => cg.syncPlans(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
     handlers.reportPlanOutcome = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => cg.reportPlanOutcome(params, reqCtx),
+        () => cg.reportPlanOutcome(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
@@ -6539,35 +6578,35 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
     handlers.createPropertyList = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => pl.createPropertyList(params, reqCtx),
+        () => pl.createPropertyList(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
     handlers.updatePropertyList = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => pl.updatePropertyList(params, reqCtx),
+        () => pl.updatePropertyList(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
     handlers.getPropertyList = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => pl.getPropertyList(params, reqCtx),
+        () => pl.getPropertyList(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
     handlers.listPropertyLists = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => pl.listPropertyLists(params, reqCtx),
+        () => pl.listPropertyLists(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
     handlers.deletePropertyList = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => pl.deletePropertyList(params, reqCtx),
+        () => pl.deletePropertyList(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
@@ -6577,35 +6616,35 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
     handlers.createCollectionList = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => cl.createCollectionList(params, reqCtx),
+        () => cl.createCollectionList(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
     handlers.updateCollectionList = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => cl.updateCollectionList(params, reqCtx),
+        () => cl.updateCollectionList(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
     handlers.getCollectionList = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => cl.getCollectionList(params, reqCtx),
+        () => cl.getCollectionList(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
     handlers.listCollectionLists = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => cl.listCollectionLists(params, reqCtx),
+        () => cl.listCollectionLists(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
     handlers.deleteCollectionList = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => cl.deleteCollectionList(params, reqCtx),
+        () => cl.deleteCollectionList(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
@@ -6629,28 +6668,28 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
     handlers.createContentStandards = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => cs.createContentStandardsLegacy(params, reqCtx),
+        () => cs.createContentStandardsLegacy(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
     handlers.updateContentStandards = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => cs.updateContentStandardsLegacy(params, reqCtx),
+        () => cs.updateContentStandardsLegacy(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
     handlers.calibrateContent = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => cs.calibrateContentLegacy(params, reqCtx),
+        () => cs.calibrateContentLegacy(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
     handlers.validateContentDelivery = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => cs.validateContentDeliveryLegacy(params, reqCtx),
+        () => cs.validateContentDeliveryLegacy(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
@@ -6658,7 +6697,7 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
       handlers.getMediaBuyArtifacts = async (params, ctx) => {
         const reqCtx = ctxFor(ctx, params);
         return projectSync(
-          () => cs.getMediaBuyArtifactsLegacy!(params, reqCtx),
+          () => cs.getMediaBuyArtifactsLegacy!(asValidatedDomainRequest(params), reqCtx),
           r => r
         );
       };
@@ -6667,7 +6706,7 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
       handlers.getCreativeFeatures = async (params, ctx) => {
         const reqCtx = ctxFor(ctx, params);
         return projectSync(
-          () => cs.getCreativeFeaturesLegacy!(params, reqCtx),
+          () => cs.getCreativeFeaturesLegacy!(asValidatedDomainRequest(params), reqCtx),
           r => r
         );
       };
@@ -6956,7 +6995,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
     handlers.reportUsage = async (params, ctx) => {
       const resolveCtx = toResolveCtx(ctx, 'report_usage', params);
       return projectSync(
-        () => accounts.reportUsage!(params, resolveCtx),
+        () => accounts.reportUsage!(asValidatedDomainRequest(params), resolveCtx),
         r => r
       );
     };
@@ -6969,8 +7008,9 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       // tokens / upstream IDs off `ctx.account.ctx_metadata` without
       // having to re-resolve from `params.account`.
       const resolveCtx = toResolveCtx(ctx, 'get_account_financials', params);
-      refuseInlineAccountIdWhenForbidden(accounts.resolution, params.account);
-      const resolved = await accounts.resolve(params.account, resolveCtx);
+      const accountRef = asValidatedDomainRequest<AccountReference | undefined>(params.account);
+      refuseInlineAccountIdWhenForbidden(accounts.resolution, accountRef);
+      const resolved = await accounts.resolve(accountRef, resolveCtx);
       if (!resolved) {
         throw new AdcpError('ACCOUNT_NOT_FOUND', {
           message: 'Account not found',
@@ -6983,7 +7023,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       const account = cloneAccountForRequest(resolved);
       const toolCtx = { ...resolveCtx, account };
       return projectSync(
-        () => accounts.getAccountFinancials!(params, toolCtx),
+        () => accounts.getAccountFinancials!(asValidatedDomainRequest(params), toolCtx),
         r => r,
         accounts.refreshToken ? { account, fn: accounts.refreshToken.bind(accounts) } : undefined
       );

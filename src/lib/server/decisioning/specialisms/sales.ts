@@ -80,6 +80,7 @@ import type {
   ListCreativeFormatsResponse,
   ListCreativesRequest,
   ListCreativesResponse,
+  MediaBuyStatus,
   SyncCatalogsRequest,
   SyncCatalogsSuccess,
   LogEventRequest,
@@ -90,7 +91,7 @@ import type {
   SyncCreativesSuccess,
 } from '../../../types/tools.generated';
 import type {
-  CanonicalCreativeAsset,
+  CanonicalSyncCreativeAsset,
   CanonicalCreateMediaBuyRequest,
   CanonicalCreativeResponse,
   CanonicalGetProductsRequest,
@@ -100,20 +101,25 @@ import type {
   CanonicalUpdateMediaBuyRequest,
 } from '../../../v2/projection/creative-delivery';
 
-type Creative = CanonicalCreativeAsset;
+type SyncCreative = CanonicalSyncCreativeAsset;
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 type ExclusivePayload<TLeft, TRight> =
   | (TLeft & { [K in Exclude<keyof TRight, keyof TLeft>]?: never })
   | (TRight & { [K in Exclude<keyof TLeft, keyof TRight>]?: never });
+type LegacyMediaBuyStatusInput<T> = T & { status?: MediaBuyStatus };
 
 type CanonicalGetProductsPayload = Omit<ServerPayload<CanonicalCreativeResponse<GetProductsResponse>>, 'products'> & {
   products?: CanonicalProduct[];
 };
 export type GetProductsPayload = RequireCacheScopeWhenProducts<CanonicalGetProductsPayload>;
-type CreateMediaBuySuccessPayload = ServerPayload<CanonicalCreativeResponse<CreateMediaBuySuccess>>;
+type CreateMediaBuySuccessPayload = LegacyMediaBuyStatusInput<
+  ServerPayload<CanonicalCreativeResponse<CreateMediaBuySuccess>>
+>;
 type CreateMediaBuyErrorPayload = ServerPayload<CanonicalCreativeResponse<CreateMediaBuyError>>;
 export type CreateMediaBuyPayload = ExclusivePayload<CreateMediaBuySuccessPayload, CreateMediaBuyErrorPayload>;
-export type UpdateMediaBuyPayload = ServerPayload<CanonicalCreativeResponse<UpdateMediaBuySuccess>>;
+export type UpdateMediaBuyPayload = LegacyMediaBuyStatusInput<
+  ServerPayload<CanonicalCreativeResponse<UpdateMediaBuySuccess>>
+>;
 export type GetMediaBuyDeliveryPayload = ServerPayload<CanonicalCreativeResponse<GetMediaBuyDeliveryResponse>>;
 export type GetMediaBuysPayload = ServerPayload<CanonicalCreativeResponse<GetMediaBuysResponse>>;
 export type ProvidePerformanceFeedbackPayload = ServerPayload<ProvidePerformanceFeedbackSuccess>;
@@ -121,10 +127,10 @@ export type LegacyListCreativeFormatsPayload = ServerPayload<ListCreativeFormats
 export type ListCreativesPayload = ServerPayload<CanonicalListCreativesResponse>;
 export type LegacyGetProductsPayload = RequireCacheScopeWhenProducts<ServerPayload<GetProductsResponse>>;
 export type LegacyCreateMediaBuyPayload = ExclusivePayload<
-  ServerPayload<CreateMediaBuySuccess>,
+  LegacyMediaBuyStatusInput<ServerPayload<CreateMediaBuySuccess>>,
   ServerPayload<CreateMediaBuyError>
 >;
-export type LegacyUpdateMediaBuyPayload = ServerPayload<UpdateMediaBuySuccess>;
+export type LegacyUpdateMediaBuyPayload = LegacyMediaBuyStatusInput<ServerPayload<UpdateMediaBuySuccess>>;
 export type LegacyGetMediaBuyDeliveryPayload = ServerPayload<GetMediaBuyDeliveryResponse>;
 export type LegacyGetMediaBuysPayload = ServerPayload<GetMediaBuysResponse>;
 export type LegacyListCreativesPayload = ServerPayload<ListCreativesResponse>;
@@ -273,7 +279,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
    * }
    * ```
    */
-  syncCreatives?(creatives: Creative[], ctx: Ctx<TCtxMeta>): Promise<SyncCreativesHandlerResult>;
+  syncCreatives?(creatives: SyncCreative[], ctx: Ctx<TCtxMeta>): Promise<SyncCreativesHandlerResult>;
 
   // ── get_media_buy_delivery: sync only ───────────────────────────────
 

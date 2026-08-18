@@ -141,7 +141,8 @@ const MAX_PATCH_ENUMERATION = 500;
  * Update this when 3.0 reaches EOL — at that point drop the 3.0.x
  * enumeration entirely.
  */
-const LAST_3_0_GA_PATCH = 12;
+const LAST_3_0_GA_PATCH = 24;
+const LAST_3_1_GA_PATCH = 15;
 
 function withVersionAliases(versions: readonly string[]): string[] {
   const out: string[] = [];
@@ -177,6 +178,22 @@ function buildCompatibleVersions(adcpVersion: string): string[] {
   const minor = Number(semverMatch[2]);
   const patch = Number(semverMatch[3]);
   const prerelease = semverMatch[4];
+
+  // 3.2 prereleases are opt-in and exact. Keep every supported 3.0/3.1 GA
+  // patch available for pinned peers, but never add a moving `3.2-beta`
+  // family alias: beta.0, beta.1, and later candidates may carry different
+  // wire contracts and bundles.
+  if (major === 3 && minor === 2 && patch === 0 && /^(beta|rc)\.\d+$/.test(prerelease ?? '')) {
+    const range3_0_x: string[] = [];
+    for (let p = 0; p <= LAST_3_0_GA_PATCH; p++) range3_0_x.push(`3.0.${p}`);
+    const range3_1_x: string[] = [];
+    for (let p = 0; p <= LAST_3_1_GA_PATCH; p++) range3_1_x.push(`3.1.${p}`);
+    const historical = withVersionAliases([...PRE_3_1_COMPATIBLE_PREFIX, ...range3_0_x, ...range3_1_x]);
+    const exactPrereleaseAliases = withVersionAliases([adcpVersion]).filter(
+      version => version !== `${major}.${minor}-${prerelease!.split('.')[0]}`
+    );
+    return [...historical, ...exactPrereleaseAliases.filter(version => !historical.includes(version))];
+  }
 
   // 3.1.0 prerelease primary pin (current 8.x line). Keep wire compat with
   // 3.0.x GA sellers — the wire is open-enum and a 3.1-pinned SDK that meets

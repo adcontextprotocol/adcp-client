@@ -55,6 +55,7 @@ import {
   urlRender,
   buildCreativeReturn,
   previewCreative,
+  type CanonicalFormatKind,
 } from '@adcp/sdk';
 import type {
   Format,
@@ -79,6 +80,103 @@ assertNoExampleTlds(
   { DEFAULT_LISTING_WORKSPACE, PUBLIC_AGENT_URL },
   { allowIn: ['test', 'development'], checklistPath: 'examples/hello_creative_adapter_template.ts' }
 );
+
+type SupportedFormat = NonNullable<
+  NonNullable<import('@adcp/sdk').GetAdCPCapabilitiesResponse['creative']>['supported_formats']
+>[number];
+
+/** Stable public routes backed by the upstream template catalog. The mock
+ * workspace exposes this exact set; production adapters generate the same
+ * configuration from their deployed template registry. */
+const SUPPORTED_FORMATS: SupportedFormat[] = [
+  {
+    capability_id: 'display_300x250',
+    format: {
+      format_kind: 'image',
+      params: {
+        width: 300,
+        height: 250,
+        slots: [{ asset_group_id: 'serving_tag', asset_type: 'html', required: true }],
+      },
+      display_name: 'Display 300x250 template',
+    },
+    operations: ['build', 'preview'],
+  },
+  {
+    capability_id: 'display_728x90',
+    format: {
+      format_kind: 'image',
+      params: {
+        width: 728,
+        height: 90,
+        slots: [{ asset_group_id: 'serving_tag', asset_type: 'javascript', required: true }],
+      },
+      display_name: 'Display 728x90 template',
+    },
+    operations: ['build', 'preview'],
+  },
+  {
+    capability_id: 'display_320x50',
+    format: {
+      format_kind: 'image',
+      params: {
+        width: 320,
+        height: 50,
+        slots: [{ asset_group_id: 'serving_tag', asset_type: 'javascript', required: true }],
+      },
+      display_name: 'Display 320x50 template',
+    },
+    operations: ['build', 'preview'],
+  },
+  {
+    capability_id: 'video_15s',
+    format: {
+      format_kind: 'video_vast',
+      params: {
+        duration_ms_exact: 15_000,
+      },
+      display_name: 'Video preroll 15s template',
+    },
+    operations: ['build', 'preview'],
+  },
+  {
+    capability_id: 'audio_30s',
+    format: {
+      format_kind: 'audio_hosted',
+      params: {
+        duration_ms_exact: 30_000,
+        asset_source: 'seller_pre_rendered_from_brief',
+        buyer_asset_acceptance: 'rejected',
+      },
+      display_name: 'Audio 30s synthesis template',
+    },
+    operations: ['build', 'preview'],
+  },
+];
+
+function supportedFormat(capabilityId: string): SupportedFormat | undefined {
+  return SUPPORTED_FORMATS.find(entry => entry.capability_id === capabilityId);
+}
+
+function capabilityForOperation(
+  capabilityId: string,
+  operation: 'build' | 'preview',
+  field: 'target_capability_id' | 'target_capability_ids'
+): SupportedFormat {
+  const capability = supportedFormat(capabilityId);
+  if (!capability || !capability.operations?.includes(operation)) {
+    throw new AdcpError('FORMAT_NOT_SUPPORTED', {
+      message: `Creative capability '${capabilityId}' does not advertise the ${operation} operation`,
+      field,
+      details: {
+        supported_capability_ids: SUPPORTED_FORMATS.filter(entry => entry.operations?.includes(operation)).map(
+          entry => entry.capability_id
+        ),
+      },
+    });
+  }
+  return capability;
+}
 
 // ---------------------------------------------------------------------------
 // Upstream client — SWAP for production.
@@ -322,24 +420,26 @@ function templateToFormat(t: UpstreamTemplate): Format {
  *  four output kinds (HTML / JS / VAST / audio) key under the same id; the
  *  asset_type discriminator on the value picks the matching slot's typed
  *  branch. */
-function projectRenderToManifest(
-  render: UpstreamRender,
-  formatId: { agent_url: string; id: string }
-): CreativeManifest {
+type ManifestFormatIdentity =
+  | { format_id: { agent_url: string; id: string }; format_kind?: never }
+  | { format_kind: CanonicalFormatKind; format_id?: never };
+
+function projectRenderToManifest(render: UpstreamRender, formatIdentity: ManifestFormatIdentity): CreativeManifest {
   const out = render.output ?? {};
   const assets: CreativeManifest['assets'] = {};
+  const canonical = 'format_kind' in formatIdentity;
   if (out.tag_html) {
     assets['serving_tag'] = htmlAsset({ content: out.tag_html });
   } else if (out.tag_javascript) {
     assets['serving_tag'] = javascriptAsset({ content: out.tag_javascript });
   } else if (out.vast_xml) {
-    // VAST is handled here as raw HTML so the storyboard's schema check on
-    // build_creative passes. A production VAST integration should use the
-    // `vast` asset type with `delivery_type: 'inline'` (see SHAPE-GOTCHAS.md
-    // §3) — included here as html for fixture simplicity since the
-    // creative-template storyboard's build step asserts `assets` presence
-    // rather than a specific asset_type.
-    assets['serving_tag'] = htmlAsset({ content: out.vast_xml });
+    // Canonical video_vast declares the normative `vast_tag` slot and returns
+    // an inline VAST asset. The legacy named-format path retains its historical
+    // `serving_tag` HTML projection so 3.0/3.1 callers continue to receive an
+    // asset matching list_creative_formats.
+    assets[canonical ? 'vast_tag' : 'serving_tag'] = canonical
+      ? { asset_type: 'vast', delivery_type: 'inline', content: out.vast_xml }
+      : htmlAsset({ content: out.vast_xml });
   } else if (out.audio_url) {
     // Audio templates render to a hosted MP3. Real audio platforms return
     // signed CDN URLs with TTL — the buyer must fetch within the lifetime.
@@ -347,14 +447,21 @@ function projectRenderToManifest(
     // that the AdCP creative-manifest oneOf requires. Reuses the same
     // `serving_tag` asset_id as the HTML / JS / VAST branches — the asset_type
     // discriminator is what the buyer keys on, not the asset_id.
-    assets['serving_tag'] = audioAsset({ url: out.audio_url });
+    assets[canonical ? 'audio_main' : 'serving_tag'] = audioAsset({ url: out.audio_url });
   }
-  return { format_id: formatId, assets };
+  return { ...formatIdentity, assets };
 }
 
 class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, never>, CreativeMeta> {
   capabilities = {
     specialisms: ['creative-template'] as const,
+    overrides: {
+      creative: {
+        supported_formats: SUPPORTED_FORMATS,
+        bills_through_adcp: false,
+        canonical_catalog_version: '3.2.0',
+      },
+    },
     config: {},
   };
 
@@ -437,12 +544,17 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
       const idempotency = req.idempotency_key ?? randomUUID();
       const inputs = manifestToInputs(req.creative_manifest);
 
-      const buildOne = async (target: { agent_url: string; id: string }, i: number): Promise<CreativeManifest> => {
-        const template = slugToTemplate.get(target.id);
+      const buildOne = async (
+        targetId: string,
+        formatIdentity: ManifestFormatIdentity,
+        i: number,
+        selectorField: 'target_capability_id' | 'target_capability_ids' | 'target_format_id' | 'target_format_ids'
+      ): Promise<CreativeManifest> => {
+        const template = slugToTemplate.get(targetId);
         if (!template) {
-          throw new AdcpError('INVALID_REQUEST', {
-            message: `Unknown target_format_id.id: ${target.id}`,
-            field: 'target_format_id',
+          throw new AdcpError('FORMAT_NOT_SUPPORTED', {
+            message: `Unknown creative target: ${targetId}`,
+            field: selectorField,
           });
         }
         const created = await upstream.createRender(workspaceId, {
@@ -452,15 +564,39 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
           client_request_id: `${idempotency}.${i}`,
         });
         const completed = await upstream.waitForRender(workspaceId, created.render_id);
-        return projectRenderToManifest(completed, { agent_url: PUBLIC_AGENT_URL, id: target.id });
+        return projectRenderToManifest(completed, formatIdentity);
       };
 
       // `buildCreativeReturn.multi(...)` / `.single(...)` pin which arm of
       // the 4-shape `BuildCreativeReturn` union you're emitting. The framework
       // wraps `multi` into `{ creative_manifests: [...] }` and `single` into
       // `{ creative_manifest: <obj> }` on the wire. SHAPE-GOTCHAS §5.
+      if (req.target_capability_ids && req.target_capability_ids.length > 0) {
+        const manifests = await Promise.all(
+          req.target_capability_ids.map((capabilityId, i) => {
+            const capability = capabilityForOperation(capabilityId, 'build', 'target_capability_ids');
+            return buildOne(capabilityId, { format_kind: capability.format.format_kind }, i, 'target_capability_ids');
+          })
+        );
+        return buildCreativeReturn.multi(manifests);
+      }
+
+      if (req.target_capability_id) {
+        const capability = capabilityForOperation(req.target_capability_id, 'build', 'target_capability_id');
+        return buildCreativeReturn.single(
+          await buildOne(
+            req.target_capability_id,
+            { format_kind: capability.format.format_kind },
+            0,
+            'target_capability_id'
+          )
+        );
+      }
+
       if (req.target_format_ids && req.target_format_ids.length > 0) {
-        const manifests = await Promise.all(req.target_format_ids.map((t, i) => buildOne(t, i)));
+        const manifests = await Promise.all(
+          req.target_format_ids.map((target, i) => buildOne(target.id, { format_id: target }, i, 'target_format_ids'))
+        );
         return buildCreativeReturn.multi(manifests);
       }
 
@@ -471,7 +607,9 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
           field: 'target_format_id',
         });
       }
-      return buildCreativeReturn.single(await buildOne(req.target_format_id, 0));
+      return buildCreativeReturn.single(
+        await buildOne(req.target_format_id.id, { format_id: req.target_format_id }, 0, 'target_format_id')
+      );
     },
 
     previewCreativeLegacy: async (req: PreviewCreativeRequest, ctx): Promise<PreviewCreativeResponse> => {
@@ -501,21 +639,61 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
       if (!req.creative_manifest) {
         throw new AdcpError('INVALID_REQUEST', { message: 'creative_manifest required for single preview' });
       }
-      if (!req.creative_manifest.format_id) {
-        throw new AdcpError('INVALID_REQUEST', {
-          message: 'creative_manifest.format_id required for single preview',
-          field: 'creative_manifest.format_id',
-        });
+      // Resolve the canonical and legacy selectors independently. Canonical
+      // targets must be advertised with `preview`; legacy named formats keep
+      // their deprecated top-level `format_id` route and error attribution.
+      let sourceFormatId: string;
+      let sourceIsCanonical = false;
+      if (req.target_capability_id) {
+        capabilityForOperation(req.target_capability_id, 'preview', 'target_capability_id');
+        sourceFormatId = req.target_capability_id;
+        sourceIsCanonical = true;
+      } else if (req.format_id?.id) {
+        sourceFormatId = req.format_id.id;
+      } else if (req.creative_manifest.format_id?.id) {
+        // SDK 12/13 and the published 3.1 creative-template storyboard used
+        // the manifest's named format as the renderer route when the optional
+        // top-level format_id was absent. Keep that compatibility path while
+        // preferring the explicit top-level selector above.
+        sourceFormatId = req.creative_manifest.format_id.id;
+      } else {
+        const manifestKind = req.creative_manifest.format_kind;
+        let candidates = SUPPORTED_FORMATS.filter(
+          capability => capability.operations?.includes('preview') && capability.format.format_kind === manifestKind
+        );
+
+        // Three display renderers share the image canonical. Dimensions are
+        // sufficient to select one only when they produce exactly one match.
+        if (manifestKind === 'image') {
+          const imageSlot = req.creative_manifest.assets['image'];
+          const image = Array.isArray(imageSlot) ? imageSlot[0] : imageSlot;
+          const width = image && typeof image === 'object' && image.asset_type === 'image' ? image.width : undefined;
+          const height = image && typeof image === 'object' && image.asset_type === 'image' ? image.height : undefined;
+          if (typeof width === 'number' && typeof height === 'number') {
+            candidates = candidates.filter(
+              capability => capability.format.params.width === width && capability.format.params.height === height
+            );
+          }
+        }
+
+        const inferredCapability = candidates[0];
+        if (candidates.length !== 1 || !inferredCapability?.capability_id) {
+          throw new AdcpError('FORMAT_NOT_SUPPORTED', {
+            message: `Canonical preview inference found ${candidates.length} compatible advertised capabilities`,
+            field: 'target_capability_id',
+            details: { supported_capability_ids: candidates.map(capability => capability.capability_id) },
+          });
+        }
+        sourceFormatId = inferredCapability.capability_id;
+        sourceIsCanonical = true;
       }
 
-      // Buyer's manifest carries the input format_id; resolve to upstream.
-      const sourceFormatId = req.creative_manifest.format_id.id;
       const templates = await upstream.listTemplates(workspaceId);
       const template = templates.find(t => templateIdToFormatSlug(t) === sourceFormatId);
       if (!template) {
-        throw new AdcpError('INVALID_REQUEST', {
-          message: `Unknown format_id.id: ${sourceFormatId}`,
-          field: 'creative_manifest.format_id',
+        throw new AdcpError('FORMAT_NOT_SUPPORTED', {
+          message: `Unknown ${sourceIsCanonical ? 'target_capability_id' : 'format_id.id'}: ${sourceFormatId}`,
+          field: sourceIsCanonical ? 'target_capability_id' : 'format_id',
         });
       }
 
@@ -568,7 +746,16 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
  *  keyed map, some a positional array. */
 function manifestToInputs(manifest: CreativeManifest | undefined): unknown[] {
   if (!manifest) return [];
-  return Object.entries(manifest.assets).map(([asset_id, asset]) => ({ asset_id, ...asset }));
+  return Object.entries(manifest.assets).map(([asset_id, asset]) =>
+    Array.isArray(asset)
+      ? { asset_id, assets: asset }
+      : asset !== null && typeof asset === 'object'
+        ? {
+            asset_id,
+            ...asset,
+          }
+        : { asset_id, asset }
+  );
 }
 
 // ---------------------------------------------------------------------------

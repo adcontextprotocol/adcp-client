@@ -44,6 +44,8 @@ export interface PositiveVector {
   kind: 'positive';
   id: string;
   name: string;
+  /** Trusted profile pin from the authored fixture; never inferred from request fields. */
+  signing_profile_version: string;
   reference_now: number;
   request: VectorRequest;
   verifier_capability: VerifierCapabilityFixture;
@@ -57,6 +59,8 @@ export interface NegativeVector {
   kind: 'negative';
   id: string;
   name: string;
+  /** Trusted profile pin from the authored fixture; never inferred from request fields. */
+  signing_profile_version: string;
   reference_now: number;
   request: VectorRequest;
   verifier_capability: VerifierCapabilityFixture;

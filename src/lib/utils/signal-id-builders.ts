@@ -8,15 +8,18 @@ import type { SignalID } from '../types/core.generated';
 
 type CatalogSignal = Extract<SignalID, { source: 'catalog' }>;
 type AgentSignal = Extract<SignalID, { source: 'agent' }>;
-type Tagged<T, Tag extends string> = Omit<T, 'source'> & { source: Tag };
-
+type CatalogSignalFields = {
+  data_provider_domain: CatalogSignal['data_provider_domain'];
+  id: CatalogSignal['id'];
+};
+type AgentSignalFields = { agent_url: AgentSignal['agent_url']; id: AgentSignal['id'] };
 /** Build a `catalog`-variant `SignalID`. Verifiable via the providers adagents.json. */
-export function catalogSignalId(fields: Omit<CatalogSignal, 'source'>): Tagged<CatalogSignal, 'catalog'> {
+export function catalogSignalId(fields: CatalogSignalFields): CatalogSignal {
   return { ...fields, source: 'catalog' };
 }
 
 /** Build an `agent`-variant `SignalID`. Agent-native segments not in a catalog. */
-export function agentSignalId(fields: Omit<AgentSignal, 'source'>): Tagged<AgentSignal, 'agent'> {
+export function agentSignalId(fields: AgentSignalFields): AgentSignal {
   return { ...fields, source: 'agent' };
 }
 

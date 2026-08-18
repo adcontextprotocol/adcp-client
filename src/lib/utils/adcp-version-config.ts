@@ -32,6 +32,15 @@ import { hasSchemaBundle, resolveBundleKey, toReleasePrecisionWire } from '../va
 export function resolveAdcpVersion(adcpVersion: string | undefined): string {
   if (adcpVersion === undefined) return ADCP_VERSION;
 
+  const currentReleasePrecision = toReleasePrecisionWire(ADCP_VERSION);
+  if (isMovingAdcpPrereleaseFamilyAlias(adcpVersion)) {
+    throw new ConfigurationError(
+      `adcpVersion ${JSON.stringify(adcpVersion)} is a moving prerelease-family alias. ` +
+        `Pin the exact 3.2 beta artifact (${JSON.stringify(currentReleasePrecision)}) instead.`,
+      'adcpVersion'
+    );
+  }
+
   const major = parseAdcpMajorVersion(adcpVersion);
   if (!Number.isFinite(major)) {
     throw new ConfigurationError(
@@ -66,13 +75,19 @@ export function resolveAdcpVersion(adcpVersion: string | undefined): string {
   return adcpVersion;
 }
 
+/** Whether a value is the ambiguous moving family alias for the pinned 3.2 preview. */
+export function isMovingAdcpPrereleaseFamilyAlias(version: string): boolean {
+  if (!ADCP_VERSION.startsWith('3.2.0-')) return false;
+  return prereleaseFamilyAlias(toReleasePrecisionWire(ADCP_VERSION)) === version;
+}
+
 export function adcpVersionAliases(version: string, includeFamilyAlias = true): Set<string> {
   const aliases = new Set<string>([version]);
   const add = (value: string) => {
     aliases.add(value);
     if (includeFamilyAlias) {
       const family = prereleaseFamilyAlias(value);
-      if (family) aliases.add(family);
+      if (family && !(ADCP_VERSION.startsWith('3.2.0-') && family.startsWith('3.2-'))) aliases.add(family);
     }
   };
 

@@ -97,6 +97,7 @@ function parsePositive(id: string, raw: unknown): PositiveVector {
     kind: 'positive',
     id,
     name: str(r.name, `${id}.name`),
+    signing_profile_version: optionalSigningProfileVersion(r),
     reference_now: num(r.reference_now, `${id}.reference_now`),
     request: parseRequest(id, r.request),
     verifier_capability: parseCapability(id, r.verifier_capability),
@@ -132,6 +133,7 @@ function parseNegative(id: string, raw: unknown): NegativeVector {
     kind: 'negative',
     id,
     name: str(r.name, `${id}.name`),
+    signing_profile_version: optionalSigningProfileVersion(r),
     reference_now: num(r.reference_now, `${id}.reference_now`),
     request: parseRequest(id, r.request),
     verifier_capability: parseCapability(id, r.verifier_capability),
@@ -142,6 +144,12 @@ function parseNegative(id: string, raw: unknown): NegativeVector {
     requires_contract: contract,
     spec_reference: typeof r.spec_reference === 'string' ? r.spec_reference : undefined,
   };
+}
+
+function optionalSigningProfileVersion(vector: Record<string, unknown>): string {
+  // Older cached bundles predate the explicit marker; every root vector in
+  // those bundles exercises the legacy 3.1 binary profile.
+  return typeof vector.signing_profile_version === 'string' ? vector.signing_profile_version : '3.1';
 }
 
 function parseJwksSelector(

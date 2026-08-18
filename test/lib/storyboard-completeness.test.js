@@ -97,7 +97,9 @@ describe('storyboard structural completeness', () => {
         assert.ok(sb.id, 'missing id');
         assert.ok(sb.version, 'missing version');
         assert.ok(sb.title, 'missing title');
-        assert.ok(sb.narrative, 'missing narrative');
+        // 3.2 storyboards may use the concise top-level `summary` in place
+        // of the older long-form `narrative` field.
+        assert.ok(sb.narrative || sb.summary, 'missing narrative or summary');
         assert.ok(Array.isArray(sb.phases), 'phases must be an array');
       });
 

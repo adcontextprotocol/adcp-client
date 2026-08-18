@@ -21,7 +21,8 @@
  *   - `*.previous` backup snapshots from `sync-schemas` replaceTree
  *   - older patch versions of stable releases — collapsed into the
  *     highest-patch sibling
- *   - `tmp/`, `compliance/` subtrees — runtime validator doesn't read them
+ *   - `tmp/`, `compliance/`, and transport-projection (`mcp/`) subtrees —
+ *     runtime canonical validation doesn't read them
  *
  * Invoked by the `build:lib` npm script after tsc emits JS.
  */
@@ -258,7 +259,7 @@ function main(): void {
         const rel = path.relative(srcRoot, src);
         if (!rel) return true;
         const top = rel.split(path.sep)[0];
-        if (top === 'tmp' || top === 'compliance') return false;
+        if (top === 'tmp' || top === 'compliance' || top === 'mcp') return false;
         return true;
       },
     });

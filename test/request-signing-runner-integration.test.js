@@ -85,6 +85,7 @@ function startReferenceVerifier({ replayCap = 1000 } = {}) {
     revoked_jtis: [],
   });
   const middleware = createExpressVerifier({
+    adcpVersion: '3.1',
     capability: {
       supported: true,
       covers_content_digest: 'either',

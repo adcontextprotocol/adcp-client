@@ -4,6 +4,7 @@ import { writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync, statSy
 import { compile } from 'json-schema-to-typescript';
 import path from 'path';
 import { injectJsdocConstraints, removeArrayLengthConstraints } from './schema-utils';
+import { resolveSchemaRefInCache, schemaRefToCacheRelativePath } from './schema-cache-ref';
 
 // Write file only if content differs (excluding timestamp)
 function writeFileIfChanged(filePath: string, newContent: string): boolean {
@@ -42,15 +43,81 @@ const ADCP_CORE_SCHEMAS = ['media-buy', 'creative-asset', 'product', 'targeting'
 // The adagents schema re-declares types that are already in property schema
 const STANDALONE_SCHEMAS: string[] = []; // ['adagents']
 
+// Compile these canonical documents before broad aggregate roots. In a large
+// root, json-schema-to-typescript can emit the first occurrence of a shared
+// type from a validation-only overlay (allOf/anyOf) and permanently keep that
+// weakened occurrence during deduplication. The standalone documents are the
+// authoritative public shapes and must win first-definition ownership.
+const PRIORITY_CANONICAL_SCHEMAS = [
+  // Compile direct constraint-bearing roots before forecast/tool schemas that
+  // reference them. json-schema-to-typescript does not reliably preserve
+  // injected @pattern tags when the first declaration originates through a
+  // transitive $ref.
+  'core/brand-ref.json',
+  'core/business-entity.json',
+  'core/platform-extension-ref.json',
+  'core/delivery-metrics.json',
+  'core/measurement-terms.json',
+  'core/publisher-property-selector.json',
+  'core/forecast-point.json',
+  'core/targeting-overlay-support.json',
+  'core/targeting-overlay-requirements.json',
+  'core/delivery-metric-aggregate.json',
+  'core/cancellation-policy.json',
+  'media-buy/package-update.json',
+  'core/creative-approval-scope.json',
+  'core/warning-resource.json',
+  'formats/canonical/image.json',
+  // Present in the signed 3.2 manifest but omitted from index.json's legacy
+  // governance task aggregation. Keep its public validators available until
+  // the index and manifest converge upstream.
+  'property/validate-property-delivery-request.json',
+  'property/validate-property-delivery-response.json',
+] as const;
+
+const PRIORITY_CANONICAL_TYPE_NAMES = new Set([
+  'BrandReference',
+  'BusinessEntity',
+  'PlatformExtensionReference',
+  'DeliveryMetrics',
+  'MeasurementTerms',
+  'PublisherPropertySelector',
+  'ForecastPoint',
+  'TargetingOverlaySupport',
+  'TargetingOverlayRequirements',
+  'DeliveryMetricAggregate',
+  'CancellationPolicy',
+  'PackageUpdate',
+  'ScopedCreativeApproval',
+  'WarningAffectedResource',
+  'CanonicalFormatImage',
+  'SizeModeMutex',
+  'Fixed',
+  'MultiSize',
+  'Responsive',
+  'None',
+]);
+
 // Shared schemas that are authoritative in core.generated.ts but are also
 // pulled into tool compilation through request/response $refs. Keep them out
 // of tools.generated.ts and import references from core.generated.ts instead.
 const CORE_AUTHORED_TOOL_SHARED_TYPES = new Set([
+  'AccountReference',
+  'AssetVariant',
   'AudienceConstraints',
+  'BrandReference',
   'CatalogItemDeliveryMetrics',
+  'CreativeAsset',
+  'ExtensionObject',
+  'FormatReferenceStructuredObject',
   'GeoDeliveryMetrics',
+  'GetProductsAsyncSubmitted',
+  'ImageAsset',
   'KeywordDeliveryMetrics',
+  'Provenance',
   'PurchaseType',
+  'RightsConstraint',
+  ...PRIORITY_CANONICAL_TYPE_NAMES,
 ]);
 
 const BACKWARD_COMPAT_TYPE_ALIASES: Array<{
@@ -68,29 +135,40 @@ const BACKWARD_COMPAT_TYPE_ALIASES: Array<{
     newName: 'IdentityMatchResponseRouterPublisher',
     reason: 'AdCP 3.1.10 renamed the publisher-facing response to distinguish it from the provider hop.',
   },
+  {
+    oldName: 'ContextMatchResponse',
+    newName: 'ContextMatchResponseRouterPublisher',
+    reason: 'AdCP 3.2 names the publisher-facing context-match response by hop.',
+  },
+  {
+    oldName: 'OutcomeMeasurementDeprecated',
+    newName: 'OutcomeMeasurement',
+    reason: 'SDK 13 exported the 3.1 compatibility name.',
+  },
+  {
+    oldName: 'GetProductsSubmitted',
+    newName: 'GetProductsAsyncSubmitted',
+    reason: 'AdCP 3.2 shortened the submitted response title; the aggregate schema still emits the legacy nested name.',
+  },
+  {
+    oldName: 'GetSignalsSubmitted',
+    newName: 'GetSignalsAsyncSubmitted',
+    reason: 'AdCP 3.2 shortened the submitted response title; the aggregate schema still emits the legacy nested name.',
+  },
+  ...['CreateMediaBuy', 'UpdateMediaBuy', 'SyncCatalogs', 'BuildCreative', 'SyncCreatives'].map(baseName => ({
+    oldName: `${baseName}AsyncSubmitted`,
+    newName: `${baseName}Submitted`,
+    reason: 'AdCP 3.2 shortened submitted response type names.',
+  })),
 ];
 
 // Load schema from cache - handles both /schemas/v1/ and /schemas/X.Y.Z/ paths
 function loadCachedSchema(schemaRef: string): any {
   try {
-    // Strip any /schemas/ prefix (versioned or v1) to get the relative path
-    // e.g., /schemas/2.4.0/core/product.json -> core/product.json
-    //       /schemas/v1/core/product.json -> core/product.json
-    let relativePath = schemaRef;
-    if (relativePath.startsWith('/schemas/')) {
-      // Remove /schemas/ prefix
-      relativePath = relativePath.substring('/schemas/'.length);
-      // Remove version segment (either v1 or X.Y.Z format)
-      const segments = relativePath.split('/');
-      if (segments[0].match(/^(v\d+|\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?|latest)$/)) {
-        // First segment is a version, skip it
-        relativePath = segments.slice(1).join('/');
-      }
-    }
-
-    const schemaPath = path.join(LATEST_CACHE_DIR, relativePath);
-    if (!existsSync(schemaPath)) {
-      throw new Error(`Schema not found in cache: ${schemaPath}`);
+    const relativePath = schemaRefToCacheRelativePath(schemaRef);
+    const schemaPath = resolveSchemaRefInCache(LATEST_CACHE_DIR, schemaRef);
+    if (!relativePath || !schemaPath || !existsSync(schemaPath)) {
+      throw new Error(`Schema not found in cache for ref: ${schemaRef}`);
     }
 
     let schema = JSON.parse(readFileSync(schemaPath, 'utf8'));
@@ -290,7 +368,7 @@ function resolveAllOfRefForMerge(ref: string): any | null {
   if (!ref || typeof ref !== 'string') return null;
   // Only external schema refs are resolvable through the cache. Local
   // `#/$defs/...` and other fragment-only refs are left to jsts.
-  if (!ref.startsWith('/schemas/')) return null;
+  if (!schemaRefToCacheRelativePath(ref)) return null;
   // Suppress the warn from loadCachedSchema for legitimate misses (e.g. a
   // schema path we don't have cached yet). The original `allOf` member stays
   // in place if resolution fails.
@@ -486,6 +564,94 @@ export function preservePostalCountrySystemRequiredness(schema: any): any {
   };
 }
 
+function isRequirednessOnlySchema(schema: any): boolean {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return false;
+  const keys = Object.keys(schema).filter(key => !['description', '$comment', 'title'].includes(key));
+  if (keys.length === 1 && keys[0] === 'required') return Array.isArray(schema.required);
+  if (keys.length === 1 && keys[0] === 'not') return isRequirednessOnlySchema(schema.not);
+  if (keys.length === 1 && (keys[0] === 'anyOf' || keys[0] === 'allOf')) {
+    const members = schema[keys[0]];
+    return Array.isArray(members) && members.length > 0 && members.every(isRequirednessOnlySchema);
+  }
+  if (keys.length > 0 && keys.every(key => key === 'required' || key === 'properties')) {
+    if (schema.required !== undefined && !Array.isArray(schema.required)) return false;
+    if (schema.properties !== undefined) {
+      if (!schema.properties || typeof schema.properties !== 'object' || Array.isArray(schema.properties)) return false;
+      if (!Object.values(schema.properties).every(isRequirednessOnlySchema)) return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Drop anyOf members that only conditionally require/forbid already-declared
+ * properties. They remain enforced by Ajv from the untouched source schema;
+ * keeping them in the emit-only copy makes jsts replace the useful object
+ * shape with unions of anonymous index signatures.
+ */
+function dropValidationOnlyAnyOf(schema: any): any {
+  if (
+    !schema?.properties ||
+    !Array.isArray(schema.anyOf) ||
+    schema.anyOf.length === 0 ||
+    !schema.anyOf.every(isRequirednessOnlySchema)
+  ) {
+    return schema;
+  }
+  const result = { ...schema };
+  delete result.anyOf;
+  return result;
+}
+
+/**
+ * Materialize the canonical image/html5/display-tag size mutex. The protocol
+ * expresses this as a validation-only allOf member whose branches contain
+ * required/not clauses but no properties. jsts therefore emits Fixed,
+ * MultiSize, Responsive and None as empty/index-signature shapes. Copying the
+ * seven size properties from the containing format gives TypeScript the
+ * intended structural union; Ajv still enforces exact mutual exclusion.
+ */
+function materializeSizeModeMutex(schema: any, parentProperties: Record<string, any>): any {
+  if (!schema || schema.title !== 'Size-mode mutex' || !Array.isArray(schema.oneOf)) return schema;
+  const sizeFields = ['width', 'height', 'sizes', 'min_width', 'max_width', 'min_height', 'max_height'];
+  const available = Object.fromEntries(
+    sizeFields.filter(field => parentProperties[field] !== undefined).map(field => [field, parentProperties[field]])
+  );
+  if (Object.keys(available).length === 0) return schema;
+
+  const rewritten = schema.oneOf.map((branch: any) => {
+    const title = branch?.title;
+    let fields: string[];
+    let required: string[] = [];
+    if (title === 'fixed') {
+      fields = ['width', 'height'];
+      required = fields;
+    } else if (title === 'multi-size') {
+      fields = ['sizes'];
+      required = fields;
+    } else if (title === 'responsive') {
+      fields = ['min_width', 'max_width', 'min_height', 'max_height'];
+    } else if (title === 'none') {
+      fields = [];
+    } else {
+      return branch;
+    }
+    const properties = Object.fromEntries(
+      fields.filter(field => available[field]).map(field => [field, available[field]])
+    );
+    return {
+      ...(title ? { title } : {}),
+      ...(branch.description ? { description: branch.description } : {}),
+      type: 'object',
+      properties,
+      ...(required.length > 0 ? { required } : {}),
+      additionalProperties: false,
+    };
+  });
+  return { ...schema, oneOf: rewritten };
+}
+
 /**
  * Recursively remove additionalProperties: true from schema to enforce strict typing
  * This prevents [k: string]: unknown in generated TypeScript types
@@ -500,6 +666,7 @@ export function enforceStrictSchema(schema: any): any {
 
   schema = expandConditionalRequiredDiscriminator(schema);
   schema = preservePostalCountrySystemRequiredness(schema);
+  schema = dropValidationOnlyAnyOf(schema);
 
   // Rewrite mutual-exclusion `oneOf` patterns (e.g. Format.renders[]) into
   // explicit closed-shape branches before any further processing — see
@@ -509,6 +676,12 @@ export function enforceStrictSchema(schema: any): any {
 
   // Create a shallow copy
   const strictSchema = { ...schema };
+
+  if (strictSchema.properties && Array.isArray(strictSchema.allOf)) {
+    strictSchema.allOf = strictSchema.allOf.map((member: any) =>
+      materializeSizeModeMutex(member, strictSchema.properties)
+    );
+  }
 
   // Check if this field must preserve arbitrary properties (e.g., context fields)
   const mustPreserveProperties =
@@ -639,10 +812,46 @@ export function enforceStrictSchema(schema: any): any {
       if (resolved) {
         // Variant-level fields win on collision — `properties`, `required`,
         // and `additionalProperties` are merged with variant precedence.
-        strictSchema.properties = {
-          ...(resolved.properties ?? {}),
-          ...(strictSchema.properties ?? {}),
-        };
+        const resolvedProperties = resolved.properties ?? {};
+        const localProperties = strictSchema.properties ?? {};
+        strictSchema.properties = { ...resolvedProperties };
+        for (const [propertyName, localProperty] of Object.entries(localProperties)) {
+          const resolvedProperty = resolvedProperties[propertyName];
+          // A sibling declaration in an allOf refines the referenced
+          // property; it does not replace structural keywords such as type
+          // and items. Canonical image `slots` supplies a local default while
+          // the base schema owns its array shape.
+          const mergedProperty =
+            resolvedProperty &&
+            typeof resolvedProperty === 'object' &&
+            !Array.isArray(resolvedProperty) &&
+            localProperty &&
+            typeof localProperty === 'object' &&
+            !Array.isArray(localProperty)
+              ? { ...resolvedProperty, ...localProperty }
+              : localProperty;
+          // Annotation-only sibling refinements are marked `tsType: unknown`
+          // during the first recursive pass. Once they are merged with a
+          // structural base property (for example canonical image `slots`,
+          // whose sibling only supplies a default), that marker must not
+          // override the base array/object shape.
+          if (
+            mergedProperty &&
+            typeof mergedProperty === 'object' &&
+            !Array.isArray(mergedProperty) &&
+            resolvedProperty &&
+            typeof resolvedProperty === 'object' &&
+            !Array.isArray(resolvedProperty) &&
+            (resolvedProperty.type || resolvedProperty.$ref || resolvedProperty.items || resolvedProperty.properties) &&
+            localProperty &&
+            typeof localProperty === 'object' &&
+            !Array.isArray(localProperty) &&
+            localProperty.tsType === 'unknown'
+          ) {
+            delete mergedProperty.tsType;
+          }
+          strictSchema.properties[propertyName] = mergedProperty;
+        }
         const mergedRequired = [...(resolved.required ?? []), ...(strictSchema.required ?? [])];
         if (mergedRequired.length > 0) {
           strictSchema.required = [...new Set(mergedRequired)];
@@ -687,10 +896,20 @@ export function enforceStrictSchema(schema: any): any {
     strictSchema.allOf = strictSchema.allOf
       .filter((member: any) => {
         const keys = Object.keys(member);
+        // Recursive normalization turns validation-only conditionals into
+        // annotation nodes (`$comment` plus `tsType: unknown`) before their
+        // parent reaches this filter. They remain validation-only and must
+        // not collapse the enclosing structural type to `unknown`.
+        if (member.tsType === 'unknown' && keys.every(k => metadataOnlyKeys.has(k) || k === 'tsType')) {
+          return false;
+        }
         if (keys.length === 1 && keys[0] === 'not') return false;
         // Conditional validators are exclusively `if` / `then` / `else`.
         // Drop members composed only of those keys.
-        if (keys.length > 0 && keys.every(k => k === 'if' || k === 'then' || k === 'else')) {
+        if (
+          keys.some(k => k === 'if' || k === 'then' || k === 'else') &&
+          keys.every(k => k === 'if' || k === 'then' || k === 'else' || metadataOnlyKeys.has(k))
+        ) {
           return false;
         }
         // XOR-via-anyOf pattern: a member that is purely `{ anyOf: [...] }`
@@ -1305,6 +1524,12 @@ function isolateGetMediaBuyDeliveryCompatBreakdowns(schema: any): any {
 export function applyCodegenSchemaWorkarounds(schema: any, schemaName: string): any {
   if (!schema || typeof schema !== 'object') return schema;
 
+  schema = coalesceDefinitionKeywords(schema);
+
+  if (schemaName === 'DeclineProposalsResponse') {
+    schema = materializeDeclineProposalsResponseBranches(schema);
+  }
+
   if (schemaName === 'GetMediaBuyDeliveryResponse') {
     return isolateGetMediaBuyDeliveryCompatBreakdowns(schema);
   }
@@ -1316,19 +1541,49 @@ export function applyCodegenSchemaWorkarounds(schema: any, schemaName: string): 
         ...removeRequiredFields(item, ['confirmed_at', 'revision']),
         title: item.title || 'GetMediaBuysResponseMediaBuy',
       };
-      // beta.7 adds an item-level if/then guard for provisional buys. jsts
-      // collapses the entire inline item to `{[k: string]: unknown}` when that
-      // conditional remains in `allOf`; dropping it keeps the structural fields
-      // visible to generated TS/Zod while Ajv still enforces the real schema.
-      if (
-        Array.isArray(cleanedItem.allOf) &&
-        cleanedItem.allOf.every((member: any) => {
-          if (!member || typeof member !== 'object' || Array.isArray(member)) return false;
-          const keys = Object.keys(member);
-          return keys.length > 0 && keys.every(k => k === '$comment' || k === 'if' || k === 'then' || k === 'else');
-        })
-      ) {
+      // Item-level if/then guards cannot be expressed by the TS emitter. If
+      // one appears beside structural allOf members, jsts emits `& unknown`
+      // and drops the MediaBuy fields entirely. Remove only the conditional
+      // members; keep the structural members (including indicator overlays).
+      // Ajv continues to validate the untouched source schema at runtime.
+      if (Array.isArray(cleanedItem.allOf)) {
+        // The item already carries the complete MediaBuy property set at its
+        // root. Fold direct structural overlays (currently indicators) into
+        // that root, then remove allOf so nested conditionals inside the
+        // duplicated MediaBuy member cannot make jsts discard the base type.
+        const structuralProperties = cleanedItem.allOf.reduce(
+          (properties: Record<string, unknown>, member: any) => ({
+            ...properties,
+            ...(member && typeof member === 'object' && !Array.isArray(member) ? member.properties : undefined),
+          }),
+          {}
+        );
+        cleanedItem.properties = { ...cleanedItem.properties, ...structuralProperties };
         delete cleanedItem.allOf;
+      }
+      const packageItems = cleanedItem.properties?.packages?.items;
+      if (packageItems && typeof packageItems === 'object' && !Array.isArray(packageItems)) {
+        // PackageStatus already declares its complete public field set at the
+        // root. Its allOf/dependencies members are runtime-only validation
+        // overlays; leaving them in lets jsts emit only the indicator fields.
+        const packageStructuralProperties = (packageItems.allOf ?? []).reduce(
+          (properties: Record<string, unknown>, member: any) => ({
+            ...properties,
+            ...(member && typeof member === 'object' && !Array.isArray(member) ? member.properties : undefined),
+          }),
+          {}
+        );
+        const cleanedPackageItems = {
+          ...packageItems,
+          properties: { ...packageItems.properties, ...packageStructuralProperties },
+        };
+        for (const keyword of ['allOf', 'dependencies', 'not', 'if', 'then', 'else']) {
+          delete cleanedPackageItems[keyword];
+        }
+        cleanedItem.properties.packages = {
+          ...cleanedItem.properties.packages,
+          items: cleanedPackageItems,
+        };
       }
       return {
         ...schema,
@@ -1343,6 +1598,68 @@ export function applyCodegenSchemaWorkarounds(schema: any, schemaName: string): 
     }
   }
 
+  return schema;
+}
+
+function materializeDeclineProposalsResponseBranches(schema: any): any {
+  if (!schema?.properties || !Array.isArray(schema.anyOf) || schema.anyOf.length !== 2) return schema;
+
+  const branches: any[] = [];
+  for (const member of schema.anyOf) {
+    let overlay = member;
+    if (typeof member?.$ref === 'string') {
+      overlay = loadCachedSchema(member.$ref);
+      if (!overlay?.properties) return schema;
+    }
+    const branch = {
+      type: 'object',
+      properties: { ...schema.properties, ...(overlay.properties ?? {}) },
+      required: [...new Set([...(schema.required ?? []), ...(overlay.required ?? [])])],
+      additionalProperties: schema.additionalProperties ?? false,
+    };
+    branches.push(branch);
+  }
+
+  const result = { ...schema, oneOf: branches };
+  delete result.type;
+  delete result.properties;
+  delete result.required;
+  delete result.anyOf;
+  delete result.additionalProperties;
+  return result;
+}
+
+/**
+ * json-schema-to-typescript rejects a document containing both draft-07
+ * `definitions` and modern `$defs`. Protocol bundles can legitimately contain
+ * both after dereferencing. Merge the disjoint maps for the emit-only copy and
+ * update local pointers; runtime validation continues to use the untouched
+ * signed schema.
+ */
+export function coalesceDefinitionKeywords(schema: any): any {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return schema;
+  if (!schema.definitions || !schema.$defs) return schema;
+
+  const collisions = Object.keys(schema.definitions).filter(name => name in schema.$defs);
+  if (collisions.length > 0) {
+    throw new Error(`Cannot merge definitions and $defs with duplicate names: ${collisions.join(', ')}`);
+  }
+
+  schema.$defs = { ...schema.definitions, ...schema.$defs };
+  delete schema.definitions;
+
+  const rewritePointers = (value: any): void => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      value.forEach(rewritePointers);
+      return;
+    }
+    if (typeof value.$ref === 'string' && value.$ref.startsWith('#/definitions/')) {
+      value.$ref = `#/$defs/${value.$ref.slice('#/definitions/'.length)}`;
+    }
+    Object.values(value).forEach(rewritePointers);
+  };
+  rewritePointers(schema);
   return schema;
 }
 
@@ -1757,7 +2074,7 @@ async function generateToolTypes(tools: ToolDefinition[], preGeneratedTypes: Set
     read: (file: { url: string }) => {
       const url = file.url;
       // Handle any /schemas/ path (versioned or v1)
-      if (url.startsWith('/schemas/')) {
+      if (schemaRefToCacheRelativePath(url)) {
         const schema = loadCachedSchema(url);
         if (schema) {
           return Promise.resolve(enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema))));
@@ -1950,9 +2267,44 @@ const POSTAL_AREA_SUPPORT_INDEX_TYPE =
  */
 function widenPostalAreaSupportIndexSignature(typeDefinitions: string): string {
   return typeDefinitions.replace(
-    /(export interface PostalAreaSupport \{[\s\S]*?\n)\s+\[k: string\]: \('postal_code' \| 'custom'\)\[] \| undefined;\n(\})/g,
+    /(export interface (?:ExternalCore1)?PostalAreaSupport \{[\s\S]*?\n)\s+\[k: string\]: (?:\['postal_code' \| 'custom', \.\.\.\('postal_code' \| 'custom'\)\[]\]|\('postal_code' \| 'custom'\)\[]) \| undefined;\n(\})/g,
     '$1  [country: `${Uppercase<string>}`]: ' + `${POSTAL_AREA_SUPPORT_INDEX_TYPE} | undefined;\n$2`
   );
+}
+
+/** Widen boolean feature maps for the one structured 3.2 capability value. */
+function widenMediaBuyFeaturesIndexSignature(typeDefinitions: string): string {
+  return typeDefinitions.replace(
+    /(export interface (?:ExternalCore1)?(?:Canonical)?MediaBuyFeatures \{[\s\S]*?bidding_policy\?: (\w*BiddingPolicyCapability);[\s\S]*?)\[k: string\]: boolean \| undefined;/g,
+    '$1[k: string]: boolean | $2 | undefined;'
+  );
+}
+
+/**
+ * The source ForecastRange oneOf only encodes required-field combinations;
+ * both emitted branches are otherwise empty index signatures. Keeping that
+ * redundant union makes TypeScript form an enormous cartesian product at use
+ * sites. The optional fields remain exact here; runtime schemas retain the
+ * low/high-or-mid invariant from the signed JSON Schema.
+ */
+function simplifyForecastRange(typeDefinitions: string): string {
+  const start = typeDefinitions.indexOf('export type ForecastRange = ');
+  if (start === -1) return typeDefinitions;
+  const nextDeclaration = /\nexport (?:type|interface) \w+/g;
+  nextDeclaration.lastIndex = start + 'export type ForecastRange = '.length;
+  const nextMatch = nextDeclaration.exec(typeDefinitions);
+  if (!nextMatch) throw new Error('simplifyForecastRange: unable to locate next type boundary');
+  const end = nextMatch.index;
+  const replacement = `export interface ForecastRange {
+  /** Conservative (low-end) forecast value. */
+  low?: number;
+  /** Expected (most likely) forecast value. */
+  mid?: number;
+  /** Optimistic (high-end) forecast value. */
+  high?: number;
+  [k: string]: unknown | undefined;
+}`;
+  return typeDefinitions.slice(0, start) + replacement + typeDefinitions.slice(end);
 }
 
 function namePostalAreaCountryBranch(typeDefinitions: string): string {
@@ -2090,7 +2442,13 @@ function removeNumberedCoreTypeDuplicates(typeDefinitions: string, coreTypeNames
     })
     .filter((entry): entry is { numbered: string; base: string } => entry !== null && coreTypeNames.has(entry.base));
 
-  if (numberedCoreTypes.length === 0) return typeDefinitions;
+  // Base-name duplicates must be removed even when this generation happens
+  // not to contain a numbered sibling. Otherwise a bundled tool schema can
+  // redeclare (and weaken) a priority canonical such as
+  // `CanonicalFormatImage`, defeating the core-generated import.
+  if (numberedCoreTypes.length === 0) {
+    return filterDuplicateTypeDefinitions(typeDefinitions, new Set(coreTypeNames));
+  }
 
   let result = typeDefinitions;
   for (const { numbered, base } of numberedCoreTypes) {
@@ -2268,9 +2626,33 @@ const JSTS_UNDER_RESOLUTION_ALIASES: Array<{ numbered: string; base: string }> =
   { numbered: 'PostalArea2', base: 'PostalArea' },
   { numbered: 'PostalArea4', base: 'PostalArea' },
   { numbered: 'PostalArea6', base: 'PostalArea' },
+  { numbered: 'Property1', base: 'Property' },
+  { numbered: 'Product1', base: 'Product' },
+  { numbered: 'SizeModeMutex1', base: 'SizeModeMutex' },
+  { numbered: 'SizeModeMutex2', base: 'SizeModeMutex' },
+  { numbered: 'Fixed1', base: 'Fixed' },
+  { numbered: 'Fixed2', base: 'Fixed' },
+  { numbered: 'MultiSize1', base: 'MultiSize' },
+  { numbered: 'MultiSize2', base: 'MultiSize' },
+  { numbered: 'Responsive1', base: 'Responsive' },
+  { numbered: 'Responsive2', base: 'Responsive' },
+  { numbered: 'None1', base: 'None' },
+  { numbered: 'None2', base: 'None' },
 ];
 
-const JSTS_REPEATED_UNDER_RESOLUTION_BASES = ['VASTAsset', 'DAASTAsset', 'AssetVariant'] as const;
+const JSTS_REPEATED_UNDER_RESOLUTION_BASES = [
+  'VASTAsset',
+  'DAASTAsset',
+  'AssetVariant',
+  // Constraint-bearing canonical roots compiled ahead of transitive users.
+  // Referenced copies lose @pattern/minItems metadata in jsts; keep every
+  // numbered occurrence identical to the authoritative public type.
+  'BrandReference',
+  'BusinessEntity',
+  'PlatformExtensionReference',
+  'DeliveryMetrics',
+  'MeasurementTerms',
+] as const;
 
 function buildKnownJstsAliases(typeDefinitions: string): Array<{ numbered: string; base: string }> {
   const exportedTypes = collectExportedTypeNames(typeDefinitions);
@@ -2281,7 +2663,7 @@ function buildKnownJstsAliases(typeDefinitions: string): Array<{ numbered: strin
     const numberedPattern = new RegExp(`^${base}(\\d+)$`);
     for (const name of exportedTypes) {
       const match = name.match(numberedPattern);
-      if (!match || Number(match[1]) < 2) continue;
+      if (!match || Number(match[1]) < 1) continue;
       aliases.set(name, { numbered: name, base });
     }
   }
@@ -2752,8 +3134,14 @@ function discoverAllSchemaFiles(dir: string, base: string = dir): string[] {
   for (const entry of readdirSync(dir)) {
     const fullPath = path.join(dir, entry);
     if (statSync(fullPath).isDirectory()) {
-      // Skip tmp directory
-      if (entry === 'tmp') continue;
+      // The versioned mcp/ and bundled/ trees are transport/build projections
+      // of the canonical AdCP schemas. Compiling them again as gap types
+      // duplicates nearly the entire public surface (and weakens several
+      // declarations because projections intentionally inline dependencies or
+      // permit envelope fields).
+      // Only canonical protocol schemas own the SDK's exported types.
+      const relativeDirectory = path.relative(base, fullPath);
+      if (entry === 'tmp' || relativeDirectory === 'mcp' || relativeDirectory === 'bundled') continue;
       results.push(...discoverAllSchemaFiles(fullPath, base));
     } else if (entry.endsWith('.json') && entry !== 'index.json') {
       results.push(path.relative(base, fullPath));
@@ -2932,7 +3320,7 @@ async function generateTypes() {
     read: (file: { url: string }) => {
       const url = file.url;
       // Handle any /schemas/ path (versioned or v1)
-      if (url.startsWith('/schemas/')) {
+      if (schemaRefToCacheRelativePath(url)) {
         const schema = loadCachedSchema(url);
         if (schema) {
           return Promise.resolve(enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema))));
@@ -2944,6 +3332,72 @@ async function generateTypes() {
 
   // Track generated types across all core schemas to prevent duplicates
   const generatedCoreTypes = new Set<string>();
+
+  // Compile canonical enum documents before broad aggregate roots. Large
+  // dereferenced 3.2 roots can narrow a shared enum in one context or make
+  // json-schema-to-typescript emit one numbered type per member. The canonical
+  // enum directory owns these public unions; tool output imports them from
+  // core.generated.ts instead of letting first-tool order choose a subset.
+  const enumDirectory = path.join(LATEST_CACHE_DIR, 'enums');
+  const canonicalEnums = existsSync(enumDirectory)
+    ? readdirSync(enumDirectory)
+        .filter(fileName => fileName.endsWith('.json'))
+        .sort()
+        .map(fileName => {
+          const ref = `enums/${fileName}`;
+          const schema = loadCachedSchema(ref);
+          const typeName =
+            typeof schema?.title === 'string' ? schema.title.replace(/[^A-Za-z0-9]/g, '') : schemaPathToTypeName(ref);
+          return { ref, schema, typeName };
+        })
+    : [];
+
+  for (const { ref, schema, typeName } of canonicalEnums) {
+    try {
+      if (!schema) throw new Error(`Schema ${ref} not found in cache`);
+      const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema)));
+      const types = await compile(strictSchema, typeName, {
+        bannerComment: '',
+        style: { semi: true, singleQuote: true },
+        additionalProperties: false,
+        strictIndexSignatures: true,
+        $refOptions: { resolve: { cache: refResolver } },
+      });
+      const filteredTypes = filterDuplicateTypeDefinitions(types, generatedCoreTypes);
+      coreTypes += `// ${typeName.toUpperCase()} CANONICAL ENUM\n${filteredTypes}\n`;
+      // jsts title casing is not equivalent to stripping punctuation (for
+      // example "Day of Week" becomes `DayOfWeek`, not `DayofWeek`). Seed
+      // tool imports from the declarations it actually emitted.
+      for (const emittedTypeName of collectExportedTypeNames(types)) {
+        CORE_AUTHORED_TOOL_SHARED_TYPES.add(emittedTypeName);
+      }
+    } catch (error) {
+      console.error(`❌ Failed to generate canonical enum ${ref}:`, error.message);
+    }
+  }
+  console.log(`✅ Generated ${canonicalEnums.length} canonical core enums`);
+
+  for (const ref of PRIORITY_CANONICAL_SCHEMAS) {
+    try {
+      const schema = loadCachedSchema(ref);
+      if (!schema) throw new Error(`Schema ${ref} not found in cache`);
+      const typeName =
+        typeof schema.title === 'string' ? schema.title.replace(/[^A-Za-z0-9]/g, '') : schemaPathToTypeName(ref);
+      const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema)));
+      const types = await compile(strictSchema, typeName, {
+        bannerComment: '',
+        style: { semi: true, singleQuote: true },
+        additionalProperties: false,
+        strictIndexSignatures: true,
+        $refOptions: { resolve: { cache: refResolver } },
+      });
+      const filteredTypes = filterDuplicateTypeDefinitions(types, generatedCoreTypes);
+      coreTypes += `// ${typeName.toUpperCase()} PRIORITY CANONICAL SCHEMA\n${filteredTypes}\n`;
+    } catch (error) {
+      console.error(`❌ Failed to generate priority canonical schema ${ref}:`, error.message);
+    }
+  }
+  console.log(`✅ Generated ${PRIORITY_CANONICAL_SCHEMAS.length} priority canonical schemas`);
 
   for (const schemaName of ADCP_CORE_SCHEMAS) {
     try {
@@ -3051,7 +3505,13 @@ async function generateTypes() {
   toolTypes = applyKnownJstsAliases(toolTypes);
   toolTypes = fixTypedIndexSignatures(toolTypes);
   toolTypes = widenPostalAreaSupportIndexSignature(toolTypes);
-  toolTypes = addReferencedCoreTypeImports(toolTypes, CORE_AUTHORED_TOOL_SHARED_TYPES);
+  toolTypes = widenMediaBuyFeaturesIndexSignature(toolTypes);
+  toolTypes = simplifyForecastRange(toolTypes);
+  // This set is deliberately limited to canonical enums plus the handful of
+  // shared core contracts above. Import all of them: numbered-type cleanup can
+  // introduce a canonical reference after lexical reference scanning, and
+  // type-only imports have no runtime or bundle cost.
+  toolTypes = addCoreGeneratedTypeImports(toolTypes, CORE_AUTHORED_TOOL_SHARED_TYPES);
   toolTypes = addCoreGeneratedTypeReExports(toolTypes, CORE_AUTHORED_TOOL_SHARED_TYPES);
 
   // Compile gap schemas: all schemas not already generated by root schema passes.
@@ -3077,10 +3537,14 @@ async function generateTypes() {
   const processedCoreTypes = hardenTrustedMatchGeneratedTypes(
     applyIndividualAssetDiscriminators(
       addBackwardCompatTypeAliases(
-        widenPostalAreaSupportIndexSignature(
-          fixTypedIndexSignatures(
-            applyKnownJstsAliases(
-              namePostalAreaCountryBranch(removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes)))
+        simplifyForecastRange(
+          widenMediaBuyFeaturesIndexSignature(
+            widenPostalAreaSupportIndexSignature(
+              fixTypedIndexSignatures(
+                applyKnownJstsAliases(
+                  namePostalAreaCountryBranch(removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes)))
+                )
+              )
             )
           )
         )

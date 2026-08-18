@@ -31,6 +31,10 @@ import type {
   SIInitiateSessionResponse,
   SISendMessageResponse,
   SITerminateSessionResponse,
+  CreateMediaBuyResponse,
+  GetProductsResponse,
+  UpdateMediaBuyResponse,
+  SyncCreativesResponse,
 } from '../types/tools.generated';
 
 import type {
@@ -38,21 +42,17 @@ import type {
   CreateMediaBuyAsyncInputRequired,
   CreateMediaBuyAsyncSubmitted,
   CreateMediaBuyAsyncWorking,
-  CreateMediaBuyResponse,
   GetProductsAsyncInputRequired,
   GetProductsAsyncSubmitted,
   GetProductsAsyncWorking,
-  GetProductsResponse,
   SyncCreativesAsyncInputRequired,
   SyncCreativesAsyncSubmitted,
   SyncCreativesAsyncWorking,
-  SyncCreativesResponse,
   TaskStatus,
   TaskType,
   UpdateMediaBuyAsyncInputRequired,
   UpdateMediaBuyAsyncSubmitted,
   UpdateMediaBuyAsyncWorking,
-  UpdateMediaBuyResponse,
 } from '../types/core.generated';
 import type { TaskResultMetadata } from './ConversationTypes';
 import {

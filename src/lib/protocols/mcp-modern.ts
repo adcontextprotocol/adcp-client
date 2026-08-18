@@ -339,6 +339,7 @@ async function createNegotiatedClient(
         upstream: diagnosticFetch,
         signing: options.signingContext.signing,
         getCapability: options.signingContext.getCapability,
+        adcpVersion: options.signingContext.adcpVersion,
       }) as typeof fetch)
     : diagnosticFetch;
   const transport = new StreamableHTTPClientTransport(new URL(options.agentUrl), {

@@ -612,7 +612,7 @@ describe('schema-driven validation', () => {
       });
       assert.match(
         outcome.schemaId ?? '',
-        /^\/schemas\/3\.\d+(?:\.\d+(?:-[\w.]+)?)?\/bundled\/signals\/activate-signal-response\.json$/,
+        /^(?:https:\/\/adcontextprotocol\.org)?\/schemas\/3\.\d+(?:\.\d+(?:-[\w.]+)?)?\/bundled\/signals\/activate-signal-response\.json$/,
         `outcome.schemaId should name the root validator, got: ${outcome.schemaId}`
       );
     });

@@ -43,14 +43,14 @@ import type {
   BuildCreativeMultiSuccess,
 } from '../../../types/tools.generated';
 import type {
-  CanonicalCreativeAsset,
+  CanonicalSyncCreativeAsset,
   CanonicalCreativeResponse,
   CanonicalListCreativesRequest,
   CanonicalListCreativesResponse,
 } from '../../../v2/projection/creative-delivery';
 import type { SyncCreativesRow } from './sales';
 
-type Creative = CanonicalCreativeAsset;
+type SyncCreative = CanonicalSyncCreativeAsset;
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
 export type LegacyPreviewCreativePayload = ServerPayload<PreviewCreativeResponse>;
@@ -123,7 +123,7 @@ export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
    * `status: 'pending_review'` for sync-arm rows awaiting manual review.
    */
   syncCreatives?(
-    creatives: Creative[],
+    creatives: SyncCreative[],
     ctx: Ctx<TCtxMeta>
   ): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
 

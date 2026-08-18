@@ -32,7 +32,7 @@ test('detectFinalizeAction', async t => {
     assert.strictEqual(detectFinalizeAction(req), null);
   });
 
-  await t.test('returns the first finalize entry with index', () => {
+  await t.test('rejects mixed finalize and non-finalize entries', () => {
     const req = {
       buying_mode: 'refine',
       refine: [
@@ -41,8 +41,35 @@ test('detectFinalizeAction', async t => {
         { scope: 'proposal', action: 'finalize', proposal_id: 'p2' },
       ],
     };
-    const found = detectFinalizeAction(req);
-    assert.deepStrictEqual(found, { index: 1, proposalId: 'p1', ask: 'lock pricing' });
+    assert.throws(
+      () => detectFinalizeAction(req),
+      err => err.code === 'INVALID_REQUEST' && err.field === 'refine'
+    );
+  });
+
+  await t.test('rejects multi-finalize before selecting an entry', () => {
+    const req = {
+      buying_mode: 'refine',
+      refine: [
+        { scope: 'proposal', action: 'finalize', proposal_id: 'p1' },
+        { scope: 'proposal', action: 'finalize', proposal_id: 'p2' },
+      ],
+    };
+    assert.throws(
+      () => detectFinalizeAction(req),
+      err => err.code === 'MULTI_FINALIZE_UNSUPPORTED' && err.field === 'refine'
+    );
+  });
+
+  await t.test('rejects finalize outside refine buying mode', () => {
+    const req = {
+      buying_mode: 'brief',
+      refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'p1' }],
+    };
+    assert.throws(
+      () => detectFinalizeAction(req),
+      err => err.code === 'INVALID_REQUEST' && err.field === 'refine'
+    );
   });
 
   await t.test('omits ask when absent', () => {
@@ -53,12 +80,15 @@ test('detectFinalizeAction', async t => {
     assert.deepStrictEqual(detectFinalizeAction(req), { index: 0, proposalId: 'p3' });
   });
 
-  await t.test('skips finalize entries missing proposal_id', () => {
+  await t.test('rejects finalize entries missing proposal_id', () => {
     const req = {
       buying_mode: 'refine',
       refine: [{ scope: 'proposal', action: 'finalize' }],
     };
-    assert.strictEqual(detectFinalizeAction(req), null);
+    assert.throws(
+      () => detectFinalizeAction(req),
+      err => err.code === 'INVALID_REQUEST' && err.field === 'refine'
+    );
   });
 });
 
@@ -307,6 +337,34 @@ test('maybeInterceptFinalize', async t => {
       }),
       err => err.code === 'PROPOSAL_NOT_FOUND' && err.field === 'refine[0].proposal_id'
     );
+  });
+
+  await t.test('rejects multi-finalize before adopter or store side effects', async () => {
+    const store = new InMemoryProposalStore();
+    store.putDraft({ proposalId: 'p1', accountId: 'acct_1', recipes: new Map(), proposalPayload: {} });
+    store.putDraft({ proposalId: 'p2', accountId: 'acct_1', recipes: new Map(), proposalPayload: {} });
+    let finalizeCalls = 0;
+    await assert.rejects(
+      maybeInterceptFinalize({
+        request: {
+          buying_mode: 'refine',
+          refine: [
+            { scope: 'proposal', action: 'finalize', proposal_id: 'p1' },
+            { scope: 'proposal', action: 'finalize', proposal_id: 'p2' },
+          ],
+        },
+        manager: manager(async () => {
+          finalizeCalls += 1;
+          return {};
+        }),
+        store,
+        ctx: { account: { id: 'acct_1' } },
+      }),
+      err => err.code === 'MULTI_FINALIZE_UNSUPPORTED'
+    );
+    assert.strictEqual(finalizeCalls, 0);
+    assert.strictEqual((await store.get('p1', { expectedAccountId: 'acct_1' })).state, 'draft');
+    assert.strictEqual((await store.get('p2', { expectedAccountId: 'acct_1' })).state, 'draft');
   });
 
   await t.test('intercepts + projects (project commits + emits wire response)', async () => {

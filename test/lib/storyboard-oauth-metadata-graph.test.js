@@ -136,8 +136,7 @@ async function startGraphServer(protectedResourceOverride) {
 
 describe('oauth_metadata_graph storyboard integration', () => {
   it('keeps the pinned 3.1 compliance bundle free of the 3.2 OAuth storyboard', () => {
-    assert.match(ADCP_VERSION, /^3\.1\./);
-    assert.doesNotMatch(loadComplianceIndex({ version: ADCP_VERSION }).universal.join(','), /oauth-setup/);
+    assert.doesNotMatch(loadComplianceIndex({ version: '3.1.15' }).universal.join(','), /oauth-setup/);
   });
 
   it('loads and executes oauth_setup through comply() from an external 3.2 bundle', async () => {

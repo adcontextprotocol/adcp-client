@@ -423,6 +423,7 @@ function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
     upstream: (input, init) => baseFetch(input as any, init),
     signing: signingContext.signing,
     getCapability: signingContext.getCapability,
+    adcpVersion: signingContext.adcpVersion,
   });
   return wrapFetchWithCapture(signingFetch as typeof fetch);
 }

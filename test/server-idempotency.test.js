@@ -238,6 +238,149 @@ describe('createAdcpServer with idempotency', () => {
     assert.notEqual(result.replayed, true);
   });
 
+  it('same principal cannot replay proposal finalization across resolved accounts', async () => {
+    const idempotency = createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) });
+    let accountId = 'tenant_a';
+    let calls = 0;
+    const seenAccounts = [];
+    const server = createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency,
+      resolveAccountFromAuth: async () => ({ id: accountId }),
+      resolveIdempotencyPrincipal: () => 'shared-client',
+      mediaBuy: {
+        getProducts: async (_params, ctx) => {
+          calls += 1;
+          seenAccounts.push(ctx.account.id);
+          return { products: [], account_id: ctx.account.id, execution: calls };
+        },
+      },
+    });
+    const request = {
+      buying_mode: 'refine',
+      refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'proposal_1' }],
+      idempotency_key: 'cross_tenant_finalize_0001',
+    };
+
+    const first = await callTool(server, 'get_products', request);
+    accountId = 'tenant_b';
+    const second = await callTool(server, 'get_products', request);
+
+    assert.equal(calls, 2);
+    assert.deepEqual(seenAccounts, ['tenant_a', 'tenant_b']);
+    assert.notEqual(first.replayed, true);
+    assert.notEqual(second.replayed, true);
+  });
+
+  it('same principal and key cannot replay a response across tools', async () => {
+    const idempotency = createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) });
+    let productCalls = 0;
+    let buyCalls = 0;
+    const server = createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency,
+      resolveSessionKey: () => 'tenant',
+      mediaBuy: {
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1', packages: [], source: 'buy', execution: ++buyCalls }),
+        updateMediaBuy: async () => ({
+          media_buy_id: 'mb_1',
+          packages: [],
+          source: 'update',
+          execution: ++productCalls,
+        }),
+      },
+    });
+    const request = {
+      ...basePayload,
+      idempotency_key: 'cross_tool_replay_key_0001',
+    };
+
+    await callTool(server, 'create_media_buy', request);
+    const update = await callTool(server, 'update_media_buy', request);
+
+    assert.equal(buyCalls, 1);
+    assert.equal(productCalls, 0);
+    assert.equal(update.adcp_error?.code, 'IDEMPOTENCY_CONFLICT');
+  });
+
+  it('blocks rather than re-executes an SDK 13 replay entry after upgrade', async () => {
+    const idempotency = createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) });
+    const request = { ...basePayload, idempotency_key: 'legacy_upgrade_replay_0001' };
+    const legacy = await idempotency.check({ principal: 'tenant', key: request.idempotency_key, payload: request });
+    assert.equal(legacy.kind, 'miss');
+    await idempotency.save({
+      principal: 'tenant',
+      key: request.idempotency_key,
+      payloadHash: legacy.payloadHash,
+      response: { media_buy_id: 'legacy_mb', packages: [] },
+    });
+    let calls = 0;
+    const server = createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency,
+      resolveSessionKey: () => 'tenant',
+      mediaBuy: {
+        createMediaBuy: async () => {
+          calls += 1;
+          return { media_buy_id: 'new_mb', packages: [] };
+        },
+      },
+    });
+
+    const result = await callTool(server, 'create_media_buy', request);
+
+    assert.equal(result.adcp_error?.code, 'IDEMPOTENCY_CONFLICT');
+    assert.match(result.adcp_error?.message, /reconcile.*natural key/i);
+    assert.equal(calls, 0, 'an older cache record must prevent duplicate execution during upgrade');
+  });
+
+  it('cannot forge SDK 14 replay identity by planting internal-looking fields in an SDK 13 entry', async () => {
+    const idempotency = createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) });
+    const request = { ...basePayload, idempotency_key: 'legacy_forged_scope_0001' };
+    // SDK 13 hashed the request object verbatim. These fields exactly mimic
+    // the former object-shaped SDK 14 discriminators and would have replayed
+    // without a structurally distinct tuple root.
+    const forgedLegacyPayload = {
+      ...request,
+      __adcp_internal_tool: 'create_media_buy',
+      __adcp_internal_trusted_scope: ['tenant', null, null],
+    };
+    const legacy = await idempotency.check({
+      principal: 'tenant',
+      key: request.idempotency_key,
+      payload: forgedLegacyPayload,
+    });
+    assert.equal(legacy.kind, 'miss');
+    await idempotency.save({
+      principal: 'tenant',
+      key: request.idempotency_key,
+      payloadHash: legacy.payloadHash,
+      response: { media_buy_id: 'attacker_seeded_mb', packages: [] },
+    });
+    let calls = 0;
+    const server = createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency,
+      resolveSessionKey: () => 'tenant',
+      mediaBuy: {
+        createMediaBuy: async () => {
+          calls += 1;
+          return { media_buy_id: 'new_mb', packages: [] };
+        },
+      },
+    });
+
+    const result = await callTool(server, 'create_media_buy', request);
+
+    assert.equal(result.adcp_error?.code, 'IDEMPOTENCY_CONFLICT');
+    assert.notEqual(result.media_buy_id, 'attacker_seeded_mb');
+    assert.equal(calls, 0);
+  });
+
   it('does not apply idempotency to read-only tools', async () => {
     const idempotency = createIdempotencyStore({
       backend: memoryBackend({ sweepIntervalMs: 0 }),
@@ -256,6 +399,136 @@ describe('createAdcpServer with idempotency', () => {
     const result = await callTool(server, 'get_products', { brief: 'test' });
     assert.ok(result.products);
     assert.equal(result.adcp_error, undefined);
+  });
+
+  it('replays an ordinary get_products read when the optional key is supplied', async () => {
+    const idempotency = createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) });
+    let calls = 0;
+    const server = createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency,
+      resolveSessionKey: () => 'tenant',
+      mediaBuy: {
+        getProducts: async params => ({ products: [], brief: params.brief, execution: ++calls }),
+      },
+    });
+    const request = { brief: 'find inventory', idempotency_key: 'keyed_discovery_read_0001' };
+
+    const first = await callTool(server, 'get_products', request);
+    const replay = await callTool(server, 'get_products', request);
+    const conflict = await callTool(server, 'get_products', { ...request, brief: 'different inventory' });
+    const invalid = await callTool(server, 'get_products', { brief: 'find inventory', idempotency_key: 123 });
+
+    assert.equal(calls, 1);
+    assert.equal(first.execution, 1);
+    assert.equal(replay.execution, 1);
+    assert.equal(replay.replayed, true);
+    assert.equal(conflict.adcp_error?.code, 'IDEMPOTENCY_CONFLICT');
+    assert.equal(invalid.adcp_error?.code, 'INVALID_REQUEST');
+    assert.equal(invalid.adcp_error?.field, 'idempotency_key');
+  });
+
+  it('applies idempotency to the state-changing get_products proposal-finalize variant', async () => {
+    const idempotency = createIdempotencyStore({
+      backend: memoryBackend({ sweepIntervalMs: 0 }),
+    });
+    let calls = 0;
+    const server = createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency,
+      resolveSessionKey: () => 'tenant',
+      mediaBuy: {
+        getProducts: async () => {
+          calls += 1;
+          return { products: [], execution: calls };
+        },
+      },
+    });
+    const request = {
+      buying_mode: 'refine',
+      refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'proposal_1' }],
+      idempotency_key: 'finalize_replay_key_0001',
+    };
+
+    const first = await callTool(server, 'get_products', request);
+    const replay = await callTool(server, 'get_products', request);
+    const conflict = await callTool(server, 'get_products', {
+      ...request,
+      refine: [{ ...request.refine[0], ask: 'change the committed hold' }],
+    });
+    const missingKey = await callTool(server, 'get_products', {
+      buying_mode: 'refine',
+      refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'proposal_2' }],
+    });
+    const numericKey = await callTool(server, 'get_products', {
+      buying_mode: 'refine',
+      refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'proposal_3' }],
+      idempotency_key: 123,
+    });
+
+    assert.equal(calls, 2, 'replay and conflict must not re-execute; an unkeyed compatibility call executes once');
+    assert.equal(first.execution, 1);
+    assert.equal(replay.execution, 1);
+    assert.equal(replay.replayed, true);
+    assert.equal(conflict.adcp_error?.code, 'IDEMPOTENCY_CONFLICT');
+    assert.equal(missingKey.execution, 2);
+    assert.equal(missingKey.adcp_error, undefined);
+    assert.equal(missingKey.replayed, undefined);
+    assert.equal(numericKey.adcp_error?.code, 'INVALID_REQUEST');
+    assert.equal(numericKey.adcp_error?.field, 'idempotency_key');
+    assert.equal(calls, 2);
+  });
+
+  it('rejects malformed finalize intent before a validation-off handler can mutate', async () => {
+    const idempotency = createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) });
+    let calls = 0;
+    const server = createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency,
+      resolveSessionKey: () => 'tenant',
+      mediaBuy: {
+        getProducts: async () => {
+          calls += 1;
+          return { products: [] };
+        },
+      },
+    });
+
+    const result = await callTool(server, 'get_products', {
+      refine: [{ action: 'finalize', proposal_id: 123 }],
+    });
+
+    assert.equal(result.adcp_error?.code, 'INVALID_REQUEST');
+    assert.equal(result.adcp_error?.field, 'refine');
+    assert.equal(calls, 0);
+
+    const objectResult = await callTool(server, 'get_products', {
+      refine: { scope: 'proposal', action: 'finalize', proposal_id: 'proposal_1' },
+    });
+    assert.equal(objectResult.adcp_error?.code, 'INVALID_REQUEST');
+    assert.equal(objectResult.adcp_error?.field, 'refine');
+    assert.equal(calls, 0);
+
+    const wrongMode = await callTool(server, 'get_products', {
+      buying_mode: 'brief',
+      refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'proposal_1' }],
+    });
+    assert.equal(wrongMode.adcp_error?.code, 'INVALID_REQUEST');
+    assert.equal(calls, 0);
+
+    const mixed = await callTool(server, 'get_products', {
+      buying_mode: 'refine',
+      refine: [
+        { scope: 'proposal', action: 'finalize', proposal_id: 'proposal_1' },
+        { scope: 'product', action: 'omit', product_id: 'product_1' },
+        'not-an-entry',
+      ],
+    });
+    assert.equal(mixed.adcp_error?.code, 'INVALID_REQUEST');
+    assert.equal(calls, 0);
   });
 
   it('handler errors are NOT cached (retry re-executes)', async () => {
@@ -669,6 +942,32 @@ describe('createAdcpServer config warnings', () => {
       },
     });
     assert.equal(messages.length, 0);
+  });
+
+  it('logs once when a get_products handler reaches proposal finalization without a store', async () => {
+    const messages = [];
+    const logger = {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: msg => messages.push(msg),
+    };
+    const server = createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      logger,
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+    });
+    const request = {
+      buying_mode: 'refine',
+      refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'proposal_1' }],
+    };
+
+    await callTool(server, 'get_products', request);
+    await callTool(server, 'get_products', request);
+
+    assert.equal(messages.length, 1);
+    assert.match(messages[0], /proposal finalization.*without an idempotency store/i);
   });
 
   it("idempotency: 'disabled' suppresses the missing-store error log", () => {

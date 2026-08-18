@@ -73,6 +73,7 @@ import {
   previewCreative,
   urlRender,
   type CanonicalCreativeAsset,
+  type CanonicalSyncCreativeAsset,
   type CanonicalListedCreative,
 } from '@adcp/sdk';
 import type {
@@ -611,7 +612,7 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
       return { status: 'completed' as const, formats: upstreamFormats.map(projectFormat) };
     },
 
-    syncCreatives: async (creatives: CanonicalCreativeAsset[], ctx): Promise<SyncCreativesRow[]> => {
+    syncCreatives: async (creatives: CanonicalSyncCreativeAsset[], ctx): Promise<SyncCreativesRow[]> => {
       const networkCode = ctx.account.ctx_metadata.network_code;
       const advertiserId = ctx.account.id;
       const rows: SyncCreativesRow[] = [];
