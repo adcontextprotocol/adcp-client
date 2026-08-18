@@ -1,5 +1,36 @@
 # Changelog
 
+## 14.0.0-beta.2
+
+### Minor Changes
+
+- e423e51: Bound long-lived client and server caches and add a 60-second default deadline plus a 2 MiB response-body cap to `createUpstreamHttpClient`. Canonical-reference resolvers now use a count- and byte-bounded LRU by default, A2A client discovery and multi-host metadata caches evict least-recent entries, and upstream calls accept per-client/per-call `requestTimeoutMs`, `maxResponseBytes`, and caller cancellation. Set either numeric option to `0` to disable that bound.
+- 6fbf207: Verify inbound task-status webhooks with the authentication mode selected at registration time. The client now persists secretless callback provenance before seller dispatch, verifies those registrations with RFC 9421 using seller keys resolved through `brand.json`, rejects HMAC/RFC mode substitution, binds signatures to raw bytes and the trusted public callback URL, and provides injectable registration, replay, revocation, and JWKS stores for durable deployments. Legacy HMAC receivers remain compatible and never persist secret-derived material.
+- fd414ba: Add AdCP 3.2 cross-role governance authorization builders, capability-gated buyer middleware, compact-JWS service verification, and the published conformance vectors.
+
+  Governance adapter transport or malformed-response failures now throw `GovernanceAdapterError` instead of returning a denial-shaped result, so sellers can distinguish unavailable governance infrastructure from an authoritative policy denial. Authoritative adapter denials now use the AdCP 3.2 `CheckGovernanceResponse` fields (`verdict`, `check_type`, and `findings`) and no longer expose the legacy `status`, `binding`, or `plan_id` response members.
+
+  Governed calls now fail closed instead of forwarding receiver credentials from `push_notification_config`, `reporting_webhook`, or `artifact_webhook` to the governance agent. For an SDK-injected task-status webhook, retry with `{ disableWebhook: true }` and poll, or use A2A task-status notifications. Credential-bearing reporting and artifact callbacks must be omitted from governed requests. Legacy condition re-checks preserve and persist the response `governance_context` continuation token.
+
+- ae9a8fc: Add `lintPackageFormatSelectorDimensions` to `@adcp/sdk/v2/projection` for incomplete or conflicting fixed-size image dimensions across canonical package selectors and deprecated legacy format IDs.
+
+### Patch Changes
+
+- e223146: Restore `Pick`, `Omit`, and structural-assignment compatibility for generated named open-object types while preserving explicit extension-map index signatures.
+- 38266d0: Regenerate agent documentation after Changesets updates the package version in release pull requests.
+- a9811e2: Grade explicit payload-level failures as expected errors in compliance storyboards, including live-account controller denials returned through successful MCP calls.
+- 85f8b35: Fail closed around compliance-only test surfaces. Seeded test-controller fixtures now require a trusted resolved sandbox or mock account, including for account-less tools.
+
+  `createComplyController(...).register(server)` previously warned but still exposed the controller when `sandboxGate` was omitted. It now throws unless the process is both `NODE_ENV=test|development` and explicitly acknowledged with `ADCP_COMPLY_CONTROLLER_UNGATED=1`. Existing direct registrations must add a gate that closes over trusted server-side deployment/auth state; per-principal adopters should use `createAdcpServerFromPlatform(platform, { complyTest })` for its resolved-account gate.
+
+- e223146: Exercise the AdCP 3.2 compact media-buy lifecycle through conformance schema fuzzing, compact direct-buy fixture seeding, and public SDK buyer wrappers in storyboard runs while retaining the legacy media-buy coverage.
+- e223146: Accept 3.2 prerelease response versions when verifying `refine_proposals` results and report the rejected value in version diagnostics.
+- e223146: Accept canonical array-valued asset slots across every generated format schema, including hosted audio.
+- 93d9cbe: Restore RFC 9421 verifier and storyboard interoperability with frozen AdCP 3.0 and 3.1 signing vectors while enforcing the pinned 3.2 Content-Digest contract for body-bearing and empty-body requests.
+- 2018caf: Fix generated creative runtime schemas so manifest and library assets validate their declared asset variants, canonical and legacy identities remain mutually exclusive, and whitespace-padded legacy agent URLs fail validation instead of throwing from a Zod intersection.
+- e223146: Enforce AdCP 3.2 bidding-policy and canonical budget-allocation invariants in the public runtime leaf schemas.
+- e223146: Preserve exact official AdCP input schemas in modern MCP `tools/list` at the supported Zod 4.1 peer floor, apply the server's resolved media-buy tool profile, and keep default discovery under a 1 MiB context budget without bundling full MCP response projections.
+
 ## 14.0.0-beta.1
 
 ### Minor Changes
