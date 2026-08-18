@@ -265,7 +265,10 @@ export interface TestOptions {
   };
   /** @internal Pre-created client from comply() — avoids per-scenario MCP reconnection */
   _client?: unknown;
-  /** @internal Pre-discovered profile from comply() — skips per-scenario discovery */
+  /**
+   * @internal Pre-discovered profile from comply() — skips per-scenario discovery.
+   * @deprecated Use `StoryboardRunOptions.profile` for storyboard profile reuse.
+   */
   _profile?: AgentProfile;
   /**
    * @internal Server-declared AdCP version learned during capability discovery.
