@@ -869,9 +869,8 @@ describe('runStoryboard: multi-instance through MCP SDK', () => {
   });
 
   test('round-robins a stateless storyboard across two MCP stubs via the SDK', async () => {
-    // check_governance is deterministic per plan_id — both stubs accept it and
-    // return identical responses, so this storyboard doesn't depend on state
-    // sharing. It exists solely to verify that the MCP SDK path (initialize
+    // Each check_governance call is independent, so this storyboard doesn't
+    // depend on state sharing. It exists solely to verify that the MCP SDK path (initialize
     // handshake, tools/call serialization, session handling) works when the
     // runner has two distinct transports rotating per step.
     const storyboard = {
@@ -894,10 +893,10 @@ describe('runStoryboard: multi-instance through MCP SDK', () => {
               task: 'check_governance',
               sample_request: {
                 plan_id: 'plan-mcp-sdk',
-                binding: 'proposed',
-                caller: 'buyer',
+                caller: 'https://buyer.example',
+                target_agent: 'https://seller.example/mcp',
                 tool: 'create_media_buy',
-                payload: { budget: 100 },
+                payload: { total_budget: { amount: 100, currency: 'USD' } },
               },
             },
             {
@@ -906,10 +905,10 @@ describe('runStoryboard: multi-instance through MCP SDK', () => {
               task: 'check_governance',
               sample_request: {
                 plan_id: 'plan-mcp-sdk',
-                binding: 'proposed',
-                caller: 'buyer',
+                caller: 'https://buyer.example',
+                target_agent: 'https://seller.example/mcp',
                 tool: 'create_media_buy',
-                payload: { budget: 200 },
+                payload: { total_budget: { amount: 200, currency: 'USD' } },
               },
             },
             {
@@ -918,10 +917,10 @@ describe('runStoryboard: multi-instance through MCP SDK', () => {
               task: 'check_governance',
               sample_request: {
                 plan_id: 'plan-mcp-sdk',
-                binding: 'proposed',
-                caller: 'buyer',
+                caller: 'https://buyer.example',
+                target_agent: 'https://seller.example/mcp',
                 tool: 'create_media_buy',
-                payload: { budget: 300 },
+                payload: { total_budget: { amount: 300, currency: 'USD' } },
               },
             },
           ],

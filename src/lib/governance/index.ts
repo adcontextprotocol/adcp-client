@@ -14,6 +14,48 @@
  * resolves category synonyms and custom policies server-side.
  */
 
+export {
+  GOVERNANCE_AUTHORIZATION_CRITICAL_CLAIMS,
+  GovernanceAuthorizationError,
+  GovernanceReplayStoreAdapter,
+  InMemoryGovernanceReplayStore,
+  buildGovernanceCommitment,
+  buildGovernanceExecutionCommitment,
+  buildGovernanceExecutionRequest,
+  buildGovernanceIntentRequest,
+  buildGovernanceProposedCommitment,
+  computeGovernedPayloadHash,
+  createGovernanceEnforcementMiddleware,
+  getGovernanceEnforcementTasks,
+  governancePurchaseTypeForTask,
+  governanceTaskRequiresProposedCommitment,
+  targetDeclaresGovernanceEnforcement,
+  targetDeclaresLegacyGovernanceAwareness,
+  verifyGovernanceAuthorization,
+} from './authorization';
+export type {
+  BuildGovernanceExecutionRequestInput,
+  BuildGovernanceIntentRequestInput,
+  GovernanceAuthorizationClaims,
+  GovernanceAuthorizationCriticalClaim,
+  GovernanceAuthorizationErrorCode,
+  GovernanceAuthorizationFailure,
+  GovernanceAuthorizationResult,
+  GovernanceAuthorizationSuccess,
+  GovernanceCommitment,
+  GovernanceEnforcementMiddleware,
+  GovernanceEnforcementMiddlewareConfig,
+  GovernanceEnforcementMiddlewareInput,
+  GovernanceEnforcementMode,
+  GovernanceEnforcementTask,
+  GovernanceReplayStore,
+  GovernanceReplayBinding,
+  GovernanceRevocationResolver,
+  GovernanceRevocationStatus,
+  InMemoryGovernanceReplayStoreOptions,
+  VerifyGovernanceAuthorizationOptions,
+} from './authorization';
+
 /**
  * `policy_categories` values that MUST set `human_review_required: true`
  * under GDPR Art 22 / EU AI Act Annex III. Matches the schema's `if/then`

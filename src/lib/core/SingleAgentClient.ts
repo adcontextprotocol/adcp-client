@@ -3048,7 +3048,8 @@ export class SingleAgentClient {
           adaptedParams,
           canonicalInputHandler,
           effectiveOptions,
-          serverVersion
+          serverVersion,
+          capabilityDiscoveryContext.capabilities
         )
     );
     throwIfAborted(effectiveOptions?.signal);
@@ -5498,7 +5499,8 @@ export class SingleAgentClient {
         adaptedParams,
         inputHandler,
         effectiveOptions,
-        serverVersion
+        serverVersion,
+        capabilityDiscoveryContext.capabilities
       );
 
       const postAdapterLogs = [...inputSchemaStripLogs, ...v25DriftLogs];

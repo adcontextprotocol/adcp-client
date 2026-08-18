@@ -5,7 +5,7 @@
  * Used by comply() to verify sellers correctly call governance agents with
  * governance_context during the media buy lifecycle.
  *
- * - Always returns "approved" with a deterministic governance_context
+ * - Always returns "approved" with a real compact-JWS governance_context
  * - Records every inbound call for assertion by test scenarios
  * - Starts on an ephemeral port (HTTP or HTTPS), shuts down cleanly
  */
@@ -19,7 +19,8 @@ import {
   type ServerResponse,
 } from 'http';
 import { createServer as createHttpsServer, type Server as HttpsServer } from 'https';
-import { randomUUID } from 'crypto';
+import { createHash, generateKeyPairSync, randomUUID, type KeyObject } from 'crypto';
+import { CompactSign } from 'jose';
 import { execFileSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -31,6 +32,9 @@ import {
   SyncPlansRequestSchema,
   GetPlanAuditLogsRequestSchema,
 } from '../../types/schemas.generated';
+import { canonicalize } from '../../utils/jcs';
+import { computeGovernedPayloadHash, type GovernanceCommitment } from '../../governance';
+import type { AdcpJsonWebKey } from '../../signing/types';
 
 export interface StubCallRecord {
   tool: string;
@@ -88,10 +92,28 @@ export class GovernanceAgentStub {
   private callLog: StubCallRecord[] = [];
   private governanceContextPrefix: string;
   private expectedToken: string;
+  private readonly signingKey: KeyObject;
+  private readonly signingJwk: AdcpJsonWebKey;
+  private issuer = 'https://governance-stub.invalid/governance';
 
   constructor() {
     this.governanceContextPrefix = `stub-gc-${randomUUID().slice(0, 8)}`;
     this.expectedToken = `stub-token-${randomUUID()}`;
+    const pair = generateKeyPairSync('ed25519');
+    this.signingKey = pair.privateKey;
+    const publicJwk = pair.publicKey.export({ format: 'jwk' }) as JsonWebKey;
+    const kid = `stub-gov-${createHash('sha256')
+      .update(publicJwk.x ?? '')
+      .digest('hex')
+      .slice(0, 12)}`;
+    this.signingJwk = {
+      ...publicJwk,
+      kid,
+      alg: 'EdDSA',
+      use: 'sig',
+      key_ops: ['verify'],
+      adcp_use: 'governance-signing',
+    } as AdcpJsonWebKey;
   }
 
   /**
@@ -100,6 +122,14 @@ export class GovernanceAgentStub {
    */
   get authToken(): string {
     return this.expectedToken;
+  }
+
+  get publicJwk(): AdcpJsonWebKey {
+    return structuredClone(this.signingJwk);
+  }
+
+  get issuerUrl(): string {
+    return this.issuer;
   }
 
   private handleRequest() {
@@ -162,7 +192,9 @@ export class GovernanceAgentStub {
           reject(new Error('Failed to get server address'));
           return;
         }
-        resolve({ url: `${protocol}://127.0.0.1:${addr.port}/mcp` });
+        const url = `${protocol}://127.0.0.1:${addr.port}/mcp`;
+        this.issuer = url;
+        resolve({ url });
       });
       this.httpServer!.on('error', reject);
     });
@@ -217,10 +249,53 @@ export class GovernanceAgentStub {
   }
 
   /**
-   * Generate the governance_context string this stub issues.
+   * Generate a signed governance_context string this stub issues.
    */
-  generateContext(planId: string): string {
-    return `${this.governanceContextPrefix}-${planId}`;
+  async generateContext(input: {
+    planId: string;
+    checkId: string;
+    audience: string;
+    caller: string;
+    task: string;
+    payload: Record<string, unknown>;
+    commitment: GovernanceCommitment;
+    phase?: string;
+  }): Promise<string> {
+    const now = Math.floor(Date.now() / 1000);
+    const claims = {
+      iss: this.issuer,
+      sub: `${this.governanceContextPrefix}-${createHash('sha256').update(input.planId).digest('hex').slice(0, 16)}`,
+      plan_hash: createHash('sha256')
+        .update(canonicalize({ plan_id: input.planId }))
+        .digest('base64url'),
+      aud: input.audience,
+      iat: now,
+      nbf: now - 5,
+      exp: now + 15 * 60,
+      jti: `stub-jti-${randomUUID()}`,
+      phase: input.phase ?? 'intent',
+      caller: input.caller,
+      check_id: input.checkId,
+      authorized_commitment: input.commitment,
+      authorized_task: input.task,
+      authorized_payload_hash: computeGovernedPayloadHash(input.payload),
+    };
+    const signer = new CompactSign(Buffer.from(JSON.stringify(claims), 'utf8')).setProtectedHeader({
+      alg: 'EdDSA',
+      kid: this.signingJwk.kid,
+      typ: 'adcp-gov+jws',
+      crit: ['authorized_commitment', 'authorized_task', 'authorized_payload_hash'],
+      authorized_commitment: true,
+      authorized_task: true,
+      authorized_payload_hash: true,
+    });
+    return signer.sign(this.signingKey, {
+      crit: {
+        authorized_commitment: true,
+        authorized_task: true,
+        authorized_payload_hash: true,
+      },
+    });
   }
 
   private recordCall(tool: string, params: Record<string, unknown>): void {
@@ -282,9 +357,45 @@ export class GovernanceAgentStub {
       (async (args: Record<string, unknown>) => {
         this.recordCall('check_governance', args);
 
-        const planId = args.plan_id as string;
+        const planId = (args.plan_id as string | undefined) ?? 'opaque-plan-binding';
         const checkId = `chk_stub_${randomUUID().slice(0, 8)}`;
-        const gc = this.generateContext(planId);
+        const payload = (args.payload as Record<string, unknown> | undefined) ?? {};
+        const totalBudget = payload.total_budget;
+        const totalBudgetObject =
+          totalBudget && typeof totalBudget === 'object'
+            ? (totalBudget as { amount?: unknown; currency?: unknown })
+            : undefined;
+        const proposed = args.proposed_commitment as { amount?: unknown; currency?: unknown } | undefined;
+        const execution = args.execution_commitment as { amount?: unknown; currency?: unknown } | undefined;
+        const planned = args.planned_delivery as { total_budget?: unknown; currency?: unknown } | undefined;
+        const amount =
+          proposed?.amount ??
+          totalBudgetObject?.amount ??
+          (typeof totalBudget === 'number' ? totalBudget : undefined) ??
+          execution?.amount ??
+          planned?.total_budget;
+        const currency =
+          proposed?.currency ??
+          totalBudgetObject?.currency ??
+          payload.currency ??
+          execution?.currency ??
+          planned?.currency;
+        if (typeof amount !== 'number' || typeof currency !== 'string') {
+          throw new TypeError('Stub governance intent requires a resolvable monetary commitment');
+        }
+        const caller = args.caller as string;
+        const audience = (args.target_agent as string | undefined) ?? caller;
+        const task = (args.tool as string | undefined) ?? 'execution';
+        const gc = await this.generateContext({
+          planId,
+          checkId,
+          audience,
+          caller,
+          task,
+          payload,
+          commitment: { amount, currency },
+          phase: args.tool ? 'intent' : 'execution',
+        });
 
         return {
           content: [
@@ -293,10 +404,11 @@ export class GovernanceAgentStub {
               text: JSON.stringify({
                 check_id: checkId,
                 verdict: 'approved',
-                plan_id: planId,
+                check_type: args.tool ? 'intent' : 'execution',
+                ...(args.tool ? { plan_id: planId } : {}),
                 explanation: 'Stub governance agent: approved for testing.',
                 governance_context: gc,
-                expires_at: new Date(Date.now() + 3600_000).toISOString(),
+                expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
               }),
             },
           ],
