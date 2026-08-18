@@ -671,7 +671,11 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
           const height = image && typeof image === 'object' && image.asset_type === 'image' ? image.height : undefined;
           if (typeof width === 'number' && typeof height === 'number') {
             candidates = candidates.filter(
-              capability => capability.format.params.width === width && capability.format.params.height === height
+              capability =>
+                'width' in capability.format.params &&
+                'height' in capability.format.params &&
+                capability.format.params.width === width &&
+                capability.format.params.height === height
             );
           }
         }

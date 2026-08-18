@@ -1185,7 +1185,9 @@ export interface ContextObject {}
 /**
  * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
  */
-export interface ExtensionObject {}
+export interface ExtensionObject {
+  [k: string]: unknown | undefined;
+}
 /**
  * Response payload for get_products task
  */
