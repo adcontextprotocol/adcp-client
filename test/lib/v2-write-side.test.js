@@ -235,6 +235,7 @@ describe('lintPackageFormatSelectorDimensions', () => {
     const cases = [
       [{ width: 300, sizes }, 'FORMAT_SELECTOR_DIMENSIONS_INCOMPLETE'],
       [{ width: 0, height: 250, sizes }, 'FORMAT_SELECTOR_DIMENSIONS_INVALID'],
+      [{ width: 300, height: 250, sizes }, 'FORMAT_SELECTOR_DIMENSIONS_INVALID'],
     ];
 
     for (const [params, code] of cases) {

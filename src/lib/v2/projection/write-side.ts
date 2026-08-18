@@ -192,9 +192,19 @@ function inspectSelectorDimensions(
   }
 
   const hasDirectDimensions = params.width !== undefined || params.height !== undefined;
-  let diagnosed = hasDirectDimensions
-    ? addInspectionDiagnostic(diagnostics, inspection, selector, field, formatIdIndex)
-    : false;
+  let diagnosed = false;
+  if (hasDirectDimensions && inspection.kind === 'complete') {
+    diagnostics.push({
+      code: 'FORMAT_SELECTOR_DIMENSIONS_INVALID',
+      field,
+      selector,
+      message: `${field} cannot combine fixed width and height with a multi-size sizes array`,
+      ...(formatIdIndex !== undefined ? { format_id_index: formatIdIndex } : {}),
+    });
+    diagnosed = true;
+  } else if (hasDirectDimensions) {
+    diagnosed = addInspectionDiagnostic(diagnostics, inspection, selector, field, formatIdIndex);
+  }
   if (params.sizes.length === 0) {
     addInspectionDiagnostic(diagnostics, { kind: 'invalid' }, selector, `${field}.sizes`, formatIdIndex);
     return { inspection, diagnosed: true };
