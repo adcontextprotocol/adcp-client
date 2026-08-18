@@ -17,6 +17,7 @@ const { setStatusChangeBus, createInMemoryStatusChangeBus } = require('../dist/l
 const { StaticJwksResolver, InMemoryReplayStore, InMemoryRevocationStore } = require('../dist/lib/signing/server.js');
 const { getSchemaValidatorByRef } = require('../dist/lib/validation/schema-loader');
 const { toCanonicalOnlyResponse } = require('../dist/lib/v2/projection');
+const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/idempotency');
 
 const validateMcpWebhookPayload = getSchemaValidatorByRef('core/mcp-webhook-payload.json');
 assert.ok(validateMcpWebhookPayload, 'MCP webhook payload schema must compile');
@@ -80,6 +81,279 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     });
     assert.strictEqual(typeof server.connect, 'function');
     assert.strictEqual(typeof server.dispatchTestRequest, 'function');
+  });
+
+  it('makes the compact 3.2 lifecycle primary while preserving legacy seller routes', async () => {
+    const calls = [];
+    const base = buildPlatform();
+    const platform = buildPlatform({
+      sales: {
+        ...base.sales,
+        getProducts: async (req, ctx) => {
+          calls.push(['get_products', req.adcp_version, ctx.account.id]);
+          return { products: [], cache_scope: 'account' };
+        },
+      },
+      mediaBuyLifecycle: {
+        proposalRefinement: { supported_dimensions: ['total_budget', 'product_changes'] },
+        listProducts: async (req, ctx) => {
+          calls.push(['list_products', req.adcp_version, ctx.account.id]);
+          return {
+            outcome: 'listed',
+            products: [],
+            feed_version: 'feed-3.2',
+            cache_scope: 'account',
+          };
+        },
+        requestProposals: async () => ({ outcome: 'rejected', reason: 'fixture' }),
+        refineProposals: async () => ({ results: [] }),
+        declineProposals: async () => ({ results: [] }),
+        buyProducts: async () => ({ media_buy_id: 'mb-direct' }),
+        acceptProposal: async () => ({ media_buy_id: 'mb-proposal' }),
+        controlMediaBuy: async () => ({ media_buy_id: 'mb-control', revision: 2 }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'compact-and-legacy',
+      version: '1.0.0',
+      adcpVersion: '3.2.0-beta.0',
+      capabilities: { supported_versions: ['3.0.24', '3.1.15', '3.2.0-beta.0'] },
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const listed = await server.dispatchTestRequest({ method: 'tools/list' });
+    const names = listed.tools.map(tool => tool.name);
+    for (const tool of [
+      'list_products',
+      'request_proposals',
+      'refine_proposals',
+      'decline_proposals',
+      'buy_products',
+      'accept_proposal',
+      'control_media_buy',
+    ]) {
+      assert.ok(names.includes(tool), `${tool} should be in the active media-buy profile`);
+    }
+    assert.ok(!names.includes('get_products'));
+    assert.ok(!names.includes('create_media_buy'));
+    assert.ok(!names.includes('update_media_buy'));
+    assert.strictEqual(listed._meta.adcp_profile, 'media-buy');
+
+    const compact = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'list_products',
+        arguments: { adcp_version: '3.2.0-beta.0', account: { account_id: 'acc-modern' } },
+      },
+    });
+    assert.notStrictEqual(compact.isError, true, JSON.stringify(compact.structuredContent));
+    assert.strictEqual(compact.structuredContent.feed_version, 'feed-3.2');
+
+    for (const adcp_version of ['3.1.15', '3.0.24']) {
+      const legacy = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'get_products',
+          arguments: { adcp_version, buying_mode: 'wholesale', account: { account_id: `acc-${adcp_version}` } },
+        },
+      });
+      assert.notStrictEqual(legacy.isError, true, JSON.stringify(legacy.structuredContent));
+    }
+    assert.deepStrictEqual(calls, [
+      ['list_products', '3.2.0-beta.0', 'acc-modern'],
+      ['get_products', '3.1.15', 'acc-3.1.15'],
+      ['get_products', '3.0.24', 'acc-3.0.24'],
+    ]);
+  });
+
+  it('supports a compact-only sales platform and derives proposal capabilities', async () => {
+    const platform = buildPlatform({
+      sales: undefined,
+      mediaBuyLifecycle: {
+        listProducts: async () => ({ outcome: 'listed', products: [], feed_version: 'feed-1', cache_scope: 'account' }),
+        requestProposals: async () => ({ outcome: 'rejected', reason: 'fixture' }),
+        buyProducts: async () => ({ media_buy_id: 'mb-direct' }),
+        controlMediaBuy: async () => ({ media_buy_id: 'mb-direct', revision: 2 }),
+        getMediaBuys: async () => ({ media_buys: [] }),
+        getMediaBuyDelivery: async () => ({ media_buy_deliveries: [] }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'compact-only',
+      version: '1.0.0',
+      adcpVersion: '3.2.0-beta.0',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const capabilities = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_adcp_capabilities', arguments: {} },
+    });
+    assert.strictEqual(capabilities.structuredContent.media_buy.supports_proposals, true);
+    const listed = await server.dispatchTestRequest({ method: 'tools/list' });
+    assert.ok(listed.tools.some(tool => tool.name === 'list_products'));
+    assert.ok(listed.tools.some(tool => tool.name === 'get_media_buys'));
+    assert.ok(!listed.tools.some(tool => tool.name === 'get_products'));
+  });
+
+  it('rejects compact proposal mutations before invoking without trusted account and principal scope', async () => {
+    let calls = 0;
+    const base = buildPlatform();
+    const platform = buildPlatform({
+      accounts: {
+        ...base.accounts,
+        resolve: async ref => (ref == null ? null : { id: ref.account_id, metadata: {} }),
+      },
+      mediaBuyLifecycle: {
+        declineProposals: async () => {
+          calls += 1;
+          return { results: [] };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'scoped-compact',
+      version: '1.0.0',
+      adcpVersion: '3.2.0-beta.0',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const response = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'decline_proposals',
+          arguments: { idempotency_key: 'decline-scope-key-0001', declines: [] },
+        },
+      },
+      {
+        authInfo: {
+          token: 'redacted',
+          clientId: 'buyer-1',
+          scopes: [],
+          credential: { kind: 'api_key', key_id: 'buyer-key-1' },
+        },
+      }
+    );
+    assert.strictEqual(response.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND');
+    assert.strictEqual(calls, 0);
+  });
+
+  it('does not treat an unauthenticated session key as compact-mutation authentication', async () => {
+    let calls = 0;
+    const platform = buildPlatform({
+      mediaBuyLifecycle: {
+        declineProposals: async () => {
+          calls += 1;
+          return { results: [] };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'anonymous-session',
+      version: '1.0.0',
+      adcpVersion: '3.2.0-beta.0',
+      resolveSessionKey: () => 'anonymous-session',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const response = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'decline_proposals',
+        arguments: { idempotency_key: 'anonymous-session-key-01', declines: [] },
+      },
+    });
+    assert.strictEqual(response.structuredContent.adcp_error.code, 'AUTH_MISSING');
+    assert.strictEqual(calls, 0);
+  });
+
+  it('authenticates compact mutation retries before idempotency replay', async () => {
+    let calls = 0;
+    const platform = buildPlatform({
+      mediaBuyLifecycle: {
+        declineProposals: async () => {
+          calls += 1;
+          return { results: [] };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'compact-replay-auth',
+      version: '1.0.0',
+      adcpVersion: '3.2.0-beta.0',
+      idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
+      resolveIdempotencyPrincipal: () => 'deliberately-shared-principal',
+      resolveSessionKey: () => 'deliberately-shared-session',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const request = {
+      method: 'tools/call',
+      params: {
+        name: 'decline_proposals',
+        arguments: {
+          idempotency_key: 'compact-replay-auth-key-01',
+          account: { account_id: 'acc_1' },
+          declines: [],
+        },
+      },
+    };
+
+    const first = await server.dispatchTestRequest(request, {
+      authInfo: { credential: { kind: 'api_key', key_id: 'buyer-key-1' } },
+    });
+    assert.notStrictEqual(first.isError, true, JSON.stringify(first.structuredContent));
+
+    const unauthenticated = await server.dispatchTestRequest(request);
+    assert.strictEqual(unauthenticated.structuredContent.adcp_error.code, 'AUTH_MISSING');
+    assert.strictEqual(unauthenticated.structuredContent.replayed, undefined);
+
+    const tokenOnly = await server.dispatchTestRequest(request, {
+      authInfo: { token: 'opaque-token-without-stable-principal' },
+    });
+    assert.strictEqual(tokenOnly.structuredContent.adcp_error.code, 'AUTH_MISSING');
+    assert.strictEqual(tokenOnly.structuredContent.replayed, undefined);
+    assert.strictEqual(calls, 1);
+  });
+
+  it('passes an immutable trusted refinement scope to the compact platform handler', async () => {
+    let seenScope;
+    const platform = buildPlatform({
+      mediaBuyLifecycle: {
+        proposalRefinement: { supported_dimensions: [] },
+        refineProposals: async (_req, ctx) => {
+          seenScope = ctx.proposalRefinementScope;
+          return { results: [] };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'refinement-scope',
+      version: '1.0.0',
+      adcpVersion: '3.2.0-beta.0',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const response = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'refine_proposals',
+          arguments: { idempotency_key: 'refine-scope-key-00001', refinements: [] },
+        },
+      },
+      {
+        authInfo: {
+          token: 'redacted',
+          scopes: [],
+          credential: { kind: 'api_key', key_id: 'buyer-key-1' },
+        },
+      }
+    );
+    assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+    assert.deepStrictEqual(seenScope, {
+      tenant_id: 'acc_1',
+      account_id: 'acc_1',
+      principal_id: 'api_key:buyer-key-1',
+    });
+    assert.strictEqual(Object.isFrozen(seenScope), true);
   });
 
   it('dispatches get_products through the platform.sales method', async () => {
@@ -6837,6 +7111,74 @@ describe('createAdcpServerFromPlatform — default resolveIdempotencyPrincipal',
     });
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
     assert.strictEqual(result.structuredContent.media_buy_id, 'mb_1');
+  });
+
+  it('preserves the SDK 13 principal for established tools and namespaces compact mutations', async () => {
+    const seenPrincipals = [];
+    const backingStore = createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) });
+    const idempotency = {
+      ...backingStore,
+      check: async params => {
+        seenPrincipals.push({ key: params.key, principal: params.principal });
+        return backingStore.check(params);
+      },
+    };
+    const base = basePlatform();
+    const server = createAdcpServerFromPlatform(
+      {
+        ...base,
+        mediaBuyLifecycle: {
+          declineProposals: async () => ({ results: [] }),
+        },
+      },
+      {
+        name: 'principal-compat',
+        version: '0.0.1',
+        adcpVersion: '3.2.0-beta.0',
+        idempotency,
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+    const context = {
+      authInfo: {
+        clientId: 'sdk-13-buyer',
+        credential: { kind: 'api_key', key_id: 'sdk-14-key' },
+      },
+    };
+
+    await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'create_media_buy',
+          arguments: {
+            account: { account_id: 'acc_1' },
+            packages: [],
+            idempotency_key: 'legacy-principal-key-0001',
+          },
+        },
+      },
+      context
+    );
+    await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'decline_proposals',
+          arguments: {
+            account: { account_id: 'acc_1' },
+            declines: [],
+            idempotency_key: 'compact-principal-key-001',
+          },
+        },
+      },
+      context
+    );
+
+    assert.deepStrictEqual(seenPrincipals, [
+      { key: 'legacy-principal-key-0001', principal: 'sdk-13-buyer' },
+      { key: 'compact-principal-key-001', principal: 'api_key:sdk-14-key' },
+    ]);
   });
 });
 

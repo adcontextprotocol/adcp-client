@@ -933,6 +933,48 @@ export function hasSchemaBundle(version: string): boolean {
   }
 }
 
+const mcpProfileInputSchemaCache = new Map<string, Readonly<Record<string, unknown>> | null>();
+
+/** Load the exact self-contained request projection from an MCP role profile. */
+export function getMcpProfileInputSchema(
+  toolName: string,
+  profile: string,
+  version: string = ADCP_VERSION
+): Readonly<Record<string, unknown>> | undefined {
+  const root = resolveSchemaRoot(version);
+  const cacheKey = `${root}\u001f${profile}\u001f${toolName}`;
+  const cached = mcpProfileInputSchemaCache.get(cacheKey);
+  if (cached !== undefined) return cached ?? undefined;
+
+  const mcpRoot = path.join(root, 'mcp');
+  if (!existsSync(mcpRoot)) {
+    mcpProfileInputSchemaCache.set(cacheKey, null);
+    return undefined;
+  }
+  const protocolVersions = readdirSync(mcpRoot, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name)
+    .sort()
+    .reverse();
+  for (const protocolVersion of protocolVersions) {
+    const profileRoot = path.resolve(mcpRoot, protocolVersion, 'profiles', profile);
+    const manifestFile = path.join(profileRoot, 'manifest.json');
+    if (!existsSync(manifestFile)) continue;
+    const manifest = loadJson(manifestFile) as {
+      tools?: Record<string, { inputSchema?: unknown }>;
+    };
+    const schemaRef = manifest.tools?.[toolName]?.inputSchema;
+    if (typeof schemaRef !== 'string') continue;
+    const schemaFile = path.resolve(profileRoot, schemaRef);
+    if (!schemaFile.startsWith(`${profileRoot}${path.sep}`) || !existsSync(schemaFile)) continue;
+    const schema = Object.freeze(loadJson(schemaFile));
+    mcpProfileInputSchemaCache.set(cacheKey, schema);
+    return schema;
+  }
+  mcpProfileInputSchemaCache.set(cacheKey, null);
+  return undefined;
+}
+
 /**
  * Test hook: reset cached state. With no argument, clears every version's
  * loader state; with a version, clears only the bundle that version
@@ -940,6 +982,7 @@ export function hasSchemaBundle(version: string): boolean {
  * bundle).
  */
 export function _resetValidationLoader(version?: string): void {
+  mcpProfileInputSchemaCache.clear();
   if (version === undefined) {
     states.clear();
   } else {

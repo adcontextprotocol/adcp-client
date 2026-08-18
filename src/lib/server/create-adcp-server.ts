@@ -44,7 +44,7 @@ import {
   type AdcpVersion,
 } from '../version';
 import { isMovingAdcpPrereleaseFamilyAlias, resolveAdcpVersion } from '../utils/adcp-version-config';
-import { getValidator, hasSchemaBundle, resolveBundleKey } from '../validation/schema-loader';
+import { getValidator, hasSchemaBundle, resolveBundleKey, getMcpProfileInputSchema } from '../validation/schema-loader';
 import { TOOL_INPUT_SHAPES } from '../schemas';
 import { TaskTypeValues } from '../types/enums.generated';
 import { bundleSupportsAdcpVersionField } from '../protocols';
@@ -59,6 +59,7 @@ import {
   setSdkServerInstructions,
   setMcpAppResources,
   wrapInitializeHandler,
+  wrapSdkRequestHandler,
   type AdcpServer,
   type AdcpServerInternal,
 } from './adcp-server';
@@ -1427,6 +1428,46 @@ export interface McpAppMeta {
 }
 
 /**
+ * The active AdCP 3.2 media-buy MCP catalog.
+ *
+ * Deprecated compatibility entry points such as `get_products`,
+ * `create_media_buy`, and `update_media_buy` are deliberately absent. A
+ * server may still keep those tools callable for older buyers while
+ * advertising this compact surface to new MCP clients.
+ *
+ * @public
+ */
+export const MEDIA_BUY_MCP_TOOL_PROFILE = [
+  'accept_proposal',
+  'buy_products',
+  'control_media_buy',
+  'decline_proposals',
+  'get_account_financials',
+  'get_adcp_capabilities',
+  'get_media_buy_delivery',
+  'get_media_buys',
+  'get_task_status',
+  'list_accounts',
+  'list_creatives',
+  'list_products',
+  'list_tasks',
+  'log_event',
+  'provide_performance_feedback',
+  'refine_proposals',
+  'report_usage',
+  'request_proposals',
+  'sync_accounts',
+  'sync_agent_notification_configs',
+  'sync_audiences',
+  'sync_catalogs',
+  'sync_creatives',
+  'sync_event_sources',
+  'sync_governance',
+] as const;
+
+export type AdcpMcpToolProfile = 'auto' | 'media-buy' | 'all';
+
+/**
  * Declarative registration for a tool outside {@link AdcpToolMap} — seller
  * extensions (e.g. collection-list helpers), test-harness endpoints
  * (`comply_test_controller`), or AdCP surfaces whose JSON Schemas haven't
@@ -1520,6 +1561,32 @@ export type WebhooksConfig = Pick<
 export interface AdcpServerConfig<TAccount = unknown> {
   name: string;
   version: string;
+
+  /**
+   * Controls the tools advertised by MCP `tools/list` without removing
+   * compatibility call routes.
+   *
+   * - `auto` (default): a 3.2 server with any compact media-buy lifecycle
+   *   handler advertises the spec's active `media-buy` profile.
+   * - `media-buy`: always advertise the intersection of registered tools and
+   *   the active 3.2 media-buy profile.
+   * - `all`: advertise every registered tool, including deprecated aliases.
+   *
+   * This is a discovery filter, not an authorization boundary. In `auto` and
+   * `media-buy` modes, registered legacy tools remain callable so 3.0/3.1
+   * buyers that already know their tool names continue to work.
+   */
+  mcpToolProfile?: AdcpMcpToolProfile;
+
+  /**
+   * Require framework-resolved account context on compact lifecycle
+   * mutations before replay lookup. Enabled by the decisioning-platform
+   * adapter; raw-handler adopters can retain their own scope resolver during
+   * the compatibility window.
+   *
+   * @internal
+   */
+  requireCompactMutationAccountScope?: boolean;
 
   /**
    * Expose generated top-level AdCP request shapes in MCP `tools/list`.
@@ -2575,6 +2642,19 @@ function taskBelongsToCaller(task: TaskRecord, accountId: string, ownerScope: st
   return task.ownerScope === ownerScope;
 }
 
+function authenticatedPrincipalForContext(
+  authInfo: ResolvedAuthInfo | undefined,
+  agent: BuyerAgent | undefined
+): string | undefined {
+  if (agent?.agent_url) return `agent:${agent.agent_url}`;
+  const credential = authInfo?.credential;
+  if (credential?.kind === 'http_sig') return `http_sig:${credential.agent_url}`;
+  if (credential?.kind === 'oauth') return `oauth:${credential.client_id}`;
+  if (credential?.kind === 'api_key') return `api_key:${credential.key_id}`;
+  if (typeof authInfo?.clientId === 'string' && authInfo.clientId.length > 0) return `client:${authInfo.clientId}`;
+  return undefined;
+}
+
 function taskOwnerScopeForContext(
   authInfo: ResolvedAuthInfo | undefined,
   sessionKey: string | undefined,
@@ -2862,6 +2942,16 @@ const COMPACT_MEDIA_BUY_LIFECYCLE_TOOLS = [
   'accept_proposal',
   'control_media_buy',
 ] as const;
+
+/** @internal Shared by the platform adapter's principal resolver and dispatcher gate. */
+export const COMPACT_MEDIA_BUY_MUTATION_TOOLS = new Set<string>([
+  'request_proposals',
+  'refine_proposals',
+  'decline_proposals',
+  'buy_products',
+  'accept_proposal',
+  'control_media_buy',
+]);
 
 // ---------------------------------------------------------------------------
 // Domain → tool name mapping
@@ -4018,6 +4108,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     name,
     version,
     adcpVersion: configuredAdcpVersion,
+    mcpToolProfile = 'auto',
+    requireCompactMutationAccountScope = false,
     resolveAccount,
     resolveAccountFromAuth,
     resolveSessionKey,
@@ -4040,6 +4132,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     testController: testControllerBridge,
     responseEnhancer,
   } = config;
+  if (!['auto', 'media-buy', 'all'].includes(mcpToolProfile)) {
+    throw new Error(
+      `createAdcpServer: mcpToolProfile must be "auto", "media-buy", or "all"; got ${JSON.stringify(mcpToolProfile)}`
+    );
+  }
   const notificationHandlerConfigured = typeof config.protocol?.syncAgentNotificationConfigs === 'function';
   const notificationCapabilitySupported = capConfig?.capability_changes?.notifications?.supported === true;
   if (notificationHandlerConfigured !== notificationCapabilitySupported) {
@@ -4179,6 +4276,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // (3.1 seller serving a 3.0 buyer at 3.0) is a follow-up; today this
   // always reflects the seller's own pin.
   const protocolBundleKey = resolveBundleKey(adcpVersion);
+  const frameworkToolMeta = { adcp_version: adcpVersion } as const;
   const servedAdcpVersion = (() => {
     const bundleKey = protocolBundleKey;
     return bundleSupportsAdcpVersionField(bundleKey) ? bundleKey : undefined;
@@ -5643,6 +5741,28 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
         }
 
+        // Compact lifecycle mutations are account- and principal-scoped.
+        // Enforce both before idempotency lookup: a cache hit returns without
+        // invoking the adopter handler, so a handler-only gate would allow an
+        // unauthenticated retry to receive a prior authenticated response
+        // whenever a custom principal resolver collapses their namespaces.
+        if (COMPACT_MEDIA_BUY_MUTATION_TOOLS.has(toolName)) {
+          if (authenticatedPrincipalForContext(ctx.authInfo, ctx.agent) === undefined) {
+            return finalize(
+              adcpError('AUTH_MISSING', {
+                message: `${toolName} requires an authenticated buyer principal`,
+              })
+            );
+          }
+          if (requireCompactMutationAccountScope && ctx.account == null) {
+            return finalize(
+              adcpError('ACCOUNT_NOT_FOUND', {
+                message: `${toolName} requires a resolved account scope`,
+              })
+            );
+          }
+        }
+
         if (toolName === 'refine_proposals') {
           if (ctx.authInfo === undefined && ctx.agent === undefined) {
             return finalize(
@@ -6696,6 +6816,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         {
           inputSchema: frameworkInputSchemaFor(toolName),
           ...(meta?.annotations != null && { annotations: meta.annotations }),
+          _meta: frameworkToolMeta,
         },
         toolHandler as Parameters<typeof server.registerTool>[2]
       );
@@ -6710,6 +6831,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       {
         inputSchema: frameworkInputSchemaFor('get_task_status'),
         annotations: RO,
+        _meta: frameworkToolMeta,
       },
       (async (params: any, extra: any) => {
         const credentialError = taskToolCredentialPolicyError('get_task_status', params ?? {}, extra);
@@ -6788,6 +6910,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       {
         inputSchema: frameworkInputSchemaFor('list_tasks'),
         annotations: RO,
+        _meta: frameworkToolMeta,
       },
       (async (params: any, extra: any) => {
         const credentialError = taskToolCredentialPolicyError('list_tasks', params ?? {}, extra);
@@ -7145,6 +7268,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     {
       inputSchema: frameworkInputSchemaFor('get_adcp_capabilities'),
       annotations: { readOnlyHint: true },
+      _meta: frameworkToolMeta,
     },
     (async (params: any, extra: { authInfo?: ResolvedAuthInfo } = {}) => {
       const requestParams = isPlainObject(params) ? params : {};
@@ -7321,6 +7445,57 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     }) as Parameters<typeof server.registerTool>[2]
   );
   registeredToolNames.add('get_adcp_capabilities');
+
+  const configuredRelease = parseAdcpRelease(protocolBundleKey);
+  const serves32OrNewer =
+    configuredRelease !== undefined &&
+    (configuredRelease.major > 3 || (configuredRelease.major === 3 && configuredRelease.minor >= 2));
+  if (mcpToolProfile === 'media-buy' && !serves32OrNewer) {
+    throw new Error('createAdcpServer: mcpToolProfile="media-buy" requires adcpVersion 3.2 or newer');
+  }
+  const activeMcpToolProfile: Exclude<AdcpMcpToolProfile, 'auto'> =
+    mcpToolProfile === 'media-buy' || (mcpToolProfile === 'auto' && serves32OrNewer && compactLifecycleTools.length > 0)
+      ? 'media-buy'
+      : 'all';
+  const mediaBuyProfileTools = new Set<string>(MEDIA_BUY_MCP_TOOL_PROFILE);
+  const wrappedToolsList = wrapSdkRequestHandler(server, 'tools/list', async (original, request, extra) => {
+    const response = await original(request, extra);
+    if (response == null || typeof response !== 'object') return response;
+    const tools = (response as { tools?: unknown }).tools;
+    if (!Array.isArray(tools)) return response;
+
+    const visibleTools = tools.filter(tool => {
+      const toolName = (tool as { name?: unknown } | null)?.name;
+      if (typeof toolName !== 'string') return true;
+      // Compact lifecycle names do not exist before 3.2. Keep a mistakenly
+      // supplied forward handler callable only after the configured server
+      // pin advances; never advertise it from a 3.0/3.1 endpoint.
+      if (!serves32OrNewer && COMPACT_MEDIA_BUY_LIFECYCLE_TOOLS.includes(toolName as never)) return false;
+      return activeMcpToolProfile === 'all' || mediaBuyProfileTools.has(toolName);
+    });
+    const projectedTools = visibleTools.map(tool => {
+      if (activeMcpToolProfile !== 'media-buy') return tool;
+      const toolName = (tool as { name?: unknown } | null)?.name;
+      if (typeof toolName !== 'string') return tool;
+      const inputSchema = getMcpProfileInputSchema(toolName, 'media-buy', adcpVersion);
+      return inputSchema ? { ...(tool as Record<string, unknown>), inputSchema } : tool;
+    });
+
+    return {
+      ...(response as Record<string, unknown>),
+      tools: projectedTools,
+      _meta: {
+        ...((response as { _meta?: Record<string, unknown> })._meta ?? {}),
+        adcp_version: adcpVersion,
+        adcp_profile: activeMcpToolProfile,
+      },
+    };
+  });
+  if (!wrappedToolsList) {
+    throw new Error(
+      'createAdcpServer: failed to install MCP tools/list profile filtering; the MCP SDK request-handler internals may have changed'
+    );
+  }
 
   // Validate `credentialPolicy.tools` keys against the FULL registered
   // tool set, including `get_adcp_capabilities` (registered just above).

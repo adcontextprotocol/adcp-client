@@ -102,6 +102,14 @@ SDK 14 adds convenience methods and generated server/type/schema support for:
 
 These do not replace the established tools for older agents. Discover `lifecycle_tools` and branch. Keep `getProducts()`/`createMediaBuy()`/`updateMediaBuy()` available for AdCP 3.0 and 3.1. Preserve the same idempotency key only for an exact retry; changed commercial intent requires a fresh key.
 
+For sellers, implement the compact handlers on
+`platform.mediaBuyLifecycle`; keep `platform.sales` as the 3.0/3.1 facade when
+the endpoint serves mixed buyers. SDK 14's default MCP discovery then shows
+the active 3.2 media-buy profile while leaving configured legacy names directly
+callable. It also exposes `_meta.adcp_version` and `_meta.adcp_profile` in
+`tools/list`. See the [surface comparison and compatibility test
+matrix](guides/MEDIA-BUY-3.2-COMPATIBILITY.md).
+
 For the established proposal path, treat only `get_products` refinements with
 `scope: 'proposal'` and `action: 'finalize'` as mutations. SDK 14 clients attach
 an idempotency key and exact retries must reuse it; SDK 14 servers replay a

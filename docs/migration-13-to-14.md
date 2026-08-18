@@ -46,8 +46,17 @@ by their other commercial mutations.
 
 SDK 14 also hardens replay-cache isolation by including the tool and trusted
 resolved session/account identity in canonical replay identity. Existing-tool
-cache keys retain their SDK 13 scope so an older durable entry cannot be
-missed and executed twice. Because SDK 14's stronger payload identity differs,
+cache keys retain both their SDK 13 scope and bare `authInfo.clientId`
+principal format, so an older durable entry cannot be missed and executed
+twice during a rolling upgrade. The new 3.2 compact mutation tools instead use
+credential-kind-prefixed principals such as `oauth:<client_id>`,
+`api_key:<key_id>`, or `agent:<agent_url>` and do not fall back to session or
+account identity. Those tools have no SDK 13 cache entries to migrate.
+
+If you supply `resolveIdempotencyPrincipal`, your resolver remains
+authoritative for both established and compact tools; keep its output stable
+across the deployment or deliberately dual-read/migrate your backing store.
+Because SDK 14's stronger payload identity differs,
 a retry against an SDK 13 entry returns `IDEMPOTENCY_CONFLICT` instead of the
 old cached body; reconcile by natural key rather than minting a replacement
 key until the original replay TTL expires. New entries cannot replay a body
@@ -103,14 +112,31 @@ Do not select a signing profile from a version value inside an unverified reques
 
 ## Server handler additions
 
-`createAdcpServerFromPlatform()` can route the new compact lifecycle, governance adjustment, and agent notification tasks. The generated handler maps cover:
+`createAdcpServerFromPlatform()` routes the new compact lifecycle through
+`platform.mediaBuyLifecycle`, including `proposalRefinement` capability
+metadata for `refineProposals`. Keep `platform.sales` beside it when the same
+seller must accept 3.0/3.1 callers. Both facades should call the same business
+services rather than maintaining parallel commercial state.
+
+The generated handler maps cover:
 
 - `list_products`, `request_proposals`, `refine_proposals`, `decline_proposals`
 - `buy_products`, `accept_proposal`, `control_media_buy`
 - `report_plan_adjustment`
 - `sync_agent_notification_configs`
 
-An SDK 14 server may continue serving 3.0/3.1 clients through the established tool names. Advertise only handlers that are configured and verify both the old facade and new compact path use the same authorization, tenant isolation, idempotency, and commercial source of truth.
+On a 3.2 server, the default `mcpToolProfile: 'auto'` advertises only the
+intersection of registered tools and the active spec `media-buy` profile. The
+deprecated names remain callable compatibility routes. Use
+`mcpToolProfile: 'all'` only for migration diagnostics. MCP `tools/list`
+includes `_meta.adcp_version` and `_meta.adcp_profile`, and each framework tool
+includes `_meta.adcp_version`.
+
+An SDK 14 server may therefore continue serving 3.0/3.1 clients through the
+established tool names without steering new MCP clients toward them. Verify
+both facades use the same authorization, tenant isolation, idempotency, and
+commercial source of truth. The exact surface comparison and test matrix are
+in [AdCP 3.2 media-buy lifecycle compatibility](guides/MEDIA-BUY-3.2-COMPATIBILITY.md).
 
 For create/update media-buy handlers, use `media_buy_status` for the business state:
 
