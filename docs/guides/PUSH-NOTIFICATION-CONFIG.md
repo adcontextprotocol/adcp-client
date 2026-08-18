@@ -4,20 +4,29 @@ Push notification config tells the AdCP agent where to send async task status up
 
 ## How It Works
 
-When you configure a `webhookUrlTemplate` and `webhookSecret` on the client, every outgoing tool call (`create_media_buy`, `update_media_buy`, `sync_creatives`, etc.) will include a `push_notification_config` in the wire payload. The URL is generated per-operation so each task has its own unique webhook endpoint.
+When you configure a `webhookUrlTemplate`, every outgoing tool call (`create_media_buy`, `update_media_buy`, `sync_creatives`, etc.) can include a `push_notification_config`. The URL is generated per operation. Omitting `webhookSecret` selects the current RFC 9421 signature profile; setting it explicitly selects legacy HMAC-SHA256.
 
 ## Client Setup
 
 ```typescript
 const client = new AdCPClient({
   webhookUrlTemplate: 'https://your-app.com/adcp/webhook/{task_type}/{agent_id}/{operation_id}',
-  webhookSecret: 'your-hmac-secret-min-32-characters-here',
 });
 ```
 
 ## Wire Payload
 
-All async operations produce the same `push_notification_config` shape on the wire:
+The default RFC 9421 registration has no `authentication` block:
+
+```json
+{
+  "push_notification_config": {
+    "url": "https://your-app.com/adcp/webhook/create_media_buy/agent_123/cd51e063-2b79-4a6d-afac-ed7789c3a443"
+  }
+}
+```
+
+Setting `webhookSecret` opts into the legacy shape:
 
 ```json
 {
@@ -96,10 +105,34 @@ All async operations produce the same `push_notification_config` shape on the wi
 
 ## Authentication
 
+### RFC 9421 (default)
+
+`SingleAgentClient` records the exact callback URL, seller, protocol, task, and selected authentication mode before dispatch. `verifyAndParseWebhook` then resolves the registered seller's keys through its capabilities → `brand.json` → `agents[].jwks_uri` chain and verifies the RFC 9421 signature, content digest, signature window, revocation, and nonce replay protection.
+
+The receiver must supply exact raw bytes, the trusted route operation ID, HTTP method, and the externally visible absolute URL. Do not derive the public URL from untrusted `Host` or `X-Forwarded-*` headers. Behind a trusted reverse proxy, construct it from server-owned configuration:
+
+```typescript
+app.post(
+  '/adcp/webhook/:task_type/:agent_id/:operation_id',
+  express.raw({ type: 'application/json' }),
+  client.createWebhookHandler({
+    getRequestUrl: req => `https://your-app.com${req.originalUrl}`,
+  }),
+);
+```
+
+The default registration and replay stores are process-local. Production receivers that can restart or run multiple replicas must inject a shared durable `webhookRegistrationStore` and `webhookVerification.replayStore`; registration writes must be atomic create-or-identical, and replay insertion must be atomic across replicas. Retain registrations for at least the seller retry horizon (seven days by default).
+
+For deterministic tests or infrastructure-managed keys, set `webhookVerification.jwks`. Otherwise seller key discovery is automatic and uses an unauthenticated official protocol client for the capabilities step, so credentials configured for one endpoint are never transplanted to the registered callback origin. Sellers whose capability discovery requires authentication should provide an origin-bound `webhookVerification.fetchCapabilities(agentUrl, protocol)` callback or inject `webhookVerification.jwks` directly.
+
+### Legacy HMAC-SHA256
+
 When `webhookSecret` is configured, the legacy webhook authentication path uses `HMAC-SHA256`. The agent signs `${timestamp}.${raw_body_bytes}` with the shared secret and sends:
 
 - `x-adcp-signature: sha256=<hex digest>`
 - `x-adcp-timestamp: <unix seconds>`
+
+HMAC registration provenance never stores the credential or a secret-derived fingerprint. The configured global `webhookSecret` remains the verification key, preserving the established behavior across process restarts and replicas. If the optional registration store is unavailable, HMAC dispatch and verification continue; RFC 9421 dispatch fails closed because seller-pinned provenance is required for safe verification.
 
 Capture the raw request body before JSON parsing and verify it with the SDK helper:
 
@@ -127,7 +160,9 @@ app.post('/adcp/webhook/:task_type/:agent_id/:operation_id', async (req, res) =>
 
 `verifyWebhookRequest` normalizes header casing, rejects missing or ambiguous signature headers, enforces a 300s timestamp freshness window by default, and compares signatures in constant time. It does not maintain a replay cache; use `webhookDedup` below to drop duplicate webhook events by `idempotency_key`.
 
-For spec-current RFC 9421 webhook signatures, use `createWebhookVerifier` / `verifyWebhookSignature` from `@adcp/sdk/signing/server` instead of the HMAC helper.
+The mode recorded at registration is authoritative. The receiver never tries RFC 9421 and falls back to HMAC (or vice versa), and mixed-mode headers fail with `webhook_mode_mismatch`.
+
+`reporting_webhook` and artifact callbacks are separate registrations. The automatic provenance described above covers task-status `push_notification_config`; existing reporting webhook HMAC verification remains recordless for compatibility.
 
 ## Deduplication
 

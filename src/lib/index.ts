@@ -282,11 +282,21 @@ export type {
   SingleAgentClientConfig,
   SyncCreativesTaskOptions,
   VerifyAndParseWebhookOptions,
+  WebhookHandlerAdapter,
+  WebhookHandlerRequest,
   WebhookParseErrorCode,
   WebhookParseFailure,
   WebhookParseResult,
   WebhookParseSuccess,
+  WebhookVerificationConfig,
 } from './core/SingleAgentClient';
+export {
+  InMemoryWebhookRegistrationStore,
+  type InMemoryWebhookRegistrationStoreOptions,
+  type WebhookAuthenticationMode,
+  type WebhookRegistration,
+  type WebhookRegistrationStore,
+} from './core/webhook-registration';
 export {
   AgentClient,
   type CanonicalGetProductsResponse,
@@ -298,7 +308,11 @@ export {
   type AdcpTaskName,
   type InProcessAgentClientConfig,
 } from './core/AgentClient';
-export { ADCPMultiAgentClient, createADCPMultiAgentClient } from './core/ADCPMultiAgentClient';
+export {
+  ADCPMultiAgentClient,
+  createADCPMultiAgentClient,
+  type MultiAgentWebhookHandlerAdapter,
+} from './core/ADCPMultiAgentClient';
 export { ConfigurationManager } from './core/ConfigurationManager';
 export {
   CreativeAgentClient,

@@ -69,6 +69,7 @@ import { ConfigurationError } from '../errors';
 import { resolveBundleKey, toReleasePrecisionWire, validateAdcpVersionWire } from '../validation/schema-loader';
 import { buildAgentSigningContext, CAPABILITY_OP, ensureCapabilityLoaded } from '../signing/client';
 import { withResponseSizeLimit } from './responseSizeLimit';
+import { preparedProtocolToolCallFor } from './prepared-call-context';
 import {
   withTransportDiagnostics,
   type TransportActivityHandler as TransportActivityHandlerFn,
@@ -495,15 +496,17 @@ export class ProtocolClient {
       transportActivityContext,
     } = options;
     const transport = normalizeTransportOptions(requestedTransport);
-    const preparedCall = prepareProtocolToolCall(agent, args, {
-      webhookUrl,
-      webhookSecret,
-      webhookToken,
-      serverVersion,
-      adcpVersion,
-      wireAdcpVersion,
-      versionEnvelope: versionEnvelopeMode,
-    });
+    const preparedCall =
+      preparedProtocolToolCallFor(agent, toolName, args) ??
+      prepareProtocolToolCall(agent, args, {
+        webhookUrl,
+        webhookSecret,
+        webhookToken,
+        serverVersion,
+        adcpVersion,
+        wireAdcpVersion,
+        versionEnvelope: versionEnvelopeMode,
+      });
     // Enter the response-size-limit ALS slot once for this call. The slot is
     // read by `wrapFetchWithSizeLimit` in both protocol transports, so the
     // cap applies regardless of which path (MCP / A2A / OAuth refresh) the

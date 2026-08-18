@@ -3,8 +3,14 @@
 
 import { randomUUID } from 'crypto';
 import type { AgentConfig } from '../types';
-import { ProtocolClient, normalizeTransportOptions, prepareProtocolToolCall } from '../protocols';
+import {
+  ProtocolClient,
+  normalizeTransportOptions,
+  prepareProtocolToolCall,
+  type PreparedProtocolToolCall,
+} from '../protocols';
 import { listMCPTasks } from '../protocols/mcp-tasks';
+import { withPreparedProtocolToolCall } from '../protocols/prepared-call-context';
 import { getAuthToken } from '../auth';
 import { is401Error, adcpErrorToTypedError, ConfigurationError } from '../errors';
 import type { ADCPError } from '../errors';
@@ -91,6 +97,53 @@ const GOVERNED_CALLBACK_FIELDS = new Set(['push_notification_config', 'reporting
 type GovernedCredentialScanResult =
   | { kind: 'credential'; path: string; callbackField: string }
   | { kind: 'limit'; limit: 'nodes' | 'depth' };
+
+function webhookRegistrationFromPreparedCall(
+  agent: AgentConfig,
+  preparedCall: PreparedProtocolToolCall
+): { callbackUrl: string; mode: 'rfc9421' | 'hmac-sha256' } | undefined {
+  const candidate =
+    agent.protocol === 'a2a'
+      ? preparedCall.pushNotificationConfig
+      : preparedCall.args.push_notification_config &&
+          typeof preparedCall.args.push_notification_config === 'object' &&
+          !Array.isArray(preparedCall.args.push_notification_config)
+        ? (preparedCall.args.push_notification_config as Record<string, unknown>)
+        : undefined;
+  if (!candidate) return undefined;
+  if (typeof candidate.url !== 'string') {
+    throw new ConfigurationError('push_notification_config.url must be a string.', 'push_notification_config.url');
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(candidate, 'authentication')) {
+    return { callbackUrl: candidate.url, mode: 'rfc9421' };
+  }
+  const authentication = candidate.authentication;
+  if (!authentication || typeof authentication !== 'object' || Array.isArray(authentication)) {
+    throw new ConfigurationError(
+      'push_notification_config.authentication selects legacy verification and must be a supported object.',
+      'push_notification_config.authentication'
+    );
+  }
+  const schemes = (authentication as Record<string, unknown>).schemes;
+  const credentials = (authentication as Record<string, unknown>).credentials;
+  if (
+    !Array.isArray(schemes) ||
+    schemes.length !== 1 ||
+    schemes[0] !== 'HMAC-SHA256' ||
+    typeof credentials !== 'string' ||
+    credentials.length === 0
+  ) {
+    throw new ConfigurationError(
+      'This receiver supports legacy HMAC-SHA256 or RFC 9421 push notifications; Bearer and mixed schemes are not supported.',
+      'push_notification_config.authentication.schemes'
+    );
+  }
+  return {
+    callbackUrl: candidate.url,
+    mode: 'hmac-sha256',
+  };
+}
 
 /**
  * Find callback authentication credentials before an exact downstream payload
@@ -419,8 +472,16 @@ export class TaskExecutor {
       webhookUrlTemplate?: WebhookUrlTemplate;
       /** Agent ID for webhook URL generation */
       agentId?: string;
-      /** Webhook secret for HMAC authentication (min 32 chars) */
+      /** Webhook secret for legacy HMAC authentication. */
       webhookSecret?: string;
+      /** Persist sanitized callback mode provenance before dispatch. */
+      onWebhookRegistration?: (registration: {
+        agent: AgentConfig;
+        taskType: string;
+        operationId: string;
+        callbackUrl: string;
+        mode: 'rfc9421' | 'hmac-sha256';
+      }) => void | Promise<void>;
       /** Fail tasks when response schema validation fails (default: true) */
       strictSchemaValidation?: boolean;
       /** Log all schema validation violations to debug logs (default: true) */
@@ -814,11 +875,35 @@ export class TaskExecutor {
         metadata: { toolName: taskName, type: 'request' },
       };
 
+      // Materialize once, persist callback provenance, and dispatch this same
+      // prepared object. A seller can post immediately after receiving the
+      // request, so the registration write must complete before the network
+      // boundary is crossed.
+      const preparedCall = prepareProtocolToolCall(agent, effectiveParams, {
+        webhookUrl,
+        webhookSecret: this.config.webhookSecret,
+        serverVersion,
+        adcpVersion: this.config.adcpVersion,
+        wireAdcpVersion: this.config.wireAdcpVersion,
+        versionEnvelope: this.config.versionEnvelope,
+      });
+      if (webhookUrl && this.config.onWebhookRegistration) {
+        const registration = webhookRegistrationFromPreparedCall(agent, preparedCall);
+        if (registration) {
+          await this.config.onWebhookRegistration({
+            agent,
+            taskType: taskName,
+            operationId: taskId,
+            ...registration,
+          });
+        }
+      }
+
       // Send initial request and get streaming response with webhook URL.
       // Pass the caller's A2A session ids (contextId for conversation binding,
       // taskId for resuming a non-terminal server-side task). The adapter
       // drops these on the wire for MCP (no session concept there).
-      const response = await ProtocolClient.callTool(agent, taskName, effectiveParams, {
+      const callOptions = {
         debugLogs,
         webhookUrl,
         webhookSecret: this.config.webhookSecret,
@@ -836,7 +921,11 @@ export class TaskExecutor {
           contextId: options.contextId,
           idempotencyKey,
         },
-      });
+      };
+      const response = await withPreparedProtocolToolCall(
+        { agent, toolName: taskName, args: effectiveParams, preparedCall },
+        () => ProtocolClient.callTool(agent, taskName, effectiveParams, callOptions)
+      );
       throwIfAborted(options.signal);
 
       // Emit protocol_response activity
