@@ -66,7 +66,7 @@ function page(body, dimensions, title, responsive = false) {
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https:; media-src https:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
 <title>${escapeHtml(title)}</title><style>
-*{box-sizing:border-box}html,body{margin:0}body{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#f5f5f5;font-family:system-ui,-apple-system,sans-serif}.adcp-label{width:min(100%,600px);padding:5px 8px;background:#e5e7eb;color:#374151;font-size:10px;font-weight:650;letter-spacing:.02em}.adcp-preview{${frameSize};overflow:hidden;position:relative;background:#fff;border:1px solid #ddd}.adcp-preview img,.adcp-preview video{display:block;width:100%;height:100%;object-fit:cover}.adcp-preview video{object-fit:contain;background:#000}.adcp-placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;padding:16px;color:#fff;text-align:center;background:linear-gradient(135deg,#0f766e,#115e59)}.adcp-placeholder strong{font-size:14px}.adcp-placeholder span{margin-top:4px;font-size:11px;opacity:.85}.adcp-native{display:flex;flex-direction:column;gap:8px;height:100%;padding:16px}.adcp-native img{height:60%;border-radius:4px}.adcp-native__sponsor{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.04em}.adcp-native__title{font-size:16px;font-weight:650;color:#171717}.adcp-native__body{font-size:13px;line-height:1.4;color:#525252}.adcp-native__cta{font-size:13px;font-weight:650;color:#0f766e}.adcp-carousel{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(180px,80%);gap:10px;width:min(100%,600px);padding:10px;overflow-x:auto;background:#fff;border:1px solid #ddd}.adcp-card{overflow:hidden;border:1px solid #ddd;border-radius:6px;background:#fff;scroll-snap-align:start}.adcp-card img,.adcp-card video{display:block;width:100%;aspect-ratio:1/1;object-fit:cover}.adcp-card__copy{display:grid;gap:5px;padding:9px}.adcp-card__headline{font-size:14px;font-weight:650;color:#171717}.adcp-card__description,.adcp-carousel__primary{font-size:12px;line-height:1.4;color:#525252}.adcp-card__cta{font-size:12px;font-weight:650;color:#0f766e}
+*{box-sizing:border-box}html,body{margin:0}body{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#f5f5f5;font-family:system-ui,-apple-system,sans-serif}.adcp-label{width:min(100%,600px);padding:5px 8px;background:#e5e7eb;color:#374151;font-size:10px;font-weight:650;letter-spacing:.02em}.adcp-preview{${frameSize};overflow:hidden;position:relative;background:#fff;border:1px solid #ddd}.adcp-preview img,.adcp-preview video{display:block;width:100%;height:100%;object-fit:cover}.adcp-preview video{object-fit:contain;background:#000}.adcp-preview--with-copy{display:grid;grid-template-rows:minmax(0,1fr) auto}.adcp-preview--with-copy>a,.adcp-preview--with-copy>img{min-height:0}.adcp-preview--with-copy>a>img{height:100%}.adcp-placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;padding:16px;color:#fff;text-align:center;background:linear-gradient(135deg,#0f766e,#115e59)}.adcp-placeholder strong{font-size:14px}.adcp-placeholder span{margin-top:4px;font-size:11px;opacity:.85}.adcp-native{display:flex;flex-direction:column;gap:8px;height:100%;padding:16px}.adcp-native img{height:60%;border-radius:4px}.adcp-native__sponsor{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.04em}.adcp-native__title{font-size:16px;font-weight:650;color:#171717}.adcp-native__body{font-size:13px;line-height:1.4;color:#525252}.adcp-native__cta{font-size:13px;font-weight:650;color:#0f766e}.adcp-carousel{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(180px,80%);gap:10px;width:min(100%,600px);padding:10px;overflow-x:auto;background:#fff;border:1px solid #ddd}.adcp-card{overflow:hidden;border:1px solid #ddd;border-radius:6px;background:#fff;scroll-snap-align:start}.adcp-card img,.adcp-card video{display:block;width:100%;height:auto;object-fit:cover}.adcp-card__copy{display:grid;gap:5px;padding:9px}.adcp-card__headline{font-size:14px;font-weight:650;color:#171717}.adcp-card__description,.adcp-carousel__primary{font-size:12px;line-height:1.4;color:#525252}.adcp-card__cta{font-size:12px;font-weight:650;color:#0f766e}
 </style></head><body>${body}</body></html>`;
 }
 
@@ -117,7 +117,9 @@ function imageBody(presentation) {
     presentation.body_text ? `<div class="adcp-card__description">${escapeHtml(presentation.body_text)}</div>` : '',
     presentation.cta ? `<div class="adcp-card__cta">${escapeHtml(presentation.cta)}</div>` : '',
   ].join('');
-  return `<div class="adcp-preview">${media}${copy ? `<div class="adcp-card__copy">${copy}</div>` : ''}</div>`;
+  return `<div class="adcp-preview${copy ? ' adcp-preview--with-copy' : ''}">${media}${
+    copy ? `<div class="adcp-card__copy">${copy}</div>` : ''
+  }</div>`;
 }
 
 /**
@@ -136,11 +138,13 @@ export function renderImageResult(input, requestedDimensions) {
 
 function carouselMedia(media) {
   if (media.type === 'video') {
-    return `<video controls playsinline preload="metadata" controlslist="nodownload noremoteplayback" disablepictureinpicture><source src="${escapeHtml(
+    return `<video width="${media.width}" height="${media.height}" controls playsinline preload="metadata" controlslist="nodownload noremoteplayback" disablepictureinpicture><source src="${escapeHtml(
       media.url
     )}"></video>`;
   }
-  return `<img src="${escapeHtml(media.url)}" alt="${escapeHtml(media.alt_text ?? '')}" referrerpolicy="no-referrer">`;
+  return `<img src="${escapeHtml(media.url)}" width="${media.width}" height="${media.height}" alt="${escapeHtml(
+    media.alt_text ?? ''
+  )}" referrerpolicy="no-referrer">`;
 }
 
 function carouselBody(presentation) {
@@ -150,8 +154,9 @@ function carouselBody(presentation) {
   const cards = presentation.cards
     .map(card => {
       const media = carouselMedia(card.media);
-      const linkedMedia = card.landing_page_url
-        ? `<a href="${escapeHtml(card.landing_page_url)}" target="_blank" rel="noopener noreferrer">${media}</a>`
+      const navigationUrl = card.landing_page_url ?? presentation.landing_page_url;
+      const linkedMedia = navigationUrl
+        ? `<a href="${escapeHtml(navigationUrl)}" target="_blank" rel="noopener noreferrer">${media}</a>`
         : media;
       const copy = [
         card.headline ? `<div class="adcp-card__headline">${escapeHtml(card.headline)}</div>` : '',

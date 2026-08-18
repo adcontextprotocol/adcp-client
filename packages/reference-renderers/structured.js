@@ -349,18 +349,21 @@ function validateImageSizeMode(params, issues) {
   }
 }
 
-function imageDimensions(raw, params, path, issues) {
+function imageDimensions(raw, params, path, issues, options = {}) {
   if (!positiveInteger(raw.width) || !positiveInteger(raw.height)) {
     issues.push(issue('INVALID_ASSET', path, 'image needs positive integer width and height'));
     return;
   }
-  const ratios = acceptedPixelRatios(params, issues);
+  const ratios =
+    options.useAssetPixelRatio === true
+      ? [positiveNumber(raw.pixel_ratio) ? raw.pixel_ratio : 1]
+      : acceptedPixelRatios(params, issues);
   if (raw.pixel_ratio !== undefined && !positiveNumber(raw.pixel_ratio)) {
     issues.push(issue('INVALID_ASSET', `${path}.pixel_ratio`, 'pixel_ratio must be positive'));
     return;
   }
   const candidates = raw.pixel_ratio === undefined ? ratios : [raw.pixel_ratio];
-  if (raw.pixel_ratio !== undefined && !ratios.includes(raw.pixel_ratio)) {
+  if (options.useAssetPixelRatio !== true && raw.pixel_ratio !== undefined && !ratios.includes(raw.pixel_ratio)) {
     issues.push(
       issue(
         'CONSTRAINT_VIOLATION',
@@ -439,12 +442,12 @@ function imageDimensions(raw, params, path, issues) {
   }
 }
 
-function imageMedia(parsed, raw, path, params, issues) {
+function imageMedia(parsed, raw, path, params, issues, options) {
   if (!isRecord(raw) || raw.asset_type !== 'image' || typeof raw.url !== 'string') {
     issues.push(issue('INVALID_ASSET', path, 'media must be an image asset'));
     return undefined;
   }
-  imageDimensions(raw, params, path, issues);
+  imageDimensions(raw, params, path, issues, options);
   const substituted = substituteMacros(raw.url, `${path}.url`, parsed.supportedMacros, parsed.macros, issues);
   const url = safeHttpsUrl(substituted, `${path}.url`, issues);
   if (!url || !positiveInteger(raw.width) || !positiveInteger(raw.height)) return undefined;
@@ -585,7 +588,7 @@ function prepareCard(parsed, raw, index, allowedTypes, aspectRatio, issues) {
   }
   const media =
     raw.media.asset_type === 'image'
-      ? imageMedia(parsed, raw.media, `${path}.media`, {}, issues)
+      ? imageMedia(parsed, raw.media, `${path}.media`, {}, issues, { useAssetPixelRatio: true })
       : videoMedia(parsed, raw.media, `${path}.media`, parsed.params, issues);
   if (media && aspectRatio !== undefined && !ratioMatches(media.width, media.height, aspectRatio)) {
     issues.push(issue('CONSTRAINT_VIOLATION', `${path}.media`, 'card media does not match card_aspect_ratio'));
@@ -678,8 +681,10 @@ export function prepareImageCarouselReference(input) {
       ? undefined
       : navigationAsset(parsed, parsed.manifest.assets.landing_page_url, 'manifest.assets.landing_page_url', issues);
   if (issues.length > 0) return { ok: false, issues };
-  const navigations = preparedCards.flatMap(card => (card.landing_page_url ? [card.landing_page_url] : []));
-  if (landingPageUrl) navigations.push(landingPageUrl);
+  const navigations = preparedCards.flatMap(card => {
+    const navigation = card.landing_page_url ?? landingPageUrl;
+    return navigation ? [navigation] : [];
+  });
   return {
     ok: true,
     presentation: {

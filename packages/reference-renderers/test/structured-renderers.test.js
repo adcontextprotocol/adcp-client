@@ -105,6 +105,26 @@ test('accepts declared Retina image density without changing logical size', () =
   assert.equal(result.ok, true);
 });
 
+test('accepts self-declared Retina density on carousel card images', () => {
+  const result = prepareImageCarouselReference({
+    manifest: {
+      format_kind: 'image_carousel',
+      assets: {
+        cards: ['one', 'two'].map(id =>
+          card(`https://cdn.example/${id}.png`, {
+            media: {
+              ...imageAsset(`https://cdn.example/${id}.png`, 1200, 1200),
+              pixel_ratio: 2,
+            },
+          })
+        ),
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+});
+
 test('prepares and renders canonical image carousel cards', () => {
   const input = {
     manifest: {
@@ -150,6 +170,56 @@ test('prepares and renders canonical image carousel cards', () => {
   assert.match(rendered.html, /Community reference presentation — non-authoritative/);
   assert.match(rendered.html, /https:\/\/cdn\.example\/one\.png/);
   assert.doesNotMatch(rendered.html, /<script/i);
+});
+
+test('preserves non-square carousel media dimensions in rendered HTML', () => {
+  const input = {
+    manifest: {
+      format_kind: 'image_carousel',
+      assets: {
+        cards: ['one', 'two'].map(id =>
+          card(`https://cdn.example/${id}.png`, {
+            media: imageAsset(`https://cdn.example/${id}.png`, 600, 300),
+          })
+        ),
+      },
+    },
+    declaration: {
+      format_kind: 'image_carousel',
+      params: { card_aspect_ratio: '2:1' },
+    },
+  };
+
+  const result = renderImageCarouselResult(input);
+  assert.equal(result.ok, true);
+  assert.match(result.html, /width="600" height="300"/);
+  assert.doesNotMatch(result.html, /aspect-ratio:1\/1/);
+  assert.match(result.html, /\.adcp-card img,.adcp-card video\{[^}]*height:auto/);
+});
+
+test('uses the carousel landing page as the fallback card navigation', () => {
+  const landingPageUrl = 'https://brand.example/all-products';
+  const input = {
+    manifest: {
+      format_kind: 'image_carousel',
+      assets: {
+        cards: [card('https://cdn.example/one.png'), card('https://cdn.example/two.png')],
+        landing_page_url: {
+          asset_type: 'url',
+          url_type: 'clickthrough',
+          url: landingPageUrl,
+        },
+      },
+    },
+  };
+
+  const prepared = prepareImageCarouselReference(input);
+  assert.equal(prepared.ok, true);
+  assert.deepEqual(prepared.presentation.network.user_navigations, [landingPageUrl, landingPageUrl]);
+
+  const rendered = renderImageCarouselResult(input);
+  assert.equal(rendered.ok, true);
+  assert.equal(rendered.html.split(`href="${landingPageUrl}"`).length - 1, 2);
 });
 
 test('rejects carousel count, aspect ratio, and media-type violations', () => {
@@ -208,6 +278,23 @@ test('structured image rendering exposes issues instead of a placeholder', () =>
   });
   assert.equal(result.ok, false);
   assert.ok(result.issues.some(entry => entry.code === 'INVALID_ASSET'));
+});
+
+test('allocates visible layout space for structured image copy', () => {
+  const result = renderImageResult({
+    manifest: {
+      format_kind: 'image',
+      assets: {
+        image_main: imageAsset('https://cdn.example/image.png'),
+        headline: { asset_type: 'text', content: 'Visible headline' },
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.match(result.html, /adcp-preview adcp-preview--with-copy/);
+  assert.match(result.html, /grid-template-rows:minmax\(0,1fr\) auto/);
+  assert.match(result.html, /Visible headline/);
 });
 
 test('mounts complete documents into a capability-minimal iframe', () => {
