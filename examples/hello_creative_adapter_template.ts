@@ -458,6 +458,13 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
     overrides: {
       creative: {
         supported_formats: SUPPORTED_FORMATS,
+        preview: {
+          routes: SUPPORTED_FORMATS.flatMap(capability =>
+            capability.capability_id && capability.operations?.includes('preview')
+              ? [{ capability_id: capability.capability_id, rendering_origin: 'platform_native' as const }]
+              : []
+          ),
+        },
         bills_through_adcp: false,
         canonical_catalog_version: '3.2.0',
       },
