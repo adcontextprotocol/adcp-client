@@ -565,8 +565,8 @@ function postProcessTrustedMatchPrivacyBoundaryStrictness(content: string): stri
   return result;
 }
 
-/** Preserve JSON-Schema-only creative identity constraints lost in TS projection. */
-function postProcessCreativeAssetIdentityConstraints(content: string): string {
+/** Preserve JSON-Schema-only creative constraints lost in TS projection. */
+function postProcessCreativeRuntimeConstraints(content: string): string {
   const schemaBlock = (schemaName: string): { start: number; end: number; block: string } => {
     const start = content.indexOf(`export const ${schemaName} = `);
     const end = content.indexOf('\n\nexport const ', start + 1);
@@ -576,8 +576,7 @@ function postProcessCreativeAssetIdentityConstraints(content: string): string {
     return { start, end, block: content.slice(start, end) };
   };
 
-  const creativeAsset = schemaBlock('CreativeAssetSchema');
-  const suffix = `.superRefine((value, ctx) => {
+  const identityRefinement = `.superRefine((value, ctx) => {
     const hasFormatId = value.format_id !== undefined;
     const hasFormatKind = value.format_kind !== undefined;
     if (hasFormatId === hasFormatKind) {
@@ -587,15 +586,83 @@ function postProcessCreativeAssetIdentityConstraints(content: string): string {
             message: "creative identity requires exactly one of format_id or format_kind"
         });
     }
+    if ("capability_id" in value || "capability_ref" in value) {
+        ctx.addIssue({
+            code: "custom",
+            path: [],
+            message: "creative identity does not allow capability_id or capability_ref"
+        });
+    }
 })`;
-  const strictCreativeAsset = creativeAsset.block.replace(/;\s*$/, `${suffix};`);
-  if (strictCreativeAsset === creativeAsset.block) {
-    throw new Error('Unable to apply format identity XOR validation to CreativeAssetSchema.');
-  }
-  content = content.slice(0, creativeAsset.start) + strictCreativeAsset + content.slice(creativeAsset.end);
+
+  const preserveCreativeConstraints = (schemaName: 'CreativeAssetSchema' | 'CreativeManifestSchema'): void => {
+    const schema = schemaBlock(schemaName);
+    const constrainedAssets = schema.block
+      // `patternProperties` is lost when json-schema-to-typescript combines it
+      // with `additionalProperties: true`. Preserve validation for canonical
+      // slot keys while continuing to allow forward-compatible extension keys.
+      // AssetVariantSchema is declared later in the generated module, so defer
+      // resolving it until parse time to avoid a top-level TDZ reference.
+      .replace('assets: z.record(z.string(), z.unknown())', 'assets: CreativeAssetsSchema');
+    if (constrainedAssets === schema.block) {
+      throw new Error(`Unable to preserve creative asset constraints on ${schemaName}.`);
+    }
+
+    const withoutLossyIdentityIntersection = constrainedAssets
+      // The required/not-only identity branches project to `Record<string,
+      // unknown>` aliases, making this intersection both ineffective and, when
+      // a string format normalizes its output, capable of throwing Zod's
+      // "Unmergable intersection" error. The refinement below preserves the
+      // normative XOR directly.
+      .replace(
+        /\.and\(z\.union\(\[(?:V1CreativeNamedFormatReferenceSchema, V2CreativeCanonicalFormatKindSchema|NamedFormatManifestSchema, CanonicalFormatManifestSchema)\]\)\)/,
+        ''
+      );
+    if (withoutLossyIdentityIntersection === constrainedAssets) {
+      throw new Error(`Unable to remove lossy creative identity intersection from ${schemaName}.`);
+    }
+
+    const strictSchema = withoutLossyIdentityIntersection.replace(/;\s*$/, `${identityRefinement};`);
+    if (strictSchema === withoutLossyIdentityIntersection) {
+      throw new Error(`Unable to preserve creative identity XOR on ${schemaName}.`);
+    }
+    content = content.slice(0, schema.start) + strictSchema + content.slice(schema.end);
+  };
+
+  preserveCreativeConstraints('CreativeAssetSchema');
+  preserveCreativeConstraints('CreativeManifestSchema');
+
+  const creativeManifest = schemaBlock('CreativeManifestSchema');
+  const assetValueSchema = `const CreativeAssetValueSchema: z.ZodType = z.unknown().superRefine((value, ctx) => {
+    const variants = Array.isArray(value) ? value : [value];
+    if (variants.length === 0 || variants.some(variant => !AssetVariantSchema.safeParse(variant).success)) {
+        ctx.addIssue({
+            code: "custom",
+            message: "creative slot must contain an asset or non-empty array of assets"
+        });
+    }
+});
+
+const CreativeAssetsSchema: z.ZodType<Record<string, unknown>> = z.record(z.string(), z.unknown()).superRefine((assets, ctx) => {
+    for (const [slotKey, assetValue] of Object.entries(assets)) {
+        if (/^[a-z0-9_]+$/.test(slotKey) && !CreativeAssetValueSchema.safeParse(assetValue).success) {
+            ctx.addIssue({
+                code: "custom",
+                path: [slotKey],
+                message: "creative slot must contain an asset or non-empty array of assets"
+            });
+        }
+    }
+});
+
+`;
+  content = content.slice(0, creativeManifest.start) + assetValueSchema + content.slice(creativeManifest.start);
 
   const formatReference = schemaBlock('FormatReferenceStructuredObjectSchema');
-  const strictFormatReference = formatReference.block.replace('agent_url: z.string()', 'agent_url: z.url()');
+  const strictFormatReference = formatReference.block.replace(
+    'agent_url: z.string()',
+    'agent_url: z.string().regex(/^[\\x21-\\x7E]+$/).regex(/^(?:[^%]|%[0-9A-Fa-f]{2})*$/).url()'
+  );
   if (strictFormatReference === formatReference.block) {
     throw new Error('Unable to apply URI validation to FormatReferenceStructuredObjectSchema.agent_url.');
   }
@@ -2112,7 +2179,7 @@ async function generateZodSchemas() {
 
     // TypeScript cannot retain JSON Schema `format: uri` or root oneOf
     // exclusivity. Restore both for legacy/canonical creative identity.
-    zodSchemas = postProcessCreativeAssetIdentityConstraints(zodSchemas);
+    zodSchemas = postProcessCreativeRuntimeConstraints(zodSchemas);
 
     // Trusted Match request schemas are closed privacy-boundary contracts.
     // Unlike ordinary AdCP tool payloads, accepting unknown root/nested fields
