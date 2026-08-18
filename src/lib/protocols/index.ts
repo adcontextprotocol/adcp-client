@@ -389,13 +389,13 @@ export interface CallToolOptions {
   };
 }
 
-// AdCP 3.2.0-beta.0's published MCP schemas accidentally dropped the
+// AdCP 3.2.0-beta.0's published request schemas accidentally dropped the
 // deprecated integer from these otherwise release-versioned requests
 // (adcontextprotocol/adcp#6649). Omit only the SDK-injected field; an
 // explicit caller value must still reach the seller for conformance probes.
 const COMPACT_SCHEMAS_WITHOUT_MAJOR = new Set(['buy_products', 'accept_proposal', 'control_media_buy']);
 
-function applyPublishedMcpSchemaCompatibility(
+function applyPublishedSchemaCompatibility(
   toolName: string | undefined,
   argsWithVersion: Record<string, unknown>,
   callerArgs: Record<string, unknown>
@@ -446,7 +446,7 @@ export function prepareProtocolToolCall(
     options.serverVersion
   );
   const argsWithVersion = applyVersionEnvelope(args, envelope);
-  if (agent.protocol === 'mcp') applyPublishedMcpSchemaCompatibility(options.toolName, argsWithVersion, args);
+  applyPublishedSchemaCompatibility(options.toolName, argsWithVersion, args);
 
   // The in-process MCP client has historically had no protocol webhook
   // registration path. Preserve that behavior and, crucially, describe the
@@ -884,7 +884,7 @@ export const createMCPClient = (
         callMCPToolWithTasks(
           agentUrl,
           toolName,
-          applyPublishedMcpSchemaCompatibility(toolName, applyVersionEnvelope(args, versionEnvelope), args),
+          applyPublishedSchemaCompatibility(toolName, applyVersionEnvelope(args, versionEnvelope), args),
           authToken,
           debugLogs,
           headers,
@@ -915,7 +915,7 @@ export const createA2AClient = (
         callA2ATool(
           agentUrl,
           toolName,
-          applyVersionEnvelope(parameters, versionEnvelope),
+          applyPublishedSchemaCompatibility(toolName, applyVersionEnvelope(parameters, versionEnvelope), parameters),
           authToken,
           debugLogs,
           undefined,

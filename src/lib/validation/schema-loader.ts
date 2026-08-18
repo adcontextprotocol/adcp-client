@@ -934,6 +934,16 @@ export function hasSchemaBundle(version: string): boolean {
 }
 
 const mcpToolSchemaCache = new Map<string, Readonly<Record<string, unknown>> | null>();
+const mcpToolSummaryCache = new Map<string, string | null>();
+
+function boundedMcpToolSummary(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const summary = value.trim();
+  if (!summary) return undefined;
+
+  const words = summary.split(/\s+/);
+  return words.length < 100 ? summary : `${words.slice(0, 99).join(' ')}…`;
+}
 
 /** Load an exact self-contained tool projection from an MCP manifest. @internal */
 export function getMcpToolSchema(
@@ -982,6 +992,49 @@ export function getMcpToolSchema(
   return undefined;
 }
 
+/** Load the concise tool summary published by an exact MCP manifest. @internal */
+export function getMcpToolSummary(
+  toolName: string,
+  options: { profile?: string; protocolVersion?: string } = {},
+  version: string = ADCP_VERSION
+): string | undefined {
+  const root = resolveSchemaRoot(version);
+  const profile = options.profile ?? 'all';
+  const cacheKey = `${root}\u001f${options.protocolVersion ?? 'latest'}\u001f${profile}\u001f${toolName}`;
+  const cached = mcpToolSummaryCache.get(cacheKey);
+  if (cached !== undefined) return cached ?? undefined;
+
+  const mcpRoot = path.join(root, 'mcp');
+  if (!existsSync(mcpRoot)) {
+    mcpToolSummaryCache.set(cacheKey, null);
+    return undefined;
+  }
+  const protocolVersions = options.protocolVersion
+    ? [options.protocolVersion]
+    : readdirSync(mcpRoot, { withFileTypes: true })
+        .filter(entry => entry.isDirectory())
+        .map(entry => entry.name)
+        .sort()
+        .reverse();
+  for (const protocolVersion of protocolVersions) {
+    const manifestRoot =
+      profile === 'all'
+        ? path.resolve(mcpRoot, protocolVersion)
+        : path.resolve(mcpRoot, protocolVersion, 'profiles', profile);
+    const manifestFile = path.join(manifestRoot, 'manifest.json');
+    if (!existsSync(manifestFile)) continue;
+    const manifest = loadJson(manifestFile) as {
+      tools?: Record<string, { summary?: unknown }>;
+    };
+    const summary = boundedMcpToolSummary(manifest.tools?.[toolName]?.summary);
+    if (summary === undefined) continue;
+    mcpToolSummaryCache.set(cacheKey, summary);
+    return summary;
+  }
+  mcpToolSummaryCache.set(cacheKey, null);
+  return undefined;
+}
+
 /** Load the exact self-contained request projection from an MCP role profile. */
 export function getMcpProfileInputSchema(
   toolName: string,
@@ -999,6 +1052,7 @@ export function getMcpProfileInputSchema(
  */
 export function _resetValidationLoader(version?: string): void {
   mcpToolSchemaCache.clear();
+  mcpToolSummaryCache.clear();
   if (version === undefined) {
     states.clear();
   } else {

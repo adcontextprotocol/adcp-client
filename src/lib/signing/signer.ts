@@ -228,7 +228,7 @@ export function prepareRequestSignature(
   // 3.2 defaults to covering the digest, but an explicitly negotiated
   // `covers_content_digest: forbidden` policy must still win. Encoding and
   // digest coverage are independent parts of the signing profile.
-  const coverDigest = hasBody && (options.coverContentDigest ?? binaryEncoding === 'rfc8941-base64');
+  const coverDigest = options.coverContentDigest ?? binaryEncoding === 'rfc8941-base64';
   const headers: Record<string, string> = { ...flattenHeaders(request.headers) };
   if (coverDigest) {
     headers['Content-Digest'] = computeContentDigest(request.body ?? '', binaryEncoding);
@@ -270,19 +270,15 @@ export function finalizeRequestSignature(prepared: PreparedRequestSignature, sig
 
 export function signRequest(request: RequestLike, key: SignerKey, options: SignRequestOptions = {}): SignedRequest {
   assertKeyPurpose(key, 'request-signing');
-  assertSafeHighLevelRequestProfile(request, options);
+  assertSafeHighLevelRequestProfile(options);
   const prepared = prepareRequestSignature(request, { keyid: key.keyid, alg: key.alg }, options);
   const signature = produceSignature(key, Buffer.from(prepared.base, 'utf8'));
   return finalizeRequestSignature(prepared, signature);
 }
 
 /** @internal Guard the convenience signer while leaving low-level vector authoring available. */
-export function assertSafeHighLevelRequestProfile(request: RequestLike, options: SignRequestOptions): void {
-  if (
-    (request.body ?? '').length > 0 &&
-    options.binaryEncoding === 'rfc8941-base64' &&
-    options.coverContentDigest === false
-  ) {
+export function assertSafeHighLevelRequestProfile(options: SignRequestOptions): void {
+  if (options.binaryEncoding === 'rfc8941-base64' && options.coverContentDigest === false) {
     throw new TypeError(
       'AdCP 3.2 request signing requires Content-Digest coverage. ' +
         'Use prepareRequestSignature()/finalizeRequestSignature() only when authoring an intentional negative test vector.'

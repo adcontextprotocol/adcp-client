@@ -153,6 +153,79 @@ describe('applyVersionEnvelope — single chokepoint for all 4 wire-injection si
   });
 });
 
+describe('AdCP 3.2 strict compact request envelopes', () => {
+  const account = { brand: { domain: 'buyer.example' }, operator: 'buyer.example' };
+  const idempotency_key = 'compact-envelope-test-0001';
+  const compactRequests = {
+    buy_products: {
+      idempotency_key,
+      account,
+      feed_version: 'feed-1',
+      purchases: [{ product_id: 'product-1', pricing_option_id: 'price-1' }],
+      start_time: '2026-09-01T00:00:00Z',
+      end_time: '2026-09-02T00:00:00Z',
+    },
+    accept_proposal: {
+      idempotency_key,
+      account,
+      proposal_id: 'proposal-1',
+      proposal_terms_digest: `sha256:${'A'.repeat(43)}`,
+    },
+    control_media_buy: {
+      idempotency_key,
+      account,
+      media_buy_id: 'media-buy-1',
+      revision: 1,
+      paused: true,
+    },
+  };
+
+  test('A2A removes only the SDK-injected major from strict compact schemas', () => {
+    const { prepareProtocolToolCall } = require('../../dist/lib/protocols/index.js');
+    const { validateRequest } = require('../../dist/lib/validation/schema-validator.js');
+    const agent = { id: 'strict-a2a', name: 'strict-a2a', agent_uri: 'https://seller.example/a2a', protocol: 'a2a' };
+
+    for (const [toolName, request] of Object.entries(compactRequests)) {
+      const prepared = prepareProtocolToolCall(agent, request, { toolName, adcpVersion: '3.2.0-beta.0' }).args;
+      assert.strictEqual(prepared.adcp_version, '3.2-beta.0', `${toolName} keeps the release pin`);
+      assert.strictEqual(
+        Object.hasOwn(prepared, 'adcp_major_version'),
+        false,
+        `${toolName} omits the SDK-injected deprecated integer`
+      );
+      const validation = validateRequest(toolName, prepared, '3.2.0-beta.0');
+      assert.strictEqual(validation.valid, true, `${toolName}: ${JSON.stringify(validation.issues)}`);
+    }
+  });
+
+  test('A2A preserves an explicit caller major for version-negotiation probes', () => {
+    const { prepareProtocolToolCall } = require('../../dist/lib/protocols/index.js');
+    const agent = { id: 'probe-a2a', name: 'probe-a2a', agent_uri: 'https://seller.example/a2a', protocol: 'a2a' };
+
+    for (const [toolName, request] of Object.entries(compactRequests)) {
+      const prepared = prepareProtocolToolCall(
+        agent,
+        { ...request, adcp_major_version: 99 },
+        { toolName, adcpVersion: '3.2.0-beta.0' }
+      ).args;
+      assert.strictEqual(prepared.adcp_major_version, 99, `${toolName} preserves the caller's probe value`);
+    }
+  });
+
+  test('the compatibility exception does not remove the major from other 3.2 tools', () => {
+    const { prepareProtocolToolCall } = require('../../dist/lib/protocols/index.js');
+    const agent = { id: 'normal-a2a', name: 'normal-a2a', agent_uri: 'https://seller.example/a2a', protocol: 'a2a' };
+    const prepared = prepareProtocolToolCall(
+      agent,
+      {},
+      { toolName: 'list_products', adcpVersion: '3.2.0-beta.0' }
+    ).args;
+
+    assert.strictEqual(prepared.adcp_major_version, 3);
+    assert.strictEqual(prepared.adcp_version, '3.2-beta.0');
+  });
+});
+
 describe('ADCP_ENVELOPE_FIELDS — strip-path carve-outs', () => {
   test('adcp_version is preserved by SingleAgentClient strip path', () => {
     // Defends the same caller-override path against schema stripping by

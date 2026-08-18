@@ -36,7 +36,7 @@ export async function signRequestAsync(
   options: SignRequestOptions = {}
 ): Promise<SignedRequest> {
   assertProviderPurpose(provider, 'request-signing');
-  assertSafeHighLevelRequestProfile(request, options);
+  assertSafeHighLevelRequestProfile(options);
   const prepared = prepareRequestSignature(request, { keyid: provider.keyid, alg: provider.algorithm }, options);
   const signature = await provider.sign(Buffer.from(prepared.base, 'utf8'));
   return finalizeRequestSignature(prepared, signature);

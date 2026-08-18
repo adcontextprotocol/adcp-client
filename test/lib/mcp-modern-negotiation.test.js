@@ -649,6 +649,20 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
   assert.equal(compact._meta.adcp_version, '3.2.0-beta.0');
   assert.equal(compact._meta.adcp_profile, 'media-buy');
   assert.equal(
+    compact.tools.find(tool => tool.name === 'list_products').description,
+    'List seller products that match structured discovery criteria.'
+  );
+  assert.deepEqual(
+    compact.tools
+      .filter(tool => {
+        if (typeof tool.description !== 'string' || tool.description.trim() === '') return true;
+        return tool.description.trim().split(/\s+/).length >= 100;
+      })
+      .map(tool => tool.name),
+    [],
+    'every advertised official media-buy tool must have a concise description'
+  );
+  assert.equal(
     compact.tools.find(tool => tool.name === 'request_proposals').inputSchema.$schema,
     'https://json-schema.org/draft/2020-12/schema'
   );
@@ -680,7 +694,7 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
   assert.equal(all._meta.adcp_profile, 'all');
 });
 
-test('modern serving preserves an explicitly registered custom output schema', async t => {
+test('modern serving preserves explicitly registered custom schemas and descriptions', async t => {
   const { z } = require('zod');
   const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
   const { Client, StreamableHTTPClientTransport } = require('@modelcontextprotocol/client');
@@ -691,6 +705,7 @@ test('modern serving preserves an explicitly registered custom output schema', a
   legacy.registerTool(
     'request_proposals',
     {
+      description: 'Adopter-specific proposal bridge.',
       inputSchema: {},
       outputSchema: z.object({ placeholder: z.string() }),
     },
@@ -713,6 +728,7 @@ test('modern serving preserves an explicitly registered custom output schema', a
   await client.connect(new StreamableHTTPClientTransport(new URL(url)));
   const listed = await client.listTools();
   const proposals = listed.tools.find(tool => tool.name === 'request_proposals');
+  assert.equal(proposals.description, 'Adopter-specific proposal bridge.');
   assert.ok(proposals.outputSchema.properties?.placeholder);
   assert.equal(proposals.outputSchema.properties?.outcome, undefined);
 });

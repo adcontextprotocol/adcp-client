@@ -37,7 +37,7 @@ import {
 } from './adcp-server';
 import { ADCP_INSTRUCTIONS_RESOLVER, MEDIA_BUY_MCP_TOOL_PROFILE } from './create-adcp-server';
 import { mcpAppResourceMetadata, readMcpAppResource } from './mcp-app';
-import { getMcpToolSchema } from '../validation/schema-loader';
+import { getMcpToolSchema, getMcpToolSummary } from '../validation/schema-loader';
 
 export interface ModernMcpServerAdapter {
   handle: NodeMcpRequestHandler;
@@ -100,6 +100,21 @@ function officialAdcpInputSchema(
   return projection;
 }
 
+function officialAdcpToolSummary(
+  toolName: string,
+  adcpVersion: string,
+  profile: 'media-buy' | 'all'
+): string | undefined {
+  return getMcpToolSummary(
+    toolName,
+    {
+      protocolVersion: '2026-07-28',
+      ...(profile === 'media-buy' && { profile: 'media-buy' }),
+    },
+    adcpVersion
+  );
+}
+
 function schemaForModernMcp(
   toolName: string,
   schema: unknown,
@@ -145,8 +160,10 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
     }
   > = toolDefinitions.map(tool => {
     const { inputSchema, outputSchema, ...definition } = tool;
+    const description = tool.description ?? officialAdcpToolSummary(tool.name, adcpVersion, activeMcpToolProfile);
     return {
       ...definition,
+      ...(description !== undefined && { description }),
       ...(inputSchema !== undefined && {
         inputSchema: schemaForModernMcp(tool.name, inputSchema, adcpVersion, activeMcpToolProfile),
       }),
