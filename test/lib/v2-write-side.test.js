@@ -66,6 +66,24 @@ describe('lintPackageFormatSelectorDimensions', () => {
     assert.deepStrictEqual(diagnostics[0].legacy_dimensions, { width: 728, height: 90 });
   });
 
+  test('reports dimensions that conflict with the resolved legacy catalog', () => {
+    const diagnostics = lintPackageFormatSelectorDimensions({
+      format_ids: [
+        {
+          agent_url: AAO_AGENT_URL,
+          id: 'display_728x90_image',
+          width: 300,
+          height: 250,
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(
+      diagnostics.map(diagnostic => [diagnostic.code, diagnostic.selector, diagnostic.field]),
+      [['FORMAT_SELECTOR_DIMENSIONS_MISMATCH', 'legacy', 'format_ids[0]']]
+    );
+  });
+
   test('reports dimensionless dual image selectors without guessing dimensions', () => {
     const diagnostics = lintPackageFormatSelectorDimensions(
       {
@@ -101,6 +119,58 @@ describe('lintPackageFormatSelectorDimensions', () => {
     }
   });
 
+  test('reports incomplete and invalid dimensions from resolved legacy-only projections', () => {
+    const diagnostics = lintPackageFormatSelectorDimensions(
+      {
+        format_ids: [
+          { agent_url: 'https://formats.example/', id: 'partial_image' },
+          { agent_url: 'https://formats.example/', id: 'invalid_image' },
+        ],
+      },
+      {
+        legacyFormatConverter: ({ formatId }) => ({
+          format_kind: 'image',
+          format_option_id: formatId.id,
+          params: formatId.id === 'partial_image' ? { width: 300 } : { width: 0, height: 250 },
+        }),
+      }
+    );
+
+    assert.deepStrictEqual(
+      diagnostics.map(diagnostic => [diagnostic.code, diagnostic.selector, diagnostic.field]),
+      [
+        ['FORMAT_SELECTOR_DIMENSIONS_INCOMPLETE', 'legacy', 'format_ids[0]'],
+        ['FORMAT_SELECTOR_DIMENSIONS_INVALID', 'legacy', 'format_ids[1]'],
+      ]
+    );
+  });
+
+  test('preserves product-aware converter context', () => {
+    const seen = [];
+    const diagnostics = lintPackageFormatSelectorDimensions(
+      {
+        format_kind: 'image',
+        params: { width: 300, height: 250 },
+        format_ids: [{ agent_url: 'https://formats.example/', id: 'contextual_image' }],
+      },
+      {
+        projectionContext: { productId: 'product-42', field: 'packages[3]' },
+        legacyFormatConverter: context => {
+          seen.push({ productId: context.productId, field: context.field });
+          return context.productId === 'product-42'
+            ? { format_kind: 'image', format_option_id: 'contextual', params: { width: 728, height: 90 } }
+            : null;
+        },
+      }
+    );
+
+    assert.deepStrictEqual(
+      diagnostics.map(diagnostic => [diagnostic.code, diagnostic.field]),
+      [['FORMAT_SELECTOR_DIMENSIONS_MISMATCH', 'packages[3].format_ids[0]']]
+    );
+    assert.deepStrictEqual(seen, [{ productId: 'product-42', field: 'packages[3].format_ids[0]' }]);
+  });
+
   test('does not treat multi-size image selectors as one fixed-size projection', () => {
     assert.deepStrictEqual(
       lintPackageFormatSelectorDimensions({
@@ -117,6 +187,20 @@ describe('lintPackageFormatSelectorDimensions', () => {
         ],
       }),
       []
+    );
+  });
+
+  test('still enforces width/height atomicity within multi-size selectors', () => {
+    const diagnostics = lintPackageFormatSelectorDimensions({
+      format_kind: 'image',
+      params: {
+        sizes: [{ width: 300, height: 250 }, { width: 728 }],
+      },
+    });
+
+    assert.deepStrictEqual(
+      diagnostics.map(diagnostic => [diagnostic.code, diagnostic.selector, diagnostic.field]),
+      [['FORMAT_SELECTOR_DIMENSIONS_INCOMPLETE', 'canonical', 'params.sizes[1]']]
     );
   });
 });

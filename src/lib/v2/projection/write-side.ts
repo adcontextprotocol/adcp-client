@@ -73,10 +73,19 @@ export interface PackageFormatSelectorInput {
   format_ids?: readonly V1FormatId[];
 }
 
-/** Optional seller-specific catalogs used to resolve legacy format IDs. */
+/** Optional seller-specific catalogs and context used to resolve legacy format IDs. */
 export interface PackageFormatSelectorDimensionOptions {
   legacyFormatConverter?: LegacyFormatConverter;
   projectionCatalogs?: readonly ProjectionCatalogSnapshot[];
+  /**
+   * Preserve the caller's real product/path identity for product-aware legacy
+   * converters. Omit only when the converter is context-independent.
+   */
+  projectionContext?: {
+    productId: string;
+    /** Field path of the package selector; defaults to the selector root. */
+    field?: string;
+  };
 }
 
 export interface FixedSizeDimensions {
@@ -167,6 +176,34 @@ function addInspectionDiagnostic(
   return true;
 }
 
+function inspectSelectorDimensions(
+  params: Readonly<Record<string, unknown>> | undefined,
+  diagnostics: PackageFormatSelectorDimensionDiagnostic[],
+  selector: 'canonical' | 'legacy',
+  field: string,
+  formatIdIndex?: number
+): { inspection: DimensionInspection; diagnosed: boolean } {
+  const inspection = inspectFixedDimensions(params);
+  if (!Array.isArray(params?.sizes)) {
+    return {
+      inspection,
+      diagnosed: addInspectionDiagnostic(diagnostics, inspection, selector, field, formatIdIndex),
+    };
+  }
+
+  let diagnosed = false;
+  for (const [index, size] of params.sizes.entries()) {
+    const sizeInspection =
+      size !== null && typeof size === 'object' && !Array.isArray(size)
+        ? inspectFixedDimensions(size as Readonly<Record<string, unknown>>)
+        : ({ kind: 'invalid' } as const);
+    diagnosed =
+      addInspectionDiagnostic(diagnostics, sizeInspection, selector, `${field}.sizes[${index}]`, formatIdIndex) ||
+      diagnosed;
+  }
+  return { inspection, diagnosed };
+}
+
 /**
  * Diagnose fixed-size image dimension loss across direct canonical and
  * deprecated legacy package selectors.
@@ -175,49 +212,109 @@ function addInspectionDiagnostic(
  * precedence, mutate the package, or reject valid canonical-only,
  * legacy-only, multi-size, responsive, or inherently canonical-only shapes.
  * Legacy IDs are normalized through the same catalog/converter path as the
- * rest of the projection layer.
+ * rest of the projection layer. An empty result means no dimensional issue
+ * was found among selectors the configured catalogs/converter could resolve;
+ * it is not proof that every seller-owned legacy ID was resolvable.
+ *
+ * @example
+ * ```ts
+ * import { lintPackageFormatSelectorDimensions } from '@adcp/sdk/v2/projection';
+ *
+ * const diagnostics = lintPackageFormatSelectorDimensions(packageSelector, {
+ *   projectionCatalogs: sellerCatalogs,
+ *   legacyFormatConverter: convertSellerFormat,
+ *   projectionContext: { productId: product.product_id, field: 'packages[0]' },
+ * });
+ * if (diagnostics.length > 0) report(diagnostics);
+ * ```
  */
 export function lintPackageFormatSelectorDimensions(
   selector: PackageFormatSelectorInput,
   options?: PackageFormatSelectorDimensionOptions
 ): PackageFormatSelectorDimensionDiagnostic[] {
   const diagnostics: PackageFormatSelectorDimensionDiagnostic[] = [];
+  const paramsField = options?.projectionContext?.field ? `${options.projectionContext.field}.params` : 'params';
+  const formatIdField = (index: number): string =>
+    `${options?.projectionContext?.field ? `${options.projectionContext.field}.` : ''}format_ids[${index}]`;
   const canonicalImage = selector.format_kind === 'image';
-  const canonicalInspection = canonicalImage ? inspectFixedDimensions(selector.params) : { kind: 'non_fixed' as const };
-  const canonicalAlreadyDiagnosed = canonicalImage
-    ? addInspectionDiagnostic(diagnostics, canonicalInspection, 'canonical', 'params')
-    : false;
+  const canonicalResult = canonicalImage
+    ? inspectSelectorDimensions(selector.params, diagnostics, 'canonical', paramsField)
+    : { inspection: { kind: 'non_fixed' as const }, diagnosed: false };
+  const canonicalInspection = canonicalResult.inspection;
 
   const legacyImages: Array<{ index: number; inspection: DimensionInspection }> = [];
   for (const [index, ref] of (selector.format_ids ?? []).entries()) {
-    const inlineInspection = inspectFixedDimensions(ref as unknown as Readonly<Record<string, unknown>>);
-    if (addInspectionDiagnostic(diagnostics, inlineInspection, 'legacy', `format_ids[${index}]`, index)) continue;
-    if (!canonicalImage || canonicalInspection.kind === 'non_fixed') continue;
+    const field = formatIdField(index);
+    const inlineResult = inspectSelectorDimensions(
+      ref as unknown as Readonly<Record<string, unknown>>,
+      diagnostics,
+      'legacy',
+      field,
+      index
+    );
+    if (inlineResult.diagnosed) continue;
 
-    const projected = projectV1ProductToV2(
+    const productId = options?.projectionContext?.productId ?? '<package-selector>';
+    let converterDiagnosed = false;
+    const legacyFormatConverter = options?.legacyFormatConverter
+      ? (context: Parameters<LegacyFormatConverter>[0]) => {
+          const converted = options.legacyFormatConverter?.({ ...context, productId, field });
+          if (converted?.format_kind === 'image') {
+            converterDiagnosed =
+              inspectSelectorDimensions(converted.params, diagnostics, 'legacy', field, index).diagnosed ||
+              converterDiagnosed;
+          }
+          return converted;
+        }
+      : undefined;
+
+    const projection = projectV1ProductToV2(
       {
-        product_id: `<package-selector:${index}>`,
+        product_id: productId,
         name: 'Package selector',
         description: 'Package selector dimensional lint',
         format_ids: [{ ...ref }],
       },
-      options
-    ).v2.format_options[0];
+      { legacyFormatConverter, projectionCatalogs: options?.projectionCatalogs }
+    );
+    if (converterDiagnosed) continue;
+    const dimensionalFailure = projection.diagnostics.find(
+      diagnostic =>
+        diagnostic.code === 'FORMAT_PROJECTION_FAILED' &&
+        (diagnostic.error.details.resolution_failure === 'invalid_format_id_parameters' ||
+          diagnostic.error.details.resolution_failure === 'catalog_requirement_conflict')
+    );
+    if (dimensionalFailure?.code === 'FORMAT_PROJECTION_FAILED') {
+      const catalogConflict = dimensionalFailure.error.details.resolution_failure === 'catalog_requirement_conflict';
+      diagnostics.push({
+        code: catalogConflict ? 'FORMAT_SELECTOR_DIMENSIONS_MISMATCH' : 'FORMAT_SELECTOR_DIMENSIONS_INVALID',
+        field,
+        selector: 'legacy',
+        message: catalogConflict
+          ? `${field} dimensions conflict with the resolved legacy format catalog`
+          : `${field} contains invalid fixed-size image dimensions`,
+        format_id_index: index,
+      });
+      continue;
+    }
+
+    const projected = projection.v2.format_options[0];
     if (projected?.format_kind !== 'image') continue;
-    legacyImages.push({ index, inspection: inspectFixedDimensions(projected.params) });
+    const projectedResult = inspectSelectorDimensions(projected.params, diagnostics, 'legacy', field, index);
+    if (!projectedResult.diagnosed) legacyImages.push({ index, inspection: projectedResult.inspection });
   }
 
   if (!canonicalImage || canonicalInspection.kind === 'non_fixed' || legacyImages.length === 0) {
     return diagnostics;
   }
 
-  if (canonicalInspection.kind === 'absent' && !canonicalAlreadyDiagnosed) {
+  if (canonicalInspection.kind === 'absent' && !canonicalResult.diagnosed) {
     diagnostics.push({
       code: 'FORMAT_SELECTOR_DIMENSIONS_INCOMPLETE',
-      field: 'params',
+      field: paramsField,
       selector: 'canonical',
       message:
-        'params must provide width and height when a direct image selector is combined with legacy image selectors',
+        `${paramsField} must provide width and height when a direct image selector is combined with legacy image selectors`,
     });
   }
 
@@ -225,9 +322,9 @@ export function lintPackageFormatSelectorDimensions(
     if (legacy.inspection.kind === 'absent') {
       diagnostics.push({
         code: 'FORMAT_SELECTOR_DIMENSIONS_INCOMPLETE',
-        field: `format_ids[${legacy.index}]`,
+        field: formatIdField(legacy.index),
         selector: 'legacy',
-        message: `format_ids[${legacy.index}] does not resolve to width and height for comparison with the direct image selector`,
+        message: `${formatIdField(legacy.index)} does not resolve to width and height for comparison with the direct image selector`,
         format_id_index: legacy.index,
       });
       continue;
@@ -240,10 +337,10 @@ export function lintPackageFormatSelectorDimensions(
     ) {
       diagnostics.push({
         code: 'FORMAT_SELECTOR_DIMENSIONS_MISMATCH',
-        field: `format_ids[${legacy.index}]`,
+        field: formatIdField(legacy.index),
         selector: 'cross_projection',
         message:
-          `format_ids[${legacy.index}] resolves to ${legacy.inspection.dimensions.width}x${legacy.inspection.dimensions.height}, ` +
+          `${formatIdField(legacy.index)} resolves to ${legacy.inspection.dimensions.width}x${legacy.inspection.dimensions.height}, ` +
           `but the direct image selector declares ${canonicalInspection.dimensions.width}x${canonicalInspection.dimensions.height}`,
         format_id_index: legacy.index,
         canonical_dimensions: canonicalInspection.dimensions,
