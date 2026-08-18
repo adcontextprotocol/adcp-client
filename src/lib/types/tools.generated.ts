@@ -7,6 +7,7 @@ import type {
   ActionSource,
   AdCPProtocol,
   AdCPSpecialism,
+  AdCPVersionEnvelope,
   AdvertiserIndustry,
   AgeDeterminationBasis,
   AgeVerificationMethod,
@@ -38,6 +39,7 @@ import type {
   CanceledBy,
   CancellationPolicy,
   CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement,
+  CanonicalFormatBase,
   CanonicalFormatDAASTAudio,
   CanonicalFormatDisplayTag,
   CanonicalFormatHTML5Banner,
@@ -168,6 +170,7 @@ import type {
   PolicyCategory,
   PolicyEnforcementLevel,
   PostalCodeSystem,
+  PostalCountrySystem,
   PreviewOutputFormat,
   PriceAdjustmentKind,
   PricingModel,
@@ -178,6 +181,7 @@ import type {
   ProposalDeclineReason,
   ProposalRefinementReason,
   ProposalStatus,
+  ProtocolEnvelope,
   Provenance,
   PublisherIdentifierTypes,
   PublisherPropertySelector,
@@ -194,7 +198,9 @@ import type {
   ScanType,
   ScopedCreativeApproval,
   SignalAvailabilityType,
+  SignalDefinitionEnrichment,
   SignalSource,
+  SignalTargetingExpression,
   SignalValueType,
   SizeModeMutex,
   SnapshotUnavailableReason,
@@ -233,7 +239,7 @@ import type {
   WebhookSecurityMethod,
 } from './core.generated';
 
-export type { AccountCurrencyMode, AccountReference, AccountScope, AccountStatus, ActionNotAllowedReason, ActionSource, AdCPProtocol, AdCPSpecialism, AdvertiserIndustry, AgeDeterminationBasis, AgeVerificationMethod, AssessmentStatus, AssetContentType, AssetVariant, AttestationClaim, AttributionMethodology, AttributionModel, AudienceConstraints, AudienceEvidenceMethodology, AudienceResolutionMethod, AudienceSource, AudienceStatus, AudienceSubjectType, AudioChannelLayout, AudioDistributionType, AuthenticationScheme, AvailableMetric, BillingParty, BinaryVerdict, BrandAgentType, BrandReference, BrowserFamily, BusinessEntity, C2PAWatermarkAction, CanceledBy, CancellationPolicy, CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement, CanonicalFormatDAASTAudio, CanonicalFormatDisplayTag, CanonicalFormatHTML5Banner, CanonicalFormatHostedAudio, CanonicalFormatHostedVideo, CanonicalFormatImage, CanonicalFormatImageCarousel, CanonicalFormatNativeInFeed, CanonicalFormatResponsiveCreative, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven, CanonicalFormatVASTVideo, CanonicalMediaBuyActionMode, CanonicalMediaBuyActionName, CatalogAction, CatalogItemDeliveryMetrics, CatalogItemStatus, CatalogType, CloudStorageProtocol, CoBrandingRequirement, CollectionCadence, CollectionKind, CollectionRelationship, CollectionStatus, CompletionSource, ConsentBasis, ContentIDType, ContentRatingSystem, CountryFusedPostalCodeSystem, CreativeAction, CreativeAgentCapability, CreativeApprovalStatus, CreativeAsset, CreativeBrief, CreativeEventReasonCode, CreativeIdentifierType, CreativeQuality, CreativeSelectionStrategy, CreativeSortField, CreativeStatus, DAASTTrackingEvent, DAASTVersion, DayOfWeek, DelegationAuthority, DeliveryMetricAggregate, DeliveryMetrics, DeliveryStatus, DeliveryType, DemographicSystem, DerivativeType, DevicePlatform, DeviceType, DigitalSourceType, DimensionUnit, DisclosurePersistence, DisclosurePosition, DistanceUnit, DistributionIdentifierType, EmbeddedProvenanceMethod, ErrorCode, ErrorScope, EscalationSeverity, EventType, Exclusivity, ExtensionObject, FeatureCheckStatus, FeedFormat, FeedbackSource, Fixed, ForecastMethod, ForecastPoint, ForecastRangeUnit, ForecastableMetric, FormatIDParameter, FormatReferenceStructuredObject, FrameRateType, FrequencyCapScope, GOPType, GenreTaxonomy, GeoDeliveryMetrics, GeographicTargetingLevel, GetProductsAsyncSubmitted, GovernanceDecision, GovernanceDomain, GovernanceMode, GovernancePhase, HTTPMethod, HistoryEntryType, ImageAsset, ImpairmentOfflineState, ImpairmentReasonCode, IndicatorType, InstallmentStatus, JavaScriptModuleType, KeywordDeliveryMetrics, LandingPageRequirement, LiftDimension, LogoSlot, MakegoodRemedy, MarkdownFlavor, MatchIDType, MatchType, MeasurementTerms, MediaBuyActionMode, MediaBuyHealth, MediaBuyStatus, MediaBuyValidAction, MediaChannel, MetricScope, MetricType, MetroAreaSystem, MoovAtomPosition, MultiSize, None, NotificationType, OfferingAvailabilityStatus, OutcomeType, Pacing, PackageUpdate, PaymentTerms, PerformanceBaseline, PerformanceStandardMetric, PlatformExtensionReference, PolicyCategory, PolicyEnforcementLevel, PostalCodeSystem, PreviewOutputFormat, PriceAdjustmentKind, PricingModel, PricingStructure, ProductionQuality, PropertyIdentifierTypes, PropertyType, ProposalDeclineReason, ProposalRefinementReason, ProposalStatus, Provenance, PublisherIdentifierTypes, PublisherPropertySelector, PurchaseType, ReachUnit, ReportingFrequency, Responsive, RestrictedAttribute, RightType, RightUse, RightsBillingPeriod, RightsConstraint, SISessionStatus, ScanType, ScopedCreativeApproval, SignalAvailabilityType, SignalSource, SignalValueType, SizeModeMutex, SnapshotUnavailableReason, SocialPlacementSurface, SortDirection, SortMetric, SpecialCategory, SponsoredPlacementType, TMPResponseType, TalentRole, TargetingOverlayRequirements, TargetingOverlaySupport, TaskStatus, TaskType, TransportMode, TravelTimeUnit, UIDType, URLAssetType, UniversalMacro, UpdateFrequency, VASTTrackingEvent, VASTVersion, ValidationMode, VideoPlacementType, ViewabilityStandard, WCAGLevel, WarningAffectedResource, WarningCode, WatermarkMediaType, WebhookResponseType, WebhookSecurityMethod } from './core.generated';
+export type { AccountCurrencyMode, AccountReference, AccountScope, AccountStatus, ActionNotAllowedReason, ActionSource, AdCPProtocol, AdCPSpecialism, AdCPVersionEnvelope, AdvertiserIndustry, AgeDeterminationBasis, AgeVerificationMethod, AssessmentStatus, AssetContentType, AssetVariant, AttestationClaim, AttributionMethodology, AttributionModel, AudienceConstraints, AudienceEvidenceMethodology, AudienceResolutionMethod, AudienceSource, AudienceStatus, AudienceSubjectType, AudioChannelLayout, AudioDistributionType, AuthenticationScheme, AvailableMetric, BillingParty, BinaryVerdict, BrandAgentType, BrandReference, BrowserFamily, BusinessEntity, C2PAWatermarkAction, CanceledBy, CancellationPolicy, CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement, CanonicalFormatBase, CanonicalFormatDAASTAudio, CanonicalFormatDisplayTag, CanonicalFormatHTML5Banner, CanonicalFormatHostedAudio, CanonicalFormatHostedVideo, CanonicalFormatImage, CanonicalFormatImageCarousel, CanonicalFormatNativeInFeed, CanonicalFormatResponsiveCreative, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven, CanonicalFormatVASTVideo, CanonicalMediaBuyActionMode, CanonicalMediaBuyActionName, CatalogAction, CatalogItemDeliveryMetrics, CatalogItemStatus, CatalogType, CloudStorageProtocol, CoBrandingRequirement, CollectionCadence, CollectionKind, CollectionRelationship, CollectionStatus, CompletionSource, ConsentBasis, ContentIDType, ContentRatingSystem, CountryFusedPostalCodeSystem, CreativeAction, CreativeAgentCapability, CreativeApprovalStatus, CreativeAsset, CreativeBrief, CreativeEventReasonCode, CreativeIdentifierType, CreativeQuality, CreativeSelectionStrategy, CreativeSortField, CreativeStatus, DAASTTrackingEvent, DAASTVersion, DayOfWeek, DelegationAuthority, DeliveryMetricAggregate, DeliveryMetrics, DeliveryStatus, DeliveryType, DemographicSystem, DerivativeType, DevicePlatform, DeviceType, DigitalSourceType, DimensionUnit, DisclosurePersistence, DisclosurePosition, DistanceUnit, DistributionIdentifierType, EmbeddedProvenanceMethod, ErrorCode, ErrorScope, EscalationSeverity, EventType, Exclusivity, ExtensionObject, FeatureCheckStatus, FeedFormat, FeedbackSource, Fixed, ForecastMethod, ForecastPoint, ForecastRangeUnit, ForecastableMetric, FormatIDParameter, FormatReferenceStructuredObject, FrameRateType, FrequencyCapScope, GOPType, GenreTaxonomy, GeoDeliveryMetrics, GeographicTargetingLevel, GetProductsAsyncSubmitted, GovernanceDecision, GovernanceDomain, GovernanceMode, GovernancePhase, HTTPMethod, HistoryEntryType, ImageAsset, ImpairmentOfflineState, ImpairmentReasonCode, IndicatorType, InstallmentStatus, JavaScriptModuleType, KeywordDeliveryMetrics, LandingPageRequirement, LiftDimension, LogoSlot, MakegoodRemedy, MarkdownFlavor, MatchIDType, MatchType, MeasurementTerms, MediaBuyActionMode, MediaBuyHealth, MediaBuyStatus, MediaBuyValidAction, MediaChannel, MetricScope, MetricType, MetroAreaSystem, MoovAtomPosition, MultiSize, None, NotificationType, OfferingAvailabilityStatus, OutcomeType, Pacing, PackageUpdate, PaymentTerms, PerformanceBaseline, PerformanceStandardMetric, PlatformExtensionReference, PolicyCategory, PolicyEnforcementLevel, PostalCodeSystem, PostalCountrySystem, PreviewOutputFormat, PriceAdjustmentKind, PricingModel, PricingStructure, ProductionQuality, PropertyIdentifierTypes, PropertyType, ProposalDeclineReason, ProposalRefinementReason, ProposalStatus, ProtocolEnvelope, Provenance, PublisherIdentifierTypes, PublisherPropertySelector, PurchaseType, ReachUnit, ReportingFrequency, Responsive, RestrictedAttribute, RightType, RightUse, RightsBillingPeriod, RightsConstraint, SISessionStatus, ScanType, ScopedCreativeApproval, SignalAvailabilityType, SignalDefinitionEnrichment, SignalSource, SignalTargetingExpression, SignalValueType, SizeModeMutex, SnapshotUnavailableReason, SocialPlacementSurface, SortDirection, SortMetric, SpecialCategory, SponsoredPlacementType, TMPResponseType, TalentRole, TargetingOverlayRequirements, TargetingOverlaySupport, TaskStatus, TaskType, TransportMode, TravelTimeUnit, UIDType, URLAssetType, UniversalMacro, UpdateFrequency, VASTTrackingEvent, VASTVersion, ValidationMode, VideoPlacementType, ViewabilityStandard, WCAGLevel, WarningAffectedResource, WarningCode, WatermarkMediaType, WebhookResponseType, WebhookSecurityMethod } from './core.generated';
 
 // Tool Parameter and Response Types
 // Generated from official AdCP schemas
@@ -439,59 +445,6 @@ export type SignalTargeting =
  */
 export type PostalArea = PostalArea1 | PostalAreaWithFusedSystem;
 export type PostalArea1 = PostalCountrySystem;
-/**
- * Valid country-local postal system pairing. Registered countries only accept their registered local systems; countries without a registered local system use postal_code or custom.
- */
-export type PostalCountrySystem = (
-  | {
-      country?: 'US';
-      system?: 'zip' | 'zip_plus_four';
-    }
-  | {
-      country?: 'GB';
-      system?: 'outward' | 'full';
-    }
-  | {
-      country?: 'CA';
-      system?: 'fsa' | 'full';
-    }
-  | {
-      country?: 'DE' | 'CH' | 'AT';
-      system?: 'plz';
-    }
-  | {
-      country?: 'FR';
-      system?: 'code_postal';
-    }
-  | {
-      country?: 'AU';
-      system?: 'postcode';
-    }
-  | {
-      country?: 'BR';
-      system?: 'cep';
-    }
-  | {
-      country?: 'IN';
-      system?: 'pin';
-    }
-  | {
-      country?: 'ZA';
-      system?: 'postal_code';
-    }
-  | {
-      country?: {
-        [k: string]: unknown | undefined;
-      };
-      system?: 'postal_code' | 'custom';
-    }
-) & {
-  /**
-   * ISO 3166-1 alpha-2 country code.
-   */
-  country: string;
-  system: PostalCodeSystem;
-};
 /**
  * Buyer policy for evaluating Product.audience_evidence. In required mode, sellers MUST apply the evidence_presence and admissibility semantics and exclude non-matching products; they MUST NOT ignore an unsupported hard requirement. In preferred mode, sellers use matches for ranking and explain the evidence selected. Buyers SHOULD inspect media_buy.audience_evidence capabilities before sending this object.
  */
@@ -1019,44 +972,6 @@ export type PackageSignalTargeting = SignalTargetingExpression & {
   activation_key?: ActivationKey;
   [k: string]: unknown | undefined;
 };
-/**
- * Predicate over a named signal definition. Signals are typed dimensions, similar to feature values: binary signals match true, categorical signals match one of a set of values, and numeric signals match a range. In package signal targeting groups, include/exclude semantics are controlled by the parent group operator, not by negating the expression.
- */
-export type SignalTargetingExpression =
-  | {
-      signal_ref: SignalRef;
-      /**
-       * Discriminator for binary signals.
-       */
-      value_type: 'binary';
-      /**
-       * Binary package signal entries match users for whom the signal is true. Use the parent group operator for include/exclude.
-       */
-      value: true;
-      [k: string]: unknown | undefined;
-    }
-  | {
-      signal_ref: SignalRef;
-      /**
-       * Discriminator for categorical signals.
-       */
-      value_type: 'categorical';
-      /**
-       * Values to target. Users with any of these values match the expression.
-       *
-       * @minItems 1
-       */
-      values: [string, ...string[]];
-      [k: string]: unknown | undefined;
-    }
-  | (
-      | {
-          [k: string]: unknown | undefined;
-        }
-      | {
-          [k: string]: unknown | undefined;
-        }
-    );
 /**
  * Named signal being targeted.
  */
@@ -5779,82 +5694,6 @@ export interface CreativeLocalePolicy {
 export interface ImageFormatDeclaration {
   format_kind: 'image';
   params: CanonicalFormatImage;
-}
-/**
- * Shared parameter fields that apply across canonical formats. Each canonical format extends this base with format-specific parameters (dimensions, durations, codecs, slot constraints).
- */
-export interface CanonicalFormatBase {
-  /**
-   * When true, this canonical or seller narrowing may not work as declared. Adopters SHOULD preflight it with validate_input or in a sandbox and SHOULD NOT route production budget without testing; experimental status never makes the deprecated v1 path preferable. Drivers include unsettled spec shape, an adopter runtime gap, and custom shapes awaiting promotion. This replaces the earlier status plus runtime_status axes. Sellers SHOULD set experimental whenever a canonical or declaration is not production-ready.
-   */
-  experimental?: boolean;
-  /**
-   * When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.
-   */
-  deprecated?: boolean;
-  /**
-   * Whether this canonical has any v1 named-format equivalent. `true` (default) — the canonical is structurally expressible as one or more v1 named formats (IAB display sizes, VAST tags, DAAST tags, etc.); v1→v2 projection via `v1-canonical-mapping.json` is meaningful. `false` — the canonical is inherently new in v2 and has no v1 form; v1's `list_creative_formats` couldn't express it because the underlying concept (algorithmic surface composition, AI-surface mentions, retail-media catalog placements, multi-card carousels) didn't exist as a v1 named-format archetype.
-   *
-   * Lets SDKs distinguish two failure modes that today look identical: (a) the registry hasn't covered this canonical yet (correctable — seller adds explicit `canonical` field or files a registry entry) vs (b) no v1 path is possible (informational — buyer needs v2-aware consumption, or seller declares `canonical_formats_only: true` on the product declaration). SDKs encountering `v1_translatable: false` on a canonical SHOULD NOT emit `FORMAT_PROJECTION_FAILED` (which signals registry-coverage gap) — instead surface the inherent v1-unreachability as a different diagnostic or skip silently. The 4 inherently-v2 canonicals at 3.1 GA: `image_carousel`, `sponsored_placement`, `responsive_creative`, `agent_placement`.
-   */
-  v1_translatable?: boolean;
-  /**
-   * AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.
-   */
-  since_version?: string;
-  /**
-   * AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').
-   */
-  migration_target_version?: string;
-  /**
-   * Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).
-   */
-  composition_model?: 'deterministic' | 'algorithmic';
-  /**
-   * When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.
-   */
-  provenance_required?: boolean;
-  /**
-   * Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.
-   *
-   * **Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: "platform_extension_field", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.
-   */
-  platform_extensions?: PlatformExtensionReference[];
-  /**
-   * When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.
-   *
-   * **Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.
-   */
-  synthesis_nondeterministic?: boolean;
-  /**
-   * Programmatic declaration of which canonical asset_group_id slots a manifest targeting this format must (or may) populate. Lets SDK codegen and validators enumerate expected slots without parsing the format's prose description. Each entry references an asset_group_id from the canonical vocabulary registry, paired with an `asset_type` so the validator knows which asset schema to apply. Format-level narrowing parameters that apply across all slots (e.g., flat `headline_max_chars` on responsive_creative) may also live on the format declaration; per-slot constraints (a specific slot's `max_chars` or `max_size_kb`) live on the slot entry.
-   */
-  slots?: ({
-    [k: string]: unknown | undefined;
-  } & {
-    [k: string]: unknown | undefined;
-  } & {
-    [k: string]: unknown | undefined;
-  } & {
-    [k: string]: unknown | undefined;
-  } & {
-    [k: string]: unknown | undefined;
-  } & {
-    [k: string]: unknown | undefined;
-  })[];
-  /**
-   * Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
-   */
-  required_connections?: DownstreamConnectionRequirement[];
-  /**
-   * Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.
-   */
-  reference_mutability?: 'immutable_snapshot' | 'mutable_requires_reapproval' | 'mutable_auto_recheck';
-  /**
-   * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
-   */
-  production_window_business_days?: number;
-  [k: string]: unknown | undefined;
 }
 export interface HTML5FormatDeclaration {
   format_kind: 'html5';
@@ -14029,20 +13868,6 @@ export interface ExplicitPackagesWithFixedAllocation {
   packages: (PackageRequest & {
     [k: string]: unknown | undefined;
   })[];
-}
-/**
- * Release-precision AdCP protocol version negotiation fields. Composed via `allOf` into every AdCP request and response schema so the version semantics live in exactly one place. Distinct from `core/protocol-envelope.json`, which wraps responses at the transport layer (context_id / task_id / status / payload). This envelope is part of the payload itself.
- */
-export interface AdCPVersionEnvelope {
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 }
 /**
  * Audio asset with URL and technical specifications
@@ -34067,222 +33892,6 @@ export type GetSignalsCompletion = AdCPVersionEnvelope &
     [k: string]: unknown | undefined;
   };
 /**
- * Optional signal-definition enrichment fields that may be projected inline on signal listings when requested through get_signals.fields. This schema intentionally excludes signal identity and required definition fields so source-native, private, or compact listings can include typed partial disclosure without becoming a full adagents.json signal definition.
- */
-export type SignalDefinitionEnrichment = {
-  [k: string]: unknown | undefined;
-} & {
-  /**
-   * Restricted attribute categories this signal touches.
-   *
-   * @minItems 1
-   */
-  restricted_attributes?: [RestrictedAttribute, ...RestrictedAttribute[]];
-  demographic_predicate?: DemographicPredicate;
-  /**
-   * Policy categories this signal is sensitive for.
-   *
-   * @minItems 1
-   */
-  policy_categories?: [string, ...string[]];
-  /**
-   * Optional taxonomy metadata describing what this signal means in an external audience, content, retail-media, or provider-owned taxonomy.
-   */
-  taxonomy?: {
-    ref: string;
-    version?: string;
-    segtax?: number;
-    etag?: string;
-    /**
-     * @minItems 1
-     */
-    values: [
-      {
-        id: string;
-        path?: string;
-        modifiers?: string[];
-      },
-      ...{
-        id: string;
-        path?: string;
-        modifiers?: string[];
-      }[]
-    ];
-    /**
-     * @minItems 1
-     */
-    value_mappings?: [
-      {
-        value: string;
-        taxonomy_value_id: string;
-        path?: string;
-        modifiers?: string[];
-      },
-      ...{
-        value: string;
-        taxonomy_value_id: string;
-        path?: string;
-        modifiers?: string[];
-      }[]
-    ];
-    parent_match_behavior?: 'exact_only' | 'descendants_supported' | 'unknown';
-  };
-  segmentation_criteria?: string;
-  criteria_url?: string;
-  /**
-   * @minItems 1
-   */
-  data_sources?: [
-    (
-      | 'app_behavior'
-      | 'app_usage'
-      | 'web_usage'
-      | 'geo_location'
-      | 'email'
-      | 'tv_ott_or_stb_device'
-      | 'panel'
-      | 'online_ecommerce'
-      | 'credit_data'
-      | 'loyalty_card'
-      | 'transaction'
-      | 'online_survey'
-      | 'offline_survey'
-      | 'public_record_census'
-      | 'public_record_voter_file'
-      | 'public_record_other'
-      | 'offline_transaction'
-    ),
-    ...(
-      | 'app_behavior'
-      | 'app_usage'
-      | 'web_usage'
-      | 'geo_location'
-      | 'email'
-      | 'tv_ott_or_stb_device'
-      | 'panel'
-      | 'online_ecommerce'
-      | 'credit_data'
-      | 'loyalty_card'
-      | 'transaction'
-      | 'online_survey'
-      | 'offline_survey'
-      | 'public_record_census'
-      | 'public_record_voter_file'
-      | 'public_record_other'
-      | 'offline_transaction'
-    )[]
-  ];
-  methodology?: 'observed' | 'declared' | 'derived' | 'inferred' | 'modeled';
-  audience_expansion?: boolean;
-  device_expansion?: boolean;
-  refresh_cadence?:
-    | 'intra_day'
-    | 'daily'
-    | 'weekly'
-    | 'monthly'
-    | 'bi_monthly'
-    | 'quarterly'
-    | 'bi_annually'
-    | 'annually';
-  lookback_window?:
-    | 'intra_day'
-    | 'daily'
-    | 'weekly'
-    | 'monthly'
-    | 'bi_monthly'
-    | 'quarterly'
-    | 'bi_annually'
-    | 'annually';
-  onboarder?: {
-    /**
-     * @minItems 1
-     */
-    match_keys: [
-      'name' | 'address' | 'email' | 'postal' | 'lat_long' | 'mobile_id' | 'cookie_id' | 'ip' | 'customer_id' | 'phone',
-      ...(
-        | 'name'
-        | 'address'
-        | 'email'
-        | 'postal'
-        | 'lat_long'
-        | 'mobile_id'
-        | 'cookie_id'
-        | 'ip'
-        | 'customer_id'
-        | 'phone'
-      )[]
-    ];
-    pre_onboarding_audience_expansion?: boolean;
-    pre_onboarding_device_expansion?: boolean;
-    pre_onboarding_precision_level?: 'individual' | 'household' | 'business' | 'geography';
-  };
-  /**
-   * @minItems 1
-   */
-  countries?: [string, ...string[]];
-  /**
-   * Data provider's declared GDPR Article 6 lawful basis or consent basis for the underlying signal definition, projected into this get_signals response row when requested. Sellers and federating agents that pass through another provider's signal MUST NOT substitute their own processing basis for the provider-declared basis.
-   *
-   * @minItems 1
-   */
-  consent_basis?: [ConsentBasis, ...ConsentBasis[]];
-  /**
-   * Data provider's declared GDPR Article 9 basis for the underlying signal definition when special-category data is involved and Article 9 applies, projected into this get_signals response row when requested. Sellers and federating agents that pass through another provider's signal MUST NOT substitute their own Article 9 basis for the provider-declared basis.
-   */
-  art9_basis?: 'explicit_consent' | 'manifestly_made_public' | 'substantial_public_interest' | 'vital_interests';
-  modeling?: {
-    method: 'lookalike' | 'supervised' | 'embedding' | 'rules';
-    seed_source: {
-      type: 'first_party_crm' | 'panel' | 'declared_survey' | 'transactional' | 'behavioral';
-      /**
-       * Provider assertion that the seed source carries a signed attestation. Consumers MUST NOT treat this boolean alone as cryptographic proof.
-       */
-      provider_signed: boolean;
-    };
-    /**
-     * @minItems 1
-     */
-    training_data_jurisdictions: [string, ...string[]];
-    ai_act_risk_class: 'minimal' | 'limited' | 'high_risk';
-    disclosure?: SignalModelingDisclosure;
-  };
-  /**
-   * Per-signal data-subject-rights routing. This is a contact/routing reference, not a machine-callable AdCP API.
-   */
-  data_subject_rights?: {
-    upstream_source_domain?: string;
-    /**
-     * @minItems 1
-     */
-    channels: [
-      (
-        | {
-            [k: string]: unknown | undefined;
-          }
-        | {
-            [k: string]: unknown | undefined;
-          }
-      ),
-      ...(
-        | {
-            [k: string]: unknown | undefined;
-          }
-        | {
-            [k: string]: unknown | undefined;
-          }
-      )[]
-    ];
-    response_sla_days?: number;
-    ccpa_opt_out_url?: string;
-  };
-  /**
-   * When this definition record was last updated. This indicates freshness of the definition record, not an attestation that the underlying data or model was refreshed at that time.
-   */
-  last_updated?: string;
-  dts_compliant_version?: string;
-  [k: string]: unknown | undefined;
-};
-/**
  * Success response - media buy created successfully
  */
 export type CreateMediaBuyCompletion = {
@@ -34601,50 +34210,6 @@ export interface ComplyTestControllerRequest {
      */
     sandbox: true;
   };
-}
-/**
- * Canonical envelope field-set for AdCP task responses, normalized across transports. Defines the protocol-layer fields (status, context_id, context, task_id, timestamp, replayed, adcp_error, push_notification_config, governance_context) and the conceptual `payload` grouping for task-specific response data. The serialization rules — whether envelope fields appear as siblings of payload fields, as a nested `payload` object, or via transport-native containers — are transport-specific and normative per transport (see Transport serialization below). The `status` field is REQUIRED on every task response envelope, including synchronous metadata responses (e.g., `get_adcp_capabilities`) where the value is `completed`. Agents shipping responses without a top-level `status` are non-conformant regardless of whether the task body schema would otherwise validate.
- */
-export interface ProtocolEnvelope {
-  /**
-   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
-   */
-  context_id?: string;
-  context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
-  status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
-  /**
-   * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
-   */
-  timestamp?: string;
-  /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
-   */
-  replayed?: boolean;
-  adcp_error?: Error;
-  push_notification_config?: PushNotificationConfig;
-  /**
-   * Opaque authorization context issued only by an approved check_governance decision. Buyers attach it to governed requests across protocol roles (media buys, rights acquisitions, signal activations, creative services); receiving services persist it and forward it on subsequent execution and lifecycle checks. The context is the authoritative plan binding at service boundaries, so a service MUST NOT require a separate plan_id.
-   *
-   * Governance agents MUST emit a compact JWS per the AdCP JWS profile. Verifiers validate standard authorization claims such as signature, issuer, audience, expiry, and replay protection, but intermediaries MUST NOT interpret embedded governance state for business logic. A conditions or denied verdict never carries an authorization context.
-   *
-   * This is the primary correlation key for audit and reporting across the governance lifecycle.
-   */
-  governance_context?: string;
-  /**
-   * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
-   */
-  payload?: {
-    [k: string]: unknown | undefined;
-  };
-  [k: string]: unknown | undefined;
 }
 /**
  * Response from the comply_test_controller tool. Shape varies by scenario type: list_scenarios returns available scenarios, force_* returns state transition results, simulate_* returns simulation results.

@@ -17,7 +17,7 @@ import type {
   RepeatableGroupSlot,
 } from '../lib/types/format-asset-slots';
 
-// --- Image: `formats` is canonical; 3.2 also permits extension fields ---
+// --- Image: `formats` is canonical; extension requirement fields stay forward-compatible ---
 const goodImage: IndividualImageAssetSlot = {
   item_type: 'individual',
   asset_type: 'image',
@@ -27,19 +27,18 @@ const goodImage: IndividualImageAssetSlot = {
 };
 void goodImage;
 
-const badImage: IndividualImageAssetSlot = {
+const extendedImage: IndividualImageAssetSlot = {
   item_type: 'individual',
   asset_type: 'image',
   asset_id: 'hero',
   required: true,
   requirements: {
-    // Non-canonical extension fields are retained for forward compatibility.
     file_types: ['jpg'],
   },
 };
-void badImage;
+void extendedImage;
 
-// --- Video: milliseconds are canonical; extension fields remain allowed ---
+// --- Video: milliseconds are canonical ---
 const goodVideo: IndividualVideoAssetSlot = {
   item_type: 'individual',
   asset_type: 'video',
@@ -49,26 +48,17 @@ const goodVideo: IndividualVideoAssetSlot = {
 };
 void goodVideo;
 
-const badVideoMinSeconds: IndividualVideoAssetSlot = {
+const extendedVideoDurations: IndividualVideoAssetSlot = {
   item_type: 'individual',
   asset_type: 'video',
   asset_id: 'ad',
   required: true,
-  requirements: { min_duration_seconds: 6 },
+  requirements: { min_duration_seconds: 6, max_duration_seconds: 30 },
 };
-void badVideoMinSeconds;
+void extendedVideoDurations;
 
-const badVideoMaxSeconds: IndividualVideoAssetSlot = {
-  item_type: 'individual',
-  asset_type: 'video',
-  asset_id: 'ad',
-  required: true,
-  requirements: { max_duration_seconds: 30 },
-};
-void badVideoMaxSeconds;
-
-// --- Video: `containers` is canonical; extension fields remain allowed ---
-const badVideoFileTypes: IndividualVideoAssetSlot = {
+// --- Video: `containers` is canonical; extension requirement fields remain accepted ---
+const extendedVideo: IndividualVideoAssetSlot = {
   item_type: 'individual',
   asset_type: 'video',
   asset_id: 'ad',
@@ -77,7 +67,7 @@ const badVideoFileTypes: IndividualVideoAssetSlot = {
     file_types: ['mp4'],
   },
 };
-void badVideoFileTypes;
+void extendedVideo;
 
 // --- Video: container enum is closed ---
 const badVideoContainer: IndividualVideoAssetSlot = {

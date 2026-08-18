@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.2.0-beta.0
-// Generated at: 2026-08-18T11:11:09.491Z
+// Generated at: 2026-08-18T17:22:43.578Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**

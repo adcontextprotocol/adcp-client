@@ -150,7 +150,7 @@ export function parseWholesaleFeedWebhookNotification(input: unknown): Normalize
     eventCreatedAt,
     ...(affectedEntityType !== undefined && { affectedEntityType }),
     event: event as V31Beta.WholesaleFeedEvent,
-    webhook: webhook as V31Beta.WholesaleFeedWebhook,
+    webhook: webhook as unknown as V31Beta.WholesaleFeedWebhook,
   };
 }
 

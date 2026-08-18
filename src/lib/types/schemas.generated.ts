@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-18T11:16:43.454Z
+// Generated at: 2026-08-18T17:26:19.019Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -2415,22 +2415,6 @@ export const CanonicalFormatImageSchema = z.object({}).passthrough().merge(z.obj
     asset_source: z.union([z.literal("buyer_uploaded"), z.literal("publisher_host_recorded"), z.literal("seller_pre_rendered_from_brief"), z.literal("seller_human_designed"), z.literal("agent_synthesized"), z.literal("publisher_owned_reference")]).optional(),
     buyer_asset_acceptance: z.union([z.literal("accepted"), z.literal("rejected")]).optional()
 }).passthrough());
-
-export const CanonicalFormatBaseSchema = z.object({
-    experimental: z.boolean().optional(),
-    deprecated: z.boolean().optional(),
-    v1_translatable: z.boolean().optional(),
-    since_version: z.string().optional(),
-    migration_target_version: z.string().optional(),
-    composition_model: z.union([z.literal("deterministic"), z.literal("algorithmic")]).optional(),
-    provenance_required: z.boolean().optional(),
-    platform_extensions: z.array(PlatformExtensionReferenceSchema).optional(),
-    synthesis_nondeterministic: z.boolean().optional(),
-    slots: z.array(z.record(z.string(), z.unknown())).optional(),
-    required_connections: z.array(DownstreamConnectionRequirementSchema).optional(),
-    reference_mutability: z.union([z.literal("immutable_snapshot"), z.literal("mutable_requires_reapproval"), z.literal("mutable_auto_recheck")]).optional(),
-    production_window_business_days: z.number().optional()
-}).passthrough();
 
 export const PlatformExtensionReference1Schema = PlatformExtensionReferenceSchema;
 
@@ -12667,6 +12651,22 @@ export const AudienceEvidenceSelectionSchema: z.ZodType = z.object({
                 }).passthrough())
             }).passthrough()])]).optional(),
     ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const CanonicalFormatBaseSchema = z.object({
+    experimental: z.boolean().optional(),
+    deprecated: z.boolean().optional(),
+    v1_translatable: z.boolean().optional(),
+    since_version: z.string().optional(),
+    migration_target_version: z.string().optional(),
+    composition_model: z.union([z.literal("deterministic"), z.literal("algorithmic")]).optional(),
+    provenance_required: z.boolean().optional(),
+    platform_extensions: z.array(PlatformExtensionReference1Schema).optional(),
+    synthesis_nondeterministic: z.boolean().optional(),
+    slots: z.array(z.record(z.string(), z.unknown())).optional(),
+    required_connections: z.array(DownstreamConnectionRequirementSchema).optional(),
+    reference_mutability: z.union([z.literal("immutable_snapshot"), z.literal("mutable_requires_reapproval"), z.literal("mutable_auto_recheck")]).optional(),
+    production_window_business_days: z.number().optional()
 }).passthrough();
 
 export const PricingOptionSchema = z.union([CPMPricingOptionSchema, VCPMPricingOptionSchema, CPCPricingOptionSchema, CPCVPricingOptionSchema, CPVPricingOptionSchema, CPPPricingOptionSchema, CPAPricingOptionSchema, RevenueSharePricingOptionSchema, FlatRatePricingOptionSchema, TimeBasedPricingOptionSchema]);

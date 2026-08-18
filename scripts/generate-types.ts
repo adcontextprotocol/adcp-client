@@ -141,9 +141,11 @@ const PRIORITY_CANONICAL_TYPE_NAMES = new Set([
 // of tools.generated.ts and import references from core.generated.ts instead.
 const CORE_AUTHORED_TOOL_SHARED_TYPES = new Set([
   'AccountReference',
+  'AdCPVersionEnvelope',
   'AssetVariant',
   'AudienceConstraints',
   'BrandReference',
+  'CanonicalFormatBase',
   'CatalogItemDeliveryMetrics',
   'CreativeAsset',
   'ExtensionObject',
@@ -152,9 +154,13 @@ const CORE_AUTHORED_TOOL_SHARED_TYPES = new Set([
   'GetProductsAsyncSubmitted',
   'ImageAsset',
   'KeywordDeliveryMetrics',
+  'PostalCountrySystem',
   'Provenance',
+  'ProtocolEnvelope',
   'PurchaseType',
   'RightsConstraint',
+  'SignalDefinitionEnrichment',
+  'SignalTargetingExpression',
   ...PRIORITY_CANONICAL_TYPE_NAMES,
 ]);
 

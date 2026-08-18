@@ -881,7 +881,7 @@ export function toWireAccount<TCtxMeta>(account: Account<TCtxMeta>): WireAccount
     if (account.governance_agents.length !== 1) {
       throw new Error('Account.governance_agents must contain exactly one agent when present');
     }
-    wire.governance_agents = [projectGovernanceAgent(account.governance_agents[0])];
+    wire.governance_agents = [projectGovernanceAgent(account.governance_agents[0]!)];
   }
   if (account.reporting_bucket !== undefined) wire.reporting_bucket = account.reporting_bucket;
   if (account.notification_configs !== undefined) {
