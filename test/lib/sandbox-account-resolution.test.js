@@ -456,7 +456,7 @@ describe('resolveAccountForMediaBuy', () => {
   });
 });
 
-describe('buildCreateMediaBuyRequest accountRef override', () => {
+describe('buildCreateMediaBuyRequest', () => {
   const product = {
     product_id: 'prod-1',
     name: 'Product 1',
@@ -490,5 +490,46 @@ describe('buildCreateMediaBuyRequest accountRef override', () => {
         ),
       /Resolve an account before building the request/
     );
+  });
+
+  test('uses an auction floor to derive a 1.5x legacy bid price', () => {
+    const request = buildCreateMediaBuyRequest(
+      product,
+      { pricing_option_id: 'auction-floor', pricing_model: 'cpm', floor_price: 4 },
+      { brand: { domain: 'test.example' } }
+    );
+
+    assert.strictEqual(request.packages[0].bid_price, 6);
+  });
+
+  test('does not invent a bid when auction pricing has guidance only', () => {
+    const request = buildCreateMediaBuyRequest(
+      product,
+      { pricing_option_id: 'auction-guidance', pricing_model: 'cpm', price_guidance: { min: 2, max: 5 } },
+      { brand: { domain: 'test.example' } }
+    );
+
+    assert.strictEqual(request.packages[0].bid_price, undefined);
+  });
+
+  test('raises the default budget to the pricing option minimum spend', () => {
+    const request = buildCreateMediaBuyRequest(
+      product,
+      { pricing_option_id: 'minimum', pricing_model: 'cpm', fixed_price: 3, min_spend_per_package: 2500 },
+      { brand: { domain: 'test.example' } }
+    );
+
+    assert.strictEqual(request.packages[0].budget, 2500);
+  });
+
+  test('supports contingent pricing options without auction or minimum-spend fields', () => {
+    const request = buildCreateMediaBuyRequest(
+      product,
+      { pricing_option_id: 'revenue', pricing_model: 'revenue_share', currency: 'USD', revenue_share_rate: 0.1 },
+      { brand: { domain: 'test.example' } }
+    );
+
+    assert.strictEqual(request.packages[0].budget, 1000);
+    assert.strictEqual(request.packages[0].bid_price, undefined);
   });
 });

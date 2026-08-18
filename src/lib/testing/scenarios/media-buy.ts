@@ -80,15 +80,16 @@ export function buildCreateMediaBuyRequest(
     accountRef?: AccountReference;
   } = {}
 ): Record<string, unknown> {
-  const minSpend = typeof pricingOption.min_spend_per_package === 'number' ? pricingOption.min_spend_per_package : 0;
+  const minSpendPerPackage = 'min_spend_per_package' in pricingOption ? pricingOption.min_spend_per_package : undefined;
+  const minSpend = typeof minSpendPerPackage === 'number' ? minSpendPerPackage : 0;
   const budget = options.budget || Math.max(1000, minSpend);
   const now = new Date();
   const startTime = new Date(now.getTime() + 24 * 60 * 60 * 1000); // Tomorrow
   const endTime = new Date(startTime.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days later
 
-  const isAuction =
-    !('fixed_price' in pricingOption) &&
-    (pricingOption.floor_price !== undefined || pricingOption.price_guidance !== undefined);
+  const floorPrice = 'floor_price' in pricingOption ? pricingOption.floor_price : undefined;
+  const priceGuidance = 'price_guidance' in pricingOption ? pricingOption.price_guidance : undefined;
+  const isAuction = !('fixed_price' in pricingOption) && (floorPrice !== undefined || priceGuidance !== undefined);
 
   const packageRequest: Record<string, unknown> = {
     product_id: product.product_id,
@@ -97,8 +98,8 @@ export function buildCreateMediaBuyRequest(
   };
 
   // Add bid_price if auction-based
-  if (isAuction && typeof pricingOption.floor_price === 'number') {
-    packageRequest.bid_price = pricingOption.floor_price * 1.5;
+  if (isAuction && typeof floorPrice === 'number') {
+    packageRequest.bid_price = floorPrice * 1.5;
   }
 
   // Add inline creatives if provided
