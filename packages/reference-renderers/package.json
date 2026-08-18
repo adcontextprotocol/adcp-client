@@ -13,6 +13,7 @@
   "files": [
     "index.js",
     "index.d.ts",
+    "structured.js",
     "README.md"
   ],
   "sideEffects": false,

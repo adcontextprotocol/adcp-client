@@ -1872,7 +1872,16 @@ export {
   getPreviewUrl,
   getPreviewHtml,
 } from './utils/preview-normalizer';
-export type { PreviewRenderV3 } from './utils/preview-normalizer';
+export type { PreviewRendererMetadata, PreviewRenderV3 } from './utils/preview-normalizer';
+export {
+  resolvePreviewAuthority,
+  type PlacementPreviewCandidate,
+  type PreviewAuthorityInput,
+  type PreviewAuthorityResolution,
+  type PreviewFidelity,
+  type SelectedPreviewAuthority,
+  type SellerPreviewCandidate,
+} from './utils/preview-authority';
 
 // ====== TYPE GUARD UTILITIES ======
 // Type guards for automatic TypeScript type narrowing in webhook handlers
