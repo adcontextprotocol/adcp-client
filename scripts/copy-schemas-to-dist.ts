@@ -21,8 +21,9 @@
  *   - `*.previous` backup snapshots from `sync-schemas` replaceTree
  *   - older patch versions of stable releases — collapsed into the
  *     highest-patch sibling
- *   - `tmp/`, `compliance/`, and transport-projection (`mcp/`) subtrees —
- *     runtime canonical validation doesn't read them
+ *   - `tmp/`, `compliance/`, and most transport-projection (`mcp/`)
+ *     subtrees. The active MCP media-buy role profile is retained for exact
+ *     `tools/list` request-schema discovery.
  *
  * Invoked by the `build:lib` npm script after tsc emits JS.
  */
@@ -258,8 +259,17 @@ function main(): void {
       filter: src => {
         const rel = path.relative(srcRoot, src);
         if (!rel) return true;
-        const top = rel.split(path.sep)[0];
-        if (top === 'tmp' || top === 'compliance' || top === 'mcp') return false;
+        const parts = rel.split(path.sep);
+        const top = parts[0];
+        if (top === 'tmp' || top === 'compliance') return false;
+        if (top === 'mcp') {
+          // Retain only mcp/<protocol-version>/profiles/media-buy/** plus
+          // the ancestor directories cpSync needs to reach it.
+          if (parts.length <= 2) return true;
+          if (parts[2] !== 'profiles') return false;
+          if (parts.length === 3) return true;
+          return parts[3] === 'media-buy';
+        }
         return true;
       },
     });

@@ -239,6 +239,9 @@ export type {
   SalesPlatform,
   SalesCorePlatform,
   SalesIngestionPlatform,
+  MediaBuyLifecyclePlatform,
+  MediaBuyLifecycleCorePlatform,
+  MediaBuyLifecycleProposalPlatform,
   GetProductsPayload,
   LegacyGetProductsPayload,
   GetProductsHandlerResult,
@@ -261,6 +264,13 @@ export type {
   SyncCatalogsPayload,
   LogEventPayload,
   SyncEventSourcesPayload,
+  ListProductsPayload,
+  RequestProposalsPayload,
+  RefineProposalsPayload,
+  DeclineProposalsPayload,
+  BuyProductsPayload,
+  AcceptProposalPayload,
+  ControlMediaBuyPayload,
 } from './specialisms/sales';
 
 export type {

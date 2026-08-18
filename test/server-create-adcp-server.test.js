@@ -1,6 +1,10 @@
 const { describe, it, mock } = require('node:test');
 const assert = require('node:assert');
-const { createAdcpServer: _createAdcpServer } = require('../dist/lib/server/create-adcp-server');
+const {
+  createAdcpServer: _createAdcpServer,
+  MEDIA_BUY_MCP_TOOL_PROFILE,
+} = require('../dist/lib/server/create-adcp-server');
+const { readFileSync } = require('node:fs');
 const { getSdkServer } = require('../dist/lib/server/adcp-server');
 const { InMemoryStateStore } = require('../dist/lib/server/state-store');
 const { InMemoryTaskStore } = require('../dist/lib/server/tasks');
@@ -81,6 +85,137 @@ describe('createAdcpServer', () => {
     // Private SDK field we rely on for test dispatch — lock in the contract
     // so a SDK bump that renames it trips this test.
     assert.strictEqual(typeof sdk._registeredTools, 'object');
+  });
+
+  describe('MCP media-buy tool profile', () => {
+    const compactHandlers = {
+      listProducts: async () => ({ outcome: 'listed', products: [], feed_version: 'feed-1', cache_scope: 'public' }),
+      requestProposals: async () => ({ outcome: 'rejected', reason: 'fixture' }),
+      declineProposals: async () => ({ results: [] }),
+      buyProducts: async () => ({ media_buy_id: 'mb-compact' }),
+      acceptProposal: async () => ({ media_buy_id: 'mb-proposal' }),
+      controlMediaBuy: async () => ({ media_buy_id: 'mb-control', revision: 2 }),
+    };
+
+    it('stays exactly aligned with the checked-in AdCP 3.2 media-buy manifest', () => {
+      const manifest = JSON.parse(
+        readFileSync('schemas/cache/3.2.0-beta.0/mcp/2026-07-28/profiles/media-buy/manifest.json', 'utf8')
+      );
+      assert.deepStrictEqual([...MEDIA_BUY_MCP_TOOL_PROFILE], manifest.filters.include_tools);
+    });
+
+    it('advertises the active 3.2 profile by default while legacy aliases remain callable', async () => {
+      const legacyCalls = [];
+      const server = createAdcpServer({
+        name: 'Profile seller',
+        version: '1.0.0',
+        adcpVersion: '3.2.0-beta.0',
+        capabilities: { supported_versions: ['3.0.24', '3.1.15', '3.2.0-beta.0'] },
+        mediaBuy: {
+          ...compactHandlers,
+          getProducts: async params => {
+            legacyCalls.push(params.adcp_version);
+            return { products: [], cache_scope: 'public' };
+          },
+          createMediaBuy: async () => ({ media_buy_id: 'mb-legacy', packages: [] }),
+          updateMediaBuy: async () => ({ media_buy_id: 'mb-legacy', packages: [] }),
+          getMediaBuys: async () => ({ media_buys: [] }),
+          getMediaBuyDelivery: async () => ({ media_buy_deliveries: [] }),
+        },
+        creative: {
+          buildCreative: async () => ({ creative_manifest: { manifest_id: 'mf-1', assets: [] } }),
+        },
+      });
+
+      const listed = await server.dispatchTestRequest({ method: 'tools/list' });
+      const names = listed.tools.map(tool => tool.name);
+      for (const compact of [
+        'list_products',
+        'request_proposals',
+        'decline_proposals',
+        'buy_products',
+        'accept_proposal',
+        'control_media_buy',
+      ]) {
+        assert.ok(names.includes(compact), `${compact} should be advertised`);
+      }
+      assert.ok(names.includes('get_media_buys'));
+      assert.ok(names.includes('get_media_buy_delivery'));
+      assert.ok(names.includes('get_adcp_capabilities'));
+      assert.ok(!names.includes('get_products'), 'deprecated discovery alias should not be advertised');
+      assert.ok(!names.includes('create_media_buy'), 'deprecated create alias should not be advertised');
+      assert.ok(!names.includes('update_media_buy'), 'deprecated update alias should not be advertised');
+      assert.ok(!names.includes('build_creative'), 'creative-builder tools are outside the media-buy role profile');
+      assert.deepStrictEqual(listed._meta, {
+        adcp_version: '3.2.0-beta.0',
+        adcp_profile: 'media-buy',
+      });
+      assert.strictEqual(listed.tools[0]._meta.adcp_version, '3.2.0-beta.0');
+      const requestProposalsTool = listed.tools.find(tool => tool.name === 'request_proposals');
+      const officialRequestSchema = JSON.parse(
+        readFileSync(
+          'schemas/cache/3.2.0-beta.0/mcp/2026-07-28/profiles/media-buy/media-buy/request-proposals-request.json',
+          'utf8'
+        )
+      );
+      assert.deepStrictEqual(requestProposalsTool.inputSchema, officialRequestSchema);
+      assert.strictEqual(requestProposalsTool.outputSchema, undefined);
+
+      // Discovery is compact, but an already-integrated 3.1 or 3.0 buyer can
+      // still call the legacy name and negotiate its own validation bundle.
+      for (const adcp_version of ['3.1.15', '3.0.24']) {
+        const result = await callToolRaw(server, 'get_products', {
+          adcp_version,
+          buying_mode: 'wholesale',
+        });
+        assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+      }
+      assert.deepStrictEqual(legacyCalls, ['3.1.15', '3.0.24']);
+    });
+
+    for (const adcpVersion of ['3.1.15', '3.0.24']) {
+      it(`advertises the legacy lifecycle, not 3.2 handlers, when pinned to ${adcpVersion}`, async () => {
+        const server = createAdcpServer({
+          name: 'Legacy profile seller',
+          version: '1.0.0',
+          adcpVersion,
+          mediaBuy: {
+            ...compactHandlers,
+            getProducts: async () => ({ products: [], cache_scope: 'public' }),
+            createMediaBuy: async () => ({ media_buy_id: 'mb-legacy', packages: [] }),
+            updateMediaBuy: async () => ({ media_buy_id: 'mb-legacy', packages: [] }),
+          },
+        });
+        const listed = await server.dispatchTestRequest({ method: 'tools/list' });
+        const names = listed.tools.map(tool => tool.name);
+        assert.ok(names.includes('get_products'));
+        assert.ok(names.includes('create_media_buy'));
+        assert.ok(names.includes('update_media_buy'));
+        assert.ok(!names.includes('list_products'));
+        assert.ok(!names.includes('request_proposals'));
+        assert.ok(!names.includes('buy_products'));
+        assert.strictEqual(listed._meta.adcp_version, adcpVersion);
+        assert.strictEqual(listed._meta.adcp_profile, 'all');
+      });
+    }
+
+    it('supports opting into the complete registered surface for migration diagnostics', async () => {
+      const server = createAdcpServer({
+        name: 'Migration seller',
+        version: '1.0.0',
+        adcpVersion: '3.2.0-beta.0',
+        mcpToolProfile: 'all',
+        mediaBuy: {
+          ...compactHandlers,
+          getProducts: async () => ({ products: [], cache_scope: 'public' }),
+        },
+      });
+      const listed = await server.dispatchTestRequest({ method: 'tools/list' });
+      const names = listed.tools.map(tool => tool.name);
+      assert.ok(names.includes('list_products'));
+      assert.ok(names.includes('get_products'));
+      assert.strictEqual(listed._meta.adcp_profile, 'all');
+    });
   });
 
   it('dispatchTestRequest routes tools/call through the registered handler', async () => {
@@ -757,16 +892,25 @@ describe('createAdcpServer', () => {
         name: 'Test',
         version: '1.0.0',
         validation: { responses: 'strict' },
+        resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           declineProposals: async () => ({
             results: [{ proposal_id: 'proposal-1', outcome: 'declined' }],
           }),
         },
       });
-      const response = await callToolRaw(server, 'decline_proposals', {
-        idempotency_key: 'decline-key-0000001',
-        declines: [{ proposal_id: 'proposal-1' }],
-      });
+      const response = await callToolRaw(
+        server,
+        'decline_proposals',
+        {
+          idempotency_key: 'decline-key-0000001',
+          declines: [{ proposal_id: 'proposal-1' }],
+          account: { account_id: 'account-1' },
+        },
+        {
+          authInfo: { credential: { kind: 'api_key', key_id: 'buyer-1' } },
+        }
+      );
       assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
       assert.strictEqual(response.structuredContent.status, undefined);
       assert.deepStrictEqual(response.structuredContent.results, [{ proposal_id: 'proposal-1', outcome: 'declined' }]);

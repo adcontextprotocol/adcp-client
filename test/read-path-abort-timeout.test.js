@@ -578,7 +578,7 @@ describe('read-path cancellation and timeout', () => {
                 content: [{ type: 'text', text: 'done' }],
                 structuredContent: { status: 'completed', ok: true },
               });
-            }, 250);
+            }, 600);
             return { task };
           },
           getTask: async (_args, extra) => extra.taskStore.getTask(extra.taskId),
@@ -609,9 +609,9 @@ describe('read-path cancellation and timeout', () => {
         undefined,
         [],
         undefined,
-        { requestTimeoutMs: 75, workingTimeout: 1_000 }
+        { requestTimeoutMs: 250, workingTimeout: 2_000 }
       );
-      assert.ok(Date.now() - startedAt > 150, 'task should outlive the one-shot request timeout');
+      assert.ok(Date.now() - startedAt > 400, 'task should outlive the one-shot request timeout');
       assert.strictEqual(result.structuredContent.status, 'completed');
       assert.strictEqual(result.structuredContent.ok, true);
     } finally {

@@ -103,14 +103,31 @@ Do not select a signing profile from a version value inside an unverified reques
 
 ## Server handler additions
 
-`createAdcpServerFromPlatform()` can route the new compact lifecycle, governance adjustment, and agent notification tasks. The generated handler maps cover:
+`createAdcpServerFromPlatform()` routes the new compact lifecycle through
+`platform.mediaBuyLifecycle`, including `proposalRefinement` capability
+metadata for `refineProposals`. Keep `platform.sales` beside it when the same
+seller must accept 3.0/3.1 callers. Both facades should call the same business
+services rather than maintaining parallel commercial state.
+
+The generated handler maps cover:
 
 - `list_products`, `request_proposals`, `refine_proposals`, `decline_proposals`
 - `buy_products`, `accept_proposal`, `control_media_buy`
 - `report_plan_adjustment`
 - `sync_agent_notification_configs`
 
-An SDK 14 server may continue serving 3.0/3.1 clients through the established tool names. Advertise only handlers that are configured and verify both the old facade and new compact path use the same authorization, tenant isolation, idempotency, and commercial source of truth.
+On a 3.2 server, the default `mcpToolProfile: 'auto'` advertises only the
+intersection of registered tools and the active spec `media-buy` profile. The
+deprecated names remain callable compatibility routes. Use
+`mcpToolProfile: 'all'` only for migration diagnostics. MCP `tools/list`
+includes `_meta.adcp_version` and `_meta.adcp_profile`, and each framework tool
+includes `_meta.adcp_version`.
+
+An SDK 14 server may therefore continue serving 3.0/3.1 clients through the
+established tool names without steering new MCP clients toward them. Verify
+both facades use the same authorization, tenant isolation, idempotency, and
+commercial source of truth. The exact surface comparison and test matrix are
+in [AdCP 3.2 media-buy lifecycle compatibility](guides/MEDIA-BUY-3.2-COMPATIBILITY.md).
 
 For create/update media-buy handlers, use `media_buy_status` for the business state:
 

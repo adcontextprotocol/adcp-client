@@ -34,10 +34,13 @@ function createAdcpServer(config) {
 }
 
 async function callToolRaw(server, toolName, params) {
-  return server.dispatchTestRequest({
-    method: 'tools/call',
-    params: { name: toolName, arguments: params ?? {} },
-  });
+  return server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: { name: toolName, arguments: params ?? {} },
+    },
+    { authInfo: { credential: { kind: 'api_key', key_id: 'two-layer-test-buyer' } } }
+  );
 }
 
 // Maps tool name → (handlerKey, domainKey, requestArgs). The dispatcher

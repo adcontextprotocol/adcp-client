@@ -130,6 +130,12 @@ export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
   return {
     account,
     ...(handlerCtx.agent != null && { agent: handlerCtx.agent }),
+    ...(handlerCtx.callerMutationScope != null && {
+      callerMutationScope: Object.freeze({ ...handlerCtx.callerMutationScope }),
+    }),
+    ...(handlerCtx.proposalRefinementScope != null && {
+      proposalRefinementScope: Object.freeze({ ...handlerCtx.proposalRefinementScope }),
+    }),
     ...(input != null && { input }),
     state: {
       findByObject: () => [],
