@@ -31,18 +31,28 @@ function assertAtMost(label, actual, limit, unit = 'bytes') {
   }
 }
 
+export function parseNpmPackOutput(output) {
+  // npm 10 can print prepare-hook output (including ANSI color sequences)
+  // before --json output even with --ignore-scripts. Try each array opener in
+  // order and accept only a complete top-level JSON array.
+  for (let start = output.indexOf('['); start !== -1; start = output.indexOf('[', start + 1)) {
+    try {
+      const parsed = JSON.parse(output.slice(start).trim());
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      // Keep scanning past banners such as ESC[32m or non-JSON hook output.
+    }
+  }
+  throw new Error('npm pack did not return a valid JSON array');
+}
+
 export function checkPackageSize(repoRoot) {
   const output = execFileSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts', '--loglevel=error'], {
     cwd: repoRoot,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit'],
   });
-  let packageInfo;
-  try {
-    [packageInfo] = JSON.parse(output);
-  } catch (error) {
-    throw new Error(`npm pack did not return valid JSON: ${error.message}`);
-  }
+  const [packageInfo] = parseNpmPackOutput(output);
   if (!packageInfo || !Array.isArray(packageInfo.files)) {
     throw new Error('npm pack did not return package file metadata');
   }
