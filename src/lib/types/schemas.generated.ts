@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-18T16:23:51.726Z
+// Generated at: 2026-08-18T16:45:57.714Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -2825,7 +2825,9 @@ export const SyncCatalogsAsyncInputRequiredSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const TaskStatus2Schema = z.literal("rejected");
+export const GetProductsRejectedStatusSchema = z.literal("rejected");
+
+export const TaskStatus2Schema = GetProductsRejectedStatusSchema;
 
 export const BrandKeySchema = z.object({
     domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/),
@@ -3170,7 +3172,7 @@ export const GetProductsRejectedSchema = z.object({
     context_id: z.string().optional(),
     context: ContextObjectSchema.optional(),
     task_id: z.string().optional(),
-    status: TaskStatus2Schema,
+    status: GetProductsRejectedStatusSchema,
     message: z.string().optional(),
     timestamp: z.string().optional(),
     replayed: z.boolean().optional(),

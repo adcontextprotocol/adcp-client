@@ -2390,6 +2390,58 @@ function namePostalAreaCountryBranch(typeDefinitions: string): string {
   );
 }
 
+/** Give get_products' business-rejection status a stable non-numbered name. */
+function nameGetProductsRejectedStatus(typeDefinitions: string, required = false): string {
+  const interfaces = [...typeDefinitions.matchAll(/export interface GetProductsRejected\s*\{[\s\S]*?\n\}/g)];
+  if (interfaces.length === 0 && !required) return typeDefinitions;
+  if (interfaces.length !== 1) {
+    throw new Error(
+      `nameGetProductsRejectedStatus: expected one GetProductsRejected interface, found ${interfaces.length}`
+    );
+  }
+
+  const interfaceSource = interfaces[0][0];
+  const statusProperties = [...interfaceSource.matchAll(/^(\s*status:\s*)(TaskStatus\d+)(\s*;\s*)$/gm)];
+  if (statusProperties.length !== 1) {
+    throw new Error(
+      `nameGetProductsRejectedStatus: expected one numbered status property, found ${statusProperties.length}`
+    );
+  }
+
+  const numberedName = statusProperties[0][2];
+  if (numberedName !== 'TaskStatus2' && /\bTaskStatus2\b/.test(typeDefinitions)) {
+    throw new Error(
+      `nameGetProductsRejectedStatus: cannot preserve TaskStatus2 because it is already assigned while ` +
+        `GetProductsRejected uses ${numberedName}`
+    );
+  }
+  const declarationPattern = new RegExp(`^export type ${numberedName} = 'rejected';$`, 'gm');
+  const declarations = [...typeDefinitions.matchAll(declarationPattern)];
+  const references = typeDefinitions.match(new RegExp(`\\b${numberedName}\\b`, 'g')) ?? [];
+  if (declarations.length !== 1 || references.length !== 2) {
+    throw new Error(
+      `nameGetProductsRejectedStatus: expected one declaration and two references for ${numberedName}, ` +
+        `found ${declarations.length} and ${references.length}`
+    );
+  }
+
+  const rewrittenInterface = interfaceSource.replace(
+    statusProperties[0][0],
+    `${statusProperties[0][1]}GetProductsRejectedStatus${statusProperties[0][3]}`
+  );
+  const stableDeclaration = [
+    "export type GetProductsRejectedStatus = 'rejected';",
+    '/**',
+    ' * Re-export of `GetProductsRejectedStatus` under the legacy codegen artifact name.',
+    ' *',
+    ' * @deprecated Use `GetProductsRejectedStatus` from `@adcp/sdk/types`. Slated for removal in the next major.',
+    ' */',
+    'export type TaskStatus2 = GetProductsRejectedStatus;',
+  ].join('\n');
+
+  return typeDefinitions.replace(interfaceSource, rewrittenInterface).replace(declarationPattern, stableDeclaration);
+}
+
 /**
  * Align optional TypeScript properties with Zod .nullish() behavior.
  *
@@ -3569,7 +3621,7 @@ async function generateTypes() {
   // occurrences of the same schema within a single compilation unit
   toolTypes = removeNumberedTypeDuplicates(toolTypes);
   toolTypes = removeNumberedCoreTypeDuplicates(toolTypes, CORE_AUTHORED_TOOL_SHARED_TYPES);
-  toolTypes = namePostalAreaCountryBranch(toolTypes);
+  toolTypes = nameGetProductsRejectedStatus(namePostalAreaCountryBranch(toolTypes));
   toolTypes = applyKnownJstsAliases(toolTypes);
   toolTypes = fixTypedIndexSignatures(toolTypes);
   toolTypes = widenPostalAreaSupportIndexSignature(toolTypes);
@@ -3610,7 +3662,10 @@ async function generateTypes() {
             widenPostalAreaSupportIndexSignature(
               fixTypedIndexSignatures(
                 applyKnownJstsAliases(
-                  namePostalAreaCountryBranch(removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes)))
+                  nameGetProductsRejectedStatus(
+                    namePostalAreaCountryBranch(removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))),
+                    true
+                  )
                 )
               )
             )
@@ -3668,4 +3723,4 @@ if (require.main === module) {
   })();
 }
 
-export { generateTypes };
+export { generateTypes, nameGetProductsRejectedStatus };
