@@ -78,11 +78,10 @@ test('generated types maintain strict schema enforcement', () => {
   // - CatalogFieldMapping and CatalogFieldBinding are now clean interfaces/unions, not intersections
   // - Remaining ~42 signatures are protocol-mandated context fields + asset metadata
   //
-  // Reduced from 1050 to 30 after fully regenerating AdCP 3.2 types through
-  // enforceStrictSchema. Named open objects remain forward-compatible at
-  // runtime without acquiring source-incompatible TypeScript index
-  // signatures. The remaining signatures are explicit opaque maps such as
-  // ExtensionObject and protocol-mandated echo/context values.
+  // Reduced from 1050 to 0 after fully regenerating AdCP 3.2 tool types
+  // through enforceStrictSchema. Named open objects remain forward-compatible
+  // at runtime without acquiring source-incompatible TypeScript index
+  // signatures; intentional opaque maps are canonicalized outside this file.
   const MAX_ALLOWED = 0;
 
   console.log(`📊 Type strictness metrics:`);
