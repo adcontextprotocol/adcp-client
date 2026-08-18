@@ -23,7 +23,7 @@
  * match the security doc.
  */
 
-import { buildSignatureBase, canonicalTargetUri, getHeaderValue, type RequestLike } from './canonicalize';
+import { buildSignatureBase, canonicalTargetUri, getHeaderValue } from './canonicalize';
 import { contentDigestMatches } from './content-digest';
 import { RequestSignatureError, WebhookSignatureError } from './errors';
 import { parseSignature, parseSignatureInput, type ParsedSignatureInput } from './parser';
@@ -34,6 +34,14 @@ import { InMemoryRevocationStore, type RevocationStore } from './revocation';
 import { ALLOWED_ALGS, CLOCK_SKEW_TOLERANCE_SECONDS, MAX_SIGNATURE_WINDOW_SECONDS } from './types';
 
 export const WEBHOOK_SIGNING_TAG = 'adcp/webhook-signing/v1';
+
+/** Receiver-side request shape; body may be the exact undecoded wire bytes. */
+export interface WebhookRequestLike {
+  method: string;
+  url: string;
+  headers: Record<string, string | string[] | undefined>;
+  body?: string | Uint8Array;
+}
 
 /**
  * Covered-component minimum for webhooks. Unlike request-signing, every
@@ -88,7 +96,7 @@ export interface VerifyWebhookResult {
  * entry, so external traffic can't grow the per-keyid cache.
  */
 export async function verifyWebhookSignature(
-  request: RequestLike,
+  request: WebhookRequestLike,
   options: VerifyWebhookOptions
 ): Promise<VerifyWebhookResult> {
   const now = options.now ? options.now() : Math.floor(Date.now() / 1000);
@@ -246,7 +254,7 @@ export async function verifyWebhookSignature(
   // Step 10: cryptographic verify.
   const base = buildSignatureBase(
     parsedInput.components,
-    request,
+    { method: request.method, url: request.url, headers: request.headers },
     parsedInput.params,
     parsedInput.signatureParamsValue
   );
@@ -374,7 +382,7 @@ function validateTargetUri(rawUrl: string): void {
       `@target-uri "${rawUrl}" is not a parseable URL.`
     );
   }
-  if (url.protocol !== 'https:' && !isLoopbackHost(url.hostname)) {
+  if (url.protocol !== 'https:' && !isWebhookLoopbackHost(url.hostname)) {
     throw new WebhookSignatureError(
       'webhook_target_uri_malformed',
       6,
@@ -406,7 +414,7 @@ function validateTargetUri(rawUrl: string): void {
 // before this sees them. No octet-range check is needed (or reachable).
 const LOOPBACK_IPV4 = /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 
-function isLoopbackHost(hostname: string): boolean {
+export function isWebhookLoopbackHost(hostname: string): boolean {
   if (!hostname) return false;
   // Node's `URL.hostname` keeps IPv6 literals bracketed; a FQDN keeps its dot.
   const normalized = hostname.toLowerCase().replace(/\.$/, '');
@@ -462,11 +470,11 @@ export interface CreateWebhookVerifierOptions extends Omit<VerifyWebhookOptions,
  */
 export function createWebhookVerifier(
   options: CreateWebhookVerifierOptions
-): (request: RequestLike) => Promise<VerifyWebhookResult> {
+): (request: WebhookRequestLike) => Promise<VerifyWebhookResult> {
   // Instantiate defaults once at creation time so every request handled by
   // this verifier shares the same replay / revocation state. Per-request
   // construction would defeat replay detection entirely.
   const replayStore = options.replayStore ?? new InMemoryReplayStore();
   const revocationStore = options.revocationStore ?? new InMemoryRevocationStore();
-  return (request: RequestLike) => verifyWebhookSignature(request, { ...options, replayStore, revocationStore });
+  return (request: WebhookRequestLike) => verifyWebhookSignature(request, { ...options, replayStore, revocationStore });
 }

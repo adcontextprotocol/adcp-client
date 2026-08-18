@@ -24,6 +24,7 @@ import {
   type SingleAgentClientConfig,
   type SyncCreativesTaskOptions,
   type VerifyAndParseWebhookOptions,
+  type WebhookHandlerAdapter,
   type WebhookParseResult,
 } from './SingleAgentClient';
 import type { InputHandler, TaskOptions, TaskResult, TaskInfo, Message } from './ConversationTypes';
@@ -577,6 +578,11 @@ export class AgentClient {
    */
   async verifyAndParseWebhook(options: VerifyAndParseWebhookOptions): Promise<WebhookParseResult> {
     return this.client.verifyAndParseWebhook(options);
+  }
+
+  /** Create a trusted-route HTTP receiver for this specific agent. */
+  createWebhookHandler(adapter: WebhookHandlerAdapter = {}) {
+    return this.client.createWebhookHandler(adapter);
   }
 
   /**
