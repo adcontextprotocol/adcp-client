@@ -202,6 +202,7 @@ describe('request-signing: runner dispatch against reference verifier', () => {
   test('probe dispatch grades a positive vector with 2xx + empty WWW-Authenticate', async () => {
     const result = await probeRequestSigningVector('positive-001-basic-post', instance.url, {
       allow_http: true,
+      request_signing: { transport: 'raw' },
     });
     assert.ok(!result.error, `probe error: ${result.error}`);
     assert.ok(result.status >= 200 && result.status < 300, `status ${result.status}`);
@@ -213,6 +214,7 @@ describe('request-signing: runner dispatch against reference verifier', () => {
     try {
       const result = await probeRequestSigningVector('negative-002-wrong-tag', fresh.url, {
         allow_http: true,
+        request_signing: { transport: 'raw' },
       });
       assert.ok(!result.error, `probe error: ${result.error}`);
       assert.strictEqual(result.status, 401);
@@ -286,6 +288,7 @@ describe('request-signing: runner dispatch against reference verifier', () => {
       const result = await runStoryboardStep(fresh.url, storyboard, 'positive-001-basic-post', {
         allow_http: true,
         _client: {}, // bypass MCP profile discovery — probe tasks don't touch the client
+        request_signing: { transport: 'raw' },
       });
       assert.strictEqual(result.passed, true, `step should pass: ${result.error}`);
       assert.strictEqual(result.response.status, 200);
@@ -341,6 +344,7 @@ describe('request-signing: runner dispatch against reference verifier', () => {
     try {
       const result = await probeRequestSigningVector('negative-007-missing-content-digest', fresh.url, {
         allow_http: true,
+        request_signing: { transport: 'raw' },
       });
       assert.ok(result.error, 'grader mismatch surfaces as probe error');
       assert.ok(/expected 401/.test(result.error), `diagnostic: ${result.error}`);
