@@ -285,7 +285,12 @@ const BUILTIN_IDENTIFIERS = new Set([
   'ReferenceError',
   // Utility types.
   'Partial',
-  'Required',
+  // Do not add `Required` here: AdCP 3.2 exports a protocol type named
+  // `Required = true` for targeting-overlay requirement flags. The generated
+  // declarations currently do not use TypeScript's `Required<T>` utility, so
+  // treating the identifier as a built-in drops the protocol declaration from
+  // narrow per-tool slices and makes bare `Required` references resolve to the
+  // generic utility with a missing type argument.
   'Readonly',
   'Pick',
   'Omit',
@@ -571,4 +576,4 @@ if (require.main === module) {
   main();
 }
 
-export const __test__ = { stripComments, shouldWarnOnExportCollision };
+export const __test__ = { stripComments, shouldWarnOnExportCollision, closure };
