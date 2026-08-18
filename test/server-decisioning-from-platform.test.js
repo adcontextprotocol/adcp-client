@@ -7112,6 +7112,74 @@ describe('createAdcpServerFromPlatform — default resolveIdempotencyPrincipal',
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
     assert.strictEqual(result.structuredContent.media_buy_id, 'mb_1');
   });
+
+  it('preserves the SDK 13 principal for established tools and namespaces compact mutations', async () => {
+    const seenPrincipals = [];
+    const backingStore = createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) });
+    const idempotency = {
+      ...backingStore,
+      check: async params => {
+        seenPrincipals.push({ key: params.key, principal: params.principal });
+        return backingStore.check(params);
+      },
+    };
+    const base = basePlatform();
+    const server = createAdcpServerFromPlatform(
+      {
+        ...base,
+        mediaBuyLifecycle: {
+          declineProposals: async () => ({ results: [] }),
+        },
+      },
+      {
+        name: 'principal-compat',
+        version: '0.0.1',
+        adcpVersion: '3.2.0-beta.0',
+        idempotency,
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+    const context = {
+      authInfo: {
+        clientId: 'sdk-13-buyer',
+        credential: { kind: 'api_key', key_id: 'sdk-14-key' },
+      },
+    };
+
+    await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'create_media_buy',
+          arguments: {
+            account: { account_id: 'acc_1' },
+            packages: [],
+            idempotency_key: 'legacy-principal-key-0001',
+          },
+        },
+      },
+      context
+    );
+    await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'decline_proposals',
+          arguments: {
+            account: { account_id: 'acc_1' },
+            declines: [],
+            idempotency_key: 'compact-principal-key-001',
+          },
+        },
+      },
+      context
+    );
+
+    assert.deepStrictEqual(seenPrincipals, [
+      { key: 'legacy-principal-key-0001', principal: 'sdk-13-buyer' },
+      { key: 'compact-principal-key-001', principal: 'api_key:sdk-14-key' },
+    ]);
+  });
 });
 
 // Regression test for #1886: createAdcpServerFromPlatform did not forward

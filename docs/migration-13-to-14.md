@@ -46,8 +46,17 @@ by their other commercial mutations.
 
 SDK 14 also hardens replay-cache isolation by including the tool and trusted
 resolved session/account identity in canonical replay identity. Existing-tool
-cache keys retain their SDK 13 scope so an older durable entry cannot be
-missed and executed twice. Because SDK 14's stronger payload identity differs,
+cache keys retain both their SDK 13 scope and bare `authInfo.clientId`
+principal format, so an older durable entry cannot be missed and executed
+twice during a rolling upgrade. The new 3.2 compact mutation tools instead use
+credential-kind-prefixed principals such as `oauth:<client_id>`,
+`api_key:<key_id>`, or `agent:<agent_url>` and do not fall back to session or
+account identity. Those tools have no SDK 13 cache entries to migrate.
+
+If you supply `resolveIdempotencyPrincipal`, your resolver remains
+authoritative for both established and compact tools; keep its output stable
+across the deployment or deliberately dual-read/migrate your backing store.
+Because SDK 14's stronger payload identity differs,
 a retry against an SDK 13 entry returns `IDEMPOTENCY_CONFLICT` instead of the
 old cached body; reconcile by natural key rather than minting a replacement
 key until the original replay TTL expires. New entries cannot replay a body

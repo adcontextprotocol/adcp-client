@@ -2474,8 +2474,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   }
 
   // Construction-time warn: when the default `resolveIdempotencyPrincipal`
-  // is used (no explicit hook), the chain falls through:
+  // is used (no explicit hook), established tools retain the SDK 13 chain:
   //   ctx.authInfo.clientId → ctx.sessionKey → ctx.account.id → undefined
+  // Compact media-buy mutations instead require a stable authenticated
+  // principal below; they never fall through to session/account identity.
   // The `account.id` fallback collapses unauthenticated buyers into one
   // shared idempotency namespace per account — fine for single-tenant
   // deployments where every buyer authenticates, dangerous for multi-
@@ -2536,19 +2538,19 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // Pool-derived stores override the spread above when adopters supplied
     // `pool` but no explicit per-store opt. Explicit values still win.
     ...(effectiveIdempotency !== undefined && { idempotency: effectiveIdempotency }),
-    // v6 default principal resolver: every mutating tool requires an
-    // idempotency principal (the v5 createAdcpServer surface returns
-    // SERVICE_UNAVAILABLE when one isn't wired). v6 platform adopters
-    // who skip the explicit hook get a sensible default — auth client
-    // id when present (multi-tenant: each buyer owns its own
-    // idempotency namespace), else session key, else account id
-    // (single-tenant fallback). Adopters override by passing
-    // resolveIdempotencyPrincipal in opts; the spread above keeps
-    // explicit values winning. Closed by the Emma matrix surfacing
-    // SERVICE_UNAVAILABLE on every v6 mutating call.
+    // Preserve the SDK 13 principal namespace for established tools so a
+    // retry spanning a rolling 13→14 deployment still finds its durable
+    // idempotency entry. The new compact lifecycle uses credential-kind
+    // namespacing and refuses session/account fallbacks, preventing
+    // cross-credential collisions without reopening a duplicate-buy window
+    // on create_media_buy/update_media_buy. Explicit adopter resolvers still
+    // win for every tool.
     resolveIdempotencyPrincipal:
       opts.resolveIdempotencyPrincipal ??
-      (ctx => authenticatedPrincipalFor(ctx) ?? ctx.sessionKey ?? ctx.account?.id ?? undefined),
+      ((ctx, _params, toolName) =>
+        COMPACT_MEDIA_BUY_MUTATION_TOOL_NAMES.has(toolName)
+          ? authenticatedPrincipalFor(ctx)
+          : (ctx.authInfo?.clientId ?? ctx.sessionKey ?? ctx.account?.id ?? undefined)),
     resolveAccount: async (ref, ctx) => {
       const start = Date.now();
       let resolved = false;
@@ -4075,6 +4077,15 @@ function authenticatedPrincipalFor(ctx: HandlerContext<Account>): string | undef
   }
   return undefined;
 }
+
+const COMPACT_MEDIA_BUY_MUTATION_TOOL_NAMES = new Set([
+  'request_proposals',
+  'refine_proposals',
+  'decline_proposals',
+  'buy_products',
+  'accept_proposal',
+  'control_media_buy',
+]);
 
 function hasPushNotificationConfig(params: unknown): boolean {
   return (
