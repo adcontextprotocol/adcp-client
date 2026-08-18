@@ -7,7 +7,7 @@ import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
 import { parseAdcpMajorVersion, type AdcpVersion } from '../version';
 import { isAdcpVersionSupported, isPre31AdcpVersion, resolveAdcpVersion } from '../utils/adcp-version-config';
 import { getVersionAdapter, resolveAdapterKey } from '../adapters/version';
-import { schemaAllowsTopLevelField } from '../validation/schema-loader';
+import { isExternalSchemaRootActive, schemaAllowsTopLevelField } from '../validation/schema-loader';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -3301,8 +3301,14 @@ export class SingleAgentClient {
     // absent and Zod would fail on it too. This matches the pre-existing
     // `skipIdempotencyAutoInject` behavior and is acceptable because both
     // flags are @internal and only set by the storyboard runner for
-    // schema_validation steps.
-    if (!options?.skipIdempotencyAutoInject && !options?.skipAccountValidation) {
+    // schema_validation steps. An explicit external schema root also skips
+    // this generated snapshot; TaskExecutor's AJV pass below validates the
+    // same request against the caller-supplied current-source bundle.
+    if (
+      !options?.skipIdempotencyAutoInject &&
+      !options?.skipAccountValidation &&
+      !isExternalSchemaRootActive(this.resolvedAdcpVersion)
+    ) {
       this.validateRequest(taskType, normalizedParams);
     }
 
@@ -5003,7 +5009,9 @@ export class SingleAgentClient {
     ) {
       normalizedParams = { ...normalizedParams, idempotency_key: generateIdempotencyKey() };
     }
-    this.validateRequest(taskType, normalizedParams);
+    if (!isExternalSchemaRootActive(this.resolvedAdcpVersion)) {
+      this.validateRequest(taskType, normalizedParams);
+    }
   }
 
   /**

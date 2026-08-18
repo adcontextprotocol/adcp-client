@@ -53,6 +53,23 @@ function writeGetProductsRequestSchema(schemaRoot, idVersion, sentinel = 'extern
   );
 }
 
+function writeListCreativesRequestSchema(schemaRoot, idVersion) {
+  fs.mkdirSync(path.join(schemaRoot, 'bundled', 'creative'), { recursive: true });
+  fs.writeFileSync(
+    path.join(schemaRoot, 'bundled', 'creative', 'list-creatives-request.json'),
+    JSON.stringify({
+      $schema: 'http://json-schema.org/draft-07/schema#',
+      $id: `/schemas/${idVersion}/bundled/creative/list-creatives-request.json`,
+      type: 'object',
+      properties: {
+        fields: { type: 'array', items: { enum: ['assets'] } },
+      },
+      required: ['fields'],
+      additionalProperties: true,
+    })
+  );
+}
+
 function writeComplyControllerAsyncRefSchemas(schemaRoot, idVersion) {
   fs.mkdirSync(path.join(schemaRoot, 'compliance'), { recursive: true });
   fs.mkdirSync(path.join(schemaRoot, 'core'), { recursive: true });
@@ -749,6 +766,86 @@ describe('storyboard runner AdCP version negotiation', () => {
     }
   });
 
+  test('latest schema ids and same-change request fields work through the public storyboard runner', async () => {
+    const { createTestClient } = require('../../dist/lib/testing/client.js');
+    const { runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner.js');
+
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-latest-current-source-request-'));
+    const schemaRoot = path.join(tempRoot, 'dist', 'schemas', 'latest');
+    writeSchemaIndex(schemaRoot, CURRENT_PRERELEASE_VERSION);
+    writeListCreativesRequestSchema(schemaRoot, 'latest');
+
+    const agent = {
+      id: 'current-source-request-agent',
+      name: 'Current source request agent',
+      agent_uri: 'https://stub.example/mcp',
+      protocol: 'mcp',
+    };
+    const client = createTestClient(agent.agent_uri, 'mcp', {
+      adcpVersion: CURRENT_PRERELEASE_VERSION,
+      versionEnvelope: 'auto',
+    });
+    const innerClient = client.client;
+    let capturedRequest;
+    innerClient.ensureEndpointDiscovered = async () => agent;
+    innerClient.detectServerVersion = async () => 'v3';
+    innerClient.validateTaskFeatures = async () => {};
+    innerClient.executor.executeTask = async (_agent, taskName, params) => {
+      capturedRequest = params;
+      return {
+        success: true,
+        status: 'completed',
+        data: {
+          status: 'completed',
+          creatives: [],
+          query_summary: {},
+          pagination: { total: 0, offset: 0, limit: 50, has_more: false },
+        },
+        metadata: {},
+      };
+    };
+
+    const storyboard = {
+      id: 'current_source_request',
+      version: '1.0.0',
+      adcp_version: CURRENT_PRERELEASE_VERSION,
+      title: 'Current-source request',
+      category: 'test',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: 'sync', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      phases: [
+        {
+          id: 'creative',
+          title: 'Creative',
+          steps: [
+            {
+              id: 'list',
+              title: 'List creatives with a same-change field value',
+              task: 'list_creatives',
+              sample_request: { fields: ['assets'] },
+            },
+          ],
+        },
+      ],
+    };
+
+    try {
+      const result = await runStoryboardStep('https://stub.example/mcp', storyboard, 'list', {
+        protocol: 'mcp',
+        schemaRoot,
+        _client: client,
+        _profile: { name: agent.name, tools: ['list_creatives'], raw_capabilities: {} },
+      });
+
+      assert.strictEqual(result.passed, true, result.error);
+      assert.deepStrictEqual(capturedRequest.fields, ['assets']);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test('latest compliance metadata can be repaired from published_version', () => {
     const { loadComplianceIndex } = require('../../dist/lib/testing/storyboard/index.js');
 
@@ -969,6 +1066,14 @@ describe('storyboard runner AdCP version negotiation', () => {
       assert.throws(
         () => withExternalSchemaRoot('3.0.12', wrongSchemaRoot, () => {}),
         new RegExp(`does not match the requested version.*${CURRENT_PRERELEASE_VERSION.replaceAll('.', '\\.')}`)
+      );
+
+      const mismatchedLatestRoot = path.join(tempRoot, 'schema-bundles', 'latest');
+      writeSchemaIndex(mismatchedLatestRoot, CURRENT_PRERELEASE_VERSION);
+      writeGetProductsRequestSchema(mismatchedLatestRoot, 'latest');
+      assert.throws(
+        () => withExternalSchemaRoot('3.0.12', mismatchedLatestRoot, () => {}),
+        /does not match the requested version.*"latest" ids pinned by a matching root index/
       );
     } finally {
       _resetValidationLoader('3.0.12');

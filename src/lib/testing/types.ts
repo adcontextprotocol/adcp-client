@@ -105,7 +105,8 @@ export interface TestOptions {
   /**
    * External schema bundle root used for request/response validation during
    * storyboard and compliance runs. The root is registered against
-   * `adcpVersion` (or the storyboard/compliance version when omitted).
+   * `adcpVersion` (or the storyboard/compliance version when omitted) and is
+   * authoritative over the SDK's generated Zod snapshot for the run.
    */
   schemaRoot?: string;
   /** Custom User-Agent string sent with all outbound requests */

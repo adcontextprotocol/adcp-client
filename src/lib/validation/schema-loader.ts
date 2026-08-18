@@ -439,13 +439,37 @@ function collectSchemaRootVersionAliasGroups(root: string): Array<{ hint: string
   return groups;
 }
 
+function readSchemaRootDeclaredVersion(root: string): string | undefined {
+  const candidates = [path.join(root, 'index.json')];
+  if (path.basename(root) === 'bundled') candidates.push(path.join(path.dirname(root), 'index.json'));
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue;
+    try {
+      const index = loadJson(candidate);
+      if (typeof index.adcp_version === 'string' && index.adcp_version !== 'latest') {
+        return index.adcp_version;
+      }
+    } catch {
+      // The normal mismatch error below carries the actionable root/version context.
+    }
+  }
+  return undefined;
+}
+
 function assertSchemaRootMatchesVersion(version: string, root: string): Set<string> {
   const expectedAliases = schemaRootVersionAliases(version);
   const rootGroups = collectSchemaRootVersionAliasGroups(root);
   const rootAliases = collectSchemaRootVersionAliases(root);
+  const declaredVersion = readSchemaRootDeclaredVersion(root);
+  const declaredAliases = declaredVersion ? schemaRootVersionAliases(declaredVersion) : new Set<string>();
+  const latestIsPinnedByIndex = [...declaredAliases].some(alias => expectedAliases.has(alias));
   if (
     rootGroups.length > 0 &&
-    rootGroups.every(group => [...group.aliases].some(alias => expectedAliases.has(alias)))
+    rootGroups.every(
+      group =>
+        [...group.aliases].some(alias => expectedAliases.has(alias)) ||
+        (group.hint === 'latest' && latestIsPinnedByIndex)
+    )
   ) {
     return new Set([...expectedAliases, ...rootAliases]);
   }
@@ -458,7 +482,8 @@ function assertSchemaRootMatchesVersion(version: string, root: string): Set<stri
           .join(', ');
   throw new Error(
     `External AdCP schema root for version "${version}" at ${root} does not match the requested version and ` +
-      `must contain only schema ids matching ${Array.from(expectedAliases).sort().join(', ')}; found ${found}.`
+      `must contain only schema ids matching ${Array.from(expectedAliases).sort().join(', ')}, or "latest" ids ` +
+      `pinned by a matching root index.json adcp_version; found ${found}.`
   );
 }
 
@@ -524,6 +549,25 @@ export function withExternalSchemaRoot<T>(version: string, root: string | undefi
     clearStatesForBundle(alias);
   }
   return scopedExternalSchemaRoots.run(next, fn);
+}
+
+/**
+ * Return whether validation for `version` currently resolves through a
+ * caller-supplied schema bundle rather than the SDK's packaged snapshot.
+ *
+ * Storyboard validation uses this to make an explicit external JSON Schema
+ * bundle authoritative. Without that distinction, the runner can validate a
+ * response successfully with the supplied bundle and then fail the same
+ * response against the older generated Zod schemas compiled into the SDK.
+ *
+ * @internal — not part of the public API surface; may change without a major bump.
+ */
+export function isExternalSchemaRootActive(version: string): boolean {
+  const key = resolveBundleKey(version);
+  const scopedRoot = scopedExternalSchemaRoots.getStore()?.get(key);
+  if (scopedRoot && existsSync(scopedRoot)) return true;
+  const registeredRoot = externalSchemaRoots.get(key);
+  return registeredRoot !== undefined && existsSync(registeredRoot);
 }
 
 function walkJsonFiles(dir: string): string[] {

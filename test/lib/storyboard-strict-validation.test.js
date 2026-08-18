@@ -1,8 +1,9 @@
 /**
  * Strict/lenient response-schema validation + run-level aggregation (issue
  * #820, fourth proposal). `runValidations` must attach an AJV-based strict
- * verdict to every `response_schema` ValidationResult without flipping the
- * step's pass/fail (which stays Zod-driven for backwards compatibility).
+ * verdict to every `response_schema` ValidationResult. Packaged-cache runs
+ * stay Zod-driven for backwards compatibility; an explicit external schema
+ * root makes AJV authoritative for current-source validation.
  *
  * Tests hit the storyboard validation layer directly — `runValidations`
  * with a synthetic `ValidationContext`. No runner boot or network needed.
@@ -10,9 +11,28 @@
 
 const { describe, test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const { runValidations } = require('../../dist/lib/testing/storyboard/validations.js');
 const { summarizeStrictValidation, listStrictOnlyFailures } = require('../../dist/lib/testing/storyboard/runner.js');
+const { _resetValidationLoader, withExternalSchemaRoot } = require('../../dist/lib/validation/schema-loader.js');
+
+const EXTERNAL_VERSION = '9.9.0-beta.1';
+
+function writeExternalResponseSchema(root, toolName, schema) {
+  const bundled = path.join(root, 'bundled');
+  fs.mkdirSync(bundled, { recursive: true });
+  fs.writeFileSync(
+    path.join(bundled, `${toolName.replaceAll('_', '-')}-response.json`),
+    JSON.stringify({
+      $schema: 'http://json-schema.org/draft-07/schema#',
+      $id: `/schemas/${EXTERNAL_VERSION}/test/${toolName.replaceAll('_', '-')}-response.json`,
+      ...schema,
+    })
+  );
+}
 
 function ctx(taskName, data, responseSchemaRef) {
   return {
@@ -29,6 +49,113 @@ function ctxWith(taskName, data, responseSchemaRef, extra) {
 }
 
 describe('storyboard validations: strict/lenient response_schema delta', () => {
+  test('external schemaRoot accepts current-source responses rejected by packaged Zod', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-external-authority-'));
+    try {
+      writeExternalResponseSchema(root, 'list_creative_formats', {
+        type: 'object',
+        required: ['current_source_marker'],
+        properties: { current_source_marker: { const: true } },
+        additionalProperties: false,
+      });
+
+      const [result] = withExternalSchemaRoot(EXTERNAL_VERSION, root, () =>
+        runValidations(
+          [{ check: 'response_schema', description: 'response conforms to current source' }],
+          ctxWith('list_creative_formats', { current_source_marker: true }, 'test/list-response.json', {
+            adcpVersion: EXTERNAL_VERSION,
+          })
+        )
+      );
+
+      assert.strictEqual(result.passed, true, result.error);
+      assert.strictEqual(result.strict.valid, true);
+      assert.strictEqual(result.strict.lenient_valid, false);
+      assert.match(result.schema_id, new RegExp(`/schemas/${EXTERNAL_VERSION.replaceAll('.', '\\.')}/`));
+    } finally {
+      _resetValidationLoader(EXTERNAL_VERSION);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('external schemaRoot rejects packaged-Zod responses that current source disallows', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-external-authority-'));
+    try {
+      writeExternalResponseSchema(root, 'list_creative_formats', {
+        type: 'object',
+        required: ['current_source_marker'],
+        properties: { current_source_marker: { const: true } },
+        additionalProperties: false,
+      });
+
+      const [result] = withExternalSchemaRoot(EXTERNAL_VERSION, root, () =>
+        runValidations(
+          [{ check: 'response_schema', description: 'response conforms to current source' }],
+          ctxWith('list_creative_formats', { formats: [] }, 'test/list-response.json', {
+            adcpVersion: EXTERNAL_VERSION,
+          })
+        )
+      );
+
+      assert.strictEqual(result.passed, false);
+      assert.strictEqual(result.strict.valid, false);
+      assert.strictEqual(result.strict.lenient_valid, true);
+      assert.ok(result.actual.some(issue => issue.keyword === 'required'));
+
+      const summary = summarizeStrictValidation([
+        { phase_id: 'external', steps: [{ step_id: 'reject', task: 'list_creative_formats', validations: [result] }] },
+      ]);
+      assert.strictEqual(summary.strict_only_failures, 1);
+      assert.strictEqual(summary.lenient_also_failed, 0);
+    } finally {
+      _resetValidationLoader(EXTERNAL_VERSION);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('external schemaRoot validates tools absent from the packaged Zod map', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-external-authority-'));
+    try {
+      writeExternalResponseSchema(root, 'future_protocol_tool', {
+        type: 'object',
+        required: ['future_value'],
+        properties: { future_value: { type: 'string' } },
+        additionalProperties: false,
+      });
+
+      const [result] = withExternalSchemaRoot(EXTERNAL_VERSION, root, () =>
+        runValidations(
+          [{ check: 'response_schema', description: 'future tool response conforms' }],
+          ctxWith('future_protocol_tool', { future_value: 'same-change' }, 'test/future-tool-response.json', {
+            adcpVersion: EXTERNAL_VERSION,
+          })
+        )
+      );
+
+      assert.strictEqual(result.passed, true, result.error);
+      assert.strictEqual(result.strict.valid, true);
+      assert.strictEqual(result.strict.lenient_valid, null);
+
+      const [rejected] = withExternalSchemaRoot(EXTERNAL_VERSION, root, () =>
+        runValidations(
+          [{ check: 'response_schema', description: 'future tool response conforms' }],
+          ctxWith('future_protocol_tool', { future_value: 42 }, 'test/future-tool-response.json', {
+            adcpVersion: EXTERNAL_VERSION,
+          })
+        )
+      );
+      const summary = summarizeStrictValidation([
+        { phase_id: 'external', steps: [{ step_id: 'future', task: 'future_protocol_tool', validations: [rejected] }] },
+      ]);
+      assert.strictEqual(summary.strict_only_failures, 0);
+      assert.strictEqual(summary.lenient_also_failed, 0);
+      assert.strictEqual(summary.lenient_unobserved, 1);
+    } finally {
+      _resetValidationLoader(EXTERNAL_VERSION);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('clean response: strict.valid=true, passed=true, no issues emitted', () => {
     // Minimal valid list_creative_formats response — `formats` is the only
     // required field at the root; an empty array satisfies both Zod and AJV.

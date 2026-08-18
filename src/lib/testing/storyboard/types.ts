@@ -2403,25 +2403,31 @@ export interface ValidationResult {
   /**
    * Issue #820 follow-up — strict JSON-schema (AJV) verdict for
    * `response_schema` checks. `passed` remains the lenient Zod outcome
-   * (runner's historical pass/fail semantics); `strict` carries the
-   * AJV-with-formats-and-additionalProperties verdict separately so
-   * agent developers can see the strict/lenient delta without the
-   * runner failing a step that the Zod path accepts. Absent on non-
-   * response_schema checks or when no AJV schema is available.
+   * (runner's historical packaged-cache semantics); `strict` carries the
+   * AJV-with-formats-and-additionalProperties verdict separately so agent
+   * developers can see the strict/lenient delta. When the run supplies an
+   * external `schemaRoot`, its AJV verdict is authoritative and may drive
+   * `passed`. Absent on non-response_schema checks or when no AJV schema is
+   * available.
    */
   strict?: StrictValidationVerdict;
 }
 
 /**
  * Strict (AJV JSON-schema) verdict attached to a response_schema
- * validation result. Informational — the step's pass/fail is driven by
- * the lenient Zod path. `valid: false` with `valid_lenient: true`
- * indicates the strict/lenient delta: the agent's response passes the
- * generated Zod shape but fails strict JSON-schema (typically a
- * `format` violation or an `additionalProperties: false` breach).
+ * validation result. Informational for packaged-cache runs, where step
+ * pass/fail remains driven by the lenient Zod path. Authoritative for runs
+ * with an external `schemaRoot`, so current protocol source is not gated by
+ * the SDK's generated Zod snapshot.
  */
 export interface StrictValidationVerdict {
   valid: boolean;
+  /**
+   * Outcome from the SDK's packaged Zod snapshot, captured only as a
+   * comparison signal. `null` means that snapshot has no schema for the tool.
+   * External-schema runs never use this field to decide pass/fail.
+   */
+  lenient_valid?: boolean | null;
   /** Response variant AJV ultimately validated against. After fallback: `"sync"`. */
   variant: string;
   /** Concrete AJV issues (RFC 6901 pointers) when `valid: false`. Absent when valid. */
@@ -3132,11 +3138,17 @@ export interface StrictValidationSummary {
   /**
    * Count of validations where BOTH lenient Zod AND strict AJV rejected —
    * the step already failed under today's semantics, so strict rejection
-   * isn't new signal. Equals `failed - strict_only_failures`. Useful for
-   * dashboards that want to distinguish "already-failing" from
-   * "silently-failing" in the same run.
+   * isn't new signal. Useful for dashboards that want to distinguish
+   * "already-failing" from "silently-failing" in the same run. Strict
+   * failures without a packaged Zod comparator are reported separately as
+   * `lenient_unobserved`.
    */
   lenient_also_failed: number;
+  /**
+   * Strict AJV failures for tools with no packaged Zod schema to compare.
+   * Present only when non-zero so older serialized summaries remain stable.
+   */
+  lenient_unobserved?: number;
 }
 
 /**

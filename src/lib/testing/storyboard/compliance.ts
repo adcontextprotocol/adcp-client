@@ -174,7 +174,10 @@ export interface ResolveOptions {
   /**
    * Explicit schema bundle root to use with the selected compliance cache.
    * The path must point at the schema-data directory for the cache version,
-   * for example `.../dist/lib/schemas-data/3.0`.
+   * for example `.../dist/lib/schemas-data/3.0`. During storyboard runs this
+   * external JSON Schema bundle is authoritative for request/response
+   * validation, including tools or fields newer than the SDK's generated Zod
+   * snapshot.
    */
   schemaRoot?: string;
   /**

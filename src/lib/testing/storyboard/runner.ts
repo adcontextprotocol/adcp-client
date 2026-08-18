@@ -33,6 +33,7 @@ import { detectStrictValidationHints } from './strict-validation-hints';
 import {
   runValidations,
   decorateValidationResult,
+  isExternalResponseSchemaAuthoritative,
   validationFailsStep,
   RUNNER_CAPABILITY_VERSION,
   type ValidationContext,
@@ -4143,6 +4144,7 @@ function collectSchemasUsed(phases: StoryboardPhaseResult[]): Array<{ schema_id:
  * production-readiness gap.
  * `lenient_also_failed` = #(lenient-fail ∧ strict-fail) — step already
  * broken, strict-rejection isn't new signal.
+ * `lenient_unobserved` = #(no packaged Zod comparator ∧ strict-fail).
  *
  * Exported so callers post-processing a `StoryboardResult` (dashboards,
  * CI formatters) can compute the same summary over a subset of phases
@@ -4180,7 +4182,8 @@ export function listStrictOnlyFailures(
         if (v.check !== 'response_schema') continue;
         if (v.strict === undefined) continue;
         if (v.strict.valid) continue;
-        if (!v.passed) continue; // already counted by lenient path
+        const lenientAccepted = v.strict.lenient_valid === true || (v.strict.lenient_valid === undefined && v.passed);
+        if (!lenientAccepted) continue;
         rows.push({
           phase_id: phase.phase_id,
           step_id: step.step_id,
@@ -4198,6 +4201,8 @@ export function summarizeStrictValidation(phases: StoryboardPhaseResult[]): Stri
   let checked = 0;
   let passed = 0;
   let strictOnlyFailures = 0;
+  let lenientAlsoFailed = 0;
+  let lenientUnobserved = 0;
   for (const phase of phases) {
     for (const step of phase.steps) {
       for (const v of step.validations) {
@@ -4205,10 +4210,17 @@ export function summarizeStrictValidation(phases: StoryboardPhaseResult[]): Stri
         checked++;
         if (v.strict.valid) {
           passed++;
-        } else if (v.passed) {
-          // Lenient Zod accepted this response; strict AJV rejected it.
-          // That's the agent's strictness gap — the signal #820 wants.
-          strictOnlyFailures++;
+        } else {
+          const lenientValid = v.strict.lenient_valid;
+          if (lenientValid === true || (lenientValid === undefined && v.passed)) {
+            // Lenient Zod accepted this response; strict AJV rejected it.
+            // That's the agent's strictness gap — the signal #820 wants.
+            strictOnlyFailures++;
+          } else if (lenientValid === false || lenientValid === undefined) {
+            lenientAlsoFailed++;
+          } else {
+            lenientUnobserved++;
+          }
         }
       }
     }
@@ -4220,7 +4232,8 @@ export function summarizeStrictValidation(phases: StoryboardPhaseResult[]): Stri
     passed,
     failed,
     strict_only_failures: strictOnlyFailures,
-    lenient_also_failed: failed - strictOnlyFailures,
+    lenient_also_failed: lenientAlsoFailed,
+    ...(lenientUnobserved > 0 && { lenient_unobserved: lenientUnobserved }),
   };
 }
 
@@ -5463,21 +5476,58 @@ async function executeStep(
       ...(validationTaskResult && { taskResult: validationTaskResult }),
       agentUrl: runState.agentUrl,
       contributions: runState.contributions,
+      ...(effectiveStep.response_schema_ref && { responseSchemaRef: effectiveStep.response_schema_ref }),
       request: requestRecord,
       ...(responseRecord && { response: responseRecord }),
     };
-    const decoratedCandidates = authoredSchemaValidations.map(validation =>
-      decorateValidationResult(baseSchemaResult, schemaValidationContext, validation)
-    );
-    const schemaResults = decoratedCandidates.length
-      ? decoratedCandidates
-      : [{ ...baseSchemaResult, severity: 'required' } satisfies ValidationResult];
-    schemaRejectionIsAdvisory = schemaResults.every(result => !validationFailsStep(result));
-    if (schemaRejectionIsAdvisory && !step.expect_error) passed = true;
-    // Prepend so extractFailures picks it up before any inline validation
-    // entry that may also be failing (e.g. `field_present` checks that
-    // legitimately can't observe their target against an unparsed payload).
-    validations = [...schemaResults, ...validations.filter(result => result.check !== 'response_schema')];
+    if (isExternalResponseSchemaAuthoritative(schemaValidationContext)) {
+      // The installed SDK's generated Zod snapshot can reject a response that
+      // the caller's current-source schemaRoot accepts. Re-grade the raw
+      // payload preserved on ResponseSchemaValidationError through that
+      // authoritative bundle instead of replacing its verdict with the stale
+      // packaged rejection.
+      const authoredExternalResults = validations.filter(result => result.check === 'response_schema');
+      const externalSchemaResults =
+        authoredExternalResults.length > 0
+          ? authoredExternalResults
+          : runValidations(
+              [
+                {
+                  check: 'response_schema',
+                  description: `Response schema validation for ${schemaValidationError.toolName}`,
+                },
+              ],
+              schemaValidationContext
+            );
+      const externalPayloadAccepted =
+        externalSchemaResults.length > 0 && externalSchemaResults.every(result => result.passed);
+      schemaRejectionIsAdvisory = externalSchemaResults.every(result => !validationFailsStep(result));
+      if (externalPayloadAccepted && validationTaskResult) {
+        taskResult = validationTaskResult;
+        passed = !step.expect_error;
+        responseRecord ??= {
+          transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
+          payload: redactSecrets(validationTaskResult.data),
+          duration_ms: stepResult.duration_ms,
+        };
+      } else if (schemaRejectionIsAdvisory && !step.expect_error) {
+        passed = true;
+      }
+      validations = [...externalSchemaResults, ...validations.filter(result => result.check !== 'response_schema')];
+    } else {
+      const decoratedCandidates = authoredSchemaValidations.map(validation =>
+        decorateValidationResult(baseSchemaResult, schemaValidationContext, validation)
+      );
+      const schemaResults = decoratedCandidates.length
+        ? decoratedCandidates
+        : [{ ...baseSchemaResult, severity: 'required' } satisfies ValidationResult];
+      schemaRejectionIsAdvisory = schemaResults.every(result => !validationFailsStep(result));
+      if (schemaRejectionIsAdvisory && !step.expect_error) passed = true;
+      // Prepend so extractFailures picks it up before any inline validation
+      // entry that may also be failing (e.g. `field_present` checks that
+      // legitimately can't observe their target against an unparsed payload).
+      validations = [...schemaResults, ...validations.filter(result => result.check !== 'response_schema')];
+    }
   }
 
   // Persist the captured A2A envelope keyed by step id so cross-step

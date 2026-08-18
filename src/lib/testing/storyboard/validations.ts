@@ -12,7 +12,7 @@ import { prepareResponseForSchemaValidation, TOOL_RESPONSE_SCHEMAS } from '../..
 import { injectLegacyEnvelopeStatus } from '../../utils/envelope-status-compat';
 import { TRANSPORT_SUFFIX_REGEX } from '../../utils/a2a-discovery';
 import { validateResponse, type ValidationIssue } from '../../validation/schema-validator';
-import { hasSchemaBundle } from '../../validation/schema-loader';
+import { hasSchemaBundle, isExternalSchemaRootActive } from '../../validation/schema-loader';
 import { ADCP_VERSION, LIBRARY_VERSION } from '../../version';
 import { isPre31AdcpVersion } from '../../utils/adcp-version-config';
 import { gte as semverGte, valid as validSemver } from 'semver';
@@ -441,10 +441,13 @@ const SCHEMA_URL_BASE = 'https://adcontextprotocol.org';
  * convention used by `$id` in cached JSON schemas; the url dereferences
  * against the public docs origin so implementors can fetch it.
  */
-function resolveSchemaIdentity(schemaRef: string | undefined): { schema_id: string | null; schema_url: string | null } {
+function resolveSchemaIdentity(
+  schemaRef: string | undefined,
+  adcpVersion: string = ADCP_VERSION
+): { schema_id: string | null; schema_url: string | null } {
   if (!schemaRef) return { schema_id: null, schema_url: null };
   const trimmed = schemaRef.replace(/^\/+/, '');
-  const schemaId = `/schemas/${ADCP_VERSION}/${trimmed}`;
+  const schemaId = `/schemas/${adcpVersion}/${trimmed}`;
   const schemaUrl = `${SCHEMA_URL_BASE}${schemaId}`;
   return { schema_id: schemaId, schema_url: schemaUrl };
 }
@@ -520,7 +523,7 @@ function mapZodIssueToSchemaKeyword(issue: { code: string; message: string }): s
 }
 
 // ────────────────────────────────────────────────────────────
-// response_schema: validate against Zod
+// response_schema: validate against the active schema authority
 // ────────────────────────────────────────────────────────────
 
 function validateResponseSchema(
@@ -529,52 +532,89 @@ function validateResponseSchema(
   taskResult: TaskResult
 ): ValidationResult {
   const taskName = ctx.taskName;
-  const { schema_id, schema_url } = resolveSchemaIdentity(ctx.responseSchemaRef);
-  const schema = TOOL_RESPONSE_SCHEMAS[taskName];
-  if (!schema) {
-    return {
-      check: 'response_schema',
-      passed: false,
-      description: validation.description,
-      error: `No schema registered for task "${taskName}"`,
-      json_pointer: null,
-      expected: schema_id ?? `response schema for ${taskName}`,
-      // The runner failed before observing the agent — distinguish that from
-      // "agent returned null" so implementors don't chase a phantom agent bug.
-      actual: { reason: 'no_schema_registered', task: taskName },
-      schema_id,
-      schema_url,
-    };
-  }
+  const schemaIdentityVersion = ctx.adcpVersion ?? ctx.responseAdcpVersion ?? ADCP_VERSION;
+  const { schema_id, schema_url } = resolveSchemaIdentity(ctx.responseSchemaRef, schemaIdentityVersion);
 
   // Keep the raw payload separately from the object-form one below so the
   // shape-drift detector can recognize bare-array responses (a common drift
   // pattern for list tools). Strip _message when it's a top-level property —
   // bare arrays don't carry that field.
-  const rawData = taskResult.data ?? {};
+  const rawData: unknown = taskResult.data ?? {};
   const dataWithoutMessage = Array.isArray(rawData)
     ? rawData
     : (() => {
         const { _message, ...rest } = rawData as Record<string, unknown>;
         return rest;
       })();
-  // 3.0.x back-compat: synthesize envelope `status` for legacy peers
-  // before validating against the 3.1 envelope schema. See
-  // `utils/envelope-status-compat.ts`.
+  const schema = TOOL_RESPONSE_SCHEMAS[taskName];
+  // Evaluate the packaged validator for diagnostics even when an external
+  // bundle is authoritative. Its result must never gate that run, but it lets
+  // strict-summary consumers distinguish an actual strict/lenient delta from
+  // a response that both schema sources reject.
   const dataForValidation = Array.isArray(dataWithoutMessage)
     ? dataWithoutMessage
     : injectLegacyEnvelopeStatus(dataWithoutMessage as Record<string, unknown>, { toolName: taskName });
   const responseAdcpVersion = ctx.responseAdcpVersion ?? ctx.adcpVersion;
-  const parseResult = schema.safeParse(
+  const parseResult = schema?.safeParse(
     prepareResponseForSchemaValidation(taskName, dataForValidation, responseAdcpVersion)
   );
+  const computedStrict = computeStrictVerdict(taskName, dataWithoutMessage, ctx.adcpVersion, ctx.responseAdcpVersion);
+  const strict = computedStrict ? { ...computedStrict, lenient_valid: parseResult?.success ?? null } : undefined;
+  const externalSchemaIsAuthoritative = isExternalResponseSchemaAuthoritative(ctx);
 
-  // Strict (AJV) verdict runs alongside the lenient Zod check so the run
-  // report surfaces strictness deltas (issue #820 follow-up). The AJV path
-  // enforces `format` keywords and `additionalProperties: false` that Zod's
-  // `passthrough()` omits — a response can pass Zod and fail AJV. The step's
-  // overall pass/fail stays Zod-driven to preserve backwards compatibility.
-  const strict = computeStrictVerdict(taskName, dataWithoutMessage, ctx.adcpVersion, ctx.responseAdcpVersion);
+  // An explicit schemaRoot represents current source that may be newer than
+  // this SDK package's generated Zod snapshot. In that mode the external JSON
+  // Schema bundle is the source of truth for both known tools and tools added
+  // by the external build.
+  if (externalSchemaIsAuthoritative) {
+    if (!strict) {
+      return noResponseSchemaResult(validation, taskName, schema_id, schema_url);
+    }
+    if (strict.valid) {
+      const base: ValidationResult = {
+        check: 'response_schema',
+        passed: true,
+        description: validation.description,
+        schema_id,
+        schema_url,
+        strict,
+      };
+      const warning = buildStrictWarning(strict);
+      return warning ? { ...base, warning } : base;
+    }
+
+    const issues = strict.issues ?? [];
+    const firstIssue = issues[0];
+    return {
+      check: 'response_schema',
+      passed: false,
+      description: validation.description,
+      error:
+        issues.length > 0
+          ? issues
+              .slice(0, 5)
+              .map(issue => `${issue.instance_path || '/'}: ${issue.message}`)
+              .join('; ')
+          : `External JSON Schema rejected the ${taskName} response`,
+      json_pointer: firstIssue?.instance_path || null,
+      expected: schema_id ?? `response schema for ${taskName}`,
+      actual: issues,
+      schema_id,
+      schema_url,
+      strict,
+    };
+  }
+
+  if (!schema) {
+    return noResponseSchemaResult(validation, taskName, schema_id, schema_url, strict);
+  }
+  // `schema` is present, so optional chaining above necessarily produced a
+  // packaged verdict.
+  if (!parseResult) return noResponseSchemaResult(validation, taskName, schema_id, schema_url, strict);
+
+  // Strict (AJV) verdict runs alongside the lenient Zod check so packaged-cache
+  // runs surface strictness deltas without changing their historical pass/fail.
+  // Explicit external bundles take the authoritative branch above instead.
 
   // Shape-drift no longer rides on `ValidationResult.warning` — issue #935
   // moved that diagnostic to `StoryboardStepResult.hints[]` as a structured
@@ -621,6 +661,48 @@ function validateResponseSchema(
   return strict ? { ...failed, strict } : failed;
 }
 
+/** @internal Shared with the storyboard runner's Zod-rejection recovery path. */
+export function isExternalResponseSchemaAuthoritative(
+  ctx: Pick<ValidationContext, 'adcpVersion' | 'responseAdcpVersion'>
+): boolean {
+  const validationVersion = responseSchemaValidationVersion(ctx.adcpVersion, ctx.responseAdcpVersion);
+  return validationVersion !== undefined && isExternalSchemaRootActive(validationVersion);
+}
+
+function responseSchemaValidationVersion(
+  adcpVersion: string | undefined,
+  responseAdcpVersion: string | undefined
+): string | undefined {
+  // An explicit external root belongs to the caller-selected protocol source
+  // and must win over a packaged stable wire alias advertised by the server.
+  // The server version still feeds compatibility preparation separately.
+  if (adcpVersion && isExternalSchemaRootActive(adcpVersion)) return adcpVersion;
+  return responseAdcpVersion && hasSchemaBundle(responseAdcpVersion) ? responseAdcpVersion : adcpVersion;
+}
+
+function noResponseSchemaResult(
+  validation: StoryboardValidation,
+  taskName: string,
+  schema_id: string | null,
+  schema_url: string | null,
+  strict?: StrictValidationVerdict
+): ValidationResult {
+  const result: ValidationResult = {
+    check: 'response_schema',
+    passed: false,
+    description: validation.description,
+    error: `No schema registered for task "${taskName}"`,
+    json_pointer: null,
+    expected: schema_id ?? `response schema for ${taskName}`,
+    // The runner failed before observing the agent — distinguish that from
+    // "agent returned null" so implementors don't chase a phantom agent bug.
+    actual: { reason: 'no_schema_registered', task: taskName },
+    schema_id,
+    schema_url,
+  };
+  return strict ? { ...result, strict } : result;
+}
+
 /**
  * Run the strict AJV validator for `taskName` against the response payload.
  * Returns undefined when no AJV schema is available (the client can't
@@ -634,9 +716,14 @@ function computeStrictVerdict(
   adcpVersion?: string,
   responseAdcpVersion?: string
 ): StrictValidationVerdict | undefined {
-  const validationVersion =
-    responseAdcpVersion && hasSchemaBundle(responseAdcpVersion) ? responseAdcpVersion : adcpVersion;
-  if (responseAdcpVersion && isPre31AdcpVersion(responseAdcpVersion) && !hasSchemaBundle(responseAdcpVersion)) {
+  const externalVersionSelected = adcpVersion !== undefined && isExternalSchemaRootActive(adcpVersion);
+  const validationVersion = responseSchemaValidationVersion(adcpVersion, responseAdcpVersion);
+  if (
+    !externalVersionSelected &&
+    responseAdcpVersion &&
+    isPre31AdcpVersion(responseAdcpVersion) &&
+    !hasSchemaBundle(responseAdcpVersion)
+  ) {
     return undefined;
   }
   const payloadForValidation = prepareResponseForSchemaValidation(taskName, payload, responseAdcpVersion);
