@@ -15,7 +15,14 @@ import type { Account, AccountStore } from './account';
 import type { BuyerAgentRegistry } from './buyer-agent';
 import type { SessionContext, OnInstructionsError, MaybePromise } from '../create-adcp-server';
 import type { StatusMappers } from './status-mappers';
-import type { SalesPlatform, SalesCorePlatform, SalesIngestionPlatform } from './specialisms/sales';
+import type {
+  SalesPlatform,
+  SalesCorePlatform,
+  SalesIngestionPlatform,
+  MediaBuyLifecyclePlatform,
+  MediaBuyLifecycleCorePlatform,
+  MediaBuyLifecycleProposalPlatform,
+} from './specialisms/sales';
 import type { ProposalManager, Recipe } from './proposal';
 import type { CreativeBuilderPlatform } from './specialisms/creative';
 import type { CreativeAdServerPlatform } from './specialisms/creative-ad-server';
@@ -224,6 +231,8 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
   // by `TCtxMeta` so adopters get typed `ctx.account.ctx_metadata` access in their
   // method bodies without casting.
   sales?: SalesPlatform<TCtxMeta>;
+  /** Primary AdCP 3.2 media-buy lifecycle; compose with `sales` for 3.0/3.1 compatibility routes. */
+  mediaBuyLifecycle?: MediaBuyLifecyclePlatform<TCtxMeta>;
   creative?: CreativeBuilderPlatform<TCtxMeta> | CreativeAdServerPlatform<TCtxMeta>;
   audiences?: AudiencePlatform<TCtxMeta>;
   signals?: SignalsPlatform<TCtxMeta>;
@@ -301,7 +310,8 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
 //
 // Wired per the AdCP 3.0 GA enum; preview specialisms (sales-streaming-tv,
 // sales-exchange, sales-retail-media) get added when they land in spec.
-type SalesCoreSpecialism = 'sales-non-guaranteed' | 'sales-guaranteed' | 'sales-broadcast-tv' | 'sales-catalog-driven';
+type SalesCoreSpecialism = 'sales-non-guaranteed' | 'sales-guaranteed' | 'sales-broadcast-tv';
+type SalesCatalogSpecialism = 'sales-catalog-driven';
 type SalesIngestionSpecialism = 'sales-social';
 type SalesProposalSpecialism = 'sales-proposal-mode';
 
@@ -321,7 +331,26 @@ type CampaignGovernanceSpecialism = 'governance-spend-authority' | 'governance-d
 // soundness escape — adopters declare metadata inside `DecisioningPlatform<_,
 // TCtxMeta>` directly; this constraint exists only to compile-check that
 // claimed specialisms have a matching sub-interface field on the platform.
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+type SalesCorePlatformRequirement<TCtxMeta> =
+  | {
+      sales: SalesCorePlatform<TCtxMeta> & SalesIngestionPlatform<TCtxMeta>;
+      mediaBuyLifecycle?: MediaBuyLifecyclePlatform<TCtxMeta>;
+    }
+  | {
+      sales?: SalesPlatform<TCtxMeta>;
+      mediaBuyLifecycle: MediaBuyLifecycleCorePlatform<TCtxMeta>;
+    };
+
+type SalesProposalPlatformRequirement<TCtxMeta> =
+  | {
+      sales: Required<Pick<SalesPlatform<TCtxMeta>, 'getProducts'>> & SalesIngestionPlatform<TCtxMeta>;
+      mediaBuyLifecycle?: MediaBuyLifecyclePlatform<TCtxMeta>;
+    }
+  | {
+      sales?: SalesPlatform<TCtxMeta>;
+      mediaBuyLifecycle: MediaBuyLifecycleProposalPlatform<TCtxMeta>;
+    };
+
 export type RequiredPlatformsFor<
   S extends AdCPSpecialism,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -341,36 +370,38 @@ export type RequiredPlatformsFor<
     : S extends 'creative-ad-server'
       ? { creative: CreativeAdServerPlatform<TCtxMeta> }
       : S extends SalesCoreSpecialism
-        ? { sales: SalesCorePlatform<TCtxMeta> & SalesIngestionPlatform<TCtxMeta> }
-        : S extends SalesIngestionSpecialism
-          ? // Walled-garden specialisms (sales-social, today). Bidding owned upstream
-            // — only the ingestion surface is required. Adopters can voluntarily
-            // implement core methods on the same `sales` object; the SalesPlatform
-            // alias accepts both shapes.
-            { sales: SalesIngestionPlatform<TCtxMeta> }
-          : S extends SalesProposalSpecialism
-            ? // Proposal-mode adopters only need `getProducts` — the rest of the
-              // lifecycle flows through `publishStatusChange` on
-              // `resource_type: 'proposal'`. Ingestion is optional.
-              { sales: Required<Pick<SalesPlatform<TCtxMeta>, 'getProducts'>> & SalesIngestionPlatform<TCtxMeta> }
-            : S extends 'audience-sync'
-              ? { audiences: AudiencePlatform<TCtxMeta> }
-              : S extends SignalSpecialism
-                ? { signals: SignalsPlatform<TCtxMeta> }
-                : S extends CampaignGovernanceSpecialism
-                  ? { campaignGovernance: CampaignGovernancePlatform<TCtxMeta> }
-                  : S extends 'sponsored-intelligence'
-                    ? { sponsoredIntelligence: SponsoredIntelligencePlatform<TCtxMeta> }
-                    : S extends 'property-lists'
-                      ? { propertyLists: PropertyListsPlatform<TCtxMeta> }
-                      : S extends 'collection-lists'
-                        ? { collectionLists: CollectionListsPlatform<TCtxMeta> }
-                        : S extends 'content-standards'
-                          ? { contentStandards: ContentStandardsPlatform<TCtxMeta> }
-                          : S extends 'brand-rights'
-                            ? { brandRights: BrandRightsPlatform<TCtxMeta> }
-                            : // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-                              {};
+        ? SalesCorePlatformRequirement<TCtxMeta>
+        : S extends SalesCatalogSpecialism
+          ? { sales: SalesCorePlatform<TCtxMeta> & SalesIngestionPlatform<TCtxMeta> }
+          : S extends SalesIngestionSpecialism
+            ? // Walled-garden specialisms (sales-social, today). Bidding owned upstream
+              // — only the ingestion surface is required. Adopters can voluntarily
+              // implement core methods on the same `sales` object; the SalesPlatform
+              // alias accepts both shapes.
+              { sales: SalesIngestionPlatform<TCtxMeta> }
+            : S extends SalesProposalSpecialism
+              ? // Proposal-mode adopters only need `getProducts` — the rest of the
+                // lifecycle flows through `publishStatusChange` on
+                // `resource_type: 'proposal'`. Ingestion is optional.
+                SalesProposalPlatformRequirement<TCtxMeta>
+              : S extends 'audience-sync'
+                ? { audiences: AudiencePlatform<TCtxMeta> }
+                : S extends SignalSpecialism
+                  ? { signals: SignalsPlatform<TCtxMeta> }
+                  : S extends CampaignGovernanceSpecialism
+                    ? { campaignGovernance: CampaignGovernancePlatform<TCtxMeta> }
+                    : S extends 'sponsored-intelligence'
+                      ? { sponsoredIntelligence: SponsoredIntelligencePlatform<TCtxMeta> }
+                      : S extends 'property-lists'
+                        ? { propertyLists: PropertyListsPlatform<TCtxMeta> }
+                        : S extends 'collection-lists'
+                          ? { collectionLists: CollectionListsPlatform<TCtxMeta> }
+                          : S extends 'content-standards'
+                            ? { contentStandards: ContentStandardsPlatform<TCtxMeta> }
+                            : S extends 'brand-rights'
+                              ? { brandRights: BrandRightsPlatform<TCtxMeta> }
+                              : // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+                                {};
 // `{}` (not `Record<string, never>`) is the right "no extra requirements"
 // fallthrough — intersects to identity (`P & {} = P`) for specialisms
 // without platform constraints. Same reasoning RequiredCapabilitiesFor

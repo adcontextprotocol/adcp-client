@@ -1,6 +1,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
+const { createPrivateKey, sign: nodeSign } = require('node:crypto');
 const { readFileSync, existsSync, unlinkSync, mkdtempSync } = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -8,12 +9,16 @@ const path = require('node:path');
 const {
   buildSignatureBase,
   computeContentDigest,
+  contentDigestUsesEncoding,
   contentDigestMatches,
   createExpressVerifier,
   InMemoryReplayStore,
   InMemoryRevocationStore,
   parseContentDigest,
   parseSignatureInput,
+  prepareRequestSignature,
+  finalizeRequestSignature,
+  requestSigningEncodingForVersion,
   RequestSignatureError,
   signRequest,
   StaticJwksResolver,
@@ -38,6 +43,16 @@ delete privateJwk.key_ops;
 delete privateJwk.use;
 const publicJwk = { ...ed };
 delete publicJwk._private_d_for_test_only;
+
+function signIntentionalNegativeVector(request, options) {
+  const prepared = prepareRequestSignature(request, { keyid: 'test-ed25519-2026', alg: 'ed25519' }, options);
+  const signature = nodeSign(
+    null,
+    Buffer.from(prepared.base, 'utf8'),
+    createPrivateKey({ key: privateJwk, format: 'jwk' })
+  );
+  return finalizeRequestSignature(prepared, signature);
+}
 
 describe('parser hardening (security/code-review findings)', () => {
   test('empty-value numeric param is rejected (not silently coerced to 0)', () => {
@@ -117,6 +132,17 @@ describe('parser hardening (security/code-review findings)', () => {
     );
   });
 
+  test('Signature rejects duplicate dictionary labels before profile validation', () => {
+    const { parseSignature } = require('../dist/lib/signing/index.js');
+    assert.throws(
+      () => parseSignature('sig1=:dGVzdA==:, sig1=:bGVnYWN5:', 'sig1', 'rfc8941-base64'),
+      err =>
+        err instanceof RequestSignatureError &&
+        err.code === 'request_signature_header_malformed' &&
+        /more than once/.test(err.message)
+    );
+  });
+
   test('Signature-Input with multiple labels selects sig1 even when not first', () => {
     const header =
       'proxy=("@method");created=1;expires=2;nonce="x";keyid="k";alg="ed25519";tag="adcp/request-signing/v1", sig1=("@method" "@target-uri" "@authority");created=10;expires=20;nonce="y";keyid="kk";alg="ed25519";tag="adcp/request-signing/v1"';
@@ -129,7 +155,7 @@ describe('parser hardening (security/code-review findings)', () => {
     // RFC 8941 sf-binary values can carry member-level parameters. Our parser
     // must not reject these — it should decode just the inner :base64: payload.
     const { parseSignature } = require('../dist/lib/signing/index.js');
-    const parsed = parseSignature('sig1=:dGVzdA==:;created=1776520800', 'sig1');
+    const parsed = parseSignature('sig1=:dGVzdA==:;created=1776520800', 'sig1', 'rfc8941-base64');
     assert.deepStrictEqual(Buffer.from(parsed.bytes).toString('utf8'), 'test');
   });
 
@@ -140,7 +166,7 @@ describe('parser hardening (security/code-review findings)', () => {
       err =>
         err instanceof RequestSignatureError &&
         err.code === 'request_signature_header_malformed' &&
-        /non-base64/i.test(err.message)
+        /base64/i.test(err.message)
     );
   });
 });
@@ -159,6 +185,204 @@ describe('content-digest SF dictionary support (protocol finding)', () => {
     const sha256 = computeContentDigest(body).match(/:(.+):/)[1];
     const header = `sha-512=:AAAA==:, sha-256=:${sha256}:`;
     assert.strictEqual(contentDigestMatches(header, body), true);
+  });
+
+  test('legacy request signatures still emit RFC 9530 standard-Base64 Content-Digest', () => {
+    const body = '{"plan_id":"legacy_digest"}';
+    const signed = signRequest(
+      {
+        method: 'POST',
+        url: 'https://seller.example.com/adcp/create_media_buy',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      },
+      { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwk },
+      { coverContentDigest: true, binaryEncoding: 'legacy-base64url' }
+    );
+
+    assert.strictEqual(contentDigestUsesEncoding(signed.headers['Content-Digest'], 'rfc8941-base64'), true);
+    assert.strictEqual(contentDigestUsesEncoding(signed.headers['Content-Digest'], 'legacy-base64url'), false);
+  });
+});
+
+describe('AdCP 3.2 RFC 8941 binary profile', () => {
+  test('version selection keeps 3.0/3.1 legacy and makes 3.2 standards-compliant', () => {
+    assert.strictEqual(requestSigningEncodingForVersion('3.0.24'), 'legacy-base64url');
+    assert.strictEqual(requestSigningEncodingForVersion('3.1.15'), 'legacy-base64url');
+    assert.strictEqual(requestSigningEncodingForVersion('3.2-beta.0'), 'rfc8941-base64');
+    assert.strictEqual(requestSigningEncodingForVersion('3.2.0-beta.0'), 'rfc8941-base64');
+  });
+
+  test('an explicitly pinned 3.2 verifier uses padded Base64 and mandatory Content-Digest', async () => {
+    const now = 1776520800;
+    const url = 'https://seller.example.com/adcp/create_media_buy';
+    const body = '{"plan_id":"plan_3_2"}';
+    const signed = signRequest(
+      { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
+      { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwk },
+      {
+        now: () => now,
+        windowSeconds: 300,
+        nonce: 'adcp-3-2-profile-nonce',
+        binaryEncoding: 'rfc8941-base64',
+      }
+    );
+
+    assert.match(signed.headers.Signature, /^sig1=:[A-Za-z0-9+/]+={1,2}:$/);
+    assert.ok(signed.headers['Signature-Input'].includes('"content-digest"'));
+    assert.strictEqual(contentDigestUsesEncoding(signed.headers['Content-Digest'], 'rfc8941-base64'), true);
+
+    const result = await verifyRequestSignature(
+      { method: 'POST', url, headers: signed.headers, body },
+      {
+        capability: { supported: true, covers_content_digest: 'required', required_for: [] },
+        jwks: new StaticJwksResolver([publicJwk]),
+        replayStore: new InMemoryReplayStore(),
+        revocationStore: new InMemoryRevocationStore(),
+        now: () => now,
+        operation: 'create_media_buy',
+        adcpVersion: '3.2-beta.0',
+      }
+    );
+    assert.strictEqual(result.keyid, 'test-ed25519-2026');
+  });
+
+  test('an unpinned verifier accepts 3.2 Base64 without overriding the trusted digest policy', async () => {
+    const now = 1776520800;
+    const url = 'https://seller.example.com/adcp/create_media_buy';
+    const body = '{"plan_id":"plan_3_2_unpinned"}';
+    const signed = signIntentionalNegativeVector(
+      { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
+      {
+        now: () => now,
+        windowSeconds: 300,
+        nonce: 'adcp-3-2-unpinned-nonce',
+        coverContentDigest: false,
+        binaryEncoding: 'rfc8941-base64',
+      }
+    );
+
+    const result = await verifyRequestSignature(
+      { method: 'POST', url, headers: signed.headers, body },
+      {
+        capability: { supported: true, covers_content_digest: 'forbidden', required_for: [] },
+        jwks: new StaticJwksResolver([publicJwk]),
+        replayStore: new InMemoryReplayStore(),
+        revocationStore: new InMemoryRevocationStore(),
+        now: () => now,
+        operation: 'create_media_buy',
+      }
+    );
+    assert.strictEqual(result.keyid, 'test-ed25519-2026');
+  });
+
+  test('an explicit 3.2 pin rejects body signatures that omit Content-Digest', async () => {
+    const now = 1776520800;
+    const url = 'https://seller.example.com/adcp/create_media_buy';
+    const body = '{"amount":1}';
+    const signed = signIntentionalNegativeVector(
+      { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
+      {
+        now: () => now,
+        nonce: 'standard-no-digest-nonce',
+        binaryEncoding: 'rfc8941-base64',
+        coverContentDigest: false,
+      }
+    );
+    for (const adcpVersion of ['3.2-beta.0', '']) {
+      await assert.rejects(
+        () =>
+          verifyRequestSignature(
+            { method: 'POST', url, headers: signed.headers, body: '{"amount":999999}' },
+            {
+              capability: { supported: true, covers_content_digest: 'either', required_for: [] },
+              jwks: new StaticJwksResolver([publicJwk]),
+              replayStore: new InMemoryReplayStore(),
+              revocationStore: new InMemoryRevocationStore(),
+              now: () => now,
+              adcpVersion,
+            }
+          ),
+        err => err instanceof RequestSignatureError && err.code === 'request_signature_components_incomplete'
+      );
+    }
+  });
+
+  test('high-level 3.2 signer refuses an undigested body', () => {
+    assert.throws(
+      () =>
+        signRequest(
+          {
+            method: 'POST',
+            url: 'https://seller.example.com/mcp',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{"amount":1}',
+          },
+          { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwk },
+          { binaryEncoding: 'rfc8941-base64', coverContentDigest: false }
+        ),
+      /requires Content-Digest coverage/
+    );
+  });
+
+  test('strict verification rejects duplicate Content-Digest dictionary members', async () => {
+    const now = 1776520800;
+    const url = 'https://seller.example.com/adcp/create_media_buy';
+    const body = '{"amount":1}';
+    const signed = signRequest(
+      { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
+      { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwk },
+      { now: () => now, nonce: 'duplicate-digest-nonce', binaryEncoding: 'rfc8941-base64' }
+    );
+    const headers = {
+      ...signed.headers,
+      'Content-Digest': `sha-256=:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=:, ${signed.headers['Content-Digest']}`,
+    };
+    await assert.rejects(
+      () =>
+        verifyRequestSignature(
+          { method: 'POST', url, headers, body },
+          {
+            capability: { supported: true, covers_content_digest: 'required', required_for: [] },
+            jwks: new StaticJwksResolver([publicJwk]),
+            replayStore: new InMemoryReplayStore(),
+            revocationStore: new InMemoryRevocationStore(),
+            now: () => now,
+          }
+        ),
+      err => err instanceof RequestSignatureError && err.code === 'request_signature_header_malformed'
+    );
+  });
+
+  test('3.2 verifier accepts a legacy Base64URL request profile when rolling-upgrade policy is either', async () => {
+    const now = 1776520800;
+    const url = 'https://seller.example.com/adcp/create_media_buy';
+    const body = '{"plan_id":"legacy_profile"}';
+    const signed = signRequest(
+      { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
+      { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwk },
+      {
+        now: () => now,
+        windowSeconds: 300,
+        nonce: 'legacy-profile-nonce',
+        coverContentDigest: true,
+        binaryEncoding: 'legacy-base64url',
+      }
+    );
+
+    const result = await verifyRequestSignature(
+      { method: 'POST', url, headers: signed.headers, body },
+      {
+        capability: { supported: true, covers_content_digest: 'either', required_for: [] },
+        jwks: new StaticJwksResolver([publicJwk]),
+        replayStore: new InMemoryReplayStore(),
+        revocationStore: new InMemoryRevocationStore(),
+        now: () => now,
+        operation: 'create_media_buy',
+        adcpVersion: '3.2-beta.0',
+      }
+    );
+    assert.strictEqual(result.keyid, 'test-ed25519-2026');
   });
 });
 
@@ -191,6 +415,7 @@ describe('verifier: kid consistency + replay TTL floor (protocol/security findin
           revocationStore: new InMemoryRevocationStore(),
           now: () => 1776520800,
           operation: 'create_media_buy',
+          adcpVersion: '3.1',
         }),
       err =>
         err instanceof RequestSignatureError && err.code === 'request_signature_key_unknown' && /kid/i.test(err.message)
@@ -218,6 +443,7 @@ describe('verifier: kid consistency + replay TTL floor (protocol/security findin
         revocationStore: new InMemoryRevocationStore(),
         now: () => now,
         operation: 'create_media_buy',
+        adcpVersion: '3.1',
       }
     );
     // 61s later (past the 10s validity + 60s skew) — the entry must still be

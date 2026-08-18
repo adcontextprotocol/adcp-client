@@ -657,14 +657,14 @@ export async function discoverCreativeFormats(
       };
 
       // Check for deprecated assets_required usage
-      if (usesDeprecatedAssetsField(format)) {
+      if (usesDeprecatedAssetsField(format as unknown as Parameters<typeof usesDeprecatedAssetsField>[0])) {
         const displayId = typeof formatInfo.format_id === 'object' ? formatInfo.format_id.id : formatInfo.format_id;
         deprecatedFormats.push(displayId);
       }
 
       // Extract asset requirements from format spec using format-assets utilities
       // This handles both v2.6 `assets` and deprecated `assets_required` fields
-      const formatAssets = getFormatAssets(format);
+      const formatAssets = getFormatAssets(format as unknown as Parameters<typeof getFormatAssets>[0]);
       for (const asset of formatAssets) {
         const assetId = asset.item_type === 'individual' ? asset.asset_id : asset.asset_group_id;
 

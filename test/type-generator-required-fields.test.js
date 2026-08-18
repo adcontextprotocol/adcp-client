@@ -212,9 +212,11 @@ test('every unconditional canonical core required property is required in genera
     ts.ScriptKind.TS
   );
   const declarations = new Map();
+  const declarationsByCaseFoldedName = new Map();
   for (const statement of source.statements) {
     if (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)) {
       declarations.set(statement.name.text, statement);
+      declarationsByCaseFoldedName.set(statement.name.text.toLowerCase(), statement);
     }
   }
 
@@ -254,7 +256,12 @@ test('every unconditional canonical core required property is required in genera
     const key = `${typeName}.${field}`;
     if (seen.has(key)) return 'absent';
     seen.add(key);
-    const declaration = declarations.get(typeName);
+    // json-schema-to-typescript PascalCases words in titles (for example,
+    // "Scoped creative approval" -> ScopedCreativeApproval), while the raw
+    // schema-title normalization above only removes punctuation. Resolve the
+    // declaration case-insensitively so this guard checks requiredness rather
+    // than generator-specific capitalization.
+    const declaration = declarations.get(typeName) ?? declarationsByCaseFoldedName.get(typeName.toLowerCase());
     if (!declaration) return 'absent';
     let state;
     if (ts.isInterfaceDeclaration(declaration)) {

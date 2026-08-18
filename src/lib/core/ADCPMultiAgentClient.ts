@@ -12,6 +12,10 @@ import type {
   CreativeDeliveryTaskOptions,
   SingleAgentClientConfig,
   SyncCreativesTaskOptions,
+  VerifyAndParseWebhookOptions,
+  WebhookHandlerAdapter,
+  WebhookHandlerRequest,
+  WebhookParseResult,
 } from './SingleAgentClient';
 import { ADCP_VERSION } from '../version';
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
@@ -53,6 +57,11 @@ import type {
   CanonicalSyncCreativesRequest,
   CanonicalUpdateMediaBuyRequest,
 } from '../v2/projection/creative-delivery';
+
+export interface MultiAgentWebhookHandlerAdapter extends WebhookHandlerAdapter {
+  /** Resolve agent identity from trusted routing state, never from the unverified payload. */
+  getAgentId?: (request: WebhookHandlerRequest) => string | undefined | Promise<string | undefined>;
+}
 
 /**
  * Collection of agent clients for parallel operations across multiple AdCP agents.
@@ -969,10 +978,46 @@ export class ADCPMultiAgentClient {
     return agent.getWebhookUrl(taskType, operationId);
   }
 
+  /** Verify without dispatching, using an agent id obtained from trusted routing context. */
+  async verifyAndParseWebhook(agentId: string, options: VerifyAndParseWebhookOptions): Promise<WebhookParseResult> {
+    return this.getAgent(agentId).verifyAndParseWebhook(options);
+  }
+
+  /**
+   * Create a multi-agent HTTP receiver. Agent selection comes only from the
+   * adapter or route `agent_id`/`agentId` parameter, never the webhook body.
+   */
+  createWebhookHandler(adapter: MultiAgentWebhookHandlerAdapter = {}) {
+    return async (
+      req: WebhookHandlerRequest,
+      res: {
+        status: (code: number) => { json: (body: unknown) => void };
+        json?: unknown;
+        writeHead: (code: number, headers: Record<string, string>) => void;
+        end: (body: string) => void;
+      }
+    ) => {
+      const agentId = (await adapter.getAgentId?.(req)) || req.params?.agent_id || req.params?.agentId;
+      if (!agentId || !this.hasAgent(agentId)) {
+        const body = { error: 'Trusted webhook route does not identify a configured agent.' };
+        if (res.json) res.status(400).json(body);
+        else {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(body));
+        }
+        return;
+      }
+      return this.getAgent(agentId).createWebhookHandler(adapter)(req, res);
+    };
+  }
+
   /**
    * Handle webhook from any agent (async task completion or notifications)
    *
    * Automatically routes webhook to the correct agent based on agent_id in payload.
+   *
+   * @deprecated Legacy HMAC compatibility only. Use `createWebhookHandler()`
+   * so agent identity and complete RFC 9421 request context come from trusted routing.
    *
    * @param payload - Webhook payload from agent (must contain agent_id or operation_id)
    * @param taskType - Task type (e.g create_media_buy) from url param or url part of the webhook delivery

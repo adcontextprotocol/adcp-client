@@ -87,7 +87,11 @@ after(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-function runCli(args, env = {}, { timeout = 10_000 } = {}) {
+// CLI startup loads the full compliance catalog. Under the highly concurrent
+// fast suite that can exceed 10 seconds even though the same command completes
+// normally in isolation, so keep the child timeout below the test runner's
+// 60-second ceiling while leaving enough process-pressure headroom.
+function runCli(args, env = {}, { timeout = 30_000 } = {}) {
   return spawnSync(process.execPath, [CLI, ...args], {
     encoding: 'utf8',
     env: { ...process.env, ...env },

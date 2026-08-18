@@ -36,6 +36,8 @@ const { createAdcpServer: _createAdcpServer } = require('../../dist/lib/server/c
 
 function createAdcpServer(config) {
   return _createAdcpServer({
+    resolveAccount: ref => ({ account_id: ref?.account_id ?? 'sandbox-test-account', mode: 'sandbox' }),
+    resolveAccountFromAuth: () => ({ account_id: 'sandbox-test-account', mode: 'sandbox' }),
     ...config,
     validation: { requests: 'off', responses: 'off', ...(config?.validation ?? {}) },
   });

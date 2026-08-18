@@ -33,6 +33,9 @@ export interface LegacyEnvelopeStatusOptions {
 
 const MEDIA_BUY_STATUS_RESPONSE_TOOLS = new Set(['create_media_buy', 'update_media_buy']);
 
+/** 3.2 synchronous response arms that intentionally forbid task-envelope status. */
+export const STATUS_FREE_SYNC_RESPONSE_TOOLS: ReadonlySet<string> = new Set(['list_products', 'decline_proposals']);
+
 /**
  * Detect whether a response payload should be treated as 3.0.x for the
  * purposes of envelope-status leniency.
@@ -95,6 +98,7 @@ export function injectLegacyEnvelopeStatus<T extends Record<string, unknown>>(
   if (!response || typeof response !== 'object' || Array.isArray(response)) {
     return response;
   }
+  if (options?.toolName && STATUS_FREE_SYNC_RESPONSE_TOOLS.has(options.toolName)) return response;
 
   if (
     options?.toolName &&

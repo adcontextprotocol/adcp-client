@@ -3,9 +3,19 @@ import { parseDictionary } from 'structured-headers';
 
 const SHA256_MEMBER_RE = /(?:^|[,\s])sha-256=:([A-Za-z0-9+/_-]+={0,2}):/;
 
-export function computeContentDigest(body: string | Uint8Array): string {
+export type SfBinaryEncoding = 'rfc8941-base64' | 'legacy-base64url';
+
+/** Select the request-signing binary profile from a trusted endpoint pin. */
+export function requestSigningEncodingForVersion(adcpVersion: string): SfBinaryEncoding {
+  const normalized = adcpVersion.trim().replace(/^v/, '');
+  return /^(?:2(?:\.|$)|3\.(?:0|1)(?:\.|-|$)|3$)/.test(normalized) ? 'legacy-base64url' : 'rfc8941-base64';
+}
+
+export function computeContentDigest(body: string | Uint8Array, encoding: SfBinaryEncoding = 'rfc8941-base64'): string {
   const buf = toBuffer(body);
-  const hash = createHash('sha256').update(buf).digest('base64');
+  const hash = createHash('sha256')
+    .update(buf)
+    .digest(encoding === 'legacy-base64url' ? 'base64url' : 'base64');
   return `sha-256=:${hash}:`;
 }
 
@@ -25,6 +35,14 @@ export function parseContentDigest(header: string): Buffer | null {
   }
   const m = header.match(SHA256_MEMBER_RE);
   return m && m[1] ? Buffer.from(m[1], 'base64') : null;
+}
+
+export function contentDigestUsesEncoding(header: string, encoding: SfBinaryEncoding): boolean {
+  const match = header.match(/(?:^|[,\s])sha-256=:([^:]+):/);
+  if (!match?.[1]) return false;
+  const encoded = match[1];
+  if (encoding === 'legacy-base64url') return /^[A-Za-z0-9_-]+$/.test(encoded);
+  return encoded.length % 4 === 0 && /^[A-Za-z0-9+/]+={1,2}$/.test(encoded);
 }
 
 export function contentDigestMatches(header: string, body: string | Uint8Array): boolean {

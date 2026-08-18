@@ -1,0 +1,31 @@
+{
+  "mode": "pre",
+  "tag": "beta",
+  "initialVersions": {
+    "@adcp/sdk": "13.0.0",
+    "@adcp/client": "6.0.0",
+    "@adcp/eslint-plugin": "0.1.7",
+    "@adcp/reference-renderers": "0.0.0"
+  },
+  "changesets": [
+    "add-reference-renderers",
+    "brave-lions-preserve-types",
+    "brave-owls-negotiate",
+    "bright-badgers-document",
+    "bright-ravens-profile",
+    "calm-foxes-bound",
+    "calm-otters-verify",
+    "fair-runners-grade",
+    "fix-k8s-cluster-local-private-url",
+    "fuzzy-bears-guard",
+    "quick-mice-fuzz-compact",
+    "sharp-pumas-refine-version",
+    "silly-bears-accept-slots",
+    "smart-cats-govern",
+    "smart-cats-verify-legacy",
+    "tidy-banners-lint",
+    "tidy-creatives-validate",
+    "tidy-owls-validate-bidding",
+    "warm-foxes-list-schemas"
+  ]
+}

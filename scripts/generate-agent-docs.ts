@@ -111,8 +111,14 @@ function loadIndex(): SchemaIndex {
 }
 
 function loadSchema(ref: string): any {
-  // Strip /schemas/{version}/ prefix to get relative path
+  // Indexes may use either root-relative or absolute canonical schema URLs.
+  // Resolve both to a cache-relative path before stripping the version.
   let rel = ref;
+  try {
+    rel = new URL(ref).pathname;
+  } catch {
+    // A relative reference is already suitable for the handling below.
+  }
   if (rel.startsWith('/schemas/')) {
     rel = rel.substring('/schemas/'.length);
     const segments = rel.split('/');
@@ -221,6 +227,12 @@ function collectTools(index: SchemaIndex): ToolInfo[] {
 
       const reqSchema = task.request?.$ref ? loadSchema(task.request.$ref) : null;
       const resSchema = task.response?.$ref ? loadSchema(task.response.$ref) : null;
+      if (task.request?.$ref && !reqSchema) {
+        throw new Error(`Unable to resolve request schema for ${kebab}: ${task.request.$ref}`);
+      }
+      if (task.response?.$ref && !resSchema) {
+        throw new Error(`Unable to resolve response schema for ${kebab}: ${task.response.$ref}`);
+      }
       const { required, optional } = summarizeFields(reqSchema);
       const resFields = summarizeResponseFields(resSchema);
 
@@ -659,7 +671,7 @@ function generateLlmsTxt(
   ln(`## Canonical Reference Resolver`);
   ln();
   ln(
-    `\`format_schema\` and \`platform_extensions\` references use immutable \`{ uri, digest }\` pointers. Use \`createCanonicalReferenceResolver\` from \`@adcp/sdk/canonical-references\` instead of raw fetches; it applies SSRF-safe DNS-pinned fetches, redirect blocking, timeout/body caps, SHA-256 verification, structured non-throwing statuses, and caller-owned policy-scoped caching.`
+    `\`format_schema\` and \`platform_extensions\` references use immutable \`{ uri, digest }\` pointers. Use \`createCanonicalReferenceResolver\` from \`@adcp/sdk/canonical-references\` instead of raw fetches; it applies SSRF-safe DNS-pinned fetches, redirect blocking, timeout/body caps, SHA-256 verification, structured non-throwing statuses, and bounded policy-scoped LRU caching. The zero-argument cache holds at most 64 entries / 32 MiB estimated retained data; use \`createCanonicalReferenceCache({ maxEntries, maxBytes })\` to tune the per-resolver budget or inject a fully caller-owned cache.`
   );
   ln();
   ln('```typescript');
@@ -788,7 +800,7 @@ function generateLlmsTxt(
   ln('```');
   ln();
   ln(
-    `2. **Agent re-plan vs. network retry.** A network retry (same bytes, socket timeout) reuses the same key — the SDK handles this. An agent re-plan (LLM re-ran its planner and produced a different payload) means a NEW intent — mint a fresh key by calling the method again without passing one. Reusing the prior key with a different payload returns \`IdempotencyConflictError\`.`
+    `2. **Agent re-plan vs. network retry.** A network retry (same bytes, socket timeout) reuses the same key — the SDK handles this. Reusing a key with a different canonical payload returns \`IdempotencyConflictError\`. Treat that as a reconciliation stop: look up the prior operation by your natural key before deciding whether the new payload is a genuinely new intent. This is also safe across SDK upgrades that strengthen replay identity after the original operation may already have succeeded.`
   );
   ln();
   ln(
@@ -799,7 +811,8 @@ function generateLlmsTxt(
   ln("import { IdempotencyConflictError, IdempotencyExpiredError } from '@adcp/sdk';");
   ln();
   ln('if (result.errorInstance instanceof IdempotencyConflictError) {');
-  ln('  // Agent re-planned with different payload. Retry with a fresh key.');
+  ln('  // Reconcile the prior operation by natural key before deciding whether');
+  ln('  // this payload is a genuinely new intent. Do not blindly rotate keys.');
   ln('  // result.errorInstance.idempotencyKey carries the key the server omitted.');
   ln('}');
   ln('if (result.errorInstance instanceof IdempotencyExpiredError) {');

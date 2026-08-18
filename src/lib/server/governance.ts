@@ -57,6 +57,13 @@ import { callMCPTool } from '../protocols/mcp';
 import type { CheckGovernanceResponse } from '../types/tools.generated';
 import type { McpToolResponse } from './responses';
 import { adcpError } from './errors';
+import { normalizeGovernanceVerdict } from '../core/GovernanceTypes';
+import {
+  verifyGovernanceAuthorization,
+  type GovernanceEnforcementMiddlewareConfig,
+  type GovernanceEnforcementMiddlewareInput,
+  type GovernanceAuthorizationSuccess,
+} from '../governance';
 
 /**
  * Extract a tool's JSON payload from an MCP `CallToolResult` envelope.
@@ -93,8 +100,8 @@ function extractMcpPayload(raw: unknown): Record<string, unknown> | null {
     }
   }
 
-  // Legacy: caller spread the payload at top level.
-  if ('status' in envelope || 'check_id' in envelope) return envelope;
+  // Legacy and modern callers may spread the payload at top level.
+  if ('status' in envelope || 'verdict' in envelope || 'check_id' in envelope) return envelope;
 
   return null;
 }
@@ -181,27 +188,36 @@ export async function checkGovernance(options: CheckGovernanceOptions): Promise<
   const raw = await callMCPTool(agentUrl, 'check_governance', args, authToken);
   const extracted = extractMcpPayload(raw);
 
-  if (!extracted || !('status' in extracted) || !('check_id' in extracted) || !('explanation' in extracted)) {
+  if (
+    !extracted ||
+    (!('status' in extracted) && !('verdict' in extracted)) ||
+    !('check_id' in extracted) ||
+    !('explanation' in extracted)
+  ) {
     throw new Error(
       `Invalid check_governance response from ${agentUrl}: ` +
-        `missing required fields (status, check_id, explanation). Got: ${JSON.stringify(raw)?.slice(0, 200)}`
+        `missing required fields (verdict/status, check_id, explanation). Got: ${JSON.stringify(raw)?.slice(0, 200)}`
     );
   }
   const response = extracted as unknown as CheckGovernanceResponse;
+  const normalized = normalizeGovernanceVerdict(response);
+  if (!normalized) {
+    throw new Error(`Invalid check_governance verdict response from ${agentUrl}`);
+  }
 
-  if (response.verdict === 'approved') {
+  if (normalized.verdict === 'approved') {
     return {
       approved: true,
       checkId: response.check_id,
       explanation: response.explanation,
-      governanceContext: response.governance_context ?? undefined,
-      expiresAt: response.expires_at ?? undefined,
+      governanceContext: normalized.governanceContext,
+      expiresAt: normalized.expiresAt,
       nextCheck: response.next_check ?? undefined,
       findings: response.findings,
     };
   }
 
-  if (response.verdict === 'conditions') {
+  if (normalized.verdict === 'conditions') {
     return {
       approved: 'conditions',
       checkId: response.check_id,
@@ -245,4 +261,48 @@ export function governanceDeniedError(result: GovernanceDenied | GovernanceCondi
     message: result.explanation,
     details,
   });
+}
+
+/** Map an adapter transport failure to the protocol's transient wire error. */
+export function governanceUnavailableError(): McpToolResponse {
+  return adcpError('GOVERNANCE_UNAVAILABLE', {
+    message: 'The configured governance agent is unavailable; retry with backoff',
+  });
+}
+
+export type AdcpGovernanceEnforcementMiddleware = <T>(
+  input: GovernanceEnforcementMiddlewareInput,
+  next: (authorization: GovernanceAuthorizationSuccess) => T | Promise<T>
+) => Promise<T | McpToolResponse>;
+
+/**
+ * Server-handler variant of the governance verifier. Invalid, missing,
+ * expired, or replay-conflicting authorization is returned as the required
+ * structured `PERMISSION_DENIED` envelope instead of escaping as a generic
+ * exception that a dispatcher could misclassify as `INTERNAL_ERROR`.
+ */
+export function createAdcpGovernanceEnforcementMiddleware(
+  config: GovernanceEnforcementMiddlewareConfig
+): AdcpGovernanceEnforcementMiddleware {
+  return async <T>(
+    input: GovernanceEnforcementMiddlewareInput,
+    next: (authorization: GovernanceAuthorizationSuccess) => T | Promise<T>
+  ): Promise<T | McpToolResponse> => {
+    const result = await verifyGovernanceAuthorization({
+      ...config,
+      token: input.token,
+      authenticatedCaller: input.authenticatedCaller,
+      expectedTask: input.task,
+      payload: input.payload,
+      actualCommitment: input.actualCommitment,
+      expectedPhase: input.expectedPhase,
+    });
+    if (!result.ok) {
+      return adcpError('PERMISSION_DENIED', {
+        message: result.message,
+        details: { governance_error: result.error },
+      });
+    }
+    return next(result);
+  };
 }

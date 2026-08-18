@@ -87,21 +87,23 @@ function buildListCreativesResponseBase(
   const filters = request.filters;
   const filtersApplied: string[] = [];
   if (filters) {
-    if (filters.accounts?.length) filtersApplied.push('accounts');
-    if (filters.statuses?.length) filtersApplied.push('statuses');
-    if (filters.tags?.length) filtersApplied.push('tags');
-    if (filters.tags_any?.length) filtersApplied.push('tags_any');
+    if (Array.isArray(filters.accounts) && filters.accounts.length) filtersApplied.push('accounts');
+    if (Array.isArray(filters.statuses) && filters.statuses.length) filtersApplied.push('statuses');
+    if (Array.isArray(filters.tags) && filters.tags.length) filtersApplied.push('tags');
+    if (Array.isArray(filters.tags_any) && filters.tags_any.length) filtersApplied.push('tags_any');
     if (filters.name_contains) filtersApplied.push('name_contains');
-    if (filters.creative_ids?.length) filtersApplied.push('creative_ids');
+    if (Array.isArray(filters.creative_ids) && filters.creative_ids.length) filtersApplied.push('creative_ids');
     if (filters.created_after) filtersApplied.push('created_after');
     if (filters.created_before) filtersApplied.push('created_before');
     if (filters.updated_after) filtersApplied.push('updated_after');
     if (filters.updated_before) filtersApplied.push('updated_before');
-    if (filters.assigned_to_packages?.length) filtersApplied.push('assigned_to_packages');
-    if (filters.media_buy_ids?.length) filtersApplied.push('media_buy_ids');
+    if (Array.isArray(filters.assigned_to_packages) && filters.assigned_to_packages.length) {
+      filtersApplied.push('assigned_to_packages');
+    }
+    if (Array.isArray(filters.media_buy_ids) && filters.media_buy_ids.length) filtersApplied.push('media_buy_ids');
     if (filters.unassigned !== undefined) filtersApplied.push('unassigned');
     if (filters.has_served !== undefined) filtersApplied.push('has_served');
-    if (filters.concept_ids?.length) filtersApplied.push('concept_ids');
+    if (Array.isArray(filters.concept_ids) && filters.concept_ids.length) filtersApplied.push('concept_ids');
     if (
       includeLegacyFormatFilter &&
       'format_ids' in filters &&

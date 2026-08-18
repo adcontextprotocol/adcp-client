@@ -6,10 +6,10 @@
  * script proves the packed tarball actually loads. It packs the package,
  * installs the tarball plus its required peerDependencies pinned to their
  * range floors into a throwaway directory in the OS temp dir, then loads
- * `@adcp/sdk`, `@adcp/sdk/enums`, and `@adcp/sdk/server` through both a real
- * ESM `import` and a real CJS `require`, asserting each exposes a known runtime
- * symbol. It also runs a modern MCP negotiation under Bun, whose ESM/CJS
- * interoperability differs from Node's.
+ * package entry points through both a real ESM `import` and a real CJS
+ * `require`, asserting each exposes a known runtime symbol. It also compiles
+ * the exact schema surface through both declaration formats and runs a modern
+ * MCP negotiation under Bun, whose ESM/CJS interoperability differs from Node's.
  *
  * Why a temp dir outside the repo: installing inside the workspace would let
  * the monorepo dedupe peers against the repo's own node_modules, so a missing
@@ -22,10 +22,11 @@
  * Exits non-zero on any failure.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkPackageSize } from './check-package-size.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -67,6 +68,9 @@ try {
     JSON.stringify({ name: 'adcp-verify-consumer', version: '1.0.0', private: true }, null, 2)
   );
 
+  console.log('📏 Auditing publish size...');
+  checkPackageSize(REPO_ROOT);
+
   // Pack into the temp dir and locate the .tgz on disk. We deliberately do NOT
   // parse `npm pack --json` stdout: npm runs the `prepare` lifecycle during
   // pack and its banner pollutes stdout (even with --ignore-scripts on some npm
@@ -79,12 +83,26 @@ try {
   const tgz = readdirSync(tmpDir).find(f => f.endsWith('.tgz'));
   if (!tgz) throw new Error(`npm pack produced no .tgz in ${tmpDir}`);
   const tarballPath = path.join(tmpDir, tgz);
+  const tarballBytes = statSync(tarballPath).size;
   console.log(`   → ${tgz}`);
+  console.log(`   ${(tarballBytes / 1024 / 1024).toFixed(1)} MiB`);
 
   const packedPaths = new Set(run('tar', ['-tf', tarballPath]).trim().split('\n'));
-  const requiredGuides = ['package/docs/migration-12-to-13.md', 'package/MIGRATION-v8.md'];
+  const requiredGuides = [
+    'package/docs/migration-12-to-14.md',
+    'package/docs/migration-13-to-14.md',
+    'package/docs/migration-12-to-13.md',
+    'package/MIGRATION-v8.md',
+  ];
   for (const guide of requiredGuides) {
     if (!packedPaths.has(guide)) throw new Error(`packed migration guide is missing: ${guide}`);
+  }
+  const packedMcpResponses = [...packedPaths].filter(
+    packedPath =>
+      packedPath.includes('/schemas-data/') && packedPath.includes('/mcp/') && /-response\.json$/.test(packedPath)
+  );
+  if (packedMcpResponses.length > 0) {
+    throw new Error(`packed MCP discovery assets include response schemas: ${packedMcpResponses[0]}`);
   }
   console.log('   migration guides referenced by README are present');
 
@@ -102,6 +120,7 @@ try {
     { specifier: '@adcp/sdk/enums', symbol: 'EventTypeValues' },
     { specifier: '@adcp/sdk/server', symbol: 'A2AInvocationError' },
     { specifier: '@adcp/sdk/testing', symbol: 'mergeSeedProductLegacy' },
+    { specifier: '@adcp/sdk/schemas', symbol: 'CreativeAssetSchema' },
   ];
 
   // Shared by both generated smoke modules. A function declaration (not an
@@ -140,6 +159,50 @@ try {
   run('node', ['smoke.mjs'], { cwd: tmpDir, stdio: 'inherit' });
   console.log('🔍 CJS require:');
   run('node', ['smoke.cjs'], { cwd: tmpDir, stdio: 'inherit' });
+
+  const schemaTypeSmoke = [
+    "import { CreativeAssetSchema } from '@adcp/sdk/schemas';",
+    "import type { z } from 'zod';",
+    '',
+    'type IsAny<T> = 0 extends 1 & T ? true : false;',
+    'type Input = z.input<typeof CreativeAssetSchema>;',
+    'type Output = z.output<typeof CreativeAssetSchema>;',
+    'const schemaIsNotAny: IsAny<typeof CreativeAssetSchema> = false;',
+    'const shapeIsNotAny: IsAny<typeof CreativeAssetSchema.shape> = false;',
+    'const inputIsNotAny: IsAny<Input> = false;',
+    'const outputIsNotAny: IsAny<Output> = false;',
+    'const creativeId = CreativeAssetSchema.shape.creative_id;',
+    'const idOnly = CreativeAssetSchema.pick({ creative_id: true });',
+    'const parse = (input: Input): Output => CreativeAssetSchema.parse(input);',
+    'void [schemaIsNotAny, shapeIsNotAny, inputIsNotAny, outputIsNotAny, creativeId, idOnly, parse];',
+    '',
+  ].join('\n');
+  writeFileSync(path.join(tmpDir, 'smoke-types.mts'), schemaTypeSmoke);
+  writeFileSync(path.join(tmpDir, 'smoke-types.cts'), schemaTypeSmoke);
+  console.log('🔬 TypeScript Node16 declarations (ESM + CJS):');
+  // The generated declaration is 43 MiB and full dependency re-checking
+  // exceeds an 8 GiB heap. build:lib already checks its source graph; this
+  // consumer check resolves the packed bridge and instantiates its public
+  // schema types while skipping diagnostics internal to dependency .d.ts files.
+  const typecheckArgs = [
+    '--max-old-space-size=8192',
+    path.join(REPO_ROOT, 'node_modules', 'typescript', 'bin', 'tsc'),
+    '--noEmit',
+    '--strict',
+    '--skipLibCheck',
+    '--target',
+    'ES2022',
+    '--module',
+    'Node16',
+    '--moduleResolution',
+    'Node16',
+  ];
+  // Compile each format in its own process. Loading both copies of this exact
+  // 43 MiB inferred type graph at once can exceed an 8 GiB heap.
+  for (const fixture of ['smoke-types.mts', 'smoke-types.cts']) {
+    run(process.execPath, [...typecheckArgs, fixture], { cwd: tmpDir, stdio: 'inherit' });
+  }
+  console.log('  exact schema types resolve through both declaration formats');
 
   // Bun selects a different conditional-export path for dual ESM/CJS
   // dependencies than Node. Exercise the packed artifact through a real MCP
@@ -181,6 +244,54 @@ try {
   console.log('🔥 Bun MCP negotiation:');
   run('npx', ['--yes', 'bun@1.3.8', 'smoke.mcp.mjs'], { cwd: tmpDir, stdio: 'inherit' });
   console.log('  Bun ESM negotiation through @adcp/sdk ok');
+
+  // The modern MCP server consumes the adopter's Zod peer. Zod 4.1 satisfies
+  // our declared range but predates `~standard.jsonSchema`; exercise a real
+  // packed AdCP server at that exact floor so tools/list cannot silently
+  // regress to `{ properties: {} }` while source tests use a newer Zod.
+  writeFileSync(
+    path.join(tmpDir, 'smoke.mcp-schema.mjs'),
+    [
+      "import { createRequire } from 'node:module';",
+      "import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';",
+      "import { InMemoryStateStore, serve } from '@adcp/sdk';",
+      "import { createAdcpServer } from '@adcp/sdk/server/legacy/v5';",
+      '',
+      'const require = createRequire(import.meta.url);',
+      "const zodVersion = require('zod/package.json').version;",
+      "if (zodVersion !== '4.1.5') throw new Error(`expected the Zod peer floor 4.1.5, got ${zodVersion}`);",
+      'const httpServer = serve(',
+      '  () => createAdcpServer({',
+      "    name: 'package-schema-smoke',",
+      "    version: '1.0.0',",
+      '    stateStore: new InMemoryStateStore(),',
+      '  }),',
+      '  { port: 0, onListening: () => {} }',
+      ');',
+      "await new Promise((resolve, reject) => { httpServer.once('error', reject); httpServer.listening ? resolve() : httpServer.once('listening', resolve); });",
+      'const address = httpServer.address();',
+      "if (!address || typeof address === 'string') throw new Error('AdCP server did not bind');",
+      'const client = new Client(',
+      "  { name: 'package-schema-client', version: '1.0.0' },",
+      "  { versionNegotiation: { mode: { pin: '2026-07-28' } } }",
+      ');',
+      'try {',
+      '  await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`)));',
+      '  const listed = await client.listTools();',
+      '  const discoveryBytes = Buffer.byteLength(JSON.stringify(listed.tools));',
+      '  if (discoveryBytes > 1024 * 1024) throw new Error(`default tools/list is ${discoveryBytes} bytes; budget is 1 MiB`);',
+      '  if (listed.tools.some(tool => tool.outputSchema !== undefined)) throw new Error("default tools/list must remain input-only");',
+      "  const capabilities = listed.tools.find(tool => tool.name === 'get_adcp_capabilities');",
+      '  if (!capabilities?.inputSchema?.properties?.protocols) throw new Error(`empty AdCP input schema at Zod ${zodVersion}: ${JSON.stringify(capabilities?.inputSchema)}`);',
+      '} finally {',
+      '  await client.close().catch(() => {});',
+      '  await new Promise((resolve, reject) => httpServer.close(error => error ? reject(error) : resolve()));',
+      '}',
+    ].join('\n')
+  );
+  console.log('🧩 Modern AdCP tools/list at Zod peer floor:');
+  run('node', ['smoke.mcp-schema.mjs'], { cwd: tmpDir, stdio: 'inherit' });
+  console.log('  bundled AdCP input schemas survive Zod 4.1.5');
 
   // `@adcp/sdk/enums` is documented as a lean, zod-free entry point safe for
   // browser bundlers. Bundling it with `--platform=browser` catches

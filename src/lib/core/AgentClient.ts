@@ -24,6 +24,7 @@ import {
   type SingleAgentClientConfig,
   type SyncCreativesTaskOptions,
   type VerifyAndParseWebhookOptions,
+  type WebhookHandlerAdapter,
   type WebhookParseResult,
 } from './SingleAgentClient';
 import type { InputHandler, TaskOptions, TaskResult, TaskInfo, Message } from './ConversationTypes';
@@ -32,6 +33,18 @@ import type { WebhookHeaderValue } from '../webhooks';
 import type {
   GetProductsRequest,
   GetProductsResponse,
+  ListProductsRequest,
+  ListProductsResponse,
+  RequestProposalsRequest,
+  RequestProposalsResponse,
+  DeclineProposalsRequest,
+  DeclineProposalsResponse,
+  BuyProductsRequest,
+  BuyProductsResponse,
+  AcceptProposalRequest,
+  AcceptProposalResponse,
+  ControlMediaBuyRequest,
+  ControlMediaBuyResponse,
   ListCreativeFormatsRequest,
   ListCreativeFormatsResponse,
   CreateMediaBuyRequest,
@@ -100,10 +113,14 @@ import type {
   CheckGovernanceResponse,
   ReportPlanOutcomeRequest,
   ReportPlanOutcomeResponse,
+  ReportPlanAdjustmentRequest,
+  ReportPlanAdjustmentResponse,
   GetPlanAuditLogsRequest,
   GetPlanAuditLogsResponse,
   ListTransformersRequest,
   ListTransformersResponse,
+  SyncAgentNotificationConfigsRequest,
+  SyncAgentNotificationConfigsResponse,
 } from '../types/tools.generated';
 import type { MutatingRequestInput } from '../utils/idempotency';
 import { buildRefineProposalsRequest } from '../negotiation/buyer';
@@ -170,7 +187,13 @@ export type V2AugmentedGetProductsResponse = CanonicalGetProductsResponse;
  */
 export type TaskResponseTypeMap = {
   get_products: CanonicalGetProductsResponse;
+  list_products: ListProductsResponse;
+  request_proposals: RequestProposalsResponse;
   refine_proposals: RefineProposalsResponse;
+  decline_proposals: DeclineProposalsResponse;
+  buy_products: BuyProductsResponse;
+  accept_proposal: AcceptProposalResponse;
+  control_media_buy: ControlMediaBuyResponse;
   create_media_buy: CanonicalCreativeResponse<CreateMediaBuyResponse>;
   update_media_buy: CanonicalCreativeResponse<UpdateMediaBuyResponse>;
   sync_creatives: CanonicalCreativeResponse<SyncCreativesResponse>;
@@ -198,9 +221,11 @@ export type TaskResponseTypeMap = {
   sync_plans: SyncPlansResponse;
   check_governance: CheckGovernanceResponse;
   report_plan_outcome: ReportPlanOutcomeResponse;
+  report_plan_adjustment: ReportPlanAdjustmentResponse;
   get_plan_audit_logs: GetPlanAuditLogsResponse;
   context_match: ContextMatchResponse;
   identity_match: IdentityMatchResponseRouterPublisher;
+  sync_agent_notification_configs: SyncAgentNotificationConfigsResponse;
 };
 
 /**
@@ -211,7 +236,13 @@ export type AdcpTaskName = keyof TaskResponseTypeMap;
 /** Exact request mapping paired with {@link TaskResponseTypeMap}. */
 export type TaskRequestTypeMap = {
   get_products: CanonicalGetProductsRequest;
+  list_products: ListProductsRequest;
+  request_proposals: MutatingRequestInput<RequestProposalsRequest>;
   refine_proposals: RefineProposalsInput;
+  decline_proposals: MutatingRequestInput<DeclineProposalsRequest>;
+  buy_products: MutatingRequestInput<BuyProductsRequest>;
+  accept_proposal: MutatingRequestInput<AcceptProposalRequest>;
+  control_media_buy: MutatingRequestInput<ControlMediaBuyRequest>;
   create_media_buy: MutatingRequestInput<CanonicalCreateMediaBuyRequest>;
   update_media_buy: MutatingRequestInput<CanonicalUpdateMediaBuyRequest>;
   sync_creatives: MutatingRequestInput<CanonicalSyncCreativesRequest>;
@@ -239,9 +270,11 @@ export type TaskRequestTypeMap = {
   sync_plans: MutatingRequestInput<SyncPlansRequest>;
   check_governance: CheckGovernanceRequest;
   report_plan_outcome: MutatingRequestInput<ReportPlanOutcomeRequest>;
+  report_plan_adjustment: MutatingRequestInput<ReportPlanAdjustmentRequest>;
   get_plan_audit_logs: GetPlanAuditLogsRequest;
   context_match: ContextMatchRequest;
   identity_match: IdentityMatchRequest;
+  sync_agent_notification_configs: MutatingRequestInput<SyncAgentNotificationConfigsRequest>;
 };
 
 export type TaskRequestFor<K extends AdcpTaskName> = TaskRequestTypeMap[K];
@@ -547,6 +580,11 @@ export class AgentClient {
     return this.client.verifyAndParseWebhook(options);
   }
 
+  /** Create a trusted-route HTTP receiver for this specific agent. */
+  createWebhookHandler(adapter: WebhookHandlerAdapter = {}) {
+    return this.client.createWebhookHandler(adapter);
+  }
+
   /**
    * Verify webhook signature using HMAC-SHA256 per AdCP spec.
    *
@@ -595,6 +633,134 @@ export class AgentClient {
       ...this.withSession('get_products', options),
     });
 
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Discover products through the compact AdCP 3.2 catalog task. */
+  async listProducts(
+    params: ListProductsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ListProductsResponse>> {
+    const result = await this.client.executeTask(
+      'list_products',
+      params,
+      inputHandler,
+      this.withSession('list_products', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Request one or more compact AdCP 3.2 proposals. */
+  async requestProposals(
+    params: MutatingRequestInput<RequestProposalsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<RequestProposalsResponse>> {
+    const result = await this.client.executeTask(
+      'request_proposals',
+      params,
+      inputHandler,
+      this.withSession('request_proposals', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Decline outstanding proposals. */
+  async declineProposals(
+    params: MutatingRequestInput<DeclineProposalsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<DeclineProposalsResponse>> {
+    const result = await this.client.executeTask(
+      'decline_proposals',
+      params,
+      inputHandler,
+      this.withSession('decline_proposals', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Buy explicit products through the compact AdCP 3.2 lifecycle. */
+  async buyProducts(
+    params: MutatingRequestInput<BuyProductsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<BuyProductsResponse>> {
+    const result = await this.client.executeTask(
+      'buy_products',
+      params,
+      inputHandler,
+      this.withSession('buy_products', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Accept a proposal through the compact AdCP 3.2 lifecycle. */
+  async acceptProposal(
+    params: MutatingRequestInput<AcceptProposalRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<AcceptProposalResponse>> {
+    const result = await this.client.executeTask(
+      'accept_proposal',
+      params,
+      inputHandler,
+      this.withSession('accept_proposal', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Apply a compact lifecycle control to an existing media buy. */
+  async controlMediaBuy(
+    params: MutatingRequestInput<ControlMediaBuyRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ControlMediaBuyResponse>> {
+    const result = await this.client.executeTask(
+      'control_media_buy',
+      params,
+      inputHandler,
+      this.withSession('control_media_buy', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Record a governance-plan adjustment with idempotent 3.2 semantics. */
+  async reportPlanAdjustment(
+    params: MutatingRequestInput<ReportPlanAdjustmentRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ReportPlanAdjustmentResponse>> {
+    const result = await this.client.executeTask(
+      'report_plan_adjustment',
+      params,
+      inputHandler,
+      this.withSession('report_plan_adjustment', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Declaratively replace agent-anchored notification subscriptions. */
+  async syncAgentNotificationConfigs(
+    params: MutatingRequestInput<SyncAgentNotificationConfigsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SyncAgentNotificationConfigsResponse>> {
+    const result = await this.client.executeTask(
+      'sync_agent_notification_configs',
+      params,
+      inputHandler,
+      this.withSession('sync_agent_notification_configs', options)
+    );
     this.retainSession(result);
     return result;
   }

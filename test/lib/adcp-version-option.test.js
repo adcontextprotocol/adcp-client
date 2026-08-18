@@ -118,20 +118,44 @@ describe('adcpVersion constructor option', () => {
 
     test('accepts pins that resolve to a bundled version', () => {
       // SDK bundles the current ADCP_VERSION. The full-semver pin,
-      // release-precision pin, and prerelease-family alias (when present)
-      // all resolve to the same bundle.
+      // release-precision pin resolve to the same bundle. The 3.2 preview
+      // deliberately rejects its moving prerelease-family alias.
       assert.strictEqual(resolveAdcpVersion(ADCP_VERSION), ADCP_VERSION);
       assert.strictEqual(resolveAdcpVersion(ADCP_RELEASE_PRECISION), ADCP_RELEASE_PRECISION);
-      assert.strictEqual(resolveAdcpVersion(ADCP_PRERELEASE_FAMILY), ADCP_PRERELEASE_FAMILY);
+      if (ADCP_VERSION.startsWith('3.2.0-')) {
+        assert.throws(() => resolveAdcpVersion(ADCP_PRERELEASE_FAMILY), /moving prerelease-family alias/);
+      } else {
+        assert.strictEqual(resolveAdcpVersion(ADCP_PRERELEASE_FAMILY), ADCP_PRERELEASE_FAMILY);
+      }
     });
 
-    test('compatibility helpers include release-precision aliases', () => {
+    test('compatibility helpers include exact release-precision aliases without a moving 3.2 family', () => {
       const { getCompatibleVersions, isCompatibleWith } = require('../../dist/lib/index.js');
+      const { isAdcpVersionSupported } = require('../../dist/lib/utils/adcp-version-config.js');
 
       assert.ok(getCompatibleVersions().includes(ADCP_RELEASE_PRECISION));
-      assert.ok(getCompatibleVersions().includes(ADCP_PRERELEASE_FAMILY));
       assert.strictEqual(isCompatibleWith(ADCP_RELEASE_PRECISION), true);
-      assert.strictEqual(isCompatibleWith(ADCP_PRERELEASE_FAMILY), true);
+      if (ADCP_VERSION.startsWith('3.2.0-')) {
+        assert.ok(!getCompatibleVersions().includes(ADCP_PRERELEASE_FAMILY));
+        assert.strictEqual(isCompatibleWith(ADCP_PRERELEASE_FAMILY), false);
+        assert.strictEqual(isAdcpVersionSupported(ADCP_VERSION, [ADCP_PRERELEASE_FAMILY]), false);
+      } else {
+        assert.ok(getCompatibleVersions().includes(ADCP_PRERELEASE_FAMILY));
+        assert.strictEqual(isCompatibleWith(ADCP_PRERELEASE_FAMILY), true);
+      }
+    });
+
+    test('server capabilities reject the moving 3.2 prerelease-family alias', () => {
+      if (!ADCP_VERSION.startsWith('3.2.0-')) return;
+      assert.throws(
+        () =>
+          createAdcpServer({
+            name: 'moving-beta',
+            version: '1.0.0',
+            capabilities: { supported_versions: [ADCP_PRERELEASE_FAMILY] },
+          }),
+        /supported_versions contains moving prerelease-family alias/
+      );
     });
 
     test('rejects pins for which no schema bundle ships', () => {

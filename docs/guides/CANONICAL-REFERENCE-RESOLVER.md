@@ -9,9 +9,20 @@ AdCP 3.1 `format_schema` and `platform_extensions` references use the same immut
 Use `@adcp/sdk/canonical-references` instead of hand-rolled fetch code. The resolver applies the SDK SSRF guard, pins DNS before connecting, disables redirects, enforces a 5 second default timeout, caps bodies at 1 MiB by default, verifies the SHA-256 digest, and caches successful fetched root documents by a policy-scoped `uri@digest` key.
 
 ```ts
-import { createCanonicalReferenceResolver } from '@adcp/sdk/canonical-references';
+import {
+  createCanonicalReferenceCache,
+  createCanonicalReferenceResolver,
+} from '@adcp/sdk/canonical-references';
 
 const resolver = createCanonicalReferenceResolver();
+
+// Optional: tune the bounded per-resolver LRU for your process budget.
+const largerResolver = createCanonicalReferenceResolver({
+  cache: createCanonicalReferenceCache({
+    maxEntries: 128,
+    maxBytes: 64 * 1024 * 1024,
+  }),
+});
 
 const formatSchemaRef = {
   uri: 'https://publisher.example-ad.com/schemas/slot.json',
@@ -59,7 +70,7 @@ External `$ref` bodies are mutable unless pinned. The canonical resolver therefo
 
 | Option | Default | Notes |
 |---|---:|---|
-| `cache` | fresh per resolver | Caller-owned cache. Entries are cloned on read/write and scoped by security policy. |
+| `cache` | fresh bounded LRU per resolver | The default keeps at most 64 entries and 32 MiB of estimated retained data. Pass `createCanonicalReferenceCache({ maxEntries, maxBytes })` to tune it, or inject a caller-owned cache. Entries are cloned on read/write and scoped by security policy. |
 | `timeoutMs` | `5000` | Per-fetch timeout. |
 | `maxBodyBytes` | `1048576` | Per-body cap for top-level and external ref fetches. |
 | `externalRefDigests` | none | Required for every external `$ref` in `format_schema`. |
@@ -73,3 +84,5 @@ External `$ref` bodies are mutable unless pinned. The canonical resolver therefo
 | `allowPrivateNetwork` | `false` | Test/dev-only private-network fixture escape hatch. Metadata/link-local remains blocked. |
 
 The legacy `@adcp/sdk/v2/format-schema` helpers still support the older `ADCP_ALLOW_INTERNAL_PROBES=1` test pattern. The canonical resolver uses explicit per-call/per-resolver options instead, so production code cannot inherit a relaxed environment flag accidentally.
+
+`maxBytes` is a conservative estimate covering the cached body, decoded string, and parsed document; exact JavaScript heap overhead varies by runtime. Content-addressed entries do not expire by time. LRU eviction can cause a later refetch, but the digest still guarantees the same immutable document. A custom injected cache remains entirely caller-owned and is not wrapped or capped by the resolver.

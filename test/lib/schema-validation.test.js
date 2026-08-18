@@ -17,6 +17,53 @@ const { validateOutgoingRequest, validateIncomingResponse } = require('../../dis
 const { _resetValidationLoader } = require('../../dist/lib/validation/schema-loader.js');
 const { ValidationError } = require('../../dist/lib/errors');
 
+function compactCommitmentResponse(extra = {}) {
+  return {
+    status: 'completed',
+    media_buy_id: 'mb-1',
+    revision: 1,
+    accepted_proposal: {
+      proposal_id: 'proposal-1',
+      proposal_kind: 'new_media_buy',
+      proposal_status: 'accepted',
+      media_buy_id: 'mb-1',
+      accepted_at: '2026-08-18T12:00:00Z',
+      name: 'Accepted proposal',
+      commercial_terms: {
+        brand: { domain: 'example.com' },
+        purchases: [
+          {
+            product_id: 'product-1',
+            pricing_option_id: 'price-1',
+            pricing: {
+              pricing_option_id: 'price-1',
+              pricing_model: 'cpm',
+              currency: 'USD',
+              fixed_price: 10,
+            },
+            start_time: '2026-08-19T00:00:00Z',
+            end_time: '2026-09-01T00:00:00Z',
+          },
+        ],
+        start_time: '2026-08-19T00:00:00Z',
+        end_time: '2026-09-01T00:00:00Z',
+      },
+      terms_digest: `sha256:${'A'.repeat(43)}`,
+    },
+    purchase_bindings: [{ purchase_index: 0, product_id: 'product-1', package_id: 'package-1' }],
+    available_actions: [],
+    ...extra,
+  };
+}
+
+function failedCompactCommitmentResponse(extra = {}) {
+  return {
+    status: 'failed',
+    errors: [{ code: 'INVALID_REQUEST', message: 'The commitment could not be completed' }],
+    ...extra,
+  };
+}
+
 describe('schema-driven validation', () => {
   describe('validateRequest', () => {
     test('flags missing required fields with a JSON Pointer', () => {
@@ -168,7 +215,7 @@ describe('schema-driven validation', () => {
       }
     });
 
-    test('nested-body drift is still caught (relaxation does not recurse)', () => {
+    test('nested-body drift is still caught (relaxation does not recurse into properties)', () => {
       // get_property_list-response nests `list: { ... }` with its own
       // additionalProperties:false. Typos inside the body must still fail
       // — envelope passthrough is a root-level concession only.
@@ -181,6 +228,31 @@ describe('schema-driven validation', () => {
       assert.ok(
         nestedAdditional.length > 0,
         `expected additionalProperties failure inside /list body, got: ${JSON.stringify(outcome.issues)}`
+      );
+    });
+
+    test('accepts SDK-stamped adcp_version through nested compact commitment aliases', () => {
+      for (const tool of ['buy_products', 'accept_proposal']) {
+        for (const response of [
+          compactCommitmentResponse({ adcp_version: '3.2-beta.0' }),
+          failedCompactCommitmentResponse({ adcp_version: '3.2-beta.0' }),
+        ]) {
+          const outcome = validateResponse(tool, response, '3.2.0-beta.0');
+          assert.strictEqual(outcome.valid, true, `${tool} ${response.status}: ${formatIssues(outcome.issues)}`);
+        }
+      }
+    });
+
+    test('compact commitment relaxation does not make nested bodies permissive', () => {
+      const response = compactCommitmentResponse();
+      response.accepted_proposal.commercial_terms.unknown_nested_field = 'typo';
+      const outcome = validateResponse('buy_products', response, '3.2.0-beta.0');
+      assert.ok(
+        outcome.issues.some(
+          issue =>
+            issue.keyword === 'additionalProperties' && issue.pointer.startsWith('/accepted_proposal/commercial_terms')
+        ),
+        `expected nested commercial terms drift to fail: ${JSON.stringify(outcome.issues)}`
       );
     });
   });
@@ -612,7 +684,7 @@ describe('schema-driven validation', () => {
       });
       assert.match(
         outcome.schemaId ?? '',
-        /^\/schemas\/3\.\d+(?:\.\d+(?:-[\w.]+)?)?\/bundled\/signals\/activate-signal-response\.json$/,
+        /^(?:https:\/\/adcontextprotocol\.org)?\/schemas\/3\.\d+(?:\.\d+(?:-[\w.]+)?)?\/bundled\/signals\/activate-signal-response\.json$/,
         `outcome.schemaId should name the root validator, got: ${outcome.schemaId}`
       );
     });

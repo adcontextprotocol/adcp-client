@@ -33,6 +33,8 @@ import type { TaskHandoff, TaskHandoffContext, TaskHandoffOptions } from './asyn
 import type { CtxMetadataRef, ResourceKind } from '../ctx-metadata';
 import type { BuyerAgent } from './buyer-agent';
 import type { Recipe } from './proposal';
+import type { CallerMutationScope } from '../create-adcp-server';
+import type { ProposalRefinementScope } from '../../negotiation/seller';
 
 // Unconstrained `TAccount` (no `extends Account`) so adopters with metadata
 // types that don't extend `Record<string, unknown>` (interfaces without index
@@ -42,6 +44,12 @@ import type { Recipe } from './proposal';
 export interface RequestContext<TAccount = Account> {
   /** Resolved account for this request. */
   account: TAccount;
+
+  /** Framework-derived caller namespace for authenticated mutations. */
+  callerMutationScope?: Readonly<CallerMutationScope>;
+
+  /** Framework-derived proposal namespace; never sourced from request fields. */
+  proposalRefinementScope?: Readonly<ProposalRefinementScope>;
 
   /**
    * Resolved buyer agent for this request, when an `agentRegistry` is

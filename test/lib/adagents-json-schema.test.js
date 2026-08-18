@@ -30,7 +30,10 @@ function loadAjv() {
   for (const file of walkJsonFiles(SCHEMA_ROOT)) {
     const rel = path.relative(SCHEMA_ROOT, file);
     const top = rel.split(path.sep)[0];
-    if (top === 'bundled') continue;
+    // adagents.json is part of the core schema graph. MCP profiles are
+    // self-contained discovery documents and may use a newer JSON Schema
+    // draft than the core graph's Ajv instance.
+    if (top === 'bundled' || top === 'mcp') continue;
 
     const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
     // Avoid ajv.getSchema() during registration: it can eagerly compile refs

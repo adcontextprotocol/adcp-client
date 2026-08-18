@@ -163,10 +163,12 @@ export function inlineCreativesForPackages<TPackage extends InlineCreativePackag
   options: InlineCreativesForPackagesOptions<TPackage> = {}
 ): InlineCreativePackagePatch<TPackage, CanonicalCreativeAsset>[] {
   assertCanonicalInlineInputs(packages, creatives, options);
-  return inlineCreativesForPackagesInternal(packages, creatives, options, 'canonical') as InlineCreativePackagePatch<
-    TPackage,
-    CanonicalCreativeAsset
-  >[];
+  return inlineCreativesForPackagesInternal(
+    packages as unknown as ReadonlyArray<LegacyInlineCreativePackage>,
+    creatives as unknown as ReadonlyArray<CreativeAsset>,
+    options as unknown as InternalInlineCreativesOptions<LegacyInlineCreativePackage>,
+    'canonical'
+  ) as InlineCreativePackagePatch<TPackage, CanonicalCreativeAsset>[];
 }
 
 /**
@@ -179,13 +181,13 @@ export function inlineCreativesForPackages<TPackage extends InlineCreativePackag
  */
 export function inlineCreativesForPackagesLegacy<TPackage extends LegacyInlineCreativePackage>(
   packages: ReadonlyArray<TPackage>,
-  creatives: ReadonlyArray<CreativeAsset>,
+  creatives: ReadonlyArray<CreativeAsset | CanonicalCreativeAsset>,
   options: InlineCreativesForPackagesLegacyOptions<TPackage> = {}
 ): InlineCreativePackagePatch<TPackage, LegacyCreativeAsset>[] {
   const { creativeFormatWireMode = 'legacy', ...sharedOptions } = options;
   return inlineCreativesForPackagesInternal(
     packages,
-    creatives,
+    creatives as ReadonlyArray<CreativeAsset>,
     {
       ...sharedOptions,
       legacyFormatConverter: options.legacyFormatConverter,
@@ -274,9 +276,10 @@ function inlineCreativesForPackagesInternal<TPackage extends LegacyInlineCreativ
         legacyFormatConverter,
         canonicalFormatLegacyResolver
       );
-      const compatible = !filterByFormat || creativeMatchesPackage(pkg, projected);
+      const projectedCreative = projected as unknown as CreativeAsset;
+      const compatible = !filterByFormat || creativeMatchesPackage(pkg, projectedCreative);
       if (compatible) {
-        inlined.push(applyAssignmentToCreative(projected, assignment));
+        inlined.push(applyAssignmentToCreative(projectedCreative, assignment));
       } else if (onIncompatibleAssignment === 'throw') {
         throw new Error(
           `inlineCreativesForPackages assignment creative_id "${assignment.creative_id}" ` +
@@ -297,8 +300,9 @@ function inlineCreativesForPackagesInternal<TPackage extends LegacyInlineCreativ
           legacyFormatConverter,
           canonicalFormatLegacyResolver
         );
-        if (!filterByFormat || creativeMatchesPackage(pkg, projected)) {
-          inlined.push({ ...projected });
+        const projectedCreative = projected as unknown as CreativeAsset;
+        if (!filterByFormat || creativeMatchesPackage(pkg, projectedCreative)) {
+          inlined.push({ ...projectedCreative });
         }
       }
     }

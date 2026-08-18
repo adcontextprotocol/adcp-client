@@ -92,6 +92,7 @@ function makeRevocationStore() {
 function makeMiddleware(replayStore) {
   const jwks = new StaticJwksResolver(loadPublicKeys());
   return createExpressVerifier({
+    adcpVersion: '3.1',
     capability: {
       supported: true,
       covers_content_digest: 'either',
@@ -209,6 +210,7 @@ function startNoopReplayServer() {
     },
   };
   const middleware = createExpressVerifier({
+    adcpVersion: '3.1',
     capability: {
       supported: true,
       covers_content_digest: 'either',

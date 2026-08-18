@@ -32,7 +32,10 @@ export function singleEnvelopedBuildCreativeReturn(fields: SingleEnvelopeFields)
 /** Shaped `BuildCreativeMultiSuccess`. `manifests` renamed to `creative_manifests` on wire. */
 export function multiEnvelopedBuildCreativeReturn(fields: MultiEnvelopeFields): BuildCreativeMultiSuccess {
   const { manifests, ...rest } = fields;
-  return { ...rest, creative_manifests: manifests };
+  if (manifests.length === 0) {
+    throw new Error('multiEnvelopedBuildCreativeReturn requires at least one creative manifest');
+  }
+  return { ...rest, creative_manifests: manifests as [CreativeManifest, ...CreativeManifest[]] };
 }
 
 /** Grouped accessor for the four `build_creative` return shapes. */

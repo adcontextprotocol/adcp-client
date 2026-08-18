@@ -3,6 +3,7 @@
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'fs';
 import { jsonSchemaToZod } from 'json-schema-to-zod';
 import path from 'path';
+import { resolveSchemaRefInCache } from './schema-cache-ref';
 import { removeMinItemsConstraints } from './schema-utils';
 
 // Schema cache configuration
@@ -104,23 +105,9 @@ function loadCachedSchema(schemaRef: string): any {
   try {
     const latestCacheDir = getLatestCacheDir();
 
-    // Strip any /schemas/ prefix (versioned or v1) to get the relative path
-    // e.g., /schemas/2.5.0/core/product.json -> core/product.json
-    //       /schemas/v1/core/product.json -> core/product.json
-    let relativePath = schemaRef;
-    if (relativePath.startsWith('/schemas/')) {
-      // Remove /schemas/ prefix
-      relativePath = relativePath.substring('/schemas/'.length);
-      // Remove version segment (e.g., "2.5.0/" or "v1/" or "v2/")
-      const firstSlash = relativePath.indexOf('/');
-      if (firstSlash > 0) {
-        relativePath = relativePath.substring(firstSlash + 1);
-      }
-    }
-
-    const schemaPath = path.join(latestCacheDir, relativePath);
-    if (!existsSync(schemaPath)) {
-      throw new Error(`Schema not found in cache: ${schemaPath}`);
+    const schemaPath = resolveSchemaRefInCache(latestCacheDir, schemaRef);
+    if (!schemaPath || !existsSync(schemaPath)) {
+      throw new Error(`Schema not found in cache for ref: ${schemaRef}`);
     }
     return JSON.parse(readFileSync(schemaPath, 'utf8'));
   } catch (error) {

@@ -162,6 +162,7 @@ async function verifyVector(argv) {
       revocationStore,
       now: () => now,
       operation,
+      adcpVersion: vector.signing_profile_version ?? '3.1',
     });
     console.log(JSON.stringify({ outcome: 'accepted', verified_signer: verified, operation }, null, 2));
     return { accepted: true };

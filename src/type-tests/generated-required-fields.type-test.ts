@@ -6,12 +6,18 @@ import type {
   TasksGetResponse,
 } from '../lib/types/core.generated';
 import type {
+  AdCPVersionEnvelope as ToolAdCPVersionEnvelope,
   CatalogItemDeliveryMetrics as ToolCatalogItemDeliveryMetrics,
+  CanonicalFormatBase as ToolCanonicalFormatBase,
   GeoDeliveryMetrics as ToolGeoDeliveryMetrics,
   GetMediaBuyDeliveryCatalogItemMetrics,
   GetMediaBuyDeliveryGeoMetrics,
   GetMediaBuyDeliveryKeywordMetrics,
   KeywordDeliveryMetrics as ToolKeywordDeliveryMetrics,
+  PostalCountrySystem as ToolPostalCountrySystem,
+  ProtocolEnvelope as ToolProtocolEnvelope,
+  SignalDefinitionEnrichment as ToolSignalDefinitionEnrichment,
+  SignalTargetingExpression as ToolSignalTargetingExpression,
 } from '../lib/types/tools.generated';
 
 type Assert<T extends true> = T;
@@ -37,6 +43,12 @@ type _ToolKeywordIsRequired = Assert<IsRequired<ToolKeywordDeliveryMetrics, 'key
 type _ToolMatchTypeIsRequired = Assert<IsRequired<ToolKeywordDeliveryMetrics, 'match_type'>>;
 type _ToolGeoLevelIsRequired = Assert<IsRequired<ToolGeoDeliveryMetrics, 'geo_level'>>;
 type _ToolGeoCodeIsRequired = Assert<IsRequired<ToolGeoDeliveryMetrics, 'geo_code'>>;
+type _ToolPostalCountryIsRequired = Assert<IsRequired<ToolPostalCountrySystem, 'country'>>;
+type _ToolProtocolStatusIsRequired = Assert<IsRequired<ToolProtocolEnvelope, 'status'>>;
+type _ToolAdCPVersionEnvelopeExport = ToolAdCPVersionEnvelope;
+type _ToolCanonicalFormatBaseExport = ToolCanonicalFormatBase;
+type _ToolSignalDefinitionEnrichmentExport = ToolSignalDefinitionEnrichment;
+type _ToolSignalTargetingExpressionExport = ToolSignalTargetingExpression;
 
 // Buyer-side tool responses retain tolerance for legacy sellers that predate
 // the v3 breakdown identifiers. These aliases must stay distinct from the

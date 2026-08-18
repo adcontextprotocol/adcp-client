@@ -21,6 +21,25 @@ import { getAuthoritativeMediaBuyStatus } from '../../utils/media-buy-status';
 
 type ContextExtractor = (data: unknown) => Record<string, unknown>;
 
+const PRODUCT_CONTEXT_KEYS = [
+  'product',
+  'products',
+  'product_id',
+  'pricing_option',
+  'pricing_option_id',
+  'feed_version',
+  'pricing_version',
+];
+const PROPOSAL_CONTEXT_KEYS = [
+  'proposal',
+  'proposals',
+  'proposal_id',
+  'proposal_status',
+  'proposal_kind',
+  'terms_digest',
+  'proposal_terms_digest',
+];
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
@@ -36,6 +55,43 @@ function readMediaBuyFields(data: unknown): { mediaBuyId?: unknown; status?: unk
     mediaBuyId: nested?.media_buy_id ?? outer?.media_buy_id,
     status: readMediaBuyStatus(nested) ?? readMediaBuyStatus(outer),
   };
+}
+
+function readProposalFields(proposal: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!proposal) return {};
+  const extracted: Record<string, unknown> = {};
+  if (proposal.proposal_id) extracted.proposal_id = proposal.proposal_id;
+  if (proposal.proposal_status) extracted.proposal_status = proposal.proposal_status;
+  if (proposal.proposal_kind) extracted.proposal_kind = proposal.proposal_kind;
+  if (proposal.terms_digest) {
+    extracted.terms_digest = proposal.terms_digest;
+    extracted.proposal_terms_digest = proposal.terms_digest;
+  }
+  return extracted;
+}
+
+function readCompactMediaBuyFields(data: unknown): Record<string, unknown> {
+  const outer = asRecord(data);
+  if (!outer || outer.status !== 'completed') return {};
+  const mediaBuyId = outer.media_buy_id;
+  // Compact responses use `status` for task completion and
+  // `media_buy_status` for lifecycle state. Never reinterpret a bare
+  // `status: completed` as the MediaBuy's status when the optional lifecycle
+  // field is absent.
+  const status = readMediaBuyStatus({ media_buy_status: outer.media_buy_status });
+  const acceptedProposal = asRecord(outer.accepted_proposal);
+  const extracted: Record<string, unknown> = {};
+  if (mediaBuyId) extracted.media_buy_id = mediaBuyId;
+  if (status) extracted.media_buy_status = status;
+  if (outer.revision) {
+    extracted.revision = outer.revision;
+    extracted.media_buy_revision = outer.revision;
+  }
+  if (acceptedProposal) {
+    Object.assign(extracted, readProposalFields(acceptedProposal));
+  }
+  if (Array.isArray(outer.available_actions)) extracted.available_actions = outer.available_actions;
+  return extracted;
 }
 
 export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
@@ -78,6 +134,57 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
     return extracted;
   },
 
+  list_products(data) {
+    const d = asRecord(data);
+    const products = d?.products as Array<Record<string, unknown>> | undefined;
+    if (!products?.[0]) return {};
+    const first = products[0];
+    const pricingOptions = first.pricing_options as Array<Record<string, unknown>> | undefined;
+    const extracted: Record<string, unknown> = {};
+    if (first.product_id) extracted.product_id = first.product_id;
+    if (pricingOptions?.[0]) {
+      if (pricingOptions[0].pricing_option_id) extracted.pricing_option_id = pricingOptions[0].pricing_option_id;
+    }
+    if (d?.feed_version) extracted.feed_version = d.feed_version;
+    if (d?.pricing_version) extracted.pricing_version = d.pricing_version;
+    return extracted;
+  },
+
+  request_proposals(data) {
+    const d = asRecord(data);
+    const proposals = d?.proposals as Array<Record<string, unknown>> | undefined;
+    if (!proposals?.[0]) return {};
+    return readProposalFields(proposals[0]);
+  },
+
+  refine_proposals(data) {
+    const d = asRecord(data);
+    const results = d?.results as Array<Record<string, unknown>> | undefined;
+    if (!results?.length) return {};
+    const proposalResult = results.find(result => asRecord(result.proposal) || Array.isArray(result.proposals));
+    const proposal =
+      asRecord(proposalResult?.proposal) ??
+      (proposalResult?.proposals as Array<Record<string, unknown>> | undefined)?.[0] ??
+      undefined;
+    return proposal ? readProposalFields(proposal) : {};
+  },
+
+  decline_proposals() {
+    return {};
+  },
+
+  buy_products(data) {
+    return readCompactMediaBuyFields(data);
+  },
+
+  accept_proposal(data) {
+    return readCompactMediaBuyFields(data);
+  },
+
+  control_media_buy(data) {
+    return readCompactMediaBuyFields(data);
+  },
+
   create_media_buy(data) {
     const { mediaBuyId, status } = readMediaBuyFields(data);
     const extracted: Record<string, unknown> = {};
@@ -106,10 +213,16 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
     // (absent has_more is treated as terminal, not as a list-in-progress).
     const pagination = d?.pagination as Record<string, unknown> | undefined;
     if (pagination?.has_more === true) return {};
-    return {
+    const extracted: Record<string, unknown> = {
       media_buy_id: buys[0].media_buy_id,
       media_buy_status: readMediaBuyStatus(buys[0]),
     };
+    if (buys[0].revision) {
+      extracted.revision = buys[0].revision;
+      extracted.media_buy_revision = buys[0].revision;
+    }
+    if (Array.isArray(buys[0].available_actions)) extracted.available_actions = buys[0].available_actions;
+    return extracted;
   },
 
   list_creative_formats(data) {
@@ -550,6 +663,15 @@ export interface ContextWriteResult {
   values: Record<string, unknown>;
   provenance: Record<string, ContextProvenanceEntry>;
   /**
+   * Convention-owned alias groups that must be removed before applying
+   * `values`. Conditional groups only clear when the current context key
+   * matches one of the response-derived values.
+   */
+  clearGroups?: Array<{
+    keys: string[];
+    when?: { key: string; values: unknown[] };
+  }>;
+  /**
    * `path:` entries whose declared response path did not resolve to a usable
    * value (absent, `null`, or `""`). Per runner-output-contract.yaml v2.0.0,
    * the runner synthesizes a `capture_path_not_resolvable` validation result
@@ -568,6 +690,32 @@ export interface ContextWriteResult {
  */
 export function extractContextWithProvenance(taskName: string, data: unknown, stepId: string): ContextWriteResult {
   const values = extractContext(taskName, data);
+  const clearGroups = (() => {
+    const response = asRecord(data);
+    switch (taskName) {
+      case 'list_products':
+        return response?.outcome === 'listed' && Array.isArray(response.products)
+          ? [{ keys: PRODUCT_CONTEXT_KEYS }]
+          : undefined;
+      case 'request_proposals':
+        return values.proposal_id ? [{ keys: PROPOSAL_CONTEXT_KEYS }] : undefined;
+      case 'refine_proposals':
+        return values.proposal_id ? [{ keys: PROPOSAL_CONTEXT_KEYS }] : undefined;
+      case 'decline_proposals':
+        const declinedIds = Array.isArray(response?.results)
+          ? response.results
+              .map(asRecord)
+              .filter(result => result?.outcome === 'declined')
+              .map(result => result?.proposal_id)
+              .filter(proposalId => proposalId !== undefined)
+          : [];
+        return declinedIds.length
+          ? [{ keys: PROPOSAL_CONTEXT_KEYS, when: { key: 'proposal_id', values: declinedIds } }]
+          : undefined;
+      default:
+        return undefined;
+    }
+  })();
   const provenance: Record<string, ContextProvenanceEntry> = {};
   for (const key of Object.keys(values)) {
     provenance[key] = {
@@ -576,7 +724,7 @@ export function extractContextWithProvenance(taskName: string, data: unknown, st
       source_task: taskName,
     };
   }
-  return { values, provenance };
+  return { values, provenance, ...(clearGroups && { clearGroups }) };
 }
 
 /**

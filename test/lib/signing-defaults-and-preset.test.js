@@ -26,6 +26,7 @@ const {
   createExpressVerifier,
 } = require('../../dist/lib/signing/index.js');
 const { InMemorySigningProvider } = require('../../dist/lib/signing/testing.js');
+const { ADCP_VERSION } = require('../../dist/lib/version.js');
 
 // ---------------------------------------------------------------------------
 // Key + request helpers
@@ -85,6 +86,7 @@ describe('verifySignatureAsAuthenticator default stores', () => {
       resolveOperation: mcpToolNameResolver,
       getUrl: req => `https://seller.example.com${req.url ?? '/mcp'}`,
       now: () => now,
+      adcpVersion: '3.1',
       ...overrides,
     };
   }
@@ -578,7 +580,7 @@ describe('createAgentSignedFetch preset', () => {
   it('signs when the capability cache lists the operation as required_for', async () => {
     const cache = new CapabilityCache();
     const { buildCapabilityCacheKey } = require('../../dist/lib/signing/index.js');
-    const cacheKey = buildCapabilityCacheKey(sellerAgentUri);
+    const cacheKey = buildCapabilityCacheKey(sellerAgentUri, undefined, undefined, ADCP_VERSION);
     cache.set(cacheKey, {
       agentUri: sellerAgentUri,
       requestSigning: {
@@ -629,6 +631,7 @@ describe('createExpressVerifier default stores', () => {
       },
       getUrl: req => `https://seller.example.com${req.originalUrl ?? req.url ?? '/mcp'}`,
       now: () => now,
+      adcpVersion: '3.1',
       ...overrides,
     };
   }

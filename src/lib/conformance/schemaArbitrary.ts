@@ -59,6 +59,9 @@ export function schemaToArbitrary(schema: JsonSchema, opts: ArbitraryOptions = {
   const rootSchema = opts.rootSchema ?? schema;
   const optsWithRoot: ArbitraryOptions = opts.rootSchema ? opts : { ...opts, rootSchema };
 
+  const mergedAllOf = mergeStructuralAllOf(schema, rootSchema);
+  if (mergedAllOf) return schemaToArbitrary(mergedAllOf, optsWithRoot);
+
   if (typeof schema.$ref === 'string') {
     const ref = schema.$ref;
     const seenRefs = optsWithRoot.seenRefs ?? new Set<string>();
@@ -110,6 +113,97 @@ export function schemaToArbitrary(schema: JsonSchema, opts: ArbitraryOptions = {
   }
 }
 
+/**
+ * Merge allOf branches that are structural object declarations. Bundled 3.2
+ * schemas use this for portable attestation references: the first arm is the
+ * complete reference and the second narrows issuer/subject fields. Treating
+ * the allOf as unknown produces arbitrary junk; a recursive property merge
+ * preserves both the base shape and the narrowing.
+ *
+ * Pure validation branches (if/then/not) deliberately bail out and continue
+ * through the existing conditional handling below.
+ */
+function mergeStructuralAllOf(schema: JsonSchema, root: JsonSchema): JsonSchema | undefined {
+  if (!Array.isArray(schema.allOf) || schema.allOf.length === 0) return undefined;
+  const branches: JsonSchema[] = [];
+  for (const rawBranch of schema.allOf as JsonSchema[]) {
+    let branch = rawBranch;
+    if (typeof branch.$ref === 'string') {
+      const resolved = resolveLocalRef(root, branch.$ref);
+      if (!resolved) return undefined;
+      branch = resolved;
+    }
+    if (
+      !branch ||
+      typeof branch !== 'object' ||
+      (!branch.properties && !branch.required && branch.type !== 'object' && !branch.oneOf && !branch.anyOf)
+    ) {
+      return undefined;
+    }
+    branches.push(mergeStructuralAllOf(branch, root) ?? branch);
+  }
+
+  const base = { ...schema };
+  delete base.allOf;
+  return branches.reduce((merged, branch) => mergeSchemaForGeneration(merged, branch), base);
+}
+
+function mergeSchemaForGeneration(left: JsonSchema, right: JsonSchema): JsonSchema {
+  // A structural overlay can narrow a discriminated union without repeating
+  // the union. Apply it to the compatible branch(es) rather than copying the
+  // overlay's properties beside `oneOf`, which would make the generator emit
+  // an object satisfying neither branch. Attestation references use this to
+  // narrow issuer→brand and subject→resource.
+  if (Array.isArray(left.oneOf) && right.properties) {
+    const compatible = (left.oneOf as JsonSchema[]).filter(branch => schemasCanIntersect(branch, right));
+    if (compatible.length > 0) {
+      const narrowed = compatible.map(branch => mergeSchemaForGeneration(branch, right));
+      if (narrowed.length === 1) return narrowed[0]!;
+      const outer: JsonSchema = { ...left, ...right, oneOf: narrowed };
+      delete outer.properties;
+      delete outer.required;
+      return outer;
+    }
+  }
+  const merged: JsonSchema = { ...left, ...right };
+  const leftProperties = (left.properties as Record<string, JsonSchema> | undefined) ?? {};
+  const rightProperties = (right.properties as Record<string, JsonSchema> | undefined) ?? {};
+  if (Object.keys(leftProperties).length > 0 || Object.keys(rightProperties).length > 0) {
+    merged.properties = { ...leftProperties };
+    for (const [key, rightProperty] of Object.entries(rightProperties)) {
+      const leftProperty = leftProperties[key];
+      (merged.properties as Record<string, JsonSchema>)[key] = leftProperty
+        ? mergeSchemaForGeneration(leftProperty, rightProperty)
+        : rightProperty;
+    }
+  }
+  const required = [
+    ...(Array.isArray(left.required) ? (left.required as string[]) : []),
+    ...(Array.isArray(right.required) ? (right.required as string[]) : []),
+  ];
+  if (required.length > 0) merged.required = [...new Set(required)];
+  // Both branches constrain the same instance. For generation, retain the
+  // earlier branch choice when both declare a union; the recursively merged
+  // sibling properties carry the later narrowing.
+  if (left.oneOf && right.oneOf) merged.oneOf = left.oneOf;
+  if (left.anyOf && right.anyOf) merged.anyOf = left.anyOf;
+  if (left.additionalProperties === false || right.additionalProperties === false) merged.additionalProperties = false;
+  return merged;
+}
+
+function schemasCanIntersect(left: JsonSchema, right: JsonSchema): boolean {
+  const leftProps = (left.properties as Record<string, JsonSchema> | undefined) ?? {};
+  const rightProps = (right.properties as Record<string, JsonSchema> | undefined) ?? {};
+  for (const [key, rightProp] of Object.entries(rightProps)) {
+    const leftProp = leftProps[key];
+    if (!leftProp) continue;
+    if ('const' in leftProp && 'const' in rightProp && leftProp.const !== rightProp.const) return false;
+    if (Array.isArray(leftProp.enum) && 'const' in rightProp && !leftProp.enum.includes(rightProp.const)) return false;
+    if (Array.isArray(rightProp.enum) && 'const' in leftProp && !rightProp.enum.includes(leftProp.const)) return false;
+  }
+  return true;
+}
+
 // Years 2020-2040 — well inside Ajv's date-time format validator. Fast-check's
 // default `fc.date()` produces ISO strings outside the RFC-3339 range (e.g.,
 // `+041510-07-24T...`) that the format validator rejects.
@@ -142,8 +236,13 @@ function stringArb(schema: JsonSchema): fc.Arbitrary<string> {
   // produce genuine RFC-3986 URIs rather than pattern-shaped noise that
   // Ajv's format validator rejects.
   if (format === 'uri' || format === 'uri-reference') {
-    const httpsOnly = pattern === '^https://' || pattern === '^https:' || pattern === '^https:\\/\\/';
-    return fc.webUrl({ validSchemes: httpsOnly ? ['https'] : ['http', 'https'] });
+    const httpsOnly = pattern?.startsWith('^https://') || pattern === '^https:' || pattern === '^https:\\/\\/';
+    // Restricted credential/agent URI patterns permit a canonical HTTPS
+    // origin plus path/query but forbid userinfo and fragments. A bare domain
+    // exercises a valid URI without fast-check's webUrl generator adding a
+    // fragment or percent-encoding that the stricter AdCP pattern rejects.
+    if (httpsOnly) return fc.domain().map(domain => `https://${domain}`);
+    return fc.webUrl({ validSchemes: ['http', 'https'] });
   }
   if (format === 'email') return fc.emailAddress();
   if (format === 'uuid') return fc.uuid();
@@ -161,14 +260,24 @@ function stringArb(schema: JsonSchema): fc.Arbitrary<string> {
 }
 
 function integerArb(schema: JsonSchema): fc.Arbitrary<number> {
-  const min = (schema.minimum as number | undefined) ?? -1000;
-  const max = (schema.maximum as number | undefined) ?? 1000;
+  const inclusiveMin = (schema.minimum as number | undefined) ?? -1000;
+  const inclusiveMax = (schema.maximum as number | undefined) ?? 1000;
+  const exclusiveMin = schema.exclusiveMinimum as number | undefined;
+  const exclusiveMax = schema.exclusiveMaximum as number | undefined;
+  const min = exclusiveMin === undefined ? inclusiveMin : Math.max(inclusiveMin, Math.floor(exclusiveMin) + 1);
+  const max = exclusiveMax === undefined ? inclusiveMax : Math.min(inclusiveMax, Math.ceil(exclusiveMax) - 1);
   return fc.integer({ min: Math.ceil(min), max: Math.floor(max) });
 }
 
 function numberArb(schema: JsonSchema): fc.Arbitrary<number> {
-  const min = (schema.minimum as number | undefined) ?? -1000;
-  const max = (schema.maximum as number | undefined) ?? 1000;
+  const inclusiveMin = (schema.minimum as number | undefined) ?? -1000;
+  const inclusiveMax = (schema.maximum as number | undefined) ?? 1000;
+  const exclusiveMin = schema.exclusiveMinimum as number | undefined;
+  const exclusiveMax = schema.exclusiveMaximum as number | undefined;
+  const minStep = exclusiveMin === undefined ? 0 : Math.max(Number.MIN_VALUE, Math.abs(exclusiveMin) * Number.EPSILON);
+  const maxStep = exclusiveMax === undefined ? 0 : Math.max(Number.MIN_VALUE, Math.abs(exclusiveMax) * Number.EPSILON);
+  const min = exclusiveMin === undefined ? inclusiveMin : Math.max(inclusiveMin, exclusiveMin + minStep);
+  const max = exclusiveMax === undefined ? inclusiveMax : Math.min(inclusiveMax, exclusiveMax - maxStep);
   return fc.double({ min, max, noNaN: true, noDefaultInfinity: true });
 }
 
@@ -417,9 +526,74 @@ function enforceSimpleConditionals(value: Record<string, unknown>, schema: JsonS
   let current = { ...value };
   for (const entry of (schema.allOf as JsonSchema[] | undefined) ?? []) {
     current = enforceRequiredTriggerConst(current, entry);
+    current = avoidUnsatisfiedConstConditional(current, entry, schema);
   }
   current = enforceConstThenForbidden(current, schema);
   return current;
+}
+
+/**
+ * Optional selector fields commonly activate a required sibling (or a
+ * required nested field) through if/then. When the random base record did
+ * not generate that dependent shape, omit the optional selector so the
+ * conditional does not fire. Required selectors are left intact: those need
+ * a tool-specific generator rather than silently weakening the sample.
+ */
+function avoidUnsatisfiedConstConditional(
+  value: Record<string, unknown>,
+  conditional: JsonSchema,
+  rootSchema: JsonSchema
+): Record<string, unknown> {
+  const ifSchema = conditional.if as JsonSchema | undefined;
+  const thenSchema = conditional.then as JsonSchema | undefined;
+  const ifProps = ifSchema?.properties as Record<string, JsonSchema> | undefined;
+  const triggerKeys = Array.isArray(ifSchema?.required) ? (ifSchema.required as string[]) : [];
+  if (triggerKeys.length === 0 || !thenSchema) return value;
+
+  // `if: {required:[...]}` is the other common conditional shape. If all
+  // optional trigger fields happened to be generated but the `then` contract
+  // was not, remove one trigger so the implication remains false. This keeps
+  // portable attestation references valid when both locator and embedded
+  // credential are optional (together they require content_digest), and does
+  // the same for rights.attestation_refs.
+  if (!ifProps) {
+    const matchesRequiredOnly = triggerKeys.every(key => key in value);
+    if (!matchesRequiredOnly || conditionalRequirementsSatisfied(value, thenSchema)) return value;
+    const rootRequired = new Set(Array.isArray(rootSchema.required) ? (rootSchema.required as string[]) : []);
+    const removable = triggerKeys.find(key => !rootRequired.has(key));
+    if (!removable) return value;
+    const next = { ...value };
+    delete next[removable];
+    return next;
+  }
+
+  const matches = triggerKeys.every(key => {
+    const prop = ifProps[key];
+    return key in value && prop && typeof prop === 'object' && 'const' in prop && value[key] === prop.const;
+  });
+  if (!matches || conditionalRequirementsSatisfied(value, thenSchema)) return value;
+
+  const rootRequired = new Set(Array.isArray(rootSchema.required) ? (rootSchema.required as string[]) : []);
+  const removable = triggerKeys.filter(key => !rootRequired.has(key));
+  if (removable.length === 0) return value;
+  const next = { ...value };
+  for (const key of removable) delete next[key];
+  return next;
+}
+
+function conditionalRequirementsSatisfied(value: Record<string, unknown>, thenSchema: JsonSchema): boolean {
+  for (const key of (thenSchema.required as string[] | undefined) ?? []) {
+    if (!(key in value)) return false;
+  }
+  const properties = thenSchema.properties as Record<string, JsonSchema> | undefined;
+  for (const [key, prop] of Object.entries(properties ?? {})) {
+    const nestedRequired = prop.required as string[] | undefined;
+    if (!nestedRequired) continue;
+    const nested = value[key];
+    if (!nested || typeof nested !== 'object') return false;
+    if (nestedRequired.some(requiredKey => !(requiredKey in (nested as Record<string, unknown>)))) return false;
+  }
+  return true;
 }
 
 function enforceRequiredTriggerConst(value: Record<string, unknown>, schema: JsonSchema): Record<string, unknown> {
@@ -507,7 +681,7 @@ function resolvePoolForKey(key: string, fixtures: ConformanceFixtures): readonly
   const poolName = PROPERTY_TO_POOL[key];
   if (!poolName) return null;
   const pool = fixtures[poolName];
-  return pool && pool.length > 0 ? pool : null;
+  return pool && pool.length > 0 && pool.every(value => typeof value === 'string') ? pool : null;
 }
 
 /**

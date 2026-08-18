@@ -1,0 +1,37 @@
+{
+  "name": "@adcp/reference-renderers",
+  "version": "1.0.0-beta.0",
+  "description": "Browser-safe reference presentations for AdCP canonical creative formats",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js",
+      "default": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "structured.js",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "npm test && publint --strict .",
+    "prepublishOnly": "npm run check"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adcontextprotocol/adcp-client.git",
+    "directory": "packages/reference-renderers"
+  },
+  "homepage": "https://adcontextprotocol.org/docs/creative/canonical-formats",
+  "bugs": "https://github.com/adcontextprotocol/adcp-client/issues",
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

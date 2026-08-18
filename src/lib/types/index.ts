@@ -30,6 +30,25 @@ export type {
 // We expose the new canonical name AND keep the historical `FormatID` alias
 // so SDK consumers don't break across the version bump.
 export type { FormatReferenceStructuredObject } from './core.generated';
+// Canonical-format declarations are part of the 3.2 authoring surface. Keep
+// these curated exports available from `@adcp/sdk/types` so adopters can type
+// check the shared array-valued `slots` contract without importing generated
+// implementation files.
+export type {
+  CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement,
+  CanonicalFormatBase,
+  CanonicalFormatDAASTAudio,
+  CanonicalFormatDisplayTag,
+  CanonicalFormatHostedAudio,
+  CanonicalFormatHostedVideo,
+  CanonicalFormatHTML5Banner,
+  CanonicalFormatImageCarousel,
+  CanonicalFormatNativeInFeed,
+  CanonicalFormatResponsiveCreative,
+  CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven,
+  CanonicalFormatVASTVideo,
+  ExtensionObject,
+} from './core.generated';
 import type { FormatReferenceStructuredObject } from './core.generated';
 export type { RequireCacheScopeWhenProducts, ServerPayload } from './server-payload';
 export * from './server-payload-aliases';

@@ -379,7 +379,7 @@ describe('createAdcpServerFromPlatform — comply_test_controller wiring', () =>
 
   it('F10: complyTest.inputSchema extends the canonical TOOL_INPUT_SHAPE', async () => {
     // Round-5 spike (training-agent): adopters routed through
-    // createAdcpServerFromPlatform({ complyTest }) couldn't extend the
+    // createAdcpServerFromPlatform(platform, { complyTest }) couldn't extend the
     // canonical schema with a top-level `account` field — the
     // documented `{ ...TOOL_INPUT_SHAPE, account: ... }` extension
     // pattern was unreachable through the v6 wiring path. The

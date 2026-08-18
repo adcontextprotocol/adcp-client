@@ -14,6 +14,9 @@ import {
 import type { ContentDigestPolicy, VerifierCapability } from './types';
 import type { SignerKey } from './signer';
 import { containsWebhookAuthentication } from './webhook-auth-detection';
+import { ADCP_VERSION } from '../version';
+import { requestSigningEncodingForVersion } from './content-digest';
+export { requestSigningEncodingForVersion } from './content-digest';
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 const MAX_WEBHOOK_AUTH_INSPECTION_BYTES = 1_048_576;
@@ -210,6 +213,8 @@ export interface BuildAgentSigningFetchOptions {
   signing: AgentRequestSigningConfig;
   /** Lazy accessor for the current cached capability — re-read on every call. */
   getCapability: () => CachedCapability | undefined;
+  /** Trusted SDK/endpoint version pin; never inferred from the request body. */
+  adcpVersion?: string;
 }
 
 /**
@@ -239,7 +244,9 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
     return shouldSignOperation(operation, entry?.requestSigning, signing);
   };
 
+  const binaryEncoding = requestSigningEncodingForVersion(options.adcpVersion ?? ADCP_VERSION);
   const coverContentDigest: CoverContentDigestPredicate = (_url, _init) => {
+    if (binaryEncoding === 'rfc8941-base64') return true;
     const entry = getCapability();
     return resolveCoverContentDigest(entry?.requestSigning?.covers_content_digest);
   };
@@ -253,9 +260,9 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
     // the cache key the connection was bound to. The frozen view binds the
     // wire identity to the snapshot already used for cache routing.
     const frozen = freezeProviderIdentity(signing.provider);
-    return createSigningFetchAsync(upstream, frozen, { shouldSign, coverContentDigest });
+    return createSigningFetchAsync(upstream, frozen, { shouldSign, coverContentDigest, binaryEncoding });
   }
-  return createSigningFetch(upstream, toSignerKey(signing), { shouldSign, coverContentDigest });
+  return createSigningFetch(upstream, toSignerKey(signing), { shouldSign, coverContentDigest, binaryEncoding });
 }
 
 function freezeProviderIdentity(provider: AgentRequestSigningConfigProvider['provider']) {
@@ -273,6 +280,8 @@ function freezeProviderIdentity(provider: AgentRequestSigningConfigProvider['pro
 export interface CreateAgentSignedFetchOptions {
   /** This agent's RFC 9421 signing identity (kid, alg, private_key, agent_url). */
   signing: AgentRequestSigningConfig;
+  /** Trusted endpoint pin used to select the 3.0/3.1 or 3.2 request profile. */
+  adcpVersion?: string;
   /**
    * Target seller's `agent_uri` — the base URL whose `get_adcp_capabilities`
    * response gates whether each operation gets signed. The preset keys a
@@ -306,7 +315,7 @@ export interface CreateAgentSignedFetchOptions {
    * Pass an explicit cache only when you've also primed it — call
    * {@link ensureCapabilityLoaded} against your cache instance after
    * construction, or seed it via `cache.set(buildCapabilityCacheKey(uri,
-   * token), entry)` — or when you genuinely want each caller to re-fetch
+   * token, fingerprint, adcpVersion), entry)` — or when you genuinely want each caller to re-fetch
    * the seller's capability block.
    *
    * Note: the cache stores **public** seller capability advertisements
@@ -364,10 +373,12 @@ export interface CreateAgentSignedFetchOptions {
  */
 export function createAgentSignedFetch(options: CreateAgentSignedFetchOptions): FetchLike {
   const cache = options.cache ?? defaultCapabilityCache;
-  const cacheKey = buildCapabilityCacheKey(options.sellerAgentUri, options.sellerAuthToken);
+  const adcpVersion = options.adcpVersion ?? ADCP_VERSION;
+  const cacheKey = buildCapabilityCacheKey(options.sellerAgentUri, options.sellerAuthToken, undefined, adcpVersion);
   return buildAgentSigningFetch({
     signing: options.signing,
     upstream: options.upstream,
     getCapability: () => cache.get(cacheKey),
+    adcpVersion,
   });
 }

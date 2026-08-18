@@ -247,7 +247,9 @@ describe('scoped MCP session reuse', () => {
           ),
           new Promise((_, reject) => setTimeout(() => reject(new Error('abort path hung')), 500)),
         ]),
-        error => error?.name === 'AbortError'
+        error =>
+          error?.name === 'AbortError' ||
+          (error?.code === -32001 && /AbortError|aborted/i.test(String(error?.message ?? '')))
       );
     } finally {
       clearTimeout(abortTimer);

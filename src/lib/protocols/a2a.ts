@@ -1,7 +1,6 @@
 // Official A2A client implementation - NO FALLBACKS
 import { A2AClient as A2AClientImpl } from '@a2a-js/sdk/client';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { createHmac } from 'node:crypto';
 import type { PushNotificationConfig } from '../types/tools.generated';
 import type { DebugLogEntry } from '../types/adcp';
 import { AuthenticationRequiredError, is401Error } from '../errors';
@@ -60,6 +59,24 @@ const callContextStorage = new AsyncLocalStorage<A2ACallContext>();
  */
 const a2aClientCache = new Map<string, InstanceType<typeof A2AClient>>();
 const pendingA2AClients = new Map<string, Promise<InstanceType<typeof A2AClient>>>();
+const MAX_CACHED_A2A_CLIENTS = 20;
+let a2aClientGeneration = 0;
+
+function getCachedA2AClient(cacheKey: string): InstanceType<typeof A2AClient> | undefined {
+  const client = a2aClientCache.get(cacheKey);
+  if (!client) return undefined;
+  a2aClientCache.delete(cacheKey);
+  a2aClientCache.set(cacheKey, client);
+  return client;
+}
+
+function evictLeastRecentlyUsedA2AClients(): void {
+  while (a2aClientCache.size > MAX_CACHED_A2A_CLIENTS) {
+    const oldestKey = a2aClientCache.keys().next().value as string | undefined;
+    if (oldestKey === undefined) return;
+    a2aClientCache.delete(oldestKey);
+  }
+}
 
 /**
  * Build the A2A connection-cache key. Mirrors the rationale in
@@ -79,31 +96,18 @@ function a2aCacheKey(
   agentUrl: string,
   authToken?: string,
   signingCacheKey?: string,
-  customHeaders?: Record<string, string>
+  customHeaders?: Record<string, string>,
+  allowPrivateIp = false
 ): string {
-  // 64-bit Map-key disambiguator — NOT a password hash. The cached client
-  // closes over the full credential, so a hypothetical hash collision still
-  // sends the original credential on the wire, just possibly cache-miss
-  // and reconnect. Routed via `cacheDisambiguator` (HMAC-SHA256 with empty
-  // key) instead of bare `createHash` so CodeQL's
-  // `js/insufficient-password-hash` heuristic doesn't misclassify the
-  // dataflow — see the helper docstring for the full rationale.
+  // Use the exact credential/header material in this private, in-memory key.
+  // The cached client already retains the same credential, so hashing would
+  // not reduce secret lifetime and would introduce a collision boundary.
+  // This key is never logged or persisted.
   const fingerprint = authToken ?? extractA2AAuthHeader(customHeaders);
-  const tokenSuffix = fingerprint ? `::${cacheDisambiguator(fingerprint)}` : '';
-  const headersKey = headersCacheDisambiguator(customHeaders);
-  const headersSuffix = headersKey ? `::headers:${headersKey}` : '';
-  const signingSuffix = signingCacheKey ? `::${signingCacheKey}` : '';
-  return `${agentUrl}${tokenSuffix}${headersSuffix}${signingSuffix}`;
-}
-
-/**
- * Produce a stable 64-bit Map-key disambiguator from credential material.
- * Mirrors the helper in `src/lib/protocols/mcp.ts` — the two protocol
- * modules intentionally don't share runtime imports, so each carries its
- * own copy. See the MCP-side docstring for the full rationale.
- */
-function cacheDisambiguator(value: string): string {
-  return createHmac('sha256', '').update(value).digest('hex').slice(0, 16);
+  const headersKey = headersCacheMaterial(customHeaders);
+  // A serialized tuple avoids delimiter ambiguity between attacker-controlled
+  // URLs and the policy/auth suffixes (for example, a URL ending in a suffix).
+  return JSON.stringify([agentUrl, fingerprint ?? null, headersKey ?? null, signingCacheKey ?? null, allowPrivateIp]);
 }
 
 /**
@@ -119,7 +123,7 @@ function extractA2AAuthHeader(headers: Record<string, string> | undefined): stri
   return undefined;
 }
 
-function headersCacheDisambiguator(headers?: Record<string, string>): string | undefined {
+function headersCacheMaterial(headers?: Record<string, string>): string | undefined {
   const entries = Object.entries(headers ?? {})
     .filter(([key]) => {
       const lower = key.toLowerCase();
@@ -127,7 +131,7 @@ function headersCacheDisambiguator(headers?: Record<string, string>): string | u
     })
     .map(([key, value]) => [key.toLowerCase(), value] as const)
     .sort(([a], [b]) => a.localeCompare(b));
-  return entries.length > 0 ? cacheDisambiguator(JSON.stringify(entries)) : undefined;
+  return entries.length > 0 ? JSON.stringify(entries) : undefined;
 }
 
 function redactHeadersForDebug(headers: Record<string, string>): Record<string, string> {
@@ -156,6 +160,7 @@ function redactPushNotificationConfigForDebug(
  * is just cache eviction.
  */
 export function closeA2AConnections(): void {
+  a2aClientGeneration++;
   a2aClientCache.clear();
   pendingA2AClients.clear();
 }
@@ -275,8 +280,15 @@ async function getOrCreateA2AClient(
   bypassCache = false
 ): Promise<InstanceType<typeof A2AClient>> {
   const signingContext = signingContextStorage.getStore();
-  const fetchFn = callContextStorage.getStore()?.fetchFn;
-  const cacheKey = a2aCacheKey(agentUrl, authToken, signingContext?.cacheKey, customHeaders);
+  const callContext = callContextStorage.getStore();
+  const fetchFn = callContext?.fetchFn;
+  const cacheKey = a2aCacheKey(
+    agentUrl,
+    authToken,
+    signingContext?.cacheKey,
+    customHeaders,
+    callContext?.allowPrivateIp === true
+  );
   // Scoped fetchers often carry request/tenant-specific egress policy. Keep
   // those calls one-shot so neither agent-card discovery nor a client created
   // under one policy can be reused by another caller, and so short-lived
@@ -284,19 +296,24 @@ async function getOrCreateA2AClient(
   if (bypassCache || fetchFn) {
     return createA2AClient(agentUrl, authToken);
   }
-  const cached = a2aClientCache.get(cacheKey);
+  const cached = getCachedA2AClient(cacheKey);
   if (cached) return cached;
 
   const pending = pendingA2AClients.get(cacheKey);
   if (pending) return pending;
 
+  const generation = a2aClientGeneration;
   const promise = createA2AClient(agentUrl, authToken)
     .then(client => {
+      if (generation !== a2aClientGeneration) {
+        throw new Error('A2A agent-card discovery completed after connection teardown');
+      }
       a2aClientCache.set(cacheKey, client);
+      evictLeastRecentlyUsedA2AClients();
       return client;
     })
     .finally(() => {
-      pendingA2AClients.delete(cacheKey);
+      if (pendingA2AClients.get(cacheKey) === promise) pendingA2AClients.delete(cacheKey);
     });
 
   pendingA2AClients.set(cacheKey, promise);
@@ -423,6 +440,7 @@ function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
     upstream: (input, init) => baseFetch(input as any, init),
     signing: signingContext.signing,
     getCapability: signingContext.getCapability,
+    adcpVersion: signingContext.adcpVersion,
   });
   return wrapFetchWithCapture(signingFetch as typeof fetch);
 }
@@ -647,7 +665,15 @@ async function callA2AToolImpl(
       // case) rather than authToken, the cache key must reflect that or we
       // evict the wrong entry.
       const signingContext = signingContextStorage.getStore();
-      a2aClientCache.delete(a2aCacheKey(agentUrl, authToken, signingContext?.cacheKey, context.customHeaders));
+      a2aClientCache.delete(
+        a2aCacheKey(
+          agentUrl,
+          authToken,
+          signingContext?.cacheKey,
+          context.customHeaders,
+          context.allowPrivateIp === true
+        )
+      );
 
       debugLogs.push({
         type: 'error',

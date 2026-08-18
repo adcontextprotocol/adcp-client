@@ -17,6 +17,7 @@
  */
 
 export { resolveAgent } from './resolve-agent';
+export { ResolvedAgentJwksResolver } from './resolved-agent-jwks';
 export type {
   AgentResolution,
   AgentProtocol,
@@ -24,6 +25,7 @@ export type {
   ResolveAgentOptions,
   TraceStep,
 } from './resolve-agent';
+export type { ResolvedAgentJwksResolverOptions } from './resolved-agent-jwks';
 export { getAgentJwks, createAgentJwksSet } from './jwks-set';
 export type { AgentJwksResult, GetAgentJwksOptions, CreateAgentJwksSetOptions } from './jwks-set';
 export {

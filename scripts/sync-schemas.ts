@@ -3,6 +3,7 @@
 import {
   readFileSync,
   writeFileSync,
+  appendFileSync,
   mkdirSync,
   existsSync,
   readdirSync,
@@ -24,10 +25,27 @@ import * as tar from 'tar';
 const DEFAULT_ADCP_BASE_URL = 'https://adcontextprotocol.org';
 const ADCP_BASE_URL = process.env.ADCP_BASE_URL || DEFAULT_ADCP_BASE_URL;
 const GITHUB_DIST_BASE_URL = 'https://raw.githubusercontent.com/adcontextprotocol/adcp/main/dist';
+const ADCP_SEMANTIC_VERSION =
+  /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const REPO_ROOT = path.join(__dirname, '..');
 const SCHEMA_CACHE_DIR = path.join(REPO_ROOT, 'schemas/cache');
 const COMPLIANCE_CACHE_DIR = path.join(REPO_ROOT, 'compliance/cache');
 const SKILLS_DIR = path.join(REPO_ROOT, 'skills');
+
+/**
+ * GitHub mirrors used when adcontextprotocol.org is unavailable.
+ *
+ * Prefer the version tag: release bundles can be removed from the moving
+ * `main/dist` snapshot after a release line advances, while the tag keeps the
+ * exact historical bundle and its checksum/cosign sidecars addressable.
+ */
+function getGithubDistFallbackBaseUrls(version: string): string[] {
+  if (version === 'latest') return [GITHUB_DIST_BASE_URL];
+  return [
+    `https://raw.githubusercontent.com/adcontextprotocol/adcp/v${encodeURIComponent(version)}/dist`,
+    GITHUB_DIST_BASE_URL,
+  ];
+}
 
 // Sigstore keyless identity used by the upstream release workflow (adcontextprotocol/adcp#2273).
 // Accepts any branch or tag ref — the trust gate is upstream `release.yml`'s
@@ -52,6 +70,21 @@ function getTargetAdCPVersion(): string {
   return version;
 }
 
+function assertValidAdcpVersion(version: string): void {
+  if (version !== 'latest' && !ADCP_SEMANTIC_VERSION.test(version)) {
+    throw new Error(`Invalid AdCP version ${JSON.stringify(version)}; expected a semantic version or "latest".`);
+  }
+}
+
+function assertBundleVersion(requestedVersion: string, bundledVersion: unknown): asserts bundledVersion is string {
+  if (typeof bundledVersion !== 'string' || !ADCP_SEMANTIC_VERSION.test(bundledVersion)) {
+    throw new Error('Protocol bundle has an invalid or missing adcp_version.');
+  }
+  if (requestedVersion !== 'latest' && bundledVersion !== requestedVersion) {
+    throw new Error(`Protocol bundle version mismatch: requested ${requestedVersion}, received ${bundledVersion}.`);
+  }
+}
+
 interface DomainEntry {
   schemas?: Record<string, { $ref: string; description?: string }>;
   tasks?: Record<string, { request?: { $ref: string }; response?: { $ref: string } }>;
@@ -62,12 +95,36 @@ interface SchemaIndex {
   schemas: Record<string, DomainEntry>;
 }
 
-async function fetchJson(url: string): Promise<any> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+class SchemaSyncAvailabilityError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'SchemaSyncAvailabilityError';
   }
-  return response.json();
+}
+
+function fetchStatusError(url: string, response: Response): Error {
+  const message = `Failed to fetch ${url}: ${response.status} ${response.statusText}`;
+  const rateLimited =
+    response.status === 429 ||
+    (response.status === 403 &&
+      (response.headers.get('x-ratelimit-remaining') === '0' || response.headers.has('retry-after')));
+  if (response.status === 404 || response.status === 408 || rateLimited || response.status >= 500) {
+    return new SchemaSyncAvailabilityError(message);
+  }
+  return new Error(message);
+}
+
+async function fetchAvailable(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    throw new SchemaSyncAvailabilityError(`Failed to fetch ${url}: network error (${detail})`, { cause });
+  }
+}
+
+async function fetchJson(url: string): Promise<any> {
+  return JSON.parse(await fetchText(url));
 }
 
 // Normalize $ref paths to use the target version instead of "latest".
@@ -172,15 +229,25 @@ function assertNoSymlinks(root: string): void {
 }
 
 async function fetchBinary(url: string): Promise<Buffer> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status} ${res.statusText}`);
-  return Buffer.from(await res.arrayBuffer());
+  const res = await fetchAvailable(url);
+  if (!res.ok) throw fetchStatusError(url, res);
+  try {
+    return Buffer.from(await res.arrayBuffer());
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    throw new SchemaSyncAvailabilityError(`Failed to read ${url}: network error (${detail})`, { cause });
+  }
 }
 
 async function fetchText(url: string): Promise<string> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status} ${res.statusText}`);
-  return res.text();
+  const res = await fetchAvailable(url);
+  if (!res.ok) throw fetchStatusError(url, res);
+  try {
+    return await res.text();
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    throw new SchemaSyncAvailabilityError(`Failed to read ${url}: network error (${detail})`, { cause });
+  }
 }
 
 /**
@@ -206,20 +273,29 @@ async function verifyCosignSignature(tgzPath: string, version: string, baseUrl =
   const crtUrl = `${baseUrl}/protocol/${version}.tgz.crt`;
 
   const [sigProbe, crtProbe] = await Promise.all([
-    fetch(sigUrl, { method: 'HEAD' }),
-    fetch(crtUrl, { method: 'HEAD' }),
+    fetchAvailable(sigUrl, { method: 'HEAD' }),
+    fetchAvailable(crtUrl, { method: 'HEAD' }),
   ]);
 
-  if (sigProbe.status === 404 || crtProbe.status === 404) {
+  if (sigProbe.status === 404 && crtProbe.status === 404) {
     if (requireSignature) {
-      throw new Error(`Cosign sidecars are required for v${version} but were not published.`);
+      throw new SchemaSyncAvailabilityError(
+        `Cosign sidecars are required for v${version} but were not published at ${baseUrl}.`
+      );
     }
     console.log(`ℹ️  No cosign sidecars for v${version} (checksum-only trust — upstream predates signing).`);
     return;
   }
 
+  if (sigProbe.status === 404 || crtProbe.status === 404) {
+    throw new SchemaSyncAvailabilityError(
+      `Incomplete cosign sidecars for v${version}: sig ${sigProbe.status}, crt ${crtProbe.status}.`
+    );
+  }
+
   if (!sigProbe.ok || !crtProbe.ok) {
-    throw new Error(`Unexpected status for cosign sidecars: sig ${sigProbe.status}, crt ${crtProbe.status}`);
+    if (!sigProbe.ok) throw fetchStatusError(sigUrl, sigProbe);
+    throw fetchStatusError(crtUrl, crtProbe);
   }
 
   const cosign = spawnSync('cosign', ['version'], { stdio: 'ignore' });
@@ -380,7 +456,7 @@ async function syncFromTarball(
   const tgzUrl = `${baseUrl}/protocol/${version}.tgz`;
   const shaUrl = `${tgzUrl}.sha256`;
 
-  const probe = await fetch(tgzUrl, { method: 'HEAD' });
+  const probe = await fetchAvailable(tgzUrl, { method: 'HEAD' });
   if (probe.status === 404) {
     console.warn(`⚠️  Tarball not found at ${tgzUrl} (404).`);
     return false;
@@ -415,6 +491,10 @@ async function syncFromTarball(
     }
     assertNoSymlinks(extractRoot);
 
+    const bundleIndex = JSON.parse(readFileSync(path.join(extractRoot, 'schemas/index.json'), 'utf8'));
+    const bundledVersion: string | undefined = bundleIndex.adcp_version;
+    assertBundleVersion(version, bundledVersion);
+
     replaceTree(path.join(extractRoot, 'schemas'), path.join(SCHEMA_CACHE_DIR, version));
     replaceTree(path.join(extractRoot, 'compliance'), path.join(COMPLIANCE_CACHE_DIR, version));
 
@@ -430,8 +510,7 @@ async function syncFromTarball(
 
     // Refs inside the tarball point to /schemas/latest/; rewrite for pinned versions.
     const schemaDest = path.join(SCHEMA_CACHE_DIR, version);
-    const indexJson = JSON.parse(readFileSync(path.join(schemaDest, 'index.json'), 'utf8'));
-    const semanticVersion: string = indexJson.adcp_version || version;
+    const semanticVersion: string = bundledVersion || version;
     normalizeRefsInTree(schemaDest, semanticVersion);
 
     // schemas/registry/registry.yaml is intentionally NOT written here. Although
@@ -471,6 +550,7 @@ async function syncSchemasPerFile(
   const indexUrl = `${baseUrl}/schemas/${version}/index.json`;
   console.log(`📥 Fetching schema index ${indexUrl}`);
   const schemaIndex: SchemaIndex = await fetchJson(indexUrl);
+  assertBundleVersion(version, schemaIndex.adcp_version);
 
   const versionCacheDir = path.join(SCHEMA_CACHE_DIR, version);
   mkdirSync(versionCacheDir, { recursive: true });
@@ -603,6 +683,7 @@ function findMissingRefs(cacheDir: string, alreadyAttempted: Set<string>): Set<s
  */
 async function sync(version?: string, options: { includeSharedSurfaces?: boolean } = {}): Promise<void> {
   const adcpVersion = version || getTargetAdCPVersion();
+  assertValidAdcpVersion(adcpVersion);
   const primaryPin = getTargetAdCPVersion();
   const includeSharedSurfaces = options.includeSharedSurfaces ?? adcpVersion === primaryPin;
   console.log(
@@ -610,45 +691,100 @@ async function sync(version?: string, options: { includeSharedSurfaces?: boolean
       (includeSharedSurfaces ? '' : ' (schemas only — skills + latest pointer stay at the primary pin)')
   );
 
-  async function syncWithBase(
-    baseUrl: string,
-    fallback: { preferGithubTarballFallback?: boolean } = {}
-  ): Promise<void> {
-    const viaTarball = await syncFromTarball(adcpVersion, baseUrl, includeSharedSurfaces);
-    if (!viaTarball && fallback.preferGithubTarballFallback === true && process.env.ADCP_GITHUB_FALLBACK !== '0') {
-      console.warn(
-        `⚠️  AdCP ${adcpVersion} tarball was not reachable from ${baseUrl}; ` +
-          `retrying against GitHub dist before schema-only fallback.`
-      );
-      const viaGithubTarball = await syncFromTarball(adcpVersion, GITHUB_DIST_BASE_URL, includeSharedSurfaces);
-      if (viaGithubTarball) return;
-    }
-    if (!viaTarball) {
-      if (process.env.ADCP_REQUIRE_SIGNATURE === '1') {
-        throw new Error(
-          `Signed protocol tarball required for AdCP ${adcpVersion}; refusing unsigned per-file schema fallback.`
-        );
-      }
-      await syncSchemasPerFile(adcpVersion, baseUrl, includeSharedSurfaces);
-    }
-  }
+  const syncSource = await syncSchemasWithFallbacks(
+    {
+      version: adcpVersion,
+      primaryBaseUrl: ADCP_BASE_URL,
+      includeSharedSurfaces,
+      githubFallbackEnabled: ADCP_BASE_URL === DEFAULT_ADCP_BASE_URL && process.env.ADCP_GITHUB_FALLBACK !== '0',
+      requireSignature: process.env.ADCP_REQUIRE_SIGNATURE === '1',
+    },
+    { syncFromTarball, syncSchemasPerFile, warn: message => console.warn(message) }
+  );
 
-  try {
-    await syncWithBase(ADCP_BASE_URL, {
-      preferGithubTarballFallback: ADCP_BASE_URL === DEFAULT_ADCP_BASE_URL,
-    });
-  } catch (err) {
-    if (ADCP_BASE_URL !== DEFAULT_ADCP_BASE_URL || process.env.ADCP_GITHUB_FALLBACK === '0') {
-      throw err;
-    }
-    console.warn(
-      `⚠️  Sync from adcontextprotocol.org failed for AdCP ${adcpVersion}; retrying against GitHub dist. ` +
-        `Original error: ${err instanceof Error ? err.message : err}`
-    );
-    await syncWithBase(GITHUB_DIST_BASE_URL);
+  if (includeSharedSurfaces && process.env.GITHUB_OUTPUT) {
+    appendFileSync(process.env.GITHUB_OUTPUT, `primary_schema_source=${syncSource}\n`);
   }
 
   console.log(`✅ Sync complete for AdCP ${adcpVersion}`);
+}
+
+interface SchemaSyncOperations {
+  syncFromTarball: typeof syncFromTarball;
+  syncSchemasPerFile: typeof syncSchemasPerFile;
+  warn: (message: string) => void;
+}
+
+interface SchemaSyncFallbackOptions {
+  version: string;
+  primaryBaseUrl: string;
+  includeSharedSurfaces: boolean;
+  githubFallbackEnabled: boolean;
+  requireSignature: boolean;
+}
+
+async function syncSchemasWithFallbacks(
+  options: SchemaSyncFallbackOptions,
+  operations: SchemaSyncOperations
+): Promise<'primary' | 'github'> {
+  const { version, primaryBaseUrl, includeSharedSurfaces, githubFallbackEnabled, requireSignature } = options;
+
+  let primaryUnavailable = false;
+  try {
+    if (await operations.syncFromTarball(version, primaryBaseUrl, includeSharedSurfaces)) return 'primary';
+  } catch (error) {
+    if (!(error instanceof SchemaSyncAvailabilityError)) throw error;
+    primaryUnavailable = true;
+    if (!githubFallbackEnabled) throw error;
+    operations.warn(
+      `⚠️  Sync from ${primaryBaseUrl} failed for AdCP ${version}; retrying against GitHub dist bundles. ` +
+        `Original error: ${error.message}`
+    );
+  }
+
+  if (githubFallbackEnabled) {
+    if (!primaryUnavailable) {
+      operations.warn(
+        `⚠️  AdCP ${version} tarball was not reachable from ${primaryBaseUrl}; ` +
+          `retrying against GitHub dist bundles before schema-only fallback.`
+      );
+    }
+    for (const baseUrl of getGithubDistFallbackBaseUrls(version)) {
+      try {
+        if (await operations.syncFromTarball(version, baseUrl, includeSharedSurfaces)) return 'github';
+      } catch (error) {
+        if (!(error instanceof SchemaSyncAvailabilityError)) throw error;
+        operations.warn(`⚠️  GitHub bundle fallback unavailable at ${baseUrl}: ${error.message}`);
+      }
+    }
+  }
+
+  if (requireSignature) {
+    throw new Error(
+      `Signed protocol tarball required for AdCP ${version}; refusing unsigned per-file schema fallback.`
+    );
+  }
+
+  // After a primary-host outage, prefer immutable tagged schemas but retain
+  // moving main/dist compatibility for versions whose tag is unavailable.
+  if (primaryUnavailable && githubFallbackEnabled) {
+    let lastAvailabilityError: SchemaSyncAvailabilityError | undefined;
+    for (const baseUrl of getGithubDistFallbackBaseUrls(version)) {
+      try {
+        await operations.syncSchemasPerFile(version, baseUrl, includeSharedSurfaces);
+        return 'github';
+      } catch (error) {
+        if (!(error instanceof SchemaSyncAvailabilityError)) throw error;
+        lastAvailabilityError = error;
+        operations.warn(`⚠️  GitHub per-file fallback unavailable at ${baseUrl}: ${error.message}`);
+      }
+    }
+    throw lastAvailabilityError ?? new Error(`No GitHub schema fallback configured for AdCP ${version}.`);
+  }
+
+  // A clean primary tarball 404 retains the primary host's per-file fallback.
+  await operations.syncSchemasPerFile(version, primaryBaseUrl, includeSharedSurfaces);
+  return 'primary';
 }
 
 if (require.main === module) {
@@ -659,4 +795,13 @@ if (require.main === module) {
   });
 }
 
-export { sync as syncSchemas };
+export {
+  assertBundleVersion,
+  assertValidAdcpVersion,
+  getGithubDistFallbackBaseUrls,
+  SchemaSyncAvailabilityError,
+  sync as syncSchemas,
+  syncFromTarball,
+  syncSchemasPerFile,
+  syncSchemasWithFallbacks,
+};

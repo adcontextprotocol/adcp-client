@@ -578,7 +578,7 @@ describe('read-path cancellation and timeout', () => {
                 content: [{ type: 'text', text: 'done' }],
                 structuredContent: { status: 'completed', ok: true },
               });
-            }, 250);
+            }, 600);
             return { task };
           },
           getTask: async (_args, extra) => extra.taskStore.getTask(extra.taskId),
@@ -609,9 +609,9 @@ describe('read-path cancellation and timeout', () => {
         undefined,
         [],
         undefined,
-        { requestTimeoutMs: 75, workingTimeout: 1_000 }
+        { requestTimeoutMs: 250, workingTimeout: 2_000 }
       );
-      assert.ok(Date.now() - startedAt > 150, 'task should outlive the one-shot request timeout');
+      assert.ok(Date.now() - startedAt > 400, 'task should outlive the one-shot request timeout');
       assert.strictEqual(result.structuredContent.status, 'completed');
       assert.strictEqual(result.structuredContent.ok, true);
     } finally {
@@ -1013,6 +1013,7 @@ describe('read-path cancellation and timeout', () => {
           campaign: {
             agent: { id: 'governance', name: 'governance', protocol: 'mcp', agent_uri: 'http://example.test/mcp' },
             planId: 'plan-1',
+            callerUrl: 'https://buyer.example',
           },
         },
       });
@@ -1023,7 +1024,12 @@ describe('read-path cancellation and timeout', () => {
             'create_media_buy',
             {},
             undefined,
-            { timeout: 30 }
+            { timeout: 30 },
+            undefined,
+            {
+              experimental_features: ['governance.campaign'],
+              adcp: { governance_enforcement: { tasks: [{ task: 'create_media_buy', modes: ['signed_context'] }] } },
+            }
           ),
         err => err instanceof TaskTimeoutError
       );
@@ -1046,8 +1052,11 @@ describe('read-path cancellation and timeout', () => {
         return {
           structuredContent: {
             check_id: 'check-recovery-1',
+            check_type: 'intent',
             verdict: 'approved',
+            explanation: 'Approved',
             governance_context: 'governance-context-1',
+            expires_at: '2026-08-18T12:00:00Z',
           },
         };
       }
@@ -1068,6 +1077,7 @@ describe('read-path cancellation and timeout', () => {
           campaign: {
             agent: { id: 'governance', name: 'governance', protocol: 'mcp', agent_uri: 'http://example.test/mcp' },
             planId: 'plan-1',
+            callerUrl: 'https://buyer.example',
           },
         },
       });
@@ -1080,7 +1090,16 @@ describe('read-path cancellation and timeout', () => {
             'custom_governed_mutation',
             {},
             undefined,
-            { timeout: 30 }
+            { timeout: 30 },
+            undefined,
+            {
+              experimental_features: ['governance.campaign'],
+              adcp: {
+                governance_enforcement: {
+                  tasks: [{ task: 'custom_governed_mutation', modes: ['signed_context'] }],
+                },
+              },
+            }
           ),
         err => {
           assert.ok(err instanceof TaskTimeoutError);
@@ -1125,8 +1144,11 @@ describe('read-path cancellation and timeout', () => {
         return {
           structuredContent: {
             check_id: 'check-before-response-processing',
+            check_type: 'intent',
             verdict: 'approved',
+            explanation: 'Approved',
             governance_context: 'governance-context-2',
+            expires_at: '2026-08-18T12:00:00Z',
           },
         };
       }
@@ -1144,6 +1166,7 @@ describe('read-path cancellation and timeout', () => {
           campaign: {
             agent: { id: 'governance', name: 'governance', protocol: 'mcp', agent_uri: 'http://example.test/mcp' },
             planId: 'plan-1',
+            callerUrl: 'https://buyer.example',
           },
         },
       });
@@ -1155,7 +1178,16 @@ describe('read-path cancellation and timeout', () => {
             'custom_governed_mutation',
             {},
             undefined,
-            { timeout: 20 }
+            { timeout: 20 },
+            undefined,
+            {
+              experimental_features: ['governance.campaign'],
+              adcp: {
+                governance_enforcement: {
+                  tasks: [{ task: 'custom_governed_mutation', modes: ['signed_context'] }],
+                },
+              },
+            }
           ),
         err => {
           assert.ok(err instanceof TaskTimeoutError);

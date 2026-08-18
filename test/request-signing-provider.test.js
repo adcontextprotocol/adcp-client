@@ -10,6 +10,7 @@ const {
   signRequestAsync,
   signWebhook,
   signWebhookAsync,
+  computeContentDigest,
   createSigningFetchAsync,
   buildAgentSigningContext,
   derEcdsaToP1363,
@@ -84,6 +85,85 @@ describe('signRequestAsync produces byte-identical output to signRequest (Ed2551
     assert.strictEqual(async_.headers.Signature, sync.headers.Signature);
     assert.strictEqual(async_.headers['Signature-Input'], sync.headers['Signature-Input']);
     assert.strictEqual(async_.signatureBase, sync.signatureBase);
+  });
+});
+
+describe('AdCP 3.2 empty-body request signing', () => {
+  const request = {
+    method: 'GET',
+    url: 'https://seller.example.com/adcp/get_adcp_capabilities',
+    headers: {},
+  };
+  const options = {
+    now: () => 1776520800,
+    windowSeconds: 300,
+    binaryEncoding: 'rfc8941-base64',
+  };
+
+  async function verify(signed) {
+    assert.strictEqual(
+      signed.headers['Content-Digest'],
+      computeContentDigest('', 'rfc8941-base64'),
+      'the 3.2 profile covers the SHA-256 digest of empty bytes'
+    );
+    assert.match(signed.headers['Signature-Input'], /"content-digest"/);
+    assert.doesNotMatch(signed.headers['Signature-Input'], /"content-type"/);
+
+    return verifyRequestSignature(
+      { ...request, headers: signed.headers },
+      {
+        capability: { supported: true, covers_content_digest: 'required', required_for: [] },
+        jwks: new StaticJwksResolver([publicJwkFor('test-ed25519-2026')]),
+        replayStore: new InMemoryReplayStore(),
+        revocationStore: new InMemoryRevocationStore(),
+        now: options.now,
+        adcpVersion: '3.2.0-beta.0',
+      }
+    );
+  }
+
+  test('sync signer round-trips through the strict 3.2 verifier', async () => {
+    const signed = signRequest(
+      request,
+      { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwkFor('test-ed25519-2026') },
+      { ...options, nonce: 'empty-body-sync-nonce' }
+    );
+    assert.strictEqual((await verify(signed)).status, 'verified');
+  });
+
+  test('async signer round-trips through the strict 3.2 verifier', async () => {
+    const provider = new InMemorySigningProvider({
+      keyid: 'test-ed25519-2026',
+      algorithm: 'ed25519',
+      privateKey: privateJwkFor('test-ed25519-2026'),
+    });
+    const signed = await signRequestAsync(request, provider, {
+      ...options,
+      nonce: 'empty-body-async-nonce',
+    });
+    assert.strictEqual((await verify(signed)).status, 'verified');
+  });
+
+  test('high-level sync and async signers reject an explicit undigested 3.2 profile', async () => {
+    assert.throws(
+      () =>
+        signRequest(
+          request,
+          { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwkFor('test-ed25519-2026') },
+          { ...options, coverContentDigest: false }
+        ),
+      /requires Content-Digest coverage/
+    );
+
+    const provider = new InMemorySigningProvider({
+      keyid: 'test-ed25519-2026',
+      algorithm: 'ed25519',
+      privateKey: privateJwkFor('test-ed25519-2026'),
+    });
+    await assert.rejects(
+      () => signRequestAsync(request, provider, { ...options, coverContentDigest: false }),
+      /requires Content-Digest coverage/
+    );
   });
 });
 
@@ -527,6 +607,7 @@ describe('end-to-end: provider-signed request verifies under the SDK verifier', 
   function makeVerifierContext(kid) {
     const publicJwk = publicJwkFor(kid);
     return {
+      adcpVersion: '3.1',
       jwks: new StaticJwksResolver([publicJwk]),
       replayStore: new InMemoryReplayStore(),
       revocationStore: new InMemoryRevocationStore(),

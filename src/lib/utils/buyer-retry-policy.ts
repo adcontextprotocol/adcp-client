@@ -20,6 +20,7 @@
 
 import type { AdcpStructuredError, ErrorCode } from '../server/decisioning/async-outcome';
 import { applyAdcpErrorAllowlist } from '../server/errors';
+import { STANDARD_ERROR_CODES } from '../types/error-codes';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -149,7 +150,7 @@ type CodePolicy =
  * - `GOVERNANCE_UNAVAILABLE`, `CAMPAIGN_SUSPENDED` are spec-`transient` but
  *   escalate here (out-of-band — agent can't unblock).
  */
-const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
+const EXPLICIT_CODE_POLICY: Partial<Record<ErrorCode, CodePolicy>> = {
   // Transients — server-side, retry-safe with same idempotency_key.
   RATE_LIMITED: { action: 'retry', attemptCap: 5, baseDelayMs: 1000, expBackoff: true },
   SERVICE_UNAVAILABLE: { action: 'retry', attemptCap: 3, baseDelayMs: 1000, expBackoff: true },
@@ -199,14 +200,11 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
   INVALID_STATE: { action: 'mutate-and-retry', attemptCap: 2, reason: 'state', baseDelayMs: 250 },
   NOT_CANCELLABLE: { action: 'mutate-and-retry', attemptCap: 2, reason: 'state', baseDelayMs: 250 },
 
-  // Idempotency:
-  // - CONFLICT (different payload, same key in window) — fresh key + retry is safe;
-  //   the seller already rejected the new payload before doing any work.
-  // - EXPIRED (cached response evicted past replay_ttl) — DO NOT auto-retry. The
-  //   spec explicitly warns: if the prior call may have succeeded, the buyer
-  //   MUST do a natural-key check (e.g., get_media_buys by buyer_ref) BEFORE
-  //   minting a new key. Otherwise this is exactly how double-creation happens.
-  IDEMPOTENCY_CONFLICT: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+  // Idempotency conflicts and expiry both require natural-key reconciliation.
+  // A conflict can represent an SDK-version identity boundary as well as a
+  // genuinely changed payload, so automatically minting a fresh key can
+  // duplicate an operation that succeeded before an upgrade.
+  IDEMPOTENCY_CONFLICT: { action: 'escalate', escalateReason: 'idempotency_check_required' },
   IDEMPOTENCY_EXPIRED: { action: 'escalate', escalateReason: 'idempotency_check_required' },
 
   // Creative deadline — buyer can re-negotiate or surface to user.
@@ -353,6 +351,18 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
   ITEM_VALIDATION_FAILED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
   CATALOG_LIMIT_EXCEEDED: { action: 'escalate', escalateReason: 'commercial' },
 };
+
+const DEFAULT_CODE_POLICY = Object.fromEntries(
+  Object.entries(STANDARD_ERROR_CODES).map(([code, info]) => {
+    const fallback: CodePolicy =
+      info.recovery === 'transient'
+        ? { action: 'retry', attemptCap: 3, baseDelayMs: 1000, expBackoff: true }
+        : info.recovery === 'correctable'
+          ? { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 }
+          : { action: 'escalate', escalateReason: 'terminal' };
+    return [code, EXPLICIT_CODE_POLICY[code as ErrorCode] ?? fallback];
+  })
+) as Record<ErrorCode, CodePolicy>;
 
 // ---------------------------------------------------------------------------
 // Implementation

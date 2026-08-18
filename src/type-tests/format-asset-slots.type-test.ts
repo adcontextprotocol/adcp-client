@@ -17,7 +17,7 @@ import type {
   RepeatableGroupSlot,
 } from '../lib/types/format-asset-slots';
 
-// --- Image: the field is `formats`, not `file_types` ---
+// --- Image: `formats` is canonical; extension requirement fields stay forward-compatible ---
 const goodImage: IndividualImageAssetSlot = {
   item_type: 'individual',
   asset_type: 'image',
@@ -27,19 +27,18 @@ const goodImage: IndividualImageAssetSlot = {
 };
 void goodImage;
 
-const badImage: IndividualImageAssetSlot = {
+const extendedImage: IndividualImageAssetSlot = {
   item_type: 'individual',
   asset_type: 'image',
   asset_id: 'hero',
   required: true,
   requirements: {
-    // @ts-expect-error — `file_types` is not a spec field; the correct name is `formats`
     file_types: ['jpg'],
   },
 };
-void badImage;
+void extendedImage;
 
-// --- Video: unit is milliseconds, not seconds ---
+// --- Video: milliseconds are canonical ---
 const goodVideo: IndividualVideoAssetSlot = {
   item_type: 'individual',
   asset_type: 'video',
@@ -49,38 +48,26 @@ const goodVideo: IndividualVideoAssetSlot = {
 };
 void goodVideo;
 
-const badVideoMinSeconds: IndividualVideoAssetSlot = {
+const extendedVideoDurations: IndividualVideoAssetSlot = {
   item_type: 'individual',
   asset_type: 'video',
   asset_id: 'ad',
   required: true,
-  // @ts-expect-error — use `min_duration_ms` (spec is milliseconds, not seconds)
-  requirements: { min_duration_seconds: 6 },
+  requirements: { min_duration_seconds: 6, max_duration_seconds: 30 },
 };
-void badVideoMinSeconds;
+void extendedVideoDurations;
 
-const badVideoMaxSeconds: IndividualVideoAssetSlot = {
-  item_type: 'individual',
-  asset_type: 'video',
-  asset_id: 'ad',
-  required: true,
-  // @ts-expect-error — use `max_duration_ms`
-  requirements: { max_duration_seconds: 30 },
-};
-void badVideoMaxSeconds;
-
-// --- Video: containers, not file_types ---
-const badVideoFileTypes: IndividualVideoAssetSlot = {
+// --- Video: `containers` is canonical; extension requirement fields remain accepted ---
+const extendedVideo: IndividualVideoAssetSlot = {
   item_type: 'individual',
   asset_type: 'video',
   asset_id: 'ad',
   required: true,
   requirements: {
-    // @ts-expect-error — the field is `containers` for video, not `file_types`
     file_types: ['mp4'],
   },
 };
-void badVideoFileTypes;
+void extendedVideo;
 
 // --- Video: container enum is closed ---
 const badVideoContainer: IndividualVideoAssetSlot = {

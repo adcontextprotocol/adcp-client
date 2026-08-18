@@ -9,6 +9,20 @@ import type { MutatingRequestInput } from '../utils/idempotency';
 import type {
   GetProductsRequest,
   GetProductsResponse,
+  ListProductsRequest,
+  ListProductsResponse,
+  RequestProposalsRequest,
+  RequestProposalsResponse,
+  RefineProposalsRequest,
+  RefineProposalsResponse,
+  DeclineProposalsRequest,
+  DeclineProposalsResponse,
+  BuyProductsRequest,
+  BuyProductsResponse,
+  AcceptProposalRequest,
+  AcceptProposalResponse,
+  ControlMediaBuyRequest,
+  ControlMediaBuyResponse,
   ListCreativeFormatsRequest,
   ListCreativeFormatsResponse,
   CreateMediaBuyRequest,
@@ -87,6 +101,8 @@ import type {
   SyncPlansResponse,
   ReportPlanOutcomeRequest,
   ReportPlanOutcomeResponse,
+  ReportPlanAdjustmentRequest,
+  ReportPlanAdjustmentResponse,
   GetPlanAuditLogsRequest,
   GetPlanAuditLogsResponse,
   CheckGovernanceRequest,
@@ -105,6 +121,8 @@ import type {
   GetTaskStatusResponse,
   ListTasksRequest,
   ListTasksResponse,
+  SyncAgentNotificationConfigsRequest,
+  SyncAgentNotificationConfigsResponse,
   ListAccountsRequest,
   ListAccountsResponse,
   SyncAccountsRequest,
@@ -188,6 +206,55 @@ export class Agent {
    */
   async getProducts(params: GetProductsRequest): Promise<GetProductsResponse> {
     return this.callTool<GetProductsResponse>('get_products', params);
+  }
+
+  /**
+   * Official AdCP list_products tool schema
+   */
+  async listProducts(params: ListProductsRequest): Promise<ListProductsResponse> {
+    return this.callTool<ListProductsResponse>('list_products', params);
+  }
+
+  /**
+   * Official AdCP request_proposals tool schema
+   */
+  async requestProposals(params: MutatingRequestInput<RequestProposalsRequest>): Promise<RequestProposalsResponse> {
+    return this.callTool<RequestProposalsResponse>('request_proposals', params);
+  }
+
+  /**
+   * Official AdCP refine_proposals tool schema
+   */
+  async refineProposals(params: MutatingRequestInput<RefineProposalsRequest>): Promise<RefineProposalsResponse> {
+    return this.callTool<RefineProposalsResponse>('refine_proposals', params);
+  }
+
+  /**
+   * Official AdCP decline_proposals tool schema
+   */
+  async declineProposals(params: MutatingRequestInput<DeclineProposalsRequest>): Promise<DeclineProposalsResponse> {
+    return this.callTool<DeclineProposalsResponse>('decline_proposals', params);
+  }
+
+  /**
+   * Official AdCP buy_products tool schema
+   */
+  async buyProducts(params: MutatingRequestInput<BuyProductsRequest>): Promise<BuyProductsResponse> {
+    return this.callTool<BuyProductsResponse>('buy_products', params);
+  }
+
+  /**
+   * Official AdCP accept_proposal tool schema
+   */
+  async acceptProposal(params: MutatingRequestInput<AcceptProposalRequest>): Promise<AcceptProposalResponse> {
+    return this.callTool<AcceptProposalResponse>('accept_proposal', params);
+  }
+
+  /**
+   * Official AdCP control_media_buy tool schema
+   */
+  async controlMediaBuy(params: MutatingRequestInput<ControlMediaBuyRequest>): Promise<ControlMediaBuyResponse> {
+    return this.callTool<ControlMediaBuyResponse>('control_media_buy', params);
   }
 
   /**
@@ -464,6 +531,13 @@ export class Agent {
   }
 
   /**
+   * Official AdCP report_plan_adjustment tool schema
+   */
+  async reportPlanAdjustment(params: MutatingRequestInput<ReportPlanAdjustmentRequest>): Promise<ReportPlanAdjustmentResponse> {
+    return this.callTool<ReportPlanAdjustmentResponse>('report_plan_adjustment', params);
+  }
+
+  /**
    * Official AdCP get_plan_audit_logs tool schema
    */
   async getPlanAuditLogs(params: GetPlanAuditLogsRequest): Promise<GetPlanAuditLogsResponse> {
@@ -524,6 +598,13 @@ export class Agent {
    */
   async listTasks(params: ListTasksRequest): Promise<ListTasksResponse> {
     return this.callTool<ListTasksResponse>('list_tasks', params);
+  }
+
+  /**
+   * Official AdCP sync_agent_notification_configs tool schema
+   */
+  async syncAgentNotificationConfigs(params: MutatingRequestInput<SyncAgentNotificationConfigsRequest>): Promise<SyncAgentNotificationConfigsResponse> {
+    return this.callTool<SyncAgentNotificationConfigsResponse>('sync_agent_notification_configs', params);
   }
 
   /**
@@ -590,6 +671,55 @@ export class AgentCollection {
    */
   async getProducts(params: GetProductsRequest): Promise<GetProductsResponse[]> {
     return this.callToolOnAll<GetProductsResponse>('get_products', params);
+  }
+
+  /**
+   * Official AdCP list_products tool schema (across multiple agents)
+   */
+  async listProducts(params: ListProductsRequest): Promise<ListProductsResponse[]> {
+    return this.callToolOnAll<ListProductsResponse>('list_products', params);
+  }
+
+  /**
+   * Official AdCP request_proposals tool schema (across multiple agents)
+   */
+  async requestProposals(params: MutatingRequestInput<RequestProposalsRequest>): Promise<RequestProposalsResponse[]> {
+    return this.callToolOnAll<RequestProposalsResponse>('request_proposals', params);
+  }
+
+  /**
+   * Official AdCP refine_proposals tool schema (across multiple agents)
+   */
+  async refineProposals(params: MutatingRequestInput<RefineProposalsRequest>): Promise<RefineProposalsResponse[]> {
+    return this.callToolOnAll<RefineProposalsResponse>('refine_proposals', params);
+  }
+
+  /**
+   * Official AdCP decline_proposals tool schema (across multiple agents)
+   */
+  async declineProposals(params: MutatingRequestInput<DeclineProposalsRequest>): Promise<DeclineProposalsResponse[]> {
+    return this.callToolOnAll<DeclineProposalsResponse>('decline_proposals', params);
+  }
+
+  /**
+   * Official AdCP buy_products tool schema (across multiple agents)
+   */
+  async buyProducts(params: MutatingRequestInput<BuyProductsRequest>): Promise<BuyProductsResponse[]> {
+    return this.callToolOnAll<BuyProductsResponse>('buy_products', params);
+  }
+
+  /**
+   * Official AdCP accept_proposal tool schema (across multiple agents)
+   */
+  async acceptProposal(params: MutatingRequestInput<AcceptProposalRequest>): Promise<AcceptProposalResponse[]> {
+    return this.callToolOnAll<AcceptProposalResponse>('accept_proposal', params);
+  }
+
+  /**
+   * Official AdCP control_media_buy tool schema (across multiple agents)
+   */
+  async controlMediaBuy(params: MutatingRequestInput<ControlMediaBuyRequest>): Promise<ControlMediaBuyResponse[]> {
+    return this.callToolOnAll<ControlMediaBuyResponse>('control_media_buy', params);
   }
 
   /**
@@ -817,6 +947,13 @@ export class AgentCollection {
   }
 
   /**
+   * Official AdCP report_plan_adjustment tool schema (across multiple agents)
+   */
+  async reportPlanAdjustment(params: MutatingRequestInput<ReportPlanAdjustmentRequest>): Promise<ReportPlanAdjustmentResponse[]> {
+    return this.callToolOnAll<ReportPlanAdjustmentResponse>('report_plan_adjustment', params);
+  }
+
+  /**
    * Official AdCP get_plan_audit_logs tool schema (across multiple agents)
    */
   async getPlanAuditLogs(params: GetPlanAuditLogsRequest): Promise<GetPlanAuditLogsResponse[]> {
@@ -863,6 +1000,13 @@ export class AgentCollection {
    */
   async listTasks(params: ListTasksRequest): Promise<ListTasksResponse[]> {
     return this.callToolOnAll<ListTasksResponse>('list_tasks', params);
+  }
+
+  /**
+   * Official AdCP sync_agent_notification_configs tool schema (across multiple agents)
+   */
+  async syncAgentNotificationConfigs(params: MutatingRequestInput<SyncAgentNotificationConfigsRequest>): Promise<SyncAgentNotificationConfigsResponse[]> {
+    return this.callToolOnAll<SyncAgentNotificationConfigsResponse>('sync_agent_notification_configs', params);
   }
 
   /**

@@ -17,8 +17,8 @@
  *     `putDraft` time that each recipe's `capability_overlap` axis is a
  *     subset of the corresponding wire-declared product capabilities.
  *     Mismatches throw `INTERNAL_ERROR` (adopter bug, not buyer bug).
- *   - {@link detectFinalizeAction} — pull out the first finalize-action
- *     refine entry from a `GetProductsRequest`.
+ *   - {@link detectFinalizeAction} — validate and extract a single
+ *     finalize-action refine entry from a `GetProductsRequest`.
  *   - structured-log helpers per § Observability.
  *
  * Ports `adcp-client-python.src/adcp/decisioning/proposal_lifecycle.py`.
@@ -315,7 +315,7 @@ function wireDeliveryTypes(product: Product): Set<string> {
 
 /**
  * Result of {@link detectFinalizeAction}: the index, proposal_id, and
- * optional ask of the first finalize-action refine entry.
+ * optional ask of the single finalize-action refine entry.
  *
  * @public
  */
@@ -326,8 +326,11 @@ export interface FinalizeActionRef {
 }
 
 /**
- * Return the first finalize-action refine entry from a
- * `GetProductsRequest`, or `null` if no finalize entry exists.
+ * Return the single finalize-action refine entry from a
+ * `GetProductsRequest`, or `null` if no finalize entry exists. Finalize is
+ * exclusive; mixed arrays are invalid. The v1.5 compatibility manager cannot
+ * guarantee atomic multi-finalize, so it rejects multiple entries before any
+ * store read or adopter callback.
  *
  * The index points at the entry's position in `refine[]` so the framework
  * can produce indexed wire field paths (`refine[3].proposal_id`) on
@@ -338,26 +341,61 @@ export interface FinalizeActionRef {
  * and an optional `action` (`include` / `omit` / `finalize`). v1.5 only
  * intercepts `proposal`-scoped entries with `action: 'finalize'`.
  *
- * The framework processes ONE finalize entry per request; if the buyer
- * sends multiple finalize entries, only the first is processed (rest fall
- * through to the standard refine path).
- *
  * @public
  */
 export function detectFinalizeAction(req: CanonicalGetProductsRequest): FinalizeActionRef | null {
-  const refine = (req as { refine?: ReadonlyArray<Record<string, unknown>> }).refine;
-  if (!refine || refine.length === 0) return null;
-  for (let index = 0; index < refine.length; index++) {
-    const entry = refine[index]!;
-    if (entry.scope === 'proposal' && entry.action === 'finalize') {
-      const proposalId = entry.proposal_id;
-      if (typeof proposalId === 'string' && proposalId.length > 0) {
-        const ask = typeof entry.ask === 'string' ? entry.ask : undefined;
-        return ask !== undefined ? { index, proposalId, ask } : { index, proposalId };
-      }
+  const raw = req as unknown as { buying_mode?: unknown; refine?: unknown };
+  if (raw.refine && typeof raw.refine === 'object' && !Array.isArray(raw.refine)) {
+    if ((raw.refine as Record<string, unknown>).action === 'finalize') {
+      throw invalidFinalizeRequest('refine must be an array');
     }
+    return null;
   }
-  return null;
+  if (!Array.isArray(raw.refine) || raw.refine.length === 0) return null;
+  const finalizeEntries = raw.refine
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => isFinalizeEntry(entry));
+  if (finalizeEntries.length === 0) return null;
+  if (raw.buying_mode !== 'refine') throw invalidFinalizeRequest("buying_mode must be 'refine'");
+  if (
+    raw.refine.some(
+      entry =>
+        !isFinalizeEntry(entry) ||
+        entry.scope !== 'proposal' ||
+        typeof entry.proposal_id !== 'string' ||
+        entry.proposal_id.length === 0
+    )
+  ) {
+    throw invalidFinalizeRequest('finalize must be exclusive and every entry must identify a proposal');
+  }
+  if (finalizeEntries.length > 1) {
+    throw new AdcpError('MULTI_FINALIZE_UNSUPPORTED', {
+      recovery: 'correctable',
+      message: 'This proposal manager cannot atomically finalize multiple proposals; sequence one proposal_id per call',
+      field: 'refine',
+    });
+  }
+  const { entry, index } = finalizeEntries[0]!;
+  const proposalId = entry.proposal_id as string;
+  const ask = typeof entry.ask === 'string' ? entry.ask : undefined;
+  return ask !== undefined ? { index, proposalId, ask } : { index, proposalId };
+}
+
+function isFinalizeEntry(value: unknown): value is Record<string, unknown> {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    (value as Record<string, unknown>).action === 'finalize'
+  );
+}
+
+function invalidFinalizeRequest(reason: string): AdcpError {
+  return new AdcpError('INVALID_REQUEST', {
+    recovery: 'correctable',
+    message: `Invalid get_products proposal finalization: ${reason}`,
+    field: 'refine',
+  });
 }
 
 // ---------------------------------------------------------------------------

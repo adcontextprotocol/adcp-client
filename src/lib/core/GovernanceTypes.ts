@@ -7,7 +7,21 @@
  */
 
 import type { AgentConfig } from '../types';
-import type { CheckGovernanceResponse, EscalationSeverity } from '../types/tools.generated';
+import type { CheckGovernanceRequest, CheckGovernanceResponse, EscalationSeverity } from '../types/tools.generated';
+import type { GovernanceCommitment } from '../governance';
+
+export interface GovernanceIntentDetails {
+  /** Required for tasks whose commitment is not directly derivable from payload. */
+  proposedCommitment?: GovernanceCommitment;
+  /** Required for accept_proposal so governance can verify commercial terms. */
+  proposal?: CheckGovernanceRequest['proposal'];
+  /** Overrides the task-derived purchase type when a future task needs one. */
+  purchaseType?: CheckGovernanceRequest['purchase_type'];
+  /** Runtime evidence used by signal-activation intent checks. */
+  runtimeAttestations?: CheckGovernanceRequest['runtime_attestations'];
+  /** Billing override that governance must evaluate with the commitment. */
+  invoiceRecipient?: CheckGovernanceRequest['invoice_recipient'];
+}
 
 /**
  * Campaign governance agent configuration.
@@ -23,8 +37,24 @@ export interface CampaignGovernanceConfig {
   callerUrl?: string;
   /** Max re-check iterations after auto-applying conditions. Default: 0 (return conditions to caller without re-checking). The initial governance check always fires. */
   maxConditionsIterations?: number;
-  /** Opaque governance context string from a prior check_governance response. The middleware passes this through on subsequent checks and outcome reports. */
+  /** @deprecated Intent checks never reuse authorization; retained only as an outcome-report fallback. */
   governanceContext?: string;
+  /**
+   * Resolve intent-only fields that cannot be inferred safely from downstream
+   * task arguments (for example an update's positive commitment delta).
+   */
+  resolveIntentDetails?: (
+    tool: string,
+    payload: Readonly<Record<string, unknown>>
+  ) => GovernanceIntentDetails | Promise<GovernanceIntentDetails>;
+  /**
+   * Resolve conditional `x-governed-commitment` requests that require
+   * authoritative current state (for example, whether a budget change is
+   * decrease-only). Return `true` for a trigger and `false` for an exemption.
+   * Obvious stateless exemptions such as pause, cancel, deactivate, and
+   * creative estimates are handled by the SDK before this callback runs.
+   */
+  resolveApplicability?: (tool: string, payload: Readonly<Record<string, unknown>>) => boolean | Promise<boolean>;
 }
 
 /**
@@ -112,6 +142,8 @@ export interface GovernanceEscalation {
 export interface GovernanceCheckResult {
   checkId: string;
   status: 'approved' | 'denied' | 'conditions';
+  /** Modern 3.2 response shape, or `legacy` for the deprecated 3.x arm. */
+  checkType?: 'intent' | 'execution' | 'legacy';
   explanation: string;
   findings?: GovernanceFinding[];
   conditions?: GovernanceCondition[];
@@ -119,10 +151,147 @@ export interface GovernanceCheckResult {
   expiresAt?: string;
   /** Opaque governance context issued by the governance agent. Callers must thread this to subsequent checks and outcome reports. */
   governanceContext?: string;
+  /** Non-authorizing handle used only to re-check an adjusted intent. */
+  consultationContext?: string;
   /** Whether conditions were auto-applied by the middleware */
   conditionsApplied?: boolean;
   /** The modified params after conditions were applied */
   modifiedParams?: Record<string, unknown>;
+}
+
+interface NormalizedGovernanceVerdictBase {
+  checkId: string;
+  explanation: string;
+  raw: CheckGovernanceResponse;
+}
+
+export interface NormalizedGovernanceApproved extends NormalizedGovernanceVerdictBase {
+  verdict: 'approved';
+  checkType: 'intent' | 'execution' | 'legacy';
+  governanceContext?: string;
+  expiresAt?: string;
+}
+
+export interface NormalizedGovernanceDenied extends NormalizedGovernanceVerdictBase {
+  verdict: 'denied';
+  checkType: 'intent' | 'execution' | 'legacy';
+}
+
+/**
+ * Compatibility surface for callers that consumed the pre-3.2 normalized
+ * conditions type. Runtime normalization returns one of the stricter arms
+ * below, but this broad interface remains source-compatible.
+ */
+export interface NormalizedGovernanceConditions extends NormalizedGovernanceVerdictBase {
+  verdict: 'conditions';
+  checkType: 'intent' | 'execution' | 'legacy';
+  governanceContext?: string;
+  consultationContext?: string;
+}
+
+export interface NormalizedGovernanceLegacyConditions extends NormalizedGovernanceConditions {
+  checkType: 'legacy';
+  /** Deprecated legacy 3.x continuation token. Modern conditions use consultationContext instead. */
+  governanceContext?: string;
+  consultationContext?: never;
+}
+
+export interface NormalizedGovernanceIntentConditions extends NormalizedGovernanceConditions {
+  checkType: 'intent';
+  /** Non-authorizing handle that must be threaded only to the adjusted intent re-check. */
+  consultationContext: string;
+  governanceContext?: never;
+}
+
+export type NormalizedGovernanceStrictConditions =
+  | NormalizedGovernanceLegacyConditions
+  | NormalizedGovernanceIntentConditions;
+
+export type NormalizedGovernanceVerdict =
+  | NormalizedGovernanceApproved
+  | NormalizedGovernanceDenied
+  | NormalizedGovernanceConditions;
+
+type NormalizedGovernanceStrictVerdict =
+  | NormalizedGovernanceApproved
+  | NormalizedGovernanceDenied
+  | NormalizedGovernanceStrictConditions;
+
+/**
+ * Normalize modern `verdict` responses and the deprecated legacy `status`
+ * response arm into one discriminated shape. Invalid modern combinations
+ * fail closed instead of leaking an authorization token from conditions or
+ * denied responses.
+ */
+function normalizeGovernanceVerdictStrict(response: unknown): NormalizedGovernanceStrictVerdict | null {
+  if (!response || typeof response !== 'object' || Array.isArray(response)) return null;
+  const raw = response as Record<string, unknown>;
+  if ('check_type' in raw && raw.check_type !== 'intent' && raw.check_type !== 'execution') return null;
+  const checkType = raw.check_type === 'intent' || raw.check_type === 'execution' ? raw.check_type : 'legacy';
+  const verdict =
+    checkType !== 'legacy'
+      ? isGovernanceDecision(raw.verdict)
+        ? raw.verdict
+        : null
+      : isGovernanceDecision(raw.verdict)
+        ? raw.verdict
+        : isGovernanceDecision(raw.status)
+          ? raw.status
+          : null;
+  if (!verdict || typeof raw.check_id !== 'string' || typeof raw.explanation !== 'string') return null;
+
+  const isModern = checkType !== 'legacy';
+  const governanceContext = typeof raw.governance_context === 'string' ? raw.governance_context : undefined;
+  const consultationContext = typeof raw.consultation_context === 'string' ? raw.consultation_context : undefined;
+  const expiresAt = typeof raw.expires_at === 'string' ? raw.expires_at : undefined;
+
+  if (isModern) {
+    if (verdict === 'approved' && (!governanceContext || !expiresAt)) return null;
+    if (verdict === 'conditions') {
+      if (checkType !== 'intent' || !consultationContext || 'governance_context' in raw || 'expires_at' in raw)
+        return null;
+      if (!Array.isArray(raw.conditions) || raw.conditions.length === 0) return null;
+    }
+    if (verdict !== 'conditions' && (raw.conditions !== undefined || 'consultation_context' in raw)) return null;
+    if (verdict !== 'approved' && ('governance_context' in raw || 'expires_at' in raw)) return null;
+    if (verdict === 'denied' && (!Array.isArray(raw.findings) || raw.findings.length === 0)) return null;
+    if (checkType === 'execution' && verdict === 'conditions') return null;
+  }
+
+  const base: NormalizedGovernanceVerdictBase = {
+    checkId: raw.check_id,
+    explanation: raw.explanation,
+    raw: response as CheckGovernanceResponse,
+  };
+  if (verdict === 'approved') {
+    return { ...base, verdict, checkType, governanceContext, expiresAt };
+  }
+  if (verdict === 'conditions') {
+    if (checkType === 'legacy') return { ...base, verdict, checkType, governanceContext };
+    return { ...base, verdict, checkType: 'intent', consultationContext: consultationContext! };
+  }
+  return { ...base, verdict, checkType };
+}
+
+/** Normalize a wire response while retaining the pre-3.2 public union for source compatibility. */
+export function normalizeGovernanceVerdict(response: unknown): NormalizedGovernanceVerdict | null {
+  return normalizeGovernanceVerdictStrict(response);
+}
+
+export function isGovernanceApproved(response: unknown): response is CheckGovernanceResponse {
+  return normalizeGovernanceVerdictStrict(response)?.verdict === 'approved';
+}
+
+export function isGovernanceDenied(response: unknown): response is CheckGovernanceResponse {
+  return normalizeGovernanceVerdictStrict(response)?.verdict === 'denied';
+}
+
+export function isGovernanceConditions(response: unknown): response is CheckGovernanceResponse {
+  return normalizeGovernanceVerdictStrict(response)?.verdict === 'conditions';
+}
+
+function isGovernanceDecision(value: unknown): value is 'approved' | 'denied' | 'conditions' {
+  return value === 'approved' || value === 'denied' || value === 'conditions';
 }
 
 /**
@@ -143,10 +312,15 @@ export interface GovernanceOutcome {
  * Parse a CheckGovernanceResponse into GovernanceCheckResult.
  */
 export function parseCheckResponse(response: CheckGovernanceResponse): GovernanceCheckResult {
+  const normalized = normalizeGovernanceVerdictStrict(response);
+  if (!normalized) {
+    throw new TypeError('Invalid check_governance verdict response');
+  }
   return {
-    checkId: response.check_id,
-    status: response.verdict,
-    explanation: response.explanation,
+    checkId: normalized.checkId,
+    status: normalized.verdict,
+    checkType: normalized.checkType,
+    explanation: normalized.explanation,
     findings: response.findings?.map(f => ({
       categoryId: f.category_id,
       policyId: f.policy_id ?? undefined,
@@ -162,6 +336,10 @@ export function parseCheckResponse(response: CheckGovernanceResponse): Governanc
       reason: c.reason,
     })),
     expiresAt: response.expires_at ?? undefined,
-    governanceContext: response.governance_context ?? undefined,
+    governanceContext:
+      normalized.verdict === 'approved' || (normalized.verdict === 'conditions' && normalized.checkType === 'legacy')
+        ? normalized.governanceContext
+        : undefined,
+    consultationContext: normalized.verdict === 'conditions' ? normalized.consultationContext : undefined,
   };
 }

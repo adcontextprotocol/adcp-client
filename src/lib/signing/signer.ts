@@ -7,7 +7,7 @@ import {
   type ResponseLike,
   type SignatureParams,
 } from './canonicalize';
-import { computeContentDigest } from './content-digest';
+import { computeContentDigest, type SfBinaryEncoding } from './content-digest';
 import { RequestSignatureError, ResponseSignatureError, WebhookSignatureError } from './errors';
 import type { AdcpUse } from './jwks-helpers';
 import {
@@ -153,6 +153,11 @@ export interface SignRequestOptions {
   windowSeconds?: number;
   now?: () => number;
   nonce?: string;
+  /**
+   * Binary serialization selected from the trusted negotiated endpoint.
+   * 3.2 uses RFC 8941 padded Base64; 3.0/3.1 use unpadded Base64URL.
+   */
+  binaryEncoding?: SfBinaryEncoding;
 }
 
 export interface SignedRequest {
@@ -189,6 +194,7 @@ export interface PreparedRequestSignature {
   /** Canonical signature base bytes (UTF-8). Pass to the signer/provider. */
   base: string;
   label: string;
+  binaryEncoding: SfBinaryEncoding;
 }
 
 /**
@@ -216,10 +222,19 @@ export function prepareRequestSignature(
   const label = options.label ?? 'sig1';
   const hasBody = (request.body ?? '').length > 0;
 
-  const coverDigest = options.coverContentDigest === true && hasBody;
+  // Keep the low-level helper backward compatible for callers that do not
+  // select a profile. SDK transport wrappers always pass the trusted pin.
+  const binaryEncoding = options.binaryEncoding ?? 'legacy-base64url';
+  // 3.2 defaults to covering the digest, but an explicitly negotiated
+  // `covers_content_digest: forbidden` policy must still win. Encoding and
+  // digest coverage are independent parts of the signing profile.
+  const coverDigest = options.coverContentDigest ?? binaryEncoding === 'rfc8941-base64';
   const headers: Record<string, string> = { ...flattenHeaders(request.headers) };
   if (coverDigest) {
-    headers['Content-Digest'] = computeContentDigest(request.body ?? '');
+    // Content-Digest is an RFC 9530 Structured Field and uses RFC 8941
+    // standard Base64 independently of the request Signature's versioned
+    // serialization. Frozen AdCP 3.0/3.1 vectors already use this form.
+    headers['Content-Digest'] = computeContentDigest(request.body ?? '', 'rfc8941-base64');
   }
 
   const components = [...MANDATORY_COMPONENTS];
@@ -238,22 +253,19 @@ export function prepareRequestSignature(
   const normalizedRequest: RequestLike = { ...request, headers };
   const base = buildSignatureBase(components, normalizedRequest, params);
 
-  return { components, params, headers, base, label };
+  return { components, params, headers, base, label, binaryEncoding };
 }
 
 /**
  * Attach `Signature` / `Signature-Input` headers given the bytes returned
  * by the signer/provider. Shared between the sync and async paths so the
- * base64url emission stays canonical.
- *
- * Emits base64url without padding to match the AdCP conformance-vector
- * format (and deterministic Ed25519 sigs are then byte-identical across
- * SDKs). Verifiers accept either variant since Node's base64 decoder
- * treats `+`/`-` and `/`/`_` interchangeably.
+ * binary emission stays canonical for the selected AdCP request profile.
  */
 export function finalizeRequestSignature(prepared: PreparedRequestSignature, signature: Uint8Array): SignedRequest {
   const headers = { ...prepared.headers };
-  const sigB64 = Buffer.from(signature).toString('base64url');
+  const sigB64 = Buffer.from(signature).toString(
+    prepared.binaryEncoding === 'legacy-base64url' ? 'base64url' : 'base64'
+  );
   headers['Signature-Input'] = `${prepared.label}=${formatSignatureParams(prepared.components, prepared.params)}`;
   headers['Signature'] = `${prepared.label}=:${sigB64}:`;
   return { headers, signatureBase: prepared.base, params: prepared.params };
@@ -261,9 +273,20 @@ export function finalizeRequestSignature(prepared: PreparedRequestSignature, sig
 
 export function signRequest(request: RequestLike, key: SignerKey, options: SignRequestOptions = {}): SignedRequest {
   assertKeyPurpose(key, 'request-signing');
+  assertSafeHighLevelRequestProfile(options);
   const prepared = prepareRequestSignature(request, { keyid: key.keyid, alg: key.alg }, options);
   const signature = produceSignature(key, Buffer.from(prepared.base, 'utf8'));
   return finalizeRequestSignature(prepared, signature);
+}
+
+/** @internal Guard the convenience signer while leaving low-level vector authoring available. */
+export function assertSafeHighLevelRequestProfile(options: SignRequestOptions): void {
+  if (options.binaryEncoding === 'rfc8941-base64' && options.coverContentDigest === false) {
+    throw new TypeError(
+      'AdCP 3.2 request signing requires Content-Digest coverage. ' +
+        'Use prepareRequestSignature()/finalizeRequestSignature() only when authoring an intentional negative test vector.'
+    );
+  }
 }
 
 export interface SignWebhookOptions {
@@ -301,7 +324,7 @@ export function prepareWebhookSignature(
   const label = options.label ?? 'sig1';
 
   const headers: Record<string, string> = { ...flattenHeaders(request.headers) };
-  headers['Content-Digest'] = computeContentDigest(request.body ?? '');
+  headers['Content-Digest'] = computeContentDigest(request.body ?? '', 'legacy-base64url');
 
   const components = [...WEBHOOK_MANDATORY_COMPONENTS];
   const params: SignatureParams = {
@@ -316,7 +339,7 @@ export function prepareWebhookSignature(
   const normalizedRequest: RequestLike = { ...request, headers };
   const base = buildSignatureBase(components, normalizedRequest, params);
 
-  return { components, params, headers, base, label };
+  return { components, params, headers, base, label, binaryEncoding: 'legacy-base64url' };
 }
 
 /**

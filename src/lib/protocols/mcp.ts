@@ -795,6 +795,7 @@ async function connectMCPWithFallbackImpl(
         upstream: diagnosticFetch,
         signing: signingContext.signing,
         getCapability: signingContext.getCapability,
+        adcpVersion: signingContext.adcpVersion,
       }) as typeof fetch)
     : diagnosticFetch;
   const transportOptions: StreamableHTTPClientTransportOptions = {
@@ -1237,6 +1238,7 @@ export async function connectMCP(options: {
         upstream: diagnosticFetch,
         signing: signingContext.signing,
         getCapability: signingContext.getCapability,
+        adcpVersion: signingContext.adcpVersion,
       }) as typeof fetch)
     : diagnosticFetch;
   transportOptions.fetch = wrapFetchWithCapture(withPerRequestTraceHeaders(signedFetch));

@@ -308,6 +308,45 @@ describe('toAdditiveCanonicalProduct', () => {
     );
   });
 
+  test('preserves AdCP 3.2 declaration metadata while extracting durable routes', () => {
+    const routedFormatId = {
+      agent_url: 'https://formats.publisher.example/catalog',
+      id: 'sample_image',
+      width: 300,
+      height: 250,
+    };
+    const sourceFormatOptions = [
+      {
+        format_option_id: 'sample-image',
+        format_kind: 'image',
+        params: { width: 300, height: 250 },
+        sample_render_url: 'https://publisher.example/samples/sample-image',
+        v1_format_ref: [routedFormatId],
+      },
+      {
+        format_option_id: 'localized-image',
+        format_kind: 'image',
+        params: { width: 300, height: 250 },
+        canonical_formats_only: true,
+        locale_policy: { accepted_language_ranges: ['fr', 'fr-CA'] },
+      },
+    ];
+
+    const { formatOptions, routes } = toCanonicalFormatOptionsWithRoutes('adcp-3-2-product', sourceFormatOptions);
+
+    assert.strictEqual(formatOptions[0].sample_render_url, 'https://publisher.example/samples/sample-image');
+    assert.deepStrictEqual(formatOptions[1].locale_policy, { accepted_language_ranges: ['fr', 'fr-CA'] });
+    assert.strictEqual('v1_format_ref' in formatOptions[0], false);
+    assert.deepStrictEqual(sourceFormatOptions[0].v1_format_ref, [routedFormatId]);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(routes)), [
+      {
+        product_id: 'adcp-3-2-product',
+        format_option_ref: { scope: 'product', format_option_id: 'sample-image' },
+        format_ids: [routedFormatId],
+      },
+    ]);
+  });
+
   test('conceals authored legacy refs, preserves additive identity, and forwards through persisted routes', () => {
     const formatId = {
       agent_url: 'https://formats.publisher.example/catalog',

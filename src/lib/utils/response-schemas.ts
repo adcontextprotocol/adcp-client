@@ -49,6 +49,13 @@ const GetProductsResponseStrictSchema = schemas.GetProductsResponseSchema.superR
 
 export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   // Product discovery & media buy
+  list_products: schemas.ListProductsResponseSchema,
+  request_proposals: schemas.RequestProposalsResponseSchema,
+  refine_proposals: schemas.RefineProposalsResponseSchema,
+  decline_proposals: schemas.DeclineProposalsResponseSchema,
+  buy_products: schemas.BuyProductsResponseSchema,
+  accept_proposal: schemas.AcceptProposalResponseSchema,
+  control_media_buy: schemas.ControlMediaBuyResponseSchema,
   get_products: GetProductsResponseStrictSchema,
   create_media_buy: schemas.CreateMediaBuyResponseSchema,
   update_media_buy: schemas.UpdateMediaBuyResponseSchema,
@@ -118,6 +125,7 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   sync_plans: schemas.SyncPlansResponseSchema,
   check_governance: schemas.CheckGovernanceResponseSchema,
   report_plan_outcome: schemas.ReportPlanOutcomeResponseSchema,
+  report_plan_adjustment: schemas.ReportPlanAdjustmentResponseSchema,
   get_plan_audit_logs: schemas.GetPlanAuditLogsResponseSchema,
 
   // Sponsored Intelligence
@@ -130,6 +138,7 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   get_adcp_capabilities: schemas.GetAdCPCapabilitiesResponseSchema,
   get_task_status: schemas.GetTaskStatusResponseSchema,
   list_tasks: schemas.ListTasksResponseSchema,
+  sync_agent_notification_configs: schemas.SyncAgentNotificationConfigsResponseSchema,
 
   // Test controller
   comply_test_controller: schemas.ComplyTestControllerResponseSchema,

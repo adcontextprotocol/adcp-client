@@ -115,6 +115,7 @@ export {
   tryLegacyFormatIdsFromOptions,
   legacyFormatIdsForFormatOption,
   legacyFormatIdsForCapability,
+  lintPackageFormatSelectorDimensions,
   FormatOptionRefsLookupError,
   CapabilityIdsLookupError,
   type PackageFormatRefs,
@@ -123,6 +124,11 @@ export {
   type FormatOptionSelector,
   type FormatOptionRefsLookupErrorCode,
   type CapabilityIdsLookupErrorCode,
+  type PackageFormatSelectorInput,
+  type PackageFormatSelectorDimensionOptions,
+  type FixedSizeDimensions,
+  type PackageFormatSelectorDimensionDiagnosticCode,
+  type PackageFormatSelectorDimensionDiagnostic,
 } from './write-side';
 
 export type { V1FormatId, V2ProductFormatDeclaration, V2Product, V1Product, ProjectionDiagnostic } from './types';
@@ -159,6 +165,7 @@ export {
   type CanonicalCreativeFormatSelectorContainer,
   type CreativeFormatWireMode,
   type CanonicalCreativeAsset,
+  type CanonicalSyncCreativeAsset,
   type CanonicalCreativeResponse,
   type CanonicalGetProductsResponse,
   type CanonicalGetProductsRequest,

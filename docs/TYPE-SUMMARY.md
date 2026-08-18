@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
-> Generated at: 2026-08-16
-> @adcp/sdk v13.0.0-rc.26
+> Generated at: 2026-08-18
+> @adcp/sdk v14.0.0-beta.2
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -145,9 +145,11 @@ _Response (success branch):_
   sponsored_intelligence: object
   brand: object
   creative: object
+  oauth: object
   request_signing: object
   webhook_signing: object
   identity: object
+  measurement_gateway: object
   measurement: object
   compliance_testing: object
   specialisms: object[]
@@ -188,7 +190,7 @@ _Response (success branch):_
   progress: object
   error: object
   history: object[]
-  result: Async Response Data
+  result: object
   context: Context
 }
 ```
@@ -217,6 +219,29 @@ _Response (success branch):_
 }
 ```
 
+**`sync_agent_notification_configs`** — Register, replace, pause, or clear agent-level webhook subscribers such as capabilities.
+
+_Request:_
+```
+{
+  idempotency_key: string  // required
+  notification_configs: object[]  // required
+  dry_run: boolean
+  context: Context
+}
+```
+
+_Response (success branch):_
+```
+{
+  action: 'updated' | 'unchanged' | 'cleared' | 'failed'  // required
+  dry_run: boolean
+  notification_configs: object[]
+  errors: object[]
+  context: Context
+}
+```
+
 ### Account Management
 
 **`list_accounts`** — Request parameters for listing accounts accessible to the authenticated agent.
@@ -228,6 +253,8 @@ _Request:_
   status: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed'
   pagination: Pagination Request
   sandbox: boolean
+  include_webhook_activity: boolean
+  webhook_activity_limit: integer
   context: Context
 }
 ```
@@ -336,12 +363,13 @@ _Response (success branch):_
 
 ### Media Buying
 
-**`get_products`** — Request parameters for discovering available advertising products.
+**`get_products`** — AdCP 3.
 
 _Request:_
 ```
 {
   buying_mode: 'brief' | 'wholesale' | 'refine'  // required
+  idempotency_key: string
   brief: string
   refine: object[]
   brand: Brand Ref
@@ -349,6 +377,8 @@ _Request:_
   account: Account Ref
   preferred_delivery_types: object[]
   filters: Product Filters
+  targeting_overlay: Targeting
+  required_overlay_support: Targeting Overlay Requirements
   property_list: Property List Ref
   fields: string[]
   time_budget
@@ -365,9 +395,12 @@ _Response (success branch):_
 ```
 {
   products: object[]
+  targeting_resolution: Get Products Targeting Resolution
   extensions: object
   proposals: object[]
   errors: object[]
+  reason: string
+  suggestions: string[]
   property_list_applied: boolean
   catalog_applied: boolean
   refinement_applied: object[]
@@ -387,7 +420,203 @@ _Watch out:_
 - `cache_scope` is required whenever the response includes `products` or `unchanged: true`. Use `public` for the universal rate card and `account` for account-specific rate cards or pricing overlays.
 - SDK server handlers may omit `cache_scope` only for no-account product feeds; the framework can safely infer `public` only when there is no inline account and no auth-derived/resolved account.
 
-**`list_creative_formats`** — Request parameters for discovering format IDs and creative agents supported by this sales agent.
+**`list_products`** — Request parameters for synchronous product-offer reads.
+
+_Request:_
+```
+{
+  adcp_version: Adcp_version
+  idempotency_key: string
+  context_id: string
+  context
+  governance_context: string
+  push_notification_config
+  account
+  brand: Brand Key
+  criteria: Product Discovery Criteria
+  fields: Product Fields
+  cursor: string
+  max_results: integer
+  if_feed_version: string
+  if_pricing_version: string
+}
+```
+
+_Response (success branch):_
+```
+{
+  outcome: 'listed'  // required
+}
+```
+
+**`request_proposals`** — Request parameters for creating actionable seller proposals.
+
+_Request:_
+```
+{
+  idempotency_key: string  // required
+  brief: string  // required
+  adcp_version: Adcp_version
+  context_id: string
+  context
+  governance_context: string
+  push_notification_config
+  account
+  brand: Brand Key
+  criteria: Product Discovery Criteria
+  opportunity
+}
+```
+
+_Response (success branch):_
+```
+{
+  outcome: 'proposed'  // required
+  status: 'completed'
+}
+```
+
+**`refine_proposals`** — Request parameters for creating one or more proposal revisions.
+
+_Request:_
+```
+{
+  idempotency_key: string  // required
+  refinements: object[]  // required
+  adcp_version: Adcp_version
+  context_id: string
+  context
+  governance_context: string
+  push_notification_config
+}
+```
+
+_Response (success branch):_
+```
+{
+  status: 'completed'
+}
+```
+
+**`decline_proposals`** — Request parameters for terminally declining one or more proposals.
+
+_Request:_
+```
+{
+  idempotency_key: string  // required
+  declines: object[]  // required
+  adcp_version: Adcp_version
+  context_id: string
+  context
+  governance_context: string
+  push_notification_config
+  opportunity: Opportunity Context
+}
+```
+
+
+**`buy_products`** — Create a MediaBuy directly from canonical published product offers.
+
+_Request:_
+```
+{
+  idempotency_key: string  // required
+  account  // required
+  feed_version: string  // required
+  purchases: object[]  // required
+  start_time: Start Timing  // required
+  end_time: string  // required
+  adcp_version: Adcp_version
+  brand: Brand Key
+  advertiser_industry: Advertiser Industry
+  pricing_version: string
+  total_budget: object
+  daily_budget_cap: number
+  budget_cap_timezone: string
+  budget_allocation: Canonical Budget Allocation
+  pacing: Pacing
+  bidding: Bidding Policy
+  paused: boolean
+  purchase_order_ref: string
+  agency_estimate_number: string
+  invoice_recipient: Business Entity
+  governance_context: string
+  push_notification_config: Push Notification Config
+  reporting_webhook: Reporting Webhook
+  opportunity
+  context: Context
+}
+```
+
+
+**`accept_proposal`** — Accept a committed new-buy, amendment, or cancellation proposal.
+
+_Request:_
+```
+{
+  idempotency_key: string  // required
+  account: Canonical Account Ref  // required
+  proposal_id: string  // required
+  proposal_terms_digest: string  // required
+  adcp_version: Adcp_version
+  total_budget: object
+  daily_budget_cap: number
+  budget_cap_timezone: string
+  io_acceptance: object
+  purchase_order_ref: string
+  governance_context: string
+  push_notification_config: Push Notification Config
+  reporting_webhook: Reporting Webhook
+  opportunity
+  context: Context
+}
+```
+
+
+**`control_media_buy`** — Apply operational controls inside accepted commercial terms.
+
+_Request:_
+```
+{
+  idempotency_key: string  // required
+  account: Canonical Account Ref  // required
+  media_buy_id: string  // required
+  revision: integer  // required
+  adcp_version: Adcp_version
+  paused: boolean
+  canceled: 'true'
+  cancellation_reason: string
+  total_budget: object
+  daily_budget_cap: number,null
+  budget_cap_timezone: string,null
+  budget_allocation: Canonical Budget Allocation
+  pacing: Pacing
+  bidding: Bidding Policy | null
+  packages: object[]
+  reporting_webhook: Reporting Webhook
+  governance_context: string
+  push_notification_config: Push Notification Config
+  context: Context
+}
+```
+
+_Response (success branch):_
+```
+{
+  status: 'completed'  // required
+  media_buy_id: string  // required
+  revision: integer  // required
+  media_buy_status: Media Buy Status
+  implementation_date: string,null
+  affected_package_ids: string[]
+  available_actions: object[]
+  warnings: object[]
+  context: Context
+  replayed: 'true'
+}
+```
+
+**`list_creative_formats`** — Deprecated 3.
 
 _Request:_
 ```
@@ -430,7 +659,7 @@ _Watch out:_
 - Use the typed factories from `@adcp/sdk`: `displayRender({ role, dimensions })` for display/video; `parameterizedRender({ role })` for audio and template formats (auto-injects `parameters_from_format_id: true`).
 - Audio formats (`type: "audio"`) have no width/height — declare `renders: [parameterizedRender({ role: "primary" })]` and encode duration/codec in `format_id.parameters` (declared via `accepts_parameters`).
 
-**`create_media_buy`** — Request parameters for creating a media buy.
+**`create_media_buy`** — AdCP 3.
 
 _Request:_
 ```
@@ -440,15 +669,23 @@ _Request:_
   brand: Brand Ref  // required
   start_time: Start Timing  // required
   end_time: string  // required
+  governance_context: string
   plan_id: string
   proposal_id: string
+  opportunity
   total_budget: object
+  daily_budget_cap: number
+  budget_cap_timezone: string
+  budget_allocation
   packages: object[]
   advertiser_industry: Advertiser Industry
   invoice_recipient: Business Entity
   io_acceptance: object
   po_number: string
+  name: string
   agency_estimate_number: string
+  pacing: Pacing
+  bidding
   paused: boolean
   push_notification_config: Push Notification Config
   reporting_webhook: Reporting Webhook
@@ -464,16 +701,23 @@ _Response (success branch):_
   confirmed_at: string,null  // required
   revision: integer  // required
   packages: object[]  // required
+  proposal_id: string
+  name: string
   account: Account
   invoice_recipient: Business Entity
   media_buy_status: Media Buy Status
-  status: Media Buy Status
   creative_deadline: string
   currency: string
   total_budget: number
+  daily_budget_cap: number
+  budget_cap_timezone: string
+  budget_allocation
+  pacing: Pacing
+  bidding
   valid_actions: object[]
   available_actions: object[]
   planned_delivery: Planned Delivery
+  warnings: object[]
   sandbox: boolean
   context: Context
 }
@@ -482,7 +726,7 @@ _Response (success branch):_
 _Watch out:_
 - Server handlers should return business lifecycle state as `media_buy_status`. The framework owns the task envelope `status`; do not return top-level `status` as the media-buy state.
 
-**`update_media_buy`** — Request parameters for updating campaign and package settings.
+**`update_media_buy`** — AdCP 3.
 
 _Request:_
 ```
@@ -490,12 +734,20 @@ _Request:_
   account: Account Ref  // required
   media_buy_id: string  // required
   idempotency_key: string  // required
+  governance_context: string
+  name: string
   revision: integer
   paused: boolean
   canceled: 'true'
   cancellation_reason: string
   start_time: Start Timing
   end_time: string
+  total_budget: object
+  daily_budget_cap: number,null
+  budget_cap_timezone: string,null
+  budget_allocation
+  pacing: Pacing
+  bidding: Bidding Policy | null
   packages: object[]
   invoice_recipient: Business Entity
   new_packages: object[]
@@ -510,15 +762,21 @@ _Response (success branch):_
 {
   media_buy_id: string  // required
   revision: integer  // required
+  name: string
   media_buy_status: Media Buy Status
-  status: Media Buy Status
   currency: string
   total_budget: number
+  daily_budget_cap: number
+  budget_cap_timezone: string
+  budget_allocation
+  pacing: Pacing
+  bidding
   implementation_date: string,null
   invoice_recipient: Business Entity
   affected_packages: object[]
   valid_actions: object[]
   available_actions: object[]
+  warnings: object[]
   sandbox: boolean
   context: Context
 }
@@ -535,6 +793,7 @@ _Request:_
   account: Account Ref
   media_buy_ids: string[]
   status_filter: Media Buy Status | object[]
+  indicator_types: object[]
   include_snapshot: boolean
   include_history: integer
   include_webhook_activity: boolean
@@ -598,14 +857,7 @@ _Response (success branch):_
 _Request:_
 ```
 {
-  media_buy_id: string  // required
   idempotency_key: string  // required
-  measurement_period: Datetime Range  // required
-  performance_index: number  // required
-  package_id: string
-  creative_id: string
-  metric_type: Metric Type
-  feedback_source: Feedback Source
   context: Context
 }
 ```
@@ -614,6 +866,11 @@ _Response (success branch):_
 ```
 {
   success: 'true'  // required
+  feedback_id: string
+  application_status: 'accepted' | 'applied' | 'not_applied'
+  status_reason: string
+  received_at: string
+  applied_at: string
   sandbox: boolean
   context: Context
 }
@@ -697,6 +954,8 @@ _Request:_
   idempotency_key: string  // required
   account: Account Ref  // required
   catalogs: object[]
+  item_availability_updates: object[]
+  item_availability_queries: object[]
   catalog_ids: string[]
   delete_missing: boolean
   dry_run: boolean
@@ -710,7 +969,10 @@ _Response (success branch):_
 ```
 {
   catalogs: object[]  // required
+  status: 'completed'
   dry_run: boolean
+  item_availability_updates: object[]
+  item_availability_states: object[]
   sandbox: boolean
   context: Context
 }
@@ -724,6 +986,7 @@ _Request:_
 ```
 {
   idempotency_key: string  // required
+  governance_context: string
   message: string
   creative_manifest: Creative Manifest
   creative_id: string
@@ -732,6 +995,8 @@ _Request:_
   package_id: string
   target_format_id: Format Id
   target_format_ids: object[]
+  target_capability_id: string
+  target_capability_ids: string[]
   transformer_id: string
   config: object
   refine_from_build_variant_id: string
@@ -788,6 +1053,7 @@ _Request:_
 {
   request_type: 'single' | 'batch' | 'variant'  // required
   creative_manifest: Creative Manifest
+  target_capability_id: string
   format_id: Format Id
   inputs: object[]
   template_id: string
@@ -797,6 +1063,8 @@ _Request:_
   requests: object[]
   variant_id: string
   creative_id: string
+  allow_async: boolean
+  push_notification_config: Push Notification Config
   context: Context
 }
 ```
@@ -806,6 +1074,7 @@ _Response (success branch):_
 {
   response_type: 'single'  // required
   previews: object[]  // required
+  quality_used: Creative Quality
   interactive_url: string
   expires_at: string
   context: Context
@@ -815,7 +1084,7 @@ _Response (success branch):_
 _Watch out:_
 - Each `renders[]` entry is a oneOf on `output_format` — use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` to inject the discriminator and require the matching `preview_url`/`preview_html` field.
 
-**`list_creative_formats`** — Request parameters for discovering creative formats from this creative agent.
+**`list_creative_formats`** — Deprecated 3.
 
 _Request:_
 ```
@@ -865,6 +1134,8 @@ _Request:_
   transformer_ids: string[]
   input_format_ids: object[]
   output_format_ids: object[]
+  input_format_kinds: object[]
+  output_capability_ids: string[]
   name_search: string
   brief: string
   expand_params: string[]
@@ -925,6 +1196,8 @@ _Request:_
   sort: object
   pagination: Pagination Request
   include_assignments: boolean
+  assignment_projection: 'all' | 'matching'
+  assignment_limit: integer
   include_snapshot: boolean
   include_items: boolean
   include_variables: boolean
@@ -958,10 +1231,11 @@ _Request:_
 ```
 {
   account: Account Ref  // required
-  creatives: object[]  // required
   idempotency_key: string  // required
+  creatives: object[]
   creative_ids: string[]
   assignments: object[]
+  assignment_operations: object[]
   delete_missing: boolean
   dry_run: boolean
   validation_mode: Validation Mode
@@ -1521,12 +1795,12 @@ _Request:_
   plan_id: string  // required
   idempotency_key: string  // required
   outcome: Outcome Type  // required
-  governance_context: string  // required
   check_id: string
   purchase_type: Purchase Type
   seller_response: object
   delivery: object
   error: object
+  governance_context: string
   context: Context
 }
 ```
@@ -1537,8 +1811,46 @@ _Response (success branch):_
   outcome_id: string  // required
   outcome_state: 'accepted' | 'findings'  // required
   committed_budget: number
+  delivery_reconciliation_status: 'consistent' | 'measurement_variance' | 'disputed' | 'unmatched' | 'closed_unresolved'
+  delivery_period_state: 'open' | 'closed'
   findings: object[]
   plan_summary: object
+  replayed: boolean
+  context: Context
+}
+```
+
+**`report_plan_adjustment`** — Seller-authenticated append-only commitment adjustment report.
+
+_Request:_
+```
+{
+  action: 'report' | 'review'  // required
+  plan_id: string  // required
+  idempotency_key: string  // required
+  outcome_id: string
+  adjustment_id: string
+  decision: 'accept' | 'dispute'
+  seller_reference: string
+  seller_adjustment_id: string
+  adjustment_type: 'decommitment' | 'refund' | 'credit' | 'makegood'
+  amount: object
+  reason: string
+  effective_at: string
+  evidence: object
+  context: Context
+}
+```
+
+_Response (success branch):_
+```
+{
+  adjustment_id: string  // required
+  adjustment_state: 'reported' | 'verified' | 'disputed'  // required
+  adjustment_type: 'decommitment' | 'refund' | 'credit' | 'makegood'  // required
+  amount: object  // required
+  headroom_restored: number  // required
+  plan_summary: object  // required
   replayed: boolean
   context: Context
 }
@@ -1571,16 +1883,22 @@ _Response (success branch):_
 _Request:_
 ```
 {
-  plan_id: string  // required
   caller: string  // required
+  plan_id: string
   purchase_type: Purchase Type
+  target_agent: string
+  proposed_commitment: object
+  execution_commitment: object
   tool: string
   payload: object
+  proposal: Canonical Proposal
   governance_context: string
+  consultation_context: string
   phase: Governance Phase
   planned_delivery: Planned Delivery
   delivery_metrics: object
   modification_summary: string
+  runtime_attestations: object[]
   invoice_recipient: Business Entity
   context: Context
 }
@@ -1591,15 +1909,20 @@ _Response (success branch):_
 {
   check_id: string  // required
   verdict: Governance Decision  // required
-  plan_id: string  // required
   explanation: string  // required
+  check_type: 'intent' | 'execution'
+  plan_id: string
   findings: object[]
   conditions: object[]
+  consultation_context: string
   expires_at: string
   next_check: string
+  delivery_statement: object
   categories_evaluated: string[]
   policies_evaluated: string[]
   mode: Governance Mode
+  runtime_attestation_evaluations: object[]
+  runtime_attestation_binding_digest: string
   governance_context: string
   context: Context
 }

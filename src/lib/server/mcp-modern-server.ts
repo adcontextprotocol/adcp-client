@@ -10,11 +10,15 @@
 import {
   McpServer as ModernMcpServer,
   createMcpHandler,
+  fromJsonSchema,
   isLegacyRequest,
   type AuthInfo as ModernAuthInfo,
+  type JsonSchemaType,
   type ResourceMetadata,
+  type RegisteredTool as ModernRegisteredTool,
   type StandardSchemaWithJSON,
   type ServerContext,
+  type Tool as ModernTool,
   type ToolAnnotations,
 } from '@modelcontextprotocol/server';
 import { toNodeHandler, toWebRequest, type NodeMcpRequestHandler } from '@modelcontextprotocol/node';
@@ -23,14 +27,17 @@ import {
   getSdkServer,
   getSdkServerInfo,
   getSdkServerInstructions,
+  getMcpToolProfile,
   isRegisteredToolVisible,
   listMcpAppResources,
   listRegisteredToolDefinitions,
   type AdcpAuthInfo,
   type AdcpServer,
+  type RegisteredToolDefinition,
 } from './adcp-server';
-import { ADCP_INSTRUCTIONS_RESOLVER } from './create-adcp-server';
+import { ADCP_INSTRUCTIONS_RESOLVER, MEDIA_BUY_MCP_TOOL_PROFILE } from './create-adcp-server';
 import { mcpAppResourceMetadata, readMcpAppResource } from './mcp-app';
+import { getMcpToolSchema, getMcpToolSummary } from '../validation/schema-loader';
 
 export interface ModernMcpServerAdapter {
   handle: NodeMcpRequestHandler;
@@ -56,6 +63,82 @@ function linkedMcpAppResourceUri(tool: { _meta?: Record<string, unknown> }): str
   return typeof resourceUri === 'string' ? resourceUri : undefined;
 }
 
+let warnedAboutCustomSchemaJsonConversion = false;
+
+function hasStandardJsonSchema(schema: unknown): boolean {
+  if (schema === null || typeof schema !== 'object') return false;
+  const standard = (schema as Record<string, unknown>)['~standard'];
+  if (standard === null || typeof standard !== 'object') return false;
+  const jsonSchema = (standard as Record<string, unknown>)['jsonSchema'];
+  return jsonSchema !== null && typeof jsonSchema === 'object';
+}
+
+function hasJsonConversionForSchemaOrRawShape(schema: unknown): boolean {
+  if (hasStandardJsonSchema(schema)) return true;
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return false;
+  const entries = Object.values(schema as Record<string, unknown>);
+  return entries.length > 0 && entries.every(hasStandardJsonSchema);
+}
+
+function officialAdcpInputSchema(
+  toolName: string,
+  adcpVersion: string,
+  profile: 'media-buy' | 'all'
+): Readonly<Record<string, unknown>> | undefined {
+  // Use the exact manifest for the negotiated MCP era. The compact catalog
+  // resolves through its role profile; `all` resolves through the generic
+  // transport manifest and never borrows constraints from a narrower role.
+  const projection = getMcpToolSchema(
+    toolName,
+    'input',
+    {
+      protocolVersion: '2026-07-28',
+      ...(profile === 'media-buy' && { profile: 'media-buy' }),
+    },
+    adcpVersion
+  );
+  return projection;
+}
+
+function officialAdcpToolSummary(
+  toolName: string,
+  adcpVersion: string,
+  profile: 'media-buy' | 'all'
+): string | undefined {
+  return getMcpToolSummary(
+    toolName,
+    {
+      protocolVersion: '2026-07-28',
+      ...(profile === 'media-buy' && { profile: 'media-buy' }),
+    },
+    adcpVersion
+  );
+}
+
+function schemaForModernMcp(
+  toolName: string,
+  schema: unknown,
+  adcpVersion: string,
+  profile: 'media-buy' | 'all'
+): StandardSchemaWithJSON {
+  const officialSchema = officialAdcpInputSchema(toolName, adcpVersion, profile);
+  if (officialSchema) {
+    // This official MCP bridge supplies both validation and the JSON
+    // conversion hook that Zod versions before 4.2 do not implement.
+    return fromJsonSchema(officialSchema as JsonSchemaType);
+  }
+
+  if (!hasJsonConversionForSchemaOrRawShape(schema) && !warnedAboutCustomSchemaJsonConversion) {
+    warnedAboutCustomSchemaJsonConversion = true;
+    console.warn(
+      '[adcp/serve] A custom MCP tool schema does not expose ~standard.jsonSchema. ' +
+        'With Zod, complete modern tools/list schemas require zod >=4.2.0. ' +
+        'Current AdCP tools use bundled official JSON Schemas, but this custom or legacy tool may be advertised with an empty schema.'
+    );
+  }
+  return schema as StandardSchemaWithJSON;
+}
+
 /** Build a strict 2026-07-28 handler around one configured AdCP server. @internal */
 export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcpServerAdapter {
   const sdkServer = getSdkServer(agentServer);
@@ -65,6 +148,32 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
 
   const serverInfo = getSdkServerInfo(sdkServer);
   const toolDefinitions = listRegisteredToolDefinitions(sdkServer);
+  const adcpVersion = agentServer.getAdcpVersion();
+  const activeMcpToolProfile = getMcpToolProfile(agentServer);
+  const mediaBuyProfileTools = new Set<string>(MEDIA_BUY_MCP_TOOL_PROFILE);
+  const isInActiveDiscoveryProfile = (toolName: string): boolean =>
+    activeMcpToolProfile === 'all' || mediaBuyProfileTools.has(toolName);
+  const modernToolDefinitions: Array<
+    Omit<RegisteredToolDefinition, 'inputSchema' | 'outputSchema'> & {
+      inputSchema?: StandardSchemaWithJSON;
+      outputSchema?: StandardSchemaWithJSON;
+    }
+  > = toolDefinitions.map(tool => {
+    const { inputSchema, outputSchema, ...definition } = tool;
+    const description = tool.description ?? officialAdcpToolSummary(tool.name, adcpVersion, activeMcpToolProfile);
+    return {
+      ...definition,
+      ...(description !== undefined && { description }),
+      ...(inputSchema !== undefined && {
+        inputSchema: schemaForModernMcp(tool.name, inputSchema, adcpVersion, activeMcpToolProfile),
+      }),
+      // Output schemas can dwarf the input discovery surface and are not
+      // required for clients to form tool calls. Preserve an adopter's
+      // explicitly registered schema, but do not replace it with a bundled
+      // full AdCP response projection.
+      ...(outputSchema !== undefined && { outputSchema: outputSchema as StandardSchemaWithJSON }),
+    };
+  });
   const handler = createMcpHandler(
     async requestContext => {
       if (requestContext.requestInfo?.headers.get('mcp-method') === 'server/discover') {
@@ -80,7 +189,8 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
 
       const authInfo = toAdcpAuthInfo(requestContext.authInfo);
       const toolVisibility = new Map<string, boolean>();
-      for (const tool of toolDefinitions) {
+      const registeredTools = new Map<string, ModernRegisteredTool>();
+      for (const tool of modernToolDefinitions) {
         const visible = await isRegisteredToolVisible(agentServer, { toolName: tool.name, authInfo });
         toolVisibility.set(tool.name, visible);
         if (!visible) continue;
@@ -88,7 +198,7 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
           ...(tool.title !== undefined && { title: tool.title }),
           ...(tool.description !== undefined && { description: tool.description }),
           ...(tool.outputSchema !== undefined && {
-            outputSchema: tool.outputSchema as StandardSchemaWithJSON,
+            outputSchema: tool.outputSchema,
           }),
           ...(tool.annotations !== undefined && { annotations: tool.annotations as ToolAnnotations }),
           ...(tool._meta !== undefined && { _meta: tool._meta }),
@@ -102,14 +212,49 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
           });
 
         if (tool.inputSchema !== undefined) {
-          modern.registerTool(
+          registeredTools.set(
             tool.name,
-            { ...config, inputSchema: tool.inputSchema as StandardSchemaWithJSON },
-            async (args, ctx) => invoke((args ?? {}) as Record<string, unknown>, ctx)
+            modern.registerTool(tool.name, { ...config, inputSchema: tool.inputSchema }, async (args, ctx) =>
+              invoke((args ?? {}) as Record<string, unknown>, ctx)
+            )
           );
         } else {
-          modern.registerTool(tool.name, config, async ctx => invoke({}, ctx));
+          registeredTools.set(
+            tool.name,
+            modern.registerTool(tool.name, config, async ctx => invoke({}, ctx))
+          );
         }
+      }
+
+      // Keep every authorized handler registered for direct compatibility
+      // calls, but make the role profile a discovery concern only. The
+      // low-level handler override is the public MCP SDK extension point for
+      // response shaping; tool dispatch continues through McpServer's own
+      // registered tools/call handler and validation pipeline.
+      if (registeredTools.size > 0) {
+        modern.server.setRequestHandler('tools/list', () => ({
+          tools: modernToolDefinitions
+            .filter(tool => toolVisibility.get(tool.name) === true && isInActiveDiscoveryProfile(tool.name))
+            .map(tool => {
+              const registered = registeredTools.get(tool.name)!;
+              return {
+                name: tool.name,
+                ...(tool.title !== undefined && { title: tool.title }),
+                ...(tool.description !== undefined && { description: tool.description }),
+                inputSchema: (modern.toolInputSchemaJson(tool.name) ?? {
+                  type: 'object',
+                  properties: {},
+                }) as unknown as ModernTool['inputSchema'],
+                ...(registered.outputSchemaJson !== undefined && { outputSchema: registered.outputSchemaJson }),
+                ...(tool.annotations !== undefined && { annotations: tool.annotations as ToolAnnotations }),
+                ...(tool._meta !== undefined && { _meta: tool._meta }),
+              };
+            }),
+          _meta: {
+            adcp_version: adcpVersion,
+            adcp_profile: activeMcpToolProfile,
+          },
+        }));
       }
 
       // `createMcpHandler` reconstructs the MCP v2 server for every request,
@@ -117,7 +262,11 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
       // when the opaque AdCP server is created.
       for (const resource of listMcpAppResources(agentServer)) {
         const linkedTools = toolDefinitions.filter(tool => linkedMcpAppResourceUri(tool) === resource.uri);
-        if (linkedTools.length > 0 && !linkedTools.some(tool => toolVisibility.get(tool.name) === true)) continue;
+        if (
+          linkedTools.length > 0 &&
+          !linkedTools.some(tool => toolVisibility.get(tool.name) === true && isInActiveDiscoveryProfile(tool.name))
+        )
+          continue;
         modern.registerResource(
           resource.name,
           resource.uri,

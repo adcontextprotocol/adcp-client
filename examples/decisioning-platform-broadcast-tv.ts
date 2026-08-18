@@ -37,15 +37,12 @@ import {
   type GetProductsHandlerResult,
   type SyncCreativesRow,
 } from '@adcp/sdk/server';
-import type { GetProductsRequest } from '@adcp/sdk';
+import type { CreateMediaBuyRequest, GetProductsRequest, UpdateMediaBuyRequest } from '@adcp/sdk';
 import type {
-  CreateMediaBuyRequest,
   CreateMediaBuySuccess,
-  UpdateMediaBuyRequest,
   UpdateMediaBuySuccess,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
-  CreativeAsset,
   AccountReference,
 } from '@adcp/sdk/types';
 
@@ -190,7 +187,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
           const buyId = `mb_${this.capabilities.config.affiliateId}_${Date.now()}`;
           const buy: BroadcastBuy = {
             media_buy_id: buyId,
-            status: 'pending_start',
+            media_buy_status: 'pending_start',
             confirmed_at: new Date().toISOString(),
             revision: 1,
             daypart: 'primetime',
@@ -203,7 +200,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
           const account = (req as { account?: { account_id?: string } }).account;
           const accountId = account?.account_id ?? 'broadcast_acc_1';
           setTimeout(() => {
-            buy.status = 'active';
+            buy.media_buy_status = 'active';
             publishStatusChange({
               account_id: accountId,
               resource_type: 'media_buy',
@@ -228,9 +225,13 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
       }
       // Broadcast: pause = preempt the schedule; canceled is irreversible
       // (cannot reactivate without a fresh IO).
-      if (patch.paused === true) existing.status = 'paused';
-      if (patch.paused === false && existing.status === 'paused') existing.status = 'active';
-      return { media_buy_id: existing.media_buy_id, status: existing.status, revision: existing.revision };
+      if (patch.paused === true) existing.media_buy_status = 'paused';
+      if (patch.paused === false && existing.media_buy_status === 'paused') existing.media_buy_status = 'active';
+      return {
+        media_buy_id: existing.media_buy_id,
+        media_buy_status: existing.media_buy_status,
+        revision: existing.revision,
+      };
     },
 
     /**
@@ -246,7 +247,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
           await new Promise(r => setTimeout(r, this.capabilities.config.standardsReviewMs));
           // Mock policy: anything tagged "political" rejects; rest approve.
           return creatives.map(c => {
-            const id = (c as { creative_id?: string }).creative_id ?? `cr_${Math.random()}`;
+            const id = c.creative_id;
             const tags = ((c as { tags?: string[] }).tags ?? []).map(t => t.toLowerCase());
             if (tags.includes('political')) {
               return {

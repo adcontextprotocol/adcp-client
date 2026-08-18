@@ -12,6 +12,101 @@ describe('Zod Schema Validation', () => {
     assert.ok(schemas, 'Schemas should be importable');
   });
 
+  test('reference image and carousel fixtures conform to SDK schemas', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+    const { prepareImageCarouselReference, prepareImageReference } =
+      await import('../../packages/reference-renderers/index.js');
+    const imageManifest = {
+      format_kind: 'image',
+      assets: {
+        image_main: {
+          asset_type: 'image',
+          url: 'https://cdn.example/image.png',
+          width: 300,
+          height: 250,
+        },
+      },
+    };
+    const imageDeclaration = {
+      format_kind: 'image',
+      params: { width: 300, height: 250 },
+    };
+    const carouselManifest = {
+      format_kind: 'image_carousel',
+      assets: {
+        cards: ['one', 'two'].map(id => ({
+          asset_type: 'card',
+          media: {
+            asset_type: 'image',
+            url: `https://cdn.example/${id}.png`,
+            width: 600,
+            height: 600,
+          },
+          headline: `Card ${id}`,
+        })),
+      },
+    };
+    const carouselDeclaration = {
+      format_kind: 'image_carousel',
+      params: {
+        min_cards: 2,
+        max_cards: 4,
+        card_aspect_ratio: '1:1',
+        allowed_card_media_asset_types: ['image'],
+      },
+    };
+
+    for (const [manifest, declaration, prepare] of [
+      [imageManifest, imageDeclaration, prepareImageReference],
+      [carouselManifest, carouselDeclaration, prepareImageCarouselReference],
+    ]) {
+      assert.strictEqual(schemas.CreativeManifestSchema.safeParse(manifest).success, true);
+      assert.strictEqual(schemas.ProductFormatDeclarationSchema.safeParse(declaration).success, true);
+      assert.strictEqual(prepare({ manifest, declaration }).ok, true);
+    }
+  });
+
+  test('all canonical-format overlays accept the shared array-valued slots contract', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+    const canonicalSchemas = [
+      schemas.CanonicalFormatDisplayTagSchema,
+      schemas.CanonicalFormatImageCarouselSchema,
+      schemas.CanonicalFormatHostedVideoSchema,
+      schemas.CanonicalFormatVASTVideoSchema,
+      schemas.CanonicalFormatHostedAudioSchema,
+      schemas.CanonicalFormatDAASTAudioSchema,
+      schemas.CanonicalFormatSponsoredPlacementRetailMediaCatalogDrivenSchema,
+      schemas.CanonicalFormatNativeInFeedSchema,
+      schemas.CanonicalFormatResponsiveCreativeSchema,
+      schemas.CanonicalFormatAgentPlacementAISurfaceSponsoredPlacementSchema,
+      schemas.CanonicalFormatHTML5BannerSchema,
+    ];
+    const value = {
+      slots: [{ asset_group_id: 'audio_main', asset_type: 'audio', required: true }],
+    };
+
+    for (const schema of canonicalSchemas) {
+      assert.strictEqual(schema.safeParse(value).success, true);
+    }
+  });
+
+  test('CreativeBriefSchema requires at least one required disclosure when present', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const brief = required_disclosures => ({
+      name: 'Launch brief',
+      compliance: { required_disclosures },
+    });
+    assert.strictEqual(schemas.CreativeBriefSchema.safeParse(brief([])).success, false);
+    assert.strictEqual(schemas.CreativeBriefSchema.safeParse(brief([{ text: 'Terms apply.' }])).success, true);
+  });
+
   test('ProductSchema is importable and has parse method', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');
@@ -408,6 +503,139 @@ describe('Zod Schema Validation', () => {
         format_id: { agent_url: 'bad', id: 'display_image' },
       }).success,
       false
+    );
+    assert.doesNotThrow(() =>
+      schemas.CreativeAssetSchema.safeParse({
+        ...base,
+        format_id: { agent_url: ' https://legacy.example ', id: 'display_image' },
+      })
+    );
+    assert.strictEqual(
+      schemas.CreativeAssetSchema.safeParse({
+        ...base,
+        format_id: { agent_url: ' https://legacy.example ', id: 'display_image' },
+      }).success,
+      false
+    );
+    for (const agent_url of [
+      'https://legacy.example/a b',
+      'https://legacy.example/a\tb',
+      'https://legacy.example/%ZZ',
+      'https://münich.example',
+    ]) {
+      assert.strictEqual(
+        schemas.CreativeAssetSchema.safeParse({
+          ...base,
+          format_id: { agent_url, id: 'display_image' },
+        }).success,
+        false,
+        `agent_url must reject whitespace: ${JSON.stringify(agent_url)}`
+      );
+    }
+    for (const forbiddenIdentity of ['capability_id', 'capability_ref']) {
+      assert.strictEqual(
+        schemas.CreativeAssetSchema.safeParse({
+          ...base,
+          format_kind: 'image',
+          [forbiddenIdentity]: 'legacy-capability',
+        }).success,
+        false,
+        `${forbiddenIdentity} is forbidden by the creative schema`
+      );
+    }
+  });
+
+  test('creative schemas validate slot assets and canonical manifest identity', async () => {
+    const schemas = await import('../../dist/lib/types/schemas.generated.mjs');
+
+    assert.strictEqual(
+      schemas.CreativeManifestSchema.safeParse({
+        format_kind: 'display_tag',
+        assets: { tag_url: { asset_type: 'url' } },
+      }).success,
+      false,
+      'URL assets must include url'
+    );
+    assert.strictEqual(
+      schemas.CreativeManifestSchema.safeParse({
+        format_kind: 'display_tag',
+        assets: { tag_url: [] },
+      }).success,
+      false,
+      'multi-value asset slots must be non-empty'
+    );
+    assert.strictEqual(
+      schemas.CreativeManifestSchema.safeParse({
+        format_kind: 'display_tag',
+        assets: {
+          tag_url: { asset_type: 'url', url: 'https://creative.example/tag.js' },
+        },
+      }).success,
+      true
+    );
+    assert.strictEqual(
+      schemas.CreativeManifestSchema.safeParse({ assets: {} }).success,
+      false,
+      'a manifest requires exactly one identity branch'
+    );
+    assert.strictEqual(
+      schemas.CreativeManifestSchema.safeParse({
+        format_kind: 'display_tag',
+        format_id: { agent_url: 'https://legacy.example', id: 'display_tag' },
+        assets: {},
+      }).success,
+      false,
+      'legacy and canonical identities are mutually exclusive'
+    );
+    assert.strictEqual(
+      schemas.CreativeManifestSchema.safeParse({
+        format_kind: 'display_tag',
+        assets: { 'x-vendor-extension': { vendor_payload: true } },
+      }).success,
+      true,
+      'nonmatching extension keys remain allowed by additionalProperties'
+    );
+
+    const assetBase = { creative_id: 'creative_1', name: 'Creative', format_kind: 'display_tag' };
+    assert.strictEqual(
+      schemas.CreativeAssetSchema.safeParse({
+        ...assetBase,
+        assets: { tag_url: { asset_type: 'url' } },
+      }).success,
+      false,
+      'creative library assets apply the same slot validation'
+    );
+    assert.strictEqual(
+      schemas.CreativeAssetSchema.safeParse({
+        ...assetBase,
+        assets: {
+          tag_url: [
+            { asset_type: 'url', url: 'https://creative.example/one.js' },
+            { asset_type: 'url', url: 'https://creative.example/two.js' },
+          ],
+        },
+      }).success,
+      true,
+      'creative library assets accept populated variant arrays'
+    );
+    assert.strictEqual(
+      schemas.CreativeAssetSchema.safeParse({
+        ...assetBase,
+        assets: { 'x-vendor-extension': { vendor_payload: true } },
+      }).success,
+      true,
+      'creative library assets preserve extension keys'
+    );
+  });
+
+  test('creative runtime validation does not inflate MCP JSON schemas', async () => {
+    const schemas = await import('../../dist/lib/types/schemas.generated.mjs');
+    const inputSchema = z.toJSONSchema(schemas.CreativeManifestSchema);
+
+    assert.deepStrictEqual(
+      inputSchema.properties.assets.additionalProperties,
+      {},
+      'runtime-only slot validation must not expand AssetVariant into MCP discovery schemas'
     );
   });
 
@@ -1223,6 +1451,30 @@ describe('Zod Schema Validation', () => {
       result.success,
       `Signal with governance metadata should validate: ${JSON.stringify(result.error?.issues)}`
     );
+  });
+
+  test('activate signal destination/deployment unions preserve platform and agent identities', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const destinations = [
+      { type: 'platform', platform: 'the-trade-desk', account: 'seat_123' },
+      { type: 'agent', agent_url: 'https://signals.example.com/mcp', account: 'agent_account_456' },
+    ];
+    const request = schemas.ActivateSignalRequestSchema.safeParse({
+      signal_agent_segment_id: 'segment_1',
+      destinations,
+      idempotency_key: 'activate-signal-union-0001',
+    });
+    assert.ok(request.success, `Both destination arms should validate: ${JSON.stringify(request.error?.issues)}`);
+
+    const deployments = destinations.map(destination =>
+      destination.type === 'platform' ? { ...destination, is_live: false } : { ...destination, is_live: false }
+    );
+    const response = schemas.ActivateSignalSuccessSchema.safeParse({ deployments });
+    assert.ok(response.success, `Both deployment arms should validate: ${JSON.stringify(response.error?.issues)}`);
+    assert.deepStrictEqual(response.data.deployments, deployments);
   });
 
   test('record schemas preserve value types after undefined removal', async () => {

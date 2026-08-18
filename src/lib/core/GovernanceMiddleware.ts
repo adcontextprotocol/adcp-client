@@ -34,6 +34,14 @@ import { toolRequiresGovernance, parseCheckResponse } from './GovernanceTypes';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
 import { generateIdempotencyKey } from '../utils/idempotency';
 import { createAbortError } from '../protocols/abort';
+import type { AdcpCapabilities } from '../utils/capabilities';
+import { canonicalize } from '../utils/jcs';
+import {
+  buildGovernanceIntentRequest,
+  governancePurchaseTypeForTask,
+  targetDeclaresGovernanceEnforcement,
+  targetDeclaresLegacyGovernanceAwareness,
+} from '../governance';
 
 /**
  * Typed debug log entries for governance operations.
@@ -48,6 +56,8 @@ const SAFE_PATH_SEGMENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$|^\d+$/;
 
 /** Path segments that would cause prototype pollution even though they match the safe pattern. */
 const FORBIDDEN_PATH_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
+const MAX_CONDITION_PATH_DEPTH = 32;
+const MAX_CONDITION_ARRAY_INDEX = 10_000;
 
 /**
  * Set a value at a dot-path in an object. Creates intermediate objects as needed.
@@ -61,6 +71,9 @@ export function setAtPath(obj: Record<string, any>, path: string, value: unknown
     throw new Error('Empty path is not allowed');
   }
   const parts = path.split('.');
+  if (parts.length > MAX_CONDITION_PATH_DEPTH) {
+    throw new Error(`Condition path exceeds maximum depth of ${MAX_CONDITION_PATH_DEPTH}`);
+  }
   for (const part of parts) {
     // Explicit inline block for prototype-pollution vectors. The
     // FORBIDDEN_PATH_SEGMENTS set covers the same cases but CodeQL's
@@ -74,6 +87,9 @@ export function setAtPath(obj: Record<string, any>, path: string, value: unknown
     }
     if (!SAFE_PATH_SEGMENT.test(part)) {
       throw new Error(`Invalid path segment: ${part}`);
+    }
+    if (/^\d+$/.test(part) && Number(part) > MAX_CONDITION_ARRAY_INDEX) {
+      throw new Error(`Condition array index exceeds maximum of ${MAX_CONDITION_ARRAY_INDEX}`);
     }
   }
   let current = obj;
@@ -161,8 +177,38 @@ export class GovernanceMiddleware {
   /**
    * Check whether this tool requires a governance check.
    */
-  requiresCheck(tool: string): boolean {
-    return toolRequiresGovernance(tool, this.governanceConfig);
+  requiresCheck(tool: string, targetCapabilities?: AdcpCapabilities): boolean {
+    if (!toolRequiresGovernance(tool, this.governanceConfig)) return false;
+    // Preserve the published scope-only predicate for direct callers. The
+    // execution path uses shouldCheck(), which requires discovered target
+    // capabilities and fails closed when they are absent.
+    if (!targetCapabilities) return true;
+    return (
+      targetDeclaresGovernanceEnforcement(targetCapabilities, tool) ||
+      targetDeclaresLegacyGovernanceAwareness(targetCapabilities, tool)
+    );
+  }
+
+  /** Resolve request-level triggers and exemptions after the capability gate. */
+  async shouldCheck(
+    tool: string,
+    params: Readonly<Record<string, unknown>>,
+    targetCapabilities?: AdcpCapabilities
+  ): Promise<boolean> {
+    if (!toolRequiresGovernance(tool, this.governanceConfig)) return false;
+    if (!targetCapabilities) {
+      throw new Error(
+        `Target capabilities are required before applying configured governance to ${tool}; refusing to bypass governance`
+      );
+    }
+    if (!this.requiresCheck(tool, targetCapabilities)) return false;
+    // The legacy 3.0/3.1 declaration had no conditional-commitment contract.
+    if (!targetDeclaresGovernanceEnforcement(targetCapabilities, tool)) return true;
+
+    const stateless = statelessGovernanceApplicability(tool, params);
+    if (stateless !== undefined) return stateless;
+    const resolver = this.governanceConfig.campaign?.resolveApplicability;
+    return resolver ? resolver(tool, params) : true;
   }
 
   /**
@@ -185,6 +231,22 @@ export class GovernanceMiddleware {
   async checkProposed(
     tool: string,
     params: Record<string, unknown>,
+    debugLogs?: GovernanceDebugEntry[],
+    signal?: AbortSignal
+  ): Promise<{ result: GovernanceCheckResult; params: Record<string, unknown> }>;
+  async checkProposed(
+    targetAgent: AgentConfig,
+    targetCapabilities: AdcpCapabilities,
+    tool: string,
+    params: Record<string, unknown>,
+    debugLogs?: GovernanceDebugEntry[],
+    signal?: AbortSignal
+  ): Promise<{ result: GovernanceCheckResult; params: Record<string, unknown> }>;
+  async checkProposed(
+    targetAgentOrTool: AgentConfig | string,
+    targetCapabilitiesOrParams: AdcpCapabilities | Record<string, unknown>,
+    toolOrDebugLogs: string | GovernanceDebugEntry[] = [],
+    paramsOrSignal?: Record<string, unknown> | AbortSignal,
     debugLogs: GovernanceDebugEntry[] = [],
     signal?: AbortSignal
   ): Promise<{ result: GovernanceCheckResult; params: Record<string, unknown> }> {
@@ -193,20 +255,65 @@ export class GovernanceMiddleware {
       throw new Error('Campaign governance not configured');
     }
 
+    const legacyDirectCall = typeof targetAgentOrTool === 'string';
+    const targetAgent = typeof targetAgentOrTool === 'string' ? config.agent : targetAgentOrTool;
+    const targetCapabilities = legacyDirectCall ? undefined : (targetCapabilitiesOrParams as AdcpCapabilities);
+    const tool = typeof targetAgentOrTool === 'string' ? targetAgentOrTool : (toolOrDebugLogs as string);
+    const params = legacyDirectCall
+      ? (targetCapabilitiesOrParams as Record<string, unknown>)
+      : (paramsOrSignal as Record<string, unknown>);
+    if (legacyDirectCall) {
+      debugLogs = Array.isArray(toolOrDebugLogs) ? toolOrDebugLogs : [];
+      signal = paramsOrSignal instanceof AbortSignal ? paramsOrSignal : undefined;
+    }
+
     const maxReChecks = config.maxConditionsIterations ?? 0;
     let currentParams = structuredClone(params);
     let iteration = 0;
+    let consultationContext: string | undefined;
+    let legacyGovernanceContext = config.governanceContext;
+    let proposedCommitmentOverride: import('../governance').GovernanceCommitment | undefined;
+    let proposalOverride: CheckGovernanceRequest['proposal'] | undefined;
+    let purchaseTypeOverride: CheckGovernanceRequest['purchase_type'] | undefined;
+    let runtimeAttestationsOverride: CheckGovernanceRequest['runtime_attestations'] | undefined;
+    let invoiceRecipientOverride: CheckGovernanceRequest['invoice_recipient'] | undefined;
+    let conditionsApplied = false;
 
     // Always make the initial governance check. maxConditionsIterations only
     // controls how many times we re-apply conditions and re-check.
     do {
-      const request: CheckGovernanceRequest = {
-        plan_id: config.planId,
-        caller: config.callerUrl ?? '',
-        tool,
-        payload: currentParams,
-        governance_context: config.governanceContext,
-      };
+      const modernEnforcement = !legacyDirectCall && targetDeclaresGovernanceEnforcement(targetCapabilities, tool);
+      const legacyAwareness = legacyDirectCall || targetDeclaresLegacyGovernanceAwareness(targetCapabilities, tool);
+      if (!modernEnforcement && !legacyAwareness) {
+        throw new Error(`Target service does not declare governance enforcement for ${tool}`);
+      }
+      if (modernEnforcement && !config.callerUrl) {
+        throw new Error(
+          'CampaignGovernanceConfig.callerUrl is required when the target declares AdCP 3.2 governance enforcement'
+        );
+      }
+      const details = modernEnforcement ? ((await config.resolveIntentDetails?.(tool, currentParams)) ?? {}) : {};
+      const request: CheckGovernanceRequest = modernEnforcement
+        ? buildGovernanceIntentRequest({
+            planId: config.planId,
+            caller: config.callerUrl ?? '',
+            targetAgent,
+            tool,
+            payload: currentParams,
+            purchaseType: purchaseTypeOverride ?? details.purchaseType ?? governancePurchaseTypeForTask(tool),
+            proposedCommitment: proposedCommitmentOverride ?? details.proposedCommitment,
+            consultationContext,
+            proposal: proposalOverride ?? details.proposal,
+            runtimeAttestations: runtimeAttestationsOverride ?? details.runtimeAttestations,
+            invoiceRecipient: invoiceRecipientOverride ?? details.invoiceRecipient,
+          })
+        : ({
+            plan_id: config.planId,
+            caller: config.callerUrl ?? '',
+            tool,
+            payload: structuredClone(currentParams),
+            ...(legacyGovernanceContext !== undefined ? { governance_context: legacyGovernanceContext } : {}),
+          } as CheckGovernanceRequest);
 
       debugLogs.push({
         type: 'governance_check',
@@ -230,18 +337,31 @@ export class GovernanceMiddleware {
         tool,
         binding: 'proposed',
         iteration,
-        response: responseData,
+        response: redactGovernanceContexts(responseData),
       });
 
       const checkResult = parseCheckResponse(responseData as unknown as CheckGovernanceResponse);
 
-      // Thread governance_context from response to subsequent checks
-      if (checkResult.governanceContext) {
-        config.governanceContext = checkResult.governanceContext;
+      if (modernEnforcement && checkResult.checkType !== 'intent') {
+        throw new Error('Modern governance intent returned a legacy or execution verdict');
       }
 
       if (checkResult.status === 'approved') {
-        return { result: checkResult, params: currentParams };
+        if (conditionsApplied) {
+          checkResult.conditionsApplied = true;
+          checkResult.modifiedParams = structuredClone(currentParams);
+        }
+        if (modernEnforcement && !checkResult.governanceContext) {
+          throw new Error('Approved governance intent did not return a signed governance_context');
+        }
+        if (!modernEnforcement) {
+          if (checkResult.governanceContext) config.governanceContext = checkResult.governanceContext;
+          return { result: checkResult, params: currentParams };
+        }
+        return {
+          result: checkResult,
+          params: { ...currentParams, governance_context: checkResult.governanceContext },
+        };
       }
 
       if (checkResult.status === 'denied') {
@@ -266,13 +386,61 @@ export class GovernanceMiddleware {
         return { result: checkResult, params: currentParams };
       }
 
-      // Apply conditions and re-check
-      for (const condition of checkResult.conditions) {
-        setAtPath(currentParams, condition.field, condition.requiredValue);
+      if (modernEnforcement) {
+        // Conditions are rooted at the complete check_governance arguments,
+        // not just the downstream payload. They are a non-authorizing
+        // counterproposal and must be re-checked with consultation_context.
+        const adjustedRequest = structuredClone(request) as unknown as Record<string, any>;
+        const originalImmutableFields = snapshotImmutablePayloadFields(adjustedRequest.payload);
+        for (const condition of checkResult.conditions) {
+          const root = condition.field.split('.')[0];
+          if (!SUPPORTED_INTENT_CONDITION_ROOTS.has(root!)) {
+            throw new Error(`Governance condition cannot modify unsupported intent field: ${root}`);
+          }
+          setAtPath(adjustedRequest, condition.field, condition.requiredValue);
+        }
+
+        // A condition may replace the entire payload rather than naming the
+        // immutable routing, identity, and protocol-owned fields directly.
+        // Compare effective values after every condition so nested paths and
+        // whole-payload replacement cannot redirect the authorized request.
+        const adjustedImmutableFields = snapshotImmutablePayloadFields(adjustedRequest.payload);
+        for (const field of GOVERNANCE_IMMUTABLE_PAYLOAD_FIELDS) {
+          if (!jsonValuesEqual(originalImmutableFields[field], adjustedImmutableFields[field])) {
+            throw new Error(`Governance conditions cannot modify protected payload field ${field}`);
+          }
+        }
+
+        currentParams = structuredClone((adjustedRequest.payload ?? {}) as Record<string, unknown>);
+        proposedCommitmentOverride = adjustedRequest.proposed_commitment as
+          | import('../governance').GovernanceCommitment
+          | undefined;
+        proposalOverride = adjustedRequest.proposal as CheckGovernanceRequest['proposal'] | undefined;
+        purchaseTypeOverride = adjustedRequest.purchase_type as CheckGovernanceRequest['purchase_type'] | undefined;
+        runtimeAttestationsOverride = adjustedRequest.runtime_attestations as
+          | CheckGovernanceRequest['runtime_attestations']
+          | undefined;
+        invoiceRecipientOverride = adjustedRequest.invoice_recipient as
+          | CheckGovernanceRequest['invoice_recipient']
+          | undefined;
+        consultationContext = checkResult.consultationContext;
+        if (!consultationContext) {
+          throw new Error('Governance conditions response omitted consultation_context');
+        }
+      } else {
+        // Legacy conditions were rooted directly at the downstream payload.
+        for (const condition of checkResult.conditions) {
+          setAtPath(currentParams, condition.field, condition.requiredValue);
+        }
+        if (checkResult.governanceContext) {
+          legacyGovernanceContext = checkResult.governanceContext;
+          config.governanceContext = checkResult.governanceContext;
+        }
       }
 
       checkResult.conditionsApplied = true;
       checkResult.modifiedParams = currentParams;
+      conditionsApplied = true;
 
       debugLogs.push({
         type: 'governance_conditions_applied',
@@ -290,6 +458,7 @@ export class GovernanceMiddleware {
       result: {
         checkId: '',
         status: 'denied',
+        checkType: 'intent',
         explanation: `Governance conditions could not be resolved after ${maxReChecks} iterations`,
       },
       params: currentParams,
@@ -417,4 +586,99 @@ export class GovernanceMiddleware {
       timestamp: new Date().toISOString(),
     });
   }
+}
+
+const CONDITIONAL_OPERATIONAL_KEYS = new Set([
+  'account',
+  'adcp_major_version',
+  'adcp_version',
+  'context',
+  'governance_context',
+  'idempotency_key',
+  'media_buy_id',
+  'push_notification_config',
+  'revision',
+  'rights_id',
+]);
+
+const SUPPORTED_INTENT_CONDITION_ROOTS = new Set([
+  'payload',
+  'proposed_commitment',
+  'proposal',
+  'purchase_type',
+  'runtime_attestations',
+  'invoice_recipient',
+]);
+
+const GOVERNANCE_IMMUTABLE_PAYLOAD_FIELDS = [
+  'account',
+  'media_buy_id',
+  'rights_id',
+  'revision',
+  'idempotency_key',
+  'context',
+  'adcp_major_version',
+  'adcp_version',
+  'push_notification_config',
+] as const;
+
+function snapshotImmutablePayloadFields(
+  payload: unknown
+): Record<(typeof GOVERNANCE_IMMUTABLE_PAYLOAD_FIELDS)[number], unknown> {
+  const record = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+  const snapshot = {} as Record<(typeof GOVERNANCE_IMMUTABLE_PAYLOAD_FIELDS)[number], unknown>;
+  for (const field of GOVERNANCE_IMMUTABLE_PAYLOAD_FIELDS) {
+    snapshot[field] = record[field] === undefined ? undefined : structuredClone(record[field]);
+  }
+  return snapshot;
+}
+
+function jsonValuesEqual(left: unknown, right: unknown): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return canonicalize(left) === canonicalize(right);
+}
+
+/**
+ * Return a request-local applicability answer when the schema exemption is
+ * decidable without reading seller state. `undefined` delegates ambiguous
+ * delta/price/term comparisons to the adopter callback (or conservatively
+ * governs when no callback is installed).
+ */
+function statelessGovernanceApplicability(
+  tool: string,
+  params: Readonly<Record<string, unknown>>
+): boolean | undefined {
+  if (tool === 'activate_signal') return params.action !== 'deactivate';
+  if (tool === 'build_creative' && params.mode === 'estimate') return false;
+
+  if (tool === 'update_rights') {
+    if (params.paused === false) return true;
+    if (params.paused === true && hasOnlyOperationalAnd(params, ['paused'])) return false;
+    return undefined;
+  }
+
+  if (tool === 'update_media_buy' || tool === 'control_media_buy') {
+    if (params.paused === false) return true;
+    if (params.canceled === true && hasOnlyOperationalAnd(params, ['canceled', 'cancellation_reason'])) return false;
+    if (params.paused === true && hasOnlyOperationalAnd(params, ['paused'])) return false;
+    return undefined;
+  }
+
+  return undefined;
+}
+
+function hasOnlyOperationalAnd(params: Readonly<Record<string, unknown>>, allowed: string[]): boolean {
+  const allowedKeys = new Set(allowed);
+  return Object.keys(params).every(key => CONDITIONAL_OPERATIONAL_KEYS.has(key) || allowedKeys.has(key));
+}
+
+function redactGovernanceContexts(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactGovernanceContexts);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [
+      key,
+      key === 'governance_context' || key === 'consultation_context' ? '[redacted]' : redactGovernanceContexts(child),
+    ])
+  );
 }

@@ -21,6 +21,7 @@ interface ToolSchemaLocation {
 const TOOL_SCHEMA_LOCATIONS: Record<ConformanceToolName, ToolSchemaLocation> = {
   // Tier 1
   get_products: { domain: 'media-buy', fileBase: 'get-products' },
+  list_products: { domain: 'media-buy', fileBase: 'list-products' },
   list_creative_formats: { domain: 'media-buy', fileBase: 'list-creative-formats' },
   list_creatives: { domain: 'creative', fileBase: 'list-creatives' },
   get_media_buys: { domain: 'media-buy', fileBase: 'get-media-buys' },
@@ -42,6 +43,12 @@ const TOOL_SCHEMA_LOCATIONS: Record<ConformanceToolName, ToolSchemaLocation> = {
   update_media_buy: { domain: 'media-buy', fileBase: 'update-media-buy' },
   update_property_list: { domain: 'property', fileBase: 'update-property-list' },
   update_content_standards: { domain: 'content-standards', fileBase: 'update-content-standards' },
+  request_proposals: { domain: 'media-buy', fileBase: 'request-proposals' },
+  refine_proposals: { domain: 'media-buy', fileBase: 'refine-proposals' },
+  decline_proposals: { domain: 'media-buy', fileBase: 'decline-proposals' },
+  buy_products: { domain: 'media-buy', fileBase: 'buy-products' },
+  accept_proposal: { domain: 'media-buy', fileBase: 'accept-proposal' },
+  control_media_buy: { domain: 'media-buy', fileBase: 'control-media-buy' },
 };
 
 /**

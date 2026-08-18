@@ -877,8 +877,11 @@ export function toWireAccount<TCtxMeta>(account: Account<TCtxMeta>): WireAccount
   if (account.credit_limit !== undefined) wire.credit_limit = account.credit_limit;
   if (account.setup !== undefined) wire.setup = account.setup;
   if (account.account_scope !== undefined) wire.account_scope = account.account_scope;
-  if (account.governance_agents !== undefined) {
-    wire.governance_agents = account.governance_agents.map(projectGovernanceAgent);
+  if (account.governance_agents !== undefined && account.governance_agents.length > 0) {
+    if (account.governance_agents.length !== 1) {
+      throw new Error('Account.governance_agents must contain exactly one agent when present');
+    }
+    wire.governance_agents = [projectGovernanceAgent(account.governance_agents[0]!)];
   }
   if (account.reporting_bucket !== undefined) wire.reporting_bucket = account.reporting_bucket;
   if (account.notification_configs !== undefined) {

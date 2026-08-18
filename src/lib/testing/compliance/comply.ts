@@ -1355,6 +1355,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     const executedStoryboards: Storyboard[] = [];
     const runOptions: StoryboardRunOptions = {
       ...effectiveOptions,
+      ...(complianceDir !== undefined && { complianceDir }),
       agentTools: profile.tools,
       ...(webhook_receiver !== undefined && { webhook_receiver }),
       ...(webhook_replay_receiver !== undefined && { webhook_replay_receiver }),
@@ -1734,6 +1735,12 @@ async function runWithDegradedProfile(
     const results = grouped.get(track) ?? [];
     if (results.length > 0) {
       const trackResult = mapStoryboardResultsToTrackResult(track, results, profile);
+      // In the degraded-profile path, an explicitly requested storyboard was
+      // attempted but its tool-gated scenarios may all skip because discovery
+      // itself was rejected. That is a partial assessment, not an untested
+      // track: retain a reference in `tested_tracks` so reports do not imply
+      // the probe was never run.
+      if (trackResult.status === 'skip') trackResult.status = 'partial';
       const obs = [...trackResult.observations, ...collectObservations(track, trackResult.scenarios, profile)];
       trackResult.observations = obs;
       allObservations.push(...obs);

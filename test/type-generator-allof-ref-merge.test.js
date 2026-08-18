@@ -159,6 +159,28 @@ writeFileSync(__OUT_PATH__, JSON.stringify({
   );
 });
 
+test('enforceStrictSchema preserves base array structure for annotation-only property refinements', () => {
+  const result = runHarness(`
+import { writeFileSync, readFileSync } from 'fs';
+import { join } from 'path';
+import { enforceStrictSchema } from '__GENERATE_TYPES__';
+
+const schemaPath = join(process.cwd(), 'schemas/cache/${ADCP_VERSION}/formats/canonical/html5.json');
+const input = JSON.parse(readFileSync(schemaPath, 'utf8'));
+const out = enforceStrictSchema(JSON.parse(JSON.stringify(input)));
+writeFileSync(__OUT_PATH__, JSON.stringify({
+  hasAllOfBaseRef: (out.allOf ?? []).some(member => member?.$ref?.endsWith('/formats/canonical/_base.json')),
+  slotsType: out.properties?.slots?.type,
+  slotsHasItems: !!out.properties?.slots?.items,
+  slotsTsType: out.properties?.slots?.tsType ?? null,
+}));
+`);
+  assert.strictEqual(result.hasAllOfBaseRef, false, 'canonical base ref must be consumed by the merge');
+  assert.strictEqual(result.slotsType, 'array', 'local defaults must not replace the base slots array type');
+  assert.strictEqual(result.slotsHasItems, true, 'base slots item structure must survive local refinement');
+  assert.strictEqual(result.slotsTsType, null, 'annotation-only unknown marker must not override the base type');
+});
+
 test('enforceStrictSchema promotes conditional params properties', () => {
   const result = runHarness(`
 import { writeFileSync } from 'fs';
@@ -586,4 +608,100 @@ main().catch((err) => { console.error(err); process.exit(1); });
     result.strict.oneOf.every(branch => branch.type === 'object' && branch.properties?.payload_length),
     'parent properties must be inlined into every attestation branch'
   );
+});
+
+test('allOf merge does not inherit an open-map signature onto a named interface', () => {
+  const result = runHarness(`
+import { writeFileSync } from 'fs';
+import { compile } from 'json-schema-to-typescript';
+import { enforceStrictSchema } from '__GENERATE_TYPES__';
+
+const input = {
+  title: 'NamedAdopterShape',
+  type: 'object',
+  properties: { local: { type: 'string' } },
+  allOf: [{
+    type: 'object',
+    description: 'Opaque context that must echo this value back unchanged',
+    properties: { inherited: { type: 'string' } },
+    additionalProperties: true,
+  }],
+};
+
+async function main() {
+  const strict = enforceStrictSchema(JSON.parse(JSON.stringify(input)));
+  const ts = await compile(strict, 'NamedAdopterShape', {
+    bannerComment: '',
+    additionalProperties: false,
+    strictIndexSignatures: true,
+  });
+  writeFileSync(__OUT_PATH__, JSON.stringify({ strict, ts }));
+}
+main().catch((err) => { console.error(err); process.exit(1); });
+`);
+
+  assert.strictEqual(result.strict.additionalProperties, undefined);
+  assert.doesNotMatch(result.ts, /\[k:\s*string\]:\s*unknown/);
+  assert.match(result.ts, /inherited\??:\s*string/);
+  assert.match(result.ts, /local\??:\s*string/);
+});
+
+test('conditional discriminator expansion does not copy named-object openness into branches', () => {
+  const result = runHarness(`
+import { writeFileSync } from 'fs';
+import { enforceStrictSchema } from '__GENERATE_TYPES__';
+
+const input = {
+  title: 'ConditionalNamedShape',
+  type: 'object',
+  properties: {
+    kind: { type: 'string', enum: ['plain', 'detailed'] },
+    detail: { type: 'string' },
+  },
+  required: ['kind'],
+  additionalProperties: true,
+  allOf: [{
+    if: { properties: { kind: { const: 'detailed' } }, required: ['kind'] },
+    then: { required: ['detail'] },
+  }],
+};
+
+const strict = enforceStrictSchema(JSON.parse(JSON.stringify(input)));
+writeFileSync(__OUT_PATH__, JSON.stringify({ strict }));
+`);
+
+  assert.ok(Array.isArray(result.strict.oneOf));
+  assert.ok(
+    result.strict.oneOf.every(branch => branch.additionalProperties !== true),
+    'expanded discriminator branches must not regain an open index signature'
+  );
+});
+
+test('canonical Extension Object remains an explicitly indexable extension map', () => {
+  const result = runHarness(`
+import { writeFileSync } from 'fs';
+import { compile } from 'json-schema-to-typescript';
+import { enforceStrictSchema } from '__GENERATE_TYPES__';
+
+const input = {
+  title: 'Extension Object',
+  description: 'Vendor-namespaced extension values',
+  type: 'object',
+  additionalProperties: true,
+};
+
+async function main() {
+  const strict = enforceStrictSchema(JSON.parse(JSON.stringify(input)));
+  const ts = await compile(strict, 'ExtensionObject', {
+    bannerComment: '',
+    additionalProperties: false,
+    strictIndexSignatures: true,
+  });
+  writeFileSync(__OUT_PATH__, JSON.stringify({ strict, ts }));
+}
+main().catch((err) => { console.error(err); process.exit(1); });
+`);
+
+  assert.strictEqual(result.strict.additionalProperties, true);
+  assert.match(result.ts, /\[k:\s*string\]:\s*unknown\s*\|\s*undefined/);
 });

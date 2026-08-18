@@ -116,12 +116,21 @@ class DataMatrixPlatform implements DecisioningPlatform<DataMatrixConfig, DataMa
       // Sync ack: return deployments in `pending` state. Identity-graph
       // match runs in background; publishStatusChange fires when each
       // destination reaches activating / deployed / failed.
-      const deployments = req.destinations.map(d => ({
-        type: 'platform' as const,
-        platform: 'platform' in d ? d.platform : 'unknown',
-        account_id: 'account_id' in d ? d.account_id : undefined,
-        is_live: false,
-      }));
+      const deployments: ActivateSignalSuccess['deployments'] = req.destinations.map(d =>
+        d.type === 'platform'
+          ? {
+              type: 'platform',
+              platform: d.platform,
+              ...(d.account !== undefined && { account: d.account }),
+              is_live: false,
+            }
+          : {
+              type: 'agent',
+              agent_url: d.agent_url,
+              ...(d.account !== undefined && { account: d.account }),
+              is_live: false,
+            }
+      );
 
       // Schedule background activation for each destination
       const accountId = req.account && 'account_id' in req.account ? req.account.account_id : 'dm_default';
@@ -131,7 +140,10 @@ class DataMatrixPlatform implements DecisioningPlatform<DataMatrixConfig, DataMa
             account_id: accountId,
             resource_type: 'signal',
             resource_id: req.signal_agent_segment_id,
-            payload: { platform: dep.platform, status: 'deployed', is_live: true },
+            payload:
+              dep.type === 'platform'
+                ? { type: dep.type, platform: dep.platform, account: dep.account, status: 'deployed', is_live: true }
+                : { type: dep.type, agent_url: dep.agent_url, account: dep.account, status: 'deployed', is_live: true },
           });
         }, 100).unref?.();
       }

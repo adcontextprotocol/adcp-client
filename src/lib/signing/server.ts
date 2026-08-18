@@ -90,12 +90,14 @@ export {
 export { verifyRequestSignature, type VerifyRequestOptions } from './verifier';
 export {
   createWebhookVerifier,
+  isWebhookLoopbackHost,
   verifyWebhookSignature,
   WEBHOOK_MANDATORY_COMPONENTS,
   WEBHOOK_SIGNING_TAG,
   type CreateWebhookVerifierOptions,
   type VerifyWebhookOptions,
   type VerifyWebhookResult,
+  type WebhookRequestLike,
 } from './webhook-verifier';
 export { createExpressVerifier, type ExpressLike, type ExpressMiddlewareOptions } from './middleware';
 export {
@@ -109,6 +111,7 @@ export {
 export { signResponseAsync } from './signer-async';
 export {
   resolveAgent,
+  ResolvedAgentJwksResolver,
   getAgentJwks,
   createAgentJwksSet,
   AgentResolverError,
@@ -130,5 +133,6 @@ export {
   type IdentityKeyOrigins,
   type IdentityPosture,
   type ResolveAgentOptions,
+  type ResolvedAgentJwksResolverOptions,
   type TraceStep,
 } from './agent-resolver';

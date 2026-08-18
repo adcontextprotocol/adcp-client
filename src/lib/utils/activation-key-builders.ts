@@ -12,15 +12,15 @@ import type { ActivationKey } from '../types/core.generated';
 
 type SegmentIdKey = Extract<ActivationKey, { type: 'segment_id' }>;
 type KeyValueKey = Extract<ActivationKey, { type: 'key_value' }>;
-type Tagged<T, Tag extends string> = Omit<T, 'type'> & { type: Tag };
-
+type SegmentIdKeyFields = { segment_id: SegmentIdKey['segment_id'] };
+type KeyValueKeyFields = { key: KeyValueKey['key']; value: KeyValueKey['value'] };
 /** Build a `segment_id`-variant `ActivationKey`. */
-export function segmentIdActivationKey(fields: Omit<SegmentIdKey, 'type'>): Tagged<SegmentIdKey, 'segment_id'> {
+export function segmentIdActivationKey(fields: SegmentIdKeyFields): SegmentIdKey {
   return { ...fields, type: 'segment_id' };
 }
 
 /** Build a `key_value`-variant `ActivationKey`. `key`/`value` flatten on the top level. SHAPE-GOTCHAS §1. */
-export function keyValueActivationKey(fields: Omit<KeyValueKey, 'type'>): Tagged<KeyValueKey, 'key_value'> {
+export function keyValueActivationKey(fields: KeyValueKeyFields): KeyValueKey {
   return { ...fields, type: 'key_value' };
 }
 

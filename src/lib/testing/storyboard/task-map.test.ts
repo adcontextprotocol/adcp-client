@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { defaultStoryboardResponseProjection, executeStoryboardTask } from './task-map';
+import { TASK_TO_METHOD, defaultStoryboardResponseProjection, executeStoryboardTask } from './task-map';
 
 const INVALID_REQUEST_ERROR = {
   code: 'INVALID_REQUEST',
@@ -43,6 +43,45 @@ function makeFailureClient(adcpError?: object) {
 }
 
 describe('executeStoryboardTask — adcp_error forwarding', () => {
+  it('routes every compact 3.2 lifecycle step through its public SDK buyer wrapper', async () => {
+    const compactMethods = {
+      list_products: 'listProducts',
+      request_proposals: 'requestProposals',
+      refine_proposals: 'refineProposals',
+      decline_proposals: 'declineProposals',
+      buy_products: 'buyProducts',
+      accept_proposal: 'acceptProposal',
+      control_media_buy: 'controlMediaBuy',
+    } as const;
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const client: Record<string, unknown> = {
+      executeTask: async () => {
+        throw new Error('compact lifecycle steps must not bypass the public buyer wrappers');
+      },
+    };
+    for (const method of Object.values(compactMethods)) {
+      client[method] = async (params: unknown) => {
+        calls.push({ method, params });
+        return { success: true, data: { method } };
+      };
+    }
+
+    for (const [task, method] of Object.entries(compactMethods)) {
+      expect(TASK_TO_METHOD[task]).toBe(method);
+      const params = { compact_marker: task };
+      const result = await executeStoryboardTask(client, task, params);
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual({ method });
+    }
+
+    expect(calls).toEqual(
+      Object.entries(compactMethods).map(([task, method]) => ({
+        method,
+        params: { compact_marker: task },
+      }))
+    );
+  });
+
   it('uses raw legacy creative methods when grading a pre-3.2 wire', async () => {
     const calls: string[] = [];
     let receivedParams: unknown;

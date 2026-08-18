@@ -14,6 +14,8 @@ import {
   type SigningProvider,
 } from '../../../signing';
 import { ssrfSafeFetch } from '../../../net/ssrf-fetch';
+import { requestSigningEncodingForVersion } from '../../../signing/content-digest';
+import { ADCP_VERSION } from '../../../version';
 import type { SignerGradeReport, SignerGradeStep } from './types';
 
 export interface GradeSignerOptions {
@@ -43,6 +45,8 @@ export interface GradeSignerOptions {
   jwksUrl: string;
   /** AdCP operation to embed in the sample request body. Defaults to `create_media_buy`. */
   operation?: string;
+  /** Trusted signing-profile version. Defaults to the SDK's exact AdCP release pin. */
+  adcpVersion?: string;
   /**
    * Content-digest policy the operator's verifier advertises. The grader
    * exercises the same policy locally so a signer that fails to emit
@@ -72,6 +76,7 @@ export interface GradeSignerOptions {
 export async function gradeSigner(options: GradeSignerOptions): Promise<SignerGradeReport> {
   const start = Date.now();
   const operation = options.operation ?? 'create_media_buy';
+  const adcpVersion = options.adcpVersion ?? ADCP_VERSION;
   const coversContentDigest = options.coversContentDigest ?? 'required';
   const sampleUrl = new URL(`/adcp/${operation}`, options.agentUrl).toString();
   const sampleBody = JSON.stringify({ probe: 'adcp-signer-grade', operation });
@@ -106,7 +111,10 @@ export async function gradeSigner(options: GradeSignerOptions): Promise<SignerGr
       provider,
       // Cover Content-Digest unless the operator's policy is `'forbidden'`,
       // matching `resolveCoverContentDigest`'s posture at the agent layer.
-      { coverContentDigest: coversContentDigest !== 'forbidden' }
+      {
+        coverContentDigest: coversContentDigest !== 'forbidden',
+        binaryEncoding: requestSigningEncodingForVersion(adcpVersion),
+      }
     );
   } catch (err) {
     return failReport(options, sample, start, {
@@ -140,6 +148,7 @@ export async function gradeSigner(options: GradeSignerOptions): Promise<SignerGr
       replayStore,
       revocationStore,
       operation,
+      adcpVersion,
     });
     if (result.status !== 'verified') {
       // Defensive — `signRequestAsync` always emits `Signature` /

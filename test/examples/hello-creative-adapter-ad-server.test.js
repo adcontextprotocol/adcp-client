@@ -36,7 +36,7 @@ runHelloAdapterGates({
       label: 'projects the canonical creative library onto the legacy 3.1 list_creatives schema',
       run: async ({ callTool }) => {
         const account = { account_id: 'acct_acme_creative' };
-        const legacy = await callTool('list_creatives', { account, fields: ['format_id'] });
+        const legacy = await callTool('list_creatives', { adcp_version: '3.1', account, fields: ['format_id'] });
         assert.ok(legacy?.structuredContent?.creatives?.[0]?.format_id, JSON.stringify(legacy));
         assert.equal(legacy.structuredContent.creatives[0].format_kind, undefined);
       },

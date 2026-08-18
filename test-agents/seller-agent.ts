@@ -135,6 +135,7 @@ function createAgent({ taskStore }: ServeContext) {
         return {
           status: 'completed' as const,
           products: PRODUCTS,
+          cache_scope: 'public' as const,
           sandbox: true,
           context: params.context ?? undefined,
         };
@@ -173,6 +174,7 @@ function createAgent({ taskStore }: ServeContext) {
             if (
               'min_spend_per_package' in pricing &&
               pricing.min_spend_per_package != null &&
+              typeof pkg.budget === 'number' &&
               pkg.budget < pricing.min_spend_per_package
             ) {
               return adcpError('BUDGET_TOO_LOW', {
@@ -231,7 +233,7 @@ function createAgent({ taskStore }: ServeContext) {
 
       syncCreatives: async (params, ctx) => {
         const results = [];
-        for (const creative of params.creatives) {
+        for (const creative of params.creatives ?? []) {
           const existing = await ctx.store.get('creatives', creative.creative_id);
           await ctx.store.put('creatives', creative.creative_id, {
             ...creative,

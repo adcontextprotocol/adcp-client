@@ -13,7 +13,10 @@ function readJson(filePath) {
 }
 
 function normalizeAssetSchemaRef(ref) {
-  return ref.replace(/^\/schemas\/(?:[^/]+\/)?core\/assets\//, '/schemas/core/assets/');
+  return ref.replace(
+    /^(?:https:\/\/adcontextprotocol\.org)?\/schemas\/(?:[^/]+\/)?core\/assets\//,
+    '/schemas/core/assets/'
+  );
 }
 
 test('generated asset union stays aligned with the creative asset-type registry', () => {

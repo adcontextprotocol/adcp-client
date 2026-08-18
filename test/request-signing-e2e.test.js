@@ -81,6 +81,7 @@ function startServer(capability) {
   const replayStore = new InMemoryReplayStore();
   const revocationStore = new InMemoryRevocationStore();
   const middleware = createExpressVerifier({
+    adcpVersion: '3.1',
     capability,
     jwks,
     replayStore,

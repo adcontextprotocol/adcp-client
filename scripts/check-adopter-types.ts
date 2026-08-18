@@ -90,13 +90,27 @@ import { createSingleAgentClient, extractAdcpErrorFromMcp, extractAdcpErrorFromT
 import type {
   CreateMediaBuyPayload as TypesCreateMediaBuyPayload,
   CreateMediaBuySuccess,
+  CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement,
+  CanonicalFormatBase,
+  CanonicalFormatDAASTAudio,
+  CanonicalFormatDisplayTag,
+  CanonicalFormatHostedAudio,
+  CanonicalFormatHostedVideo,
+  CanonicalFormatHTML5Banner,
+  CanonicalFormatImageCarousel,
+  CanonicalFormatNativeInFeed,
+  CanonicalFormatResponsiveCreative,
+  CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven,
+  CanonicalFormatVASTVideo,
   CreativeManifest,
+  ExtensionObject,
   GetProductsPayload as TypesGetProductsPayload,
   ServerPayload as ServerPayloadFromTypes,
   UpdateMediaBuyPayload as TypesUpdateMediaBuyPayload,
 } from '@adcp/sdk/types';
 import type {
   AccountReference,
+  CreativeBrief,
   FormatSchemaReferenceResult,
   CreateMediaBuyPayload as RootCreateMediaBuyPayload,
   GetProductsPayload as RootGetProductsPayload,
@@ -214,7 +228,13 @@ const _payloadResults: [
   ok({ deployments: [] }),
   ok({ brand_id: 'brand_1', house: { domain: 'acme.com', name: 'Acme' }, names: [{ en: 'Acme' }] }),
   ok({ rights: [] }),
-  ok({ rights_id: 'rights_1', terms: rightsTerms }),
+  ok({
+    rights_id: 'rights_1',
+    terms: rightsTerms,
+    generation_credentials: [],
+    rights_constraint: {} as LegacyUpdateRightsPayload['rights_constraint'],
+    implementation_date: null,
+  }),
   ok({ approval_status: 'approved', rights_id: 'rights_1' }),
   ok(_createMediaBuyPayload),
   ok([]),
@@ -298,7 +318,7 @@ const _serverPayload: ServerPayload<CreateMediaBuySuccess> = {
   confirmed_at: '2026-01-01T00:00:00Z',
   revision: 1,
   packages: [],
-  status: 'active',
+  media_buy_status: 'active',
 };
 const _typesPayload: ServerPayloadFromTypes<CreateMediaBuySuccess> = _serverPayload;
 void _typesPayload;
@@ -321,6 +341,68 @@ void _typesUpdatePayload;
 void _availableAction;
 // @ts-expect-error named payload aliases must not expose SDK-owned protocol envelope fields
 void _rootPayloadAlias.task_id;
+
+// Issue #2573: generated named interfaces must remain compatible with
+// standard utility types and structurally equivalent adopter declarations.
+// Runtime validation stays open to future wire fields; the exported named
+// TypeScript surface must not acquire a catch-all index signature as a side
+// effect. Explicit extension maps remain indexable by design.
+type _BriefWithoutName = Omit<CreativeBrief, 'name'>;
+declare const _briefWithoutName: _BriefWithoutName;
+const _omittedBriefHeadline: string | undefined = _briefWithoutName.messaging?.headline;
+
+type _BriefMessaging = Pick<CreativeBrief, 'messaging'>;
+declare const _briefMessaging: _BriefMessaging;
+const _pickedBriefHeadline: string | undefined = _briefMessaging.messaging?.headline;
+
+interface _AdopterCreativeBrief {
+  name: string;
+  messaging?: {
+    headline?: string;
+  };
+}
+declare const _adopterCreativeBrief: _AdopterCreativeBrief;
+const _structurallyAssignedBrief: CreativeBrief = _adopterCreativeBrief;
+
+const _extensionMap: ExtensionObject = { vendor: { feature: true } };
+const _extensionValue: unknown = _extensionMap.vendor;
+void _omittedBriefHeadline;
+void _pickedBriefHeadline;
+void _structurallyAssignedBrief;
+void _extensionValue;
+
+// Canonical format overlays refine the base declaration with defaults and
+// format-specific fields. Their slots property must remain assignable from
+// the shared array contract rather than being widened to a record by codegen.
+const _canonicalSlots = [
+  { asset_group_id: 'audio_main', asset_type: 'audio' as const, required: true },
+] satisfies NonNullable<CanonicalFormatBase['slots']>;
+const _canonicalSlotAssignments: [
+  Pick<CanonicalFormatDisplayTag, 'slots'>,
+  Pick<CanonicalFormatImageCarousel, 'slots'>,
+  Pick<CanonicalFormatHostedVideo, 'slots'>,
+  Pick<CanonicalFormatVASTVideo, 'slots'>,
+  Pick<CanonicalFormatHostedAudio, 'slots'>,
+  Pick<CanonicalFormatDAASTAudio, 'slots'>,
+  Pick<CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven, 'slots'>,
+  Pick<CanonicalFormatNativeInFeed, 'slots'>,
+  Pick<CanonicalFormatResponsiveCreative, 'slots'>,
+  Pick<CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement, 'slots'>,
+  Pick<CanonicalFormatHTML5Banner, 'slots'>,
+] = [
+  { slots: _canonicalSlots },
+  { slots: _canonicalSlots },
+  { slots: _canonicalSlots },
+  { slots: _canonicalSlots },
+  { slots: _canonicalSlots },
+  { slots: _canonicalSlots },
+  { slots: _canonicalSlots },
+  { slots: _canonicalSlots },
+  { slots: _canonicalSlots },
+  { slots: _canonicalSlots },
+  { slots: _canonicalSlots },
+];
+void _canonicalSlotAssignments;
 
 const _canonicalResolver = createSubpathCanonicalReferenceResolver();
 const _formatSchemaResult = null as unknown as FormatSchemaReferenceResult;

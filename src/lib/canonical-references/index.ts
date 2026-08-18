@@ -6,7 +6,7 @@
  * hex digest of the fetched body. This module gives callers one security
  * boundary for resolving those references: HTTPS-only by default, DNS-pinned
  * SSRF-safe fetches, redirects disabled, body and timeout caps, digest
- * verification, caller-owned caching, and structured non-throwing results.
+ * verification, bounded policy-scoped caching, and structured non-throwing results.
  */
 import { createHash } from 'crypto';
 import Ajv from 'ajv';
@@ -124,8 +124,15 @@ export interface CanonicalReferenceCache {
   set(key: string, value: CanonicalReferenceResolvedResult): void;
 }
 
+export interface CanonicalReferenceCacheOptions {
+  /** Maximum retained entries. Default 64. Set to 0 to disable caching. */
+  maxEntries?: number;
+  /** Maximum estimated retained bytes. Default 32 MiB. Set to 0 to disable caching. */
+  maxBytes?: number;
+}
+
 export interface CanonicalReferenceResolverOptions {
-  /** Caller-owned cache. Defaults to a fresh per-resolver Map. */
+  /** Caller-owned cache. Defaults to a fresh bounded per-resolver LRU. */
   cache?: CanonicalReferenceCache;
   /** Default 5_000 ms. */
   timeoutMs?: number;
@@ -179,6 +186,8 @@ export interface CanonicalReferenceResolver {
 const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
 const DEFAULT_MAX_TOTAL_REF_BYTES = 8 * 1024 * 1024;
+const DEFAULT_CACHE_MAX_ENTRIES = 64;
+const DEFAULT_CACHE_MAX_BYTES = 32 * 1024 * 1024;
 const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 const DRAFT_07_URIS = new Set(['http://json-schema.org/draft-07/schema#', 'https://json-schema.org/draft-07/schema#']);
 const DRAFT_2020_12_URIS = new Set([
@@ -197,12 +206,75 @@ const SPECIAL_USE_HOSTS = new Set([
   'test',
 ]);
 
-export function createCanonicalReferenceCache(): CanonicalReferenceCache {
-  const store = new Map<string, CanonicalReferenceResolvedResult>();
+function resolveCacheLimit(
+  name: keyof CanonicalReferenceCacheOptions,
+  value: number | undefined,
+  fallback: number
+): number {
+  const resolved = value ?? fallback;
+  if (!Number.isSafeInteger(resolved) || resolved < 0) {
+    throw new RangeError(`${name} must be a non-negative safe integer`);
+  }
+  return resolved;
+}
+
+/**
+ * Estimate the heap retained by the three large, duplicated representations:
+ * raw bytes, the decoded JS string, and the parsed document. Object overhead is
+ * runtime-specific, so maxBytes is intentionally documented as an estimate.
+ */
+function estimateCanonicalReferenceCacheBytes(key: string, value: CanonicalReferenceResolvedResult): number {
+  let documentBytes = value.body.byteLength * 2;
+  try {
+    const serialized = JSON.stringify(value.document);
+    if (serialized !== undefined) documentBytes = serialized.length * 2;
+  } catch {
+    // Canonical JSON cannot be cyclic, but caller-supplied cache values may be.
+    // Retain the conservative body-derived fallback in that case.
+  }
+  const retainedStrings =
+    key.length * 2 +
+    (value.cacheKey?.length ?? 0) * 2 +
+    (value.ref?.uri?.length ?? 0) * 2 +
+    (value.ref?.digest?.length ?? 0) * 2 +
+    (value.contentType?.length ?? 0) * 2;
+  return value.body.byteLength + value.text.length * 2 + documentBytes + retainedStrings + 512;
+}
+
+export function createCanonicalReferenceCache(options: CanonicalReferenceCacheOptions = {}): CanonicalReferenceCache {
+  const maxEntries = resolveCacheLimit('maxEntries', options.maxEntries, DEFAULT_CACHE_MAX_ENTRIES);
+  const maxBytes = resolveCacheLimit('maxBytes', options.maxBytes, DEFAULT_CACHE_MAX_BYTES);
+  const store = new Map<string, { value: CanonicalReferenceResolvedResult; bytes: number }>();
+  let retainedBytes = 0;
+
   return {
-    get: key => store.get(key),
+    get: key => {
+      const entry = store.get(key);
+      if (!entry) return undefined;
+      // Map iteration order is the LRU order: refresh hits to most-recent.
+      store.delete(key);
+      store.set(key, entry);
+      return entry.value;
+    },
     set: (key, value) => {
-      store.set(key, value);
+      const previous = store.get(key);
+      if (previous) {
+        store.delete(key);
+        retainedBytes -= previous.bytes;
+      }
+
+      const bytes = estimateCanonicalReferenceCacheBytes(key, value);
+      if (maxEntries === 0 || maxBytes === 0 || bytes > maxBytes) return;
+
+      store.set(key, { value, bytes });
+      retainedBytes += bytes;
+      while (store.size > maxEntries || retainedBytes > maxBytes) {
+        const oldestKey = store.keys().next().value as string | undefined;
+        if (oldestKey === undefined) break;
+        const oldest = store.get(oldestKey);
+        store.delete(oldestKey);
+        if (oldest) retainedBytes -= oldest.bytes;
+      }
     },
   };
 }

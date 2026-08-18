@@ -1,9 +1,11 @@
 import { signRequest, type SignerKey, type SignRequestOptions } from './signer';
+import type { SfBinaryEncoding } from './content-digest';
 
 /** Callback form for `coverContentDigest` — lets the wrapper decide per call. */
 export type CoverContentDigestPredicate = (url: string, init: RequestInit | undefined) => boolean;
+export type BinaryEncodingPredicate = (url: string, init: RequestInit | undefined) => SfBinaryEncoding;
 
-export interface SigningFetchOptions extends Omit<SignRequestOptions, 'coverContentDigest'> {
+export interface SigningFetchOptions extends Omit<SignRequestOptions, 'coverContentDigest' | 'binaryEncoding'> {
   shouldSign?: (url: string, init: RequestInit | undefined) => boolean;
   /**
    * Whether to cover `content-digest`. May be a boolean (static) or a
@@ -12,6 +14,7 @@ export interface SigningFetchOptions extends Omit<SignRequestOptions, 'coverCont
    * policy (`required` / `forbidden` / `either`) per operation.
    */
   coverContentDigest?: boolean | CoverContentDigestPredicate;
+  binaryEncoding?: SfBinaryEncoding | BinaryEncodingPredicate;
 }
 
 /**
@@ -69,8 +72,10 @@ export function createSigningFetch(upstream: FetchLike, key: SignerKey, options:
       typeof options.coverContentDigest === 'function'
         ? options.coverContentDigest(url, init)
         : options.coverContentDigest;
-    const { coverContentDigest: _omit, ...signerOptionsBase } = options;
-    const signerOptions: SignRequestOptions = { ...signerOptionsBase, coverContentDigest };
+    const binaryEncoding =
+      typeof options.binaryEncoding === 'function' ? options.binaryEncoding(url, init) : options.binaryEncoding;
+    const { coverContentDigest: _omitDigest, binaryEncoding: _omitEncoding, ...signerOptionsBase } = options;
+    const signerOptions: SignRequestOptions = { ...signerOptionsBase, coverContentDigest, binaryEncoding };
 
     const signed = signRequest({ method, url, headers, body }, key, signerOptions);
 

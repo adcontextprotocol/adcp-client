@@ -1,7 +1,8 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { extractContext } = require('../../dist/lib/testing/storyboard/context.js');
+const { extractContext, extractContextWithProvenance } = require('../../dist/lib/testing/storyboard/context.js');
+const { proposalTermsDigest } = require('../../dist/lib/negotiation/verification.js');
 
 describe('context extractors', () => {
   describe('build_creative', () => {
@@ -212,13 +213,274 @@ describe('context extractors', () => {
 
     it('prefers media_buy_status on get_media_buys items', () => {
       const result = extractContext('get_media_buys', {
-        media_buys: [{ media_buy_id: 'mb_1', status: 'completed', media_buy_status: 'active' }],
+        media_buys: [
+          {
+            media_buy_id: 'mb_1',
+            status: 'completed',
+            media_buy_status: 'active',
+            revision: 4,
+            available_actions: [{ action: 'pause' }],
+          },
+        ],
       });
 
       assert.deepStrictEqual(result, {
         media_buy_id: 'mb_1',
         media_buy_status: 'active',
+        revision: 4,
+        media_buy_revision: 4,
+        available_actions: [{ action: 'pause' }],
       });
+    });
+  });
+
+  describe('compact 3.2 lifecycle extraction', () => {
+    it('captures one coherent product snapshot from list_products', () => {
+      const product = {
+        product_id: 'prod_1',
+        name: 'Homepage display',
+        pricing_options: [{ pricing_option_id: 'price_1', pricing_model: 'cpm', currency: 'USD', fixed_price: 10 }],
+      };
+
+      const result = extractContext('list_products', {
+        outcome: 'listed',
+        products: [product],
+        feed_version: 'feed_7',
+        pricing_version: 'pricing_3',
+        cache_scope: 'public',
+      });
+
+      assert.deepStrictEqual(result, {
+        product_id: 'prod_1',
+        pricing_option_id: 'price_1',
+        feed_version: 'feed_7',
+        pricing_version: 'pricing_3',
+      });
+    });
+
+    it('replaces product snapshots atomically when optional pricing disappears', () => {
+      const context = extractContext('list_products', {
+        outcome: 'listed',
+        products: [
+          {
+            product_id: 'prod_a',
+            name: 'Product A',
+            pricing_options: [{ pricing_option_id: 'price_a', pricing_model: 'cpm', currency: 'USD', fixed_price: 10 }],
+          },
+        ],
+        feed_version: 'feed_a',
+        pricing_version: 'pricing_a',
+        cache_scope: 'public',
+      });
+      const write = extractContextWithProvenance(
+        'list_products',
+        {
+          outcome: 'listed',
+          products: [{ product_id: 'prod_b', name: 'Product B' }],
+          feed_version: 'feed_b',
+          cache_scope: 'public',
+        },
+        'list_b'
+      );
+
+      for (const group of write.clearGroups) {
+        for (const key of group.keys) delete context[key];
+      }
+      Object.assign(context, write.values);
+
+      assert.deepStrictEqual(context, { product_id: 'prod_b', feed_version: 'feed_b' });
+      assert.equal(write.provenance.product_id.source_step_id, 'list_b');
+    });
+
+    it('captures draft and finalized proposal snapshots for acceptance', () => {
+      const commercialTerms = {
+        brand: { domain: 'example.com' },
+        purchases: [
+          {
+            product_id: 'prod_1',
+            pricing_option_id: 'price_1',
+            pricing: {
+              pricing_option_id: 'price_1',
+              pricing_model: 'cpm',
+              currency: 'USD',
+              fixed_price: 10,
+            },
+            start_time: '2026-09-01T00:00:00Z',
+            end_time: '2026-10-01T00:00:00Z',
+          },
+        ],
+        start_time: '2026-09-01T00:00:00Z',
+        end_time: '2026-10-01T00:00:00Z',
+      };
+      const draft = {
+        proposal_id: 'proposal_draft',
+        proposal_kind: 'new_media_buy',
+        proposal_status: 'draft',
+        expires_at: '2026-08-30T00:00:00Z',
+        name: 'Draft homepage campaign',
+        commercial_terms: commercialTerms,
+        terms_digest: proposalTermsDigest(commercialTerms),
+      };
+      assert.deepStrictEqual(
+        extractContext('request_proposals', {
+          outcome: 'proposed',
+          products: [{ product_id: 'prod_1', name: 'Homepage display' }],
+          proposals: [draft],
+        }),
+        {
+          proposal_id: 'proposal_draft',
+          proposal_kind: 'new_media_buy',
+          proposal_status: 'draft',
+          terms_digest: draft.terms_digest,
+          proposal_terms_digest: draft.terms_digest,
+        }
+      );
+
+      const committed = {
+        ...draft,
+        proposal_id: 'proposal_committed',
+        parent_proposal_id: draft.proposal_id,
+        proposal_status: 'committed',
+        expires_at: '2026-08-31T00:00:00Z',
+        terms_digest: draft.terms_digest,
+      };
+      assert.deepStrictEqual(
+        extractContext('refine_proposals', {
+          products: [{ product_id: 'prod_1', name: 'Homepage display' }],
+          results: [{ source_proposal_id: draft.proposal_id, outcome: 'finalized', proposal: committed }],
+        }),
+        {
+          proposal_id: 'proposal_committed',
+          proposal_kind: 'new_media_buy',
+          proposal_status: 'committed',
+          terms_digest: committed.terms_digest,
+          proposal_terms_digest: committed.terms_digest,
+        }
+      );
+
+      const revised = {
+        ...draft,
+        proposal_id: 'proposal_revised',
+        parent_proposal_id: draft.proposal_id,
+        terms_digest: draft.terms_digest,
+      };
+      assert.equal(
+        extractContext('refine_proposals', {
+          products: [{ product_id: 'prod_1', name: 'Homepage display' }],
+          results: [{ source_proposal_id: draft.proposal_id, outcome: 'revised', proposals: [revised] }],
+        }).proposal_id,
+        revised.proposal_id
+      );
+      assert.equal(
+        extractContextWithProvenance(
+          'refine_proposals',
+          { status: 'submitted', task_id: 'task_refine' },
+          'refine_submitted'
+        ).clearGroups,
+        undefined
+      );
+    });
+
+    it('captures media-buy identity and revision across buy, accept, and control', () => {
+      const commercialTerms = {
+        brand: { domain: 'example.com' },
+        purchases: [
+          {
+            product_id: 'prod_1',
+            pricing_option_id: 'price_1',
+            pricing: {
+              pricing_option_id: 'price_1',
+              pricing_model: 'cpm',
+              currency: 'USD',
+              fixed_price: 10,
+            },
+            start_time: '2026-09-01T00:00:00Z',
+            end_time: '2026-10-01T00:00:00Z',
+          },
+        ],
+        start_time: '2026-09-01T00:00:00Z',
+        end_time: '2026-10-01T00:00:00Z',
+      };
+      const termsDigest = proposalTermsDigest(commercialTerms);
+      const acceptedProposal = {
+        proposal_id: 'proposal_accepted',
+        proposal_kind: 'new_media_buy',
+        proposal_status: 'accepted',
+        media_buy_id: 'mb_compact',
+        accepted_at: '2026-08-18T10:00:00Z',
+        name: 'Accepted homepage campaign',
+        commercial_terms: commercialTerms,
+        terms_digest: termsDigest,
+      };
+      const commitment = {
+        status: 'completed',
+        media_buy_id: 'mb_compact',
+        media_buy_status: 'pending_creatives',
+        revision: 2,
+        accepted_proposal: acceptedProposal,
+        purchase_bindings: [{ purchase_index: 0, product_id: 'prod_1', package_id: 'pkg_1' }],
+        available_actions: [],
+      };
+      const expected = {
+        media_buy_id: 'mb_compact',
+        media_buy_status: 'pending_creatives',
+        revision: 2,
+        media_buy_revision: 2,
+        proposal_id: 'proposal_accepted',
+        proposal_kind: 'new_media_buy',
+        proposal_status: 'accepted',
+        terms_digest: termsDigest,
+        proposal_terms_digest: termsDigest,
+        available_actions: [],
+      };
+
+      assert.deepStrictEqual(extractContext('buy_products', commitment), expected);
+      assert.deepStrictEqual(extractContext('accept_proposal', commitment), expected);
+      assert.deepStrictEqual(extractContext('control_media_buy', { ...commitment, accepted_proposal: undefined }), {
+        media_buy_id: 'mb_compact',
+        media_buy_status: 'pending_creatives',
+        revision: 2,
+        media_buy_revision: 2,
+        available_actions: [],
+      });
+      assert.deepStrictEqual(
+        extractContext('control_media_buy', {
+          status: 'completed',
+          media_buy_id: 'mb_compact',
+          revision: 3,
+        }),
+        {
+          media_buy_id: 'mb_compact',
+          revision: 3,
+          media_buy_revision: 3,
+        },
+        'compact task-envelope status must not be mistaken for lifecycle status'
+      );
+      assert.deepStrictEqual(extractContext('buy_products', { status: 'submitted', task_id: 'task_1' }), {});
+      assert.deepStrictEqual(
+        extractContext('accept_proposal', {
+          status: 'failed',
+          errors: [{ code: 'INVALID_STATE', message: 'Proposal is no longer committed' }],
+        }),
+        {}
+      );
+    });
+
+    it('clears proposal aliases after a decline without retaining response details', () => {
+      const results = [{ proposal_id: 'proposal_1', outcome: 'declined' }];
+      assert.deepStrictEqual(extractContext('decline_proposals', { results }), {});
+      assert.deepStrictEqual(extractContext('decline_proposals', { results: [] }), {});
+      const write = extractContextWithProvenance('decline_proposals', { results }, 'decline');
+      const context = {
+        proposal_id: 'proposal_1',
+        proposal_status: 'draft',
+        proposal_terms_digest: `sha256:${'E'.repeat(43)}`,
+      };
+      for (const group of write.clearGroups) {
+        for (const key of group.keys) delete context[key];
+      }
+      Object.assign(context, write.values);
+      assert.deepStrictEqual(context, {});
     });
   });
 

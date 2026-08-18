@@ -31,6 +31,7 @@ const primaryPrivate = { ...primary, d: primary._private_d_for_test_only };
 delete primaryPrivate._private_d_for_test_only;
 
 const baseStores = () => ({
+  adcpVersion: '3.1',
   jwks: new StaticJwksResolver([primaryPublic]),
   replayStore: new InMemoryReplayStore(),
   revocationStore: new InMemoryRevocationStore(),

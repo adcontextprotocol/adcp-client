@@ -18,7 +18,17 @@ type UrlRender = Extract<PreviewRender, { output_format: 'url' }>;
 type HtmlRender = Extract<PreviewRender, { output_format: 'html' }>;
 type BothRender = Extract<PreviewRender, { output_format: 'both' }>;
 
-type Tagged<T, Tag extends string> = Omit<T, 'output_format'> & { output_format: Tag };
+interface CommonRenderFields {
+  render_id: string;
+  role: string;
+  dimensions?: UrlRender['dimensions'];
+  embedding?: UrlRender['embedding'];
+  [key: string]: unknown;
+}
+
+type UrlRenderFields = CommonRenderFields & { preview_url: string };
+type HtmlRenderFields = CommonRenderFields & { preview_html: string };
+type BothRenderFields = CommonRenderFields & { preview_url: string; preview_html: string };
 
 /**
  * Build a url-variant `PreviewRender` with `output_format: 'url'` injected.
@@ -26,14 +36,14 @@ type Tagged<T, Tag extends string> = Omit<T, 'output_format'> & { output_format:
  * Requires `preview_url` — you can't call this without the field the `url`
  * discriminator makes required, which is the whole point of the helper.
  */
-export function urlRender(fields: Omit<UrlRender, 'output_format'>): Tagged<UrlRender, 'url'> {
+export function urlRender(fields: UrlRenderFields): UrlRender {
   return { ...fields, output_format: 'url' };
 }
 
 /**
  * Build an html-variant `PreviewRender` with `output_format: 'html'` injected.
  */
-export function htmlRender(fields: Omit<HtmlRender, 'output_format'>): Tagged<HtmlRender, 'html'> {
+export function htmlRender(fields: HtmlRenderFields): HtmlRender {
   return { ...fields, output_format: 'html' };
 }
 
@@ -41,7 +51,7 @@ export function htmlRender(fields: Omit<HtmlRender, 'output_format'>): Tagged<Ht
  * Build a both-variant `PreviewRender` with `output_format: 'both'` injected.
  * Requires both `preview_url` and `preview_html`.
  */
-export function bothRender(fields: Omit<BothRender, 'output_format'>): Tagged<BothRender, 'both'> {
+export function bothRender(fields: BothRenderFields): BothRender {
   return { ...fields, output_format: 'both' };
 }
 

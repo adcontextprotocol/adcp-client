@@ -4,12 +4,12 @@
 /**
  * AdCP SDK library version
  */
-export const LIBRARY_VERSION = '13.0.0';
+export const LIBRARY_VERSION = '14.0.0-beta.2';
 
 /**
  * AdCP specification version this library is built for
  */
-export const ADCP_VERSION = '3.1.15';
+export const ADCP_VERSION = '3.2.0-beta.0';
 
 /**
  * AdCP major version sent with every request (adcp_major_version field).
@@ -48,6 +48,18 @@ export const COMPATIBLE_ADCP_VERSIONS = [
   '3.0.10',
   '3.0.11',
   '3.0.12',
+  '3.0.13',
+  '3.0.14',
+  '3.0.15',
+  '3.0.16',
+  '3.0.17',
+  '3.0.18',
+  '3.0.19',
+  '3.0.20',
+  '3.0.21',
+  '3.0.22',
+  '3.0.23',
+  '3.0.24',
   '3.1.0',
   '3.1',
   '3.1.1',
@@ -65,6 +77,8 @@ export const COMPATIBLE_ADCP_VERSIONS = [
   '3.1.13',
   '3.1.14',
   '3.1.15',
+  '3.2.0-beta.0',
+  '3.2-beta.0',
 ] as const;
 
 /**
@@ -81,10 +95,10 @@ export type AdcpVersion = (typeof COMPATIBLE_ADCP_VERSIONS)[number];
  * Full version information
  */
 export const VERSION_INFO = {
-  library: '13.0.0',
-  adcp: '3.1.15',
+  library: '14.0.0-beta.2',
+  adcp: '3.2.0-beta.0',
   compatibleVersions: COMPATIBLE_ADCP_VERSIONS,
-  generatedAt: '2026-08-16T22:16:21.306Z',
+  generatedAt: '2026-08-18T14:14:04.086Z',
 } as const;
 
 /**

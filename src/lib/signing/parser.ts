@@ -1,5 +1,6 @@
 import { ParseError, parseDictionary, serializeInnerList, type InnerList } from 'structured-headers';
 import { RequestSignatureError } from './errors';
+import type { SfBinaryEncoding } from './content-digest';
 
 export interface ParsedSignatureInput {
   label: string;
@@ -78,7 +79,22 @@ export function parseSignatureInput(headerValue: string): ParsedSignatureInput {
   };
 }
 
-export function parseSignature(headerValue: string, expectedLabel: string): ParsedSignature {
+export function parseSignature(
+  headerValue: string,
+  expectedLabel: string,
+  encoding: SfBinaryEncoding = 'legacy-base64url'
+): ParsedSignature {
+  rejectDuplicateDictionaryKeys(headerValue, 'Signature');
+  const escapedLabel = expectedLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const rawBytes = headerValue.match(new RegExp(`(?:^|,\\s*)${escapedLabel}\\s*=\\s*:([^:]+):`))?.[1];
+  if (!rawBytes) malformed(`Signature header does not contain a byte sequence for label "${expectedLabel}"`);
+  if (encoding === 'rfc8941-base64') {
+    if (rawBytes.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={1,2}$/.test(rawBytes)) {
+      malformed('Signature value must use padded standard Base64 for AdCP 3.2+');
+    }
+  } else if (!/^[A-Za-z0-9_-]+$/.test(rawBytes)) {
+    malformed('Signature value must use unpadded Base64URL for AdCP 3.0/3.1');
+  }
   let dict;
   try {
     // RFC 9421 signatures commonly use base64url (`-`/`_`); RFC 8941 byte
