@@ -5486,6 +5486,16 @@ async function executeStep(
   // Convention-based extraction (for non-error steps, or when expect_error succeeded)
   if (passed && hasData && taskResult) {
     const extracted = extractContextWithProvenance(effectiveStep.task, taskResult.data, step.id);
+    for (const group of extracted.clearGroups ?? []) {
+      if (group.when && !group.when.values.includes(updatedContext[group.when.key])) continue;
+      for (const key of group.keys) {
+        const provenance = runState.contextProvenance?.get(key);
+        if (provenance && provenance.source_kind !== 'convention') continue;
+        delete updatedContext[key];
+        runState.responseDerivedNotApplicableContextKeys?.delete(key);
+        runState.contextProvenance?.delete(key);
+      }
+    }
     Object.assign(updatedContext, extracted.values);
     for (const key of Object.keys(extracted.values)) {
       runState.responseDerivedNotApplicableContextKeys?.delete(key);
