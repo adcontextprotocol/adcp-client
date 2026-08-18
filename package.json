@@ -467,7 +467,7 @@
     "build:lib": "npm run sync-version && npm run schemas:ensure && tsx scripts/generate-wire-spec-fields.ts && tsup && node --max-old-space-size=8192 ./node_modules/typescript/bin/tsc --project tsconfig.lib.json --emitDeclarationOnly && tsx scripts/copy-schemas-to-dist.ts && tsx scripts/copy-v2-projection-catalog.ts && tsx scripts/generate-per-tool-types.ts && tsx scripts/generate-dmts-declarations.ts",
     "build:test-agents": "npm run build:lib && tsc -p test-agents/tsconfig.json --rootDir test-agents",
     "pretest": "npm run schemas:ensure",
-    "test": "npm run test:node && npm test --workspace=packages/eslint-plugin --if-present",
+    "test": "npm run test:node && npm test --workspace=packages/eslint-plugin --if-present && npm test --workspace=@adcp/reference-renderers",
     "test:node": "npm run test:node:fast && npm run test:node:slow",
     "test:node:fast": "NODE_ENV=test node --test-timeout=60000 --test-force-exit --test $(find test -maxdepth 1 -name '*.test.js' ! -name 'generate-zod-object-intersections.test.js' -print) $(find test/lib -maxdepth 1 -name '*.test.js' ! -name 'cli-auth-scheme.test.js' ! -name 'cli-webhook-receiver-flag.test.js' ! -name 'conformance-cli.test.js' -print)",
     "test:node:fast:shard": "test -n \"$TEST_SHARD\" && NODE_ENV=test node --test-timeout=60000 --test-force-exit --test-shard=$TEST_SHARD --test $(find test -maxdepth 1 -name '*.test.js' ! -name 'generate-zod-object-intersections.test.js' -print) $(find test/lib -maxdepth 1 -name '*.test.js' ! -name 'cli-auth-scheme.test.js' ! -name 'cli-webhook-receiver-flag.test.js' ! -name 'conformance-cli.test.js' -print)",
