@@ -6,7 +6,7 @@
  * SingleAgentClient method and includes validations.
  */
 
-import type { TestOptions } from '../types';
+import type { AgentProfile, TestOptions } from '../types';
 import type { BuyerAgent, BuyerAgentBillingMode, BuyerAgentStatus } from '../../server/decisioning/buyer-agent';
 import type { WebhookConformanceSigningOptions } from '../../conformance/types';
 
@@ -65,7 +65,7 @@ export interface Storyboard {
    * the whole storyboard with `requirement_unmet` and a
    * `missing_required_tool_family:` detail prefix. The standard `comply()`
    * path populates `agentTools` before this gate runs; direct callers that
-   * reuse a client should provide `agentTools` or `_profile.tools` so the
+   * reuse a profile should provide `agentTools` or `profile.tools` so the
    * runner can enforce it without discovery ambiguity.
    */
   required_any_of_tools?: RequiredToolFamily[];
@@ -78,7 +78,7 @@ export interface Storyboard {
    *
    * Recognised names:
    *   - `controller` — the agent must advertise `comply_test_controller`.
-   *     Detected from `options.agentTools`, `_profile.tools`, or discovery
+   *     Detected from `options.agentTools`, `profile.tools`, or discovery
    *     on reused clients. Direct callers that deliberately provide none of
    *     those surfaces bypass this check; their storyboard runs into the
    *     per-step `missing_test_controller` cascade instead.
@@ -1608,6 +1608,22 @@ export interface TrustedMatchPublisherAuthRunner {
 export interface StoryboardRunOptions extends TestOptions {
   /** Compliance cache root for bundle-scoped fixtures and test vectors. */
   complianceDir?: string;
+  /**
+   * Pre-discovered agent profile to reuse instead of repeating capability
+   * discovery. When `agentTools` is omitted, the runner derives it from
+   * `profile.tools` so storyboard-level `required_tools` and step-level
+   * `requires_tool` gates remain enforced.
+   *
+   * Reuse a profile only for the same agent URL, authentication, AdCP version,
+   * and route that produced it. Route-specific profiles are not interchangeable.
+   * In an `agents` run this value supplies only the run-level/default-agent
+   * gating context; each routed agent is still discovered independently.
+   * Profile reuse does not retain or reuse a client or transport connection.
+   *
+   * `AgentProfile` does not carry the server's exact wire version. Pass
+   * `adcpVersion` separately when version-skew validation depends on it.
+   */
+  profile?: AgentProfile;
   /** Initial context (e.g., from a previous step invocation) */
   context?: StoryboardContext;
   /**

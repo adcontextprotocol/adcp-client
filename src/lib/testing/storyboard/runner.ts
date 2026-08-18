@@ -226,6 +226,18 @@ export function applyStoryboardVersionOptions(
   return complianceDir && versioned.complianceDir !== complianceDir ? { ...versioned, complianceDir } : versioned;
 }
 
+function applyReusableProfileOptions(options: StoryboardRunOptions): StoryboardRunOptions {
+  const profile = options.profile ?? options._profile;
+  if (!profile) return options;
+  const profileTools = options.agents === undefined ? (normalizeAgentToolNames(profile.tools) ?? []) : undefined;
+
+  return {
+    ...options,
+    _profile: profile,
+    ...(options.agentTools === undefined && profileTools !== undefined ? { agentTools: profileTools } : {}),
+  };
+}
+
 export function applyAdcpVersionRunOptions(
   defaultAdcpVersion: string | undefined,
   options: StoryboardRunOptions
@@ -1191,6 +1203,7 @@ export async function runStoryboard(
   storyboard: Storyboard,
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardResult> {
+  options = applyReusableProfileOptions(options);
   return withMCPConnectionScope(
     async () => {
       options = applyStoryboardVersionOptions(storyboard, options);
@@ -4227,6 +4240,7 @@ export async function runStoryboardStep(
   stepId: string,
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardStepResult> {
+  options = applyReusableProfileOptions(options);
   return withMCPConnectionScope(
     async () => {
       validateStoryboardShape(storyboard);
