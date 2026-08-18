@@ -23,6 +23,7 @@ import {
   type ValidationMode,
 } from '../validation/client-hooks';
 import { formatIssues } from '../validation/schema-validator';
+import { ADCP_VERSION } from '../version';
 import { unwrapProtocolResponse, isAdcpError, isTerminalAdcpError } from '../utils/response-unwrapper';
 import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
 import { generateIdempotencyKey, requestUsesIdempotency, redactIdempotencyKeyInArgs } from '../utils/idempotency';
@@ -484,7 +485,7 @@ export class TaskExecutor {
       }) => void | Promise<void>;
       /** Fail tasks when response schema validation fails (default: true) */
       strictSchemaValidation?: boolean;
-      /** Log all schema validation violations to debug logs (default: true) */
+      /** Emit schema validation violations to debug logs and the console (default: true) */
       logSchemaViolations?: boolean;
       /**
        * Schema-driven validation using the bundled AdCP JSON schemas.
@@ -2523,8 +2524,10 @@ export class TaskExecutor {
       const validationVersion =
         this.lastKnownServerVersion === 'v2'
           ? 'v2.5'
-          : (this.responseAdcpVersionForValidation() ?? this.config.adcpVersion);
-      const outcome = validateIncomingResponse(taskName, normalizedResponse, mode, debugLogs, validationVersion);
+          : (this.responseAdcpVersionForValidation() ?? this.config.adcpVersion ?? ADCP_VERSION);
+      // TaskExecutor owns the user-facing log entry below. Passing debugLogs
+      // into the lower-level hook would emit a second, unversioned duplicate.
+      const outcome = validateIncomingResponse(taskName, normalizedResponse, mode, undefined, validationVersion);
       if (outcome.valid) return { valid: true, errors: [] };
 
       const errorStrings = outcome.issues.map(i => `${i.pointer}: ${i.message}`);
@@ -2537,17 +2540,26 @@ export class TaskExecutor {
             outcome.issues
           )}`,
           errors: errorStrings,
+          issues: outcome.issues,
           schemaVariant: outcome.variant,
+          schemaVersion: validationVersion,
           mode,
         });
       }
 
       if (mode === 'warn') {
-        console.warn(`Schema validation failed for ${taskName} (non-blocking):`, errorStrings);
+        if (logViolations) {
+          console.warn(
+            `Schema validation failed for ${taskName} against AdCP ${validationVersion} (non-blocking):`,
+            errorStrings
+          );
+        }
         return { valid: true, errors: [] };
       }
 
-      console.error(`Schema validation failed for ${taskName}:`, errorStrings);
+      if (logViolations) {
+        console.error(`Schema validation failed for ${taskName} against AdCP ${validationVersion}:`, errorStrings);
+      }
       return { valid: false, errors: errorStrings };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'unknown error';
