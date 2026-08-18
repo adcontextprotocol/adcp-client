@@ -39,13 +39,18 @@ Options:
   --allow-live-side-effects  Opt in to vectors 016/020 against non-sandbox
                              endpoints (USE WITH CARE — creates real orders)
   --allow-http               Allow http:// URLs + private-IP targets (dev loops)
-  --transport <mode>         \`raw\` (default) posts to per-operation AdCP
-                             endpoints; \`mcp\` wraps each vector body in a
+  --transport <mode>         \`mcp\` (default) wraps each vector body in a
                              JSON-RPC tools/call envelope and posts to the
-                             agent's MCP mount (see #612).
+                             agent's MCP mount (see #612); \`raw\` posts to
+                             per-operation AdCP endpoints (REST-binding agents).
   --timeout <ms>             Per-probe timeout (default 10000)
   --json                     Emit the full GradeReport as JSON
   -h, --help                 Show this help
+
+Environment:
+  ADCP_GRADE_INITIALIZE_AUTHORIZATION
+                             Authorization header used only for the MCP
+                             initialize lifecycle (kept out of process argv).
 
 Exit code:
   0   all graded vectors passed (skipped vectors don't count as failures)
@@ -53,10 +58,10 @@ Exit code:
   2   argument / configuration error
 
 Examples:
-  adcp grade request-signing https://agent.example.com/adcp
-  adcp grade request-signing http://127.0.0.1:3000 --allow-http --skip-rate-abuse
-  adcp grade request-signing https://sandbox.seller.com/adcp --json | jq
-  adcp grade request-signing https://sandbox.seller.com/adcp \\
+  adcp grade request-signing https://agent.example.com/mcp
+  adcp grade request-signing http://127.0.0.1:3000/mcp --allow-http --skip-rate-abuse
+  adcp grade request-signing https://sandbox.seller.com/mcp --json | jq
+  adcp grade request-signing https://sandbox.seller.com/mcp \\
     --covers-content-digest either --skip-rate-abuse
 `;
 
@@ -233,6 +238,10 @@ async function runRequestSigningGrader(args) {
   }
 
   try {
+    const initializeAuthorization = process.env.ADCP_GRADE_INITIALIZE_AUTHORIZATION;
+    if (initializeAuthorization) {
+      options.initializeHeaders = { authorization: initializeAuthorization };
+    }
     const report = await gradeRequestSigning(agentUrl, options);
     if (emitJson) {
       process.stdout.write(JSON.stringify(report, null, 2) + '\n');
@@ -449,9 +458,11 @@ function printHumanReport(report, options = {}) {
     `${report.passed_count} passed, ${report.failed_count} failed, ${report.skipped_count} skipped — total ${report.total_duration_ms}ms`
   );
   console.log(`Overall: ${report.passed ? 'PASS' : 'FAIL'}`);
-  // Only hint when the operator didn't already ask for MCP — if they did and
-  // everything still fails, it's a different problem (agent down, wrong URL).
-  if (!report.passed && (!options || options.transport !== 'mcp')) {
+  // Only hint on an EXPLICIT --transport raw run — mcp is the default now,
+  // so an unset transport already grades over MCP and the raw→mcp retry
+  // hint would misdirect (if mcp mode fails everywhere, it's a different
+  // problem: agent down, wrong URL).
+  if (!report.passed && options && options.transport === 'raw') {
     const hint = detectTransportMismatch(report);
     if (hint) {
       console.log();
@@ -462,7 +473,8 @@ function printHumanReport(report, options = {}) {
 }
 
 /**
- * Heuristic: if the grader ran in `raw` mode and every non-skipped vector
+ * Heuristic: if the grader ran in `raw` mode (explicit --transport raw —
+ * mcp is the default) and every non-skipped vector
  * failed with a 404 / 405 / fetch-failed shape, the agent likely speaks MCP.
  * Raw mode POSTs to per-operation paths (`/mcp/adcp/create_media_buy`), which
  * an MCP agent — single endpoint at `/mcp` — will 404. Suggest the retry so

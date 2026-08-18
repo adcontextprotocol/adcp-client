@@ -735,6 +735,7 @@ describe('#668 grader capability-profile mismatch skip', () => {
     // unreachable address — the grader returns a failed result (probe error),
     // NOT a skipped one. That's what we're asserting here: not skipped.
     const result = await gradeOneVector(v001.id, 'positive', 'http://127.0.0.1:1', {
+      transport: 'raw',
       agentCapability: {
         supported: true,
         covers_content_digest: 'either',

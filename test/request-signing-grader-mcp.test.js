@@ -1,9 +1,9 @@
 /**
  * End-to-end test: grader in MCP transport mode against the MCP signed
  * agent from test-agents/seller-agent-signed-mcp.ts. Validates that
- * `transport: 'mcp'` correctly wraps vectors in JSON-RPC envelopes, posts
- * to the agent's single MCP endpoint, and surfaces the verifier's
- * per-vector outcomes identically to raw mode.
+ * the default MCP transport correctly wraps vectors in JSON-RPC envelopes,
+ * posts to the agent's single MCP endpoint, and surfaces the verifier's
+ * per-vector outcomes identically to explicit MCP mode.
  */
 
 const { test, describe, before, after } = require('node:test');
@@ -12,7 +12,7 @@ const { spawn, spawnSync } = require('node:child_process');
 const { existsSync, statSync } = require('node:fs');
 const path = require('node:path');
 
-const { gradeRequestSigning } = require('../dist/lib/testing/storyboard/request-signing/index.js');
+const { gradeOneVector, gradeRequestSigning } = require('../dist/lib/testing/storyboard/request-signing/index.js');
 
 // MCP signed agent is compiled to test-agents/dist/. The suite auto-builds
 // it if missing — CI runs `npm test` without an explicit build:test-agents
@@ -160,10 +160,9 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
     await stopMcpAgent(agent);
   });
 
-  test('MCP mode grades every non-profile vector against the MCP signed agent', async () => {
+  test('gradeRequestSigning defaults to MCP mode against the MCP signed agent', async () => {
     const report = await gradeRequestSigning(AGENT_URL, {
       allowPrivateIp: true,
-      transport: 'mcp',
       skipRateAbuse: true,
       agentContentDigestPolicy: 'either',
     });
@@ -179,6 +178,29 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
     assert.ok(report.passed, 'overall grade is PASS');
     assert.strictEqual(report.positive.length, 12);
     assert.strictEqual(report.negative.length, 28);
+    assert.deepStrictEqual(
+      report.positive.filter(vector => vector.skipped).map(vector => vector.vector_id),
+      [
+        '005-default-port-stripped',
+        '006-dot-segment-path',
+        '007-query-byte-preserved',
+        '008-percent-encoded-path',
+        '009-percent-encoded-unreserved-decoded',
+        '010-percent-encoded-slash-preserved',
+        '011-ipv6-authority',
+        '012-ipv6-authority-default-port-stripped',
+      ],
+      'MCP must not claim URL canonicalization coverage after target reshaping'
+    );
+  });
+
+  test('gradeOneVector defaults to MCP mode against the MCP signed agent', async () => {
+    const result = await gradeOneVector('001-basic-post', 'positive', AGENT_URL, {
+      allowPrivateIp: true,
+    });
+
+    assert.ok(result.passed, result.diagnostic ?? 'positive/001 should pass');
+    assert.strictEqual(result.http_status, 200);
   });
 
   test('MCP mode vector bodies are wrapped in JSON-RPC tools/call envelopes', async () => {

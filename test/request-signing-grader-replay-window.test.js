@@ -249,7 +249,12 @@ function startNoopReplayServer() {
   });
 }
 
-const ONLY_016 = { onlyVectors: ['016-replayed-nonce'], allowLiveSideEffects: true, allowPrivateIp: true };
+const ONLY_016 = {
+  onlyVectors: ['016-replayed-nonce'],
+  allowLiveSideEffects: true,
+  allowPrivateIp: true,
+  transport: 'raw',
+};
 
 describe('neg/016 K-pair replay-window grading', () => {
   // ── single-instance (K/K pass) ────────────────────────────────────────
@@ -344,6 +349,7 @@ describe('neg/016 K-pair replay-window grading', () => {
       // Skip 016 explicitly
       const report = await gradeRequestSigning(instance.url, {
         allowPrivateIp: true,
+        transport: 'raw',
         skipVectors: ['016-replayed-nonce'],
         skipRateAbuse: true,
       });

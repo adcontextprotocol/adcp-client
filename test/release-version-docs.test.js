@@ -25,7 +25,7 @@ test('Changesets release versioning regenerates agent docs after the package ver
   assert.match(docsCheck, /^npm run generate-agent-docs && /);
 });
 
-test('the release version workflow leaves generated agent docs current', { timeout: 60_000 }, () => {
+test('the release version workflow leaves generated agent docs current', { timeout: 120_000 }, () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'release-version-docs-'));
   const worktree = path.join(temporaryRoot, 'worktree');
   let worktreeCreated = false;

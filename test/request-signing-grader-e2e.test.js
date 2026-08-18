@@ -145,6 +145,7 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
   test('grades non-rate vectors on a covers_content_digest=either verifier', async () => {
     const report = await gradeRequestSigning(instance.url, {
       allowPrivateIp: true,
+      transport: 'raw',
       skipRateAbuse: true, // 020 has its own test below with matched caps.
       agentContentDigestPolicy: 'either',
     });
@@ -171,6 +172,7 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
     try {
       const report = await gradeRequestSigning(fresh.url, {
         allowPrivateIp: true,
+        transport: 'raw',
         onlyVectors: ['007-missing-content-digest'],
       });
       const v007 = report.negative.find(v => v.vector_id === '007-missing-content-digest');
@@ -186,6 +188,7 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
     try {
       const report = await gradeRequestSigning(fresh.url, {
         allowPrivateIp: true,
+        transport: 'raw',
         onlyVectors: ['018-digest-covered-when-forbidden'],
       });
       const v018 = report.negative.find(v => v.vector_id === '018-digest-covered-when-forbidden');
@@ -204,6 +207,7 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
     try {
       const report = await gradeRequestSigning(fresh.url, {
         allowPrivateIp: true,
+        transport: 'raw',
         rateAbuseCap: 10,
         onlyVectors: ['020-rate-abuse'],
         // 020 produces live side effects (fills the cap); test-kit contract
@@ -224,6 +228,7 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
     try {
       const report = await gradeRequestSigning(fresh.url, {
         allowPrivateIp: true,
+        transport: 'raw',
         skipRateAbuse: true,
         agentContentDigestPolicy: 'either',
       });
@@ -241,6 +246,7 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
     try {
       const report = await gradeRequestSigning(fresh.url, {
         allowPrivateIp: true,
+        transport: 'raw',
         skipRateAbuse: true,
         agentContentDigestPolicy: 'either',
       });
@@ -258,6 +264,7 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
     try {
       const report = await gradeRequestSigning(fresh.url, {
         allowPrivateIp: true,
+        transport: 'raw',
         skipRateAbuse: true,
         agentContentDigestPolicy: 'required',
       });
@@ -331,6 +338,7 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
     try {
       const report = await gradeRequestSigning(fresh.url, {
         allowPrivateIp: true,
+        transport: 'raw',
         skipRateAbuse: true,
         agentContentDigestPolicy: 'forbidden',
       });
@@ -367,6 +375,7 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
   test('agentContentDigestPolicy "either" auto-skips vectors 007 and 018 with capability_profile_mismatch', async () => {
     const report = await gradeRequestSigning(instance.url, {
       allowPrivateIp: true,
+      transport: 'raw',
       skipRateAbuse: true,
       agentContentDigestPolicy: 'either',
     });

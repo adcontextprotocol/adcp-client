@@ -1706,11 +1706,11 @@ export interface StoryboardRunOptions extends TestOptions {
     /**
      * How the grader dispatches each vector to the agent.
      *
-     *   - `raw` (default) — POSTs each vector body directly to a per-
+     *   - `raw` — POSTs each vector body directly to a per-
      *     operation AdCP endpoint (e.g. `<baseUrl>/create_media_buy`).
      *     Works for agents that expose AdCP tools as discrete HTTP
      *     operations.
-     *   - `mcp` — wraps each vector body in a JSON-RPC `tools/call`
+     *   - `mcp` (default) — wraps each vector body in a JSON-RPC `tools/call`
      *     envelope and POSTs to the agent's single `/mcp` mount. Required
      *     for MCP-only agents that don't expose per-operation endpoints.
      *     The operation name is derived from the last path segment of the
@@ -1733,6 +1733,11 @@ export interface StoryboardRunOptions extends TestOptions {
      * streamable-HTTP agents that do not issue session IDs.
      */
     mcpSessionId?: string;
+    /**
+     * Negotiated MCP protocol version for a pre-provisioned session. When the
+     * runner auto-initializes, it uses the version returned by the server.
+     */
+    mcpProtocolVersion?: string;
   };
   /**
    * Distribution strategy across agent URLs in multi-instance mode.
