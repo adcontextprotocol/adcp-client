@@ -48,11 +48,74 @@ const SOURCE_SHA = '4e553ad955f83b49c7d221ab5c3ff78237ad02e3';
 //   curl -sL "https://codeload.github.com/<repo>/tar.gz/<sha>" | shasum -a 256
 const SOURCE_TARBALL_SHA256 = '580656d6466ef9f0d1119985e6726c2efea718dc671e2ad30957fcb2fd54af0f';
 const TARGET_BUNDLE_KEY = 'v2.5';
+const FETCH_ATTEMPTS = 3;
+const FETCH_TIMEOUT_MS = 30_000;
+const RETRY_DELAY_MS = 1_000;
 
-async function fetchBinary(url: string): Promise<Buffer> {
-  const res = await fetch(url, { redirect: 'follow' });
-  if (!res.ok) throw new Error(`GET ${url} → ${res.status} ${res.statusText}`);
-  return Buffer.from(await res.arrayBuffer());
+class RetryableFetchError extends Error {}
+
+interface FetchBinaryOptions {
+  attempts?: number;
+  fetchImpl?: typeof fetch;
+  sleep?: (delayMs: number) => Promise<void>;
+}
+
+function isRetryableStatus(response: Response): boolean {
+  return (
+    response.status === 408 ||
+    response.status === 429 ||
+    response.status >= 500 ||
+    (response.status === 403 &&
+      (response.headers.get('x-ratelimit-remaining') === '0' || response.headers.has('retry-after')))
+  );
+}
+
+async function fetchBinary(url: string, options: FetchBinaryOptions = {}): Promise<Buffer> {
+  const attempts = options.attempts ?? FETCH_ATTEMPTS;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const sleep = options.sleep ?? (delayMs => new Promise(resolve => setTimeout(resolve, delayMs)));
+
+  if (!Number.isInteger(attempts) || attempts < 1) throw new Error('fetchBinary attempts must be a positive integer.');
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      let response: Response;
+      try {
+        response = await fetchImpl(url, {
+          redirect: 'follow',
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        });
+      } catch (cause) {
+        const detail = cause instanceof Error ? cause.message : String(cause);
+        throw new RetryableFetchError(`GET ${url} → network error (${detail})`, { cause });
+      }
+
+      if (!response.ok) {
+        const message = `GET ${url} → ${response.status} ${response.statusText}`;
+        try {
+          await response.body?.cancel();
+        } catch {
+          // The status is authoritative; body cleanup is best-effort.
+        }
+        if (!isRetryableStatus(response)) throw new Error(message);
+        throw new RetryableFetchError(message);
+      }
+
+      try {
+        return Buffer.from(await response.arrayBuffer());
+      } catch (cause) {
+        const detail = cause instanceof Error ? cause.message : String(cause);
+        throw new RetryableFetchError(`GET ${url} → response read error (${detail})`, { cause });
+      }
+    } catch (error) {
+      if (!(error instanceof RetryableFetchError) || attempt === attempts) throw error;
+      const delayMs = RETRY_DELAY_MS * 2 ** (attempt - 1);
+      console.warn(`⚠️  ${error.message}; retrying in ${delayMs}ms (${attempt + 1}/${attempts})`);
+      await sleep(delayMs);
+    }
+  }
+
+  throw new Error(`GET ${url} failed without an error.`);
 }
 
 /**
@@ -157,7 +220,11 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch(err => {
-  console.error(err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(err => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+export { fetchBinary };
