@@ -191,12 +191,23 @@ function inspectSelectorDimensions(
     };
   }
 
-  let diagnosed = false;
+  const hasDirectDimensions = params.width !== undefined || params.height !== undefined;
+  let diagnosed = hasDirectDimensions
+    ? addInspectionDiagnostic(diagnostics, inspection, selector, field, formatIdIndex)
+    : false;
+  if (params.sizes.length === 0) {
+    addInspectionDiagnostic(diagnostics, { kind: 'invalid' }, selector, `${field}.sizes`, formatIdIndex);
+    return { inspection, diagnosed: true };
+  }
   for (const [index, size] of params.sizes.entries()) {
-    const sizeInspection =
+    const inspectedSize =
       size !== null && typeof size === 'object' && !Array.isArray(size)
         ? inspectFixedDimensions(size as Readonly<Record<string, unknown>>)
         : ({ kind: 'invalid' } as const);
+    const sizeInspection =
+      inspectedSize.kind === 'absent' || inspectedSize.kind === 'non_fixed'
+        ? ({ kind: 'invalid' } as const)
+        : inspectedSize;
     diagnosed =
       addInspectionDiagnostic(diagnostics, sizeInspection, selector, `${field}.sizes[${index}]`, formatIdIndex) ||
       diagnosed;
@@ -213,8 +224,9 @@ function inspectSelectorDimensions(
  * legacy-only, multi-size, responsive, or inherently canonical-only shapes.
  * Legacy IDs are normalized through the same catalog/converter path as the
  * rest of the projection layer. An empty result means no dimensional issue
- * was found among selectors the configured catalogs/converter could resolve;
- * it is not proof that every seller-owned legacy ID was resolvable.
+ * was found among selectors the SDK's built-in mappings and any configured
+ * catalogs/converter could resolve; it is not proof that every seller-owned
+ * legacy ID was resolvable.
  *
  * @example
  * ```ts
@@ -278,21 +290,20 @@ export function lintPackageFormatSelectorDimensions(
       { legacyFormatConverter, projectionCatalogs: options?.projectionCatalogs }
     );
     if (converterDiagnosed) continue;
-    const dimensionalFailure = projection.diagnostics.find(
-      diagnostic =>
-        diagnostic.code === 'FORMAT_PROJECTION_FAILED' &&
-        (diagnostic.error.details.resolution_failure === 'invalid_format_id_parameters' ||
-          diagnostic.error.details.resolution_failure === 'catalog_requirement_conflict')
-    );
-    if (dimensionalFailure?.code === 'FORMAT_PROJECTION_FAILED') {
-      const catalogConflict = dimensionalFailure.error.details.resolution_failure === 'catalog_requirement_conflict';
+    const dimensionalCatalogConflict =
+      inlineResult.inspection.kind === 'complete' &&
+      ref.duration_ms === undefined &&
+      projection.diagnostics.some(
+        diagnostic =>
+          diagnostic.code === 'FORMAT_PROJECTION_FAILED' &&
+          diagnostic.error.details.resolution_failure === 'catalog_requirement_conflict'
+      );
+    if (dimensionalCatalogConflict) {
       diagnostics.push({
-        code: catalogConflict ? 'FORMAT_SELECTOR_DIMENSIONS_MISMATCH' : 'FORMAT_SELECTOR_DIMENSIONS_INVALID',
+        code: 'FORMAT_SELECTOR_DIMENSIONS_MISMATCH',
         field,
         selector: 'legacy',
-        message: catalogConflict
-          ? `${field} dimensions conflict with the resolved legacy format catalog`
-          : `${field} contains invalid fixed-size image dimensions`,
+        message: `${field} dimensions conflict with the resolved legacy format catalog`,
         format_id_index: index,
       });
       continue;
@@ -313,8 +324,7 @@ export function lintPackageFormatSelectorDimensions(
       code: 'FORMAT_SELECTOR_DIMENSIONS_INCOMPLETE',
       field: paramsField,
       selector: 'canonical',
-      message:
-        `${paramsField} must provide width and height when a direct image selector is combined with legacy image selectors`,
+      message: `${paramsField} must provide width and height when a direct image selector is combined with legacy image selectors`,
     });
   }
 

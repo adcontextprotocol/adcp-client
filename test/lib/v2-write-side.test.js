@@ -84,6 +84,17 @@ describe('lintPackageFormatSelectorDimensions', () => {
     );
   });
 
+  test('does not relabel video duration projection failures as image dimension diagnostics', () => {
+    for (const duration_ms of [15000, 0]) {
+      assert.deepStrictEqual(
+        lintPackageFormatSelectorDimensions({
+          format_ids: [{ agent_url: AAO_AGENT_URL, id: 'video_standard_30s', duration_ms }],
+        }),
+        []
+      );
+    }
+  });
+
   test('reports dimensionless dual image selectors without guessing dimensions', () => {
     const diagnostics = lintPackageFormatSelectorDimensions(
       {
@@ -202,6 +213,37 @@ describe('lintPackageFormatSelectorDimensions', () => {
       diagnostics.map(diagnostic => [diagnostic.code, diagnostic.selector, diagnostic.field]),
       [['FORMAT_SELECTOR_DIMENSIONS_INCOMPLETE', 'canonical', 'params.sizes[1]']]
     );
+  });
+
+  test('rejects empty multi-size declarations and dimensionless size entries', () => {
+    const cases = [
+      [{ sizes: [] }, 'params.sizes'],
+      [{ sizes: [{}] }, 'params.sizes[0]'],
+    ];
+
+    for (const [params, field] of cases) {
+      const diagnostics = lintPackageFormatSelectorDimensions({ format_kind: 'image', params });
+      assert.deepStrictEqual(
+        diagnostics.map(diagnostic => [diagnostic.code, diagnostic.field]),
+        [['FORMAT_SELECTOR_DIMENSIONS_INVALID', field]]
+      );
+    }
+  });
+
+  test('validates direct dimensions even when sizes are also present', () => {
+    const sizes = [{ width: 300, height: 250 }];
+    const cases = [
+      [{ width: 300, sizes }, 'FORMAT_SELECTOR_DIMENSIONS_INCOMPLETE'],
+      [{ width: 0, height: 250, sizes }, 'FORMAT_SELECTOR_DIMENSIONS_INVALID'],
+    ];
+
+    for (const [params, code] of cases) {
+      const diagnostics = lintPackageFormatSelectorDimensions({ format_kind: 'image', params });
+      assert.deepStrictEqual(
+        diagnostics.map(diagnostic => [diagnostic.code, diagnostic.field]),
+        [[code, 'params']]
+      );
+    }
   });
 });
 
