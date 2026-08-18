@@ -17,7 +17,7 @@ import type {
   RepeatableGroupSlot,
 } from '../lib/types/format-asset-slots';
 
-// --- Image: `formats` is canonical; extension requirement fields stay forward-compatible ---
+// --- Image: `formats` is canonical; runtime validation stays forward-compatible ---
 const goodImage: IndividualImageAssetSlot = {
   item_type: 'individual',
   asset_type: 'image',
@@ -27,18 +27,20 @@ const goodImage: IndividualImageAssetSlot = {
 };
 void goodImage;
 
-const extendedImage: IndividualImageAssetSlot = {
+const badImage: IndividualImageAssetSlot = {
   item_type: 'individual',
   asset_type: 'image',
   asset_id: 'hero',
   required: true,
   requirements: {
+    // @ts-expect-error non-canonical fields remain wire-valid at runtime but
+    // do not widen the named TypeScript interface with an index signature.
     file_types: ['jpg'],
   },
 };
-void extendedImage;
+void badImage;
 
-// --- Video: milliseconds are canonical ---
+// --- Video: milliseconds are canonical; legacy seconds fields stay rejected ---
 const goodVideo: IndividualVideoAssetSlot = {
   item_type: 'individual',
   asset_type: 'video',
@@ -48,26 +50,38 @@ const goodVideo: IndividualVideoAssetSlot = {
 };
 void goodVideo;
 
-const extendedVideoDurations: IndividualVideoAssetSlot = {
+const badVideoMinSeconds: IndividualVideoAssetSlot = {
   item_type: 'individual',
   asset_type: 'video',
   asset_id: 'ad',
   required: true,
-  requirements: { min_duration_seconds: 6, max_duration_seconds: 30 },
+  // @ts-expect-error use min_duration_ms on the typed surface.
+  requirements: { min_duration_seconds: 6 },
 };
-void extendedVideoDurations;
+void badVideoMinSeconds;
 
-// --- Video: `containers` is canonical; extension requirement fields remain accepted ---
-const extendedVideo: IndividualVideoAssetSlot = {
+const badVideoMaxSeconds: IndividualVideoAssetSlot = {
+  item_type: 'individual',
+  asset_type: 'video',
+  asset_id: 'ad',
+  required: true,
+  // @ts-expect-error use max_duration_ms on the typed surface.
+  requirements: { max_duration_seconds: 30 },
+};
+void badVideoMaxSeconds;
+
+// --- Video: `containers` is canonical; arbitrary siblings do not widen the type ---
+const badVideoFileTypes: IndividualVideoAssetSlot = {
   item_type: 'individual',
   asset_type: 'video',
   asset_id: 'ad',
   required: true,
   requirements: {
+    // @ts-expect-error use containers on the typed surface.
     file_types: ['mp4'],
   },
 };
-void extendedVideo;
+void badVideoFileTypes;
 
 // --- Video: container enum is closed ---
 const badVideoContainer: IndividualVideoAssetSlot = {

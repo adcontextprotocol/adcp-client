@@ -253,9 +253,7 @@ export type BrandID = string;
  * Declares how a field in an external feed maps to the AdCP catalog item schema. Used in sync_catalogs feed_field_mappings to normalize non-AdCP feeds (Google Merchant Center, LinkedIn Jobs XML, hotel XML, etc.) to the standard catalog item schema without requiring the buyer to preprocess every feed. Multiple mappings can assemble a nested object via dot notation (e.g., separate mappings for price.amount and price.currency).
  */
 export type CatalogFieldMapping = {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Field name in the external feed record. Omit when injecting a static literal value (use the value property instead).
@@ -273,7 +271,6 @@ export type CatalogFieldMapping = {
    * Static literal value to inject into catalog_field for every item, regardless of what the feed contains. Mutually exclusive with feed_field. Useful for fields the feed omits (e.g., currency when price is always USD, or a constant category value).
    */
   value?: {
-    [k: string]: unknown | undefined;
   };
   /**
    * Named transform to apply to the feed field value before writing to the catalog schema. See transform-specific parameters (format, timezone, by, separator).
@@ -299,10 +296,8 @@ export type CatalogFieldMapping = {
    * Fallback value to use when feed_field is absent, null, or empty. Applied after any transform would have been applied. Allows optional feed fields to have a guaranteed baseline value.
    */
   default?: {
-    [k: string]: unknown | undefined;
   };
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Field name in the external feed record. Omit when injecting a static literal value (use the value property instead).
@@ -320,7 +315,6 @@ export type CatalogFieldMapping = {
    * Static literal value to inject into catalog_field for every item, regardless of what the feed contains. Mutually exclusive with feed_field. Useful for fields the feed omits (e.g., currency when price is always USD, or a constant category value).
    */
   value?: {
-    [k: string]: unknown | undefined;
   };
   /**
    * Named transform to apply to the feed field value before writing to the catalog schema. See transform-specific parameters (format, timezone, by, separator).
@@ -346,10 +340,8 @@ export type CatalogFieldMapping = {
    * Fallback value to use when feed_field is absent, null, or empty. Applied after any transform would have been applied. Allows optional feed fields to have a guaranteed baseline value.
    */
   default?: {
-    [k: string]: unknown | undefined;
   };
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 };
 /**
  * Discriminator value naming one of the 12 canonical creative formats — plus `custom` for adopter-defined shapes that don't fit the canonicals (multi-placement takeover, roadblock, branded content, cross-screen sponsorship, AR lens, etc.). Used by `product-format-declaration.json` (the product's inline format declaration), `creative-manifest.json` (the buyer's v2 manifest path), and any other surface that needs to identify which canonical a payload targets.
@@ -382,7 +374,6 @@ export type FormatOptionReference = PublisherCatalogFormatOptionReference | Prod
  * Policies supported when budget allocation is fixed or omitted.
  */
 export type PolicyProfile = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Standalone policy modes accepted in this exact scope and allocation context. Combination-only components belong only in supported_combinations and need not appear here. `automatic` means the seller accepts and preserves an explicit `{automatic:true}` authored block; omission only invokes inheritance/default behavior.
@@ -418,26 +409,20 @@ export type PolicyProfile = {
 export type SignalTargeting =
   | (
       | {
-          [k: string]: unknown | undefined;
         }
       | {
-          [k: string]: unknown | undefined;
         }
     )
   | (
       | {
-          [k: string]: unknown | undefined;
         }
       | {
-          [k: string]: unknown | undefined;
         }
     )
   | (
       | {
-          [k: string]: unknown | undefined;
         }
       | {
-          [k: string]: unknown | undefined;
         }
     );
 /**
@@ -449,7 +434,6 @@ export type PostalArea1 = PostalCountrySystem;
  * Buyer policy for evaluating Product.audience_evidence. In required mode, sellers MUST apply the evidence_presence and admissibility semantics and exclude non-matching products; they MUST NOT ignore an unsupported hard requirement. In preferred mode, sellers use matches for ranking and explain the evidence selected. Buyers SHOULD inspect media_buy.audience_evidence capabilities before sending this object.
  */
 export type AudienceEvidenceRequirements = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * required excludes products whose published evidence violates the constraints; preferred only affects ranking and explanation. When this policy affects inclusion or ranking, the seller MUST return the exact matching audience_evidence_selections even if get_products.fields omitted that field.
@@ -535,7 +519,6 @@ export type AttestationIssuer = AttestationBrandIssuer | AttestationAgentIssuer 
  * Concrete delivery constraints the buyer expects to carry into create_media_buy. Buyers SHOULD use this field instead of putting equivalent exact targeting only in brief prose. Sellers evaluate these constraints during discovery and scope returned pricing and forecasts to the effective targeting. If a product cannot honor the request exactly, the seller may omit it or return a request-scoped configured product with Product targeting_resolution modifications. Absence of Product targeting_resolution means exact acceptance of this structured overlay; it does not confirm how targeting in the brief was interpreted. On refine, presence is complete replacement state for returned configurations; when omitted, each referenced product's bound targeting remains in force.
  */
 export type TargetingOverlay = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Restrict delivery to specific countries. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').
@@ -756,7 +739,6 @@ export type TargetingOverlay = {
        * @minItems 1
        */
       catchment_ids?: [string, ...string[]];
-      [k: string]: unknown | undefined;
     },
     ...{
       /**
@@ -775,7 +757,6 @@ export type TargetingOverlay = {
        * @minItems 1
        */
       catchment_ids?: [string, ...string[]];
-      [k: string]: unknown | undefined;
     }[]
   ];
   /**
@@ -786,24 +767,18 @@ export type TargetingOverlay = {
   geo_proximity?: [
     (
       | {
-          [k: string]: unknown | undefined;
         }
       | {
-          [k: string]: unknown | undefined;
         }
       | {
-          [k: string]: unknown | undefined;
         }
     ),
     ...(
       | {
-          [k: string]: unknown | undefined;
         }
       | {
-          [k: string]: unknown | undefined;
         }
       | {
-          [k: string]: unknown | undefined;
         }
     )[]
   ];
@@ -863,13 +838,11 @@ export type TargetingOverlay = {
       match_type: MatchType;
     }[]
   ];
-  [k: string]: unknown | undefined;
 };
 /**
  * A catalog-backed named place target. Values are stable identifiers in the declared system. Entries within geo_places form a union; different geographic inclusion dimensions intersect. value_labels are diagnostic only and MUST NOT be used to resolve targeting.
  */
 export type GeographicPlaceArea = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * ISO 3166-1 alpha-2 country code containing the place.
@@ -959,7 +932,6 @@ export type PackageSignalTargeting = SignalTargetingExpression & {
    */
   signal_agent_segment_id?: string;
   activation_key?: ActivationKey;
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Pricing option selected for this signal. Use the pricing_option_id from the product's signal_targeting_options entry when product-scoped pricing is present; otherwise use the seller get_signals pricing only when the product option does not override it. Required when the selected signal has pricing_options; omit only when the signal is bundled into the product price or has no incremental cost.
@@ -970,7 +942,6 @@ export type PackageSignalTargeting = SignalTargetingExpression & {
    */
   signal_agent_segment_id?: string;
   activation_key?: ActivationKey;
-  [k: string]: unknown | undefined;
 };
 /**
  * Named signal being targeted.
@@ -985,7 +956,6 @@ export type SignalRef =
        * Product-local signal identifier. For local signals exposed on both get_signals and get_products, this MUST match get_signals.signals[].signal_ref.signal_id for the same signal.
        */
       signal_id: string;
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -1000,7 +970,6 @@ export type SignalRef =
        * Signal identifier within the data provider's published adagents.json signals[].
        */
       signal_id: string;
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -1015,7 +984,6 @@ export type SignalRef =
        * Signal identifier within the issuing signal source's signal set.
        */
       signal_id: string;
-      [k: string]: unknown | undefined;
     };
 /**
  * Destination-specific activation key returned by get_signals or activate_signal. Usually omitted for seller-offered signals selected directly through the same seller; include only when the selected signal was separately activated and the seller requires the activation key to correlate the package selection.
@@ -1030,7 +998,6 @@ export type ActivationKey =
        * The platform-specific segment identifier to use in campaign targeting
        */
       segment_id: string;
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -1045,13 +1012,11 @@ export type ActivationKey =
        * The targeting parameter value
        */
       value: string;
-      [k: string]: unknown | undefined;
     };
 /**
  * A canonical audience-age predicate in completed integer years. min and max are inclusive; omitting one bound means no restriction in that direction. At least one bound is required. include_unknown is always explicit because people whose age is unavailable are not members of any numeric interval. Implementations MUST reject min greater than max; JSON Schema draft-07 cannot compare sibling numeric values.
  */
 export type DemographicAgeRange = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Inclusive minimum age in completed years. Omit for an open lower bound.
@@ -1065,13 +1030,11 @@ export type DemographicAgeRange = {
    * Whether delivery to people whose age is unavailable is part of this predicate. This field has no default and MUST be supplied.
    */
   include_unknown: boolean;
-  [k: string]: unknown | undefined;
 };
 /**
  * Frequency capping settings for package-level application. Two types of frequency control can be used independently or together: suppress enforces a cooldown between consecutive exposures; max_impressions + per + window caps total exposures per entity in a time window. When both suppress and max_impressions are set, an impression is delivered only if both constraints permit it (AND semantics). At least one of suppress, suppress_minutes, or max_impressions must be set.
  */
 export type FrequencyCap = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Cooldown period between consecutive exposures to the same entity. Prevents back-to-back ad delivery (e.g. {"interval": 60, "unit": "minutes"} for a 1-hour cooldown). Preferred over suppress_minutes.
@@ -1094,7 +1057,6 @@ export type FrequencyCap = {
    * Time window for the max_impressions cap (e.g. {"interval": 7, "unit": "days"} or {"interval": 1, "unit": "campaign"} for the full flight). Required when max_impressions is set.
    */
   window?: Duration;
-  [k: string]: unknown | undefined;
 };
 /**
  * Purchased placement selection within the product. This constrains package inventory; it is distinct from creative_assignments[].placement_refs, which only route individual creatives within the purchased set. On create, mode selected supplies the complete selected set and mode default uses the product default. On update, the surrounding targeting_overlay replacement semantics apply.
@@ -1356,7 +1318,6 @@ export interface Catalog {
    * @minItems 1
    */
   feed_field_mappings?: [CatalogFieldMapping, ...CatalogFieldMapping[]];
-  [k: string]: unknown | undefined;
 }
 /**
  * Optional operator-owned business unit, agency seat, or platform account. Only id participates in the natural account key; name is mutable display metadata.
@@ -1432,7 +1393,6 @@ export interface ProductFilters {
    * Budget range to filter appropriate products
    */
   budget_range?: {
-    [k: string]: unknown | undefined;
   };
   /**
    * @deprecated
@@ -1530,7 +1490,6 @@ export interface ProductFilters {
          * When true, require this provider to support identity match.
          */
         identity_match?: boolean;
-        [k: string]: unknown | undefined;
       },
       ...{
         /**
@@ -1545,7 +1504,6 @@ export interface ProductFilters {
          * When true, require this provider to support identity match.
          */
         identity_match?: boolean;
-        [k: string]: unknown | undefined;
       }[]
     ];
     /**
@@ -1564,18 +1522,12 @@ export interface ProductFilters {
    */
   required_geo_targeting?: [
     {
-      [k: string]: unknown | undefined;
     } & {
-      [k: string]: unknown | undefined;
     } & {
-      [k: string]: unknown | undefined;
     },
     ...({
-      [k: string]: unknown | undefined;
     } & {
-      [k: string]: unknown | undefined;
     } & {
-      [k: string]: unknown | undefined;
     })[]
   ];
   /**
@@ -1601,24 +1553,18 @@ export interface ProductFilters {
   geo_proximity?: [
     (
       | {
-          [k: string]: unknown | undefined;
         }
       | {
-          [k: string]: unknown | undefined;
         }
       | {
-          [k: string]: unknown | undefined;
         }
     ),
     ...(
       | {
-          [k: string]: unknown | undefined;
         }
       | {
-          [k: string]: unknown | undefined;
         }
       | {
-          [k: string]: unknown | undefined;
         }
     )[]
   ];
@@ -1642,18 +1588,14 @@ export interface ProductFilters {
   required_vendor_metrics?: [
     (
       | {
-          [k: string]: unknown | undefined;
         }
       | {
-          [k: string]: unknown | undefined;
         }
     ),
     ...(
       | {
-          [k: string]: unknown | undefined;
         }
       | {
-          [k: string]: unknown | undefined;
         }
     )[]
   ];
@@ -1681,7 +1623,6 @@ export interface ProductFilters {
   ];
   audience_evidence_requirements?: AudienceEvidenceRequirements;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * Selects a publisher-catalog-backed product format option by publisher domain and format option ID.
@@ -1699,7 +1640,6 @@ export interface PublisherCatalogFormatOptionReference {
    * Stable format option ID from the publisher's adagents.json top-level `formats[]`, matching a publisher-catalog-backed entry in the target product's `format_options[]`.
    */
   format_option_id: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * Selects a product-local format option by ID within the enclosing package/product context. This branch deliberately forbids `publisher_domain` (`publisher_domain: false` in the schema) because product-local references are namespaced by the enclosing product only; include `scope: "publisher"` when the selector must cross into a publisher catalog.
@@ -1714,7 +1654,6 @@ export interface ProductLocalFormatOptionReference {
    */
   format_option_id: string;
   publisher_domain?: never;
-  [k: string]: unknown | undefined;
 }
 /**
  * Filter to products from sellers supporting specific protocol features. Only features set to true are used for filtering.
@@ -1806,7 +1745,6 @@ export interface PerformanceStandard {
   threshold: number;
   standard?: ViewabilityStandard;
   vendor: BrandReference;
-  [k: string]: unknown | undefined;
 }
 /**
  * A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.
@@ -1888,7 +1826,6 @@ export interface PackageSignalTargetingGroups {
    * @minItems 1
    */
   groups: [PackageSignalTargetingGroup, ...PackageSignalTargetingGroup[]];
-  [k: string]: unknown | undefined;
 }
 /**
  * A basic Boolean group of package-level signal targeting entries. 'any' means the user must match at least one signal in the group. 'none' means the user must match none of the signals in the group. Use groups for portable include/exclude composition such as (A OR B) AND NOT (C OR D).
@@ -1904,16 +1841,13 @@ export interface PackageSignalTargetingGroup {
    * @minItems 1
    */
   signals: [PackageSignalTargeting, ...PackageSignalTargeting[]];
-  [k: string]: unknown | undefined;
 }
 /**
  * Canonical demographic audience targeting intent with optional constraints on how age may be determined. This is distinct from age_restriction: demographics selects an audience, while age_restriction expresses a legal eligibility or verification floor. Fresh create/update targeting MUST compile exactly or be rejected. During get_products, a seller may offer a different configured predicate only through sparse targeting_resolution modifications on a distinguishable product_id; selecting that product accepts the alternative. Sellers never silently broaden, narrow, default, drop, or substitute the basis.
  */
 export interface DemographicTargetingIntent {
   age: DemographicAgeRange & {
-    [k: string]: unknown | undefined;
   };
-  [k: string]: unknown | undefined;
 }
 /**
  * Reference to a property list for targeting specific properties within this product. The package runs on the intersection of the product's publisher_properties and this list. Sellers SHOULD return a validation error if the product has property_targeting_allowed: false.
@@ -1958,10 +1892,8 @@ export interface SelectedPlacements {
    */
   placement_refs: [
     PlacementReference & {
-      [k: string]: unknown | undefined;
     },
     ...(PlacementReference & {
-      [k: string]: unknown | undefined;
     })[]
   ];
   ext?: ExtensionObject;
@@ -1978,7 +1910,6 @@ export interface PlacementReference {
    * Placement ID from the publisher's adagents.json placement catalog, or an inline seller-defined placement ID interpreted within the same publisher namespace.
    */
   placement_id: string;
-  [k: string]: unknown | undefined;
 }
 export interface ProductDefaultPlacements {
   mode: 'default';
@@ -2185,7 +2116,6 @@ export interface PaginationRequest {
  * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
  */
 export interface ContextObject {
-  [k: string]: unknown | undefined;
 }
 
 
@@ -2194,7 +2124,6 @@ export interface ContextObject {
  * Represents available advertising inventory
  */
 export type Product = {
-  [k: string]: unknown | undefined;
 } & (NamedFormatProduct | CanonicalFormatProduct) & {
     /**
      * Opaque identifier for this buyable product. For a non-custom wholesale product, sellers MUST reuse the ID for the same logical catalog offer within the seller and declared cache_scope across reads and wholesale-feed webhooks; feed and pricing versions communicate temporal catalog mutation, while retirement or replacement may end the identity. Concurrent or request-bound configurations whose effective targeting, disclosed targeting modifications, forecast assumptions, terms, or overlay support differ MUST use distinguishable configured product IDs. For is_custom: true, the ID identifies only the request-specific discovery/refinement lineage and is not stable across independent contexts. Sellers MUST keep every issued configured ID resolvable for its promised lifetime. Pricing variants within one logical product are distinguished by pricing_option_id: a seller MUST mint a new pricing_option_id whenever a binding fixed price, floor, currency, model, or priced applicability changes, and MUST NOT reinterpret an issued option ID at a new price. Selecting product_id plus pricing_option_id in create_media_buy accepts that returned configuration and commercial option.
@@ -2215,10 +2144,8 @@ export type Product = {
      */
     publisher_properties: [
       PublisherPropertySelector & {
-        [k: string]: unknown | undefined;
       },
       ...(PublisherPropertySelector & {
-        [k: string]: unknown | undefined;
       })[]
     ];
     /**
@@ -2420,7 +2347,6 @@ export type Product = {
        * Target kinds available for metric goals on this product. Values match target.kind on the optimization goal. Only these target kinds are accepted — goals with unlisted target kinds will be rejected. When omitted, buyers can set target-less metric goals (maximize volume within budget) but cannot set specific targets.
        */
       supported_targets?: ('cost_per' | 'threshold_rate')[];
-      [k: string]: unknown | undefined;
     };
     vendor_metric_optimization?: VendorMetricOptimization;
     /**
@@ -2451,7 +2377,6 @@ export type Product = {
        * Whether the seller provides its own always-on measurement (e.g. Amazon sales attribution for Amazon advertisers). When true, sync_event_sources response will include seller-managed event sources with managed_by='seller'.
        */
       platform_managed?: boolean;
-      [k: string]: unknown | undefined;
     };
     /**
      * When the buyer provides a catalog on get_products, indicates which catalog items are eligible for this product. Only present for products where catalog matching is relevant (e.g., sponsored product listings, job boards, hotel ads).
@@ -2503,7 +2428,6 @@ export type Product = {
        * Call-to-action button label (e.g., 'View details', 'Get proposal').
        */
       cta_label?: string;
-      [k: string]: unknown | undefined;
     };
     /**
      * Optional detailed card with hero + carousel + structured specifications, for rich product presentation (media-kit-style pages, full product detail views). Distinct from `format` — describes the UI rendering of the product itself, not the ad creative the product accepts. Typed inline; no format_id indirection.
@@ -2528,7 +2452,6 @@ export type Product = {
       specifications?: {
         label: string;
         value: string;
-        [k: string]: unknown | undefined;
       }[];
       /**
        * Formatted price or pricing summary.
@@ -2542,7 +2465,6 @@ export type Product = {
        * Typed seller collateral for buyer planning — coverage maps, sample renders, environment photos, media kits. Distinct from hero_image/carousel_images, which are display-oriented.
        */
       reference_assets?: ProductCardReferenceAsset[];
-      [k: string]: unknown | undefined;
     };
     /**
      * Collections available in this product. Each entry references collections declared in an adagents.json by domain and collection ID. Buyers resolve full collection objects from the referenced adagents.json.
@@ -2615,7 +2537,6 @@ export type Product = {
            * @minItems 1
            */
           uid_types?: [UIDType, ...UIDType[]];
-          [k: string]: unknown | undefined;
         },
         ...{
           /**
@@ -2642,10 +2563,8 @@ export type Product = {
            * @minItems 1
            */
           uid_types?: [UIDType, ...UIDType[]];
-          [k: string]: unknown | undefined;
         }[]
       ];
-      [k: string]: unknown | undefined;
     };
     /**
      * Instructions for submitting physical creative materials (print, static OOH, cinema). Present only for products requiring physical delivery outside the digital creative assignment flow. Buyer agents MUST validate url and email domains against the seller's known domains (from adagents.json) before submitting materials. Never auto-submit without human confirmation.
@@ -2664,10 +2583,8 @@ export type Product = {
        */
       instructions?: string;
       ext?: ExtensionObject;
-      [k: string]: unknown | undefined;
     };
     ext?: ExtensionObject;
-    [k: string]: unknown | undefined;
   };
 /**
  * Identifier for a publisher property. Must be lowercase alphanumeric with underscores only.
@@ -2683,15 +2600,10 @@ export type PropertyID = string;
  * **Custom format_kind** (`format_kind: "custom"`): for adopter-defined shapes that don't fit the 12 canonicals (multi-placement takeover, roadblock, branded content, cross-screen sponsorship, sponsorship lockup, newsletter sponsorship, AR lens, playable, live event sponsorship). When `format_kind` is `custom`, the declaration MUST carry `format_shape` (recognized global pattern from the [format-shape vocabulary registry](/schemas/core/format-shape-vocabulary.json)) AND `format_schema` (URI+digest reference to a fetchable schema describing the actual `params` and `slots`). Buyer agents fetch the schema, validate manifests structurally, and reason about manifests without per-seller integration code. See [adcp#3666](https://github.com/adcontextprotocol/adcp/issues/3666) for the canonical promotion queue.
  */
 export type ProductFormatDeclaration = {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Stable identifier for this declaration within its namespace. REQUIRED when a product contains multiple declarations with the same format_kind and SHOULD be set on every entry. Publisher-backed options pair it with publisher_domain; product-local options omit publisher_domain. When a single declaration has a unique format_kind and no ID, buyers author canonically with format_kind plus params; they MUST NOT fall back to deprecated format_ids merely because this optional ID is absent. Examples: 'display_image_300x250', 'responsive_search', 'daily_pulse_homepage_image'.
@@ -3013,7 +2925,6 @@ export type ProductFormatDeclaration = {
  * A seller/platform-side connection or grant required by a product, format, or request. This is not the AdCP caller credential: the AdCP request is still authenticated once, and the seller uses these stored downstream connections to call a platform or service on the buyer's behalf. Use this shape for platforms that require more than one downstream grant, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
  */
 export type DownstreamConnectionRequirement = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Stable provider or platform namespace, preferably lowercase. Examples: `social.example`, `shortvideo.example`, or a seller-defined namespace. Omit only when the requirement is provider-agnostic, or when an `authorization_url` fully routes the human to the correct provider-specific connection flow.
@@ -3067,7 +2978,6 @@ export type DownstreamConnectionRequirement = {
      * Public URL for the referenced post, when available.
      */
     post_url?: string;
-    [k: string]: unknown | undefined;
   };
   /**
    * Seller-hosted or provider-hosted URL where a human can complete or restore this downstream connection.
@@ -3081,23 +2991,17 @@ export type DownstreamConnectionRequirement = {
    * Expiration time for the downstream grant, when known.
    */
   expires_at?: string;
-  [k: string]: unknown | undefined;
 };
 /**
  * Represents a specific public ad placement within a product's inventory. Placement IDs are scoped by publisher domain, matching placement definitions in that publisher's adagents.json. `kind` is the structural discriminator: `publisher_ref` means this product placement is a reference to `{publisher_domain, placement_id}`; `seller_inline` means the seller is defining public buyer-facing placement metadata inline. The schema accepts either `name` or `publisher_domain` because publisher-referenced placements can omit `name` only when the publisher declaration supplies it; seller-inline placements carry `name` directly. Whether a reference was resolved from publisher-hosted adagents.json or a community-maintained fallback is resolver metadata, not placement structure. Placement selection purchases inventory; creative assignments may then route creatives only within the purchased set. Reusing a registered placement preserves the registry's semantic identity; product-level placement objects may narrow format_ids/format_options or add operational detail, but SHOULD NOT redefine the placement's meaning incompatibly.
  */
 export type Placement = {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & (
     | {
-        [k: string]: unknown | undefined;
       }
     | {
-        [k: string]: unknown | undefined;
       }
   ) & {
     /**
@@ -3165,13 +3069,10 @@ export type Placement = {
      * @minItems 1
      */
     social_placement_surfaces?: [SocialPlacementSurface, ...SocialPlacementSurface[]];
-    [k: string]: unknown | undefined;
   } & (
     | {
-        [k: string]: unknown | undefined;
       }
     | {
-        [k: string]: unknown | undefined;
       }
   ) & {
     /**
@@ -3239,7 +3140,6 @@ export type Placement = {
      * @minItems 1
      */
     social_placement_surfaces?: [SocialPlacementSurface, ...SocialPlacementSurface[]];
-    [k: string]: unknown | undefined;
   };
 /**
  * A seller's commercial pricing offer, discriminated by pricing_model. pricing_option_id is the immutable identity of its binding commercial terms: changing fixed price, floor, currency, model, or priced applicability requires a new ID rather than reinterpreting the old one. fixed_price is an agreed seller price; floor_price is the seller minimum for an auction-priced option; price_guidance is non-binding discovery guidance. Buyer execution instructions belong in BiddingPolicy. revenue_share is contingent pricing: its payable spend is calculated from settled commissionable_value and does not use fixed_price or auction bidding fields. The legacy max_bid boolean and package bid_price are deprecated in 3.2 and removed in the next major.
@@ -3259,9 +3159,7 @@ export type PricingOption =
  * Revenue-share pricing. The advertiser pays a fixed decimal commission rate applied to settled commissionable_value attributed to the declared conversion event and event source. Spend is rounded once to the ISO 4217 minor-unit precision of currency after multiplication: spend = round_currency(commissionable_value × commission_rate). This is contingent pricing, not fixed-unit pricing or an auction.
  */
 export type RevenueSharePricingOption = {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Unique identifier for this pricing option within the product
@@ -3295,7 +3193,6 @@ export type RevenueSharePricingOption = {
    * Human-readable definition of inclusions, exclusions, and return or cancellation treatment used by the billing authority to calculate commissionable_value.
    */
   commission_basis_description: string;
-  [k: string]: unknown | undefined;
 };
 /**
  * Dimension constraints represented by this forecast point, such as country, region, placement, device type, platform, audience, signal value, or intersections such as placement x country or product x signal. Each item declares one dimension family; when multiple items are present, the point represents their intersection. Sellers MUST NOT emit more than one item for each `kind` on a point; consumers MUST NOT treat repeated kinds as OR semantics. Use multiple points with dimensions to expose country/placement/signal availability within one product, proposal, or signal coverage forecast without creating separate products solely for each dimension. Dimensions describe the forecast row and are independent of pricing_options.
@@ -3324,13 +3221,9 @@ export type ForecastPointDimensions = [
  * A geographic dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
  */
 export type GeoForecastDimension = {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Dimension family discriminator.
@@ -3358,15 +3251,11 @@ export type GeoForecastDimension = {
  * A signal value or signal-presence dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
  */
 export type SignalForecastDimension = {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & (
     | {
-        [k: string]: unknown | undefined;
       }
     | {
-        [k: string]: unknown | undefined;
       }
   ) & {
     /**
@@ -3405,20 +3294,17 @@ export interface ForecastRange {
   mid?: number;
   /** Optimistic (high-end) forecast value. */
   high?: number;
-  [k: string]: unknown | undefined;
 }
 export type VendorMetricID = string;
 /**
  * Product-scoped demographic breakdown support for by_demographic reporting. Declares reportable age ranges and measurement systems independently from demographic targeting execution.
  */
 export type DemographicReportingCapability = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Machine-comparable age ranges this product can report.
    */
   age?: {
-    [k: string]: unknown | undefined;
   };
   /**
    * Measurement-system notations this product may return. A code remains opaque unless its capability interval and response row also carry a canonical age predicate.
@@ -3444,7 +3330,6 @@ export type DataProviderSignalSelector =
        * Discriminator indicating all signals from this data provider are included
        */
       selection_type: 'all';
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -3461,7 +3346,6 @@ export type DataProviderSignalSelector =
        * @minItems 1
        */
       signal_ids: [string, ...string[]];
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -3478,21 +3362,16 @@ export type DataProviderSignalSelector =
        * @minItems 1
        */
       signal_tags: [string, ...string[]];
-      [k: string]: unknown | undefined;
     };
 /**
  * Shared signal identity and definition metadata used when a signal is listed outside its authoritative definition. New listings carry signal_ref; legacy listings may carry deprecated signal_id during the SignalRef migration window. Product-local signals use the listing as the definition boundary and MUST include name and value_type. Data-provider and signal-source refs MAY omit definition metadata when the buyer can resolve it from the referenced provider-published definition or source; any supplied name, description, value_type, categories, range, methodology_url, or last_updated is product/account/source context and does not replace the authoritative definition.
  */
 export type SignalListing = {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & (
     | {
-        [k: string]: unknown | undefined;
       }
     | {
-        [k: string]: unknown | undefined;
       }
   ) & {
     signal_ref?: SignalRef;
@@ -3540,13 +3419,10 @@ export type SignalListing = {
      */
     restricted_attributes?: [RestrictedAttribute, ...RestrictedAttribute[]];
     demographic_predicate?: DemographicPredicate;
-    [k: string]: unknown | undefined;
   } & (
     | {
-        [k: string]: unknown | undefined;
       }
     | {
-        [k: string]: unknown | undefined;
       }
   ) & {
     signal_ref?: SignalRef;
@@ -3594,13 +3470,10 @@ export type SignalListing = {
      */
     restricted_attributes?: [RestrictedAttribute, ...RestrictedAttribute[]];
     demographic_predicate?: DemographicPredicate;
-    [k: string]: unknown | undefined;
   } & (
     | {
-        [k: string]: unknown | undefined;
       }
     | {
-        [k: string]: unknown | undefined;
       }
   ) & {
     signal_ref?: SignalRef;
@@ -3648,7 +3521,6 @@ export type SignalListing = {
      */
     restricted_attributes?: [RestrictedAttribute, ...RestrictedAttribute[]];
     demographic_predicate?: DemographicPredicate;
-    [k: string]: unknown | undefined;
   };
 /**
  * DEPRECATED. Use signal_ref instead. Legacy SignalId retained for compatibility with older Signals Protocol clients.
@@ -3667,7 +3539,6 @@ export type SignalID =
        * Signal identifier within the data provider's catalog (e.g., 'likely_ev_buyers', 'income_100k_plus')
        */
       id: string;
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -3682,13 +3553,11 @@ export type SignalID =
        * Signal identifier within the agent's signal set (e.g., 'custom_auto_intenders')
        */
       id: string;
-      [k: string]: unknown | undefined;
     };
 /**
  * A signal the seller makes available inline for package-level signal composition on this product. Product.signal_targeting_options is used when the product needs product-scoped pricing, activation handles, defaults, grouping hints, a brief/refine-selected subset, or a curated inline menu. Wholesale products can instead omit inline options when the selectable menu is the broader get_signals feed. Product-local signals define their name and value_type inline through the shared signal-listing fields; data-provider and signal-source refs may omit those definition fields when the referenced definition or source is authoritative.
  */
 export type ProductSignalTargetingOption = SignalListing & {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Optional opaque resolved-segment or seller execution handle for this signal. Omit when signal_ref plus the value expression is sufficient for the seller to resolve the signal. Include when the seller exposes a distinct runtime or activation handle that buyers must echo in packages[].targeting_overlay.signal_targeting_groups.groups[].signals[].signal_agent_segment_id. Buyers SHOULD echo this handle verbatim rather than reconstructing identity from categorical values; providers MAY namespace handles so cross-provider identity stays legible without a shared taxonomy registry.
@@ -3718,7 +3587,6 @@ export type ProductSignalTargetingOption = SignalListing & {
    * @minItems 1
    */
   pricing_options?: [VendorPricingOption, ...VendorPricingOption[]];
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Optional opaque resolved-segment or seller execution handle for this signal. Omit when signal_ref plus the value expression is sufficient for the seller to resolve the signal. Include when the seller exposes a distinct runtime or activation handle that buyers must echo in packages[].targeting_overlay.signal_targeting_groups.groups[].signals[].signal_agent_segment_id. Buyers SHOULD echo this handle verbatim rather than reconstructing identity from categorical values; providers MAY namespace handles so cross-provider identity stays legible without a shared taxonomy registry.
@@ -3748,7 +3616,6 @@ export type ProductSignalTargetingOption = SignalListing & {
    * @minItems 1
    */
   pricing_options?: [VendorPricingOption, ...VendorPricingOption[]];
-  [k: string]: unknown | undefined;
 };
 /**
  * A pricing option offered by a vendor agent (signals, creative, governance). Combines pricing_option_id with the pricing model fields. Pass pricing_option_id in report_usage for billing verification. All vendor discovery responses return pricing_options as an array — vendors may offer multiple options (volume tiers, context-specific rates, different models per product line).
@@ -3781,17 +3648,13 @@ export type VendorPricing = CpmPricing | PercentOfMediaPricing | FlatFeePricing 
  */
 export type TargetingModification = ReplaceTargetingValue | RemoveTargetingSetValues;
 export type RemoveTargetingSetValues = {
-  [k: string]: unknown | undefined;
 };
 /**
  * An immutable, population-level claim about an inventory audience's composition, affinity, or estimated reach. This object is discovery and planning evidence only: it MUST NOT be interpreted as an exact targeting predicate, proof that any particular impression belongs to the audience, or legal-age verification.
  */
 export type AudienceEvidence = {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Stable provider-scoped identifier for the logical evidence series across versions.
@@ -4751,13 +4614,10 @@ export type AudienceEvidence = {
  * A machine-comparable audience dimension and value or numeric range used in population-level audience evidence. The built-in `age` dimension uses completed years: scalar and set values and range bounds MUST be non-negative integers, and a range's min MUST be less than or equal to its max. Provider-defined dimensions SHOULD use an HTTPS URI and SHOULD identify their taxonomy so two similarly named dimensions are not assumed equivalent.
  */
 export type AudienceCharacteristic = {
-  [k: string]: unknown | undefined;
 } & (
   | {
-      [k: string]: unknown | undefined;
     }
   | {
-      [k: string]: unknown | undefined;
     }
 ) & {
     /**
@@ -4766,7 +4626,6 @@ export type AudienceCharacteristic = {
     dimension: (
       | 'age'
       | {
-          [k: string]: unknown | undefined;
         }
     ) &
       string;
@@ -4795,10 +4654,8 @@ export type AudienceCharacteristic = {
     label?: string;
   } & (
     | {
-        [k: string]: unknown | undefined;
       }
     | {
-        [k: string]: unknown | undefined;
       }
   ) & {
     /**
@@ -4807,7 +4664,6 @@ export type AudienceCharacteristic = {
     dimension: (
       | 'age'
       | {
-          [k: string]: unknown | undefined;
         }
     ) &
       string;
@@ -4839,13 +4695,10 @@ export type AudienceCharacteristic = {
  * Portable, reference-first presentation of an independently issued claim. It identifies the claimed issuer, claim vocabulary, subject, and either a stable credential locator or an embedded credential. A presentation is a locator and claim hint, not proof or a trust decision. The evaluator remains verifier-of-record and MUST resolve or inspect the credential only under its published attestation capabilities and local trust policy.
  */
 export type AttestationReference = {
-  [k: string]: unknown | undefined;
 } & (
   | {
-      [k: string]: unknown | undefined;
     }
   | {
-      [k: string]: unknown | undefined;
     }
 ) & {
     issuer: AttestationIssuer;
@@ -4896,10 +4749,8 @@ export type AttestationReference = {
     ext?: ExtensionObject;
   } & (
     | {
-        [k: string]: unknown | undefined;
       }
     | {
-        [k: string]: unknown | undefined;
       }
   ) & {
     issuer: AttestationIssuer;
@@ -4957,9 +4808,7 @@ export type AttestationSubject = AttestationBrandSubject | AttestationAgentSubje
  * Evaluator-of-record result for one portable attestation presentation. The result binds to the exact presentation through reference_digest and may also pin the credential bytes. It records evaluation, not issuer evidence: domain consumers attach this object to the governance context, evidence snapshot, rights decision, or other action that relied on it.
  */
 export type AttestationEvaluation = {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * SHA-256 of the RFC 8785 JSON Canonicalization Scheme encoding of the complete AttestationReference, including embedded_credential when present. This prevents a result for one presentation from being replayed for another.
@@ -5021,10 +4870,8 @@ export type AttestationEvaluation = {
    */
   action_binding?:
     | {
-        [k: string]: unknown | undefined;
       }
     | {
-        [k: string]: unknown | undefined;
       };
   ext?: ExtensionObject;
 };
@@ -5032,7 +4879,6 @@ export type AttestationEvaluation = {
  * Typed seller collateral for buyer-facing product cards. Each entry carries a semantic role (coverage_map, sample_render, etc.) and a canonical asset payload. Distinct from hero_image/carousel_images (display-oriented) and from core/reference-asset.json (creative-generation oriented).
  */
 export type ProductCardReferenceAsset = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Semantic role of this asset. coverage_map: geographic or audience reach visualization; sample_render: mockup of ad placement in context; environment_photo: photo of the physical or digital environment; media_kit: downloadable media kit or spec sheet; logo: seller or property logo; other: seller-defined role (provide role_label).
@@ -5050,13 +4896,11 @@ export type ProductCardReferenceAsset = {
    * Optional human-readable context about this asset.
    */
   description?: string;
-  [k: string]: unknown | undefined;
 };
 /**
  * A proposed media plan with fixed or seller-optimized budget allocation across products. Represents the publisher's strategic recommendation for how to structure a campaign based on the brief. Proposals are actionable: committed proposals can be executed directly via create_media_buy by providing the proposal_id; draft proposals must first be finalized via get_products refine action 'finalize'.
  */
 export type Proposal = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Unique identifier for this proposal. Used to finalize a draft proposal and to execute a committed proposal via create_media_buy.
@@ -5107,7 +4951,6 @@ export type Proposal = {
      * ISO 4217 currency code
      */
     currency?: string;
-    [k: string]: unknown | undefined;
   };
   /**
    * Explanation of how this proposal aligns with the campaign brief
@@ -5115,7 +4958,6 @@ export type Proposal = {
   brief_alignment?: string;
   forecast?: DeliveryForecast;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 };
 /**
  * How a media buy's total budget is allocated across its packages. Fixed allocation preserves independent package budgets. Seller-optimized allocation delegates continuous cross-package allocation to the seller within the media-buy total, package caps, minimum-spend targets, flight windows, and pacing controls. When a seller-optimized media-buy BiddingPolicy carries cost_per or roas, that control binds to this allocation block's primary optimization goal rather than independently to each package goal.
@@ -5139,10 +4981,8 @@ export type BudgetAllocation =
        */
       optimization_goals: [
         OptimizationGoal & {
-          [k: string]: unknown | undefined;
         },
         ...(OptimizationGoal & {
-          [k: string]: unknown | undefined;
         })[]
       ];
     };
@@ -5176,10 +5016,8 @@ export type OptimizationGoal =
        */
       target_frequency?:
         | {
-            [k: string]: unknown | undefined;
           }
         | {
-            [k: string]: unknown | undefined;
           };
       /**
        * Minimum video view duration in seconds that qualifies as a completed_view for this goal. Only applicable when metric is 'completed_views'. When omitted, the seller uses their platform default (typically 2–15 seconds). Common values: 2 (Snap/LinkedIn default), 6 (TikTok), 15 (Snap 15-second views, Meta ThruPlay). Sellers declare which durations they support in metric_optimization.supported_view_durations. Sellers must reject goals with unsupported values — silent rounding would create measurement discrepancies.
@@ -5195,7 +5033,6 @@ export type OptimizationGoal =
              * Target cost per metric unit in the buy currency
              */
             value: number;
-            [k: string]: unknown | undefined;
           }
         | {
             kind: 'threshold_rate';
@@ -5203,13 +5040,11 @@ export type OptimizationGoal =
              * Minimum per-impression value. Units depend on the metric: proportion (clicks, views, completed_views), seconds (viewed_seconds, attention_seconds), or score (attention_score).
              */
             value: number;
-            [k: string]: unknown | undefined;
           };
       /**
        * Relative priority among sibling goals. Lower numbers rank first. Goals without priority follow explicitly prioritized goals. Ties use array order, so the earliest goal at the lowest explicit priority is primary; when all priorities are omitted, the first goal is primary.
        */
       priority?: number;
-      [k: string]: unknown | undefined;
     }
   | {
       kind: 'event';
@@ -5237,7 +5072,6 @@ export type OptimizationGoal =
            * Unit-scaling multiplier the seller must apply to value_field before aggregation. Use -1 for refund events (negate the value), 0.01 for values in cents, -0.01 for refunds in cents. It MUST NOT be used for currency conversion. A value of 0 zeroes out this source's value contribution (the source still counts for event dedup). Defaults to 1. This is not passed as a parameter to underlying platform APIs — the seller applies it when computing aggregated value metrics.
            */
           value_factor?: number;
-          [k: string]: unknown | undefined;
         },
         ...{
           /**
@@ -5257,7 +5091,6 @@ export type OptimizationGoal =
            * Unit-scaling multiplier the seller must apply to value_field before aggregation. Use -1 for refund events (negate the value), 0.01 for values in cents, -0.01 for refunds in cents. It MUST NOT be used for currency conversion. A value of 0 zeroes out this source's value contribution (the source still counts for event dedup). Defaults to 1. This is not passed as a parameter to underlying platform APIs — the seller applies it when computing aggregated value metrics.
            */
           value_factor?: number;
-          [k: string]: unknown | undefined;
         }[]
       ];
       /**
@@ -5270,7 +5103,6 @@ export type OptimizationGoal =
              * Target cost per event in the buy currency
              */
             value: number;
-            [k: string]: unknown | undefined;
           }
         | {
             kind: 'per_ad_spend';
@@ -5278,11 +5110,9 @@ export type OptimizationGoal =
              * Target return ratio (e.g., 4.0 means $4 of value per $1 spent)
              */
             value: number;
-            [k: string]: unknown | undefined;
           }
         | {
             kind: 'maximize_value';
-            [k: string]: unknown | undefined;
           };
       /**
        * Attribution window for this optimization goal — references the canonical `attribution-window` shape (post_click, post_view, model). Values must match an option declared in the seller's `conversion_tracking.attribution_windows` capability. Sellers MUST reject windows not in their declared capabilities. When the entire field is omitted, the seller uses their default window.
@@ -5292,7 +5122,6 @@ export type OptimizationGoal =
        * Relative priority among sibling goals. Lower numbers rank first. Goals without priority follow explicitly prioritized goals. Ties use array order, so the earliest goal at the lowest explicit priority is primary; when all priorities are omitted, the first goal is primary.
        */
       priority?: number;
-      [k: string]: unknown | undefined;
     }
   | {
       kind: 'vendor_metric';
@@ -5308,7 +5137,6 @@ export type OptimizationGoal =
              * Target cost per metric unit in the buy currency. Units of the metric are vendor-defined.
              */
             value: number;
-            [k: string]: unknown | undefined;
           }
         | {
             kind: 'threshold_rate';
@@ -5316,13 +5144,11 @@ export type OptimizationGoal =
              * Minimum per-impression value. Units of the metric are vendor-defined.
              */
             value: number;
-            [k: string]: unknown | undefined;
           };
       /**
        * Relative priority among sibling goals. Lower numbers rank first. Goals without priority follow explicitly prioritized goals. Ties use array order, so the earliest goal at the lowest explicit priority is primary; when all priorities are omitted, the first goal is primary.
        */
       priority?: number;
-      [k: string]: unknown | undefined;
     };
 /**
  * Canonical response contract for get_products, including completed results, terminal failures, wholesale unchanged responses, and the structured GetProductsRejected business outcome.
@@ -5620,7 +5446,6 @@ export interface Error {
        */
       value: string | number | boolean | null;
     }[];
-    [k: string]: unknown | undefined;
   }[];
   /**
    * Additional task-specific error details. Sellers MAY mirror `issues[]` here as `details.issues` for backward compatibility with pre-3.1 consumers reading from `details`; new consumers SHOULD prefer the top-level `issues` field.
@@ -5645,7 +5470,6 @@ export interface Error {
    * This is **SHOULD-level guidance**, not MUST: `details` remains `additionalProperties: true` and pre-3.1 sellers using `available` / `allowed` / `accepted_values` at the error root remain conformant. The canonical shape lets buyer-side diagnostic tooling (SDK runner hints, dashboards, error classifiers) reliably surface the accepted-set without per-seller pattern matching. SDKs SHOULD accept any of the legacy variants and normalize on read; the canonical shape is what new sellers and 3.1+ adopters should emit going forward.
    */
   details?: {
-    [k: string]: unknown | undefined;
   };
   /**
    * Agent recovery classification. transient: retry after delay (rate limit, service unavailable, timeout). correctable: fix the request and resend (invalid field, budget too low, creative rejected). terminal: requires human action (account suspended, payment required, account not found). Senders SHOULD populate `recovery` on every error from 3.1 onward — it is the normative carrier of recovery semantics across version skew. A receiver that does not recognize `error.code` (a newer code, or a platform-specific code) MUST still be able to classify the error from `recovery`. The `enumMetadata.recovery` block in `enums/error-code.json` is the documentary mirror for known codes; `error.recovery` on the wire is authoritative.
@@ -5663,20 +5487,17 @@ export interface Error {
    * Optional identifier for the SDK that augmented this error entry. Format: `<sdk_package_name>@<version>` (e.g., `@adcontextprotocol/adcp@7.3.0`, `adcontextprotocol-adcp-python@1.2.0`). MUST be set when `source: "sdk"`; MUST be absent when `source: "producer"` or absent. Lets downstream consumers identify which intermediate processor inserted the entry, useful for debugging cross-SDK divergence (e.g., one SDK detects a projection failure that another SDK's registry version doesn't).
    */
   sdk_id?: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * @deprecated
  * Deprecated 3.x compatibility branch. Product references one or more named formats by structured format_id ({ agent_url, id }). New 3.2 products use format_options.
  */
 export interface NamedFormatProduct {
-  [k: string]: unknown | undefined;
 }
 /**
  * Product carries one or more inline ProductFormatDeclarations, each narrowing a canonical format. This is the 3.1+ format-option path introduced by RFC #3305. A single-element `format_options` array is the 90% case; multi-element arrays declare that the product accepts any of the listed format options.
  */
 export interface CanonicalFormatProduct {
-  [k: string]: unknown | undefined;
 }
 /**
  * Optional seller-enforced creative-locale constraint for this format option. This is product/placement eligibility, not a new format kind or synthetic locale-specific format ID. Because legacy format_ids cannot preserve this constraint, declarations carrying locale_policy MUST set canonical_formats_only to true and MUST NOT carry v1_format_ref.
@@ -5689,7 +5510,6 @@ export interface CreativeLocalePolicy {
    * @maxItems 50
    */
   accepted_language_ranges: [LanguageTag, ...LanguageTag[]];
-  [k: string]: unknown | undefined;
 }
 export interface ImageFormatDeclaration {
   format_kind: 'image';
@@ -5748,7 +5568,6 @@ export interface CustomFormatDeclaration {
    * Custom shape's params. Validated against the schema fetched from `format_schema.uri` at the cached `format_schema.digest`.
    */
   params: {
-    [k: string]: unknown | undefined;
   };
 }
 /**
@@ -5790,7 +5609,6 @@ export interface CPMPricingOption {
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
   eligible_adjustments?: PriceAdjustmentKind[];
-  [k: string]: unknown | undefined;
 }
 /**
  * Optional pricing guidance for auction-based bidding
@@ -5812,1746 +5630,22 @@ export interface PriceGuidance {
    * 90th percentile of recent winning bids
    */
   p90?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Breakdown of how fixed_price was derived from the list (rate card) price. Only meaningful when fixed_price is present.
  */
-export interface PriceBreakdown {
-  /**
-   * Rate card or base price before any adjustments. The starting point from which fixed_price is derived by applying fee and discount adjustments sequentially.
-   */
-  list_price: number;
-  /**
-   * Ordered list of price adjustments. Fee and discount adjustments walk list_price to fixed_price — fees increase the running price, discounts reduce it. Commission and settlement adjustments are disclosed for transparency but do not affect the buyer's committed price.
-   *
-   * @minItems 1
-   * @maxItems 20
-   */
-  adjustments:
-    | [
-        | {
-            [k: string]: unknown | undefined;
-          }
-        | {
-            [k: string]: unknown | undefined;
-          }
-      ]
-    | [
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        )
-      ]
-    | [
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        )
-      ]
-    | [
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        )
-      ]
-    | [
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        )
-      ]
-    | [
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        )
-      ]
-    | [
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        )
-      ]
-    | [
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        )
-      ]
-    | [
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        )
-      ]
-    | [
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        )
-      ]
-    | [
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        )
-      ]
-    | [
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        )
-      ]
-    | [
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        )
-      ]
-    | [
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        )
-      ]
-    | [
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        )
-      ]
-    | [
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        )
-      ]
-    | [
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        )
-      ]
-    | [
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        )
-      ]
-    | [
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        )
-      ]
-    | [
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        ),
-        (
-          | {
-              [k: string]: unknown | undefined;
-            }
-          | {
-              [k: string]: unknown | undefined;
-            }
-        )
-      ];
-  [k: string]: unknown | undefined;
+export interface PriceAdjustment {
+  kind: PriceAdjustmentKind;
+  name: string;
+  rate?: number;
+  amount?: number;
+  description?: string;
+  beneficiary?: string;
 }
-/**
- * Viewable Cost Per Mille (cost per 1,000 viewable impressions) pricing - MRC viewability standard. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
- */
+export interface PriceBreakdown {
+  list_price: number;
+  adjustments: PriceAdjustment[];
+}
 export interface VCPMPricingOption {
   /**
    * Unique identifier for this pricing option within the product
@@ -7588,7 +5682,6 @@ export interface VCPMPricingOption {
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
   eligible_adjustments?: PriceAdjustmentKind[];
-  [k: string]: unknown | undefined;
 }
 /**
  * Cost Per Click pricing. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -7629,7 +5722,6 @@ export interface CPCPricingOption {
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
   eligible_adjustments?: PriceAdjustmentKind[];
-  [k: string]: unknown | undefined;
 }
 /**
  * Cost Per Completed View (100% video/audio completion) pricing. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -7670,7 +5762,6 @@ export interface CPCVPricingOption {
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
   eligible_adjustments?: PriceAdjustmentKind[];
-  [k: string]: unknown | undefined;
 }
 /**
  * Cost Per View (at publisher-defined threshold) pricing for video/audio. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -7713,9 +5804,7 @@ export interface CPVPricingOption {
            * Seconds of viewing required
            */
           duration_seconds: number;
-          [k: string]: unknown | undefined;
         };
-    [k: string]: unknown | undefined;
   };
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
@@ -7726,7 +5815,6 @@ export interface CPVPricingOption {
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
   eligible_adjustments?: PriceAdjustmentKind[];
-  [k: string]: unknown | undefined;
 }
 /**
  * Cost Per Point (Gross Rating Point) pricing for TV and audio campaigns. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -7766,7 +5854,6 @@ export interface CPPPricingOption {
      * Minimum GRPs/TRPs required
      */
     min_points?: number;
-    [k: string]: unknown | undefined;
   };
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
@@ -7777,7 +5864,6 @@ export interface CPPPricingOption {
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
   eligible_adjustments?: PriceAdjustmentKind[];
-  [k: string]: unknown | undefined;
 }
 /**
  * Cost Per Acquisition pricing. Advertiser pays a fixed price when a specified conversion event occurs. The event_type field declares which event triggers billing (e.g., purchase, lead, app_install).
@@ -7820,7 +5906,6 @@ export interface CPAPricingOption {
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
   eligible_adjustments?: PriceAdjustmentKind[];
-  [k: string]: unknown | undefined;
 }
 /**
  * Flat rate pricing for sponsorships, takeovers, and DOOH exclusive placements. A fixed total cost regardless of delivery volume. For duration-scaled pricing (rate × time units), use the `time` model instead. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -7857,7 +5942,6 @@ export interface FlatRatePricingOption {
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
   eligible_adjustments?: PriceAdjustmentKind[];
-  [k: string]: unknown | undefined;
 }
 /**
  * DOOH inventory allocation parameters. Sponsorship and takeover flat_rate options omit this field entirely — only include for digital out-of-home inventory.
@@ -7895,7 +5979,6 @@ export interface DoohParameters {
    * Estimated audience impressions for this slot (informational, not a delivery guarantee)
    */
   estimated_impressions?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Cost per time unit (hour, day, week, or month) - rate scales with campaign duration. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -7938,7 +6021,6 @@ export interface TimeBasedPricingOption {
      * Maximum booking duration in time_units. Must be >= min_duration when both are present.
      */
     max_duration?: number;
-    [k: string]: unknown | undefined;
   };
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
@@ -7949,7 +6031,6 @@ export interface TimeBasedPricingOption {
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
   eligible_adjustments?: PriceAdjustmentKind[];
-  [k: string]: unknown | undefined;
 }
 /**
  * Forecasted delivery metrics for this product. Concrete discovery targeting scopes the forecast to those effective values. When discovery requested only required_overlay_support for a dimension, the forecast describes the product's discovery/default scope and is not a value-specific forecast for every later selection; buyers rediscover with concrete targeting_overlay values when they need that forecast.
@@ -7986,7 +6067,6 @@ export interface DeliveryForecast {
    */
   valid_until?: string;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * A placement dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
@@ -8056,7 +6136,6 @@ export interface ForecastVendorMetricValue {
    * Optional structured payload for vendor metrics that do not fit a single scalar. Forecast rows SHOULD use ForecastRange values inside breakdown when sub-values are numeric forecasts. Buyers MUST treat this object as opaque without consulting the vendor's documentation.
    */
   breakdown?: {
-    [k: string]: unknown | undefined;
   };
 }
 /**
@@ -8080,7 +6159,6 @@ export interface OutcomeMeasurement {
    * Reporting frequency and format
    */
   reporting: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * An action a seller declares as allowed on buys created against this product, scoped to the buy statuses where the action is permitted and the modes available. Advisory template only — the authoritative per-buy resolution lives in `available_actions[]` on the buy response (which may diverge from the product template based on negotiated terms, account tier, or buy-level overrides). The containing `allowed_actions[]` array is uniquely keyed by `action`; sellers MUST NOT emit two entries with the same `action` value. JSON Schema `uniqueItems` only catches structurally identical objects, so validators MUST enforce action-uniqueness separately.
@@ -8192,7 +6270,6 @@ export interface ReportingCapabilities {
    * @minItems 1
    */
   measurement_windows?: [MeasurementWindow, ...MeasurementWindow[]];
-  [k: string]: unknown | undefined;
 }
 /**
  * Geographic breakdown support for this product. Declares which geo levels and systems are available for by_geo reporting within by_package.
@@ -8247,7 +6324,6 @@ export interface MeasurementWindow {
    * Whether this window is the basis for delivery guarantees, reconciliation, and invoicing. A product typically has one guarantee basis window (e.g., C7 for most US broadcast, post-IVT final for DOOH). Buyers reconcile against the guarantee basis window's final numbers.
    */
   is_guarantee_basis?: boolean;
-  [k: string]: unknown | undefined;
 }
 /**
  * Creative requirements and restrictions for a product
@@ -8283,7 +6359,6 @@ export interface CreativePolicy {
      * When true, the seller requires creatives to include at least one `embedded_provenance` entry. For pipelines where sidecar metadata is stripped by intermediaries, this ensures provenance data persists through delivery. Submissions that omit `embedded_provenance` are rejected with `PROVENANCE_EMBEDDED_MISSING`.
      */
     require_embedded_provenance?: boolean;
-    [k: string]: unknown | undefined;
   };
   /**
    * Governance agents the seller operates, has allowlisted, or otherwise trusts to verify provenance claims via `get_creative_features`. Buyers attaching a `verify_agent` pointer on `embedded_provenance[]` or `watermarks[]` MUST select an `agent_url` that appears in this list (canonicalized per /docs/reference/url-canonicalization: lowercase scheme and host, strip default port, normalize path dot-segments) - the buyer is *representing* that they used a verifier the seller will recognize, not asserting unilateral routing. Sellers MUST reject `sync_creatives` submissions whose `verify_agent.agent_url` does not match any entry here with `PROVENANCE_VERIFIER_NOT_ACCEPTED`. The seller is the verifier-of-record: it is the seller, not the buyer, that decides which agent it will call. Publishing the list lets buyers pre-flight their creative shape against `get_products` and lets multiple buyers converge on the same verifier without coordinating with each other.
@@ -8324,14 +6399,12 @@ export interface CreativePolicy {
       providers?: [string, ...string[]];
     }[]
   ];
-  [k: string]: unknown | undefined;
 }
 /**
  * Machine-readable demographic meaning. For product-local signals this listing is authoritative; for data-provider and signal-source refs, any projected value MUST match the referenced authoritative definition. Signal names alone never establish demographic semantics.
  */
 export interface DemographicPredicate {
   age: DemographicAgeRange;
-  [k: string]: unknown | undefined;
 }
 /**
  * Fixed cost per thousand impressions
@@ -8347,7 +6420,6 @@ export interface CpmPricing {
    */
   currency: string;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * Percentage of media spend charged for this signal. When max_cpm is set, the effective rate is capped at that CPM — useful for platforms like The Trade Desk that use percent-of-media pricing with a CPM ceiling.
@@ -8367,7 +6439,6 @@ export interface PercentOfMediaPricing {
    */
   currency: string;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * Fixed charge per billing period, regardless of impressions or spend. Used for licensed data bundles and audience subscriptions.
@@ -8387,7 +6458,6 @@ export interface FlatFeePricing {
    */
   currency: string;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * Fixed price per unit of work. Used for creative transformation (per format), AI generation (per image, per token), and rendering (per variant). The unit field describes what is counted; unit_price is the cost per one unit.
@@ -8407,7 +6477,6 @@ export interface PerUnitPricing {
    */
   currency: string;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * Escape hatch for pricing constructs that do not fit cpm, percent_of_media, flat_fee, or per_unit. Use when a vendor prices via performance kickers, tiered volume, hybrid formulas, outcome-sharing, or any other model the standard forms cannot express. Requires a human-readable description and a structured metadata object that captures the parameters a buyer needs to reason about the charge. Buyers SHOULD route custom pricing through operator review before commitment — automatic selection is not recommended.
@@ -8426,14 +6495,12 @@ export interface CustomPricing {
      * One or two sentences describing the pricing construct in plain language, displayed to the buyer's operator when requesting approval. Should not repeat the top-level `description` verbatim — summarize the charge mechanic instead (e.g., 'Base $12 CPM plus $0.50 per qualifying post-view conversion, capped at $45 CPM').
      */
     summary_for_operator?: string;
-    [k: string]: unknown | undefined;
   };
   /**
    * ISO 4217 currency code. Present when the pricing resolves to a monetary charge in a specific currency.
    */
   currency?: string;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * Composition rules for selecting signals on this product. The selectable signal menu may come from inline signal_targeting_options or from get_signals when a wholesale product omits inline options. This is product-scoped because products may be backed by different ad servers with different Boolean targeting support and group limits.
@@ -8473,7 +6540,6 @@ export interface SignalTargetingRules {
    * @minItems 1
    */
   selection_group_rules?: [SignalSelectionGroupRule, ...SignalSelectionGroupRule[]];
-  [k: string]: unknown | undefined;
 }
 /**
  * Product-scoped override for one ProductSignalTargetingOption.selection_group value. Use this when a product has mixed signal-selection behavior, such as fixed suppressions plus a required pick-one include tier.
@@ -8499,7 +6565,6 @@ export interface SignalSelectionGroupRule {
    * Maximum selected options from this selection_group.
    */
   max_selected_signals?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Exact demographic execution available for this product. Buyers MUST use this product-scoped declaration, not the seller-wide get_adcp_capabilities rollup, to preflight a demographic predicate.
@@ -8509,9 +6574,7 @@ export interface DemographicTargetingCapability {
    * Age-targeting execution available for this product.
    */
   age: {
-    [k: string]: unknown | undefined;
   };
-  [k: string]: unknown | undefined;
 }
 /**
  * Country- and value-aware support for selecting canonical ISO 3166-2 subdivisions. all_values is exhaustive for the values active in the seller's support snapshot when the declaration is issued; it does not automatically include values introduced by a later catalog revision. values is an exact finite subset. In seller-wide capabilities, each declared value is individually supported within the response scope, but the declaration does not promise that values are jointly composable or available through the same execution route or account. In Product.overlay_support, the declared values form the binding set of executable targeting permissions for that Product, subject to its declared limits; support does not itself guarantee inventory for every selection.
@@ -8620,7 +6683,6 @@ export interface ReplaceTargetingValue {
    * Complete replacement value. It MUST validate against targeting.json at path; the seller then validates the complete effective overlay. This operation may narrow or broaden only as an explicit buyer-visible proposal.
    */
   applied: {
-    [k: string]: unknown | undefined;
   };
   reason: string;
   ext?: ExtensionObject;
@@ -8637,7 +6699,6 @@ export interface DateRange {
    * End date (inclusive), ISO 8601
    */
   end: string;
-  [k: string]: unknown | undefined;
 }
 export interface AttestationBrandSubject {
   type: 'brand';
@@ -9292,7 +7353,6 @@ export interface VendorMetricOptimization {
    * Vendor-defined metrics this product can steer delivery toward. Each entry pairs a vendor identity (BrandRef anchored on the vendor's `brand.json` `agents[type='measurement']`) with a `metric_id` from that vendor's published `measurement.metrics[]` catalog, plus the target kinds the seller supports for the pair. Semantic uniqueness key is `(vendor.domain, vendor.brand_id, metric_id)`; sellers MUST de-duplicate before publication. JSON Schema `uniqueItems` blocks exact-object duplicates; semantic deduplication on the BrandRef-domain key is a seller obligation.
    */
   supported_metrics: VendorMetricOptimizationSupportedMetric[];
-  [k: string]: unknown | undefined;
 }
 /**
  * One vendor-defined metric that a product can optimize toward. Identified by the tuple `(vendor, metric_id)` plus the supported target kinds for optimization goals.
@@ -9328,7 +7388,6 @@ export interface MeasurementReadiness {
    * Seller explanation of the readiness assessment, recommendations for improvement, or context about what the buyer needs to change.
    */
   notes?: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * An actionable issue detected during a health or readiness assessment. Used by event source health and measurement readiness to surface problems and recommendations.
@@ -9342,7 +7401,6 @@ export interface DiagnosticIssue {
    * Human/agent-readable description of the issue and how to resolve it.
    */
   message: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * A hosted video file delivered directly (e.g., an MP4 you host), with URL and technical specifications including audio track properties. `width` and `height` are required because a hosted video file has intrinsic, native pixel dimensions that are known when the file is created. Tag-delivered video uses the separate `vast` asset, which carries no `width`/`height`: a VAST response resolves geometry per-`MediaFile` at serve time, so there is no single width/height for the ad. Aspect-ratio and size *constraints* (what a placement accepts) belong on the format/requirements layer, not on the asset.
@@ -9454,7 +7512,6 @@ export interface VideoAsset {
    */
   audio_description_url?: string;
   provenance?: Provenance;
-  [k: string]: unknown | undefined;
 }
 /**
  * Markdown-formatted text content following CommonMark specification
@@ -9477,7 +7534,6 @@ export interface MarkdownAsset {
    * Whether raw HTML blocks are allowed in the markdown. False recommended for security.
    */
   allow_raw_html?: boolean;
-  [k: string]: unknown | undefined;
 }
 /**
  * URL reference asset. `url_type` declares the mechanism a receiver uses to invoke the URL (clickthrough vs. tracker_pixel vs. tracker_script) and is distinct from the URL's purpose, which the format declares in `url-asset-requirements.role` (clickthrough, landing_page, impression_tracker, click_tracker, viewability_tracker, third_party_tracker). Senders SHOULD include `url_type` on every URL asset. When `url_type` is absent, receivers SHOULD fall back to the format's `url-asset-requirements.role` per this mapping: clickthrough/landing_page → `clickthrough`; impression_tracker/click_tracker → `tracker_pixel`; viewability_tracker → `tracker_script` (OMID and equivalent verification SDKs require a <script> tag — firing them as a pixel produces no measurement); third_party_tracker → no safe fallback (mechanism is integration-specific — DV/IAS ship both pixel and script forms — receivers MAY reject or warn). When neither `url_type` nor a format-side `role` is available, receivers MUST NOT silently pick a mechanism; they SHOULD reject the manifest. Note: VAST/DAAST tag URLs are not URL assets — use `asset_type: "vast"` (or the dedicated tracker types pending RFC #2915), not `asset_type: "url"` with a tracker_pixel mechanism.
@@ -9497,7 +7553,6 @@ export interface URLAsset {
    */
   description?: string;
   provenance?: Provenance;
-  [k: string]: unknown | undefined;
 }
 /**
  * References collections declared in an adagents.json. Buyers resolve full collection objects by fetching the adagents.json at the given domain and matching collection_ids against its collections array.
@@ -9513,7 +7568,6 @@ export interface CollectionSelector {
    * @minItems 1
    */
   collection_ids: [string, ...string[]];
-  [k: string]: unknown | undefined;
 }
 /**
  * A single bookable unit within a collection — one episode, issue, event, or rotation period. The parent collection's kind indicates how to interpret each installment: TV/podcast episodes, print issues, live event airings, newsletter editions, or DOOH rotation periods. Installments inherit collection-level fields they don't override: content_rating defaults to the collection's baseline, guest_talent is additive to the collection's recurring talent, and topics add context beyond the collection's genre.
@@ -9579,7 +7633,6 @@ export interface Installment {
     type: DerivativeType;
   };
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * Installment-specific content rating. Overrides the collection's baseline content_rating when present.
@@ -9590,7 +7643,6 @@ export interface ContentRating {
    * Rating value within the system (e.g., 'TV-PG', 'R', 'explicit')
    */
   rating: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * Installment-specific event context. When present, this installment is anchored to a real-world event. Overrides the collection-level special when present.
@@ -9609,7 +7661,6 @@ export interface Special {
    * When the event ends (ISO 8601). Omit for single-day events.
    */
   ends?: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * A person associated with a collection or installment, with an optional link to their brand.json identity
@@ -9624,7 +7675,6 @@ export interface Talent {
    * URL to this person's brand.json entry. Enables buyer agents to evaluate the talent's brand identity and associations.
    */
   brand_url?: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * Break-based ad inventory for this installment. For non-break formats (host reads, integrations), use product placements.
@@ -9650,7 +7700,6 @@ export interface AdInventoryConfiguration {
    * Ad format types supported in breaks (e.g., 'video', 'audio', 'display')
    */
   supported_formats?: string[];
-  [k: string]: unknown | undefined;
 }
 /**
  * Booking, cancellation, and material submission deadlines for this installment. Present when the installment has time-sensitive inventory that requires advance commitment or material delivery.
@@ -9670,7 +7719,6 @@ export interface InstallmentDeadlines {
    * @minItems 1
    */
   material_deadlines?: [MaterialDeadline, ...MaterialDeadline[]];
-  [k: string]: unknown | undefined;
 }
 /**
  * A deadline for creative material submission. Sellers declare stages to distinguish draft materials (e.g., talking points, raw artwork) from production-ready assets (e.g., approved scripts, press-ready PDFs).
@@ -9688,7 +7736,6 @@ export interface MaterialDeadline {
    * What the seller needs at this stage (e.g., 'Talking points and brand guidelines', 'Press-ready PDF with bleed')
    */
   label?: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * Request-level confirmation of structured hard targeting inferred from the brief. Sellers MUST include this when their structured interpretation of hard prose materially affects product eligibility, pricing, or forecasting; otherwise inclusion is a best practice. Omitted when no hard targeting was inferred from the brief.
@@ -9750,7 +7797,6 @@ export interface ProductAllocation {
   daypart_targets?: [DaypartTarget, ...DaypartTarget[]];
   forecast?: DeliveryForecast;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * Describes the attribution methodology and lookback windows used for conversion measurement. Enables cross-platform comparison by making attribution methodology transparent. Used as a `$ref` from `optimization-goal.json` (buyer's optimization-time attribution choice), `get-media-buy-delivery-response.json` (seller-declared attribution methodology in delivery reports), and similar surfaces. All fields are optional individually but at least one of `post_click`, `post_view`, or `model` SHOULD be populated; absence of `model` means the seller's default attribution model applies (typically `last_touch` per industry convention) — sellers SHOULD populate `model` explicitly when committing to a specific methodology.
@@ -9765,7 +7811,6 @@ export interface AttributionWindow {
    */
   post_view?: Duration;
   model?: AttributionModel;
-  [k: string]: unknown | undefined;
 }
 /**
  * Formal insertion order attached to a committed proposal. Present when the seller requires a signed agreement before the media buy can proceed. The buyer references the io_id in io_acceptance on create_media_buy.
@@ -9809,7 +7854,6 @@ export interface InsertionOrder {
      * Payment terms
      */
     payment_terms?: 'net_30' | 'net_60' | 'net_90' | 'prepaid' | 'due_on_receipt';
-    [k: string]: unknown | undefined;
   };
   /**
    * URL to a human-readable document containing the full insertion order terms
@@ -9823,7 +7867,6 @@ export interface InsertionOrder {
    * Whether the buyer must accept this IO before creating a media buy. When true, create_media_buy requires an io_acceptance referencing this io_id.
    */
   requires_signature: boolean;
-  [k: string]: unknown | undefined;
 }
 /**
  * Cursor metadata for paginated get_products responses. In brief/refine mode, continuation pages bound returned products[] for the seller's curated or refined answer; proposals may accompany a page as plan metadata but are not independently counted by this pagination envelope, and pagination does not convert the response into an exhaustive feed contract. In wholesale mode, continuation pages walk the wholesale product feed.
@@ -9870,18 +7913,15 @@ export type CanonicalAccountReference =
  * Extension-tolerant inclusive currency bounds used by legacy discovery filters. At least one bound is required; min MUST be less than or equal to max. The strict negotiation peer that rejects unknown members is media-buy/proposal-budget-constraint.json.
  */
 export type BudgetRange = {
-  [k: string]: unknown | undefined;
 } & {
   min?: number;
   max?: number;
   currency: string;
-  [k: string]: unknown | undefined;
 };
 /**
  * Buyer-authored evidence policy for compact product discovery. Organization selectors are stable keys and never carry brand assets or content provenance.
  */
 export type ProductAudienceEvidenceRequirements = {
-  [k: string]: unknown | undefined;
 } & {
   requirement_mode: 'required' | 'preferred';
   evidence_presence: 'required' | 'when_available';
@@ -10149,7 +8189,6 @@ export interface ProductDiscoveryCriteria {
    */
   policy_ids?: [string, ...string[]];
   ext?: {
-    [k: string]: unknown | undefined;
   };
 }
 /**
@@ -10219,13 +8258,11 @@ export interface ProductOfferFilters {
         agent_url: string;
         context_match?: boolean;
         identity_match?: boolean;
-        [k: string]: unknown | undefined;
       },
       ...{
         agent_url: string;
         context_match?: boolean;
         identity_match?: boolean;
-        [k: string]: unknown | undefined;
       }[]
     ];
     /**
@@ -10246,14 +8283,12 @@ export interface ProductOfferFilters {
       threshold: number;
       standard?: ViewabilityStandard;
       vendor: BrandKey;
-      [k: string]: unknown | undefined;
     },
     ...{
       metric: PerformanceStandardMetric;
       threshold: number;
       standard?: ViewabilityStandard;
       vendor: BrandKey;
-      [k: string]: unknown | undefined;
     }[]
   ];
   /**
@@ -10266,18 +8301,14 @@ export interface ProductOfferFilters {
   required_vendor_metrics?: [
     (
       | {
-          [k: string]: unknown | undefined;
         }
       | {
-          [k: string]: unknown | undefined;
         }
     ),
     ...(
       | {
-          [k: string]: unknown | undefined;
         }
       | {
-          [k: string]: unknown | undefined;
         }
     )[]
   ];
@@ -10368,7 +8399,6 @@ export type ListProductsResponse = {
  * Compact canonical creative-format declaration. Legacy named-format links are intentionally absent; params are validated against the canonical schema selected by format_kind without inlining every format union into product discovery.
  */
 export type CanonicalFormatOption = {
-  [k: string]: unknown | undefined;
 } & {
   format_option_id?: string;
   publisher_domain?: string;
@@ -10397,7 +8427,6 @@ export type CanonicalFormatOption = {
     | 'agent_placement'
     | 'custom';
   params: {
-    [k: string]: unknown | undefined;
   };
   format_shape?: string;
   format_schema?: PlatformExtensionReference;
@@ -10429,7 +8458,6 @@ export type CanonicalFormatOption = {
     | 'agent_placement'
     | 'custom';
   params: {
-    [k: string]: unknown | undefined;
   };
   format_shape?: string;
   format_schema?: PlatformExtensionReference;
@@ -10461,7 +8489,6 @@ export type CanonicalFormatOption = {
     | 'agent_placement'
     | 'custom';
   params: {
-    [k: string]: unknown | undefined;
   };
   format_shape?: string;
   format_schema?: PlatformExtensionReference;
@@ -10493,7 +8520,6 @@ export type CanonicalFormatOption = {
     | 'agent_placement'
     | 'custom';
   params: {
-    [k: string]: unknown | undefined;
   };
   format_shape?: string;
   format_schema?: PlatformExtensionReference;
@@ -10502,7 +8528,6 @@ export type CanonicalFormatOption = {
  * Compact product placement with canonical format narrowing only.
  */
 export type CanonicalProductPlacement = {
-  [k: string]: unknown | undefined;
 } & {
   kind: 'publisher_ref' | 'seller_inline';
   placement_id: string;
@@ -10536,15 +8561,10 @@ export type CanonicalProductPlacement = {
  * Self-contained selected pricing terms for compact product offers and accepted commercial snapshots. Deprecated execution hints such as max_bid are absent; bidding intent lives in BiddingPolicy.
  */
 export type CanonicalPricingOption = {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
   pricing_option_id: string;
   pricing_model: 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'cpa' | 'revenue_share' | 'flat_rate' | 'time';
@@ -10556,7 +8576,6 @@ export type CanonicalPricingOption = {
   price_breakdown?: PriceBreakdown;
   eligible_adjustments?: PriceAdjustmentKind[];
   parameters?: {
-    [k: string]: unknown | undefined;
   };
   event_type?: EventType;
   custom_event_name?: string;
@@ -10574,7 +8593,6 @@ export type CanonicalPricingOption = {
   price_breakdown?: PriceBreakdown;
   eligible_adjustments?: PriceAdjustmentKind[];
   parameters?: {
-    [k: string]: unknown | undefined;
   };
   event_type?: EventType;
   custom_event_name?: string;
@@ -10586,11 +8604,8 @@ export type CanonicalPricingOption = {
  * Compact immutable audience-evidence snapshot for product discovery. Provider identity is a BrandKey; credential and brand-asset graphs are resolved separately.
  */
 export type CanonicalAudienceEvidence = {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
   evidence_id: string;
   snapshot_id: string;
@@ -10700,10 +8715,8 @@ export interface CanonicalProduct {
    */
   publisher_properties?: [
     PublisherPropertySelector & {
-      [k: string]: unknown | undefined;
     },
     ...(PublisherPropertySelector & {
-      [k: string]: unknown | undefined;
     })[]
   ];
   channels?: MediaChannel[];
@@ -10822,7 +8835,6 @@ export interface CanonicalForecastVendorMetricValue {
   unit?: string;
   measurable_impressions?: ForecastRange | undefined;
   breakdown?: {
-    [k: string]: unknown | undefined;
   };
 }
 /**
@@ -10924,7 +8936,6 @@ export interface CanonicalProductAction {
  * Buyer-supplied context for one planning cycle across proposal request, decline, and media-buy creation. The opaque opportunity_id is stable within the seller and account scope; sellers associate it with proposals without treating it as proposal identity.
  */
 export type OpportunityContext = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Opaque buyer-assigned identifier for this planning cycle, scoped to the seller and account.
@@ -11066,7 +9077,6 @@ export type RequestProposalsResponse = (
  * Compact immutable proposal for the AdCP 3.2 lifecycle. commercial_terms is the sole authoritative commercial envelope; narrative fields do not duplicate legacy allocation or creative graphs.
  */
 export type CanonicalProposal = {
-  [k: string]: unknown | undefined;
 } & {
   proposal_id: string;
   proposal_kind: 'new_media_buy' | 'media_buy_update' | 'media_buy_cancellation';
@@ -11100,7 +9110,6 @@ export type CanonicalProposal = {
  * Buyer-authored execution policy for automatic delivery, auction bidding, average outcome cost, or return on ad spend. The containing object determines authored scope: media-buy `bidding` is a complete inherited default and package `bidding` is a complete package override. Sellers MUST preserve authored scope on readback and MUST NOT copy an inherited media-buy policy into package `bidding`. Every monetary field in this block is denominated in the media-buy currency; the selected pricing option supplies the auction unit, never another denomination. Auction-unit identity is the pricing_model plus every canonical billing-event qualifier after defaults are applied: for example CPV view threshold, CPP demographic system/demographic, CPA event tuple, time time_unit, and flat-rate/DOOH parameters. An extension qualifier participates only when its registered extension specification explicitly defines how it contributes to auction-unit identity. A media-buy bid_amount or max_bid is valid only when every inheriting package resolves the same auction-unit identity. Every affected pricing option MUST use the media-buy currency; split currency-mismatched packages into separate buys. Seller-optimized media-buy cost_per/roas bind to the primary budget_allocation.optimization_goals goal. Package-authored cost_per/roas bind to the package primary optimization goal. The primary goal is the earliest array entry among goals with the lowest explicit numeric priority; unprioritized goals follow explicitly prioritized goals; when all priorities are absent, the first entry is primary. In fixed allocation, an inherited media-buy cost_per is valid only when all inheriting packages have compatible primary-goal result units; inherited roas requires value-bearing primary goals on every inheriting package. Canonical ROAS requires each value-bearing event source to declare the media-buy currency in value_currencies; each buy consumes only exact-currency records and sellers MUST NOT convert them. Absence invokes inheritance or provider automatic delivery; `{automatic:true}` is an explicit authored policy that overrides inheritance. Sellers MUST reject unsupported modes, combinations, units, currency, goal bindings, or native placements before any provider mutation and MUST NOT silently translate semantics.
  */
 export type BiddingPolicy = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Explicitly use seller/provider automatic bidding at this authored scope. At package scope this is a complete override of a media-buy policy, not inheritance. It MUST be the only field in the block and MUST be preserved on readback.
@@ -11160,10 +9169,8 @@ export type CanonicalOptimizationGoal =
       reach_unit?: ReachUnit;
       target_frequency?:
         | {
-            [k: string]: unknown | undefined;
           }
         | {
-            [k: string]: unknown | undefined;
           };
       view_duration_seconds?: number;
       target?: {
@@ -11254,7 +9261,6 @@ export interface CompactTaskSubmitted {
   errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * Complete typed commercial envelope for a compact-lifecycle proposal. This is the authoritative audit and refinement snapshot; allocations and narrative fields are explanatory views rather than substitutes for these terms.
@@ -11277,10 +9283,8 @@ export interface CommercialTerms {
    */
   purchases: [
     ProductPurchase & {
-      [k: string]: unknown | undefined;
     },
     ...(ProductPurchase & {
-      [k: string]: unknown | undefined;
     })[]
   ];
   start_time: StartTiming;
@@ -11456,7 +9460,6 @@ export type ProposalRefinement = {
      * Hard flight-window bounds checked against commercial_terms.start_time and end_time. start_no_later_than is satisfied only by a concrete start_time at or before the bound; an asap start is unverifiable and therefore unsatisfied. end_no_earlier_than is satisfied only by an end_time at or after the bound.
      */
     flight?: {
-      [k: string]: unknown | undefined;
     };
   };
   product_changes?: ProductChangeMap;
@@ -11480,7 +9483,6 @@ export type ProposalRefinement = {
     }
   | (
       | {
-          [k: string]: unknown | undefined;
         }
       | {
           change_kind: 'cancellation';
@@ -11491,7 +9493,6 @@ export type ProposalRefinement = {
  * Inclusive bounds checked against commercial_terms.total_budget. Satisfied only when commercial_terms.total_budget is present, its currency matches, and its amount falls within every supplied bound.
  */
 export type ProposalBudgetConstraint = {
-  [k: string]: unknown | undefined;
 } & {
   min?: number;
   max?: number;
@@ -11653,7 +9654,6 @@ export type RefineProposalsResponse = (
  * Terminal buyer feedback for one immutable proposal snapshot.
  */
 export type ProposalDecline = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Immutable proposal ID returned by request_proposals or refine_proposals.
@@ -11880,7 +9880,6 @@ export interface ReportingWebhook {
    * Optional list of metrics to include in webhook notifications. If omitted, all available metrics are included. Must be subset of product's available_metrics.
    */
   requested_metrics?: AvailableMetric[];
-  [k: string]: unknown | undefined;
 }
 
 // buy_products response
@@ -11953,9 +9952,7 @@ export type CanonicalMediaBuyAction =
  * A non-blocking observation returned with a successful operation. The operation succeeded exactly as its success arm states. Warnings are immediate receipts, not durable lifecycle state; a continuing condition MUST also appear on its authoritative read surface as an indicator, defect, delivery issue, approval state, or other applicable resource state.
  */
 export type Warning = {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
   code: WarningCode;
   /**
@@ -11967,10 +9964,8 @@ export type Warning = {
    * Optional seller-specific structured diagnostics. AdCP 3.2 defines interoperability through code and affected_resource only; buyers MUST NOT require portable keys inside details. Seller extensions that are not direct diagnostics belong in ext.
    */
   details?: {
-    [k: string]: unknown | undefined;
   };
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 };
 export interface CommittedMediaBuy {
   status: 'completed';
@@ -12138,7 +10133,6 @@ export type AcceptProposalResponse = MediaBuyCommitmentResponse;
  * Operational controls for an existing package that remain inside its accepted commercial envelope. targeting_overlay is a complete replacement; keyword add/remove arrays are incremental, and the same keyword MUST NOT appear in both directions. Creative mutation, flight changes, new products, pricing changes, and billing-term changes require their dedicated lifecycle or a refined proposal.
  */
 export type PackageControl = {
-  [k: string]: unknown | undefined;
 } & {
   package_id: string;
   budget?: number | null;
@@ -12402,7 +10396,6 @@ export interface ListCreativeFormatsRequest {
  * **DEPRECATED in 3.2.** Legacy named-format definition retained for older 3.x peers and list_creative_formats compatibility projections. New products and creative agents author ProductFormatDeclaration canonical contracts instead.
  */
 export type Format = {
-  [k: string]: unknown | undefined;
 } & {
   format_id: FormatReferenceStructuredObject;
   /**
@@ -12429,7 +10422,6 @@ export type Format = {
   renders?: [
     (
       | {
-          [k: string]: unknown | undefined;
         }
       | {
           parameters_from_format_id: true;
@@ -12437,7 +10429,6 @@ export type Format = {
     ),
     ...(
       | {
-          [k: string]: unknown | undefined;
         }
       | {
           parameters_from_format_id: true;
@@ -12471,7 +10462,6 @@ export type Format = {
    * Delivery method specifications (e.g., hosted, VAST, third-party tags)
    */
   delivery?: {
-    [k: string]: unknown | undefined;
   };
   /**
    * List of universal macros supported by this format (e.g., MEDIA_BUY_ID, CACHEBUSTER, DEVICE_ID). Used for validation and developer tooling. See docs/creative/universal-macros.mdx for full documentation.
@@ -12504,9 +10494,7 @@ export type Format = {
      * Asset manifest for rendering the card, structure defined by the format
      */
     manifest: {
-      [k: string]: unknown | undefined;
     };
-    [k: string]: unknown | undefined;
   };
   /**
    * Accessibility posture of this format. Declares the WCAG conformance level that creatives produced by this format will meet.
@@ -12538,7 +10526,6 @@ export type Format = {
        * @minItems 1
        */
       persistence: [DisclosurePersistence, ...DisclosurePersistence[]];
-      [k: string]: unknown | undefined;
     },
     ...{
       position: DisclosurePosition;
@@ -12548,7 +10535,6 @@ export type Format = {
        * @minItems 1
        */
       persistence: [DisclosurePersistence, ...DisclosurePersistence[]];
-      [k: string]: unknown | undefined;
     }[]
   ];
   /**
@@ -12560,9 +10546,7 @@ export type Format = {
      * Asset manifest for rendering the detailed card, structure defined by the format
      */
     manifest: {
-      [k: string]: unknown | undefined;
     };
-    [k: string]: unknown | undefined;
   };
   /**
    * Metrics this format can produce in delivery reporting. Buyers receive the intersection of format reported_metrics and product available_metrics. If omitted, the format defers entirely to product-level metric declarations.
@@ -12583,7 +10567,6 @@ export type Format = {
   pricing_options?: [VendorPricingOption, ...VendorPricingOption[]];
   canonical?: CanonicalProjectionReference;
   canonical_parameters?: ProductFormatDeclaration;
-  [k: string]: unknown | undefined;
 };
 /**
  * Image asset
@@ -13031,7 +11014,6 @@ export interface CanonicalProjectionReference {
    * @minItems 1
    */
   slots_override?: [CanonicalProjectionSlotOverride, ...CanonicalProjectionSlotOverride[]];
-  [k: string]: unknown | undefined;
 }
 /**
  * A single slot override used when projecting a legacy named format to a v2 canonical ProductFormatDeclaration. The override replaces the canonical format's default slot with an asset-group-vocabulary entry.
@@ -13057,7 +11039,6 @@ export interface CanonicalProjectionSlotOverride {
    * When false, slot is for moderation/review only and is NOT consumed by the seller's renderer (e.g., a brand-safety brief that informs review but doesn't appear in the rendered ad).
    */
   consumed_for_production?: boolean;
-  [k: string]: unknown | undefined;
 }
 
 // create_media_buy parameters
@@ -13251,7 +11232,6 @@ export type CreateMediaBuyRequest = (
  * Package configuration for media buy creation
  */
 export type PackageRequest = AdCPVersionEnvelope & {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Opaque configured product ID returned by get_products. Selecting it accepts the product's disclosed targeting_resolution, pricing, forecast assumptions, and terms. Sellers MUST echo this value on every response package object that represents this requested package.
@@ -13275,7 +11255,6 @@ export type PackageRequest = AdCPVersionEnvelope & {
    * Parameters for the direct canonical selector in `format_kind`. Shape follows the selected canonical's parameter vocabulary: dimensions (`width`, `height`, `sizes`), duration (`duration_ms_exact`, `duration_ms_range`), codecs, asset-source and slot narrowing, or other canonical-specific constraints. Omit when selecting by `format_option_refs` or `format_ids`; those selectors resolve their parameters from the product declaration or legacy catalog projection.
    */
   params?: {
-    [k: string]: unknown | undefined;
   };
   /**
    * Hard lifetime spend cap for this package in the media buy's currency. Required in fixed allocation mode. Optional in seller-optimized mode; when omitted, the package is bounded by the shared total_budget and any other package constraints. In seller-optimized mode this is a ceiling, not a reserved or current allocation.
@@ -13419,10 +11398,8 @@ export type PackageRequest = AdCPVersionEnvelope & {
    */
   creatives?: [
     CreativeAsset & {
-      [k: string]: unknown | undefined;
     },
     ...(CreativeAsset & {
-      [k: string]: unknown | undefined;
     })[]
   ];
   /**
@@ -13431,17 +11408,13 @@ export type PackageRequest = AdCPVersionEnvelope & {
   agency_estimate_number?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 };
 /**
  * Assignment of a creative asset to a package with optional rotation and placement routing. Used in create_media_buy and update_media_buy requests. Buyers identify the stored creative with `creative_id` only. A generic `id` alias, if present due to adapter-internal payload reuse, is not an AdCP identifier and sellers MUST ignore it on input. Note: sync_creatives does not support package rotation, placement_refs, or placement_ids - use create/update_media_buy for package-level trafficking controls.
  */
 export type CreativeAssignment = {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Unique identifier for the creative
@@ -13476,7 +11449,6 @@ export type CreativeAssignment = {
    * @minItems 1
    */
   placement_ids?: [string, ...string[]];
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Unique identifier for the creative
@@ -13511,7 +11483,6 @@ export type CreativeAssignment = {
    * @minItems 1
    */
   placement_ids?: [string, ...string[]];
-  [k: string]: unknown | undefined;
 };
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving. Unlike the hosted `video` asset, a VAST tag carries no `width`/`height`: a VAST response can return multiple renditions of differing dimensions, and the player selects one per device at serve time, so there is no single width/height for the ad. Dimensional, duration, and codec *constraints* for a placement live on the format/requirements layer, not on this asset.
@@ -13543,7 +11514,6 @@ export type VASTAsset = {
    */
   audio_description_url?: string;
   provenance?: Provenance;
-  [k: string]: unknown | undefined;
 } & (
   | {
       /**
@@ -13592,7 +11562,6 @@ export type DAASTAsset = {
    */
   transcript_url?: string;
   provenance?: Provenance;
-  [k: string]: unknown | undefined;
 } & (
   | {
       /**
@@ -13638,10 +11607,8 @@ export type CatalogAsset = Catalog & {
  */
 export type PublishedPostAsset = (
   | {
-      [k: string]: unknown | undefined;
     }
   | {
-      [k: string]: unknown | undefined;
     }
 ) & {
   /**
@@ -13676,7 +11643,6 @@ export type PublishedPostAsset = (
      * Opaque platform-native identity identifier.
      */
     platform_identity_id?: string;
-    [k: string]: unknown | undefined;
   };
   /**
    * When the referenced post was originally published, if known.
@@ -13706,10 +11672,8 @@ export type PublishedPostAsset = (
      * Human-readable instructions for completing or restoring authorization.
      */
     authorization_instructions?: string;
-    [k: string]: unknown | undefined;
   };
   provenance?: Provenance;
-  [k: string]: unknown | undefined;
 };
 /**
  * A single renderer-fired HTTP tracker URL — image pixel or JavaScript include — bound to a measurement event (impression, viewability, click, custom). Generic web-pixel tracker primitive applicable to any web-rendered canonical format (image, html5, image_carousel, responsive_creative, sponsored_placement, native_*, plus the non-VAST/DAAST events of video_hosted and audio_hosted). The buyer's measurement vendor declares the tracker URL; the seller's renderer fires it at serve time without buyer-side involvement.
@@ -13756,7 +11720,6 @@ export type PublishedPostAsset = (
  * All v1→v2 upgrades surface `PIXEL_TRACKER_UPGRADE_INFERRED` so consumers can see that event/method were inferred rather than explicitly declared.
  */
 export type PixelTrackerAsset = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Discriminator identifying this as a renderer-fired pixel tracker asset. See /schemas/creative/asset-types for the registry.
@@ -13797,13 +11760,11 @@ export type PixelTrackerAsset = {
    */
   custom_event_name?: string;
   provenance?: Provenance;
-  [k: string]: unknown | undefined;
 };
 /**
  * A single tracker URL bound to a VAST `TrackingEvents` event. Emitted by the creative agent as a decomposed VAST-event URL; the sales agent assembles these into the VAST `TrackingEvents` block at serve time. IMPORTANT: this asset type is for `TrackingEvents` URLs only (start, quartiles, complete, pause, mute, etc.). The `Impression` URL MUST be modeled as a `url` asset with `url_type: "tracker_pixel"`, not as a vast_tracker with `vast_event: "impression"`. Decomposed trackers let format requirements bind specific measurement events (e.g., MRC viewable) without forcing the buyer to construct a full VAST tag.
  */
 export type VASTTrackerAsset = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Discriminator identifying this as a VAST tracker asset. See /schemas/creative/asset-types for the registry.
@@ -13813,7 +11774,6 @@ export type VASTTrackerAsset = {
    * The VAST tracking event this URL fires on. Maps 1:1 to the VAST `Tracking event="..."` attribute inside `TrackingEvents`. MUST NOT be `impression` (belongs in the VAST `Impression` element — model as a `url` asset with `url_type: "tracker_pixel"`), `clickTracking` / `customClick` (belong in `VideoClicks`), `error` (VAST `Error` element), or any of `viewable` / `notViewable` / `viewUndetermined` / `measurableImpression` / `viewableImpression` (children of the VAST `ViewableImpression` element, not `TrackingEvents`).
    */
   vast_event: VASTTrackingEvent & {
-    [k: string]: unknown | undefined;
   };
   /**
    * Tracker URL that fires when `vast_event` occurs. May carry AdCP universal macros (e.g., `{SKU}`, `{MEDIA_BUY_ID}`); the sales agent or ad server URL-encodes substituted values at serve time. See docs/creative/universal-macros.mdx.
@@ -13828,13 +11788,11 @@ export type VASTTrackerAsset = {
    */
   target?: 'linear' | 'non_linear' | 'companion';
   provenance?: Provenance;
-  [k: string]: unknown | undefined;
 };
 /**
  * A single tracker URL bound to a DAAST `TrackingEvents` event. Audio-side analogue of vast-tracker-asset. The `Impression` URL MUST be modeled as a `url` asset with `url_type: "tracker_pixel"`, not as a daast_tracker with `daast_event: "impression"`.
  */
 export type DAASTTrackerAsset = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Discriminator identifying this as a DAAST tracker asset. See /schemas/creative/asset-types for the registry.
@@ -13844,7 +11802,6 @@ export type DAASTTrackerAsset = {
    * The DAAST tracking event this URL fires on. MUST NOT be `impression` (model as `url` asset with `url_type: "tracker_pixel"`), `clickTracking` / `customClick` (click-tracking trackers go on their own URL asset), `error`, or any of the `ViewableImpression`-element children (`viewable`, `notViewable`, `viewUndetermined`, `measurableImpression`, `viewableImpression`).
    */
   daast_event: DAASTTrackingEvent & {
-    [k: string]: unknown | undefined;
   };
   /**
    * Tracker URL that fires when `daast_event` occurs. May carry AdCP universal macros; the sales agent or ad server URL-encodes substituted values at serve time. See docs/creative/universal-macros.mdx.
@@ -13859,14 +11816,12 @@ export type DAASTTrackerAsset = {
    */
   target?: 'linear' | 'companion';
   provenance?: Provenance;
-  [k: string]: unknown | undefined;
 };
 export interface ExplicitPackagesWithFixedAllocation {
   budget_allocation?: {
     mode: 'fixed';
   };
   packages: (PackageRequest & {
-    [k: string]: unknown | undefined;
   })[];
 }
 /**
@@ -13923,7 +11878,6 @@ export interface AudioAsset {
    */
   transcript_url?: string;
   provenance?: Provenance;
-  [k: string]: unknown | undefined;
 }
 /**
  * Text content asset
@@ -13942,7 +11896,6 @@ export interface TextAsset {
    */
   language?: string;
   provenance?: Provenance;
-  [k: string]: unknown | undefined;
 }
 /**
  * Inline HTML content asset. For URL-delivered HTML5 banner bundles, use the zip asset type instead. For single-URL iframe-rendered tag references, use the url asset type with an appropriate url_type.
@@ -13982,7 +11935,6 @@ export interface HTMLAsset {
     screen_reader_tested?: boolean;
   };
   provenance?: Provenance;
-  [k: string]: unknown | undefined;
 }
 /**
  * Inline JavaScript content asset. For URL-delivered third-party tag scripts, use the url asset type with url_type 'tracker_script'. For HTML5 banner bundles that include JavaScript, use the zip asset type.
@@ -14019,7 +11971,6 @@ export interface JavaScriptAsset {
     screen_reader_tested?: boolean;
   };
   provenance?: Provenance;
-  [k: string]: unknown | undefined;
 }
 /**
  * Bundled creative asset delivered as a zip archive — typically an HTML5 banner with index.html plus supporting CSS, JS, images, and fonts. Receivers unpack the zip, validate internal structure, and serve contents from CDN. Distinct from inline HTML (html asset) and from third-party tag URLs (url asset with url_type tracker_script).
@@ -14075,7 +12026,6 @@ export interface ZipAsset {
     screen_reader_tested?: boolean;
   };
   provenance?: Provenance;
-  [k: string]: unknown | undefined;
 }
 /**
  * Webhook for server-side dynamic content rendering (DCO)
@@ -14118,7 +12068,6 @@ export interface WebhookAsset {
     api_key_header?: string;
   };
   provenance?: Provenance;
-  [k: string]: unknown | undefined;
 }
 /**
  * CSS stylesheet asset
@@ -14137,7 +12086,6 @@ export interface CSSAsset {
    */
   media?: string;
   provenance?: Provenance;
-  [k: string]: unknown | undefined;
 }
 /**
  * A reference asset that provides creative context. Carries visual materials (mood boards, product shots, example creatives) with semantic roles that tell creative agents how to use them.
@@ -14155,7 +12103,6 @@ export interface ReferenceAsset {
    * Human-readable description of the asset and how it should inform creative generation
    */
   description?: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * A single card in a multi-card creative (image_carousel, future composed carousels). Carries: `media` (an image OR video asset), optional `headline` (short text), optional `description` (longer text), optional `cta` (call-to-action label), optional `landing_page_url` (url asset with `url_type: "clickthrough"`).
@@ -14191,7 +12138,6 @@ export interface CardAsset {
    */
   platform_extensions?: PlatformExtensionReference[];
   provenance?: Provenance;
-  [k: string]: unknown | undefined;
 }
 /**
  * An industry-standard or market-specific identifier for an advertising creative (e.g., Ad-ID, ISCI, Clearcast clock number, IDcrea). These identifiers are managed by external registries or clearance bodies and used across the supply chain to track and reference specific creative assets. Add a PR to extend creative-identifier-type when another shared identifier scheme needs first-class support.
@@ -14202,20 +12148,17 @@ export interface IndustryIdentifier {
    * The identifier value (e.g., 'ABCD1234000H' for Ad-ID). Preserve the value exactly as the traffic or clearance system expects it.
    */
   value: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * @deprecated
  * Deprecated 3.x compatibility branch using a structured named-format reference.
  */
 export interface V1CreativeNamedFormatReference {
-  [k: string]: unknown | undefined;
 }
 /**
  * Creative declares the portable canonical contract it targets via `format_kind` and optional `format_option_ref`.
  */
 export interface V2CreativeCanonicalFormatKind {
-  [k: string]: unknown | undefined;
 }
 export interface ExplicitPackagesWithSellerOptimizedAllocation {
   budget_allocation: {
@@ -14223,7 +12166,6 @@ export interface ExplicitPackagesWithSellerOptimizedAllocation {
   };
 }
 export interface CommittedProposalExecution {
-  [k: string]: unknown | undefined;
 }
 
 // create_media_buy response
@@ -14285,7 +12227,6 @@ export type AccountIdentityChange = AccountIdentityChangePending | AccountIdenti
  * Account-level webhook subscription for notifications whose lifecycle outlives any single media buy — creative state changes, library purges, account status changes, wholesale feed change webhooks, and future account-anchored resource events after those event types are added to this schema. This is distinct from `push-notification-config.json`, which anchors at a per-resource operation (a single task or media buy). The one-shot `sync_accounts.push_notification_config` channel may report the first async result of a provisioning request, while durable account lifecycle events such as later `payment_required` or `suspended` transitions use `account.status_changed` here. An account MAY register multiple notification configs to fan a single seller's events out to multiple buyer-side endpoints; each entry filters by `event_types`. As with push-notification-config, the default signing scheme is the AdCP RFC 9421 webhook profile against the seller's brand.json `agents[]` JWKS; the optional `authentication` block opts into the deprecated Bearer / HMAC-SHA256 fallback for compatibility. Credentials and shared secrets in `authentication.credentials` are write-only — sellers MUST NOT echo them back in `list_accounts` responses. Sellers MUST verify endpoint control before activating a new or changed active account-level notification config; delivery-time SSRF validation still applies to every fire.
  */
 export type NotificationConfig = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Buyer-supplied identifier for this subscription endpoint. This is the stable logical key within one account's notification_configs[] set: re-sending the same subscriber_id for the same account replaces that subscriber's URL, event_types, authentication selector, and active flag rather than creating a duplicate. Echoed on every webhook payload and on every `webhook_activity[]` record fired against this config so the buyer can attribute fires across multiple endpoints. MUST be unique within the account's `notification_configs[]`. Sending two entries with the same `subscriber_id` in a single `sync_accounts` request array is rejected as a per-account validation failure with `INVALID_REQUEST` or `VALIDATION_ERROR`, and `error.field` MUST point at the duplicate entry. `subscriber_id` is the stable match key for the per-account declarative-replace diff. Always required (even with a single subscriber) so the SDK contract is uniform — no conditional required-when-multiple rules to trip up implementations. Format is opaque — recommended values are short kebab-case slugs (`buyer-primary`, `audit-bus`, `dx-team`).
@@ -15443,7 +13384,6 @@ export type NotificationConfig = {
  * A specific product within a media buy (line item)
  */
 export type Package = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Seller's unique identifier for the package
@@ -15510,7 +13450,6 @@ export type Package = {
    * Parameters for the direct canonical selector in `format_kind`, echoed from the create_media_buy request whenever the request included it. Requires `format_kind`; omitted only when the request did not carry direct canonical params or when the seller cannot reconstruct legacy requests created before this field was persisted.
    */
   params?: {
-    [k: string]: unknown | undefined;
   };
   targeting_overlay?: TargetingOverlay;
   targeting_resolution?: PackageTargetingResolution;
@@ -15601,13 +13540,11 @@ export type Package = {
   creative_deadline?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 };
 /**
  * Canonical demographic predicate and exact seller execution details. Include whenever demographic targeting was requested or applied.
  */
 export type DemographicTargetingResolution = {
-  [k: string]: unknown | undefined;
 } & {
   requested: DemographicTargetingIntent;
   applied: DemographicPredicate;
@@ -15619,7 +13556,6 @@ export type DemographicTargetingResolution = {
     | {
         type: 'continuous_bounds';
         ext?: ExtensionObject;
-        [k: string]: unknown | undefined;
       }
     | {
         type: 'enumerated_intervals';
@@ -15630,7 +13566,6 @@ export type DemographicTargetingResolution = {
          */
         interval_ids: [string, ...string[]];
         ext?: ExtensionObject;
-        [k: string]: unknown | undefined;
       }
     | {
         type: 'signals';
@@ -15641,7 +13576,6 @@ export type DemographicTargetingResolution = {
          */
         signal_refs: [SignalRef, ...SignalRef[]];
         ext?: ExtensionObject;
-        [k: string]: unknown | undefined;
       };
   /**
    * Effective user-level determination bases configured for this package after intersecting buyer accepted_bases, product supported_bases, and age_restriction. This is an auditable configuration readback, not proof that every impression used every listed basis.
@@ -15656,7 +13590,6 @@ export type DemographicTargetingResolution = {
    */
   applied_verification_methods?: [AgeVerificationMethod, ...AgeVerificationMethod[]];
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 };
 /**
  * One metric in a package's binding reporting contract. Each entry uses `scope` as the discriminator and identifies a standard or vendor-defined metric that the seller has committed to populate in delivery reports.
@@ -15699,7 +13632,6 @@ export type CommittedMetric =
  * The seller's interpreted delivery parameters. Describes what the seller will actually run -- geo, channels, flight dates, frequency caps, and budget. Present when the account has governance_agents or when the seller chooses to provide delivery transparency.
  */
 export type PlannedDelivery = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Seller-assigned media buy identifier. Optional on a purchase-phase prepare/check because the service may not assign the identifier until commit; required on modification and delivery lifecycle checks.
@@ -15725,7 +13657,6 @@ export type PlannedDelivery = {
      * ISO 3166-2 subdivision codes where ads will deliver.
      */
     regions?: string[];
-    [k: string]: unknown | undefined;
   };
   /**
    * Channels the seller will deliver on.
@@ -15780,7 +13711,6 @@ export type PlannedDelivery = {
    */
   enforced_policies?: string[];
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 };
 /**
  * Selects an audience by signal reference or natural language description. Uses 'type' as the primary discriminator (signal vs description). Signal selectors additionally use 'value_type' to determine the targeting expression format (matching signal-targeting.json variants).
@@ -15788,26 +13718,20 @@ export type PlannedDelivery = {
 export type AudienceSelector =
   | (
       | {
-          [k: string]: unknown | undefined;
         }
       | {
-          [k: string]: unknown | undefined;
         }
     )
   | (
       | {
-          [k: string]: unknown | undefined;
         }
       | {
-          [k: string]: unknown | undefined;
         }
     )
   | (
       | {
-          [k: string]: unknown | undefined;
         }
       | {
-          [k: string]: unknown | undefined;
         }
     )
   | {
@@ -15823,7 +13747,6 @@ export type AudienceSelector =
        * Optional grouping hint for the governance agent (e.g., 'demographic', 'behavioral', 'contextual', 'financial')
        */
       category?: string;
-      [k: string]: unknown | undefined;
     };
 /**
  * Success response - media buy created successfully
@@ -15962,7 +13885,6 @@ export interface Account {
    * Request-only staging field. It MUST NOT appear in account read models.
    */
   destination_billing_entity?: {
-    [k: string]: unknown | undefined;
   };
   /**
    * Identifier for the rate card applied to this account
@@ -15992,7 +13914,6 @@ export interface Account {
      * When this setup link expires.
      */
     expires_at?: string;
-    [k: string]: unknown | undefined;
   };
   account_scope?: AccountScope;
   /**
@@ -16209,7 +14130,6 @@ export interface Account {
    */
   webhook_activity?: WebhookActivityRecord[];
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 export interface AccountIdentityChangePending {
   /**
@@ -16994,7 +14914,6 @@ export interface Impairment {
    * Action the buyer can take to clear the impairment, if any. Free text. Absent when no buyer-side remediation is possible (e.g., seller-initiated withdrawal pending re-publication).
    */
   remediation?: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * Current status of a package within a media buy — includes creative approval state and optional delivery snapshot. For the creation input shape, see PackageRequest. For the creation output shape, see Package.
@@ -18016,7 +15935,6 @@ export interface VendorMetricValue {
    * Optional structured payload for vendor metrics that don't fit a single scalar — panel demographic breakouts, co-view audience composition, incremental reach + frequency + lift decompositions. Free-form; the keys and value semantics are defined by the vendor (see the vendor's `brand.json` measurement-agent docs). Buyers MUST treat this object as opaque without consulting the vendor's documentation. Vendors place any fields beyond the standard envelope (e.g., confidence intervals, panel sizes) inside this object rather than at the top level.
    */
   breakdown?: {
-    [k: string]: unknown | undefined;
   };
 }
 
@@ -18144,7 +16062,6 @@ export interface DatetimeRange {
    * End timestamp (inclusive), ISO 8601
    */
   end: string;
-  [k: string]: unknown | undefined;
 }
 
 // provide_performance_feedback response
@@ -18336,7 +16253,6 @@ export interface EventSurface {
    */
   property_id?: string;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 
 // sync_event_sources response
@@ -18480,7 +16396,6 @@ export interface EventSourceHealth {
      * Seller's name for this score (e.g., 'Event Quality Score', 'Event Match Quality').
      */
     label?: string;
-    [k: string]: unknown | undefined;
   };
   /**
    * Fraction of events from this source that the seller successfully matched to ad interactions (0.0-1.0). Low match rates indicate weak user_match identifiers. Absent when the seller does not compute match rates.
@@ -18502,7 +16417,6 @@ export interface EventSourceHealth {
    * Actionable issues detected with this event source. Sellers should limit to the top 3-5 most actionable items. Buyer agents should sort by severity rather than relying on array position.
    */
   issues?: DiagnosticIssue[];
-  [k: string]: unknown | undefined;
 }
 /**
  * Error response - operation failed completely
@@ -18522,7 +16436,6 @@ export interface SyncEventSourcesError {
  * A marketing event (conversion, engagement, or custom) for attribution and optimization
  */
 export type Event = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Unique identifier for deduplication (scoped to event_type + event_source_id)
@@ -18546,13 +16459,11 @@ export type Event = {
    */
   custom_event_name?: string;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 };
 /**
  * User identifiers for attribution matching
  */
 export type UserMatch = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Universal ID values for user matching
@@ -18566,7 +16477,6 @@ export type UserMatch = {
        * Universal ID value
        */
       value: string;
-      [k: string]: unknown | undefined;
     },
     ...{
       type: UIDType;
@@ -18574,7 +16484,6 @@ export type UserMatch = {
        * Universal ID value
        */
       value: string;
-      [k: string]: unknown | undefined;
     }[]
   ];
   /**
@@ -18602,7 +16511,6 @@ export type UserMatch = {
    */
   client_user_agent?: string;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 };
 /**
  * Request parameters for logging marketing events
@@ -18707,10 +16615,8 @@ export interface EventCustomData {
      * Brand name of this item
      */
     brand?: string;
-    [k: string]: unknown | undefined;
   }[];
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 
 // log_event response
@@ -18829,7 +16735,6 @@ export interface LogEventError {
  * A CRM audience member identified by a buyer-assigned external_id and at least one matchable identifier. All identifiers must be normalized before hashing: emails to lowercase+trim, phone numbers to E.164 format (e.g. +12065551234). Providing multiple identifiers for the same person improves match rates. Composite identifiers (e.g. hashed first name + last name + zip for Google Customer Match) are not yet standardized — use the ext field for platform-specific extensions.
  */
 export type AudienceMember = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Buyer-assigned stable identifier for this audience member (e.g. CRM record ID, loyalty ID). Used for deduplication, removal, and cross-referencing with buyer systems. Adapters for CDPs that don't natively assign IDs can derive one (e.g. hash of the member's identifiers).
@@ -18855,7 +16760,6 @@ export type AudienceMember = {
        * Universal ID value
        */
       value: string;
-      [k: string]: unknown | undefined;
     },
     ...{
       type: UIDType;
@@ -18863,11 +16767,9 @@ export type AudienceMember = {
        * Universal ID value
        */
       value: string;
-      [k: string]: unknown | undefined;
     }[]
   ];
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 };
 /**
  * Request parameters for managing CRM-based audiences on an account with upsert semantics. Existing audiences matched by audience_id are updated, new ones are created. Members are specified as delta operations: add appends new members, remove drops existing ones. Recommend no more than 100,000 members per call; for larger lists, chunk and call incrementally using add/remove deltas. When delete_missing is true, buyer-managed audiences on the account not in this request are removed — do not combine with omitted audiences or all buyer-managed audiences will be deleted. When audiences is omitted, the call is discovery-only: it returns all audiences on the account without modification.
@@ -19119,7 +17021,6 @@ export interface SyncAudiencesSubmitted {
  * Request parameters for syncing buyer-managed catalog feeds, pushing immediate item availability overrides, and reading current availability state. Supports bulk operations across multiple catalog types. Existing catalogs matched by catalog_id are updated, new ones are created. When catalogs, item_availability_updates, and item_availability_queries are all omitted, the call is discovery-only.
  */
 export type SyncCatalogsRequest = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
@@ -19171,7 +17072,6 @@ export type SyncCatalogsRequest = {
  * An immediate buyer-authored availability override for an item in one immutable incarnation of a buyer-managed catalog. This overlay is distinct from seller review status: suppress makes an otherwise approved item ineligible, while restore removes only the buyer suppression and cannot override seller rejection, withdrawal, policy, rights, or inventory decisions. A suppress overlay persists across scheduled feed fetches and catalog upserts until an explicit restore, expires_at, or deletion of the containing catalog.
  */
 export type CatalogItemAvailabilityUpdate = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Buyer-assigned ID of the buyer-managed catalog containing the item.
@@ -19216,7 +17116,6 @@ export type CatalogItemAvailabilityUpdate = {
    */
   expires_at?: string;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 };
 /**
  * Unambiguous reference to an item availability overlay in one immutable incarnation of a buyer-managed catalog.
@@ -19234,7 +17133,6 @@ export interface CatalogItemAvailabilityReference {
    * Exact canonical item key used by Catalog.ids. For typed catalogs this is the type-specific identifier field; for product, inventory, and promotion catalogs it is the stable normalized source identifier retained during ingestion.
    */
   item_id: string;
-  [k: string]: unknown | undefined;
 }
 
 // sync_catalogs response
@@ -19292,7 +17190,6 @@ export type SyncCatalogsResponse = {
  * Seller acknowledgement for one buyer-authored catalog item availability update.
  */
 export type CatalogItemAvailabilityUpdateResult = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Zero-based index of the corresponding item_availability_updates entry.
@@ -19341,19 +17238,16 @@ export type CatalogItemAvailabilityUpdateResult = {
    */
   errors?: [CatalogItemAvailabilityError, ...CatalogItemAvailabilityError[]];
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 };
 /**
  * Error returned by a catalog item availability operation. REFERENCE_NOT_FOUND has a deliberately closed, invariant shape so callers cannot distinguish unknown, inaccessible, unauthorized, or stale-generation references.
  */
 export type CatalogItemAvailabilityError = Error & {
-  [k: string]: unknown | undefined;
 };
 /**
  * Current buyer-authored availability overlay state for one requested catalog item. Results are returned in request order and identify their request position explicitly.
  */
 export type CatalogItemAvailabilityState = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Zero-based index of the corresponding item_availability_queries entry.
@@ -19387,7 +17281,6 @@ export type CatalogItemAvailabilityState = {
    */
   errors?: [CatalogItemAvailabilityError, ...CatalogItemAvailabilityError[]];
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 };
 
 /**
@@ -19535,7 +17428,6 @@ export interface SyncCatalogsSubmitted {
  * Request to transform, generate, refine, or retrieve a creative manifest. Supports four modes: (1) generation from a brief or seed assets, (2) transformation of an existing manifest, (3) refinement of a prior produced variant via refine_from_build_variant_id (re-build with a natural-language message + config delta), (4) retrieval from a creative library by creative_id. Produces target manifest(s) through canonical capabilities advertised in `get_adcp_capabilities.creative.supported_formats[]`. In 3.2, provide `target_capability_id` for one output or `target_capability_ids` for multiple outputs. Legacy `target_format_id` / `target_format_ids` remain accepted during the 3.x compatibility window but are deprecated.
  */
 export type BuildCreativeRequest = {
-  [k: string]: unknown | undefined;
 } & (
   | RefinementWithInheritedTargetCapability
   | CanonicalSingleOutputBuildTarget
@@ -19735,7 +17627,7 @@ export type CreativeManifest = {
    * Each slot value is **either** a single asset object (most slots — image, video, published_post, vast_tag, landing_page_url, etc.) **or** an array of asset objects (slots with `min`/`max` counts on the format declaration — `cards` on `image_carousel`, `headlines` / `descriptions` / `images_landscape` on `responsive_creative`, etc.). Single-vs-array shape is governed by the format's `slots[].min` and `slots[].max` parameters: when `max > 1` (or when the slot is conceptually a pool), the value MUST be an array; when the slot is single-valued, the value MUST be a single object. Each asset value (single or array element) carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog, published_post, zip, card) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
    */
   assets: {
-    [k: string]: unknown | undefined;
+    [k: string]: AssetVariant | AssetVariant[];
   };
   brand?: BrandReference;
   /**
@@ -19748,7 +17640,6 @@ export type CreativeManifest = {
   industry_identifiers?: IndustryIdentifier[];
   provenance?: Provenance;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 } & (NamedFormatManifest | CanonicalFormatManifest);
 /**
  * Optional advisory evaluator (buyer-attached pointer, #5280) declaring how produced variants should be evaluated and ranked — the rank-side of the get_creative_features feature oracle. Experimental (x-status: experimental): the whole evaluator surface is new and unfrozen, and requires creative.supports_evaluator, which sellers MUST pair with `creative.evaluator` in experimental_features. Drives the producing agent's gate-then-rank pipeline over its best_of_n exploration: per leaf, evaluate (the chosen form) → optionally GATE (`evaluator.feature_requirement[]`, drop fails — internal pruning of which leaves the agent recommends, never an AdCP-layer block of an already-produced billable leaf) → RANK survivors (`evaluator.rank_by`, an explicit {feature_id, direction} ordering). Feature discovery uses get_adcp_capabilities governance.creative_features for rank_by, feature_requirement, and eval.features[]; evaluator_id is a pre-provisioned/account-arranged preset, not an ID discovered from that catalog. Populates a per-leaf `eval` block of creative-feature values (creative-feature-result[]) when supports_evaluator. When the evaluator names an external agent (`evaluator.feature_agent.agent_url` or the agent-form `agent_url`), that agent MUST appear in the seller's `creative_policy.accepted_verifiers[]` (the same allowlist #5280 established for provenance verify_agent); an off-list agent is rejected with `EVALUATOR_AGENT_NOT_ACCEPTED`. The outbound evaluator call authenticates on the transport (request signing/JWKS, mTLS, or a pre-provisioned static credential); credentials and caller-supplied trust material MUST NOT appear in evaluator, context, ext, or creative payload fields, and credential- or trust-material keys should be rejected with `CREDENTIAL_IN_ARGS`. With no `feature_requirement`, evaluation is advisory only and does not change what is produced or billed; an unreachable/unknown on-list agent degrades to seller-default ranking (advisory errors[] note), not a failure. Requires creative.supports_evaluator; otherwise ignored.
@@ -19812,10 +17703,8 @@ export type EvaluatorSpec = {
      * Soft cap on wall-clock seconds the evaluation should consume.
      */
     max_seconds?: number;
-    [k: string]: unknown | undefined;
   };
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 } & (
   | {
       /**
@@ -19831,21 +17720,18 @@ export type EvaluatorSpec = {
          */
         fail?: Artifact[];
       };
-      [k: string]: unknown | undefined;
     }
   | {
       /**
        * Account-scoped house evaluator preset selected by the buyer. This id is pre-provisioned/account-arranged, not discovered from get_adcp_capabilities governance.creative_features. That catalog only discovers the feature vocabulary the preset emits. An unknown id degrades to seller-default ranking (advisory errors[] note), not a failure.
        */
       evaluator_id: string;
-      [k: string]: unknown | undefined;
     }
   | {
       /**
        * URL of an external get_creative_features-capable judge agent the seller calls to score the produced leaves. MUST match an entry in the seller's `creative_policy.accepted_verifiers[].agent_url` (off-list → `EVALUATOR_AGENT_NOT_ACCEPTED`); an on-list agent that is unreachable or rejects the producing agent's transport authentication degrades to seller-default ranking (advisory errors[] note), not a failure. Authentication and trust material for this call belongs on the transport or in account provisioning, not in the evaluator payload.
        */
       agent_url: string;
-      [k: string]: unknown | undefined;
     }
 );
 /**
@@ -19870,45 +17756,37 @@ export type AssetAccess =
        * Deprecated in AdCP 3.2 and eligible for removal in 4.0 or later only after the deprecation-policy notice and release-cycle gates are satisfied. Presence denotes the legacy inline-credential form, not workload-identity authorization. New producers MUST omit this field. Consumers MUST NOT activate received credentials automatically; they may process them only for an explicitly allowlisted legacy peer and otherwise MUST reject or quarantine them. Consumers MUST redact the complete value from logs, traces, errors, metrics, analytics, model context, and durable storage. Use the consumer's pre-authorized workload identity or `signed_url` instead.
        */
       credentials?: {
-        [k: string]: unknown | undefined;
       };
     }
   | {
       method: 'signed_url';
     };
 export interface RefinementWithInheritedTargetCapability {
-  [k: string]: unknown | undefined;
 }
 export interface CanonicalSingleOutputBuildTarget {
-  [k: string]: unknown | undefined;
 }
 export interface CanonicalMultiOutputBuildTarget {
-  [k: string]: unknown | undefined;
 }
 /**
  * @deprecated
  */
 export interface SingleOutputNamedFormatTarget {
-  [k: string]: unknown | undefined;
 }
 /**
  * @deprecated
  */
 export interface MultiOutputNamedFormatTarget {
-  [k: string]: unknown | undefined;
 }
 /**
  * @deprecated
  * Deprecated 3.x compatibility branch. Manifest references a named format via the structured format_id object. New 3.2 manifests use format_kind.
  */
 export interface NamedFormatManifest {
-  [k: string]: unknown | undefined;
 }
 /**
  * Manifest declares which canonical format it targets via `format_kind` (e.g., `image`). This 3.1+ canonical-format path was introduced by RFC #3305.
  */
 export interface CanonicalFormatManifest {
-  [k: string]: unknown | undefined;
 }
 /**
  * A feature-based requirement — a reusable predicate over a feature value. Used by property list filters today; designed for reuse in other surfaces (audience filters, creative gates) in future versions. Use min_value/max_value for quantitative features, allowed_values for binary/categorical features.
@@ -20101,19 +17979,16 @@ export interface Artifact {
      * Open Graph protocol metadata
      */
     open_graph?: {
-      [k: string]: unknown | undefined;
     };
     /**
      * Twitter Card metadata
      */
     twitter_card?: {
-      [k: string]: unknown | undefined;
     };
     /**
      * JSON-LD structured data (schema.org)
      */
     json_ld?: {}[];
-    [k: string]: unknown | undefined;
   };
   provenance?: Provenance;
   /**
@@ -20140,9 +18015,7 @@ export interface Artifact {
      * RSS feed URL
      */
     rss_url?: string;
-    [k: string]: unknown | undefined;
   };
-  [k: string]: unknown | undefined;
 }
 /**
  * Response payload for build_creative. Exactly one of six shapes: (1) synchronous single-capability success — creative_manifest issued in-line; (2) synchronous multi-capability success — creative_manifests issued in request order; (3) multiplicity success — creatives[] each carrying variants[]; (4) dry-run estimate; (5) terminal failure; (6) submitted task envelope. Canonical 3.2 requests use target_capability_id(s); deprecated target_format_id(s) retain the same response branches during the 3.x compatibility window.
@@ -20250,7 +18123,6 @@ export type PreviewRender =
          */
         csp_policy?: string;
       };
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -20297,7 +18169,6 @@ export type PreviewRender =
          */
         csp_policy?: string;
       };
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -20348,7 +18219,6 @@ export type PreviewRender =
          */
         csp_policy?: string;
       };
-      [k: string]: unknown | undefined;
     };
 /**
  * Single-capability success response. Returned when the request used target_capability_id (or deprecated target_format_id) without fan-out. The returned creative_manifest uses canonical format_kind on the 3.2 path.
@@ -20457,7 +18327,6 @@ export interface CreativeConsumption {
    * Processing time billed, in seconds. For compute-time pricing models.
    */
   duration_seconds?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Multi-capability success response. Returned when the request used target_capability_ids (or deprecated target_format_ids). Contains one manifest per requested capability. Multi-output requests are atomic and preserve request order.
@@ -20740,7 +18609,6 @@ export interface CreativeFeatureResult {
    * Additional vendor-specific details about this evaluation
    */
   details?: {
-    [k: string]: unknown | undefined;
   };
   /**
    * Optional attribution — when this feature was evaluated for the purpose of a specific policy, policy_id references the authorizing PolicyEntry. Creative agents and sellers populate when the measurement was motivated by a specific policy; do NOT populate when the feature is a generic measurement (carbon score, brand consistency) unrelated to any policy. See /docs/governance/policy-attribution.
@@ -20877,7 +18745,6 @@ export interface BuildCreativeSubmitted {
  * Request to generate previews of creative manifests. Uses request_type to select single, batch, or variant mode.
  */
 export type PreviewCreativeRequest = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
@@ -21286,7 +19153,6 @@ export type Transformer = (CanonicalTransformerOutputs | NamedFormatTransformerO
    * Transformer-specific attributes a buyer can filter or display (e.g. provider, modality, language).
    */
   metadata?: {
-    [k: string]: unknown | undefined;
   };
   /**
    * Optional discovery/audit anchors for voice transformers provisioned from brand-agent voice_synthesis entries. Informational only: these references help buyers match a discovered transformer to brand/rights-agent provenance, but they do not assert build-time authorization or require the creative agent to perform rights-token validation.
@@ -21307,7 +19173,6 @@ export type Transformer = (CanonicalTransformerOutputs | NamedFormatTransformerO
          * Agent identifier.
          */
         id: string;
-        [k: string]: unknown | undefined;
       };
       /**
        * voice_synthesis.voice_id from the brand agent.
@@ -21317,7 +19182,6 @@ export type Transformer = (CanonicalTransformerOutputs | NamedFormatTransformerO
        * Optional rights offering or buyer-specific grant identifier associated with this provisioned voice. Brand-side voice_synthesis uses rights_offering_id for the configuration-time offering anchor. This transformer field may carry that offering ID or a grant ID after provisioning; it remains provenance metadata only, not a build_creative rights token.
        */
       rights_id?: string;
-      [k: string]: unknown | undefined;
     },
     ...{
       /**
@@ -21332,7 +19196,6 @@ export type Transformer = (CanonicalTransformerOutputs | NamedFormatTransformerO
          * Agent identifier.
          */
         id: string;
-        [k: string]: unknown | undefined;
       };
       /**
        * voice_synthesis.voice_id from the brand agent.
@@ -21342,7 +19205,6 @@ export type Transformer = (CanonicalTransformerOutputs | NamedFormatTransformerO
        * Optional rights offering or buyer-specific grant identifier associated with this provisioned voice. Brand-side voice_synthesis uses rights_offering_id for the configuration-time offering anchor. This transformer field may carry that offering ID or a grant ID after provisioning; it remains provenance metadata only, not a build_creative rights token.
        */
       rights_id?: string;
-      [k: string]: unknown | undefined;
     }[]
   ];
   /**
@@ -21403,15 +19265,12 @@ export type Transformer = (CanonicalTransformerOutputs | NamedFormatTransformerO
      * Variant axis dimensions this transformer supports (⊆ the agent's).
      */
     variant_dimensions?: ('voice' | 'theme' | 'best_of_n' | 'transformer_config' | 'custom')[];
-    [k: string]: unknown | undefined;
   };
-  [k: string]: unknown | undefined;
 };
 /**
  * Descriptor for one configuration knob a transformer exposes. Returned inside transformer.json `params[]` from list_transformers. The descriptor declares the knob's shape; the buyer supplies its value in build_creative `config` keyed by `field`. For `value_source: enumerable` params (e.g. account-specific voices), the legal `options[]` are account-scoped and dynamic — they are returned only when the param's `field` is named in the list_transformers `expand_params` request, and may be paginated via `options_cursor`.
  */
 export type TransformerParam = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * The config key. Buyers set the value under this exact key in build_creative `config`.
@@ -21451,7 +19310,6 @@ export type TransformerParam = {
      * The value the buyer passes in `config` for this field.
      */
     value: {
-      [k: string]: unknown | undefined;
     };
     /**
      * Human-readable label for this option.
@@ -21461,9 +19319,7 @@ export type TransformerParam = {
      * Option-specific attributes the buyer can filter or display (e.g. for a voice: language, gender, provider, custom).
      */
     metadata?: {
-      [k: string]: unknown | undefined;
     };
-    [k: string]: unknown | undefined;
   }[];
   /**
    * Opaque pagination cursor for this param's `options[]`. Present when more option values are available than were returned. Pass back to list_transformers (scoped to this transformer + field) to fetch the next page.
@@ -21473,7 +19329,6 @@ export type TransformerParam = {
    * The value applied when the buyer omits this field from `config`. Type matches `type`.
    */
   default?: {
-    [k: string]: unknown | undefined;
   };
   /**
    * Whether the buyer MUST supply this field in `config`. When false and no `default` is declared, the agent chooses.
@@ -21483,7 +19338,6 @@ export type TransformerParam = {
    * Human-readable explanation of what this knob does.
    */
   description?: string;
-  [k: string]: unknown | undefined;
 };
 /**
  * Response payload for list_transformers — account-scoped transformer descriptors matching the query, with optional per-param enumerated option values (when expanded) and per-account pricing (when requested).
@@ -21546,13 +19400,11 @@ export interface ListTransformersResponseCreativeAgent {
   ext?: ExtensionObject;
 }
 export interface CanonicalTransformerOutputs {
-  [k: string]: unknown | undefined;
 }
 /**
  * @deprecated
  */
 export interface NamedFormatTransformerOutputs {
-  [k: string]: unknown | undefined;
 }
 
 // get_creative_delivery parameters
@@ -21631,7 +19483,6 @@ export type CreativeVariant = DeliveryMetrics & {
       artifact_id: string;
     };
     ext?: ExtensionObject;
-    [k: string]: unknown | undefined;
   };
 };
 /**
@@ -21995,7 +19846,6 @@ export interface CreativeFilters {
    */
   has_variables?: boolean;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 
 // list_creatives response
@@ -22003,7 +19853,6 @@ export interface CreativeFilters {
  * An asset inside a materialized creative locale variant. Text and markdown assets may omit language when they make no language claim. When language is present, it MUST use the shared AdCP BCP 47 wire profile; conformance additionally requires exact equality with the enclosing variant locale.
  */
 export type LocalizedCreativeAsset = AssetVariant & {
-  [k: string]: unknown | undefined;
 };
 /**
  * Item within a multi-asset creative format. Used for carousel products, native ad components, and other formats composed of multiple distinct elements.
@@ -22026,7 +19875,6 @@ export type CreativeItem =
        * URL for media assets (images, videos, etc.)
        */
       content_uri: string;
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -22045,7 +19893,6 @@ export type CreativeItem =
        * Text content for text-based assets like headlines, body text, CTA text, etc.
        */
       content: string | string[];
-      [k: string]: unknown | undefined;
     };
 /**
  * Response from creative library query with filtered results, metadata, and optional enriched data
@@ -22362,12 +20209,10 @@ export interface CreativeLocalizationReadback {
     {
       language_range: LanguageTag;
       locale_variant_id: string;
-      [k: string]: unknown | undefined;
     },
     ...{
       language_range: LanguageTag;
       locale_variant_id: string;
-      [k: string]: unknown | undefined;
     }[]
   ];
   /**
@@ -22380,7 +20225,6 @@ export interface CreativeLocalizationReadback {
     SourceLocalizationReadback | TargetLocalizationReadback,
     ...(SourceLocalizationReadback | TargetLocalizationReadback)[]
   ];
-  [k: string]: unknown | undefined;
 }
 export interface SourceLocalizationReadback {
   /**
@@ -22390,7 +20234,6 @@ export interface SourceLocalizationReadback {
   locale: LanguageTag;
   role: 'source';
   assets: ResolvedAssets;
-  [k: string]: unknown | undefined;
 }
 /**
  * Complete resolved assets for this locale, keyed by creative slot.
@@ -22410,7 +20253,6 @@ export interface TargetLocalizationReadback {
   locale: LanguageTag;
   role: 'target';
   assets: ResolvedAssets;
-  [k: string]: unknown | undefined;
 }
 /**
  * Seller-produced readback for one rights-grant presentation and its verifier-of-record evaluation. Buyers carry AttestationReference values in rights constraints but MUST NOT author this object or assert outcome verified. A seller trusts verified readback only when it retrieves the byte-identical result from its own local evaluation store; evaluated_by is descriptive and is not proof of provenance.
@@ -22440,7 +20282,6 @@ export interface RightsAttestationEvaluation {
       action_type: 'https://adcontextprotocol.org/actions/rights-grant-evaluation';
     };
   } & {
-    [k: string]: unknown | undefined;
   };
   ext?: ExtensionObject;
 }
@@ -22468,7 +20309,6 @@ export interface CreativeVariable {
    * Whether this variable must have a value for the creative to serve
    */
   required?: boolean;
-  [k: string]: unknown | undefined;
 }
 export interface ListedCreativeCanonicalFormatKind {
   /**
@@ -22716,7 +20556,6 @@ export interface CreativeLocalization {
      */
     locale_variant_id: string;
     locale: LanguageTag;
-    [k: string]: unknown | undefined;
   };
   /**
    * Complete desired target-locale set for this creative. May be empty for a monolingual source-only creative. Every target contains materialized locale-specific asset overrides. Missing slots inherit source assets; after inheritance every resolved variant MUST satisfy the selected creative format.
@@ -22740,7 +20579,6 @@ export interface CreativeLocalization {
        */
       [k: string]: LocalizedCreativeAsset | [LocalizedCreativeAsset, ...LocalizedCreativeAsset[]];
     };
-    [k: string]: unknown | undefined;
   }[];
   /**
    * Optional explicit language-family substitutions evaluated only when strict RFC 4647 Lookup finds no equal available tag for the current requested preference. For each preference in order, the seller checks progressively truncated ranges from most to least specific and applies the first rule whose language_range equals that candidate. A rule may map a regional request to a different materialized regional variant, but no substitution is inferred when a rule is absent.
@@ -22755,7 +20593,6 @@ export interface CreativeLocalization {
        * Source or target locale variant to serve when this explicit fallback rule matches.
        */
       locale_variant_id: string;
-      [k: string]: unknown | undefined;
     },
     ...{
       language_range: LanguageTag;
@@ -22763,7 +20600,6 @@ export interface CreativeLocalization {
        * Source or target locale variant to serve when this explicit fallback rule matches.
        */
       locale_variant_id: string;
-      [k: string]: unknown | undefined;
     }[]
   ];
   /**
@@ -22774,7 +20610,6 @@ export interface CreativeLocalization {
    * Required seller behavior when neither strict RFC 4647 Lookup nor an explicit locale_fallbacks rule matches. serve_default serves default_locale_variant_id; do_not_serve makes this creative ineligible for that opportunity.
    */
   unmatched_locale_action: 'serve_default' | 'do_not_serve';
-  [k: string]: unknown | undefined;
 }
 export interface AssignOrUpdate {
   operation: 'assign';
@@ -23044,10 +20879,8 @@ export interface CreativeCapabilityTarget {
  * **Scope of validation (normative).** `validate_input` validates **manifest structure** against the canonical / product / third-party format target — slot counts, asset types, parameter ranges, format-shape constraints. It does NOT predict the surface's per-impression rendering choice. This distinction matters for `composition_model: algorithmic` formats (`responsive_creative`, `agent_placement`) where the surface picks combinations or phrasing at delivery time: the buyer's asset pool can still be structurally validated (does it meet the count/size/length requirements?) → `validated_pass` or `validated_fail` with violations. What's unpredictable is the rendered output composition, and that's NOT what `validate_input` claims to predict. `unvalidatable_nondeterministic` is reserved for `synthesis_nondeterministic: true` cases where the production pipeline itself can't be evaluated upfront — distinct from algorithmic composition where the inputs ARE evaluable but the output rendering isn't. Buyers calling `validate_input` on an algorithmic-composition target SHOULD expect a structural verdict (pass/fail), not a rendering preview.
  */
 export type ValidateInputResult = {
-  [k: string]: unknown | undefined;
 } & {
   target: {
-    [k: string]: unknown | undefined;
   };
   /**
    * Discriminator for the validation outcome. See schema description for the three states. Replaces the earlier boolean `ok` to distinguish 'failed validation' from 'platform is nondeterministic, can't pre-validate'.
@@ -23065,13 +20898,11 @@ export type ValidateInputResult = {
      * Expected value or range (e.g., '28000-32000', '9:16', 200).
      */
     expected?: {
-      [k: string]: unknown | undefined;
     };
     /**
      * Platform's pre-flight estimate for this field (NOT the actual output — there is no protocol state for orphaned out-of-spec artifacts). For TTS, this might be the predicted audio duration from text-length analysis. Helps the buyer fix the input before committing to a build.
      */
     predicted?: {
-      [k: string]: unknown | undefined;
     };
     /**
      * Path to the violating field (e.g., 'assets.video_main.duration_ms').
@@ -23081,11 +20912,8 @@ export type ValidateInputResult = {
      * Optional advisory adjustment hint. Platforms MAY suggest a corrected input shape; buyers MUST treat this as advisory, not authoritative.
      */
     retry_with?: {
-      [k: string]: unknown | undefined;
     };
-    [k: string]: unknown | undefined;
   }[];
-  [k: string]: unknown | undefined;
 };
 
 /**
@@ -23163,7 +20991,6 @@ export type Destination =
        * Optional account identifier on the platform
        */
       account?: string;
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -23178,7 +21005,6 @@ export type Destination =
        * Optional account identifier on the agent
        */
       account?: string;
-      [k: string]: unknown | undefined;
     };
 /**
  * Request parameters for discovering and refining signals. Use signal_spec for natural language discovery, signal_refs for exact lookups, both together to refine previous results, or discovery_mode: 'wholesale' to enumerate the agent's full priced signals feed (symmetric with get_products buying_mode: 'wholesale'). The legacy signal_ids field is deprecated.
@@ -23305,7 +21131,6 @@ export interface SignalFilters {
    */
   min_coverage_percentage?: number;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 
 // get_signals response
@@ -23313,7 +21138,6 @@ export interface SignalFilters {
  * Disclosure requirements and jurisdictional notes for modeled data signals. This schema is intentionally separate from core/provenance.json because creative provenance is about generated content, render guidance, and asset-level chain of custody, while signal modeling disclosure is about data-segment methodology and data-use transparency.
  */
 export type SignalModelingDisclosure = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * The provider's claim that a modeling or AI-use disclosure is required for this signal in at least one applicable jurisdiction. This is a declared compliance signal, not a protocol-level legal determination.
@@ -23387,7 +21211,6 @@ export type SignalModelingDisclosure = {
  * Optional forecast-shaped signal availability guidance. When present, this is authoritative for signal-level discovery coverage. Use this to disclose the denominator, bucket semantics, not-present bucket, aggregate present bucket, and per-value coverage distribution for the signal.
  */
 export type SignalCoverageForecast = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Coverage or availability points. Each point reuses the standard ForecastPoint shape, MUST include a signal dimension, and MUST include metrics.coverage_rate. Use metrics.impressions for count denominators and metrics.coverage_rate for the fraction of the declared scope represented by the point.
@@ -23397,18 +21220,14 @@ export type SignalCoverageForecast = {
   points: [
     ForecastPoint & {
       dimensions: {
-        [k: string]: unknown | undefined;
       };
       metrics?: {
-        [k: string]: unknown | undefined;
       };
     },
     ...(ForecastPoint & {
       dimensions: {
-        [k: string]: unknown | undefined;
       };
       metrics?: {
-        [k: string]: unknown | undefined;
       };
     })[]
   ];
@@ -23446,7 +21265,6 @@ export type SignalCoverageForecast = {
      */
     line_item_types?: [string, ...string[]];
     date_range?: DateRange;
-    [k: string]: unknown | undefined;
   };
   /**
    * 'exclusive' means the returned signal-value buckets do not overlap with each other. 'overlapping' means one impression or user can appear in multiple returned buckets, so coverage_rate values may sum above 1.0. This field describes overlap among returned buckets; bucket_completeness declares whether the returned buckets cover the full denominator.
@@ -23496,7 +21314,6 @@ export type Deployment =
        * Timestamp when activation completed (if is_live=true)
        */
       deployed_at?: string;
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -23524,7 +21341,6 @@ export type Deployment =
        * Timestamp when activation completed (if is_live=true)
        */
       deployed_at?: string;
-      [k: string]: unknown | undefined;
     };
 /**
  * Response payload for get_signals task
@@ -25917,19 +23733,16 @@ export interface Artifact1 {
      * Open Graph protocol metadata
      */
     open_graph?: {
-      [k: string]: unknown | undefined;
     };
     /**
      * Twitter Card metadata
      */
     twitter_card?: {
-      [k: string]: unknown | undefined;
     };
     /**
      * JSON-LD structured data (schema.org)
      */
     json_ld?: {}[];
-    [k: string]: unknown | undefined;
   };
   provenance?: Provenance;
   /**
@@ -25956,9 +23769,7 @@ export interface Artifact1 {
      * RSS feed URL
      */
     rss_url?: string;
-    [k: string]: unknown | undefined;
   };
-  [k: string]: unknown | undefined;
 }
 
 // create_content_standards response
@@ -28377,7 +26188,6 @@ export interface GetPlanAuditLogsResponse {
  * Universal governance check for campaign actions. The governance agent infers the check type from the fields present: tool+payload = intent check (proposed, orchestrator-side); planned_delivery or delivery_metrics with governance_context = execution or lifecycle check (committed, service-side). Proposal acceptance supplies the immutable proposal separately so governance can inspect its typed commercial terms while payload remains the exact downstream arguments. MediaBuy controls use buyer-proposed and seller-computed positive-delta ceilings. The first check is addressed by plan_id. Subsequent service-side checks use the opaque governance_context as the authoritative plan binding.
  */
 export type CheckGovernanceRequest = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
@@ -29003,7 +26813,6 @@ export interface SISponsoredContext {
      * Human-readable label for disclosure rendering. The canonical identity remains the brand/account reference.
      */
     display_name?: string;
-    [k: string]: unknown | undefined;
   };
   context_use: SIContextUse;
   /**
@@ -29045,7 +26854,6 @@ export interface SISponsoredContext {
          * Regulation or policy identifier.
          */
         regulation: string;
-        [k: string]: unknown | undefined;
       },
       ...{
         /**
@@ -29060,10 +26868,8 @@ export interface SISponsoredContext {
          * Regulation or policy identifier.
          */
         regulation: string;
-        [k: string]: unknown | undefined;
       }[]
     ];
-    [k: string]: unknown | undefined;
   };
   /**
    * When this sponsored-context declaration was made.
@@ -29081,10 +26887,8 @@ export interface SISponsoredContext {
      * Role of the declaring party.
      */
     role: 'brand_agent' | 'seller' | 'network' | 'platform';
-    [k: string]: unknown | undefined;
   };
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 
 // si_initiate_session parameters
@@ -29092,17 +26896,14 @@ export interface SISponsoredContext {
  * Host receipt for sponsored context accepted from a prior si_get_offering response or other pre-session context package. This records the accepted context_use, disclosure commitment, paying_principal, and host receipt for audit.
  */
 export type SISponsoredContextReceipt = {
-  [k: string]: unknown | undefined;
 } & {
   sponsored_context: SISponsoredContext;
   /**
    * Receiving-surface accountability fact: the use mode the host accepted and committed to honor for this sponsored context.
    */
   host_receipt: {
-    [k: string]: unknown | undefined;
   };
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 };
 /**
  * Host initiates a session with a brand agent
@@ -29178,7 +26979,6 @@ export interface SIIdentity {
      * Version of policy acknowledged
      */
     brand_policy_version?: string;
-    [k: string]: unknown | undefined;
   };
   /**
    * User data (only present if consent_granted is true)
@@ -29209,15 +27009,12 @@ export interface SIIdentity {
       state?: string;
       postal_code?: string;
       country?: string;
-      [k: string]: unknown | undefined;
     };
-    [k: string]: unknown | undefined;
   };
   /**
    * Session ID for anonymous users (when consent_granted is false)
    */
   anonymous_session_id?: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * What capabilities the host supports
@@ -29245,7 +27042,6 @@ export interface SICapabilities {
            * Brand voice identifier
            */
           voice_id?: string;
-          [k: string]: unknown | undefined;
         };
     /**
      * Brand video content playback
@@ -29261,7 +27057,6 @@ export interface SICapabilities {
            * Maximum video duration
            */
           max_duration_seconds?: number;
-          [k: string]: unknown | undefined;
         };
     /**
      * Animated video presence with brand avatar
@@ -29277,9 +27072,7 @@ export interface SICapabilities {
            * Brand avatar identifier
            */
           avatar_id?: string;
-          [k: string]: unknown | undefined;
         };
-    [k: string]: unknown | undefined;
   };
   /**
    * Visual components supported
@@ -29293,9 +27086,7 @@ export interface SICapabilities {
      * Platform-specific extensions (chatgpt_apps_sdk, maps, forms, etc.)
      */
     extensions?: {
-      [k: string]: unknown | undefined;
     };
-    [k: string]: unknown | undefined;
   };
   /**
    * Commerce capabilities
@@ -29305,7 +27096,6 @@ export interface SICapabilities {
      * Supports ACP (Agentic Commerce Protocol) checkout handoff
      */
     acp_checkout?: boolean;
-    [k: string]: unknown | undefined;
   };
   /**
    * A2UI (Agent-to-UI) capabilities
@@ -29319,13 +27109,11 @@ export interface SICapabilities {
      * Supported A2UI component catalogs (e.g., 'si-standard', 'standard')
      */
     catalogs?: string[];
-    [k: string]: unknown | undefined;
   };
   /**
    * Supports MCP Apps for rendering A2UI surfaces in iframes
    */
   mcp_apps?: boolean;
-  [k: string]: unknown | undefined;
 }
 
 // si_initiate_session response
@@ -29333,7 +27121,6 @@ export interface SICapabilities {
  * Standard visual component that brand returns and host renders
  */
 export type SIUIElement = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Component type
@@ -29351,9 +27138,7 @@ export type SIUIElement = {
    * Component-specific data
    */
   data?: {
-    [k: string]: unknown | undefined;
   };
-  [k: string]: unknown | undefined;
 };
 /**
  * Brand agent's response to session initiation
@@ -29627,9 +27412,7 @@ export interface A2UISurface {
    * Application data that components can bind to
    */
   dataModel?: {
-    [k: string]: unknown | undefined;
   };
-  [k: string]: unknown | undefined;
 }
 /**
  * A component in an A2UI surface
@@ -29652,7 +27435,6 @@ export interface A2UIComponent {
      */
     [k: string]: {} | undefined;
   };
-  [k: string]: unknown | undefined;
 }
 
 // si_terminate_session parameters
@@ -29826,7 +27608,6 @@ export interface GetAdCPCapabilitiesRequest {
  * Portable-attestation trust and delivery capabilities for this evaluator. Present only when the agent accepts AttestationReference inputs on one or more domain task surfaces. This block is an allowlist: presenters cannot expand accepted issuers, resolver endpoints, verifier agents, claim types, or proof formats by supplying values in a request.
  */
 export type AttestationCapabilities = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * Open claim identifiers the evaluator is prepared to evaluate. Each value is an absolute URI. Absence means the evaluator has not advertised portable-attestation support; an empty list is not permitted.
@@ -29999,7 +27780,6 @@ export type AttestationCapabilities = {
  * Required for sellers implementing AdCP 3.2 advertiser-account provisioning, but optional in the shared 3.x response schema for compatibility. Declares whether the account timezone is seller-wide or fixed per account and whether a buyer must select it during sync_accounts provisioning. Account timezone is the default for account-scoped calendar semantics; feature-specific capability fields explicitly declare exceptions.
  */
 export type AccountTimezoneCapability = {
-  [k: string]: unknown | undefined;
 } & {
   /**
    * seller_fixed means every account uses fixed_timezone. account_fixed means each account has an immutable timezone returned on Account and selected or assigned during account establishment.
@@ -32139,7 +29919,6 @@ export interface AccountAuthorization {
    * Convenience flag. When true, the caller is permitted only non-mutating tasks. Sellers MUST reject any mutation from a read-only caller with READ_ONLY_SCOPE. For the AdCP 3.2 product split, read-only permits list_products but rejects request_proposals, refine_proposals, and decline_proposals; a legacy get_products call is permitted only when the seller can guarantee the selected arm is a synchronous side-effect-free read. Sellers MAY omit this field; omission is equivalent to `false`. Callers MUST NOT infer read-only from `allowed_tasks` alone — the seller MUST set this explicitly when it applies.
    */
   read_only?: boolean;
-  [k: string]: unknown | undefined;
 }
 
 // sync_accounts parameters
@@ -32868,7 +30647,6 @@ export interface SyncAccountsSuccess {
      * Request-only staging field. It MUST NOT appear in sync_accounts responses.
      */
     destination_billing_entity?: {
-      [k: string]: unknown | undefined;
     };
     account_scope?: AccountScope;
     /**
@@ -33494,7 +31272,6 @@ export type ComplianceTaskCompletionData = GetProductsCompletion | GetSignalsCom
  */
 export type GetProductsCompletion = AdCPVersionEnvelope &
   ProtocolEnvelope & {
-    [k: string]: unknown | undefined;
   } & {
     /**
      * Array of matching products
@@ -33505,7 +31282,6 @@ export type GetProductsCompletion = AdCPVersionEnvelope &
      * Bundled platform-extension definitions referenced by any product in `products`. Keyed by `<extension_uri>@<digest>` (e.g., `https://creative.adcontextprotocol.org/translated/meta/extensions/meta_pixel@sha256:abc...`). When present, lets buyers resolve `platform_extensions` references on product format declarations without a separate fetch. Buyer SDKs cache by URI@digest; subsequent get_products responses MAY omit definitions the buyer already has cached and rely on the digest match. Each value is an extension definition with `extends` (the canonical concept it extends, e.g., `tracking`), `fields` (the schema for additional fields the extension contributes), `version`, and optional `description`.
      */
     extensions?: {
-      [k: string]: unknown | undefined;
     };
     /**
      * Optional array of proposed media plans with budget allocations across products. Publishers include proposals when they can provide strategic guidance based on the brief. Proposals are actionable - buyers can refine them via follow-up get_products calls within the same session, or execute them directly via create_media_buy.
@@ -33788,7 +31564,6 @@ export type GetProductsCompletion = AdCPVersionEnvelope &
             }
           | undefined;
       };
-      [k: string]: unknown | undefined;
     };
     pagination?: PaginationResponse;
     /**
@@ -33813,7 +31588,6 @@ export type GetProductsCompletion = AdCPVersionEnvelope &
     sandbox?: boolean;
     context?: ContextObject;
     ext?: ExtensionObject;
-    [k: string]: unknown | undefined;
   };
 /**
  * Response payload for get_signals task
@@ -33825,7 +31599,6 @@ export type GetSignalsCompletion = AdCPVersionEnvelope &
      */
     signals?: (SignalListing &
       SignalDefinitionEnrichment & {
-        [k: string]: unknown | undefined;
       })[];
     /**
      * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
@@ -33889,13 +31662,11 @@ export type GetSignalsCompletion = AdCPVersionEnvelope &
     sandbox?: boolean;
     context?: ContextObject;
     ext?: ExtensionObject;
-    [k: string]: unknown | undefined;
   };
 /**
  * Success response - media buy created successfully
  */
 export type CreateMediaBuyCompletion = {
-  [k: string]: unknown | undefined;
 };
 
 /**
@@ -34446,7 +32217,6 @@ export interface RawAttestation {
    * Request body the agent sent. Required when `attestation_mode` is `raw` (or omitted); MUST be absent when `attestation_mode` is `digest`. Object when content_type is JSON-shaped and the controller decoded it; string otherwise. The `x-adcp-open-payload: true` annotation applies to the decoded JSON/object arm of this mixed field; non-JSON string payloads remain scalar values governed by the surrounding schema. Adopters MUST apply the recursive secret-key redaction described in this branch's top-level description before emission — secrets at any depth (Authorization values inlined into JSON bodies, embedded JWTs, presigned-URL tokens, OAuth refresh tokens) MUST be replaced with the literal string `[redacted]`. Storyboards that assert `payload_must_contain` or `identifier_paths` are matching against THIS field — secrets MUST be redacted but storyboard-supplied identifiers (hashed PII, request correlation values) MUST NOT be redacted. Adopters SHOULD cap individual payload size at 64 KiB; payloads exceeding that SHOULD be truncated with a trailing `[…truncated]` marker — large payloads bloat compliance reports and the LLM-rendered context windows that consume them.
    */
   payload: {
-    [k: string]: unknown | undefined;
   };
   /**
    * Byte length of the post-redaction body bytes represented by this recorded_call. Required in both `raw` and `digest` modes — symmetric across modes so runners can detect adopter-side truncation regardless of attestation choice. In `raw` mode this MUST equal the UTF-8 byte length of the emitted `payload` value after the same recursive secret-key redaction the controller applied before returning it. In `digest` mode this MUST equal the exact number of bytes fed into SHA-256 for `payload_digest_sha256`: RFC 8785 (JCS) canonical bytes for JSON-shaped content after redaction, or the post-redaction raw body bytes for non-JSON content. Digest-mode `payload_length` is therefore NOT the original outbound body length before JSON parsing, redaction, or canonicalization. Mismatch between observed payload length and reported `payload_length` is a controller-side bug worth surfacing in the report.
@@ -34563,6 +32333,9 @@ export interface ControllerError {
   ext?: ExtensionObject;
 }
 
+
+/** @deprecated SDK 14 beta exported this numbered codegen compatibility alias. */
+export type Product1 = Product;
 
 /** @deprecated SDK 13 exported the 3.1 compatibility name. */
 export type OutcomeMeasurementDeprecated = OutcomeMeasurement;

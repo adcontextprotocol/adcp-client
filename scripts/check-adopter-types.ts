@@ -114,13 +114,53 @@ import type {
   FormatSchemaReferenceResult,
   CreateMediaBuyPayload as RootCreateMediaBuyPayload,
   GetProductsPayload as RootGetProductsPayload,
+  LegacyProduct,
+  LegacyGetProductsResponse,
   MediaBuyAvailableAction,
+  ProductCardFields,
+  ProductCardDetailedFields,
   SLAWindow,
   SlaWindow,
   UpdateMediaBuyPayload as RootUpdateMediaBuyPayload,
 } from '@adcp/sdk';
+import type {
+  AdCPVersionEnvelope,
+  AudienceCharacteristic,
+  CanonicalFormatBase as ToolCanonicalFormatBase,
+  CommercialTerms,
+  ExplicitPackagesWithFixedAllocation,
+  Placement,
+  PostalCountrySystem,
+  ProductFormatDeclaration,
+  ProtocolEnvelope,
+  SelectedPlacements,
+  SignalDefinitionEnrichment,
+  SignalTargetingExpression,
+} from '@adcp/sdk/types/tools.generated';
+import type {
+  BrandReference1,
+  BrandReference2,
+  BrandReference3,
+  BrandReference4,
+  BrandReference5,
+  BrandReference6,
+  BrandReference7,
+  BrandReference8,
+  BrandReference9,
+  BrandReference10,
+  BrandReference11,
+  BrandReference12,
+  BusinessEntity1,
+  MeasurementTerms1,
+  None1,
+  None2,
+  PlatformExtensionReference1,
+  Product1,
+  Property1,
+} from '@adcp/sdk/types/core.generated';
 import { createCanonicalReferenceResolver as createSubpathCanonicalReferenceResolver } from '@adcp/sdk/canonical-references';
 import { customToolFor, customToolForSchema, TOOL_INPUT_SCHEMAS, TOOL_INPUT_SHAPES, TOOL_REQUEST_SCHEMAS } from '@adcp/sdk/schemas';
+import * as publicSchemas from '@adcp/sdk/schemas';
 
 declare const _server: AdcpServer;
 void _server;
@@ -364,12 +404,72 @@ interface _AdopterCreativeBrief {
 declare const _adopterCreativeBrief: _AdopterCreativeBrief;
 const _structurallyAssignedBrief: CreativeBrief = _adopterCreativeBrief;
 
+// Nested inline shapes must be just as source-compatible as named top-level
+// interfaces. Both sides of this assignment are exported by the SDK: the
+// projection helper produces ProductCardFields, while LegacyProduct embeds
+// the corresponding wire shape inline.
+declare const _helperProductCard: ProductCardFields;
+const _generatedProductCard: NonNullable<LegacyProduct['product_card']> = _helperProductCard;
+const _helperProductCardReverse: ProductCardFields = _generatedProductCard;
+type _ProductCardWithoutDescription = Omit<NonNullable<LegacyProduct['product_card']>, 'description'>;
+const _productCardWithoutDescription: _ProductCardWithoutDescription = _helperProductCard;
+declare const _helperProductCardDetailed: ProductCardDetailedFields;
+const _generatedProductCardDetailed: NonNullable<LegacyProduct['product_card_detailed']> = _helperProductCardDetailed;
+const _helperProductCardDetailedReverse: ProductCardDetailedFields = _generatedProductCardDetailed;
+type _LegacyResponseProduct = NonNullable<LegacyGetProductsResponse['products']>[number];
+const _legacyResponseProductCard: NonNullable<_LegacyResponseProduct['product_card']> = _helperProductCard;
+
 const _extensionMap: ExtensionObject = { vendor: { feature: true } };
 const _extensionValue: unknown = _extensionMap.vendor;
 void _omittedBriefHeadline;
 void _pickedBriefHeadline;
 void _structurallyAssignedBrief;
+void _generatedProductCard;
+void _helperProductCardReverse;
+void _productCardWithoutDescription;
+void _generatedProductCardDetailed;
+void _helperProductCardDetailedReverse;
+void _legacyResponseProductCard;
 void _extensionValue;
+
+type _HasNoStringIndex<T> = string extends keyof T ? false : true;
+const _exactPackageFlowTypes: [
+  _HasNoStringIndex<SelectedPlacements>,
+  _HasNoStringIndex<ExplicitPackagesWithFixedAllocation>,
+  _HasNoStringIndex<CommercialTerms>,
+  _HasNoStringIndex<ProductFormatDeclaration>,
+  _HasNoStringIndex<Placement>,
+  _HasNoStringIndex<AudienceCharacteristic>,
+] = [true, true, true, true, true, true];
+void _exactPackageFlowTypes;
+
+type _LegacyGeneratedAliases =
+  | BrandReference1 | BrandReference2 | BrandReference3 | BrandReference4 | BrandReference5 | BrandReference6
+  | BrandReference7 | BrandReference8 | BrandReference9 | BrandReference10 | BrandReference11 | BrandReference12
+  | BusinessEntity1 | MeasurementTerms1 | None1 | None2 | PlatformExtensionReference1 | Product1 | Property1;
+declare const _legacyGeneratedAlias: _LegacyGeneratedAliases;
+void _legacyGeneratedAlias;
+
+declare const _historicalToolExports: [
+  AdCPVersionEnvelope,
+  ToolCanonicalFormatBase,
+  PostalCountrySystem,
+  ProtocolEnvelope,
+  SignalDefinitionEnrichment,
+  SignalTargetingExpression,
+];
+void _historicalToolExports;
+
+const _legacyGeneratedSchemaAliases = [
+  publicSchemas.BrandReference1Schema, publicSchemas.BrandReference2Schema, publicSchemas.BrandReference3Schema,
+  publicSchemas.BrandReference4Schema, publicSchemas.BrandReference5Schema, publicSchemas.BrandReference6Schema,
+  publicSchemas.BrandReference7Schema, publicSchemas.BrandReference8Schema, publicSchemas.BrandReference9Schema,
+  publicSchemas.BrandReference10Schema, publicSchemas.BrandReference11Schema, publicSchemas.BrandReference12Schema,
+  publicSchemas.BusinessEntity1Schema, publicSchemas.MeasurementTerms1Schema, publicSchemas.None1Schema,
+  publicSchemas.None2Schema, publicSchemas.PlatformExtensionReference1Schema, publicSchemas.Product1Schema,
+  publicSchemas.Property1Schema,
+];
+void _legacyGeneratedSchemaAliases;
 
 // Canonical format overlays refine the base declaration with defaults and
 // format-specific fields. Their slots property must remain assignable from

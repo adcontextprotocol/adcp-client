@@ -80,8 +80,8 @@ export function buildCreateMediaBuyRequest(
     accountRef?: AccountReference;
   } = {}
 ): Record<string, unknown> {
-  const minSpendPerPackage = 'min_spend_per_package' in pricingOption ? pricingOption.min_spend_per_package : undefined;
-  const minSpend = typeof minSpendPerPackage === 'number' ? minSpendPerPackage : 0;
+  const configuredMinSpend = 'min_spend_per_package' in pricingOption ? pricingOption.min_spend_per_package : undefined;
+  const minSpend = typeof configuredMinSpend === 'number' ? configuredMinSpend : 0;
   const budget = options.budget || Math.max(1000, minSpend);
   const now = new Date();
   const startTime = new Date(now.getTime() + 24 * 60 * 60 * 1000); // Tomorrow

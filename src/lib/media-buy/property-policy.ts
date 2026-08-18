@@ -55,7 +55,6 @@ export interface ProductPolicyProductLike {
   id?: unknown;
   publisher_properties?: unknown;
   property_targeting_allowed?: unknown;
-  [key: string]: unknown;
 }
 
 export interface ProductPropertyPolicyIdentifier {

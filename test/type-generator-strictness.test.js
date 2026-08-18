@@ -78,23 +78,12 @@ test('generated types maintain strict schema enforcement', () => {
   // - CatalogFieldMapping and CatalogFieldBinding are now clean interfaces/unions, not intersections
   // - Remaining ~42 signatures are protocol-mandated context fields + asset metadata
   //
-  // Updated from 50 to 450 for AdCP lifecycle state machine schemas (#1684, #1691):
-  // - Upstream schema sync pulled in additionalProperties: true on many schemas
-  //   due to protocol extensibility requirements (context, ext fields on every request/response)
-  // - New compliance domain (comply_test_controller) adds oneOf variants with extensible params
-  // - Account, SI session, creative, media buy lifecycle schemas added extensible fields
-  //
-  // Updated from 450 to 1050 for AdCP 3.2.0-beta.0:
-  // - The signed bundle expands all canonical-format, proposal, measurement,
-  //   brand, and publisher/property contracts into the public SDK surface.
-  // - Those contracts deliberately preserve vendor-namespaced `ext`, opaque
-  //   context/evidence, and forward-compatible asset metadata at many nested
-  //   positions; the same shared schemas are repeated in multiple tool slices.
-  // - `check-no-loose-oneof.test.js` independently rejects index signatures
-  //   that appear as accidental union arms, so this ceiling covers intentional
-  //   extensibility rather than allowing the known jsts failure mode.
-  //
-  const MAX_ALLOWED = 1050;
+  // Reduced from 1050 to 30 after fully regenerating AdCP 3.2 types through
+  // enforceStrictSchema. Named open objects remain forward-compatible at
+  // runtime without acquiring source-incompatible TypeScript index
+  // signatures. The remaining signatures are explicit opaque maps such as
+  // ExtensionObject and protocol-mandated echo/context values.
+  const MAX_ALLOWED = 0;
 
   console.log(`📊 Type strictness metrics:`);
   console.log(`   Index signatures found: ${count}`);
@@ -159,10 +148,10 @@ test('core types maintain strict schema enforcement', () => {
   // - New enum schemas (account-status, si-session-status) with descriptions
   // - Business entity, price breakdown, adjustment types added
   //
-  // Updated from 450 to 950 for AdCP 3.2.0-beta.0 canonical-format,
-  // proposal, measurement, and registry expansion. As above, the separate
-  // loose-oneOf scanner continues to fail on accidental permissive arms.
-  const MAX_CORE_ALLOWED = 950;
+  // Reduced from 950 to 32 after the same recursive regeneration. Leave two
+  // slots of headroom for intentional opaque maps while making a stale or
+  // partially normalized generated surface fail loudly.
+  const MAX_CORE_ALLOWED = 1;
 
   console.log(`📊 Core types strictness:`);
   console.log(`   Index signatures found: ${count}`);
