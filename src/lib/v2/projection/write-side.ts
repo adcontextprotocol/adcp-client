@@ -300,23 +300,40 @@ export function lintPackageFormatSelectorDimensions(
       { legacyFormatConverter, projectionCatalogs: options?.projectionCatalogs }
     );
     if (converterDiagnosed) continue;
-    const dimensionalCatalogConflict =
-      inlineResult.inspection.kind === 'complete' &&
-      ref.duration_ms === undefined &&
-      projection.diagnostics.some(
-        diagnostic =>
-          diagnostic.code === 'FORMAT_PROJECTION_FAILED' &&
-          diagnostic.error.details.resolution_failure === 'catalog_requirement_conflict'
+    const catalogConflict = projection.diagnostics.some(
+      diagnostic =>
+        diagnostic.code === 'FORMAT_PROJECTION_FAILED' &&
+        diagnostic.error.details.resolution_failure === 'catalog_requirement_conflict'
+    );
+    if (catalogConflict && inlineResult.inspection.kind === 'complete') {
+      const baseProjection = projectV1ProductToV2(
+        {
+          product_id: productId,
+          name: 'Package selector',
+          description: 'Package selector dimensional lint',
+          format_ids: [{ agent_url: ref.agent_url, id: ref.id }],
+        },
+        { projectionCatalogs: options?.projectionCatalogs }
       );
-    if (dimensionalCatalogConflict) {
-      diagnostics.push({
-        code: 'FORMAT_SELECTOR_DIMENSIONS_MISMATCH',
-        field,
-        selector: 'legacy',
-        message: `${field} dimensions conflict with the resolved legacy format catalog`,
-        format_id_index: index,
-      });
-      continue;
+      const baseDeclaration = baseProjection.v2.format_options[0];
+      const baseInspection =
+        baseDeclaration?.format_kind === 'image'
+          ? inspectFixedDimensions(baseDeclaration.params)
+          : ({ kind: 'non_fixed' } as const);
+      if (
+        baseInspection.kind === 'complete' &&
+        (baseInspection.dimensions.width !== inlineResult.inspection.dimensions.width ||
+          baseInspection.dimensions.height !== inlineResult.inspection.dimensions.height)
+      ) {
+        diagnostics.push({
+          code: 'FORMAT_SELECTOR_DIMENSIONS_MISMATCH',
+          field,
+          selector: 'legacy',
+          message: `${field} dimensions conflict with the resolved legacy format catalog`,
+          format_id_index: index,
+        });
+        continue;
+      }
     }
 
     const projected = projection.v2.format_options[0];

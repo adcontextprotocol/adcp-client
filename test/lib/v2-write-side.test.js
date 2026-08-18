@@ -67,21 +67,24 @@ describe('lintPackageFormatSelectorDimensions', () => {
   });
 
   test('reports dimensions that conflict with the resolved legacy catalog', () => {
-    const diagnostics = lintPackageFormatSelectorDimensions({
-      format_ids: [
-        {
-          agent_url: AAO_AGENT_URL,
-          id: 'display_728x90_image',
-          width: 300,
-          height: 250,
-        },
-      ],
-    });
+    for (const duration_ms of [undefined, 30000]) {
+      const diagnostics = lintPackageFormatSelectorDimensions({
+        format_ids: [
+          {
+            agent_url: AAO_AGENT_URL,
+            id: 'display_728x90_image',
+            width: 300,
+            height: 250,
+            ...(duration_ms === undefined ? {} : { duration_ms }),
+          },
+        ],
+      });
 
-    assert.deepStrictEqual(
-      diagnostics.map(diagnostic => [diagnostic.code, diagnostic.selector, diagnostic.field]),
-      [['FORMAT_SELECTOR_DIMENSIONS_MISMATCH', 'legacy', 'format_ids[0]']]
-    );
+      assert.deepStrictEqual(
+        diagnostics.map(diagnostic => [diagnostic.code, diagnostic.selector, diagnostic.field]),
+        [['FORMAT_SELECTOR_DIMENSIONS_MISMATCH', 'legacy', 'format_ids[0]']]
+      );
+    }
   });
 
   test('does not relabel video duration projection failures as image dimension diagnostics', () => {
@@ -93,6 +96,22 @@ describe('lintPackageFormatSelectorDimensions', () => {
         []
       );
     }
+  });
+
+  test('does not relabel non-image catalog conflicts as image dimension diagnostics', () => {
+    assert.deepStrictEqual(
+      lintPackageFormatSelectorDimensions({
+        format_ids: [
+          {
+            agent_url: AAO_AGENT_URL,
+            id: 'display_728x90_html',
+            width: 300,
+            height: 250,
+          },
+        ],
+      }),
+      []
+    );
   });
 
   test('reports dimensionless dual image selectors without guessing dimensions', () => {
