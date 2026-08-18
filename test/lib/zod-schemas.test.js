@@ -121,6 +121,26 @@ describe('Zod Schema Validation', () => {
     assert.ok(schemas.CanonicalFormatImageSchema.shape.image_formats, 'canonical formats should expose object shape');
   });
 
+  test('PriceBreakdownSchema preserves adjustment XOR and 1..20 bounds', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+    const adjustment = { kind: 'fee', name: 'ad_serving', rate: 0.1 };
+    assert.equal(schemas.PriceBreakdownSchema.safeParse({ list_price: 10, adjustments: [adjustment] }).success, true);
+    assert.equal(schemas.PriceBreakdownSchema.safeParse({ list_price: 10, adjustments: [] }).success, false);
+    assert.equal(
+      schemas.PriceBreakdownSchema.safeParse({ list_price: 10, adjustments: Array(21).fill(adjustment) }).success,
+      false
+    );
+    assert.equal(
+      schemas.PriceBreakdownSchema.safeParse({
+        list_price: 10,
+        adjustments: [{ ...adjustment, amount: 1 }],
+      }).success,
+      false
+    );
+  });
+
   test('ProductSchema exposes ZodObject composition helpers', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');

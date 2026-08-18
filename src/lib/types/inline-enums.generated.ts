@@ -224,12 +224,36 @@ export const CanonicalReportingCapabilities_DateRangeSupportValues = ["date_rang
 /** single | CapabilitiesChangedWebhook.reason */
 export const CapabilitiesChangedWebhook_ReasonValues = ["configuration_changed", "deployment_changed", "capability_enabled", "capability_disabled", "protocol_versions_changed", "manual_refresh", "other"] as const;
 
+// ====== CatalogFieldMapping ======
+
+/** single | CatalogFieldMapping.transform */
+export const CatalogFieldMapping_TransformValues = ["date", "divide", "boolean", "split"] as const;
+
 // ====== CatalogItemAvailabilityError ======
 
 /** single | CatalogItemAvailabilityError.recovery */
 export const CatalogItemAvailabilityError_RecoveryValues = ["transient", "correctable", "terminal"] as const;
 /** single | CatalogItemAvailabilityError.source */
 export const CatalogItemAvailabilityError_SourceValues = ["producer", "sdk"] as const;
+
+// ====== CatalogItemAvailabilityState ======
+
+/** single | CatalogItemAvailabilityState.availability */
+export const CatalogItemAvailabilityState_AvailabilityValues = ["active", "suppressed"] as const;
+/** single | CatalogItemAvailabilityState.status */
+export const CatalogItemAvailabilityState_StatusValues = ["found", "failed"] as const;
+
+// ====== CatalogItemAvailabilityUpdate ======
+
+/** single | CatalogItemAvailabilityUpdate.action */
+export const CatalogItemAvailabilityUpdate_ActionValues = ["suppress", "restore"] as const;
+/** single | CatalogItemAvailabilityUpdate.reason */
+export const CatalogItemAvailabilityUpdate_ReasonValues = ["out_of_stock", "back_in_stock", "content_unavailable", "content_available", "promotion_start", "promotion_end", "time_window_started", "time_window_expired", "buyer_request", "other"] as const;
+
+// ====== CatalogItemAvailabilityUpdateResult ======
+
+/** single | CatalogItemAvailabilityUpdateResult.status */
+export const CatalogItemAvailabilityUpdateResult_StatusValues = ["applied", "unchanged", "failed"] as const;
 
 // ====== CheckGovernanceResponse ======
 
@@ -250,6 +274,11 @@ export const ControllerError_ErrorValues = ["INVALID_TRANSITION", "INVALID_STATE
 
 /** single | CreateMediaBuyAsyncInputRequired.reason */
 export const CreateMediaBuyAsyncInputRequired_ReasonValues = ["APPROVAL_REQUIRED", "BUDGET_EXCEEDS_LIMIT"] as const;
+
+// ====== CreativeAssignment ======
+
+/** single | CreativeAssignment.rotation_mode */
+export const CreativeAssignment_RotationModeValues = ["weighted", "even", "sequential", "random"] as const;
 
 // ====== CreativeAssignmentChangedWebhook ======
 
@@ -273,6 +302,11 @@ export const CreativePurgedWebhook_PurgeKindValues = ["soft", "hard"] as const;
 /** single | CreativeVariable.variable_type */
 export const CreativeVariable_VariableTypeValues = ["text", "image", "video", "audio", "url", "number", "boolean", "color", "date"] as const;
 
+// ====== DAASTTrackerAsset ======
+
+/** single | DAASTTrackerAsset.target */
+export const DAASTTrackerAsset_TargetValues = ["linear", "companion"] as const;
+
 // ====== DestinationItem ======
 
 /** single | DestinationItem.destination_type */
@@ -289,6 +323,15 @@ export const DiagnosticIssue_SeverityValues = ["error", "warning", "info"] as co
 export const DigestAttestation_MethodValues = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 /** single | DigestAttestation.purpose */
 export const DigestAttestation_PurposeValues = ["platform_primary", "measurement", "attribution", "creative_serving", "identity", "other"] as const;
+
+// ====== DownstreamConnectionRequirement ======
+
+/** single | DownstreamConnectionRequirement.connection_type */
+export const DownstreamConnectionRequirement_ConnectionTypeValues = ["advertiser_account", "publisher_identity", "post_authorization"] as const;
+/** single | DownstreamConnectionRequirement.scope */
+export const DownstreamConnectionRequirement_ScopeValues = ["account", "identity", "post", "unknown"] as const;
+/** single | DownstreamConnectionRequirement.status */
+export const DownstreamConnectionRequirement_StatusValues = ["connected", "missing", "pending", "expired", "revoked", "not_required", "unknown"] as const;
 
 // ====== Duration ======
 
@@ -470,6 +513,13 @@ export const PackageStatus_IndicatorTypesEvaluatedValues = ["creative_diversity_
 /** single | PerformanceFeedback.status */
 export const PerformanceFeedback_StatusValues = ["accepted", "queued", "applied", "rejected"] as const;
 
+// ====== PixelTrackerAsset ======
+
+/** single | PixelTrackerAsset.event */
+export const PixelTrackerAsset_EventValues = ["impression", "viewable_mrc_50", "viewable_mrc_100", "viewable_video_50", "audible_video_complete", "click", "custom"] as const;
+/** single | PixelTrackerAsset.method */
+export const PixelTrackerAsset_MethodValues = ["img", "js"] as const;
+
 // ====== PolicyEntry ======
 
 /** single | PolicyEntry.source */
@@ -484,6 +534,11 @@ export const PreviewCreativeRequest_RequestTypeValues = ["single", "batch", "var
 
 /** single | Price.period */
 export const Price_PeriodValues = ["night", "month", "year", "one_time"] as const;
+
+// ====== ProductCardReferenceAsset ======
+
+/** single | ProductCardReferenceAsset.role */
+export const ProductCardReferenceAsset_RoleValues = ["coverage_map", "sample_render", "environment_photo", "media_kit", "logo", "other"] as const;
 
 // ====== PropertyError ======
 
@@ -570,6 +625,13 @@ export const ReportPlanOutcomeResponse_OutcomeStateValues = ["accepted", "findin
 /** single | ResponsePayload.task */
 export const ResponsePayload_TaskValues = ["verify_brand_claim", "verify_brand_claims"] as const;
 
+// ====== RightsConstraint ======
+
+/** single | RightsConstraint.approval_status */
+export const RightsConstraint_ApprovalStatusValues = ["pending", "approved", "rejected"] as const;
+/** single | RightsConstraint.grant_status */
+export const RightsConstraint_GrantStatusValues = ["active", "paused", "revoked"] as const;
+
 // ====== SearchBrandResult ======
 
 /** single | SearchBrandResult.relationship_trust */
@@ -602,11 +664,6 @@ export const SignalDefinition_LookbackWindowValues = ["intra_day", "daily", "wee
 /** single | SignalDefinition.methodology */
 export const SignalDefinition_MethodologyValues = ["observed", "declared", "derived", "inferred", "modeled"] as const;
 
-// ====== SignalForecastDimension ======
-
-/** single | SignalForecastDimension.presence */
-export const SignalForecastDimension_PresenceValues = ["present", "absent"] as const;
-
 // ====== SignalSelectionGroupRule ======
 
 /** single | SignalSelectionGroupRule.selection_mode */
@@ -631,6 +688,11 @@ export const SIIdentity_ConsentScopeValues = ["name", "email", "shipping_address
 
 /** single | SITerminateSessionRequest.reason */
 export const SITerminateSessionRequest_ReasonValues = ["handoff_transaction", "handoff_complete", "user_exit", "session_timeout", "host_terminated"] as const;
+
+// ====== SIUIElement ======
+
+/** single | SIUIElement.type */
+export const SIUIElement_TypeValues = ["text", "link", "image", "product_card", "carousel", "action_button", "app_handoff", "integration_actions"] as const;
 
 // ====== SyncAgentNotificationConfigsResponse ======
 
@@ -657,6 +719,13 @@ export const TMPError_CodeValues = ["invalid_request", "unknown_package", "selle
 /** single | TMPProviderRegistration.status */
 export const TMPProviderRegistration_StatusValues = ["active", "inactive", "draining"] as const;
 
+// ====== TransformerParam ======
+
+/** single | TransformerParam.type */
+export const TransformerParam_TypeValues = ["string", "number", "integer", "boolean"] as const;
+/** single | TransformerParam.value_source */
+export const TransformerParam_ValueSourceValues = ["inline", "range", "enumerable", "free_text"] as const;
+
 // ====== UpdateMediaBuyAsyncInputRequired ======
 
 /** single | UpdateMediaBuyAsyncInputRequired.reason */
@@ -669,10 +738,20 @@ export const URLAssetRequirements_ProtocolsValues = ["https", "http"] as const;
 /** single | URLAssetRequirements.role */
 export const URLAssetRequirements_RoleValues = ["clickthrough", "landing_page", "impression_tracker", "click_tracker", "viewability_tracker", "third_party_tracker"] as const;
 
+// ====== ValidateInputResult ======
+
+/** single | ValidateInputResult.result_kind */
+export const ValidateInputResult_ResultKindValues = ["validated_pass", "validated_fail", "unvalidatable_nondeterministic"] as const;
+
 // ====== ValidationResult ======
 
 /** single | ValidationResult.status */
 export const ValidationResult_StatusValues = ["compliant", "non_compliant", "not_covered", "unidentified"] as const;
+
+// ====== VASTTrackerAsset ======
+
+/** single | VASTTrackerAsset.target */
+export const VASTTrackerAsset_TargetValues = ["linear", "non_linear", "companion"] as const;
 
 // ====== VehicleItem ======
 
@@ -814,6 +893,11 @@ export const CanonicalFormatVASTVideo_ReferenceMutabilityValues = CanonicalForma
 // --- CanonicalProjectionReference ---
 /** @deprecated use `CanonicalFormatHostedAudio_AssetSourceValues` — same literal set, CanonicalProjectionReference.asset_source duplicates the canonical export. */
 export const CanonicalProjectionReference_AssetSourceValues = CanonicalFormatHostedAudio_AssetSourceValues;
+// --- CatalogItemAvailabilityUpdateResult ---
+/** @deprecated use `CatalogItemAvailabilityUpdate_ActionValues` — same literal set, CatalogItemAvailabilityUpdateResult.action duplicates the canonical export. */
+export const CatalogItemAvailabilityUpdateResult_ActionValues = CatalogItemAvailabilityUpdate_ActionValues;
+/** @deprecated use `CatalogItemAvailabilityState_AvailabilityValues` — same literal set, CatalogItemAvailabilityUpdateResult.availability duplicates the canonical export. */
+export const CatalogItemAvailabilityUpdateResult_AvailabilityValues = CatalogItemAvailabilityState_AvailabilityValues;
 // --- CreativeBrief ---
 /** @deprecated use `BriefAsset_ObjectiveValues` — same literal set, CreativeBrief.objective duplicates the canonical export. */
 export const CreativeBrief_ObjectiveValues = BriefAsset_ObjectiveValues;
@@ -865,6 +949,15 @@ export const SearchBrandResult_KellerTypeValues = GetBrandIdentitySuccess_Keller
 // --- SignalDefinition ---
 /** @deprecated use `SignalDefinition_LookbackWindowValues` — same literal set, SignalDefinition.refresh_cadence duplicates the canonical export. */
 export const SignalDefinition_RefreshCadenceValues = SignalDefinition_LookbackWindowValues;
+// --- SignalDefinitionEnrichment ---
+/** @deprecated use `SignalDefinition_Art9BasisValues` — same literal set, SignalDefinitionEnrichment.art9_basis duplicates the canonical export. */
+export const SignalDefinitionEnrichment_Art9BasisValues = SignalDefinition_Art9BasisValues;
+/** @deprecated use `SignalDefinition_LookbackWindowValues` — same literal set, SignalDefinitionEnrichment.lookback_window duplicates the canonical export. */
+export const SignalDefinitionEnrichment_LookbackWindowValues = SignalDefinition_LookbackWindowValues;
+/** @deprecated use `SignalDefinition_MethodologyValues` — same literal set, SignalDefinitionEnrichment.methodology duplicates the canonical export. */
+export const SignalDefinitionEnrichment_MethodologyValues = SignalDefinition_MethodologyValues;
+/** @deprecated use `SignalDefinition_LookbackWindowValues` — same literal set, SignalDefinitionEnrichment.refresh_cadence duplicates the canonical export. */
+export const SignalDefinitionEnrichment_RefreshCadenceValues = SignalDefinition_LookbackWindowValues;
 // --- SignalSelectionGroupRule ---
 /** @deprecated use `FeatureRequirement_IfNotCoveredValues` — same literal set, SignalSelectionGroupRule.targeting_mode duplicates the canonical export. */
 export const SignalSelectionGroupRule_TargetingModeValues = FeatureRequirement_IfNotCoveredValues;

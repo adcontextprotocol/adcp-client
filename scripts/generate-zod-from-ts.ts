@@ -422,6 +422,40 @@ function postProcessForecastRangeConstraint(content: string): string {
   return content.slice(0, start) + constrained + content.slice(end);
 }
 
+/** Restore the price-adjustment XOR and signed 1..20 array bounds. */
+function postProcessPriceBreakdownConstraints(content: string): string {
+  const adjustmentStart = content.indexOf('export const PriceAdjustmentSchema = ');
+  const adjustmentEnd = content.indexOf('\n\nexport const ', adjustmentStart + 1);
+  if (adjustmentStart === -1 || adjustmentEnd === -1) {
+    throw new Error('Unable to locate PriceAdjustmentSchema boundary');
+  }
+  const adjustment = content.slice(adjustmentStart, adjustmentEnd).replace(
+    /;\s*$/,
+    `.superRefine((value, ctx) => {
+    if ((value.rate !== undefined) === (value.amount !== undefined)) {
+        ctx.addIssue({ code: "custom", path: [], message: "price adjustment requires exactly one of rate or amount" });
+    }
+});`
+  );
+  content = content.slice(0, adjustmentStart) + adjustment + content.slice(adjustmentEnd);
+
+  const breakdownStart = content.indexOf('export const PriceBreakdownSchema = ');
+  const breakdownEnd = content.indexOf('\n\nexport const ', breakdownStart + 1);
+  if (breakdownStart === -1 || breakdownEnd === -1) {
+    throw new Error('Unable to locate PriceBreakdownSchema boundary');
+  }
+  const breakdown = content
+    .slice(breakdownStart, breakdownEnd)
+    .replace(
+      'adjustments: z.array(PriceAdjustmentSchema)',
+      'adjustments: z.array(PriceAdjustmentSchema).min(1).max(20)'
+    );
+  if (!breakdown.includes('adjustments: z.array(PriceAdjustmentSchema).min(1).max(20)')) {
+    throw new Error('Unable to preserve PriceBreakdownSchema adjustment bounds');
+  }
+  return content.slice(0, breakdownStart) + breakdown + content.slice(breakdownEnd);
+}
+
 /**
  * Post-process generated Zod schemas to strip .and(z.record(...)) intersections
  * and equivalent record-only union intersections from object schemas that
@@ -680,7 +714,10 @@ function postProcessCreativeRuntimeConstraints(content: string): string {
       // slot keys while continuing to allow forward-compatible extension keys.
       // AssetVariantSchema is declared later in the generated module, so defer
       // resolving it until parse time to avoid a top-level TDZ reference.
-      .replace('assets: z.record(z.string(), z.unknown())', 'assets: CreativeAssetsSchema');
+      .replace(
+        /assets: z\.record\(z\.string\(\), (?:z\.unknown\(\)|z\.union\(\[AssetVariantSchema, z\.array\(AssetVariantSchema\)\]\))\)/,
+        'assets: CreativeAssetsSchema'
+      );
     if (constrainedAssets === schema.block) {
       throw new Error(`Unable to preserve creative asset constraints on ${schemaName}.`);
     }
@@ -695,9 +732,9 @@ function postProcessCreativeRuntimeConstraints(content: string): string {
         /\.and\(z\.union\(\[(?:V1CreativeNamedFormatReferenceSchema, V2CreativeCanonicalFormatKindSchema|NamedFormatManifestSchema, CanonicalFormatManifestSchema)\]\)\)/,
         ''
       );
-    if (withoutLossyIdentityIntersection === constrainedAssets) {
-      throw new Error(`Unable to remove lossy creative identity intersection from ${schemaName}.`);
-    }
+    // Fully normalized named types already project as a single object and do
+    // not carry this lossy intersection. Older generated inputs still do, so
+    // retain the removal for compatibility without requiring it to exist.
 
     const strictSchema = withoutLossyIdentityIntersection.replace(/;\s*$/, `${identityRefinement};`);
     if (strictSchema === withoutLossyIdentityIntersection) {
@@ -1759,7 +1796,7 @@ function isOpaqueRecordMarkerExpression(
   visiting = new Set<string>()
 ): boolean {
   const trimmed = normalizeSchemaExpression(expression);
-  if (trimmed === 'z.record(z.string(), z.unknown())') return true;
+  if (trimmed === 'z.record(z.string(), z.unknown())' || trimmed === 'z.object({}).passthrough()') return true;
 
   const arms = unionArmsForExpression(trimmed);
   if (arms) {
@@ -1832,6 +1869,20 @@ function rewriteLeadingMarkerUnionObjectAnd(
       const base = expression.slice(0, i);
       const arg = scanBalanced(expression, i + '.and'.length);
       if (!arg) return expression;
+
+      if (
+        isOpaqueRecordMarkerExpression(base, schemaExpressions, markerCache) &&
+        isOpaqueMarkerUnion(arg.body, schemaExpressions, markerCache)
+      ) {
+        const remainder = expression.slice(arg.end);
+        if (remainder.startsWith('.and(')) {
+          const objectArg = scanBalanced(remainder, '.and'.length);
+          const objectShape = objectArg
+            ? schemaShapeForExpression(objectArg.body, schemaExpressions, shapeCache)
+            : undefined;
+          if (objectArg && objectShape) return objectArg.body + remainder.slice(objectArg.end);
+        }
+      }
 
       if (isOpaqueMarkerUnion(base, schemaExpressions, markerCache)) {
         const argShape = schemaShapeForExpression(arg.body, schemaExpressions, shapeCache);
@@ -2068,6 +2119,26 @@ const BACKWARD_COMPAT_SCHEMA_ALIASES: Array<{
   newName: string;
   reason: string;
 }> = [
+  ...Array.from({ length: 12 }, (_, index) => ({
+    oldName: `BrandReference${index + 1}`,
+    newName: 'BrandReference',
+    reason: 'SDK 14 beta exported this numbered codegen compatibility alias.',
+  })),
+  ...(
+    [
+      ['BusinessEntity1', 'BusinessEntity'],
+      ['MeasurementTerms1', 'MeasurementTerms'],
+      ['None1', 'None'],
+      ['None2', 'None'],
+      ['PlatformExtensionReference1', 'PlatformExtensionReference'],
+      ['Product1', 'Product'],
+      ['Property1', 'Property'],
+    ] as const
+  ).map(([oldName, newName]) => ({
+    oldName,
+    newName,
+    reason: 'SDK 14 beta exported this numbered codegen compatibility alias.',
+  })),
   {
     oldName: 'SignalCatalogType',
     newName: 'SignalAvailabilityType',
@@ -2253,6 +2324,7 @@ async function generateZodSchemas() {
     // Run after passthrough normalization so the object arm has its final form.
     zodSchemas = postProcessUnionStringLengthConstraints(zodSchemas);
     zodSchemas = postProcessForecastRangeConstraint(zodSchemas);
+    zodSchemas = postProcessPriceBreakdownConstraints(zodSchemas);
 
     // TypeScript cannot retain JSON Schema `format: uri` or root oneOf
     // exclusivity. Restore both for legacy/canonical creative identity.

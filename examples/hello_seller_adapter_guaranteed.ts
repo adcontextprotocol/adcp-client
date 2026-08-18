@@ -491,6 +491,10 @@ function canonicalFormatOptions(p: UpstreamProduct): CanonicalProduct['format_op
 
 function projectProduct(p: UpstreamProduct, publisherDomain: string): CanonicalProduct {
   const recipe = buildGAMLikeRecipe(p);
+  const forecast: CanonicalProduct['forecast'] =
+    p.forecast && p.forecast.points.length > 0
+      ? { ...p.forecast, points: [p.forecast.points[0]!, ...p.forecast.points.slice(1)] }
+      : undefined;
   const product: CanonicalProduct = {
     product_id: p.product_id,
     name: p.name,
@@ -534,7 +538,7 @@ function projectProduct(p: UpstreamProduct, publisherDomain: string): CanonicalP
     // GAM responses need adapter-side translation; the mock skips that step
     // intentionally so adopters can see what AdCP-shape forecast looks like
     // without writing the projection first.
-    ...(p.forecast && { forecast: p.forecast }),
+    ...(forecast && { forecast }),
   };
   // Attach the v1.5 recipe via cast — wire `Product` doesn't enumerate
   // `implementation_config` (it rides as an opaque-to-buyer extension);

@@ -149,6 +149,7 @@ const CORE_AUTHORED_TOOL_SHARED_TYPES = new Set([
   'CatalogItemDeliveryMetrics',
   'CreativeAsset',
   'ExtensionObject',
+  'Format',
   'FormatReferenceStructuredObject',
   'GeoDeliveryMetrics',
   'GetProductsAsyncSubmitted',
@@ -169,6 +170,26 @@ const BACKWARD_COMPAT_TYPE_ALIASES: Array<{
   newName: string;
   reason: string;
 }> = [
+  ...Array.from({ length: 12 }, (_, index) => ({
+    oldName: `BrandReference${index + 1}`,
+    newName: 'BrandReference',
+    reason: 'SDK 14 beta exported this numbered codegen compatibility alias.',
+  })),
+  ...(
+    [
+      ['BusinessEntity1', 'BusinessEntity'],
+      ['MeasurementTerms1', 'MeasurementTerms'],
+      ['None1', 'None'],
+      ['None2', 'None'],
+      ['PlatformExtensionReference1', 'PlatformExtensionReference'],
+      ['Product1', 'Product'],
+      ['Property1', 'Property'],
+    ] as const
+  ).map(([oldName, newName]) => ({
+    oldName,
+    newName,
+    reason: 'SDK 14 beta exported this numbered codegen compatibility alias.',
+  })),
   {
     oldName: 'SignalCatalogType',
     newName: 'SignalAvailabilityType',
@@ -734,7 +755,6 @@ export function enforceStrictSchema(schema: any): any {
   schema = expandConditionalRequiredDiscriminator(schema);
   schema = preservePostalCountrySystemRequiredness(schema);
   schema = dropValidationOnlyAnyOf(schema);
-
   // Rewrite mutual-exclusion `oneOf` patterns (e.g. Format.renders[]) into
   // explicit closed-shape branches before any further processing — see
   // {@link tightenMutualExclusionOneOf}. Idempotent on already-rewritten
@@ -2057,15 +2077,10 @@ function addBackwardCompatTypeAliases(typeDefinitions: string): string {
   let output = typeDefinitions;
   for (const { oldName, newName, reason } of BACKWARD_COMPAT_TYPE_ALIASES) {
     if (new RegExp(`^export (?:type|interface) ${oldName}\\b`, 'm').test(output)) continue;
-    const declaration = new RegExp(`(export type ${newName} =[\\s\\S]*?;\\n)`, 'm');
+    const canonicalDeclaration = new RegExp(`^export (?:type|interface) ${newName}\\b`, 'm');
+    if (!canonicalDeclaration.test(output)) continue;
     const alias = `/** @deprecated ${reason} */\nexport type ${oldName} = ${newName};\n`;
-    if (declaration.test(output)) {
-      output = output.replace(declaration, `$1${alias}`);
-      continue;
-    }
-    if (new RegExp(`^export interface ${newName}\\b`, 'm').test(output)) {
-      output += `\n${alias}`;
-    }
+    output += `\n${alias}`;
   }
   return output;
 }
@@ -2244,59 +2259,61 @@ async function generateToolTypes(tools: ToolDefinition[], preGeneratedTypes: Set
  * 4. Cleans up inline index signature objects in intersection types
  */
 function removeIndexSignatureTypes(typeDefinitions: string): string {
-  // Find all types that are pure index signatures
-  // Pattern: export type TypeName = { [k: string]: unknown };
-  // or: export type TypeName = {\n  [k: string]: unknown;\n};
-  const indexSigTypePattern = /export type (\w+) = \{\s*\[k: string\]: unknown;?\s*\};?/g;
-  const indexSigTypes = new Set<string>();
-
-  let match;
-  while ((match = indexSigTypePattern.exec(typeDefinitions)) !== null) {
-    indexSigTypes.add(match[1]);
-  }
+  const unknownIndexValue = String.raw`unknown(?: \| undefined)?`;
+  const markerPattern = new RegExp(
+    String.raw`export type (\w+) = \{\s*\[k: string\]: ${unknownIndexValue};?\s*\};`,
+    'g'
+  );
+  const markerTypes = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = markerPattern.exec(typeDefinitions)) !== null) markerTypes.add(match[1]);
 
   let result = typeDefinitions;
+  for (const typeName of markerTypes) {
+    result = result.replace(new RegExp(` & \\b${typeName}\\b`, 'g'), '');
+    result = result.replace(new RegExp(`\\b${typeName}\\b & `, 'g'), '');
+  }
+  return result;
+}
 
-  if (indexSigTypes.size > 0) {
-    console.log(`🧹 Removing ${indexSigTypes.size} index signature types: ${Array.from(indexSigTypes).join(', ')}`);
+/**
+ * Remove residual open-object markers only after numbered-type deduplication.
+ * Running these rewrites earlier changes the bodies used to identify jsts's
+ * canonical/numbered duplicates and can preserve hundreds of weaker siblings.
+ */
+function removeResidualInlineIndexSignatureArms(typeDefinitions: string): string {
+  let result = typeDefinitions;
 
-    // Remove the index signature type definitions
-    for (const typeName of indexSigTypes) {
-      // Remove single-line pattern
-      result = result.replace(
-        new RegExp(`export type ${typeName} = \\{\\s*\\[k: string\\]: unknown;?\\s*\\};?\\n?`, 'g'),
-        ''
+  for (const typeName of ['CreativeAsset', 'CreativeManifest']) {
+    const start = result.indexOf(`export type ${typeName} = `);
+    const end = start === -1 ? -1 : result.indexOf('\nexport ', start + 1);
+    if (start === -1 || end === -1) continue;
+    const block = result
+      .slice(start, end)
+      .replace(
+        /(  assets: \{\n)\s*\[k: string\]: unknown(?: \| undefined)?;/,
+        '$1    [k: string]: AssetVariant | AssetVariant[];'
       );
-      // Remove multi-line pattern
-      result = result.replace(
-        new RegExp(`export type ${typeName} = \\{\\n\\s*\\[k: string\\]: unknown;\\n\\};?\\n?`, 'g'),
-        ''
-      );
-    }
-
-    // Remove references to these types from intersection types
-    // Pattern: Type1 & IndexSigType becomes Type1
-    // Pattern: IndexSigType & Type1 becomes Type1
-    for (const typeName of indexSigTypes) {
-      // Remove " & TypeName" (when it comes after)
-      result = result.replace(new RegExp(` & ${typeName}(?=[;\\s])`, 'g'), '');
-      // Remove "TypeName & " (when it comes before)
-      result = result.replace(new RegExp(`${typeName} & `, 'g'), '');
-    }
+    result = result.slice(0, start) + block + result.slice(end);
   }
 
-  // Also remove inline index signature objects from intersections
-  // Pattern: & {\n  [k: string]: unknown;\n}
-  result = result.replace(/\s*&\s*\{\s*\[k:\s*string\]:\s*unknown;?\s*\}/gm, '');
+  const extensionStart = result.indexOf('export interface ExtensionObject {');
+  const extensionEnd =
+    extensionStart === -1 ? -1 : result.indexOf('\nexport ', extensionStart + 'export interface '.length);
+  const extensionBlock =
+    extensionStart === -1 ? '' : result.slice(extensionStart, extensionEnd === -1 ? result.length : extensionEnd);
+  const placeholder = '__ADCP_EXTENSION_OBJECT_INDEX_SIGNATURE__';
 
-  // Clean up malformed type aliases that end with semicolon followed by & (from incomplete removal)
-  // Pattern: export type Foo = Bar;\n & {...} -> export type Foo = Bar;
-  result = result.replace(/;\s*\n\s*&\s*\{[^}]*\}/gm, ';');
+  if (extensionBlock) {
+    result = result.replace(
+      extensionBlock,
+      extensionBlock.replace(/\[k: string\]: unknown(?: \| undefined)?;/, placeholder)
+    );
+  }
 
-  // Clean up any remaining orphaned & at the start of lines
-  result = result.replace(/;\s*\n\s*&/gm, ';');
-
-  return result;
+  result = result.replace(/^\s*\[k: string\]: unknown(?: \| undefined)?;\n/gm, '');
+  result = result.replace(/(\s*\/\*\*\n\s*\* @maximum 1\n\s*\*\/\n\s*(?:low|mid|high)\?:) \{\n\s*\};/g, '$1 number;');
+  return result.replace(placeholder, '[k: string]: unknown | undefined;');
 }
 
 /**
@@ -2376,7 +2393,27 @@ function simplifyForecastRange(typeDefinitions: string): string {
   mid?: number;
   /** Optimistic (high-end) forecast value. */
   high?: number;
-  [k: string]: unknown | undefined;
+}`;
+  return typeDefinitions.slice(0, start) + replacement + typeDefinitions.slice(end);
+}
+
+/** Replace jsts's bounded-array cartesian expansion with its structural item shape. */
+function simplifyPriceBreakdown(typeDefinitions: string): string {
+  const start = typeDefinitions.indexOf('export interface PriceBreakdown {');
+  if (start === -1) return typeDefinitions;
+  const end = typeDefinitions.indexOf('\nexport ', start + 1);
+  if (end === -1) throw new Error('simplifyPriceBreakdown: unable to locate next type boundary');
+  const replacement = `export interface PriceAdjustment {
+  kind: PriceAdjustmentKind;
+  name: string;
+  rate?: number;
+  amount?: number;
+  description?: string;
+  beneficiary?: string;
+}
+export interface PriceBreakdown {
+  list_price: number;
+  adjustments: PriceAdjustment[];
 }`;
   return typeDefinitions.slice(0, start) + replacement + typeDefinitions.slice(end);
 }
@@ -2727,6 +2764,31 @@ const JSTS_REPEATED_UNDER_RESOLUTION_BASES = [
   'DeliveryMetrics',
   'MeasurementTerms',
 ] as const;
+
+/**
+ * jsts also numbers genuinely distinct inline refinements when their inferred
+ * title collides with a canonical type. These must not be widened to the
+ * canonical type merely to remove the numeric suffix. Give the refinement a
+ * stable semantic name instead.
+ */
+const JSTS_NUMBERED_SEMANTIC_RENAMES: Array<{ numbered: string; semantic: string }> = [
+  { numbered: 'TaskStatus2', semantic: 'GetProductsRejectedStatus' },
+];
+
+export function renameKnownNumberedSemanticTypes(typeDefinitions: string): string {
+  const exportedTypes = collectExportedTypeNames(typeDefinitions);
+  let result = typeDefinitions;
+
+  for (const { numbered, semantic } of JSTS_NUMBERED_SEMANTIC_RENAMES) {
+    if (!exportedTypes.has(numbered)) continue;
+    if (exportedTypes.has(semantic)) {
+      throw new Error(`Cannot rename ${numbered} to existing generated type ${semantic}`);
+    }
+    result = result.replace(new RegExp(`\\b${numbered}\\b`, 'g'), semantic);
+  }
+
+  return result;
+}
 
 function buildKnownJstsAliases(typeDefinitions: string): Array<{ numbered: string; base: string }> {
   const exportedTypes = collectExportedTypeNames(typeDefinitions);
@@ -3575,12 +3637,14 @@ async function generateTypes() {
   // occurrences of the same schema within a single compilation unit
   toolTypes = removeNumberedTypeDuplicates(toolTypes);
   toolTypes = removeNumberedCoreTypeDuplicates(toolTypes, CORE_AUTHORED_TOOL_SHARED_TYPES);
+  toolTypes = removeResidualInlineIndexSignatureArms(toolTypes);
   toolTypes = namePostalAreaCountryBranch(toolTypes);
   toolTypes = applyKnownJstsAliases(toolTypes);
   toolTypes = fixTypedIndexSignatures(toolTypes);
   toolTypes = widenPostalAreaSupportIndexSignature(toolTypes);
   toolTypes = widenMediaBuyFeaturesIndexSignature(toolTypes);
   toolTypes = simplifyForecastRange(toolTypes);
+  toolTypes = simplifyPriceBreakdown(toolTypes);
   // This set is deliberately limited to canonical enums plus the handful of
   // shared core contracts above. Import all of them: numbered-type cleanup can
   // introduce a canonical reference after lexical reference scanning, and
@@ -3612,11 +3676,19 @@ async function generateTypes() {
     applyIndividualAssetDiscriminators(
       addBackwardCompatTypeAliases(
         simplifyForecastRange(
-          widenMediaBuyFeaturesIndexSignature(
-            widenPostalAreaSupportIndexSignature(
-              fixTypedIndexSignatures(
-                applyKnownJstsAliases(
-                  namePostalAreaCountryBranch(removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes)))
+          simplifyPriceBreakdown(
+            widenMediaBuyFeaturesIndexSignature(
+              widenPostalAreaSupportIndexSignature(
+                fixTypedIndexSignatures(
+                  removeResidualInlineIndexSignatureArms(
+                    applyKnownJstsAliases(
+                      namePostalAreaCountryBranch(
+                        renameKnownNumberedSemanticTypes(
+                          removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))
+                        )
+                      )
+                    )
+                  )
                 )
               )
             )

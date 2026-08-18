@@ -57,4 +57,11 @@ describe('Codegen drift guard: numbered Foo1 exports must be aliased', () => {
         offenders.map(o => `  ${CORE_GENERATED_PATH}:${o.line}  ${o.snippet}`).join('\n')
     );
   });
+
+  it('gives distinct numbered refinements semantic names without widening them', () => {
+    const src = readFileSync(CORE_GENERATED_PATH, 'utf8');
+
+    assert.doesNotMatch(src, /export type TaskStatus2\b/);
+    assert.match(src, /outcome: 'rejected';\n\s+status\?: 'completed';/);
+  });
 });

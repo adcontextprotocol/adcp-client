@@ -38,7 +38,7 @@ export interface PackageFormatRefs {
    * format_option_id }`; publisher-catalog-backed options use
    * `{ scope: 'publisher', publisher_domain, format_option_id }`.
    */
-  format_option_refs: FormatOptionRef[];
+  format_option_refs: [FormatOptionRef, ...FormatOptionRef[]];
   /** Legacy identifiers are deliberately unavailable on the canonical SDK surface. */
   format_ids?: never;
 }
@@ -582,7 +582,7 @@ export function packageRefsForFormatOptions(
     format_option_refs,
     selected.map(declaration => concealLegacyFormatRefs(declaration))
   );
-  return { format_option_refs };
+  return { format_option_refs: format_option_refs as [FormatOptionRef, ...FormatOptionRef[]] };
 }
 
 /**

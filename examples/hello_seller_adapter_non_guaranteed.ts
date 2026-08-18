@@ -420,6 +420,10 @@ function projectProduct(
   publisherDomain: string,
   pricingMode: 'fixed' | 'auction' = 'fixed'
 ): CanonicalProduct {
+  const forecast: CanonicalProduct['forecast'] =
+    p.forecast && p.forecast.points.length > 0
+      ? { ...p.forecast, points: [p.forecast.points[0]!, ...p.forecast.points.slice(1)] }
+      : undefined;
   const auctionMidpoint = p.pricing.target_cpm ?? round2(p.pricing.min_cpm * 1.3);
   const pricingOption =
     pricingMode === 'auction'
@@ -471,7 +475,7 @@ function projectProduct(
     // already (`points`, `metrics.{impressions,clicks,spend}.{low,mid,high}`,
     // `forecast_range_unit: 'spend'`, `method: 'modeled'`). Real auction-
     // backed sellers (FreeWheel, Magnite SSP) need adapter-side translation.
-    ...(p.forecast && { forecast: p.forecast }),
+    ...(forecast && { forecast }),
   };
 }
 
