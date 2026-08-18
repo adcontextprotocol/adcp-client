@@ -11,6 +11,13 @@
  * sales-guaranteed) without encoding any domain-specific logic.
  */
 
+import {
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  resolveRequestTimeoutMs,
+  throwIfAborted,
+  withAbortSignal,
+} from '../protocols/abort';
+
 // ---------------------------------------------------------------------------
 // createTranslationMap
 // ---------------------------------------------------------------------------
@@ -148,6 +155,13 @@ export interface UpstreamHttpClientOptions {
    */
   defaultHeaders?: Record<string, string>;
   /**
+   * Overall deadline for auth resolution, fetch, and response-body parsing.
+   * Defaults to 60_000 ms. Set to 0 to disable the default deadline.
+   */
+  requestTimeoutMs?: number;
+  /** Maximum response-body bytes. Defaults to 2 MiB. Set to 0 to disable. */
+  maxResponseBytes?: number;
+  /**
    * Override the underlying fetch implementation. Defaults to
    * `globalThis.fetch`. Adopters wiring `@adcp/sdk/upstream-recorder` pass
    * `recorder.wrapFetch(globalThis.fetch)` so outbound calls flow through
@@ -176,6 +190,12 @@ export interface UpstreamCallOptions {
    * the right credential per call. Ignored by other auth kinds.
    */
   authContext?: AuthContext;
+  /** Abort this call. The signal is composed with the configured deadline. */
+  signal?: AbortSignal;
+  /** Override the client deadline for this call. Set to 0 to disable it. */
+  requestTimeoutMs?: number;
+  /** Override the client response-body cap for this call. Set to 0 to disable it. */
+  maxResponseBytes?: number;
 }
 
 export interface UpstreamHttpClient {
@@ -219,6 +239,67 @@ async function resolveAuthHeader(auth: UpstreamAuth, ctx?: AuthContext): Promise
   }
 }
 
+const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+function resolveMaxResponseBytes(value: number | undefined, fallback?: number): number | undefined {
+  const resolved = value ?? fallback;
+  if (resolved == null || resolved === 0) return undefined;
+  if (!Number.isSafeInteger(resolved) || resolved < 0) {
+    throw new RangeError('maxResponseBytes must be a non-negative safe integer');
+  }
+  return resolved;
+}
+
+function responseTooLarge(maxResponseBytes: number): Error {
+  const error = new Error(`Upstream response exceeded ${maxResponseBytes} bytes`);
+  error.name = 'ResponseTooLargeError';
+  return error;
+}
+
+async function cancelResponseBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Best effort: a locked/already-errored stream is already being reclaimed.
+  }
+}
+
+async function readResponseText(response: Response, maxResponseBytes: number | undefined): Promise<string> {
+  if (maxResponseBytes === undefined) return response.text();
+
+  const declared = response.headers?.get?.('content-length');
+  if (declared && /^\d+$/.test(declared.trim()) && Number(declared) > maxResponseBytes) {
+    await cancelResponseBody(response);
+    throw responseTooLarge(maxResponseBytes);
+  }
+
+  const reader = response.body?.getReader?.();
+  if (!reader) {
+    const text = await response.text();
+    if (new TextEncoder().encode(text).byteLength > maxResponseBytes) throw responseTooLarge(maxResponseBytes);
+    return text;
+  }
+
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > maxResponseBytes) {
+      try {
+        await reader.cancel();
+      } catch {
+        // Preserve the stable size error if cancellation itself fails.
+      }
+      throw responseTooLarge(maxResponseBytes);
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  return text + decoder.decode();
+}
+
 async function doRequest<T>(
   baseUrl: string,
   auth: UpstreamAuth,
@@ -231,54 +312,69 @@ async function doRequest<T>(
     body?: unknown;
     headers?: Record<string, string>;
     authContext?: AuthContext;
+    signal?: AbortSignal;
+    requestTimeoutMs?: number;
+    maxResponseBytes?: number;
   }
 ): Promise<UpstreamHttpResult<T>> {
-  const authHeader = await resolveAuthHeader(auth, options.authContext);
-  const mergedHeaders: Record<string, string> = {
-    ...defaultHeaders,
-    ...authHeader,
-    ...options.headers,
-  };
+  const requestTimeoutMs = resolveRequestTimeoutMs(options.requestTimeoutMs);
+  return withAbortSignal([options.signal], requestTimeoutMs, async signal => {
+    const authHeader = await resolveAuthHeader(auth, options.authContext);
+    throwIfAborted(signal);
+    const mergedHeaders: Record<string, string> = {
+      ...defaultHeaders,
+      ...authHeader,
+      ...options.headers,
+    };
 
-  let url = `${baseUrl}${path}`;
-  if (options.params) {
-    const qs = Object.entries(options.params)
-      .filter(([, v]) => v !== undefined)
-      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
-      .join('&');
-    if (qs) url = `${url}?${qs}`;
-  }
+    let url = `${baseUrl}${path}`;
+    if (options.params) {
+      const qs = Object.entries(options.params)
+        .filter(([, v]) => v !== undefined)
+        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+        .join('&');
+      if (qs) url = `${url}?${qs}`;
+    }
 
-  const init: RequestInit = { method, headers: mergedHeaders };
-  if (options.body !== undefined) {
-    init.body = JSON.stringify(options.body);
-    mergedHeaders['Content-Type'] = 'application/json';
-  }
+    const init: RequestInit = { method, headers: mergedHeaders, signal };
+    if (options.body !== undefined) {
+      init.body = JSON.stringify(options.body);
+      mergedHeaders['Content-Type'] = 'application/json';
+    }
 
-  const res = await fetchImpl(url, init);
+    const res = await fetchImpl(url, init);
+    throwIfAborted(signal);
 
-  // 404 → null body (not an error — resource absent is a common upstream signal)
-  if (res.status === 404) return { status: 404, body: null };
+    // 404 → null body (not an error — resource absent is a common upstream signal)
+    if (res.status === 404) {
+      await cancelResponseBody(res);
+      throwIfAborted(signal);
+      return { status: 404, body: null };
+    }
 
-  const text = await res.text();
+    const text = await readResponseText(res, options.maxResponseBytes);
+    throwIfAborted(signal);
 
-  // Non-2xx always throws — callers must not silently swallow errors
-  if (!res.ok) {
-    throw new Error(`Upstream ${method} ${path} failed: ${res.status} ${text.slice(0, 200)}`);
-  }
+    // Non-2xx always throws — callers must not silently swallow errors
+    if (!res.ok) {
+      throw new Error(`Upstream ${method} ${path} failed: ${res.status} ${text.slice(0, 200)}`);
+    }
 
-  // Empty body (204 No Content, etc.)
-  if (!text) return { status: res.status, body: null };
+    // Empty body (204 No Content, etc.)
+    if (!text) return { status: res.status, body: null };
 
-  const body = JSON.parse(text) as T;
-  return { status: res.status, body };
+    const body = JSON.parse(text) as T;
+    return { status: res.status, body };
+  });
 }
 
 /**
  * Create a thin typed HTTP client for upstream platform APIs.
  *
- * Handles auth injection, query-string serialization, and 404→null
- * translation so adapters can focus on domain logic.
+ * Handles auth injection, query-string serialization, a 60-second default
+ * request deadline, a 2 MiB response-body cap, and 404→null translation so
+ * adapters can focus on domain logic. Timeout failures have
+ * `error.name === 'TimeoutError'`.
  *
  * @example
  * ```ts
@@ -294,29 +390,43 @@ async function doRequest<T>(
  */
 export function createUpstreamHttpClient(options: UpstreamHttpClientOptions): UpstreamHttpClient {
   const { baseUrl, auth, defaultHeaders = {}, fetch: fetchImpl = globalThis.fetch } = options;
+  const defaultRequestTimeoutMs = resolveRequestTimeoutMs(options.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS);
+  const defaultMaxResponseBytes = resolveMaxResponseBytes(options.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES);
   return {
     get: (path, params, headers, opts) =>
       doRequest(baseUrl, auth, defaultHeaders, fetchImpl, 'GET', path, {
         params,
         headers,
         authContext: opts?.authContext,
+        signal: opts?.signal,
+        requestTimeoutMs: resolveRequestTimeoutMs(opts?.requestTimeoutMs, defaultRequestTimeoutMs),
+        maxResponseBytes: resolveMaxResponseBytes(opts?.maxResponseBytes, defaultMaxResponseBytes),
       }),
     post: (path, body, headers, opts) =>
       doRequest(baseUrl, auth, defaultHeaders, fetchImpl, 'POST', path, {
         body,
         headers,
         authContext: opts?.authContext,
+        signal: opts?.signal,
+        requestTimeoutMs: resolveRequestTimeoutMs(opts?.requestTimeoutMs, defaultRequestTimeoutMs),
+        maxResponseBytes: resolveMaxResponseBytes(opts?.maxResponseBytes, defaultMaxResponseBytes),
       }),
     put: (path, body, headers, opts) =>
       doRequest(baseUrl, auth, defaultHeaders, fetchImpl, 'PUT', path, {
         body,
         headers,
         authContext: opts?.authContext,
+        signal: opts?.signal,
+        requestTimeoutMs: resolveRequestTimeoutMs(opts?.requestTimeoutMs, defaultRequestTimeoutMs),
+        maxResponseBytes: resolveMaxResponseBytes(opts?.maxResponseBytes, defaultMaxResponseBytes),
       }),
     delete: (path, headers, opts) =>
       doRequest(baseUrl, auth, defaultHeaders, fetchImpl, 'DELETE', path, {
         headers,
         authContext: opts?.authContext,
+        signal: opts?.signal,
+        requestTimeoutMs: resolveRequestTimeoutMs(opts?.requestTimeoutMs, defaultRequestTimeoutMs),
+        maxResponseBytes: resolveMaxResponseBytes(opts?.maxResponseBytes, defaultMaxResponseBytes),
       }),
   };
 }

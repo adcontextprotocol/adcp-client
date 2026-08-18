@@ -167,12 +167,14 @@ export interface ServeOptions {
    *
    * **Multi-host.** Pass a function `(host) => string` when one process
    * fronts multiple hostnames (white-label publishers, multi-brand
-   * adapters). The resolver runs per unique host — the returned URL is
-   * cached and used as the RFC 9728 `resource`, the 401-challenge
+   * adapters). The resolver must be side-effect-free and idempotent. Its
+   * returned URL is cached in a 128-host process-local LRU and used as the RFC 9728 `resource`, the 401-challenge
    * `resource_metadata`, and the JWT audience for that host. Each
    * resolved URL's path must match the mount path, same as the static
-   * form. Setting {@link trustForwardedHost} is recommended when
-   * behind a proxy.
+   * form. The host argument is untrusted request input: allowlist it before
+   * deriving a URL and throw {@link UnknownHostError} for unknown hosts.
+   * Evicted hosts are resolved again on their next request.
+   * Setting {@link trustForwardedHost} is recommended when behind a proxy.
    */
   publicUrl?: string | ((host: string) => string);
 
@@ -192,8 +194,12 @@ export interface ServeOptions {
    * Pass a function `(host) => ProtectedResourceMetadata` for multi-host
    * deployments whose authorization servers or supported scopes vary per
    * hostname (e.g., each white-label seller has its own AS). The resolver
-   * runs once per unique host and the result is cached. The static form
-   * still works when every host uses the same PRM body.
+   * must be side-effect-free and idempotent. Results are cached in the same
+   * 128-host process-local LRU as {@link publicUrl}; evicted hosts are resolved
+   * again on their next request. The host argument is untrusted request input:
+   * use the same allowlist as {@link publicUrl} and throw
+   * {@link UnknownHostError} for unknown hosts. The static form still works
+   * when every host uses the same PRM body.
    */
   protectedResource?: ProtectedResourceMetadata | ((host: string) => ProtectedResourceMetadata);
 
@@ -349,40 +355,63 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
     staticPublicOrigin = validatePublicUrl(publicUrlOption, mountPath);
   }
 
-  // Per-host caches. Function-form options are pure host → value lookups,
-  // so memoization is safe and avoids the per-request allocation of
-  // `new URL(...)` plus the caller's own host → config table work.
-  const publicUrlCache = new Map<string, string>();
-  const publicOriginCache = new Map<string, string>();
-  const prmCache = new Map<string, ProtectedResourceMetadata>();
+  // Function-form options are pure host → value lookups. Keep their values
+  // in one coordinated LRU so an unauthenticated Host-header spray cannot
+  // grow process-lifetime metadata Maps without bound.
+  const MAX_HOST_METADATA_CACHE_ENTRIES = 128;
+  type HostMetadataCacheEntry = {
+    publicUrl?: string;
+    publicOrigin?: string;
+    protectedResource?: ProtectedResourceMetadata;
+  };
+  const hostMetadataCache = new Map<string, HostMetadataCacheEntry>();
+
+  const getHostMetadata = (host: string): HostMetadataCacheEntry | undefined => {
+    const entry = hostMetadataCache.get(host);
+    if (!entry) return undefined;
+    hostMetadataCache.delete(host);
+    hostMetadataCache.set(host, entry);
+    return entry;
+  };
+
+  const updateHostMetadata = (host: string, update: HostMetadataCacheEntry): HostMetadataCacheEntry => {
+    const entry = { ...hostMetadataCache.get(host), ...update };
+    hostMetadataCache.delete(host);
+    hostMetadataCache.set(host, entry);
+    while (hostMetadataCache.size > MAX_HOST_METADATA_CACHE_ENTRIES) {
+      const oldestHost = hostMetadataCache.keys().next().value as string | undefined;
+      if (oldestHost === undefined) break;
+      hostMetadataCache.delete(oldestHost);
+    }
+    return entry;
+  };
 
   const resolvePublicUrl = (host: string): string | undefined => {
     if (typeof publicUrlOption === 'string') return publicUrlOption;
     if (!publicUrlIsFn) return undefined;
-    let cached = publicUrlCache.get(host);
-    if (cached !== undefined) return cached;
-    cached = (publicUrlOption as (h: string) => string)(host);
-    const origin = validatePublicUrl(cached, mountPath);
-    publicUrlCache.set(host, cached);
-    publicOriginCache.set(host, origin);
-    return cached;
+    const cached = getHostMetadata(host);
+    if (cached?.publicUrl !== undefined) return cached.publicUrl;
+    const publicUrl = (publicUrlOption as (h: string) => string)(host);
+    const publicOrigin = validatePublicUrl(publicUrl, mountPath);
+    updateHostMetadata(host, { publicUrl, publicOrigin });
+    return publicUrl;
   };
 
   const resolvePublicOrigin = (host: string): string | undefined => {
     if (typeof publicUrlOption === 'string') return staticPublicOrigin;
-    // Populate via resolvePublicUrl so both caches share a single validation pass.
+    // Populate via resolvePublicUrl so URL and origin share one validation pass.
     if (resolvePublicUrl(host) == null) return undefined;
-    return publicOriginCache.get(host);
+    return getHostMetadata(host)?.publicOrigin;
   };
 
   const resolveProtectedResource = (host: string): ProtectedResourceMetadata | undefined => {
     if (!protectedResourceOption) return undefined;
     if (!prmIsFn) return protectedResourceOption as ProtectedResourceMetadata;
-    let cached = prmCache.get(host);
-    if (cached !== undefined) return cached;
-    cached = (protectedResourceOption as (h: string) => ProtectedResourceMetadata)(host);
-    prmCache.set(host, cached);
-    return cached;
+    const cached = getHostMetadata(host);
+    if (cached?.protectedResource !== undefined) return cached.protectedResource;
+    const protectedResource = (protectedResourceOption as (h: string) => ProtectedResourceMetadata)(host);
+    updateHostMetadata(host, { protectedResource });
+    return protectedResource;
   };
 
   if (options?.authenticate == null && process.env.NODE_ENV === 'production') {
@@ -409,6 +438,9 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
         resource = resolvePublicUrl(host);
         prm = resolveProtectedResource(host);
       } catch (err) {
+        // Resolve the pair transactionally: a permissive publicUrl resolver
+        // must not leave a partial entry when protectedResource rejects host.
+        hostMetadataCache.delete(host);
         if (err instanceof UnknownHostError) {
           // Operator signalled "this host isn't in my routing table." 404
           // lets the OAuth grader probe fall through cleanly and doesn't
