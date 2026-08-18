@@ -74,6 +74,7 @@ const generatedSurface = {
   reExportsCoreSharedTypes: [
     'AudienceConstraints',
     'CatalogItemDeliveryMetrics',
+    'Format',
     'GeoDeliveryMetrics',
     'KeywordDeliveryMetrics',
     'PurchaseType',
@@ -82,6 +83,7 @@ const generatedSurface = {
   ),
   declaresAudienceConstraints: /export interface AudienceConstraints\\b/.test(toolsGenerated),
   declaresCatalogItemDeliveryMetrics: /export type CatalogItemDeliveryMetrics\\b/.test(toolsGenerated),
+  declaresFormat: /export (?:interface|type) Format\\b/.test(toolsGenerated),
   declaresGeoDeliveryMetrics: /export type GeoDeliveryMetrics\\b/.test(toolsGenerated),
   declaresKeywordDeliveryMetrics: /export type KeywordDeliveryMetrics\\b/.test(toolsGenerated),
   declaresPurchaseType: /export type PurchaseType\\b/.test(toolsGenerated),
@@ -179,6 +181,7 @@ test('tools.generated: core-authored shared types are imported and re-exported w
   assert.strictEqual(RESULTS.generatedSurface.reExportsCoreSharedTypes, true);
   assert.strictEqual(RESULTS.generatedSurface.declaresAudienceConstraints, false);
   assert.strictEqual(RESULTS.generatedSurface.declaresCatalogItemDeliveryMetrics, false);
+  assert.strictEqual(RESULTS.generatedSurface.declaresFormat, false);
   assert.strictEqual(RESULTS.generatedSurface.declaresGeoDeliveryMetrics, false);
   assert.strictEqual(RESULTS.generatedSurface.declaresKeywordDeliveryMetrics, false);
   assert.strictEqual(RESULTS.generatedSurface.declaresPurchaseType, false);

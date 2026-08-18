@@ -149,6 +149,7 @@ const CORE_AUTHORED_TOOL_SHARED_TYPES = new Set([
   'CatalogItemDeliveryMetrics',
   'CreativeAsset',
   'ExtensionObject',
+  'Format',
   'FormatReferenceStructuredObject',
   'GeoDeliveryMetrics',
   'GetProductsAsyncSubmitted',

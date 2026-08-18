@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-18T18:27:18.293Z
+// Generated at: 2026-08-18T18:52:10.343Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -13432,15 +13432,30 @@ export const SourceLocalizationReadbackSchema = z.object({
     assets: ResolvedAssetsSchema
 }).passthrough();
 
-export const FormatSchema = z.object({}).passthrough().merge(z.object({
+export const FormatSchema = z.object({
     format_id: FormatReferenceStructuredObjectSchema,
     name: z.string(),
     description: z.string().optional(),
     example_url: z.string().optional(),
     accepts_parameters: z.array(FormatIDParameterSchema).optional(),
-    renders: z.tuple([z.union([z.object({}).passthrough(), z.object({
-                parameters_from_format_id: z.literal(true)
-            }).passthrough()])]).rest(z.union([z.object({}).passthrough(), z.object({
+    renders: z.array(z.union([z.object({
+            role: z.string(),
+            dimensions: z.object({
+                width: z.number().optional(),
+                height: z.number().optional(),
+                min_width: z.number().optional(),
+                min_height: z.number().optional(),
+                max_width: z.number().optional(),
+                max_height: z.number().optional(),
+                unit: DimensionUnitSchema.optional(),
+                responsive: z.object({
+                    width: z.boolean(),
+                    height: z.boolean()
+                }).passthrough().optional(),
+                aspect_ratio: z.string().regex(/^\d+(\.\d+)?:\d+(\.\d+)?$/).optional()
+            }).passthrough()
+        }).passthrough(), z.object({
+            role: z.string(),
             parameters_from_format_id: z.literal(true)
         }).passthrough()])).optional(),
     assets: z.array(z.union([z.union([IndividualImageAssetSchema, IndividualVideoAssetSchema, IndividualAudioAssetSchema, IndividualTextAssetSchema, IndividualMarkdownAssetSchema, IndividualHtmlAssetSchema, IndividualCssAssetSchema, IndividualJavaScriptAssetSchema, IndividualZipAssetSchema, IndividualVastAssetSchema, IndividualDaastAssetSchema, IndividualUrlAssetSchema, IndividualWebhookAssetSchema, IndividualBriefAssetSchema, IndividualCatalogAssetSchema]), RepeatableGroupAssetSchema])).optional(),
@@ -13457,10 +13472,7 @@ export const FormatSchema = z.object({}).passthrough().merge(z.object({
         requires_accessible_assets: z.boolean().optional()
     }).passthrough().optional(),
     supported_disclosure_positions: z.array(DisclosurePositionSchema).optional(),
-    disclosure_capabilities: z.tuple([z.object({
-            position: DisclosurePositionSchema,
-            persistence: z.array(DisclosurePersistenceSchema)
-        }).passthrough()]).rest(z.object({
+    disclosure_capabilities: z.array(z.object({
         position: DisclosurePositionSchema,
         persistence: z.array(DisclosurePersistenceSchema)
     }).passthrough()).optional(),
@@ -13472,7 +13484,7 @@ export const FormatSchema = z.object({}).passthrough().merge(z.object({
     pricing_options: z.array(VendorPricingOptionSchema).optional(),
     canonical: CanonicalProjectionReferenceSchema.optional(),
     canonical_parameters: ProductFormatDeclarationSchema.optional()
-}).passthrough());
+}).passthrough();
 
 export const GeoDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object({
     geo_level: GeographicTargetingLevelSchema,

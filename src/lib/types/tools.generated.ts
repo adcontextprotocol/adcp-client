@@ -113,6 +113,7 @@ import type {
   ForecastPoint,
   ForecastRangeUnit,
   ForecastableMetric,
+  Format,
   FormatIDParameter,
   FormatReferenceStructuredObject,
   FrameRateType,
@@ -239,7 +240,7 @@ import type {
   WebhookSecurityMethod,
 } from './core.generated';
 
-export type { AccountCurrencyMode, AccountReference, AccountScope, AccountStatus, ActionNotAllowedReason, ActionSource, AdCPProtocol, AdCPSpecialism, AdCPVersionEnvelope, AdvertiserIndustry, AgeDeterminationBasis, AgeVerificationMethod, AssessmentStatus, AssetContentType, AssetVariant, AttestationClaim, AttributionMethodology, AttributionModel, AudienceConstraints, AudienceEvidenceMethodology, AudienceResolutionMethod, AudienceSource, AudienceStatus, AudienceSubjectType, AudioChannelLayout, AudioDistributionType, AuthenticationScheme, AvailableMetric, BillingParty, BinaryVerdict, BrandAgentType, BrandReference, BrowserFamily, BusinessEntity, C2PAWatermarkAction, CanceledBy, CancellationPolicy, CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement, CanonicalFormatBase, CanonicalFormatDAASTAudio, CanonicalFormatDisplayTag, CanonicalFormatHTML5Banner, CanonicalFormatHostedAudio, CanonicalFormatHostedVideo, CanonicalFormatImage, CanonicalFormatImageCarousel, CanonicalFormatNativeInFeed, CanonicalFormatResponsiveCreative, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven, CanonicalFormatVASTVideo, CanonicalMediaBuyActionMode, CanonicalMediaBuyActionName, CatalogAction, CatalogItemDeliveryMetrics, CatalogItemStatus, CatalogType, CloudStorageProtocol, CoBrandingRequirement, CollectionCadence, CollectionKind, CollectionRelationship, CollectionStatus, CompletionSource, ConsentBasis, ContentIDType, ContentRatingSystem, CountryFusedPostalCodeSystem, CreativeAction, CreativeAgentCapability, CreativeApprovalStatus, CreativeAsset, CreativeBrief, CreativeEventReasonCode, CreativeIdentifierType, CreativeQuality, CreativeSelectionStrategy, CreativeSortField, CreativeStatus, DAASTTrackingEvent, DAASTVersion, DayOfWeek, DelegationAuthority, DeliveryMetricAggregate, DeliveryMetrics, DeliveryStatus, DeliveryType, DemographicSystem, DerivativeType, DevicePlatform, DeviceType, DigitalSourceType, DimensionUnit, DisclosurePersistence, DisclosurePosition, DistanceUnit, DistributionIdentifierType, EmbeddedProvenanceMethod, ErrorCode, ErrorScope, EscalationSeverity, EventType, Exclusivity, ExtensionObject, FeatureCheckStatus, FeedFormat, FeedbackSource, Fixed, ForecastMethod, ForecastPoint, ForecastRangeUnit, ForecastableMetric, FormatIDParameter, FormatReferenceStructuredObject, FrameRateType, FrequencyCapScope, GOPType, GenreTaxonomy, GeoDeliveryMetrics, GeographicTargetingLevel, GetProductsAsyncSubmitted, GovernanceDecision, GovernanceDomain, GovernanceMode, GovernancePhase, HTTPMethod, HistoryEntryType, ImageAsset, ImpairmentOfflineState, ImpairmentReasonCode, IndicatorType, InstallmentStatus, JavaScriptModuleType, KeywordDeliveryMetrics, LandingPageRequirement, LiftDimension, LogoSlot, MakegoodRemedy, MarkdownFlavor, MatchIDType, MatchType, MeasurementTerms, MediaBuyActionMode, MediaBuyHealth, MediaBuyStatus, MediaBuyValidAction, MediaChannel, MetricScope, MetricType, MetroAreaSystem, MoovAtomPosition, MultiSize, None, NotificationType, OfferingAvailabilityStatus, OutcomeType, Pacing, PackageUpdate, PaymentTerms, PerformanceBaseline, PerformanceStandardMetric, PlatformExtensionReference, PolicyCategory, PolicyEnforcementLevel, PostalCodeSystem, PostalCountrySystem, PreviewOutputFormat, PriceAdjustmentKind, PricingModel, PricingStructure, ProductionQuality, PropertyIdentifierTypes, PropertyType, ProposalDeclineReason, ProposalRefinementReason, ProposalStatus, ProtocolEnvelope, Provenance, PublisherIdentifierTypes, PublisherPropertySelector, PurchaseType, ReachUnit, ReportingFrequency, Responsive, RestrictedAttribute, RightType, RightUse, RightsBillingPeriod, RightsConstraint, SISessionStatus, ScanType, ScopedCreativeApproval, SignalAvailabilityType, SignalDefinitionEnrichment, SignalSource, SignalTargetingExpression, SignalValueType, SizeModeMutex, SnapshotUnavailableReason, SocialPlacementSurface, SortDirection, SortMetric, SpecialCategory, SponsoredPlacementType, TMPResponseType, TalentRole, TargetingOverlayRequirements, TargetingOverlaySupport, TaskStatus, TaskType, TransportMode, TravelTimeUnit, UIDType, URLAssetType, UniversalMacro, UpdateFrequency, VASTTrackingEvent, VASTVersion, ValidationMode, VideoPlacementType, ViewabilityStandard, WCAGLevel, WarningAffectedResource, WarningCode, WatermarkMediaType, WebhookResponseType, WebhookSecurityMethod } from './core.generated';
+export type { AccountCurrencyMode, AccountReference, AccountScope, AccountStatus, ActionNotAllowedReason, ActionSource, AdCPProtocol, AdCPSpecialism, AdCPVersionEnvelope, AdvertiserIndustry, AgeDeterminationBasis, AgeVerificationMethod, AssessmentStatus, AssetContentType, AssetVariant, AttestationClaim, AttributionMethodology, AttributionModel, AudienceConstraints, AudienceEvidenceMethodology, AudienceResolutionMethod, AudienceSource, AudienceStatus, AudienceSubjectType, AudioChannelLayout, AudioDistributionType, AuthenticationScheme, AvailableMetric, BillingParty, BinaryVerdict, BrandAgentType, BrandReference, BrowserFamily, BusinessEntity, C2PAWatermarkAction, CanceledBy, CancellationPolicy, CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement, CanonicalFormatBase, CanonicalFormatDAASTAudio, CanonicalFormatDisplayTag, CanonicalFormatHTML5Banner, CanonicalFormatHostedAudio, CanonicalFormatHostedVideo, CanonicalFormatImage, CanonicalFormatImageCarousel, CanonicalFormatNativeInFeed, CanonicalFormatResponsiveCreative, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven, CanonicalFormatVASTVideo, CanonicalMediaBuyActionMode, CanonicalMediaBuyActionName, CatalogAction, CatalogItemDeliveryMetrics, CatalogItemStatus, CatalogType, CloudStorageProtocol, CoBrandingRequirement, CollectionCadence, CollectionKind, CollectionRelationship, CollectionStatus, CompletionSource, ConsentBasis, ContentIDType, ContentRatingSystem, CountryFusedPostalCodeSystem, CreativeAction, CreativeAgentCapability, CreativeApprovalStatus, CreativeAsset, CreativeBrief, CreativeEventReasonCode, CreativeIdentifierType, CreativeQuality, CreativeSelectionStrategy, CreativeSortField, CreativeStatus, DAASTTrackingEvent, DAASTVersion, DayOfWeek, DelegationAuthority, DeliveryMetricAggregate, DeliveryMetrics, DeliveryStatus, DeliveryType, DemographicSystem, DerivativeType, DevicePlatform, DeviceType, DigitalSourceType, DimensionUnit, DisclosurePersistence, DisclosurePosition, DistanceUnit, DistributionIdentifierType, EmbeddedProvenanceMethod, ErrorCode, ErrorScope, EscalationSeverity, EventType, Exclusivity, ExtensionObject, FeatureCheckStatus, FeedFormat, FeedbackSource, Fixed, ForecastMethod, ForecastPoint, ForecastRangeUnit, ForecastableMetric, Format, FormatIDParameter, FormatReferenceStructuredObject, FrameRateType, FrequencyCapScope, GOPType, GenreTaxonomy, GeoDeliveryMetrics, GeographicTargetingLevel, GetProductsAsyncSubmitted, GovernanceDecision, GovernanceDomain, GovernanceMode, GovernancePhase, HTTPMethod, HistoryEntryType, ImageAsset, ImpairmentOfflineState, ImpairmentReasonCode, IndicatorType, InstallmentStatus, JavaScriptModuleType, KeywordDeliveryMetrics, LandingPageRequirement, LiftDimension, LogoSlot, MakegoodRemedy, MarkdownFlavor, MatchIDType, MatchType, MeasurementTerms, MediaBuyActionMode, MediaBuyHealth, MediaBuyStatus, MediaBuyValidAction, MediaChannel, MetricScope, MetricType, MetroAreaSystem, MoovAtomPosition, MultiSize, None, NotificationType, OfferingAvailabilityStatus, OutcomeType, Pacing, PackageUpdate, PaymentTerms, PerformanceBaseline, PerformanceStandardMetric, PlatformExtensionReference, PolicyCategory, PolicyEnforcementLevel, PostalCodeSystem, PostalCountrySystem, PreviewOutputFormat, PriceAdjustmentKind, PricingModel, PricingStructure, ProductionQuality, PropertyIdentifierTypes, PropertyType, ProposalDeclineReason, ProposalRefinementReason, ProposalStatus, ProtocolEnvelope, Provenance, PublisherIdentifierTypes, PublisherPropertySelector, PurchaseType, ReachUnit, ReportingFrequency, Responsive, RestrictedAttribute, RightType, RightUse, RightsBillingPeriod, RightsConstraint, SISessionStatus, ScanType, ScopedCreativeApproval, SignalAvailabilityType, SignalDefinitionEnrichment, SignalSource, SignalTargetingExpression, SignalValueType, SizeModeMutex, SnapshotUnavailableReason, SocialPlacementSurface, SortDirection, SortMetric, SpecialCategory, SponsoredPlacementType, TMPResponseType, TalentRole, TargetingOverlayRequirements, TargetingOverlaySupport, TaskStatus, TaskType, TransportMode, TravelTimeUnit, UIDType, URLAssetType, UniversalMacro, UpdateFrequency, VASTTrackingEvent, VASTVersion, ValidationMode, VideoPlacementType, ViewabilityStandard, WCAGLevel, WarningAffectedResource, WarningCode, WatermarkMediaType, WebhookResponseType, WebhookSecurityMethod } from './core.generated';
 
 // Tool Parameter and Response Types
 // Generated from official AdCP schemas
@@ -10392,182 +10393,6 @@ export interface ListCreativeFormatsRequest {
 }
 
 // list_creative_formats response
-/**
- * **DEPRECATED in 3.2.** Legacy named-format definition retained for older 3.x peers and list_creative_formats compatibility projections. New products and creative agents author ProductFormatDeclaration canonical contracts instead.
- */
-export type Format = {
-} & {
-  format_id: FormatReferenceStructuredObject;
-  /**
-   * Human-readable format name
-   */
-  name: string;
-  /**
-   * Plain text explanation of what this format does and what assets it requires
-   */
-  description?: string;
-  /**
-   * Optional URL to showcase page with examples and interactive demos of this format
-   */
-  example_url?: string;
-  /**
-   * List of parameters this format accepts in format_id. Template formats define which parameters (dimensions, duration, etc.) can be specified when instantiating the format. Empty or omitted means this is a concrete format with fixed parameters.
-   */
-  accepts_parameters?: FormatIDParameter[];
-  /**
-   * Specification of rendered pieces for this format. Most formats produce a single render. Companion ad formats (video + banner), adaptive formats, and multi-placement formats produce multiple renders. Each render specifies its role and dimensions.
-   *
-   * @minItems 1
-   */
-  renders?: [
-    (
-      | {
-        }
-      | {
-          parameters_from_format_id: true;
-        }
-    ),
-    ...(
-      | {
-        }
-      | {
-          parameters_from_format_id: true;
-        }
-    )[]
-  ];
-  /**
-   * Array of all assets supported for this format. Each asset is identified by its asset_id, which must be used as the key in creative manifests. Use the 'required' boolean on each asset to indicate whether it's mandatory.
-   */
-  assets?: (
-    | (
-        | IndividualImageAsset
-        | IndividualVideoAsset
-        | IndividualAudioAsset
-        | IndividualTextAsset
-        | IndividualMarkdownAsset
-        | IndividualHtmlAsset
-        | IndividualCssAsset
-        | IndividualJavaScriptAsset
-        | IndividualZipAsset
-        | IndividualVastAsset
-        | IndividualDaastAsset
-        | IndividualUrlAsset
-        | IndividualWebhookAsset
-        | IndividualBriefAsset
-        | IndividualCatalogAsset
-      )
-    | RepeatableGroupAsset
-  )[];
-  /**
-   * Delivery method specifications (e.g., hosted, VAST, third-party tags)
-   */
-  delivery?: {
-  };
-  /**
-   * List of universal macros supported by this format (e.g., MEDIA_BUY_ID, CACHEBUSTER, DEVICE_ID). Used for validation and developer tooling. See docs/creative/universal-macros.mdx for full documentation.
-   */
-  supported_macros?: (UniversalMacro | string)[];
-  /**
-   * @deprecated
-   * **DEPRECATED in 3.1. Removed at 4.0.** Use `list_transformers` instead — a transformer declares its own `input_format_ids`/`output_format_ids`, so build capability is a property of the transformer (the unit you select and that carries pricing), not a relationship hung on a format. Discover build capability via `list_transformers` (optionally filtered by `input_format_ids`/`output_format_ids`).
-   *
-   * Migration: sellers that expressed transform capability by hanging `input_format_ids` on a format SHOULD declare a transformer via `list_transformers` instead. Buyers SHOULD discover build capability via `list_transformers` rather than filtering formats.
-   *
-   * *Legacy behavior, retained for 3.1–3.x backward compatibility:* array of format IDs this format accepts as input creative manifests; when present, indicates this format can take existing creatives in these formats as input. SDKs reading 3.1 catalogs MUST continue to honor this field when present; 4.0+ SDKs MAY reject it. New code SHOULD NOT emit this field.
-   */
-  input_format_ids?: FormatReferenceStructuredObject[];
-  /**
-   * @deprecated
-   * **DEPRECATED in 3.1. Removed at 4.0.** Use `list_transformers` instead — a transformer declares its own `output_format_ids`, so what a builder can produce is a property of the transformer, not a relationship hung on a format. Discover via `list_transformers`.
-   *
-   * Migration: sellers that expressed multi-output build capability (e.g. a multi-publisher template) by hanging `output_format_ids` on a format SHOULD declare a transformer via `list_transformers` instead.
-   *
-   * *Legacy behavior, retained for 3.1–3.x backward compatibility:* array of format IDs this format can produce as output; when present, indicates this format can build creatives in these output formats. SDKs reading 3.1 catalogs MUST continue to honor this field when present; 4.0+ SDKs MAY reject it. New code SHOULD NOT emit this field.
-   */
-  output_format_ids?: FormatReferenceStructuredObject[];
-  /**
-   * Optional standard visual card (300x400px) for displaying this format in user interfaces. Can be rendered via preview_creative or pre-generated.
-   */
-  format_card?: {
-    format_id: FormatReferenceStructuredObject;
-    /**
-     * Asset manifest for rendering the card, structure defined by the format
-     */
-    manifest: {
-    };
-  };
-  /**
-   * Accessibility posture of this format. Declares the WCAG conformance level that creatives produced by this format will meet.
-   */
-  accessibility?: {
-    wcag_level: WCAGLevel;
-    /**
-     * When true, all assets with x-accessibility fields must include those fields. For inspectable assets (image, video, audio), this means providing accessibility metadata like alt_text or captions. For opaque assets (HTML, JavaScript), this means providing self-declared accessibility properties.
-     */
-    requires_accessible_assets?: boolean;
-  };
-  /**
-   * Disclosure positions this format can render. Buyers use this to determine whether a format can satisfy their compliance requirements before submitting a creative. When omitted, the format makes no disclosure rendering guarantees — creative agents SHOULD treat this as incompatible with briefs that require specific disclosure positions. Values correspond to positions on creative-brief.json required_disclosures.
-   *
-   * @minItems 1
-   */
-  supported_disclosure_positions?: [DisclosurePosition, ...DisclosurePosition[]];
-  /**
-   * Structured disclosure capabilities per position with persistence modes. Declares which persistence behaviors each disclosure position supports, enabling persistence-aware matching against provenance render guidance and brief requirements. When present, supersedes supported_disclosure_positions for persistence-aware queries. The flat supported_disclosure_positions field is retained for backward compatibility. Each position MUST appear at most once; validators and agents SHOULD reject duplicates.
-   *
-   * @minItems 1
-   */
-  disclosure_capabilities?: [
-    {
-      position: DisclosurePosition;
-      /**
-       * Persistence modes this position supports
-       *
-       * @minItems 1
-       */
-      persistence: [DisclosurePersistence, ...DisclosurePersistence[]];
-    },
-    ...{
-      position: DisclosurePosition;
-      /**
-       * Persistence modes this position supports
-       *
-       * @minItems 1
-       */
-      persistence: [DisclosurePersistence, ...DisclosurePersistence[]];
-    }[]
-  ];
-  /**
-   * Optional detailed card with carousel and full specifications. Provides rich format documentation similar to ad spec pages.
-   */
-  format_card_detailed?: {
-    format_id: FormatReferenceStructuredObject;
-    /**
-     * Asset manifest for rendering the detailed card, structure defined by the format
-     */
-    manifest: {
-    };
-  };
-  /**
-   * Metrics this format can produce in delivery reporting. Buyers receive the intersection of format reported_metrics and product available_metrics. If omitted, the format defers entirely to product-level metric declarations.
-   *
-   * @minItems 1
-   */
-  reported_metrics?: [AvailableMetric, ...AvailableMetric[]];
-  /**
-   * @deprecated
-   * **DEPRECATED in 3.1. Removed at 4.0.** Use `transformer.pricing_options` (via `list_transformers`) instead — pricing belongs on the transformer (the unit selected and billed), exactly as it belongs on a media-buy product. Once formats only describe output shape, format-level pricing is vestigial.
-   *
-   * Migration: transformation/generation agents that charged via `format.pricing_options` SHOULD move the same `vendor-pricing-option` entries onto the corresponding transformer. The applied option is echoed per-leaf on the build_creative response and reconciled via report_usage, unchanged.
-   *
-   * *Legacy behavior, retained for 3.1–3.x backward compatibility:* pricing options for this format, used by transformation/generation agents that charge per format adapted, per image generated, or per unit of work; present when the request included include_pricing=true and account. SDKs reading 3.1 catalogs MUST continue to honor this field when present; 4.0+ SDKs MAY reject it. New code SHOULD NOT emit this field.
-   *
-   * @minItems 1
-   */
-  pricing_options?: [VendorPricingOption, ...VendorPricingOption[]];
-  canonical?: CanonicalProjectionReference;
-  canonical_parameters?: ProductFormatDeclaration;
-};
 /**
  * Image asset
  */
