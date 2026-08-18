@@ -65,6 +65,20 @@ describe('applyIdempotencyInvariant', () => {
     assert.match(result.idempotency_key, UUID_V4);
   });
 
+  test('injects on every compact 3.2 lifecycle mutation, including control_media_buy', () => {
+    for (const task of [
+      'request_proposals',
+      'refine_proposals',
+      'decline_proposals',
+      'buy_products',
+      'accept_proposal',
+      'control_media_buy',
+    ]) {
+      const result = applyIdempotencyInvariant({}, task, {});
+      assert.match(result.idempotency_key, UUID_V4, task);
+    }
+  });
+
   test('passes through read-only tasks untouched', () => {
     const input = { filter: 'x' };
     const result = applyIdempotencyInvariant(input, 'get_products', {});

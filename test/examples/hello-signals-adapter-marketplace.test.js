@@ -240,7 +240,8 @@ describe('examples/hello_signals_adapter_marketplace', () => {
     };
     const seed = await callMcpTool('comply_test_controller', {
       scenario: 'seed_buyer_agent',
-      context: { session_id: sessionId, account: scopedAccount },
+      account: scopedAccount,
+      context: { session_id: sessionId },
       params: {
         agent_url: 'https://addie.example.com',
         status: 'suspended',

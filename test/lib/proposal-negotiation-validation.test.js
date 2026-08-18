@@ -149,6 +149,17 @@ test('canonical request validation requires both 3.2 envelope fields', () => {
   );
 });
 
+test('response validation rejects malformed 3.2 prerelease pins', () => {
+  for (const adcp_version of ['3.2-.', '3.2-rc.', '3.2--rc', '3.2-rc..1']) {
+    const result = validateRefineProposalsResponseShape({ ...response(), adcp_version });
+    assert.equal(result.ok, false);
+    assert.match(result.issues[0].message, /adcp_version must be on the 3\.2 release line/);
+  }
+  for (const adcp_version of ['3.2', '3.2-beta', '3.2-beta.1', '3.2-beta-1']) {
+    assert.equal(validateRefineProposalsResponseShape({ ...response(), adcp_version }).ok, true);
+  }
+});
+
 test('proposal capability discovery accepts raw and normalized responses and fails closed on malformed declarations', () => {
   const raw = {
     media_buy: {
@@ -249,6 +260,34 @@ test('compact submitted responses validate without completed-field access', () =
     { ...submitted, message: 'x'.repeat(2001) },
   ]) {
     assert.equal(validateRefineProposalsResponseShape(invalid).ok, false);
+  }
+});
+
+test('response verifier accepts only the 3.2 response release line and reports rejected values', () => {
+  for (const adcp_version of ['3.2', '3.2-beta.0', '3.2-rc.1']) {
+    assert.equal(
+      validateRefineProposalsResponseShape({
+        ...response(),
+        adcp_version,
+      }).ok,
+      true,
+      adcp_version
+    );
+  }
+
+  for (const adcp_version of ['3.1', '4.0', 'not-a-version']) {
+    const result = validateRefineProposalsResponseShape({
+      ...response(),
+      adcp_version,
+    });
+    assert.equal(result.ok, false, adcp_version);
+    assert.equal(
+      result.issues.some(
+        issue => issue.path === 'adcp_version' && issue.message.includes(`received ${JSON.stringify(adcp_version)}`)
+      ),
+      true,
+      adcp_version
+    );
   }
 });
 

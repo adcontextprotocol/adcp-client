@@ -1,6 +1,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
+const { createPrivateKey, sign: nodeSign } = require('node:crypto');
 const { readFileSync, existsSync, unlinkSync, mkdtempSync } = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -15,6 +16,8 @@ const {
   InMemoryRevocationStore,
   parseContentDigest,
   parseSignatureInput,
+  prepareRequestSignature,
+  finalizeRequestSignature,
   requestSigningEncodingForVersion,
   RequestSignatureError,
   signRequest,
@@ -40,6 +43,16 @@ delete privateJwk.key_ops;
 delete privateJwk.use;
 const publicJwk = { ...ed };
 delete publicJwk._private_d_for_test_only;
+
+function signIntentionalNegativeVector(request, options) {
+  const prepared = prepareRequestSignature(request, { keyid: 'test-ed25519-2026', alg: 'ed25519' }, options);
+  const signature = nodeSign(
+    null,
+    Buffer.from(prepared.base, 'utf8'),
+    createPrivateKey({ key: privateJwk, format: 'jwk' })
+  );
+  return finalizeRequestSignature(prepared, signature);
+}
 
 describe('parser hardening (security/code-review findings)', () => {
   test('empty-value numeric param is rejected (not silently coerced to 0)', () => {
@@ -234,14 +247,47 @@ describe('AdCP 3.2 RFC 8941 binary profile', () => {
     assert.strictEqual(result.keyid, 'test-ed25519-2026');
   });
 
-  test('an explicit 3.2 pin rejects legacy body signatures that omit Content-Digest', async () => {
+  test('an unpinned verifier accepts 3.2 Base64 without overriding the trusted digest policy', async () => {
+    const now = 1776520800;
+    const url = 'https://seller.example.com/adcp/create_media_buy';
+    const body = '{"plan_id":"plan_3_2_unpinned"}';
+    const signed = signIntentionalNegativeVector(
+      { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
+      {
+        now: () => now,
+        windowSeconds: 300,
+        nonce: 'adcp-3-2-unpinned-nonce',
+        coverContentDigest: false,
+        binaryEncoding: 'rfc8941-base64',
+      }
+    );
+
+    const result = await verifyRequestSignature(
+      { method: 'POST', url, headers: signed.headers, body },
+      {
+        capability: { supported: true, covers_content_digest: 'forbidden', required_for: [] },
+        jwks: new StaticJwksResolver([publicJwk]),
+        replayStore: new InMemoryReplayStore(),
+        revocationStore: new InMemoryRevocationStore(),
+        now: () => now,
+        operation: 'create_media_buy',
+      }
+    );
+    assert.strictEqual(result.keyid, 'test-ed25519-2026');
+  });
+
+  test('an explicit 3.2 pin rejects body signatures that omit Content-Digest', async () => {
     const now = 1776520800;
     const url = 'https://seller.example.com/adcp/create_media_buy';
     const body = '{"amount":1}';
-    const signed = signRequest(
+    const signed = signIntentionalNegativeVector(
       { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
-      { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwk },
-      { now: () => now, nonce: 'legacy-no-digest-nonce', binaryEncoding: 'legacy-base64url' }
+      {
+        now: () => now,
+        nonce: 'standard-no-digest-nonce',
+        binaryEncoding: 'rfc8941-base64',
+        coverContentDigest: false,
+      }
     );
     for (const adcpVersion of ['3.2-beta.0', '']) {
       await assert.rejects(
@@ -260,6 +306,23 @@ describe('AdCP 3.2 RFC 8941 binary profile', () => {
         err => err instanceof RequestSignatureError && err.code === 'request_signature_components_incomplete'
       );
     }
+  });
+
+  test('high-level 3.2 signer refuses an undigested body', () => {
+    assert.throws(
+      () =>
+        signRequest(
+          {
+            method: 'POST',
+            url: 'https://seller.example.com/mcp',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{"amount":1}',
+          },
+          { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwk },
+          { binaryEncoding: 'rfc8941-base64', coverContentDigest: false }
+        ),
+      /requires Content-Digest coverage/
+    );
   });
 
   test('strict verification rejects duplicate Content-Digest dictionary members', async () => {

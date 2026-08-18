@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-18T09:25:34.294Z
+// Generated at: 2026-08-18T11:16:43.454Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -363,9 +363,113 @@ export const WebhookResponseTypeSchema = z.union([z.literal("html"), z.literal("
 
 export const WebhookSecurityMethodSchema = z.union([z.literal("hmac_sha256"), z.literal("api_key"), z.literal("none")]);
 
+export const ExtensionObjectSchema = z.record(z.string(), z.unknown());
+
+export const ReferenceAssetSchema = z.object({
+    url: z.string(),
+    role: z.union([z.literal("style_reference"), z.literal("product_shot"), z.literal("mood_board"), z.literal("example_creative"), z.literal("logo"), z.literal("strategy_doc"), z.literal("storyboard")]),
+    description: z.string().optional()
+}).passthrough();
+
 export const BrandIDSchema = z.string();
 
-export const ExtensionObjectSchema = z.record(z.string(), z.unknown());
+export const ProvenanceSchema = z.object({
+    digital_source_type: DigitalSourceTypeSchema.optional(),
+    synthetic_depiction: z.boolean().optional(),
+    ai_tool: z.object({
+        name: z.string(),
+        version: z.string().optional(),
+        provider: z.string().optional()
+    }).passthrough().optional(),
+    human_oversight: z.union([z.literal("none"), z.literal("prompt_only"), z.literal("selected"), z.literal("edited"), z.literal("directed")]).optional(),
+    declared_by: z.object({
+        agent_url: z.string().optional(),
+        role: z.union([z.literal("creator"), z.literal("advertiser"), z.literal("agency"), z.literal("platform"), z.literal("tool")])
+    }).passthrough().optional(),
+    declared_at: z.string().optional(),
+    created_time: z.string().optional(),
+    c2pa: z.object({
+        manifest_url: z.string()
+    }).passthrough().optional(),
+    embedded_provenance: z.tuple([z.object({
+            method: EmbeddedProvenanceMethodSchema,
+            standard: z.string().optional(),
+            provider: z.string(),
+            verify_agent: z.object({
+                agent_url: z.string(),
+                feature_id: z.string().optional()
+            }).passthrough().optional(),
+            embedded_at: z.string().optional()
+        }).passthrough()]).rest(z.object({
+        method: EmbeddedProvenanceMethodSchema,
+        standard: z.string().optional(),
+        provider: z.string(),
+        verify_agent: z.object({
+            agent_url: z.string(),
+            feature_id: z.string().optional()
+        }).passthrough().optional(),
+        embedded_at: z.string().optional()
+    }).passthrough()).optional(),
+    watermarks: z.tuple([z.object({
+            media_type: WatermarkMediaTypeSchema,
+            provider: z.string(),
+            verify_agent: z.object({
+                agent_url: z.string(),
+                feature_id: z.string().optional()
+            }).passthrough().optional(),
+            c2pa_action: C2PAWatermarkActionSchema.optional(),
+            embedded_at: z.string().optional()
+        }).passthrough()]).rest(z.object({
+        media_type: WatermarkMediaTypeSchema,
+        provider: z.string(),
+        verify_agent: z.object({
+            agent_url: z.string(),
+            feature_id: z.string().optional()
+        }).passthrough().optional(),
+        c2pa_action: C2PAWatermarkActionSchema.optional(),
+        embedded_at: z.string().optional()
+    }).passthrough()).optional(),
+    disclosure: z.object({
+        required: z.boolean(),
+        jurisdictions: z.tuple([z.object({
+                country: z.string(),
+                region: z.string().optional(),
+                regulation: z.string(),
+                label_text: z.string().optional(),
+                render_guidance: z.object({
+                    persistence: DisclosurePersistenceSchema.optional(),
+                    min_duration_ms: z.number().optional(),
+                    positions: z.array(DisclosurePositionSchema).optional(),
+                    ext: ExtensionObjectSchema.optional()
+                }).passthrough().optional()
+            }).passthrough()]).rest(z.object({
+            country: z.string(),
+            region: z.string().optional(),
+            regulation: z.string(),
+            label_text: z.string().optional(),
+            render_guidance: z.object({
+                persistence: DisclosurePersistenceSchema.optional(),
+                min_duration_ms: z.number().optional(),
+                positions: z.array(DisclosurePositionSchema).optional(),
+                ext: ExtensionObjectSchema.optional()
+            }).passthrough().optional()
+        }).passthrough()).optional()
+    }).passthrough().optional(),
+    verification: z.tuple([z.object({
+            verified_by: z.string(),
+            verified_time: z.string().optional(),
+            result: z.union([z.literal("authentic"), z.literal("ai_generated"), z.literal("ai_modified"), z.literal("inconclusive")]),
+            confidence: z.number().optional(),
+            details_url: z.string().optional()
+        }).passthrough()]).rest(z.object({
+        verified_by: z.string(),
+        verified_time: z.string().optional(),
+        result: z.union([z.literal("authentic"), z.literal("ai_generated"), z.literal("ai_modified"), z.literal("inconclusive")]),
+        confidence: z.number().optional(),
+        details_url: z.string().optional()
+    }).passthrough()).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
 
 export const BusinessEntitySchema = z.object({
     legal_name: z.string().max(200),
@@ -806,104 +910,6 @@ export const IndustryIdentifierSchema = z.object({
     value: z.string()
 }).passthrough();
 
-export const ProvenanceSchema = z.object({
-    digital_source_type: DigitalSourceTypeSchema.optional(),
-    synthetic_depiction: z.boolean().optional(),
-    ai_tool: z.object({
-        name: z.string(),
-        version: z.string().optional(),
-        provider: z.string().optional()
-    }).passthrough().optional(),
-    human_oversight: z.union([z.literal("none"), z.literal("prompt_only"), z.literal("selected"), z.literal("edited"), z.literal("directed")]).optional(),
-    declared_by: z.object({
-        agent_url: z.string().optional(),
-        role: z.union([z.literal("creator"), z.literal("advertiser"), z.literal("agency"), z.literal("platform"), z.literal("tool")])
-    }).passthrough().optional(),
-    declared_at: z.string().optional(),
-    created_time: z.string().optional(),
-    c2pa: z.object({
-        manifest_url: z.string()
-    }).passthrough().optional(),
-    embedded_provenance: z.tuple([z.object({
-            method: EmbeddedProvenanceMethodSchema,
-            standard: z.string().optional(),
-            provider: z.string(),
-            verify_agent: z.object({
-                agent_url: z.string(),
-                feature_id: z.string().optional()
-            }).passthrough().optional(),
-            embedded_at: z.string().optional()
-        }).passthrough()]).rest(z.object({
-        method: EmbeddedProvenanceMethodSchema,
-        standard: z.string().optional(),
-        provider: z.string(),
-        verify_agent: z.object({
-            agent_url: z.string(),
-            feature_id: z.string().optional()
-        }).passthrough().optional(),
-        embedded_at: z.string().optional()
-    }).passthrough()).optional(),
-    watermarks: z.tuple([z.object({
-            media_type: WatermarkMediaTypeSchema,
-            provider: z.string(),
-            verify_agent: z.object({
-                agent_url: z.string(),
-                feature_id: z.string().optional()
-            }).passthrough().optional(),
-            c2pa_action: C2PAWatermarkActionSchema.optional(),
-            embedded_at: z.string().optional()
-        }).passthrough()]).rest(z.object({
-        media_type: WatermarkMediaTypeSchema,
-        provider: z.string(),
-        verify_agent: z.object({
-            agent_url: z.string(),
-            feature_id: z.string().optional()
-        }).passthrough().optional(),
-        c2pa_action: C2PAWatermarkActionSchema.optional(),
-        embedded_at: z.string().optional()
-    }).passthrough()).optional(),
-    disclosure: z.object({
-        required: z.boolean(),
-        jurisdictions: z.tuple([z.object({
-                country: z.string(),
-                region: z.string().optional(),
-                regulation: z.string(),
-                label_text: z.string().optional(),
-                render_guidance: z.object({
-                    persistence: DisclosurePersistenceSchema.optional(),
-                    min_duration_ms: z.number().optional(),
-                    positions: z.array(DisclosurePositionSchema).optional(),
-                    ext: ExtensionObjectSchema.optional()
-                }).passthrough().optional()
-            }).passthrough()]).rest(z.object({
-            country: z.string(),
-            region: z.string().optional(),
-            regulation: z.string(),
-            label_text: z.string().optional(),
-            render_guidance: z.object({
-                persistence: DisclosurePersistenceSchema.optional(),
-                min_duration_ms: z.number().optional(),
-                positions: z.array(DisclosurePositionSchema).optional(),
-                ext: ExtensionObjectSchema.optional()
-            }).passthrough().optional()
-        }).passthrough()).optional()
-    }).passthrough().optional(),
-    verification: z.tuple([z.object({
-            verified_by: z.string(),
-            verified_time: z.string().optional(),
-            result: z.union([z.literal("authentic"), z.literal("ai_generated"), z.literal("ai_modified"), z.literal("inconclusive")]),
-            confidence: z.number().optional(),
-            details_url: z.string().optional()
-        }).passthrough()]).rest(z.object({
-        verified_by: z.string(),
-        verified_time: z.string().optional(),
-        result: z.union([z.literal("authentic"), z.literal("ai_generated"), z.literal("ai_modified"), z.literal("inconclusive")]),
-        confidence: z.number().optional(),
-        details_url: z.string().optional()
-    }).passthrough()).optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
 export const V1CreativeNamedFormatReferenceSchema = z.record(z.string(), z.unknown());
 
 export const V2CreativeCanonicalFormatKindSchema = z.record(z.string(), z.unknown());
@@ -1163,6 +1169,33 @@ export const DAASTTrackerAssetSchema = z.record(z.string(), z.unknown()).and(z.o
     provenance: ProvenanceSchema.optional()
 }).passthrough());
 
+export const CreativeBriefSchema = z.object({
+    name: z.string(),
+    objective: z.union([z.literal("awareness"), z.literal("consideration"), z.literal("conversion"), z.literal("retention"), z.literal("engagement")]).optional(),
+    tone: z.string().optional(),
+    audience: z.string().optional(),
+    territory: z.string().optional(),
+    messaging: z.object({
+        headline: z.string().optional(),
+        tagline: z.string().optional(),
+        cta: z.string().optional(),
+        key_messages: z.array(z.string()).optional()
+    }).passthrough().optional(),
+    reference_assets: z.array(ReferenceAssetSchema).optional(),
+    compliance: z.object({
+        required_disclosures: z.array(z.object({
+            text: z.string(),
+            position: DisclosurePositionSchema.optional(),
+            jurisdictions: z.array(z.string()).optional(),
+            regulation: z.string().optional(),
+            min_duration_ms: z.number().min(1).optional(),
+            language: z.string().optional(),
+            persistence: DisclosurePersistenceSchema.optional()
+        }).passthrough()).min(1).optional(),
+        prohibited_claims: z.array(z.string()).optional()
+    }).passthrough().optional()
+}).passthrough();
+
 export const CatalogSchema = z.object({
     catalog_id: z.string().optional(),
     name: z.string().optional(),
@@ -1235,12 +1268,6 @@ export const PackageSignalTargetingSchema = SignalTargetingExpressionSchema.and(
 
 export const DemographicTargetingIntentSchema = z.object({
     age: DemographicAgeRangeSchema
-}).passthrough();
-
-export const ReferenceAssetSchema = z.object({
-    url: z.string(),
-    role: z.union([z.literal("style_reference"), z.literal("product_shot"), z.literal("mood_board"), z.literal("example_creative"), z.literal("logo"), z.literal("strategy_doc"), z.literal("storyboard")]),
-    description: z.string().optional()
 }).passthrough();
 
 export const BrandReferenceSchema = z.object({
@@ -1340,6 +1367,459 @@ export const ResponsiveSchema = z.object({
 }).passthrough();
 
 export const NoneSchema = z.object({}).passthrough();
+
+export const SizeModeMutexSchema = z.union([FixedSchema, MultiSizeSchema, ResponsiveSchema, NoneSchema]);
+
+export const CanonicalFormatDisplayTagSchema = z.object({}).passthrough().merge(z.object({
+    experimental: z.boolean().optional(),
+    deprecated: z.boolean().optional(),
+    v1_translatable: z.boolean().optional(),
+    since_version: z.string().optional(),
+    migration_target_version: z.string().optional(),
+    composition_model: z.union([z.literal("deterministic"), z.literal("algorithmic")]).optional(),
+    provenance_required: z.boolean().optional(),
+    platform_extensions: z.array(PlatformExtensionReferenceSchema).optional(),
+    synthesis_nondeterministic: z.boolean().optional(),
+    slots: z.array(z.object({
+        asset_group_id: z.string(),
+        asset_type: z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("url"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("webhook"), z.literal("brief"), z.literal("catalog"), z.literal("published_post"), z.literal("zip"), z.literal("card"), z.literal("object"), z.literal("pixel_tracker"), z.literal("vast_tracker"), z.literal("daast_tracker")]),
+        required: z.boolean().optional(),
+        min: z.number().optional(),
+        max: z.number().optional(),
+        max_chars: z.number().optional(),
+        max_size_kb: z.number().optional(),
+        pixel_ratios: z.array(z.number()).optional(),
+        required_pixel_ratios: z.array(z.number()).optional(),
+        logo_slots: z.array(LogoSlotSchema).optional(),
+        required_logo_slots: z.array(LogoSlotSchema).optional(),
+        description: z.string().optional(),
+        consumed_for_production: z.boolean().optional()
+    }).passthrough()).optional(),
+    required_connections: z.array(DownstreamConnectionRequirementSchema).optional(),
+    reference_mutability: z.union([z.literal("immutable_snapshot"), z.literal("mutable_requires_reapproval"), z.literal("mutable_auto_recheck")]).optional(),
+    production_window_business_days: z.number().optional(),
+    width: z.number().min(1).optional(),
+    height: z.number().min(1).optional(),
+    sizes: z.array(z.object({
+        width: z.number().min(1),
+        height: z.number().min(1)
+    }).passthrough()).optional(),
+    min_width: z.number().min(1).optional(),
+    max_width: z.number().min(1).optional(),
+    min_height: z.number().min(1).optional(),
+    max_height: z.number().min(1).optional(),
+    supported_tag_types: z.array(z.union([z.literal("iframe"), z.literal("javascript"), z.literal("1x1_redirect")])).optional(),
+    ssl_required: z.boolean().optional(),
+    max_redirect_depth: z.number().min(0).optional(),
+    max_response_time_ms: z.number().min(1).optional(),
+    backup_image_required: z.boolean().optional(),
+    backup_image_max_size_kb: z.number().min(1).optional(),
+    om_sdk_required: z.boolean().optional()
+}).passthrough());
+
+export const CanonicalFormatImageCarouselSchema = z.object({
+    experimental: z.boolean().optional(),
+    deprecated: z.boolean().optional(),
+    v1_translatable: z.boolean().optional(),
+    since_version: z.string().optional(),
+    migration_target_version: z.string().optional(),
+    composition_model: z.union([z.literal("deterministic"), z.literal("algorithmic")]).optional(),
+    provenance_required: z.boolean().optional(),
+    platform_extensions: z.array(PlatformExtensionReferenceSchema).optional(),
+    synthesis_nondeterministic: z.boolean().optional(),
+    slots: z.array(z.object({
+        asset_group_id: z.string(),
+        asset_type: z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("url"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("webhook"), z.literal("brief"), z.literal("catalog"), z.literal("published_post"), z.literal("zip"), z.literal("card"), z.literal("object"), z.literal("pixel_tracker"), z.literal("vast_tracker"), z.literal("daast_tracker")]),
+        required: z.boolean().optional(),
+        min: z.number().optional(),
+        max: z.number().optional(),
+        max_chars: z.number().optional(),
+        max_size_kb: z.number().optional(),
+        pixel_ratios: z.array(z.number()).optional(),
+        required_pixel_ratios: z.array(z.number()).optional(),
+        logo_slots: z.array(LogoSlotSchema).optional(),
+        required_logo_slots: z.array(LogoSlotSchema).optional(),
+        description: z.string().optional(),
+        consumed_for_production: z.boolean().optional()
+    }).passthrough()).optional(),
+    required_connections: z.array(DownstreamConnectionRequirementSchema).optional(),
+    reference_mutability: z.union([z.literal("immutable_snapshot"), z.literal("mutable_requires_reapproval"), z.literal("mutable_auto_recheck")]).optional(),
+    production_window_business_days: z.number().optional(),
+    card_aspect_ratio: z.string().regex(/^[0-9]+(\.[0-9]+)?:[0-9]+(\.[0-9]+)?$/).optional(),
+    min_cards: z.number().min(2).optional(),
+    max_cards: z.number().optional(),
+    allowed_card_media_asset_types: z.array(z.union([z.literal("image"), z.literal("video")])).optional(),
+    allowed_card_asset_types: z.array(z.union([z.literal("image"), z.literal("video")])).optional(),
+    card_image_max_file_size_kb: z.number().min(1).optional(),
+    card_video_max_file_size_kb: z.number().min(1).optional(),
+    card_video_max_duration_ms: z.number().min(1).optional(),
+    primary_text_max_chars: z.number().min(1).optional(),
+    card_headline_max_chars: z.number().min(1).optional(),
+    card_description_max_chars: z.number().min(1).optional(),
+    ssl_required: z.boolean().optional()
+}).passthrough();
+
+export const CanonicalFormatHostedVideoSchema = z.object({
+    experimental: z.boolean().optional(),
+    deprecated: z.boolean().optional(),
+    v1_translatable: z.boolean().optional(),
+    since_version: z.string().optional(),
+    migration_target_version: z.string().optional(),
+    composition_model: z.union([z.literal("deterministic"), z.literal("algorithmic")]).optional(),
+    provenance_required: z.boolean().optional(),
+    platform_extensions: z.array(PlatformExtensionReferenceSchema).optional(),
+    synthesis_nondeterministic: z.boolean().optional(),
+    slots: z.array(z.object({
+        asset_group_id: z.string(),
+        asset_type: z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("url"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("webhook"), z.literal("brief"), z.literal("catalog"), z.literal("published_post"), z.literal("zip"), z.literal("card"), z.literal("object"), z.literal("pixel_tracker"), z.literal("vast_tracker"), z.literal("daast_tracker")]),
+        required: z.boolean().optional(),
+        min: z.number().optional(),
+        max: z.number().optional(),
+        max_chars: z.number().optional(),
+        max_size_kb: z.number().optional(),
+        pixel_ratios: z.array(z.number()).optional(),
+        required_pixel_ratios: z.array(z.number()).optional(),
+        logo_slots: z.array(LogoSlotSchema).optional(),
+        required_logo_slots: z.array(LogoSlotSchema).optional(),
+        description: z.string().optional(),
+        consumed_for_production: z.boolean().optional()
+    }).passthrough()).optional(),
+    required_connections: z.array(DownstreamConnectionRequirementSchema).optional(),
+    reference_mutability: z.union([z.literal("immutable_snapshot"), z.literal("mutable_requires_reapproval"), z.literal("mutable_auto_recheck")]).optional(),
+    production_window_business_days: z.number().optional(),
+    orientation: z.union([z.literal("vertical"), z.literal("horizontal"), z.literal("square")]).optional(),
+    aspect_ratio: z.string().regex(/^[0-9]+(\.[0-9]+)?:[0-9]+(\.[0-9]+)?$/).optional(),
+    min_width: z.number().min(1).optional(),
+    min_height: z.number().min(1).optional(),
+    max_width: z.number().min(1).optional(),
+    max_height: z.number().min(1).optional(),
+    duration_ms_range: z.array(z.number().nullable()).optional(),
+    duration_ms_exact: z.number().min(1).optional(),
+    video_codecs: z.array(z.union([z.literal("h264"), z.literal("h265"), z.literal("vp8"), z.literal("vp9"), z.literal("av1"), z.literal("prores")])).optional(),
+    audio_codecs: z.array(z.union([z.literal("aac"), z.literal("mp3"), z.literal("opus"), z.literal("pcm")])).optional(),
+    containers: z.array(z.union([z.literal("mp4"), z.literal("webm"), z.literal("mov")])).optional(),
+    min_bitrate_kbps: z.number().min(1).optional(),
+    max_bitrate_kbps: z.number().min(1).optional(),
+    max_file_size_mb: z.number().min(1).optional(),
+    frame_rates: z.array(z.number()).optional(),
+    captions: z.union([z.literal("required"), z.literal("recommended"), z.literal("not_required")]).optional(),
+    om_sdk_required: z.boolean().optional(),
+    headline_max_chars: z.number().min(1).optional(),
+    primary_text_max_chars: z.number().min(1).optional(),
+    brand_name_max_chars: z.number().min(1).optional(),
+    cta_values: z.array(z.string()).optional(),
+    companion_banner_widths: z.array(z.number()).optional(),
+    companion_banner_heights: z.array(z.number()).optional(),
+    asset_source: z.union([z.literal("buyer_uploaded"), z.literal("publisher_host_recorded"), z.literal("seller_pre_rendered_from_brief"), z.literal("seller_human_designed"), z.literal("agent_synthesized"), z.literal("publisher_owned_reference")]).optional(),
+    buyer_asset_acceptance: z.union([z.literal("accepted"), z.literal("rejected")]).optional()
+}).passthrough();
+
+export const CanonicalFormatVASTVideoSchema = z.object({
+    experimental: z.boolean().optional(),
+    deprecated: z.boolean().optional(),
+    v1_translatable: z.boolean().optional(),
+    since_version: z.string().optional(),
+    migration_target_version: z.string().optional(),
+    composition_model: z.union([z.literal("deterministic"), z.literal("algorithmic")]).optional(),
+    provenance_required: z.boolean().optional(),
+    platform_extensions: z.array(PlatformExtensionReferenceSchema).optional(),
+    synthesis_nondeterministic: z.boolean().optional(),
+    slots: z.array(z.object({
+        asset_group_id: z.string(),
+        asset_type: z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("url"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("webhook"), z.literal("brief"), z.literal("catalog"), z.literal("published_post"), z.literal("zip"), z.literal("card"), z.literal("object"), z.literal("pixel_tracker"), z.literal("vast_tracker"), z.literal("daast_tracker")]),
+        required: z.boolean().optional(),
+        min: z.number().optional(),
+        max: z.number().optional(),
+        max_chars: z.number().optional(),
+        max_size_kb: z.number().optional(),
+        pixel_ratios: z.array(z.number()).optional(),
+        required_pixel_ratios: z.array(z.number()).optional(),
+        logo_slots: z.array(LogoSlotSchema).optional(),
+        required_logo_slots: z.array(LogoSlotSchema).optional(),
+        description: z.string().optional(),
+        consumed_for_production: z.boolean().optional()
+    }).passthrough()).optional(),
+    required_connections: z.array(DownstreamConnectionRequirementSchema).optional(),
+    reference_mutability: z.union([z.literal("immutable_snapshot"), z.literal("mutable_requires_reapproval"), z.literal("mutable_auto_recheck")]).optional(),
+    production_window_business_days: z.number().optional(),
+    orientation: z.union([z.literal("vertical"), z.literal("horizontal"), z.literal("square")]).optional(),
+    aspect_ratio: z.string().regex(/^[0-9]+(\.[0-9]+)?:[0-9]+(\.[0-9]+)?$/).optional(),
+    vast_version: VASTVersionSchema.optional(),
+    vpaid_enabled: z.boolean().optional(),
+    vpaid_version: z.union([z.literal("1.0"), z.literal("2.0")]).optional(),
+    simid_supported: z.boolean().optional(),
+    duration_ms_range: z.array(z.number()).optional(),
+    duration_ms_exact: z.number().min(1).optional(),
+    min_width: z.number().min(1).optional(),
+    max_width: z.number().min(1).optional(),
+    min_height: z.number().min(1).optional(),
+    max_height: z.number().min(1).optional(),
+    linear_required: z.boolean().optional(),
+    skippable_after_ms: z.number().min(0).optional(),
+    max_wrapper_depth: z.number().min(0).optional(),
+    ssl_required: z.boolean().optional()
+}).passthrough();
+
+export const CanonicalFormatHostedAudioSchema = z.object({
+    experimental: z.boolean().optional(),
+    deprecated: z.boolean().optional(),
+    v1_translatable: z.boolean().optional(),
+    since_version: z.string().optional(),
+    migration_target_version: z.string().optional(),
+    composition_model: z.union([z.literal("deterministic"), z.literal("algorithmic")]).optional(),
+    provenance_required: z.boolean().optional(),
+    platform_extensions: z.array(PlatformExtensionReferenceSchema).optional(),
+    synthesis_nondeterministic: z.boolean().optional(),
+    slots: z.array(z.object({
+        asset_group_id: z.string(),
+        asset_type: z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("url"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("webhook"), z.literal("brief"), z.literal("catalog"), z.literal("published_post"), z.literal("zip"), z.literal("card"), z.literal("object"), z.literal("pixel_tracker"), z.literal("vast_tracker"), z.literal("daast_tracker")]),
+        required: z.boolean().optional(),
+        min: z.number().optional(),
+        max: z.number().optional(),
+        max_chars: z.number().optional(),
+        max_size_kb: z.number().optional(),
+        pixel_ratios: z.array(z.number()).optional(),
+        required_pixel_ratios: z.array(z.number()).optional(),
+        logo_slots: z.array(LogoSlotSchema).optional(),
+        required_logo_slots: z.array(LogoSlotSchema).optional(),
+        description: z.string().optional(),
+        consumed_for_production: z.boolean().optional()
+    }).passthrough()).optional(),
+    required_connections: z.array(DownstreamConnectionRequirementSchema).optional(),
+    reference_mutability: z.union([z.literal("immutable_snapshot"), z.literal("mutable_requires_reapproval"), z.literal("mutable_auto_recheck")]).optional(),
+    production_window_business_days: z.number().optional(),
+    duration_ms_range: z.array(z.number().nullable()).optional(),
+    duration_ms_exact: z.number().min(1).optional(),
+    audio_codecs: z.array(z.union([z.literal("mp3"), z.literal("aac"), z.literal("wav"), z.literal("opus"), z.literal("flac")])).optional(),
+    audio_sample_rates: z.array(z.number()).optional(),
+    audio_channels: z.array(z.union([z.literal("mono"), z.literal("stereo")])).optional(),
+    min_bitrate_kbps: z.number().min(1).optional(),
+    max_bitrate_kbps: z.number().min(1).optional(),
+    loudness_lufs: z.number().optional(),
+    loudness_tolerance_db: z.number().min(0).optional(),
+    true_peak_dbfs: z.number().optional(),
+    asset_source: z.union([z.literal("buyer_uploaded"), z.literal("publisher_host_recorded"), z.literal("seller_pre_rendered_from_brief"), z.literal("seller_human_designed"), z.literal("agent_synthesized"), z.literal("publisher_owned_reference")]).optional(),
+    buyer_asset_acceptance: z.union([z.literal("accepted"), z.literal("rejected")]).optional(),
+    companion_image_required: z.boolean().optional(),
+    companion_image_aspect_ratio: z.string().optional(),
+    companion_image_max_file_size_kb: z.number().min(1).optional(),
+    brand_name_max_chars: z.number().min(1).optional()
+}).passthrough();
+
+export const CanonicalFormatDAASTAudioSchema = z.object({
+    experimental: z.boolean().optional(),
+    deprecated: z.boolean().optional(),
+    v1_translatable: z.boolean().optional(),
+    since_version: z.string().optional(),
+    migration_target_version: z.string().optional(),
+    composition_model: z.union([z.literal("deterministic"), z.literal("algorithmic")]).optional(),
+    provenance_required: z.boolean().optional(),
+    platform_extensions: z.array(PlatformExtensionReferenceSchema).optional(),
+    synthesis_nondeterministic: z.boolean().optional(),
+    slots: z.array(z.object({
+        asset_group_id: z.string(),
+        asset_type: z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("url"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("webhook"), z.literal("brief"), z.literal("catalog"), z.literal("published_post"), z.literal("zip"), z.literal("card"), z.literal("object"), z.literal("pixel_tracker"), z.literal("vast_tracker"), z.literal("daast_tracker")]),
+        required: z.boolean().optional(),
+        min: z.number().optional(),
+        max: z.number().optional(),
+        max_chars: z.number().optional(),
+        max_size_kb: z.number().optional(),
+        pixel_ratios: z.array(z.number()).optional(),
+        required_pixel_ratios: z.array(z.number()).optional(),
+        logo_slots: z.array(LogoSlotSchema).optional(),
+        required_logo_slots: z.array(LogoSlotSchema).optional(),
+        description: z.string().optional(),
+        consumed_for_production: z.boolean().optional()
+    }).passthrough()).optional(),
+    required_connections: z.array(DownstreamConnectionRequirementSchema).optional(),
+    reference_mutability: z.union([z.literal("immutable_snapshot"), z.literal("mutable_requires_reapproval"), z.literal("mutable_auto_recheck")]).optional(),
+    production_window_business_days: z.number().optional(),
+    daast_version: z.union([z.literal("1.0"), z.literal("1.1")]).optional(),
+    duration_ms_range: z.array(z.number()).optional(),
+    duration_ms_exact: z.number().min(1).optional(),
+    linear_required: z.boolean().optional(),
+    max_wrapper_depth: z.number().min(0).optional(),
+    ssl_required: z.boolean().optional(),
+    companion_image_required: z.boolean().optional()
+}).passthrough();
+
+export const CanonicalFormatSponsoredPlacementRetailMediaCatalogDrivenSchema = z.object({
+    experimental: z.boolean().optional(),
+    deprecated: z.boolean().optional(),
+    v1_translatable: z.boolean().optional(),
+    since_version: z.string().optional(),
+    migration_target_version: z.string().optional(),
+    composition_model: z.union([z.literal("deterministic"), z.literal("algorithmic")]).optional(),
+    provenance_required: z.boolean().optional(),
+    platform_extensions: z.array(PlatformExtensionReferenceSchema).optional(),
+    synthesis_nondeterministic: z.boolean().optional(),
+    slots: z.array(z.object({
+        asset_group_id: z.string(),
+        asset_type: z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("url"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("webhook"), z.literal("brief"), z.literal("catalog"), z.literal("published_post"), z.literal("zip"), z.literal("card"), z.literal("object"), z.literal("pixel_tracker"), z.literal("vast_tracker"), z.literal("daast_tracker")]),
+        required: z.boolean().optional(),
+        min: z.number().optional(),
+        max: z.number().optional(),
+        max_chars: z.number().optional(),
+        max_size_kb: z.number().optional(),
+        pixel_ratios: z.array(z.number()).optional(),
+        required_pixel_ratios: z.array(z.number()).optional(),
+        logo_slots: z.array(LogoSlotSchema).optional(),
+        required_logo_slots: z.array(LogoSlotSchema).optional(),
+        description: z.string().optional(),
+        consumed_for_production: z.boolean().optional()
+    }).passthrough()).optional(),
+    required_connections: z.array(DownstreamConnectionRequirementSchema).optional(),
+    reference_mutability: z.union([z.literal("immutable_snapshot"), z.literal("mutable_requires_reapproval"), z.literal("mutable_auto_recheck")]).optional(),
+    production_window_business_days: z.number().optional(),
+    supported_catalog_types: z.array(CatalogTypeSchema).optional(),
+    min_items: z.number().min(1).optional(),
+    max_items: z.number().optional(),
+    fanout_mode: z.union([z.literal("per_item"), z.literal("multi_item_in_creative"), z.literal("single_item")]).optional(),
+    required_catalog_fields: z.array(z.string()).optional(),
+    supported_id_types: z.array(z.union([z.literal("asin"), z.literal("sku"), z.literal("gtin"), z.literal("offering_id"), z.literal("store_id"), z.literal("hotel_id"), z.literal("flight_id"), z.literal("vehicle_id"), z.literal("listing_id"), z.literal("program_id"), z.literal("destination_id"), z.literal("app_id"), z.literal("job_id")])).optional(),
+    hero_asset_supported: z.boolean().optional(),
+    item_production_model: z.union([z.literal("buyer_uploaded"), z.literal("seller_pre_rendered_from_brief"), z.literal("seller_human_designed"), z.literal("agent_synthesized")]).optional()
+}).passthrough();
+
+export const CanonicalFormatNativeInFeedSchema = z.object({
+    experimental: z.boolean().optional(),
+    deprecated: z.boolean().optional(),
+    v1_translatable: z.boolean().optional(),
+    since_version: z.string().optional(),
+    migration_target_version: z.string().optional(),
+    composition_model: z.union([z.literal("deterministic"), z.literal("algorithmic")]).optional(),
+    provenance_required: z.boolean().optional(),
+    platform_extensions: z.array(PlatformExtensionReferenceSchema).optional(),
+    synthesis_nondeterministic: z.boolean().optional(),
+    slots: z.array(z.object({
+        asset_group_id: z.string(),
+        asset_type: z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("url"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("webhook"), z.literal("brief"), z.literal("catalog"), z.literal("published_post"), z.literal("zip"), z.literal("card"), z.literal("object"), z.literal("pixel_tracker"), z.literal("vast_tracker"), z.literal("daast_tracker")]),
+        required: z.boolean().optional(),
+        min: z.number().optional(),
+        max: z.number().optional(),
+        max_chars: z.number().optional(),
+        max_size_kb: z.number().optional(),
+        pixel_ratios: z.array(z.number()).optional(),
+        required_pixel_ratios: z.array(z.number()).optional(),
+        logo_slots: z.array(LogoSlotSchema).optional(),
+        required_logo_slots: z.array(LogoSlotSchema).optional(),
+        description: z.string().optional(),
+        consumed_for_production: z.boolean().optional()
+    }).passthrough()).optional(),
+    required_connections: z.array(DownstreamConnectionRequirementSchema).optional(),
+    reference_mutability: z.union([z.literal("immutable_snapshot"), z.literal("mutable_requires_reapproval"), z.literal("mutable_auto_recheck")]).optional(),
+    production_window_business_days: z.number().optional(),
+    title_max_chars: z.number().min(1).optional(),
+    body_text_max_chars: z.number().min(1).optional(),
+    cta_max_chars: z.number().min(1).optional(),
+    cta_values: z.array(z.string()).optional(),
+    main_image_sizes: z.array(z.object({
+        width: z.number().min(1),
+        height: z.number().min(1)
+    }).passthrough()).optional(),
+    icon_size: z.object({
+        width: z.number().min(1),
+        height: z.number().min(1)
+    }).passthrough().optional(),
+    max_image_file_size_kb: z.number().min(1).optional(),
+    image_formats: z.array(z.union([z.literal("jpg"), z.literal("jpeg"), z.literal("png"), z.literal("gif"), z.literal("webp")])).optional(),
+    ssl_required: z.boolean().optional(),
+    asset_source: z.union([z.literal("buyer_uploaded"), z.literal("seller_pre_rendered_from_brief"), z.literal("seller_human_designed"), z.literal("agent_synthesized"), z.literal("publisher_owned_reference")]).optional(),
+    buyer_asset_acceptance: z.union([z.literal("accepted"), z.literal("rejected")]).optional()
+}).passthrough();
+
+export const CanonicalFormatResponsiveCreativeSchema = z.object({
+    experimental: z.boolean().optional(),
+    deprecated: z.boolean().optional(),
+    v1_translatable: z.boolean().optional(),
+    since_version: z.string().optional(),
+    migration_target_version: z.string().optional(),
+    composition_model: z.union([z.literal("deterministic"), z.literal("algorithmic")]).optional(),
+    provenance_required: z.boolean().optional(),
+    platform_extensions: z.array(PlatformExtensionReferenceSchema).optional(),
+    synthesis_nondeterministic: z.boolean().optional(),
+    slots: z.array(z.object({
+        asset_group_id: z.string(),
+        asset_type: z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("url"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("webhook"), z.literal("brief"), z.literal("catalog"), z.literal("published_post"), z.literal("zip"), z.literal("card"), z.literal("object"), z.literal("pixel_tracker"), z.literal("vast_tracker"), z.literal("daast_tracker")]),
+        required: z.boolean().optional(),
+        min: z.number().optional(),
+        max: z.number().optional(),
+        max_chars: z.number().optional(),
+        max_size_kb: z.number().optional(),
+        pixel_ratios: z.array(z.number()).optional(),
+        required_pixel_ratios: z.array(z.number()).optional(),
+        logo_slots: z.array(LogoSlotSchema).optional(),
+        required_logo_slots: z.array(LogoSlotSchema).optional(),
+        description: z.string().optional(),
+        consumed_for_production: z.boolean().optional()
+    }).passthrough()).optional(),
+    required_connections: z.array(DownstreamConnectionRequirementSchema).optional(),
+    reference_mutability: z.union([z.literal("immutable_snapshot"), z.literal("mutable_requires_reapproval"), z.literal("mutable_auto_recheck")]).optional(),
+    production_window_business_days: z.number().optional(),
+    headlines_min: z.number().min(0).optional(),
+    headlines_max: z.number().min(0).optional(),
+    headline_max_chars: z.number().min(1).optional(),
+    long_headlines_min: z.number().min(0).optional(),
+    long_headlines_max: z.number().min(0).optional(),
+    long_headline_max_chars: z.number().min(1).optional(),
+    descriptions_min: z.number().min(0).optional(),
+    descriptions_max: z.number().min(0).optional(),
+    description_max_chars: z.number().min(1).optional(),
+    images_landscape_min: z.number().min(0).optional(),
+    images_landscape_max: z.number().min(0).optional(),
+    images_landscape_aspect_ratio: z.string().optional(),
+    images_square_min: z.number().min(0).optional(),
+    images_square_max: z.number().min(0).optional(),
+    images_vertical_min: z.number().min(0).optional(),
+    images_vertical_max: z.number().min(0).optional(),
+    videos_min: z.number().min(0).optional(),
+    videos_max: z.number().min(0).optional(),
+    video_min_duration_ms: z.number().min(1).optional(),
+    video_max_duration_ms: z.number().min(1).optional(),
+    logo_min: z.number().min(0).optional(),
+    logo_max: z.number().min(0).optional(),
+    logo_aspect_ratios: z.array(z.string()).optional(),
+    business_name_max_chars: z.number().min(1).optional(),
+    asset_image_max_file_size_kb: z.number().min(1).optional(),
+    supports_catalog_input: z.boolean().optional()
+}).passthrough();
+
+export const CanonicalFormatAgentPlacementAISurfaceSponsoredPlacementSchema = z.object({
+    experimental: z.boolean().optional(),
+    deprecated: z.boolean().optional(),
+    v1_translatable: z.boolean().optional(),
+    since_version: z.string().optional(),
+    migration_target_version: z.string().optional(),
+    composition_model: z.union([z.literal("deterministic"), z.literal("algorithmic")]).optional(),
+    provenance_required: z.boolean().optional(),
+    platform_extensions: z.array(PlatformExtensionReferenceSchema).optional(),
+    synthesis_nondeterministic: z.boolean().optional(),
+    slots: z.array(z.object({
+        asset_group_id: z.string(),
+        asset_type: z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("url"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("webhook"), z.literal("brief"), z.literal("catalog"), z.literal("published_post"), z.literal("zip"), z.literal("card"), z.literal("object"), z.literal("pixel_tracker"), z.literal("vast_tracker"), z.literal("daast_tracker")]),
+        required: z.boolean().optional(),
+        min: z.number().optional(),
+        max: z.number().optional(),
+        max_chars: z.number().optional(),
+        max_size_kb: z.number().optional(),
+        pixel_ratios: z.array(z.number()).optional(),
+        required_pixel_ratios: z.array(z.number()).optional(),
+        logo_slots: z.array(LogoSlotSchema).optional(),
+        required_logo_slots: z.array(LogoSlotSchema).optional(),
+        description: z.string().optional(),
+        consumed_for_production: z.boolean().optional()
+    }).passthrough()).optional(),
+    required_connections: z.array(DownstreamConnectionRequirementSchema).optional(),
+    reference_mutability: z.union([z.literal("immutable_snapshot"), z.literal("mutable_requires_reapproval"), z.literal("mutable_auto_recheck")]).optional(),
+    production_window_business_days: z.number().optional(),
+    output_modality: z.union([z.literal("text"), z.literal("audio"), z.literal("card")]).optional(),
+    max_mention_length_chars: z.number().min(1).optional(),
+    max_mention_duration_ms: z.number().min(1).optional(),
+    supports_offering_reference: z.boolean().optional(),
+    supports_landing_page_url: z.boolean().optional(),
+    tone_constraints: z.array(z.string()).optional(),
+    disclosure_required: z.boolean().optional()
+}).passthrough();
 
 export const OperatorUnitSchema = z.object({
     id: z.string(),
@@ -1742,240 +2222,68 @@ export const CreativeLocalePolicySchema = z.object({
     accepted_language_ranges: z.array(LanguageTagSchema)
 }).passthrough();
 
+export const DisplayTagFormatDeclarationSchema = z.object({
+    format_kind: z.literal("display_tag"),
+    params: CanonicalFormatDisplayTagSchema
+}).passthrough();
+
+export const ImageCarouselFormatDeclarationSchema = z.object({
+    format_kind: z.literal("image_carousel"),
+    params: CanonicalFormatImageCarouselSchema
+}).passthrough();
+
+export const HostedVideoFormatDeclarationSchema = z.object({
+    format_kind: z.literal("video_hosted"),
+    params: CanonicalFormatHostedVideoSchema
+}).passthrough();
+
+export const VASTVideoFormatDeclarationSchema = z.object({
+    format_kind: z.literal("video_vast"),
+    params: CanonicalFormatVASTVideoSchema
+}).passthrough();
+
+export const HostedAudioFormatDeclarationSchema = z.object({
+    format_kind: z.literal("audio_hosted"),
+    params: CanonicalFormatHostedAudioSchema
+}).passthrough();
+
+export const DAASTAudioFormatDeclarationSchema = z.object({
+    format_kind: z.literal("audio_daast"),
+    params: CanonicalFormatDAASTAudioSchema
+}).passthrough();
+
+export const SponsoredPlacementFormatDeclarationSchema = z.object({
+    format_kind: z.literal("sponsored_placement"),
+    params: CanonicalFormatSponsoredPlacementRetailMediaCatalogDrivenSchema
+}).passthrough();
+
+export const NativeInFeedFormatDeclarationSchema = z.object({
+    format_kind: z.literal("native_in_feed"),
+    params: CanonicalFormatNativeInFeedSchema
+}).passthrough();
+
+export const ResponsiveCreativeFormatDeclarationSchema = z.object({
+    format_kind: z.literal("responsive_creative"),
+    params: CanonicalFormatResponsiveCreativeSchema
+}).passthrough();
+
+export const AgentPlacementFormatDeclarationSchema = z.object({
+    format_kind: z.literal("agent_placement"),
+    params: CanonicalFormatAgentPlacementAISurfaceSponsoredPlacementSchema
+}).passthrough();
+
 export const CustomFormatDeclarationSchema = z.object({
     format_kind: z.literal("custom"),
     params: z.record(z.string(), z.unknown())
 }).passthrough();
 
-export const CanonicalFormatBaseSchema = z.object({
-    experimental: z.boolean().optional(),
-    deprecated: z.boolean().optional(),
-    v1_translatable: z.boolean().optional(),
-    since_version: z.string().optional(),
-    migration_target_version: z.string().optional(),
-    composition_model: z.union([z.literal("deterministic"), z.literal("algorithmic")]).optional(),
-    provenance_required: z.boolean().optional(),
-    platform_extensions: z.array(PlatformExtensionReferenceSchema).optional(),
-    synthesis_nondeterministic: z.boolean().optional(),
-    slots: z.array(z.record(z.string(), z.unknown())).optional(),
-    required_connections: z.array(DownstreamConnectionRequirementSchema).optional(),
-    reference_mutability: z.union([z.literal("immutable_snapshot"), z.literal("mutable_requires_reapproval"), z.literal("mutable_auto_recheck")]).optional(),
-    production_window_business_days: z.number().optional()
-}).passthrough();
-
-export const SizeModeMutexSchema = z.union([FixedSchema, MultiSizeSchema, ResponsiveSchema, NoneSchema]);
+export const SizeModeMutex1Schema = SizeModeMutexSchema;
 
 export const Responsive1Schema = ResponsiveSchema;
-
-export const CanonicalFormatDisplayTagSchema = CanonicalFormatBaseSchema.merge(z.object({
-    slots: z.record(z.string(), z.unknown()).optional(),
-    width: z.number().optional(),
-    height: z.number().optional(),
-    sizes: z.tuple([z.object({
-            width: z.number(),
-            height: z.number()
-        }).passthrough()]).rest(z.object({
-        width: z.number(),
-        height: z.number()
-    }).passthrough()).optional(),
-    min_width: z.number().optional(),
-    max_width: z.number().optional(),
-    min_height: z.number().optional(),
-    max_height: z.number().optional(),
-    supported_tag_types: z.array(z.union([z.literal("iframe"), z.literal("javascript"), z.literal("1x1_redirect")])).optional(),
-    ssl_required: z.boolean().optional(),
-    max_redirect_depth: z.number().optional(),
-    max_response_time_ms: z.number().optional(),
-    backup_image_required: z.boolean().optional(),
-    backup_image_max_size_kb: z.number().optional(),
-    om_sdk_required: z.boolean().optional()
-}).passthrough());
 
 export const SizeModeMutex2Schema = SizeModeMutexSchema;
 
 export const Responsive2Schema = ResponsiveSchema;
-
-export const CanonicalFormatImageCarouselSchema = CanonicalFormatBaseSchema.and(z.object({
-    v1_translatable: z.boolean().optional(),
-    slots: z.record(z.string(), z.unknown()).optional(),
-    card_aspect_ratio: z.string().optional(),
-    min_cards: z.number().optional(),
-    max_cards: z.number().optional(),
-    allowed_card_media_asset_types: z.array(z.union([z.literal("image"), z.literal("video")])).optional(),
-    allowed_card_asset_types: z.array(z.union([z.literal("image"), z.literal("video")])).optional(),
-    card_image_max_file_size_kb: z.number().optional(),
-    card_video_max_file_size_kb: z.number().optional(),
-    card_video_max_duration_ms: z.number().optional(),
-    primary_text_max_chars: z.number().optional(),
-    card_headline_max_chars: z.number().optional(),
-    card_description_max_chars: z.number().optional(),
-    ssl_required: z.boolean().optional()
-}).passthrough());
-
-export const CanonicalFormatHostedVideoSchema = CanonicalFormatBaseSchema.and(z.object({
-    slots: z.record(z.string(), z.unknown()).optional(),
-    orientation: z.union([z.literal("vertical"), z.literal("horizontal"), z.literal("square")]).optional(),
-    aspect_ratio: z.string().optional(),
-    min_width: z.number().optional(),
-    min_height: z.number().optional(),
-    max_width: z.number().optional(),
-    max_height: z.number().optional(),
-    duration_ms_range: z.tuple([z.number().nullable(), z.number().nullable()]).optional(),
-    duration_ms_exact: z.number().optional(),
-    video_codecs: z.array(z.union([z.literal("h264"), z.literal("h265"), z.literal("vp8"), z.literal("vp9"), z.literal("av1"), z.literal("prores")])).optional(),
-    audio_codecs: z.array(z.union([z.literal("aac"), z.literal("mp3"), z.literal("opus"), z.literal("pcm")])).optional(),
-    containers: z.array(z.union([z.literal("mp4"), z.literal("webm"), z.literal("mov")])).optional(),
-    min_bitrate_kbps: z.number().optional(),
-    max_bitrate_kbps: z.number().optional(),
-    max_file_size_mb: z.number().optional(),
-    frame_rates: z.array(z.number()).optional(),
-    captions: z.union([z.literal("required"), z.literal("recommended"), z.literal("not_required")]).optional(),
-    om_sdk_required: z.boolean().optional(),
-    headline_max_chars: z.number().optional(),
-    primary_text_max_chars: z.number().optional(),
-    brand_name_max_chars: z.number().optional(),
-    cta_values: z.array(z.string()).optional(),
-    companion_banner_widths: z.array(z.number()).optional(),
-    companion_banner_heights: z.array(z.number()).optional(),
-    asset_source: z.union([z.literal("buyer_uploaded"), z.literal("publisher_host_recorded"), z.literal("seller_pre_rendered_from_brief"), z.literal("seller_human_designed"), z.literal("agent_synthesized"), z.literal("publisher_owned_reference")]).optional(),
-    buyer_asset_acceptance: z.union([z.literal("accepted"), z.literal("rejected")]).optional()
-}).passthrough());
-
-export const CanonicalFormatVASTVideoSchema = CanonicalFormatBaseSchema.and(z.object({
-    slots: z.record(z.string(), z.unknown()).optional(),
-    orientation: z.union([z.literal("vertical"), z.literal("horizontal"), z.literal("square")]).optional(),
-    aspect_ratio: z.string().optional(),
-    vast_version: VASTVersionSchema.optional(),
-    vpaid_enabled: z.boolean().optional(),
-    vpaid_version: z.union([z.literal("1.0"), z.literal("2.0")]).optional(),
-    simid_supported: z.boolean().optional(),
-    duration_ms_range: z.tuple([z.number(), z.number()]).optional(),
-    duration_ms_exact: z.number().optional(),
-    min_width: z.number().optional(),
-    max_width: z.number().optional(),
-    min_height: z.number().optional(),
-    max_height: z.number().optional(),
-    linear_required: z.boolean().optional(),
-    skippable_after_ms: z.number().optional(),
-    max_wrapper_depth: z.number().optional(),
-    ssl_required: z.boolean().optional()
-}).passthrough());
-
-export const CanonicalFormatHostedAudioSchema = CanonicalFormatBaseSchema.and(z.object({
-    slots: z.record(z.string(), z.unknown()).optional(),
-    duration_ms_range: z.tuple([z.number().nullable(), z.number().nullable()]).optional(),
-    duration_ms_exact: z.number().optional(),
-    audio_codecs: z.array(z.union([z.literal("mp3"), z.literal("aac"), z.literal("wav"), z.literal("opus"), z.literal("flac")])).optional(),
-    audio_sample_rates: z.array(z.number()).optional(),
-    audio_channels: z.array(z.union([z.literal("mono"), z.literal("stereo")])).optional(),
-    min_bitrate_kbps: z.number().optional(),
-    max_bitrate_kbps: z.number().optional(),
-    loudness_lufs: z.number().optional(),
-    loudness_tolerance_db: z.number().optional(),
-    true_peak_dbfs: z.number().optional(),
-    asset_source: z.union([z.literal("buyer_uploaded"), z.literal("publisher_host_recorded"), z.literal("seller_pre_rendered_from_brief"), z.literal("seller_human_designed"), z.literal("agent_synthesized"), z.literal("publisher_owned_reference")]).optional(),
-    buyer_asset_acceptance: z.union([z.literal("accepted"), z.literal("rejected")]).optional(),
-    companion_image_required: z.boolean().optional(),
-    companion_image_aspect_ratio: z.string().optional(),
-    companion_image_max_file_size_kb: z.number().optional(),
-    brand_name_max_chars: z.number().optional()
-}).passthrough());
-
-export const CanonicalFormatDAASTAudioSchema = CanonicalFormatBaseSchema.and(z.object({
-    slots: z.record(z.string(), z.unknown()).optional(),
-    daast_version: z.union([z.literal("1.0"), z.literal("1.1")]).optional(),
-    duration_ms_range: z.tuple([z.number(), z.number()]).optional(),
-    duration_ms_exact: z.number().optional(),
-    linear_required: z.boolean().optional(),
-    max_wrapper_depth: z.number().optional(),
-    ssl_required: z.boolean().optional(),
-    companion_image_required: z.boolean().optional()
-}).passthrough());
-
-export const CanonicalFormatSponsoredPlacementRetailMediaCatalogDrivenSchema = CanonicalFormatBaseSchema.and(z.object({
-    experimental: z.boolean().optional(),
-    v1_translatable: z.boolean().optional(),
-    slots: z.record(z.string(), z.unknown()).optional(),
-    supported_catalog_types: z.array(CatalogTypeSchema).optional(),
-    min_items: z.number().optional(),
-    max_items: z.number().optional(),
-    fanout_mode: z.union([z.literal("per_item"), z.literal("multi_item_in_creative"), z.literal("single_item")]).optional(),
-    required_catalog_fields: z.array(z.string()).optional(),
-    supported_id_types: z.array(z.union([z.literal("asin"), z.literal("sku"), z.literal("gtin"), z.literal("offering_id"), z.literal("store_id"), z.literal("hotel_id"), z.literal("flight_id"), z.literal("vehicle_id"), z.literal("listing_id"), z.literal("program_id"), z.literal("destination_id"), z.literal("app_id"), z.literal("job_id")])).optional(),
-    hero_asset_supported: z.boolean().optional(),
-    item_production_model: z.union([z.literal("buyer_uploaded"), z.literal("seller_pre_rendered_from_brief"), z.literal("seller_human_designed"), z.literal("agent_synthesized")]).optional()
-}).passthrough());
-
-export const CanonicalFormatNativeInFeedSchema = CanonicalFormatBaseSchema.and(z.object({
-    experimental: z.boolean().optional(),
-    v1_translatable: z.boolean().optional(),
-    slots: z.record(z.string(), z.unknown()).optional(),
-    title_max_chars: z.number().optional(),
-    body_text_max_chars: z.number().optional(),
-    cta_max_chars: z.number().optional(),
-    cta_values: z.array(z.string()).optional(),
-    main_image_sizes: z.tuple([z.object({
-            width: z.number(),
-            height: z.number()
-        }).passthrough()]).rest(z.object({
-        width: z.number(),
-        height: z.number()
-    }).passthrough()).optional(),
-    icon_size: z.object({
-        width: z.number(),
-        height: z.number()
-    }).passthrough().optional(),
-    max_image_file_size_kb: z.number().optional(),
-    image_formats: z.array(z.union([z.literal("jpg"), z.literal("jpeg"), z.literal("png"), z.literal("gif"), z.literal("webp")])).optional(),
-    ssl_required: z.boolean().optional(),
-    asset_source: z.union([z.literal("buyer_uploaded"), z.literal("seller_pre_rendered_from_brief"), z.literal("seller_human_designed"), z.literal("agent_synthesized"), z.literal("publisher_owned_reference")]).optional(),
-    buyer_asset_acceptance: z.union([z.literal("accepted"), z.literal("rejected")]).optional()
-}).passthrough());
-
-export const CanonicalFormatResponsiveCreativeSchema = CanonicalFormatBaseSchema.and(z.object({
-    experimental: z.boolean().optional(),
-    v1_translatable: z.boolean().optional(),
-    slots: z.record(z.string(), z.unknown()).optional(),
-    headlines_min: z.number().optional(),
-    headlines_max: z.number().optional(),
-    headline_max_chars: z.number().optional(),
-    long_headlines_min: z.number().optional(),
-    long_headlines_max: z.number().optional(),
-    long_headline_max_chars: z.number().optional(),
-    descriptions_min: z.number().optional(),
-    descriptions_max: z.number().optional(),
-    description_max_chars: z.number().optional(),
-    images_landscape_min: z.number().optional(),
-    images_landscape_max: z.number().optional(),
-    images_landscape_aspect_ratio: z.string().optional(),
-    images_square_min: z.number().optional(),
-    images_square_max: z.number().optional(),
-    images_vertical_min: z.number().optional(),
-    images_vertical_max: z.number().optional(),
-    videos_min: z.number().optional(),
-    videos_max: z.number().optional(),
-    video_min_duration_ms: z.number().optional(),
-    video_max_duration_ms: z.number().optional(),
-    logo_min: z.number().optional(),
-    logo_max: z.number().optional(),
-    logo_aspect_ratios: z.array(z.string()).optional(),
-    business_name_max_chars: z.number().optional(),
-    asset_image_max_file_size_kb: z.number().optional(),
-    supports_catalog_input: z.boolean().optional()
-}).passthrough());
-
-export const CanonicalFormatAgentPlacementAISurfaceSponsoredPlacementSchema = CanonicalFormatBaseSchema.and(z.object({
-    experimental: z.boolean().optional(),
-    v1_translatable: z.boolean().optional(),
-    slots: z.record(z.string(), z.unknown()).optional(),
-    output_modality: z.union([z.literal("text"), z.literal("audio"), z.literal("card")]).optional(),
-    max_mention_length_chars: z.number().optional(),
-    max_mention_duration_ms: z.number().optional(),
-    supports_offering_reference: z.boolean().optional(),
-    supports_landing_page_url: z.boolean().optional(),
-    tone_constraints: z.array(z.string()).optional(),
-    disclosure_required: z.boolean().optional()
-}).passthrough());
 
 export const ImpairmentSchema = z.object({
     impairment_id: z.string(),
@@ -2108,34 +2416,73 @@ export const CanonicalFormatImageSchema = z.object({}).passthrough().merge(z.obj
     buyer_asset_acceptance: z.union([z.literal("accepted"), z.literal("rejected")]).optional()
 }).passthrough());
 
+export const CanonicalFormatBaseSchema = z.object({
+    experimental: z.boolean().optional(),
+    deprecated: z.boolean().optional(),
+    v1_translatable: z.boolean().optional(),
+    since_version: z.string().optional(),
+    migration_target_version: z.string().optional(),
+    composition_model: z.union([z.literal("deterministic"), z.literal("algorithmic")]).optional(),
+    provenance_required: z.boolean().optional(),
+    platform_extensions: z.array(PlatformExtensionReferenceSchema).optional(),
+    synthesis_nondeterministic: z.boolean().optional(),
+    slots: z.array(z.record(z.string(), z.unknown())).optional(),
+    required_connections: z.array(DownstreamConnectionRequirementSchema).optional(),
+    reference_mutability: z.union([z.literal("immutable_snapshot"), z.literal("mutable_requires_reapproval"), z.literal("mutable_auto_recheck")]).optional(),
+    production_window_business_days: z.number().optional()
+}).passthrough();
+
 export const PlatformExtensionReference1Schema = PlatformExtensionReferenceSchema;
 
-export const CanonicalFormatHTML5BannerSchema = CanonicalFormatBaseSchema.merge(z.object({
-    slots: z.record(z.string(), z.unknown()).optional(),
-    width: z.number().optional(),
-    height: z.number().optional(),
-    sizes: z.tuple([z.object({
-            width: z.number(),
-            height: z.number()
-        }).passthrough()]).rest(z.object({
-        width: z.number(),
-        height: z.number()
+export const CanonicalFormatHTML5BannerSchema = z.object({}).passthrough().merge(z.object({
+    experimental: z.boolean().optional(),
+    deprecated: z.boolean().optional(),
+    v1_translatable: z.boolean().optional(),
+    since_version: z.string().optional(),
+    migration_target_version: z.string().optional(),
+    composition_model: z.union([z.literal("deterministic"), z.literal("algorithmic")]).optional(),
+    provenance_required: z.boolean().optional(),
+    platform_extensions: z.array(PlatformExtensionReferenceSchema).optional(),
+    synthesis_nondeterministic: z.boolean().optional(),
+    slots: z.array(z.object({
+        asset_group_id: z.string(),
+        asset_type: z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("url"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("webhook"), z.literal("brief"), z.literal("catalog"), z.literal("published_post"), z.literal("zip"), z.literal("card"), z.literal("object"), z.literal("pixel_tracker"), z.literal("vast_tracker"), z.literal("daast_tracker")]),
+        required: z.boolean().optional(),
+        min: z.number().optional(),
+        max: z.number().optional(),
+        max_chars: z.number().optional(),
+        max_size_kb: z.number().optional(),
+        pixel_ratios: z.array(z.number()).optional(),
+        required_pixel_ratios: z.array(z.number()).optional(),
+        logo_slots: z.array(LogoSlotSchema).optional(),
+        required_logo_slots: z.array(LogoSlotSchema).optional(),
+        description: z.string().optional(),
+        consumed_for_production: z.boolean().optional()
     }).passthrough()).optional(),
-    min_width: z.number().optional(),
-    max_width: z.number().optional(),
-    min_height: z.number().optional(),
-    max_height: z.number().optional(),
-    max_initial_load_kb: z.number().optional(),
-    max_polite_load_kb: z.number().optional(),
+    required_connections: z.array(DownstreamConnectionRequirementSchema).optional(),
+    reference_mutability: z.union([z.literal("immutable_snapshot"), z.literal("mutable_requires_reapproval"), z.literal("mutable_auto_recheck")]).optional(),
+    production_window_business_days: z.number().optional(),
+    width: z.number().min(1).optional(),
+    height: z.number().min(1).optional(),
+    sizes: z.array(z.object({
+        width: z.number().min(1),
+        height: z.number().min(1)
+    }).passthrough()).optional(),
+    min_width: z.number().min(1).optional(),
+    max_width: z.number().min(1).optional(),
+    min_height: z.number().min(1).optional(),
+    max_height: z.number().min(1).optional(),
+    max_initial_load_kb: z.number().min(1).optional(),
+    max_polite_load_kb: z.number().min(1).optional(),
     host_initiated_subload: z.boolean().optional(),
-    max_animation_duration_ms: z.number().optional(),
-    max_cpu_load_percent: z.number().optional(),
+    max_animation_duration_ms: z.number().min(0).optional(),
+    max_cpu_load_percent: z.number().min(1).max(100).optional(),
     mraid_required: z.boolean().optional(),
     mraid_version: z.union([z.literal("2.0"), z.literal("3.0")]).optional(),
     om_sdk_required: z.boolean().optional(),
     clicktag_macro: z.union([z.literal("clickTag"), z.literal("clickTAG")]).optional(),
     backup_image_required: z.boolean().optional(),
-    backup_image_max_size_kb: z.number().optional(),
+    backup_image_max_size_kb: z.number().min(1).optional(),
     ssl_required: z.boolean().optional()
 }).passthrough());
 
@@ -2145,61 +2492,11 @@ export const MultiSize1Schema = MultiSizeSchema;
 
 export const None1Schema = NoneSchema;
 
-export const DisplayTagFormatDeclarationSchema = z.object({
-    format_kind: z.literal("display_tag"),
-    params: CanonicalFormatDisplayTagSchema
-}).passthrough();
-
 export const Fixed2Schema = FixedSchema;
 
 export const MultiSize2Schema = MultiSizeSchema;
 
 export const None2Schema = NoneSchema;
-
-export const ImageCarouselFormatDeclarationSchema = z.object({
-    format_kind: z.literal("image_carousel"),
-    params: CanonicalFormatImageCarouselSchema
-}).passthrough();
-
-export const HostedVideoFormatDeclarationSchema = z.object({
-    format_kind: z.literal("video_hosted"),
-    params: CanonicalFormatHostedVideoSchema
-}).passthrough();
-
-export const VASTVideoFormatDeclarationSchema = z.object({
-    format_kind: z.literal("video_vast"),
-    params: CanonicalFormatVASTVideoSchema
-}).passthrough();
-
-export const HostedAudioFormatDeclarationSchema = z.object({
-    format_kind: z.literal("audio_hosted"),
-    params: CanonicalFormatHostedAudioSchema
-}).passthrough();
-
-export const DAASTAudioFormatDeclarationSchema = z.object({
-    format_kind: z.literal("audio_daast"),
-    params: CanonicalFormatDAASTAudioSchema
-}).passthrough();
-
-export const SponsoredPlacementFormatDeclarationSchema = z.object({
-    format_kind: z.literal("sponsored_placement"),
-    params: CanonicalFormatSponsoredPlacementRetailMediaCatalogDrivenSchema
-}).passthrough();
-
-export const NativeInFeedFormatDeclarationSchema = z.object({
-    format_kind: z.literal("native_in_feed"),
-    params: CanonicalFormatNativeInFeedSchema
-}).passthrough();
-
-export const ResponsiveCreativeFormatDeclarationSchema = z.object({
-    format_kind: z.literal("responsive_creative"),
-    params: CanonicalFormatResponsiveCreativeSchema
-}).passthrough();
-
-export const AgentPlacementFormatDeclarationSchema = z.object({
-    format_kind: z.literal("agent_placement"),
-    params: CanonicalFormatAgentPlacementAISurfaceSponsoredPlacementSchema
-}).passthrough();
 
 export const NamedFormatProductSchema = z.record(z.string(), z.unknown());
 
@@ -7525,40 +7822,9 @@ export const AudienceEvidenceRequirementsSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const CreativeBriefSchema = z.object({
-    name: z.string(),
-    objective: z.union([z.literal("awareness"), z.literal("consideration"), z.literal("conversion"), z.literal("retention"), z.literal("engagement")]).optional(),
-    tone: z.string().optional(),
-    audience: z.string().optional(),
-    territory: z.string().optional(),
-    messaging: z.record(z.string(), z.unknown()).and(z.object({
-        headline: z.string().optional(),
-        tagline: z.string().optional(),
-        cta: z.string().optional(),
-        key_messages: z.array(z.string()).optional()
-    }).passthrough()).optional(),
-    reference_assets: z.array(ReferenceAssetSchema).optional(),
-    compliance: z.record(z.string(), z.unknown()).and(z.object({
-        required_disclosures: z.tuple([z.record(z.string(), z.unknown()).and(z.object({
-                text: z.string(),
-                position: DisclosurePositionSchema.optional(),
-                jurisdictions: z.array(z.string()).optional(),
-                regulation: z.string().optional(),
-                min_duration_ms: z.number().optional(),
-                language: z.string().optional(),
-                persistence: DisclosurePersistenceSchema.optional()
-            }).passthrough())]).rest(z.record(z.string(), z.unknown()).and(z.object({
-            text: z.string(),
-            position: DisclosurePositionSchema.optional(),
-            jurisdictions: z.array(z.string()).optional(),
-            regulation: z.string().optional(),
-            min_duration_ms: z.number().optional(),
-            language: z.string().optional(),
-            persistence: DisclosurePersistenceSchema.optional()
-        }).passthrough())).optional(),
-        prohibited_claims: z.array(z.string()).optional()
-    }).passthrough()).optional()
-}).passthrough();
+export const BriefAssetSchema = CreativeBriefSchema.merge(z.object({
+    asset_type: z.literal("brief")
+}).passthrough());
 
 export const CatalogAssetSchema = CatalogSchema.merge(z.object({
     asset_type: z.literal("catalog")
@@ -8661,6 +8927,8 @@ export const ListCreativesRequestSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const AssetVariantSchema = z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, ZipAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, MarkdownAssetSchema, BriefAssetSchema, CatalogAssetSchema, PublishedPostAssetSchema, CardAssetSchema, PixelTrackerAssetSchema, VASTTrackerAssetSchema, DAASTTrackerAssetSchema]);
+
 export const RightsAttestationEvaluationSchema = z.object({
     rights_id: z.string(),
     content_digest: z.string(),
@@ -8682,6 +8950,10 @@ export const RightsAttestationEvaluationSchema = z.object({
     }).passthrough()),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
+
+export const LocalizedCreativeAssetSchema = AssetVariantSchema;
+
+export const ResolvedAssetsSchema = z.record(z.string(), z.union([LocalizedCreativeAssetSchema, z.array(LocalizedCreativeAssetSchema)]));
 
 export const CreativeAssetSchema = z.object({
     creative_id: z.string(),
@@ -8721,6 +8993,27 @@ export const CreativeAssetSchema = z.object({
         });
     }
 });
+
+export const CreativeLocalizationSchema = z.object({
+    source: z.record(z.string(), z.unknown()).and(z.object({
+        locale_variant_id: z.string(),
+        locale: LanguageTagSchema
+    }).passthrough()),
+    target_variants: z.array(z.record(z.string(), z.unknown()).and(z.object({
+        locale_variant_id: z.string(),
+        locale: LanguageTagSchema,
+        assets: z.record(z.string(), z.union([LocalizedCreativeAssetSchema, z.array(LocalizedCreativeAssetSchema)]))
+    }).passthrough())),
+    locale_fallbacks: z.tuple([z.record(z.string(), z.unknown()).and(z.object({
+            language_range: LanguageTagSchema,
+            locale_variant_id: z.string()
+        }).passthrough())]).rest(z.record(z.string(), z.unknown()).and(z.object({
+        language_range: LanguageTagSchema,
+        locale_variant_id: z.string()
+    }).passthrough())).optional(),
+    default_locale_variant_id: z.string(),
+    unmatched_locale_action: z.union([z.literal("serve_default"), z.literal("do_not_serve")])
+}).passthrough();
 
 export const AssignOrUpdateSchema = z.object({
     operation: z.literal("assign"),
@@ -11042,10 +11335,6 @@ export const PackageSignalTargetingGroupsSchema = z.object({
     groups: z.array(PackageSignalTargetingGroupSchema)
 }).passthrough();
 
-export const BriefAssetSchema = CreativeBriefSchema.merge(z.object({
-    asset_type: z.literal("brief")
-}).passthrough());
-
 export const TargetingOverlaySchema = z.record(z.string(), z.unknown()).and(z.object({
     geo_countries: z.array(z.string()).optional(),
     geo_countries_exclude: z.array(z.string()).optional(),
@@ -11873,8 +12162,6 @@ export const AudienceEvidenceSchema: z.ZodType = z.object({
             }).passthrough())])]).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
-
-export const SizeModeMutex1Schema = SizeModeMutexSchema;
 
 export const AudienceEvidenceSelectionSchema: z.ZodType = z.object({
     evidence_id: z.string(),
@@ -13118,31 +13405,18 @@ export const CreativeDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.objec
     weight: z.number().optional()
 }).passthrough());
 
-export const AssetVariantSchema = z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, ZipAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, MarkdownAssetSchema, BriefAssetSchema, CatalogAssetSchema, PublishedPostAssetSchema, CardAssetSchema, PixelTrackerAssetSchema, VASTTrackerAssetSchema, DAASTTrackerAssetSchema]);
+export const SourceLocalizationReadbackSchema = z.object({
+    locale_variant_id: z.string(),
+    locale: LanguageTagSchema,
+    role: z.literal("source"),
+    assets: ResolvedAssetsSchema
+}).passthrough();
 
-export const LocalizedCreativeAssetSchema = AssetVariantSchema;
-
-export const ResolvedAssetsSchema = z.record(z.string(), z.union([LocalizedCreativeAssetSchema, z.array(LocalizedCreativeAssetSchema)]));
-
-export const CreativeLocalizationSchema = z.object({
-    source: z.record(z.string(), z.unknown()).and(z.object({
-        locale_variant_id: z.string(),
-        locale: LanguageTagSchema
-    }).passthrough()),
-    target_variants: z.array(z.record(z.string(), z.unknown()).and(z.object({
-        locale_variant_id: z.string(),
-        locale: LanguageTagSchema,
-        assets: z.record(z.string(), z.union([LocalizedCreativeAssetSchema, z.array(LocalizedCreativeAssetSchema)]))
-    }).passthrough())),
-    locale_fallbacks: z.tuple([z.record(z.string(), z.unknown()).and(z.object({
-            language_range: LanguageTagSchema,
-            locale_variant_id: z.string()
-        }).passthrough())]).rest(z.record(z.string(), z.unknown()).and(z.object({
-        language_range: LanguageTagSchema,
-        locale_variant_id: z.string()
-    }).passthrough())).optional(),
-    default_locale_variant_id: z.string(),
-    unmatched_locale_action: z.union([z.literal("serve_default"), z.literal("do_not_serve")])
+export const TargetLocalizationReadbackSchema = z.object({
+    locale_variant_id: z.string(),
+    locale: LanguageTagSchema,
+    role: z.literal("target"),
+    assets: ResolvedAssetsSchema
 }).passthrough();
 
 export const FormatSchema = z.record(z.string(), z.unknown()).and(z.object({
@@ -14665,20 +14939,6 @@ export const GetCreativeDeliveryResponseSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const SourceLocalizationReadbackSchema = z.object({
-    locale_variant_id: z.string(),
-    locale: LanguageTagSchema,
-    role: z.literal("source"),
-    assets: ResolvedAssetsSchema
-}).passthrough();
-
-export const TargetLocalizationReadbackSchema = z.object({
-    locale_variant_id: z.string(),
-    locale: LanguageTagSchema,
-    role: z.literal("target"),
-    assets: ResolvedAssetsSchema
-}).passthrough();
-
 export const CreativeLocalizationReadbackSchema: z.ZodType = z.object({
     default_locale_variant_id: z.string(),
     unmatched_locale_action: z.union([z.literal("serve_default"), z.literal("do_not_serve")]),
@@ -14691,6 +14951,56 @@ export const CreativeLocalizationReadbackSchema: z.ZodType = z.object({
         locale_variant_id: z.string()
     }).passthrough())).optional(),
     variants: z.tuple([z.union([SourceLocalizationReadbackSchema, TargetLocalizationReadbackSchema])]).rest(z.union([SourceLocalizationReadbackSchema, TargetLocalizationReadbackSchema]))
+}).passthrough();
+
+export const ListedCreativeCanonicalFormatKindSchema: z.ZodType = z.object({
+    creative_id: z.string(),
+    account: AccountSchema.optional(),
+    name: z.string(),
+    format_kind: CanonicalFormatKindSchema,
+    format_option_ref: FormatOptionReferenceSchema.optional(),
+    status: CreativeStatusSchema,
+    created_date: z.iso.datetime(),
+    updated_date: z.iso.datetime(),
+    assets: z.record(z.string(), z.union([AssetVariantSchema, z.array(AssetVariantSchema)])).optional(),
+    localization: CreativeLocalizationReadbackSchema.optional(),
+    localization_unavailable: z.object({
+        errors: z.array(ErrorSchema),
+        retryable: z.boolean()
+    }).passthrough().optional(),
+    tags: z.array(z.string()).optional(),
+    rights: z.array(RightsConstraintSchema).optional(),
+    rights_attestation_evaluations: z.array(RightsAttestationEvaluationSchema).optional(),
+    concept_id: z.string().optional(),
+    concept_name: z.string().optional(),
+    variables: z.array(CreativeVariableSchema).optional(),
+    assignments: z.object({
+        assignment_count: z.number().min(0),
+        returned_assignment_count: z.number().min(0).max(200).optional(),
+        matching_assignment_count: z.number().min(0).optional(),
+        assignments_truncated: z.boolean().optional(),
+        assigned_packages: z.array(z.object({
+            indicator_types_evaluated: z.array(z.union([z.literal("creative_fatigue"), z.literal("creative_quality_opportunity")])).optional(),
+            indicators: z.array(z.object({
+                type: z.union([z.literal("creative_fatigue"), z.literal("creative_quality_opportunity")]).optional()
+            }).passthrough()).optional()
+        }).passthrough()).optional()
+    }).passthrough().optional(),
+    snapshot: z.object({
+        as_of: z.iso.datetime(),
+        staleness_seconds: z.number().min(0),
+        impressions: z.number().min(0),
+        last_served: z.iso.datetime().optional()
+    }).passthrough().optional(),
+    snapshot_unavailable_reason: SnapshotUnavailableReasonSchema.optional(),
+    items: z.array(CreativeItemSchema).optional(),
+    pricing_options: z.array(VendorPricingOptionSchema).optional(),
+    purge: z.object({
+        kind: z.literal("soft"),
+        at: z.iso.datetime(),
+        reason_code: CreativeEventReasonCodeSchema
+    }).passthrough().optional(),
+    webhook_activity: z.array(WebhookActivityRecordSchema).optional()
 }).passthrough();
 
 export const SyncCreativesRequestSchema = z.object({
@@ -15994,7 +16304,7 @@ export const UpdateMediaBuyRequestSchema: z.ZodObject<{ [K in keyof UpdateMediaB
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const GetMediaBuysResponseMediaBuySchema = z.object({
+export const GetMediaBuysResponseMediaBuySchema: z.ZodType = z.object({
     media_buy_id: z.string(),
     name: z.string().min(1).max(255).regex(/\S/).optional(),
     accepted_proposal_id: z.string().min(1).max(255).optional(),
@@ -16055,56 +16365,6 @@ export const ListedCreativeNamedFormatReferenceSchema: z.ZodType = z.object({
     account: AccountSchema.optional(),
     name: z.string(),
     format_id: FormatReferenceStructuredObjectSchema,
-    format_option_ref: FormatOptionReferenceSchema.optional(),
-    status: CreativeStatusSchema,
-    created_date: z.iso.datetime(),
-    updated_date: z.iso.datetime(),
-    assets: z.record(z.string(), z.union([AssetVariantSchema, z.array(AssetVariantSchema)])).optional(),
-    localization: CreativeLocalizationReadbackSchema.optional(),
-    localization_unavailable: z.object({
-        errors: z.array(ErrorSchema),
-        retryable: z.boolean()
-    }).passthrough().optional(),
-    tags: z.array(z.string()).optional(),
-    rights: z.array(RightsConstraintSchema).optional(),
-    rights_attestation_evaluations: z.array(RightsAttestationEvaluationSchema).optional(),
-    concept_id: z.string().optional(),
-    concept_name: z.string().optional(),
-    variables: z.array(CreativeVariableSchema).optional(),
-    assignments: z.object({
-        assignment_count: z.number().min(0),
-        returned_assignment_count: z.number().min(0).max(200).optional(),
-        matching_assignment_count: z.number().min(0).optional(),
-        assignments_truncated: z.boolean().optional(),
-        assigned_packages: z.array(z.object({
-            indicator_types_evaluated: z.array(z.union([z.literal("creative_fatigue"), z.literal("creative_quality_opportunity")])).optional(),
-            indicators: z.array(z.object({
-                type: z.union([z.literal("creative_fatigue"), z.literal("creative_quality_opportunity")]).optional()
-            }).passthrough()).optional()
-        }).passthrough()).optional()
-    }).passthrough().optional(),
-    snapshot: z.object({
-        as_of: z.iso.datetime(),
-        staleness_seconds: z.number().min(0),
-        impressions: z.number().min(0),
-        last_served: z.iso.datetime().optional()
-    }).passthrough().optional(),
-    snapshot_unavailable_reason: SnapshotUnavailableReasonSchema.optional(),
-    items: z.array(CreativeItemSchema).optional(),
-    pricing_options: z.array(VendorPricingOptionSchema).optional(),
-    purge: z.object({
-        kind: z.literal("soft"),
-        at: z.iso.datetime(),
-        reason_code: CreativeEventReasonCodeSchema
-    }).passthrough().optional(),
-    webhook_activity: z.array(WebhookActivityRecordSchema).optional()
-}).passthrough();
-
-export const ListedCreativeCanonicalFormatKindSchema: z.ZodType = z.object({
-    creative_id: z.string(),
-    account: AccountSchema.optional(),
-    name: z.string(),
-    format_kind: CanonicalFormatKindSchema,
     format_option_ref: FormatOptionReferenceSchema.optional(),
     status: CreativeStatusSchema,
     created_date: z.iso.datetime(),
@@ -16286,7 +16546,7 @@ export const MCPWebhookPayloadSchema: z.ZodType = z.object({
 
 export const BuyProductsResponseSchema = MediaBuyCommitmentResponseSchema;
 
-export const GetMediaBuysResponseSchema = z.object({
+export const GetMediaBuysResponseSchema: z.ZodType = z.object({
     context_id: z.string().optional(),
     context: ContextObjectSchema.optional(),
     task_id: z.string().optional(),

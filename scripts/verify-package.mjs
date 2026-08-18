@@ -22,12 +22,13 @@
  * Exits non-zero on any failure.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const MAX_PACKED_TARBALL_BYTES = 50 * 1024 * 1024;
 
 /** Lowest version a semver range accepts (first `||` clause, operators stripped). */
 function rangeFloor(range) {
@@ -79,12 +80,32 @@ try {
   const tgz = readdirSync(tmpDir).find(f => f.endsWith('.tgz'));
   if (!tgz) throw new Error(`npm pack produced no .tgz in ${tmpDir}`);
   const tarballPath = path.join(tmpDir, tgz);
+  const tarballBytes = statSync(tarballPath).size;
+  if (tarballBytes > MAX_PACKED_TARBALL_BYTES) {
+    throw new Error(
+      `packed tarball is ${(tarballBytes / 1024 / 1024).toFixed(1)} MiB; ` +
+        `budget is ${MAX_PACKED_TARBALL_BYTES / 1024 / 1024} MiB`
+    );
+  }
   console.log(`   → ${tgz}`);
+  console.log(`   ${(tarballBytes / 1024 / 1024).toFixed(1)} MiB (50 MiB budget)`);
 
   const packedPaths = new Set(run('tar', ['-tf', tarballPath]).trim().split('\n'));
-  const requiredGuides = ['package/docs/migration-12-to-13.md', 'package/MIGRATION-v8.md'];
+  const requiredGuides = [
+    'package/docs/migration-12-to-14.md',
+    'package/docs/migration-13-to-14.md',
+    'package/docs/migration-12-to-13.md',
+    'package/MIGRATION-v8.md',
+  ];
   for (const guide of requiredGuides) {
     if (!packedPaths.has(guide)) throw new Error(`packed migration guide is missing: ${guide}`);
+  }
+  const packedMcpResponses = [...packedPaths].filter(
+    packedPath =>
+      packedPath.includes('/schemas-data/') && packedPath.includes('/mcp/') && /-response\.json$/.test(packedPath)
+  );
+  if (packedMcpResponses.length > 0) {
+    throw new Error(`packed MCP discovery assets include response schemas: ${packedMcpResponses[0]}`);
   }
   console.log('   migration guides referenced by README are present');
 
@@ -181,6 +202,54 @@ try {
   console.log('🔥 Bun MCP negotiation:');
   run('npx', ['--yes', 'bun@1.3.8', 'smoke.mcp.mjs'], { cwd: tmpDir, stdio: 'inherit' });
   console.log('  Bun ESM negotiation through @adcp/sdk ok');
+
+  // The modern MCP server consumes the adopter's Zod peer. Zod 4.1 satisfies
+  // our declared range but predates `~standard.jsonSchema`; exercise a real
+  // packed AdCP server at that exact floor so tools/list cannot silently
+  // regress to `{ properties: {} }` while source tests use a newer Zod.
+  writeFileSync(
+    path.join(tmpDir, 'smoke.mcp-schema.mjs'),
+    [
+      "import { createRequire } from 'node:module';",
+      "import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';",
+      "import { InMemoryStateStore, serve } from '@adcp/sdk';",
+      "import { createAdcpServer } from '@adcp/sdk/server/legacy/v5';",
+      '',
+      'const require = createRequire(import.meta.url);',
+      "const zodVersion = require('zod/package.json').version;",
+      "if (zodVersion !== '4.1.5') throw new Error(`expected the Zod peer floor 4.1.5, got ${zodVersion}`);",
+      'const httpServer = serve(',
+      '  () => createAdcpServer({',
+      "    name: 'package-schema-smoke',",
+      "    version: '1.0.0',",
+      '    stateStore: new InMemoryStateStore(),',
+      '  }),',
+      '  { port: 0, onListening: () => {} }',
+      ');',
+      "await new Promise((resolve, reject) => { httpServer.once('error', reject); httpServer.listening ? resolve() : httpServer.once('listening', resolve); });",
+      'const address = httpServer.address();',
+      "if (!address || typeof address === 'string') throw new Error('AdCP server did not bind');",
+      'const client = new Client(',
+      "  { name: 'package-schema-client', version: '1.0.0' },",
+      "  { versionNegotiation: { mode: { pin: '2026-07-28' } } }",
+      ');',
+      'try {',
+      '  await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`)));',
+      '  const listed = await client.listTools();',
+      '  const discoveryBytes = Buffer.byteLength(JSON.stringify(listed.tools));',
+      '  if (discoveryBytes > 1024 * 1024) throw new Error(`default tools/list is ${discoveryBytes} bytes; budget is 1 MiB`);',
+      '  if (listed.tools.some(tool => tool.outputSchema !== undefined)) throw new Error("default tools/list must remain input-only");',
+      "  const capabilities = listed.tools.find(tool => tool.name === 'get_adcp_capabilities');",
+      '  if (!capabilities?.inputSchema?.properties?.protocols) throw new Error(`empty AdCP input schema at Zod ${zodVersion}: ${JSON.stringify(capabilities?.inputSchema)}`);',
+      '} finally {',
+      '  await client.close().catch(() => {});',
+      '  await new Promise((resolve, reject) => httpServer.close(error => error ? reject(error) : resolve()));',
+      '}',
+    ].join('\n')
+  );
+  console.log('🧩 Modern AdCP tools/list at Zod peer floor:');
+  run('node', ['smoke.mcp-schema.mjs'], { cwd: tmpDir, stdio: 'inherit' });
+  console.log('  bundled AdCP input schemas survive Zod 4.1.5');
 
   // `@adcp/sdk/enums` is documented as a lean, zod-free entry point safe for
   // browser bundlers. Bundling it with `--platform=browser` catches

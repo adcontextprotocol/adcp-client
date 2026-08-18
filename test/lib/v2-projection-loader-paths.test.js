@@ -44,9 +44,32 @@ before(() => {
   }
 
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-projection-loader-paths-'));
-  // Mimic node_modules/@adcp/sdk/dist by copying only the dist tree.
-  // Intentionally do NOT copy schemas/cache — that's the bug we're guarding.
-  fs.cpSync(SRC_DIST, path.join(tmpRoot, 'dist'), { recursive: true });
+  // Mimic the published files these loaders actually consume. Copying the
+  // entire 400+ MB dist tree made this test race schema-loader-per-version,
+  // which creates and removes a synthetic schemas-data/1.0 fixture while
+  // node:test runs files in parallel. cpSync could enumerate that fixture and
+  // then fail on a disappearing child such as 1.0/enums.
+  //
+  // Keep this fixture intentionally narrow: compiled projection modules,
+  // their version dependency, and the two schema subtrees they load. This is
+  // still a published-tarball layout and intentionally contains no
+  // schemas/cache source-tree fallback.
+  const tmpDist = path.join(tmpRoot, 'dist');
+  const tmpLib = path.join(tmpDist, 'lib');
+  fs.mkdirSync(path.join(tmpLib, 'v2'), { recursive: true });
+  fs.cpSync(path.join(SRC_DIST, 'lib', 'v2', 'projection'), path.join(tmpLib, 'v2', 'projection'), {
+    recursive: true,
+  });
+  fs.copyFileSync(path.join(SRC_DIST, 'lib', 'version.js'), path.join(tmpLib, 'version.js'));
+
+  const sourceBundle = path.join(SRC_SCHEMAS_DATA, ADCP_BUNDLE_KEY);
+  const tmpBundle = path.join(tmpLib, 'schemas-data', ADCP_BUNDLE_KEY);
+  fs.mkdirSync(tmpBundle, { recursive: true });
+  fs.cpSync(path.join(sourceBundle, 'registries'), path.join(tmpBundle, 'registries'), { recursive: true });
+  fs.mkdirSync(path.join(tmpBundle, 'formats'), { recursive: true });
+  fs.cpSync(path.join(sourceBundle, 'formats', 'canonical'), path.join(tmpBundle, 'formats', 'canonical'), {
+    recursive: true,
+  });
 });
 
 after(() => {

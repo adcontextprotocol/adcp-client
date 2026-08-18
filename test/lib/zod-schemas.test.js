@@ -12,6 +12,45 @@ describe('Zod Schema Validation', () => {
     assert.ok(schemas, 'Schemas should be importable');
   });
 
+  test('all canonical-format overlays accept the shared array-valued slots contract', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+    const canonicalSchemas = [
+      schemas.CanonicalFormatDisplayTagSchema,
+      schemas.CanonicalFormatImageCarouselSchema,
+      schemas.CanonicalFormatHostedVideoSchema,
+      schemas.CanonicalFormatVASTVideoSchema,
+      schemas.CanonicalFormatHostedAudioSchema,
+      schemas.CanonicalFormatDAASTAudioSchema,
+      schemas.CanonicalFormatSponsoredPlacementRetailMediaCatalogDrivenSchema,
+      schemas.CanonicalFormatNativeInFeedSchema,
+      schemas.CanonicalFormatResponsiveCreativeSchema,
+      schemas.CanonicalFormatAgentPlacementAISurfaceSponsoredPlacementSchema,
+      schemas.CanonicalFormatHTML5BannerSchema,
+    ];
+    const value = {
+      slots: [{ asset_group_id: 'audio_main', asset_type: 'audio', required: true }],
+    };
+
+    for (const schema of canonicalSchemas) {
+      assert.strictEqual(schema.safeParse(value).success, true);
+    }
+  });
+
+  test('CreativeBriefSchema requires at least one required disclosure when present', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const brief = required_disclosures => ({
+      name: 'Launch brief',
+      compliance: { required_disclosures },
+    });
+    assert.strictEqual(schemas.CreativeBriefSchema.safeParse(brief([])).success, false);
+    assert.strictEqual(schemas.CreativeBriefSchema.safeParse(brief([{ text: 'Terms apply.' }])).success, true);
+  });
+
   test('ProductSchema is importable and has parse method', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');

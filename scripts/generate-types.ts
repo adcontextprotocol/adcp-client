@@ -49,6 +49,16 @@ const STANDALONE_SCHEMAS: string[] = []; // ['adagents']
 // weakened occurrence during deduplication. The standalone documents are the
 // authoritative public shapes and must win first-definition ownership.
 const PRIORITY_CANONICAL_SCHEMAS = [
+  // Explicit extension bags intentionally keep their index signature. Compile
+  // the canonical map before any named open object that happens to reference
+  // it so first-definition deduplication cannot replace it with a closed
+  // structural interface.
+  'core/ext.json',
+  // Compile this source-compatibility-sensitive named interface directly.
+  // When first reached transitively through a large aggregate, jsts can
+  // retain the wire schema's open-object signatures on CreativeBrief and its
+  // nested named fields before the strict resolver gets to normalize them.
+  'core/creative-brief.json',
   // Compile direct constraint-bearing roots before forecast/tool schemas that
   // reference them. json-schema-to-typescript does not reliably preserve
   // injected @pattern tags when the first declaration originates through a
@@ -68,6 +78,21 @@ const PRIORITY_CANONICAL_SCHEMAS = [
   'core/creative-approval-scope.json',
   'core/warning-resource.json',
   'formats/canonical/image.json',
+  // Canonical overlays refine CanonicalFormatBase.slots with annotation-only
+  // defaults. Compile the normalized standalone documents before bundled MCP
+  // roots can claim these names from their lossy dereferenced copies, where
+  // the local slots annotation is represented as Record<string, unknown>.
+  'formats/canonical/html5.json',
+  'formats/canonical/display_tag.json',
+  'formats/canonical/image_carousel.json',
+  'formats/canonical/video_hosted.json',
+  'formats/canonical/video_vast.json',
+  'formats/canonical/audio_hosted.json',
+  'formats/canonical/audio_daast.json',
+  'formats/canonical/sponsored_placement.json',
+  'formats/canonical/native_in_feed.json',
+  'formats/canonical/responsive_creative.json',
+  'formats/canonical/agent_placement.json',
   // Present in the signed 3.2 manifest but omitted from index.json's legacy
   // governance task aggregation. Keep its public validators available until
   // the index and manifest converge upstream.
@@ -76,6 +101,8 @@ const PRIORITY_CANONICAL_SCHEMAS = [
 ] as const;
 
 const PRIORITY_CANONICAL_TYPE_NAMES = new Set([
+  'ExtensionObject',
+  'CreativeBrief',
   'BrandReference',
   'BusinessEntity',
   'PlatformExtensionReference',
@@ -91,6 +118,17 @@ const PRIORITY_CANONICAL_TYPE_NAMES = new Set([
   'ScopedCreativeApproval',
   'WarningAffectedResource',
   'CanonicalFormatImage',
+  'CanonicalFormatHTML5Banner',
+  'CanonicalFormatDisplayTag',
+  'CanonicalFormatImageCarousel',
+  'CanonicalFormatHostedVideo',
+  'CanonicalFormatVASTVideo',
+  'CanonicalFormatHostedAudio',
+  'CanonicalFormatDAASTAudio',
+  'CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven',
+  'CanonicalFormatNativeInFeed',
+  'CanonicalFormatResponsiveCreative',
+  'CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement',
   'SizeModeMutex',
   'Fixed',
   'MultiSize',
@@ -507,7 +545,17 @@ export function expandConditionalRequiredDiscriminator(schema: any): any {
       properties: branchProperties,
       required: [...new Set(branchRequired)],
     };
-    if (schema.additionalProperties !== undefined) branch.additionalProperties = schema.additionalProperties;
+    // `additionalProperties: true` on a named structural object is a runtime
+    // forward-compatibility rule, not a request for a TypeScript index
+    // signature. Copy typed/closed maps and the small set of explicit opaque
+    // maps only; otherwise every expanded branch reintroduces the utility-type
+    // regression that the strict-schema pass removes.
+    if (
+      schema.additionalProperties !== undefined &&
+      (schema.additionalProperties !== true || shouldPreserveOpenIndexSignature(schema))
+    ) {
+      branch.additionalProperties = schema.additionalProperties;
+    }
     return branch;
   });
 
@@ -656,9 +704,22 @@ function materializeSizeModeMutex(schema: any, parentProperties: Record<string, 
  * Recursively remove additionalProperties: true from schema to enforce strict typing
  * This prevents [k: string]: unknown in generated TypeScript types
  *
- * EXCEPTION: Fields with descriptions containing "must echo this value back unchanged"
- * (like context fields) preserve additionalProperties: true to maintain protocol compliance.
+ * EXCEPTIONS: Explicit extension maps and fields whose descriptions contain
+ * "must echo this value back unchanged" preserve additionalProperties: true.
  */
+function shouldPreserveOpenIndexSignature(schema: any): boolean {
+  if (!schema || typeof schema !== 'object' || schema.additionalProperties !== true) return false;
+
+  // `core/ext.json` is intentionally a vendor-keyed extension bag. Its title
+  // is canonical and stable across the standalone and bundled schemas.
+  if (schema.title === 'Extension Object') return true;
+
+  return (
+    typeof schema.description === 'string' &&
+    schema.description.toLowerCase().includes('must echo this value back unchanged')
+  );
+}
+
 export function enforceStrictSchema(schema: any): any {
   if (!schema || typeof schema !== 'object') {
     return schema;
@@ -684,10 +745,7 @@ export function enforceStrictSchema(schema: any): any {
   }
 
   // Check if this field must preserve arbitrary properties (e.g., context fields)
-  const mustPreserveProperties =
-    strictSchema.description &&
-    typeof strictSchema.description === 'string' &&
-    strictSchema.description.toLowerCase().includes('must echo this value back unchanged');
+  const mustPreserveProperties = shouldPreserveOpenIndexSignature(strictSchema);
 
   // Remove additionalProperties if it's true, UNLESS the field must preserve properties
   if (strictSchema.additionalProperties === true && !mustPreserveProperties) {
@@ -873,6 +931,16 @@ export function enforceStrictSchema(schema: any): any {
       strictSchema.properties = Object.fromEntries(
         Object.entries(strictSchema.properties).map(([key, value]) => [key, enforceStrictSchema(value)])
       );
+    }
+
+    // A resolved allOf base may intentionally preserve openness (for example
+    // an opaque echo context or ExtensionObject). Once its properties are
+    // merged into an ordinary named interface, that inherited flag must be
+    // judged against the resulting interface rather than blindly copied.
+    // Otherwise allOf silently resurrects `[k: string]: unknown` after the
+    // initial strictness pass and breaks Pick/Omit source compatibility.
+    if (strictSchema.additionalProperties === true && !shouldPreserveOpenIndexSignature(strictSchema)) {
+      delete strictSchema.additionalProperties;
     }
   }
 

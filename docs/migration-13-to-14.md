@@ -90,6 +90,13 @@ Use the generated request types or the narrow imports under `@adcp/sdk/types/<to
 
 For proposal refinement, validate the advertised limits and supported dimensions, keep hard constraints distinct from legacy discovery filters, and re-check `expires_at` immediately before acceptance. See [AdCP 3.2 proposal negotiation](migration-adcp-3.1-to-3.2-proposals.md).
 
+AdCP 3.2's exact MCP schema also requires `account` at the top level of every
+`comply_test_controller` request. Move a legacy
+`context: { account, session_id }` controller call to
+`{ account, context: { session_id } }`. The account remains an assertion of
+intent; the seller must resolve it through its trusted account store and admit
+only a persisted sandbox or mock account.
+
 ## Request-signing profiles are versioned
 
 SDK 13 used the legacy AdCP 3.0/3.1 representation. SDK 14 selects between two profiles:
@@ -109,6 +116,12 @@ projects that strict public contract automatically. Move the internal verifier
 to `required` after legacy callers are gone.
 
 Do not select a signing profile from a version value inside an unverified request body or header. On the server, bind the version to the endpoint, tenant, or authenticated agent configuration. Webhook signatures do not move to the 3.2 request profile.
+
+Low-level `verifyRequestSignature()` calls that omit `adcpVersion` tolerate both
+the legacy Base64URL and 3.2 RFC 8941 Base64 serialization so frozen 3.0/3.1
+integrations do not inherit the SDK's own protocol pin. This does not relax
+digest policy: `capability.covers_content_digest` remains authoritative. Pass a
+trusted `adcpVersion` whenever one is available for deterministic diagnostics.
 
 ## Cross-role governance is capability-gated
 

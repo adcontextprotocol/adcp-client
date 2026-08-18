@@ -389,6 +389,28 @@ export interface CallToolOptions {
   };
 }
 
+// AdCP 3.2.0-beta.0's published request schemas accidentally dropped the
+// deprecated integer from these otherwise release-versioned requests
+// (adcontextprotocol/adcp#6649). Omit only the SDK-injected field; an
+// explicit caller value must still reach the seller for conformance probes.
+const COMPACT_SCHEMAS_WITHOUT_MAJOR = new Set(['buy_products', 'accept_proposal', 'control_media_buy']);
+
+function applyPublishedSchemaCompatibility(
+  toolName: string | undefined,
+  argsWithVersion: Record<string, unknown>,
+  callerArgs: Record<string, unknown>
+): Record<string, unknown> {
+  if (
+    toolName &&
+    COMPACT_SCHEMAS_WITHOUT_MAJOR.has(toolName) &&
+    !Object.prototype.hasOwnProperty.call(callerArgs, 'adcp_major_version') &&
+    typeof argsWithVersion.adcp_version === 'string'
+  ) {
+    delete argsWithVersion.adcp_major_version;
+  }
+  return argsWithVersion;
+}
+
 export interface PreparedProtocolToolCall {
   /** Exact AdCP tool arguments that the target service will receive. */
   args: Record<string, unknown>;
@@ -416,7 +438,7 @@ export function prepareProtocolToolCall(
     | 'adcpVersion'
     | 'wireAdcpVersion'
     | 'versionEnvelope'
-  > = {}
+  > & { toolName?: string } = {}
 ): PreparedProtocolToolCall {
   const envelope = buildVersionEnvelopeForMode(
     options.versionEnvelope ?? 'auto',
@@ -424,6 +446,7 @@ export function prepareProtocolToolCall(
     options.serverVersion
   );
   const argsWithVersion = applyVersionEnvelope(args, envelope);
+  applyPublishedSchemaCompatibility(options.toolName, argsWithVersion, args);
 
   // The in-process MCP client has historically had no protocol webhook
   // registration path. Preserve that behavior and, crucially, describe the
@@ -499,6 +522,7 @@ export class ProtocolClient {
     const preparedCall =
       preparedProtocolToolCallFor(agent, toolName, args) ??
       prepareProtocolToolCall(agent, args, {
+        toolName,
         webhookUrl,
         webhookSecret,
         webhookToken,
@@ -860,7 +884,7 @@ export const createMCPClient = (
         callMCPToolWithTasks(
           agentUrl,
           toolName,
-          applyVersionEnvelope(args, versionEnvelope),
+          applyPublishedSchemaCompatibility(toolName, applyVersionEnvelope(args, versionEnvelope), args),
           authToken,
           debugLogs,
           headers,
@@ -891,7 +915,7 @@ export const createA2AClient = (
         callA2ATool(
           agentUrl,
           toolName,
-          applyVersionEnvelope(parameters, versionEnvelope),
+          applyPublishedSchemaCompatibility(toolName, applyVersionEnvelope(parameters, versionEnvelope), parameters),
           authToken,
           debugLogs,
           undefined,

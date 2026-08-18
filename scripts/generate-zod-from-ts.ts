@@ -111,6 +111,8 @@ const TS7056_SCHEMAS: Array<{ name: string; tsType?: string; objectShape?: boole
   { name: 'ListedCreativeNamedFormatReferenceSchema' },
   { name: 'ListedCreativeCanonicalFormatKindSchema' },
   { name: 'CreateMediaBuyRequestSchema', tsType: 'CreateMediaBuyRequest', objectShape: true },
+  { name: 'GetMediaBuysResponseMediaBuySchema' },
+  { name: 'GetMediaBuysResponseSchema' },
   { name: 'WholesaleFeedWebhookSchema' },
   { name: 'ComplyTestControllerRequestSchema', objectShape: true },
   { name: 'ListCreativesResponseSchema' },
@@ -472,6 +474,81 @@ function postProcessCanonicalFormatMarkerIntersections(content: string): string 
       'CanonicalFormatBaseSchema.merge(z.object('
     )
     .replace(/SizeModeMutexSchema\.and\(z\.object\(/g, 'z.object({}).passthrough().merge(z.object(');
+}
+
+/**
+ * Guard against lossy per-format `slots` projections.
+ *
+ * Canonical formats are compiled from their normalized standalone schemas, so
+ * slots must reach ts-to-zod as arrays. Fail generation if bundled-schema
+ * ordering ever regresses one of them to Record<string, unknown> again.
+ */
+function postProcessCanonicalFormatSlots(content: string): string {
+  const schemaNames = [
+    'CanonicalFormatDisplayTagSchema',
+    'CanonicalFormatImageCarouselSchema',
+    'CanonicalFormatHostedVideoSchema',
+    'CanonicalFormatVASTVideoSchema',
+    'CanonicalFormatHostedAudioSchema',
+    'CanonicalFormatDAASTAudioSchema',
+    'CanonicalFormatSponsoredPlacementRetailMediaCatalogDrivenSchema',
+    'CanonicalFormatNativeInFeedSchema',
+    'CanonicalFormatResponsiveCreativeSchema',
+    'CanonicalFormatAgentPlacementAISurfaceSponsoredPlacementSchema',
+    'CanonicalFormatHTML5BannerSchema',
+  ] as const;
+
+  let result = content;
+  for (const schemaName of schemaNames) {
+    const start = result.indexOf(`export const ${schemaName} = `);
+    const end = result.indexOf('\n\nexport const ', start + 1);
+    if (start === -1 || end === -1) {
+      throw new Error(`postProcessCanonicalFormatSlots: unable to locate ${schemaName}.`);
+    }
+    const block = result.slice(start, end);
+    if (/^[ \t]*slots: z\.record\(z\.string\(\), z\.unknown\(\)\)\.optional\(\),$/m.test(block)) {
+      throw new Error(`postProcessCanonicalFormatSlots: ${schemaName} emitted lossy record-valued slots.`);
+    }
+  }
+  return result;
+}
+
+/**
+ * Restore CreativeBrief.compliance.required_disclosures minItems: 1.
+ *
+ * The TypeScript generator intentionally removes array cardinality constraints
+ * because ordinary TypeScript arrays cannot represent them without tuple types.
+ * That means ts-to-zod cannot recover this runtime-only constraint. Keep the
+ * public TypeScript field ergonomic while restoring the authoritative JSON
+ * Schema validation on the generated Zod schema.
+ */
+function postProcessCreativeBriefRequiredDisclosures(content: string): string {
+  const schemaStart = content.indexOf('export const CreativeBriefSchema = ');
+  const schemaEnd = content.indexOf('\n\nexport const ', schemaStart + 1);
+  if (schemaStart === -1 || schemaEnd === -1) {
+    throw new Error('postProcessCreativeBriefRequiredDisclosures: unable to locate CreativeBriefSchema.');
+  }
+
+  const block = content.slice(schemaStart, schemaEnd);
+  const fieldStart = block.indexOf('required_disclosures: z.array(');
+  const nextFieldStart = block.indexOf('\n        prohibited_claims:', fieldStart + 1);
+  if (fieldStart === -1 || nextFieldStart === -1) {
+    throw new Error(
+      'postProcessCreativeBriefRequiredDisclosures: unable to locate required_disclosures field boundary.'
+    );
+  }
+
+  const field = block.slice(fieldStart, nextFieldStart);
+  if (/\.passthrough\(\)\)\.min\(1\)\.optional\(\),$/.test(field)) {
+    return content;
+  }
+  const correctedField = field.replace(/(\.passthrough\(\)\))\.optional\(\),$/, '$1.min(1).optional(),');
+  if (correctedField === field) {
+    throw new Error('postProcessCreativeBriefRequiredDisclosures: unable to restore minItems on required_disclosures.');
+  }
+
+  const correctedBlock = block.slice(0, fieldStart) + correctedField + block.slice(nextFieldStart);
+  return content.slice(0, schemaStart) + correctedBlock + content.slice(schemaEnd);
 }
 
 /**
@@ -2199,6 +2276,8 @@ async function generateZodSchemas() {
     // intersection for maintainers to handle deliberately.
     zodSchemas = postProcessMarkerUnionObjectIntersections(zodSchemas);
     zodSchemas = postProcessCanonicalFormatMarkerIntersections(zodSchemas);
+    zodSchemas = postProcessCanonicalFormatSlots(zodSchemas);
+    zodSchemas = postProcessCreativeBriefRequiredDisclosures(zodSchemas);
 
     // Post-process: Distribute object-envelope intersections over union object arms.
     // A schema like `Envelope.and(z.union([VariantA, VariantB]))` is equivalent to
@@ -2284,6 +2363,8 @@ export const __test__ = {
   postProcessForNullish,
   postProcessRecordIntersections,
   postProcessMarkerUnionObjectIntersections,
+  postProcessCanonicalFormatSlots,
+  postProcessCreativeBriefRequiredDisclosures,
   postProcessObjectUnionIntersections,
   postProcessObjectIntersections,
   postProcessRecordSizeConstraints,
