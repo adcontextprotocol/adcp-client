@@ -19,6 +19,8 @@ const { bridgeFromSessionStore } = require('../../dist/lib/server/index.js');
 
 function createAdcpServer(config) {
   return _createAdcpServer({
+    resolveAccount: ref => ({ account_id: ref?.account_id ?? 'sandbox-test-account', mode: 'sandbox' }),
+    resolveAccountFromAuth: () => ({ account_id: 'sandbox-test-account', mode: 'sandbox' }),
     ...config,
     validation: { requests: 'off', responses: 'off', ...(config?.validation ?? {}) },
   });
@@ -3476,13 +3478,13 @@ describe('createAdcpServer — sandbox-gate debug log on resolved-account mismat
     assert.equal(hit, undefined, 'should not log gate-mismatch when production traffic');
   });
 
-  it('does not emit debug when resolved account is sandbox (gate passes)', async () => {
+  it('accepts mode:sandbox accounts and does not emit a mismatch debug line', async () => {
     const { logger, records } = makeRecordingLogger();
     const server = createAdcpServer({
       name: 'Test',
       version: '1.0.0',
       logger,
-      resolveAccount: () => ({ account_id: 'sandbox-acct', sandbox: true }),
+      resolveAccount: () => ({ account_id: 'sandbox-acct', mode: 'sandbox' }),
       creative: { listCreatives: handlerListCreatives() },
       testController: {
         getSeededCreatives: () => [{ creative_id: 's-1', name: 'X' }],
@@ -3499,20 +3501,63 @@ describe('createAdcpServer — sandbox-gate debug log on resolved-account mismat
       ['s-1']
     );
   });
+
+  it('fails closed for account-less calls when only resolveAccount is configured', async () => {
+    const { logger } = makeRecordingLogger();
+    let bridgeCalled = false;
+    const server = _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      validation: { requests: 'off', responses: 'off' },
+      resolveAccount: () => ({ account_id: 'sandbox-acct', mode: 'sandbox' }),
+      creative: { listCreatives: handlerListCreatives() },
+      testController: {
+        getSeededCreatives: () => {
+          bridgeCalled = true;
+          return [{ creative_id: 'fixture', name: 'must not appear' }];
+        },
+      },
+    });
+
+    const res = await dispatch(server, 'list_creatives', { context: { sandbox: true } });
+    assert.equal(bridgeCalled, false);
+    assert.deepEqual(res.structuredContent.creatives, []);
+    assert.notEqual(res.structuredContent.sandbox, true);
+  });
+
+  it('fails closed for account-less calls when resolveAccountFromAuth returns null', async () => {
+    let bridgeCalled = false;
+    const server = _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'off' },
+      resolveAccount: () => ({ account_id: 'sandbox-acct', mode: 'sandbox' }),
+      resolveAccountFromAuth: () => null,
+      creative: { listCreatives: handlerListCreatives() },
+      testController: {
+        getSeededCreatives: () => {
+          bridgeCalled = true;
+          return [{ creative_id: 'fixture', name: 'must not appear' }];
+        },
+      },
+    });
+
+    const res = await dispatch(server, 'list_creatives', { context: { sandbox: true } });
+    assert.equal(bridgeCalled, false);
+    assert.deepEqual(res.structuredContent.creatives, []);
+    assert.notEqual(res.structuredContent.sandbox, true);
+  });
 });
 
 // ---------------------------------------------------------------------------
-// #1784 — construction-time warn when `testController` is registered without
-// any account resolver. The dispatch-time sandbox gate admits requests where
-// `ctx.account === undefined`, so without `resolveAccount` (or
-// `resolveAccountFromAuth`) the only remaining check is the buyer-supplied
-// `account.sandbox` / `context.sandbox` marker — caller-controlled, not a
-// trust boundary. The warn makes that silent failure mode loud once, without
-// breaking the legitimate storyboard-runner case (runner-without-resolver
-// configs simply ignore the warning).
+// #1784 / #2428 — construction-time warn when `testController` is registered
+// without auth-derived account resolution. Account-less tools cannot call
+// `resolveAccount`; without `resolveAccountFromAuth`, their bridge gate now
+// fails closed. The warning makes the omitted fixtures diagnosable.
 // ---------------------------------------------------------------------------
 
-describe('createAdcpServer — trust-boundary warn when testController lacks resolveAccount (#1784)', () => {
+describe('createAdcpServer — trust-boundary warn when testController lacks either resolver', () => {
   function makeRecordingLogger() {
     const records = { debug: [], info: [], warn: [], error: [] };
     return {
@@ -3526,7 +3571,7 @@ describe('createAdcpServer — trust-boundary warn when testController lacks res
     };
   }
 
-  const MATCH = /testController is wired but no account resolver/;
+  const MATCH = /testController is wired without/;
 
   it('warns once at construction when testController is set and neither resolver is configured', () => {
     const { logger, records } = makeRecordingLogger();
@@ -3540,6 +3585,7 @@ describe('createAdcpServer — trust-boundary warn when testController lacks res
     });
     const hits = records.warn.filter(r => MATCH.test(r.msg));
     assert.equal(hits.length, 1, 'warn fires exactly once');
+    assert.match(hits[0].msg, /without resolveAccount and resolveAccountFromAuth/);
   });
 
   it('does not warn when testController is omitted (state-local seller)', () => {
@@ -3556,7 +3602,7 @@ describe('createAdcpServer — trust-boundary warn when testController lacks res
     assert.equal(hits.length, 0);
   });
 
-  it('does not warn when resolveAccount is configured', () => {
+  it('warns when only resolveAccount is configured because account-less tools cannot use it', () => {
     const { logger, records } = makeRecordingLogger();
     _createAdcpServer({
       name: 'Test',
@@ -3568,10 +3614,11 @@ describe('createAdcpServer — trust-boundary warn when testController lacks res
       testController: { getSeededProducts: () => [] },
     });
     const hits = records.warn.filter(r => MATCH.test(r.msg));
-    assert.equal(hits.length, 0);
+    assert.equal(hits.length, 1);
+    assert.match(hits[0].msg, /without resolveAccountFromAuth —/);
   });
 
-  it('does not warn when resolveAccountFromAuth is configured (OAuth-passthrough setups)', () => {
+  it('warns when only resolveAccountFromAuth is configured because account-bearing tools cannot use it', () => {
     const { logger, records } = makeRecordingLogger();
     _createAdcpServer({
       name: 'Test',
@@ -3579,6 +3626,23 @@ describe('createAdcpServer — trust-boundary warn when testController lacks res
       logger,
       validation: { requests: 'off', responses: 'off' },
       resolveAccountFromAuth: () => ({ account_id: 'a', sandbox: true }),
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      testController: { getSeededProducts: () => [] },
+    });
+    const hits = records.warn.filter(r => MATCH.test(r.msg));
+    assert.equal(hits.length, 1);
+    assert.match(hits[0].msg, /without resolveAccount —/);
+  });
+
+  it('does not warn when both resolver paths are configured', () => {
+    const { logger, records } = makeRecordingLogger();
+    _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      validation: { requests: 'off', responses: 'off' },
+      resolveAccount: () => ({ account_id: 'a', mode: 'sandbox' }),
+      resolveAccountFromAuth: () => ({ account_id: 'a', mode: 'sandbox' }),
       mediaBuy: { getProducts: async () => ({ products: [] }) },
       testController: { getSeededProducts: () => [] },
     });

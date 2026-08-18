@@ -814,12 +814,9 @@ const server = createAdcpServerFromPlatform(myPlatform, {
   name: 'my-seller',
   version: '1.0.0',
   complyTest: {
-    // Per-request gate. Return true to allow; anything else (including
-    // throws) denies with FORBIDDEN. Production agents typically gate
-    // registration itself on `process.env.ADCP_SANDBOX === '1'` rather
-    // than relying on this — the helper logs a loud warning if registered
-    // ungated AND without an env flag.
-    sandboxGate: input => input.auth?.sandbox === true,
+    // Defense in depth in addition to the framework's resolved-account gate.
+    // `input` is buyer-supplied, so close over server-controlled state.
+    sandboxGate: () => process.env.ADCP_SANDBOX === '1',
 
     // Seed adapters — pre-populate fixtures the storyboard references by
     // stable ID. Re-seeding the same id+fixture is idempotent; divergent
@@ -871,11 +868,15 @@ The framework throws `PlatformConfigError` at construction if:
 
 **Sandbox-only.** The spec says `comply_test_controller` MUST NOT be exposed in production. Three guard layers:
 
-1. **Gate registration**: only call `createAdcpServerFromPlatform({ ..., complyTest })` when `process.env.ADCP_SANDBOX === '1'` or your equivalent sandbox flag is set. Production builds never register the tool at all.
-2. **Per-request gate**: `complyTest.sandboxGate(input)` runs on every request; return `false` to deny with `FORBIDDEN`.
+1. **Gate registration**: only pass `complyTest` to `createAdcpServerFromPlatform(platform, { ..., complyTest })` when trusted deployment state identifies a compliance environment. Production builds never register the tool at all.
+2. **Resolved-account gate**: the framework resolves the account through trusted platform state and requires sandbox or mock mode. An optional `complyTest.sandboxGate(input)` may add request-shape policy, but its buyer-supplied input is never authentication or account authority.
 3. **Transport-layer isolation**: production deployments often expose the sandbox endpoint on a separate URL with separate auth.
 
-The helper warns once per construction if it's registered without a `sandboxGate` AND without `ADCP_SANDBOX=1` / `ADCP_COMPLY_CONTROLLER_UNGATED=1` to silence the warning in setups where transport isolation handles it.
+Direct `createComplyController(...).register(server)` calls fail closed when
+`sandboxGate` is omitted. A deliberately ungated local harness must set both
+`NODE_ENV=test|development` and `ADCP_COMPLY_CONTROLLER_UNGATED=1`;
+`ADCP_SANDBOX=1` alone does not authorize ungated registration. The
+`createAdcpServerFromPlatform` path owns its resolved-account gate separately.
 
 ## Custom webhook emitter
 

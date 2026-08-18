@@ -63,7 +63,7 @@ One governance-specific rule on top:
 
 ### `comply_test_controller` is required
 
-Both `governance_spend_authority` and `property_lists` storyboards seed fixtures via `comply_test_controller.seed_plan` / `seed_property_list` before running the business-logic phases. Register via `createComplyController({ seed: { plan, property_list, collection_list, content_standards } })` and call `controller.register(server)` — same pattern as the seller adapter wires for media-buy seeding.
+Both `governance_spend_authority` and `property_lists` storyboards seed fixtures via `comply_test_controller.seed_plan` / `seed_property_list` before running the business-logic phases. Register via `createComplyController({ sandboxGate, seed: { plan, property_list, collection_list, content_standards } })` and call `controller.register(server)` — same pattern as the seller adapter wires for media-buy seeding. The gate must derive authority from server-controlled authentication or resolved account state, never from a caller-supplied sandbox marker.
 
 Without the test controller, every business-logic step skips with `missing_test_controller` and the track "passes" vacuously — the grader treats vacuous green as fail. Wire it on day one.
 
