@@ -1,6 +1,6 @@
 {
   "name": "@adcp/reference-renderers",
-  "version": "0.0.0",
+  "version": "1.0.0-beta.0",
   "description": "Browser-safe reference presentations for AdCP canonical creative formats",
   "type": "module",
   "exports": {
