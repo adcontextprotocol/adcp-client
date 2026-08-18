@@ -45,9 +45,9 @@ export interface VerifyRequestOptions {
   operation?: string;
   /**
    * Trusted endpoint release pin; never inferred from request payload data.
-   * When omitted, the verifier tolerates both the 3.0/3.1 Base64URL and the
-   * 3.2+ RFC 8941 Base64 serialization. Digest coverage remains governed by
-   * `capability.covers_content_digest` in either case.
+   * When omitted, the verifier accepts both the legacy 3.0/3.1 Base64URL
+   * representation and the 3.2+ RFC 8941 Base64 representation. Digest
+   * coverage still follows `capability.covers_content_digest`.
    */
   adcpVersion?: string;
   agentUrlForKeyid?: (keyid: string) => string | undefined;
@@ -58,7 +58,8 @@ export async function verifyRequestSignature(
   options: VerifyRequestOptions
 ): Promise<VerifyResult> {
   const now = options.now ? options.now() : Math.floor(Date.now() / 1000);
-  const pinnedBinaryEncoding = options.adcpVersion ? requestSigningEncodingForVersion(options.adcpVersion) : undefined;
+  const pinnedBinaryEncoding =
+    options.adcpVersion !== undefined ? requestSigningEncodingForVersion(options.adcpVersion) : undefined;
   const sigInputHeader = getHeaderValue(request.headers, 'Signature-Input');
   const sigHeader = getHeaderValue(request.headers, 'Signature');
 
@@ -119,24 +120,21 @@ export async function verifyRequestSignature(
 
   // Step 1: parse.
   const parsedInput = parseSignatureInput(sigInputHeader);
-  // Keep malformed-signature diagnostics deterministic for JavaScript callers
-  // that omitted the otherwise-required capability object.  A well-formed
-  // request still reaches the normal capability validation below.
-  const digestPolicy = options.capability?.covers_content_digest ?? 'either';
-  const binaryEncodingCandidates = signatureEncodingCandidates(pinnedBinaryEncoding, digestPolicy);
+  const binaryEncodingCandidates = signatureEncodingCandidates(
+    pinnedBinaryEncoding,
+    options.capability?.covers_content_digest
+  );
   let parsedSig: ReturnType<typeof parseSignature> | undefined;
-  let binaryEncoding: SfBinaryEncoding | undefined;
   let parseError: unknown;
   for (const candidate of binaryEncodingCandidates) {
     try {
       parsedSig = parseSignature(sigHeader, parsedInput.label, candidate);
-      binaryEncoding = candidate;
       break;
     } catch (error) {
       parseError ??= error;
     }
   }
-  if (!parsedSig || !binaryEncoding) throw parseError;
+  if (!parsedSig) throw parseError;
   rejectNonAsciiHost(request.url);
   validateSingleValuedCoveredHeaders(parsedInput.components, request);
 
@@ -165,10 +163,8 @@ export async function verifyRequestSignature(
   validateWindow(parsedInput.params.created, parsedInput.params.expires, now);
 
   // Step 6: covered components.
-  // A trusted 3.2+ endpoint pin carries the protocol's mandatory body-digest
-  // floor.  `either` is only an encoding-rollout policy; it must not become a
-  // payload-integrity downgrade oracle.  Legacy 3.0/3.1 pins and unpinned
-  // low-level verifiers continue to honor their declared capability.
+  // The 3.2 digest floor comes only from the trusted endpoint pin. Never
+  // derive it from the request's attacker-controlled serialization.
   const effectiveCapability =
     pinnedBinaryEncoding === 'rfc8941-base64'
       ? { ...options.capability, covers_content_digest: 'required' as const }
@@ -254,7 +250,10 @@ export async function verifyRequestSignature(
   if (parsedInput.components.includes('content-digest')) {
     const digestHeader = getHeaderValue(request.headers, 'Content-Digest');
     const encodingMatches =
-      !!digestHeader && binaryEncodingCandidates.some(candidate => contentDigestUsesEncoding(digestHeader, candidate));
+      !!digestHeader &&
+      contentDigestEncodingCandidates(pinnedBinaryEncoding, options.capability.covers_content_digest).some(candidate =>
+        contentDigestUsesEncoding(digestHeader, candidate)
+      );
     if (!digestHeader || !encodingMatches || !contentDigestMatches(digestHeader, request.body ?? '')) {
       throw new RequestSignatureError(
         'request_signature_digest_mismatch',
@@ -292,11 +291,26 @@ export async function verifyRequestSignature(
 
 function signatureEncodingCandidates(
   pinned: SfBinaryEncoding | undefined,
-  digestPolicy: VerifierCapability['covers_content_digest']
+  digestPolicy: VerifierCapability['covers_content_digest'] | undefined
 ): readonly SfBinaryEncoding[] {
   if (!pinned) return ['rfc8941-base64', 'legacy-base64url'];
   if (digestPolicy !== 'either') return [pinned];
-  return [pinned, pinned === 'rfc8941-base64' ? 'legacy-base64url' : 'rfc8941-base64'];
+  return [pinned, alternateBinaryEncoding(pinned)];
+}
+
+function contentDigestEncodingCandidates(
+  pinned: SfBinaryEncoding | undefined,
+  digestPolicy: VerifierCapability['covers_content_digest']
+): readonly SfBinaryEncoding[] {
+  // Legacy bundles contain both historical Base64URL digests and standards-
+  // compliant RFC 8941 Base64 digests. A strict 3.2 endpoint narrows to the
+  // latter; rolling-upgrade and unpinned verifiers accept both serializations.
+  if (pinned === 'rfc8941-base64' && digestPolicy !== 'either') return [pinned];
+  return ['rfc8941-base64', 'legacy-base64url'];
+}
+
+function alternateBinaryEncoding(encoding: SfBinaryEncoding): SfBinaryEncoding {
+  return encoding === 'rfc8941-base64' ? 'legacy-base64url' : 'rfc8941-base64';
 }
 
 function jsonRpcProtocolMethods(body: string | undefined): string[] {

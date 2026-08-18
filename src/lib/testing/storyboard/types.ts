@@ -37,6 +37,12 @@ export interface Storyboard {
    * authored in storyboard YAML.
    */
   adcp_version?: string;
+  /**
+   * Compliance cache root this storyboard was loaded from. Injected by the
+   * cache loader so synthesized vectors and runtime probes use the same
+   * bundle even when process-level cache environment variables differ.
+   */
+  compliance_dir?: string;
   title: string;
   category: string;
   summary: string;
@@ -1600,6 +1606,8 @@ export interface TrustedMatchPublisherAuthRunner {
 }
 
 export interface StoryboardRunOptions extends TestOptions {
+  /** Compliance cache root for bundle-scoped fixtures and test vectors. */
+  complianceDir?: string;
   /** Initial context (e.g., from a previous step invocation) */
   context?: StoryboardContext;
   /**

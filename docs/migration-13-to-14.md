@@ -94,12 +94,12 @@ For proposal refinement, validate the advertised limits and supported dimensions
 
 SDK 13 used the legacy AdCP 3.0/3.1 representation. SDK 14 selects between two profiles:
 
-| Agent version | Binary encoding | Signed request `Content-Digest` |
-|---|---|---|
-| AdCP 3.0 or 3.1 | unpadded Base64URL | governed by the legacy coverage policy |
-| AdCP 3.2 | padded standard Base64 | mandatory |
+| Agent version | `Signature` encoding | `Content-Digest` encoding | Digest coverage |
+|---|---|---|---|
+| AdCP 3.0 or 3.1 | unpadded Base64URL | padded standard Base64 | governed by the legacy coverage policy |
+| AdCP 3.2 | padded standard Base64 | padded standard Base64 | mandatory |
 
-High-level A2A/MCP clients carry the configured agent version automatically. Low-level signing integrations should pass their trusted version context and can inspect the encoding with `requestSigningEncodingForVersion()`.
+High-level A2A/MCP clients carry the configured agent version automatically. Low-level signing integrations should pass their trusted version context and can inspect the signature encoding with `requestSigningEncodingForVersion()`. For SDK 13 source compatibility, a low-level verifier with no `adcpVersion` accepts either signature encoding and applies its configured digest-coverage policy; an explicit trusted 3.2 pin keeps mandatory digest coverage.
 
 For a staged server rollout, set the internal verifier option
 `signedRequests.covers_content_digest: 'either'` to accept SDK 13 Base64URL

@@ -231,7 +231,10 @@ export function prepareRequestSignature(
   const coverDigest = options.coverContentDigest ?? binaryEncoding === 'rfc8941-base64';
   const headers: Record<string, string> = { ...flattenHeaders(request.headers) };
   if (coverDigest) {
-    headers['Content-Digest'] = computeContentDigest(request.body ?? '', binaryEncoding);
+    // Content-Digest is an RFC 9530 Structured Field and uses RFC 8941
+    // standard Base64 independently of the request Signature's versioned
+    // serialization. Frozen AdCP 3.0/3.1 vectors already use this form.
+    headers['Content-Digest'] = computeContentDigest(request.body ?? '', 'rfc8941-base64');
   }
 
   const components = [...MANDATORY_COMPONENTS];

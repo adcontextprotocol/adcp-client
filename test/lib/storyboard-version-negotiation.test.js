@@ -122,6 +122,18 @@ describe('storyboard runner AdCP version negotiation', () => {
     assert.strictEqual(options.versionEnvelope, 'auto');
   });
 
+  test('explicit version override does not inherit a mismatched storyboard cache root', () => {
+    const { applyStoryboardVersionOptions } = require('../../dist/lib/testing/storyboard/index.js');
+
+    const options = applyStoryboardVersionOptions(
+      { adcp_version: CURRENT_PRERELEASE_VERSION, compliance_dir: '/cache/3.2' },
+      { adcpVersion: '3.1.15' }
+    );
+
+    assert.strictEqual(options.adcpVersion, '3.1.15');
+    assert.strictEqual(options.complianceDir, undefined);
+  });
+
   test('version_negotiation evaluates envelope_field_pattern instead of forward-compatible not_applicable', async () => {
     const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
     const { createTestClient } = require('../../dist/lib/testing/client.js');

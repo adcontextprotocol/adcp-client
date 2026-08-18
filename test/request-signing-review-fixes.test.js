@@ -186,6 +186,23 @@ describe('content-digest SF dictionary support (protocol finding)', () => {
     const header = `sha-512=:AAAA==:, sha-256=:${sha256}:`;
     assert.strictEqual(contentDigestMatches(header, body), true);
   });
+
+  test('legacy request signatures still emit RFC 9530 standard-Base64 Content-Digest', () => {
+    const body = '{"plan_id":"legacy_digest"}';
+    const signed = signRequest(
+      {
+        method: 'POST',
+        url: 'https://seller.example.com/adcp/create_media_buy',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      },
+      { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwk },
+      { coverContentDigest: true, binaryEncoding: 'legacy-base64url' }
+    );
+
+    assert.strictEqual(contentDigestUsesEncoding(signed.headers['Content-Digest'], 'rfc8941-base64'), true);
+    assert.strictEqual(contentDigestUsesEncoding(signed.headers['Content-Digest'], 'legacy-base64url'), false);
+  });
 });
 
 describe('AdCP 3.2 RFC 8941 binary profile', () => {
@@ -196,23 +213,54 @@ describe('AdCP 3.2 RFC 8941 binary profile', () => {
     assert.strictEqual(requestSigningEncodingForVersion('3.2.0-beta.0'), 'rfc8941-base64');
   });
 
-  test('an unpinned verifier accepts 3.2 Base64 without overriding the trusted digest policy', async () => {
+  test('an explicitly pinned 3.2 verifier uses padded Base64 and mandatory Content-Digest', async () => {
     const now = 1776520800;
     const url = 'https://seller.example.com/adcp/create_media_buy';
     const body = '{"plan_id":"plan_3_2"}';
-    const signed = signIntentionalNegativeVector(
+    const signed = signRequest(
       { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
+      { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwk },
       {
         now: () => now,
         windowSeconds: 300,
         nonce: 'adcp-3-2-profile-nonce',
-        coverContentDigest: false,
         binaryEncoding: 'rfc8941-base64',
       }
     );
 
     assert.match(signed.headers.Signature, /^sig1=:[A-Za-z0-9+/]+={1,2}:$/);
-    assert.ok(!signed.headers['Signature-Input'].includes('"content-digest"'));
+    assert.ok(signed.headers['Signature-Input'].includes('"content-digest"'));
+    assert.strictEqual(contentDigestUsesEncoding(signed.headers['Content-Digest'], 'rfc8941-base64'), true);
+
+    const result = await verifyRequestSignature(
+      { method: 'POST', url, headers: signed.headers, body },
+      {
+        capability: { supported: true, covers_content_digest: 'required', required_for: [] },
+        jwks: new StaticJwksResolver([publicJwk]),
+        replayStore: new InMemoryReplayStore(),
+        revocationStore: new InMemoryRevocationStore(),
+        now: () => now,
+        operation: 'create_media_buy',
+        adcpVersion: '3.2-beta.0',
+      }
+    );
+    assert.strictEqual(result.keyid, 'test-ed25519-2026');
+  });
+
+  test('an unpinned verifier accepts 3.2 Base64 without overriding the trusted digest policy', async () => {
+    const now = 1776520800;
+    const url = 'https://seller.example.com/adcp/create_media_buy';
+    const body = '{"plan_id":"plan_3_2_unpinned"}';
+    const signed = signIntentionalNegativeVector(
+      { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
+      {
+        now: () => now,
+        windowSeconds: 300,
+        nonce: 'adcp-3-2-unpinned-nonce',
+        coverContentDigest: false,
+        binaryEncoding: 'rfc8941-base64',
+      }
+    );
 
     const result = await verifyRequestSignature(
       { method: 'POST', url, headers: signed.headers, body },
@@ -228,7 +276,7 @@ describe('AdCP 3.2 RFC 8941 binary profile', () => {
     assert.strictEqual(result.keyid, 'test-ed25519-2026');
   });
 
-  test('an explicit 3.2 required-digest capability rejects body signatures that omit Content-Digest', async () => {
+  test('an explicit 3.2 pin rejects body signatures that omit Content-Digest', async () => {
     const now = 1776520800;
     const url = 'https://seller.example.com/adcp/create_media_buy';
     const body = '{"amount":1}';
@@ -241,21 +289,23 @@ describe('AdCP 3.2 RFC 8941 binary profile', () => {
         coverContentDigest: false,
       }
     );
-    await assert.rejects(
-      () =>
-        verifyRequestSignature(
-          { method: 'POST', url, headers: signed.headers, body: '{"amount":999999}' },
-          {
-            capability: { supported: true, covers_content_digest: 'required', required_for: [] },
-            jwks: new StaticJwksResolver([publicJwk]),
-            replayStore: new InMemoryReplayStore(),
-            revocationStore: new InMemoryRevocationStore(),
-            now: () => now,
-            adcpVersion: '3.2-beta.0',
-          }
-        ),
-      err => err instanceof RequestSignatureError && err.code === 'request_signature_components_incomplete'
-    );
+    for (const adcpVersion of ['3.2-beta.0', '']) {
+      await assert.rejects(
+        () =>
+          verifyRequestSignature(
+            { method: 'POST', url, headers: signed.headers, body: '{"amount":999999}' },
+            {
+              capability: { supported: true, covers_content_digest: 'either', required_for: [] },
+              jwks: new StaticJwksResolver([publicJwk]),
+              replayStore: new InMemoryReplayStore(),
+              revocationStore: new InMemoryRevocationStore(),
+              now: () => now,
+              adcpVersion,
+            }
+          ),
+        err => err instanceof RequestSignatureError && err.code === 'request_signature_components_incomplete'
+      );
+    }
   });
 
   test('high-level 3.2 signer refuses an undigested body', () => {
