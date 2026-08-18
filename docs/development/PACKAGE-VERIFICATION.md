@@ -1,11 +1,14 @@
 # Package artifact verification
 
 The SDK ships a tree-shakeable dual ESM + CJS build with ~30 subpath exports.
-Two mechanical guards keep the publish artifact honest so packaging regressions
+Three mechanical guards keep the publish artifact honest so packaging regressions
 fail CI instead of reaching consumers.
 
-**How they run in CI** (both live in `.github/workflows/ci.yml`):
+**How they run in CI** (all three live in `.github/workflows/ci.yml`):
 
+- `check:package-size` is a fast, offline `npm pack --dry-run` audit, so it runs
+  after every `library-build`. It caps packed bytes, unpacked bytes, file count,
+  and the generated declaration sizes, and requires the exact schema façade.
 - `check:package` is cheap and offline, so it runs on **every PR** as a step in
   the `library-build` job.
 - `verify:package` does a live registry install, so it runs in the
@@ -37,13 +40,23 @@ Runs [`publint --strict`](https://publint.dev) and
 
 Requires a prior `npm run build:lib` (it inspects `dist/`).
 
+## `npm run check:package-size` — publish-size budgets
+
+`scripts/check-package-size.mjs` asks npm for the exact dry-run pack manifest
+and fails closed if its size metadata is missing. It enforces budgets for
+compressed bytes, installed bytes, and entry count, plus separate limits for
+the canonical generated schema declaration and its ESM façade. Because it runs
+unconditionally after `build:lib`, growth from any packaged source, generated
+schema, or copied cache is covered even when the live package smoke is skipped.
+The full `verify:package` smoke imports and runs the same checker.
+
 ### Why the build emits `.d.mts`
 
 The package is `type: commonjs`, so a `.d.ts` is a CJS-format declaration. The
 `import` condition resolves to `.mjs` (real ESM), so it needs an ESM-format
 declaration or attw reports "masquerading as CJS". `scripts/generate-dmts-declarations.ts`
-runs at the end of `build:lib`: it copies each `.d.ts` to `.d.mts` and appends
-explicit `.mjs` / `/index.mjs` extensions to relative specifiers (ESM
+runs at the end of `build:lib`: it normally copies each `.d.ts` to `.d.mts` and
+appends explicit `.mjs` / `/index.mjs` extensions to relative specifiers (ESM
 declaration resolution requires them) — the declaration-layer companion to the
 runtime import-fixers in `tsup.config.ts`. Each subpath's `exports` entry then
 carries per-condition types:
@@ -62,15 +75,32 @@ wildcard cleanly. Because those slices are never reached through an `import`
 condition, the generator **skips** emitting `.d.mts` for them (keyed off
 `per-tool-index.json`), trimming ~5.5 MB of otherwise-unreachable declarations.
 
+The generated Zod schema declaration is the other exception. Its fully
+inferred type graph is tens of MiB, so duplicating it byte-for-byte would make
+the installed package tens of MiB larger. The ESM declaration is instead an
+exact façade:
+
+```ts
+export * from './schemas.generated.js';
+```
+
+TypeScript's declaration extension substitution resolves that `.js` specifier
+to the canonical `schemas.generated.d.ts`, preserving the complete `.shape`,
+`.pick`, `z.input`, and `z.output` surface without re-annotating or weakening
+the public types. The generator and package-size audit both fail closed if the
+façade contract becomes unsafe.
+
 ## `npm run verify:package` — clean-room dual-format smoke
 
 `scripts/verify-package.mjs` packs a tarball, installs it plus its **required**
 peers pinned to their **range floors** into a throwaway dir under `os.tmpdir()`
 (outside the workspace, so npm resolution is honest and not monorepo-deduped),
-then loads `@adcp/sdk`, `@adcp/sdk/enums`, and `@adcp/sdk/server` through both a
-real ESM `import` and a real CJS `require`, asserting each loads and exposes a
-known runtime symbol. `server` is included so the `@a2a-js/sdk` peer gets real
-ESM/CJS load coverage through a dedicated entrypoint. Optional peers
+then loads the main, enums, server, testing, and schemas entry points through
+both a real ESM `import` and a real CJS `require`, asserting each loads and
+exposes a known runtime symbol. It also type-checks the exact generated schema
+surface from `.mts` and `.cts` consumers. `server` is included so the
+`@a2a-js/sdk` peer gets real ESM/CJS load coverage through a dedicated
+entrypoint. Optional peers
 (`peerDependenciesMeta`) are **not** installed — no tested subpath loads them,
 so pinning them would add only install weight and registry-flake surface. It
 uses `npm install` in the temp dir (never workspace pnpm/catalog) and cleans up

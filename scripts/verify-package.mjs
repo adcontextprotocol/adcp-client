@@ -6,10 +6,10 @@
  * script proves the packed tarball actually loads. It packs the package,
  * installs the tarball plus its required peerDependencies pinned to their
  * range floors into a throwaway directory in the OS temp dir, then loads
- * `@adcp/sdk`, `@adcp/sdk/enums`, and `@adcp/sdk/server` through both a real
- * ESM `import` and a real CJS `require`, asserting each exposes a known runtime
- * symbol. It also runs a modern MCP negotiation under Bun, whose ESM/CJS
- * interoperability differs from Node's.
+ * package entry points through both a real ESM `import` and a real CJS
+ * `require`, asserting each exposes a known runtime symbol. It also compiles
+ * the exact schema surface through both declaration formats and runs a modern
+ * MCP negotiation under Bun, whose ESM/CJS interoperability differs from Node's.
  *
  * Why a temp dir outside the repo: installing inside the workspace would let
  * the monorepo dedupe peers against the repo's own node_modules, so a missing
@@ -26,9 +26,9 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkPackageSize } from './check-package-size.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const MAX_PACKED_TARBALL_BYTES = 50 * 1024 * 1024;
 
 /** Lowest version a semver range accepts (first `||` clause, operators stripped). */
 function rangeFloor(range) {
@@ -68,6 +68,9 @@ try {
     JSON.stringify({ name: 'adcp-verify-consumer', version: '1.0.0', private: true }, null, 2)
   );
 
+  console.log('📏 Auditing publish size...');
+  checkPackageSize(REPO_ROOT);
+
   // Pack into the temp dir and locate the .tgz on disk. We deliberately do NOT
   // parse `npm pack --json` stdout: npm runs the `prepare` lifecycle during
   // pack and its banner pollutes stdout (even with --ignore-scripts on some npm
@@ -81,14 +84,8 @@ try {
   if (!tgz) throw new Error(`npm pack produced no .tgz in ${tmpDir}`);
   const tarballPath = path.join(tmpDir, tgz);
   const tarballBytes = statSync(tarballPath).size;
-  if (tarballBytes > MAX_PACKED_TARBALL_BYTES) {
-    throw new Error(
-      `packed tarball is ${(tarballBytes / 1024 / 1024).toFixed(1)} MiB; ` +
-        `budget is ${MAX_PACKED_TARBALL_BYTES / 1024 / 1024} MiB`
-    );
-  }
   console.log(`   → ${tgz}`);
-  console.log(`   ${(tarballBytes / 1024 / 1024).toFixed(1)} MiB (50 MiB budget)`);
+  console.log(`   ${(tarballBytes / 1024 / 1024).toFixed(1)} MiB`);
 
   const packedPaths = new Set(run('tar', ['-tf', tarballPath]).trim().split('\n'));
   const requiredGuides = [
@@ -123,6 +120,7 @@ try {
     { specifier: '@adcp/sdk/enums', symbol: 'EventTypeValues' },
     { specifier: '@adcp/sdk/server', symbol: 'A2AInvocationError' },
     { specifier: '@adcp/sdk/testing', symbol: 'mergeSeedProductLegacy' },
+    { specifier: '@adcp/sdk/schemas', symbol: 'CreativeAssetSchema' },
   ];
 
   // Shared by both generated smoke modules. A function declaration (not an
@@ -161,6 +159,50 @@ try {
   run('node', ['smoke.mjs'], { cwd: tmpDir, stdio: 'inherit' });
   console.log('🔍 CJS require:');
   run('node', ['smoke.cjs'], { cwd: tmpDir, stdio: 'inherit' });
+
+  const schemaTypeSmoke = [
+    "import { CreativeAssetSchema } from '@adcp/sdk/schemas';",
+    "import type { z } from 'zod';",
+    '',
+    'type IsAny<T> = 0 extends 1 & T ? true : false;',
+    'type Input = z.input<typeof CreativeAssetSchema>;',
+    'type Output = z.output<typeof CreativeAssetSchema>;',
+    'const schemaIsNotAny: IsAny<typeof CreativeAssetSchema> = false;',
+    'const shapeIsNotAny: IsAny<typeof CreativeAssetSchema.shape> = false;',
+    'const inputIsNotAny: IsAny<Input> = false;',
+    'const outputIsNotAny: IsAny<Output> = false;',
+    'const creativeId = CreativeAssetSchema.shape.creative_id;',
+    'const idOnly = CreativeAssetSchema.pick({ creative_id: true });',
+    'const parse = (input: Input): Output => CreativeAssetSchema.parse(input);',
+    'void [schemaIsNotAny, shapeIsNotAny, inputIsNotAny, outputIsNotAny, creativeId, idOnly, parse];',
+    '',
+  ].join('\n');
+  writeFileSync(path.join(tmpDir, 'smoke-types.mts'), schemaTypeSmoke);
+  writeFileSync(path.join(tmpDir, 'smoke-types.cts'), schemaTypeSmoke);
+  console.log('🔬 TypeScript Node16 declarations (ESM + CJS):');
+  // The generated declaration is 43 MiB and full dependency re-checking
+  // exceeds an 8 GiB heap. build:lib already checks its source graph; this
+  // consumer check resolves the packed bridge and instantiates its public
+  // schema types while skipping diagnostics internal to dependency .d.ts files.
+  const typecheckArgs = [
+    '--max-old-space-size=8192',
+    path.join(REPO_ROOT, 'node_modules', 'typescript', 'bin', 'tsc'),
+    '--noEmit',
+    '--strict',
+    '--skipLibCheck',
+    '--target',
+    'ES2022',
+    '--module',
+    'Node16',
+    '--moduleResolution',
+    'Node16',
+  ];
+  // Compile each format in its own process. Loading both copies of this exact
+  // 43 MiB inferred type graph at once can exceed an 8 GiB heap.
+  for (const fixture of ['smoke-types.mts', 'smoke-types.cts']) {
+    run(process.execPath, [...typecheckArgs, fixture], { cwd: tmpDir, stdio: 'inherit' });
+  }
+  console.log('  exact schema types resolve through both declaration formats');
 
   // Bun selects a different conditional-export path for dual ESM/CJS
   // dependencies than Node. Exercise the packed artifact through a real MCP
