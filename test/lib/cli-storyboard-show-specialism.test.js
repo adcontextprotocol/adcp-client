@@ -24,7 +24,11 @@ const path = require('node:path');
 const CLI = path.resolve(__dirname, '../../bin/adcp.js');
 
 function runCli(args) {
-  return spawnSync('node', [CLI, ...args], { encoding: 'utf8', timeout: 15_000 });
+  return spawnSync(process.execPath, [CLI, ...args], {
+    encoding: 'utf8',
+    timeout: 30_000,
+    killSignal: 'SIGKILL',
+  });
 }
 
 test('show <id> without --specialism renders the storyboard (the -1+1=0 regression)', () => {

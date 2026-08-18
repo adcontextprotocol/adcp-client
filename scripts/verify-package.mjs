@@ -91,7 +91,12 @@ try {
   console.log(`   ${(tarballBytes / 1024 / 1024).toFixed(1)} MiB (50 MiB budget)`);
 
   const packedPaths = new Set(run('tar', ['-tf', tarballPath]).trim().split('\n'));
-  const requiredGuides = ['package/docs/migration-12-to-13.md', 'package/MIGRATION-v8.md'];
+  const requiredGuides = [
+    'package/docs/migration-12-to-14.md',
+    'package/docs/migration-13-to-14.md',
+    'package/docs/migration-12-to-13.md',
+    'package/MIGRATION-v8.md',
+  ];
   for (const guide of requiredGuides) {
     if (!packedPaths.has(guide)) throw new Error(`packed migration guide is missing: ${guide}`);
   }

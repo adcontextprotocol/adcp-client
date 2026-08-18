@@ -15,8 +15,10 @@ import {
   type AuthInfo as ModernAuthInfo,
   type JsonSchemaType,
   type ResourceMetadata,
+  type RegisteredTool as ModernRegisteredTool,
   type StandardSchemaWithJSON,
   type ServerContext,
+  type Tool as ModernTool,
   type ToolAnnotations,
 } from '@modelcontextprotocol/server';
 import { toNodeHandler, toWebRequest, type NodeMcpRequestHandler } from '@modelcontextprotocol/node';
@@ -134,27 +136,27 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
   const adcpVersion = agentServer.getAdcpVersion();
   const activeMcpToolProfile = getMcpToolProfile(agentServer);
   const mediaBuyProfileTools = new Set<string>(MEDIA_BUY_MCP_TOOL_PROFILE);
+  const isInActiveDiscoveryProfile = (toolName: string): boolean =>
+    activeMcpToolProfile === 'all' || mediaBuyProfileTools.has(toolName);
   const modernToolDefinitions: Array<
     Omit<RegisteredToolDefinition, 'inputSchema' | 'outputSchema'> & {
       inputSchema?: StandardSchemaWithJSON;
       outputSchema?: StandardSchemaWithJSON;
     }
-  > = toolDefinitions
-    .filter(tool => activeMcpToolProfile === 'all' || mediaBuyProfileTools.has(tool.name))
-    .map(tool => {
-      const { inputSchema, outputSchema, ...definition } = tool;
-      return {
-        ...definition,
-        ...(inputSchema !== undefined && {
-          inputSchema: schemaForModernMcp(tool.name, inputSchema, adcpVersion, activeMcpToolProfile),
-        }),
-        // Output schemas can dwarf the input discovery surface and are not
-        // required for clients to form tool calls. Preserve an adopter's
-        // explicitly registered schema, but do not replace it with a bundled
-        // full AdCP response projection.
-        ...(outputSchema !== undefined && { outputSchema: outputSchema as StandardSchemaWithJSON }),
-      };
-    });
+  > = toolDefinitions.map(tool => {
+    const { inputSchema, outputSchema, ...definition } = tool;
+    return {
+      ...definition,
+      ...(inputSchema !== undefined && {
+        inputSchema: schemaForModernMcp(tool.name, inputSchema, adcpVersion, activeMcpToolProfile),
+      }),
+      // Output schemas can dwarf the input discovery surface and are not
+      // required for clients to form tool calls. Preserve an adopter's
+      // explicitly registered schema, but do not replace it with a bundled
+      // full AdCP response projection.
+      ...(outputSchema !== undefined && { outputSchema: outputSchema as StandardSchemaWithJSON }),
+    };
+  });
   const handler = createMcpHandler(
     async requestContext => {
       if (requestContext.requestInfo?.headers.get('mcp-method') === 'server/discover') {
@@ -170,6 +172,7 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
 
       const authInfo = toAdcpAuthInfo(requestContext.authInfo);
       const toolVisibility = new Map<string, boolean>();
+      const registeredTools = new Map<string, ModernRegisteredTool>();
       for (const tool of modernToolDefinitions) {
         const visible = await isRegisteredToolVisible(agentServer, { toolName: tool.name, authInfo });
         toolVisibility.set(tool.name, visible);
@@ -192,12 +195,49 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
           });
 
         if (tool.inputSchema !== undefined) {
-          modern.registerTool(tool.name, { ...config, inputSchema: tool.inputSchema }, async (args, ctx) =>
-            invoke((args ?? {}) as Record<string, unknown>, ctx)
+          registeredTools.set(
+            tool.name,
+            modern.registerTool(tool.name, { ...config, inputSchema: tool.inputSchema }, async (args, ctx) =>
+              invoke((args ?? {}) as Record<string, unknown>, ctx)
+            )
           );
         } else {
-          modern.registerTool(tool.name, config, async ctx => invoke({}, ctx));
+          registeredTools.set(
+            tool.name,
+            modern.registerTool(tool.name, config, async ctx => invoke({}, ctx))
+          );
         }
+      }
+
+      // Keep every authorized handler registered for direct compatibility
+      // calls, but make the role profile a discovery concern only. The
+      // low-level handler override is the public MCP SDK extension point for
+      // response shaping; tool dispatch continues through McpServer's own
+      // registered tools/call handler and validation pipeline.
+      if (registeredTools.size > 0) {
+        modern.server.setRequestHandler('tools/list', () => ({
+          tools: modernToolDefinitions
+            .filter(tool => toolVisibility.get(tool.name) === true && isInActiveDiscoveryProfile(tool.name))
+            .map(tool => {
+              const registered = registeredTools.get(tool.name)!;
+              return {
+                name: tool.name,
+                ...(tool.title !== undefined && { title: tool.title }),
+                ...(tool.description !== undefined && { description: tool.description }),
+                inputSchema: (modern.toolInputSchemaJson(tool.name) ?? {
+                  type: 'object',
+                  properties: {},
+                }) as unknown as ModernTool['inputSchema'],
+                ...(registered.outputSchemaJson !== undefined && { outputSchema: registered.outputSchemaJson }),
+                ...(tool.annotations !== undefined && { annotations: tool.annotations as ToolAnnotations }),
+                ...(tool._meta !== undefined && { _meta: tool._meta }),
+              };
+            }),
+          _meta: {
+            adcp_version: adcpVersion,
+            adcp_profile: activeMcpToolProfile,
+          },
+        }));
       }
 
       // `createMcpHandler` reconstructs the MCP v2 server for every request,
@@ -205,7 +245,11 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
       // when the opaque AdCP server is created.
       for (const resource of listMcpAppResources(agentServer)) {
         const linkedTools = toolDefinitions.filter(tool => linkedMcpAppResourceUri(tool) === resource.uri);
-        if (linkedTools.length > 0 && !linkedTools.some(tool => toolVisibility.get(tool.name) === true)) continue;
+        if (
+          linkedTools.length > 0 &&
+          !linkedTools.some(tool => toolVisibility.get(tool.name) === true && isInActiveDiscoveryProfile(tool.name))
+        )
+          continue;
         modern.registerResource(
           resource.name,
           resource.uri,

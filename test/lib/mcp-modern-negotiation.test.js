@@ -580,6 +580,7 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
   const { Client, StreamableHTTPClientTransport } = require('@modelcontextprotocol/client');
 
   async function listTools(mcpToolProfile) {
+    let legacyCalls = 0;
     const httpServer = serve(
       () =>
         createAdcpServer({
@@ -595,7 +596,10 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
             buyProducts: async () => ({ media_buy_id: 'mb-buy' }),
             acceptProposal: async () => ({ media_buy_id: 'mb-accept' }),
             controlMediaBuy: async () => ({ media_buy_id: 'mb-control', revision: 2 }),
-            getProducts: async () => ({ products: [], cache_scope: 'public' }),
+            getProducts: async () => {
+              legacyCalls++;
+              return { products: [], cache_scope: 'public' };
+            },
           },
           creative: {
             buildCreative: async () => ({ creative_manifest: { manifest_id: 'mf-1', assets: [] } }),
@@ -616,23 +620,34 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
     );
     try {
       await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`)));
-      return await client.listTools();
+      const listed = await client.listTools();
+      if (mcpToolProfile === undefined) {
+        await client.callTool({
+          name: 'get_products',
+          arguments: { buying_mode: 'brief', brief: 'legacy compatibility probe' },
+        });
+      }
+      return { listed, legacyCalls };
     } finally {
       await client.close().catch(() => {});
       await closeServer(httpServer);
     }
   }
 
-  const compact = await listTools();
+  const compactResult = await listTools();
+  const compact = compactResult.listed;
   const compactNames = compact.tools.map(tool => tool.name);
   assert.ok(compactNames.includes('list_products'));
   assert.ok(compactNames.includes('buy_products'));
   assert.ok(!compactNames.includes('get_products'));
   assert.ok(!compactNames.includes('build_creative'));
+  assert.equal(compactResult.legacyCalls, 1, 'a legacy tool hidden from discovery must remain directly callable');
   assert.ok(
     compactNames.every(name => MEDIA_BUY_MCP_TOOL_PROFILE.includes(name)),
     compactNames.join(', ')
   );
+  assert.equal(compact._meta.adcp_version, '3.2.0-beta.0');
+  assert.equal(compact._meta.adcp_profile, 'media-buy');
   assert.equal(
     compact.tools.find(tool => tool.name === 'request_proposals').inputSchema.$schema,
     'https://json-schema.org/draft/2020-12/schema'
@@ -651,7 +666,7 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
     'the default createAdcpServer surface must advertise inputs without full response schemas'
   );
 
-  const all = await listTools('all');
+  const all = (await listTools('all')).listed;
   const allNames = all.tools.map(tool => tool.name);
   assert.ok(allNames.includes('list_products'));
   assert.ok(allNames.includes('get_products'));
@@ -661,6 +676,8 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
     'https://json-schema.org/draft/2020-12/schema'
   );
   assert.doesNotMatch(all.tools.find(tool => tool.name === 'request_proposals').inputSchema.$id, /\/profiles\//);
+  assert.equal(all._meta.adcp_version, '3.2.0-beta.0');
+  assert.equal(all._meta.adcp_profile, 'all');
 });
 
 test('modern serving preserves an explicitly registered custom output schema', async t => {

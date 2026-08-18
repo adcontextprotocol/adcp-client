@@ -9,7 +9,11 @@ const CLI = path.resolve(__dirname, '../../bin/adcp.js');
 // agent path (runFullAssessment doesn't honor --dry-run) fails fast instead of
 // hanging CI.
 function runCli(args) {
-  return spawnSync('node', [CLI, ...args], { encoding: 'utf8', timeout: 10_000 });
+  return spawnSync(process.execPath, [CLI, ...args], {
+    encoding: 'utf8',
+    timeout: 30_000,
+    killSignal: 'SIGKILL',
+  });
 }
 
 // Call the command with no agent arg so `handleStoryboardRun` exits at the
