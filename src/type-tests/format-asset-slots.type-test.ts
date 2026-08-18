@@ -17,7 +17,7 @@ import type {
   RepeatableGroupSlot,
 } from '../lib/types/format-asset-slots';
 
-// --- Image: `formats` is canonical; 3.2 also permits extension fields ---
+// --- Image: `formats` is the canonical typed authoring field ---
 const goodImage: IndividualImageAssetSlot = {
   item_type: 'individual',
   asset_type: 'image',
@@ -33,13 +33,13 @@ const badImage: IndividualImageAssetSlot = {
   asset_id: 'hero',
   required: true,
   requirements: {
-    // Non-canonical extension fields are retained for forward compatibility.
+    // @ts-expect-error — noncanonical aliases stay runtime-permissive but are excluded from the typed authoring surface.
     file_types: ['jpg'],
   },
 };
 void badImage;
 
-// --- Video: milliseconds are canonical; extension fields remain allowed ---
+// --- Video: milliseconds are canonical on the typed authoring surface ---
 const goodVideo: IndividualVideoAssetSlot = {
   item_type: 'individual',
   asset_type: 'video',
@@ -54,7 +54,10 @@ const badVideoMinSeconds: IndividualVideoAssetSlot = {
   asset_type: 'video',
   asset_id: 'ad',
   required: true,
-  requirements: { min_duration_seconds: 6 },
+  requirements: {
+    // @ts-expect-error — use min_duration_ms.
+    min_duration_seconds: 6,
+  },
 };
 void badVideoMinSeconds;
 
@@ -63,17 +66,21 @@ const badVideoMaxSeconds: IndividualVideoAssetSlot = {
   asset_type: 'video',
   asset_id: 'ad',
   required: true,
-  requirements: { max_duration_seconds: 30 },
+  requirements: {
+    // @ts-expect-error — use max_duration_ms.
+    max_duration_seconds: 30,
+  },
 };
 void badVideoMaxSeconds;
 
-// --- Video: `containers` is canonical; extension fields remain allowed ---
+// --- Video: `containers` is the canonical typed authoring field ---
 const badVideoFileTypes: IndividualVideoAssetSlot = {
   item_type: 'individual',
   asset_type: 'video',
   asset_id: 'ad',
   required: true,
   requirements: {
+    // @ts-expect-error — use containers.
     file_types: ['mp4'],
   },
 };

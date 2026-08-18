@@ -680,7 +680,10 @@ function postProcessCreativeRuntimeConstraints(content: string): string {
       // slot keys while continuing to allow forward-compatible extension keys.
       // AssetVariantSchema is declared later in the generated module, so defer
       // resolving it until parse time to avoid a top-level TDZ reference.
-      .replace('assets: z.record(z.string(), z.unknown())', 'assets: CreativeAssetsSchema');
+      .replace(
+        /assets: z\.record\(z\.string\(\), (?:z\.unknown\(\)|z\.union\(\[AssetVariantSchema, z\.array\(AssetVariantSchema\)\]\))\)/,
+        'assets: CreativeAssetsSchema'
+      );
     if (constrainedAssets === schema.block) {
       throw new Error(`Unable to preserve creative asset constraints on ${schemaName}.`);
     }
@@ -2363,6 +2366,7 @@ export const __test__ = {
   postProcessForNullish,
   postProcessRecordIntersections,
   postProcessMarkerUnionObjectIntersections,
+  postProcessCreativeRuntimeConstraints,
   postProcessCanonicalFormatSlots,
   postProcessCreativeBriefRequiredDisclosures,
   postProcessObjectUnionIntersections,

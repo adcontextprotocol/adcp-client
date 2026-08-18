@@ -181,6 +181,7 @@ export const StandardScopeValues = ["attestation_verifier"] as const;
 export const StoryboardStatusValues = ["passing", "failing", "partial", "untested", "skipped", "not_selected", "unknown"] as const;
 export const TalentRoleValues = ["host", "guest", "creator", "cast", "narrator", "producer", "correspondent", "commentator", "analyst"] as const;
 export const TaskStatusValues = ["submitted", "working", "input-required", "completed", "canceled", "failed", "rejected", "auth-required", "unknown"] as const;
+export const TaskStatus2Values = ["rejected"] as const;
 export const TaskTypeValues = ["create_media_buy", "update_media_buy", "buy_products", "accept_proposal", "control_media_buy", "media_buy_delivery", "sync_creatives", "build_creative", "preview_creative", "activate_signal", "get_products", "request_proposals", "refine_proposals", "decline_proposals", "get_signals", "create_property_list", "update_property_list", "get_property_list", "list_property_lists", "delete_property_list", "sync_accounts", "get_account_financials", "get_creative_delivery", "sync_event_sources", "sync_audiences", "sync_catalogs", "log_event", "get_brand_identity", "search_brands", "get_rights", "acquire_rights", "update_rights", "sync_agent_notification_configs"] as const;
 export const TMPResponseTypeValues = ["activation", "catalog_items", "creative", "deal"] as const;
 export const TransportModeValues = ["walking", "cycling", "driving", "public_transport"] as const;

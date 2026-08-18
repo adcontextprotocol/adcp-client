@@ -62,6 +62,41 @@ function postProcessObjectUnionIntersections(input) {
   return runPostProcess('postProcessObjectUnionIntersections', input, '.zod-object-union-');
 }
 
+function postProcessCreativeRuntimeConstraints(input) {
+  return runPostProcess('postProcessCreativeRuntimeConstraints', input, '.zod-creative-runtime-');
+}
+
+for (const assetsExpression of [
+  'z.record(z.string(), z.unknown())',
+  'z.record(z.string(), z.union([AssetVariantSchema, z.array(AssetVariantSchema)]))',
+]) {
+  test(`postProcessCreativeRuntimeConstraints accepts ${assetsExpression}`, () => {
+    const output = postProcessCreativeRuntimeConstraints(`
+export const CreativeAssetSchema = z.object({
+  assets: ${assetsExpression}
+}).passthrough().and(z.union([V1CreativeNamedFormatReferenceSchema, V2CreativeCanonicalFormatKindSchema]));
+
+export const CreativeManifestSchema = z.object({
+  assets: ${assetsExpression}
+}).passthrough().and(z.union([NamedFormatManifestSchema, CanonicalFormatManifestSchema]));
+
+export const FormatReferenceStructuredObjectSchema = z.object({
+  agent_url: z.string()
+}).passthrough();
+
+export const SentinelSchema = z.string();
+`);
+
+    assert.equal((output.match(/assets: CreativeAssetsSchema/g) || []).length, 2);
+    assert.equal((output.match(/const CreativeAssetsSchema/g) || []).length, 1);
+    assert.doesNotMatch(output, /assets: z\.record/);
+    assert.doesNotMatch(output, /\.and\(z\.union\(\[(?:V1Creative|NamedFormatManifest)/);
+    assert.equal((output.match(/creative identity requires exactly one/g) || []).length, 2);
+    assert.match(output, /agent_url: z\.string\(\)\.regex/);
+    assert.match(output, /export const SentinelSchema = z\.string\(\);/);
+  });
+}
+
 test('postProcessForNullish keeps never optional constraints strict', () => {
   const output = postProcessForNullish(`
 export const ExampleSchema = z.object({

@@ -80,7 +80,10 @@ export function buildCreateMediaBuyRequest(
     accountRef?: AccountReference;
   } = {}
 ): Record<string, unknown> {
-  const minSpend = typeof pricingOption.min_spend_per_package === 'number' ? pricingOption.min_spend_per_package : 0;
+  const minSpend =
+    'min_spend_per_package' in pricingOption && typeof pricingOption.min_spend_per_package === 'number'
+      ? pricingOption.min_spend_per_package
+      : 0;
   const budget = options.budget || Math.max(1000, minSpend);
   const now = new Date();
   const startTime = new Date(now.getTime() + 24 * 60 * 60 * 1000); // Tomorrow
@@ -88,7 +91,8 @@ export function buildCreateMediaBuyRequest(
 
   const isAuction =
     !('fixed_price' in pricingOption) &&
-    (pricingOption.floor_price !== undefined || pricingOption.price_guidance !== undefined);
+    (('floor_price' in pricingOption && pricingOption.floor_price !== undefined) ||
+      ('price_guidance' in pricingOption && pricingOption.price_guidance !== undefined));
 
   const packageRequest: Record<string, unknown> = {
     product_id: product.product_id,
@@ -97,7 +101,7 @@ export function buildCreateMediaBuyRequest(
   };
 
   // Add bid_price if auction-based
-  if (isAuction && typeof pricingOption.floor_price === 'number') {
+  if (isAuction && 'floor_price' in pricingOption && typeof pricingOption.floor_price === 'number') {
     packageRequest.bid_price = pricingOption.floor_price * 1.5;
   }
 
