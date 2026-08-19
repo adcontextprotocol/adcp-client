@@ -1883,6 +1883,11 @@ export class SingleAgentClient {
     return this.resolvedAdcpVersion;
   }
 
+  /** Effective release pin emitted in protocol envelopes. @internal */
+  getWireAdcpVersion(): string {
+    return this.config.wireAdcpVersion ?? this.resolvedAdcpVersion;
+  }
+
   /**
    * Ensure MCP endpoint is discovered (lazy initialization)
    *

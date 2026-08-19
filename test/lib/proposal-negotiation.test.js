@@ -289,7 +289,7 @@ test('task failures/intermediate states surface before response fields and expir
   assert.equal(accepted, false);
 });
 
-test('AgentClient.refineProposals dispatches through the official MCP client with an idempotency key', async () => {
+test('AgentClient.refineProposals dispatches through the official MCP client with its configured wire pin', async () => {
   const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
   const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
   const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
@@ -308,7 +308,14 @@ test('AgentClient.refineProposals dispatches through the official MCP client wit
   }));
   server.registerTool(
     'refine_proposals',
-    { inputSchema: { idempotency_key: z.string(), refinements: z.array(z.any()) } },
+    {
+      inputSchema: {
+        adcp_version: z.string(),
+        adcp_major_version: z.number(),
+        idempotency_key: z.string(),
+        refinements: z.array(z.any()),
+      },
+    },
     async args => {
       captured = args;
       return {
@@ -331,11 +338,16 @@ test('AgentClient.refineProposals dispatches through the official MCP client wit
   await server.connect(serverTransport);
   const mcpClient = new Client({ name: 'Buyer', version: '1.0.0' });
   await mcpClient.connect(clientTransport);
-  const agent = AgentClient.fromMCPClient(mcpClient);
+  const agent = AgentClient.fromMCPClient(mcpClient, {
+    adcpVersion: '3.2.0-beta.2',
+    wireAdcpVersion: '3.2.0-beta.1',
+  });
 
   const result = await agent.refineProposals({ refinements: [revise()] });
   assert.equal(result.success, true);
   assert.match(captured.idempotency_key, /^[A-Za-z0-9_.:-]{16,255}$/);
+  assert.equal(captured.adcp_version, '3.2-beta.1');
+  assert.equal(captured.adcp_major_version, 3);
   assert.equal(captured.refinements[0].proposal_id, 'source-1');
 
   await mcpClient.close();

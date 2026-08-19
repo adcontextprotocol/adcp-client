@@ -126,7 +126,7 @@ function startReferenceVerifier({ replayCap = 1000 } = {}) {
 describe('request-signing: synthesize step expansion', () => {
   test('compliance loader synthesizes vectors from the selected frozen bundle', () => {
     const previousComplianceDir = process.env.ADCP_COMPLIANCE_DIR;
-    process.env.ADCP_COMPLIANCE_DIR = path.join('compliance', 'cache', '3.2.0-beta.1');
+    process.env.ADCP_COMPLIANCE_DIR = path.join('compliance', 'cache', '3.2.0-beta.2');
     let storyboards;
     try {
       storyboards = loadBundleStoryboards({

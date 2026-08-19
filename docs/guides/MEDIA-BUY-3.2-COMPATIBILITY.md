@@ -5,6 +5,10 @@ routes it can still **call**. A 3.2 seller should make the compact lifecycle the
 obvious path for new buyers without breaking a 3.0 or 3.1 buyer that already
 calls the established names.
 
+The SDK is pinned to the signed `3.2.0-beta.2` bundle. That exact prerelease
+supersedes beta.1 and includes canonical compact proposal and direct-buy
+storyboards through operational control and MediaBuy readback.
+
 ## MCP surface comparison
 
 The active 3.2 `media-buy` profile advertises these registered tools:
@@ -68,7 +72,7 @@ const platform = {
 createAdcpServerFromPlatform(platform, {
   name: 'seller',
   version: '1.0.0',
-  adcpVersion: '3.2.0-beta.1',
+  adcpVersion: '3.2.0-beta.2',
 });
 ```
 

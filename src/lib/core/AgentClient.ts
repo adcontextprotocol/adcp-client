@@ -295,6 +295,7 @@ export type TaskRequestFor<K extends AdcpTaskName> = TaskRequestTypeMap[K];
 export type InProcessAgentClientConfig = Pick<
   SingleAgentClientConfig,
   | 'adcpVersion'
+  | 'wireAdcpVersion'
   | 'versionEnvelope'
   | 'debug'
   | 'validation'
@@ -778,7 +779,11 @@ export class AgentClient {
     options?: ProposalRefinementTaskOptions
   ): Promise<TaskResult<RefineProposalsResponse>> {
     const { proposalRefinementCapabilities, ...taskOptions } = options ?? {};
-    const request = buildRefineProposalsRequest(params, proposalRefinementCapabilities);
+    const request = buildRefineProposalsRequest(
+      params,
+      proposalRefinementCapabilities,
+      this.client.getWireAdcpVersion()
+    );
     const result = (await this.client.executeTask(
       'refine_proposals' as never,
       request as never,

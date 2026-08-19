@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-08-18
+> Generated at: 2026-08-19
 > Library: @adcp/sdk v14.0.0-beta.2
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -1226,8 +1226,11 @@ Flow: `sync_catalogs → comply_test_controller → sync_catalogs → comply_tes
 **Seller fulfills a media buy with a clicks optimization goal (target CPC)** — Verifies that a seller advertising clicks in supported_optimization_metrics can accept a media buy whose metric-kind optimization_goal targets cost-per-click and reports clicks + cost_per_click on delivery. Lightweight sibling to the performance scenarios on the click-optimization side: sellers that don't advertise clicks as an optimization metric (rare — most do; pure brand sellers like broadcast TV upper-funnel video are the not_applicable population) grade not_applicable.
 Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery`
 
-**Seller completes the compact product lifecycle** — Verifies product discovery, proposal creation, finalization, and acceptance through the AdCP 3.2 compact lifecycle.
-Flow: `comply_test_controller → list_products → request_proposals → refine_proposals → accept_proposal`
+**Seller completes the compact direct-buy lifecycle** — Verifies published-offer discovery, direct purchase, revision-checked operational control, and authoritative readback through AdCP 3.2 compact tools.
+Flow: `comply_test_controller → list_products → buy_products → control_media_buy → get_media_buys`
+
+**Seller completes the compact product lifecycle** — Verifies product discovery, proposal creation, finalization, acceptance, operational control, and readback through the AdCP 3.2 compact lifecycle.
+Flow: `comply_test_controller → list_products → request_proposals → refine_proposals → accept_proposal → control_media_buy → get_media_buys`
 
 **Seller fulfills a video media buy with a completed_views optimization goal (target CPCV)** — Verifies that a seller advertising completed_views in supported_optimization_metrics can accept a media buy whose metric-kind optimization_goal targets completed views at a buyer-supplied view_duration_seconds, reject view_duration_seconds values not in the product's metric_optimization.supported_view_durations, and report completed_views + completion_rate on delivery. Sibling to reach_buy_flow on the video-completion side: sellers without video inventory (display-only DSPs, retail-media networks, audio-only sellers without video products) grade not_applicable.
 Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery`

@@ -12,6 +12,7 @@ const CLI = path.resolve(__dirname, '../../bin/adcp.js');
 
 const STORYBOARD_IDS = [
   'media_buy_seller/compact_product_lifecycle',
+  'media_buy_seller/compact_direct_buy_lifecycle',
   'media_buy_seller/declined_proposal_execution',
   'media_buy_seller/declined_proposal_refinement',
   'media_buy_seller/expired_proposal_execution',
@@ -58,10 +59,62 @@ test('the positive proposal lifecycle uses the compact tool sequence without leg
   assert.ok(storyboard);
 
   const businessTasks = tasks(storyboard).filter(task => task !== 'comply_test_controller');
-  assert.deepEqual(businessTasks, ['list_products', 'request_proposals', 'refine_proposals', 'accept_proposal']);
+  assert.deepEqual(businessTasks, [
+    'list_products',
+    'request_proposals',
+    'refine_proposals',
+    'accept_proposal',
+    'control_media_buy',
+    'get_media_buys',
+  ]);
   assert.ok(!storyboard.required_tools.includes('get_products'));
   assert.ok(!storyboard.required_tools.includes('create_media_buy'));
   assert.ok(!storyboard.required_tools.includes('update_media_buy'));
+});
+
+test('the direct-buy lifecycle uses only compact purchase, control, and readback tools', () => {
+  const storyboard = getComplianceStoryboardById('media_buy_seller/compact_direct_buy_lifecycle');
+  assert.ok(storyboard);
+
+  const businessTasks = tasks(storyboard).filter(task => task !== 'comply_test_controller');
+  assert.deepEqual(businessTasks, ['list_products', 'buy_products', 'control_media_buy', 'get_media_buys']);
+  assert.ok(!storyboard.required_tools.includes('get_products'));
+  assert.ok(!storyboard.required_tools.includes('create_media_buy'));
+  assert.ok(!storyboard.required_tools.includes('update_media_buy'));
+});
+
+test('both positive lifecycles chain seller-issued revisions into control and readback', () => {
+  const proposal = getComplianceStoryboardById('media_buy_seller/compact_product_lifecycle');
+  const direct = getComplianceStoryboardById('media_buy_seller/compact_direct_buy_lifecycle');
+  assert.ok(proposal);
+  assert.ok(direct);
+
+  const proposalSteps = new Map(steps(proposal).map(step => [step.id, step]));
+  assert.deepEqual(proposalSteps.get('accept_product_proposal').context_outputs, [
+    { key: 'accepted_media_buy_id', name: 'accepted_media_buy_id', path: 'media_buy_id' },
+    { key: 'accepted_media_buy_revision', name: 'accepted_media_buy_revision', path: 'revision' },
+    { key: 'accepted_media_buy_status', name: 'accepted_media_buy_status', path: 'media_buy_status' },
+  ]);
+  assert.equal(
+    proposalSteps.get('cap_accepted_proposal_daily_budget').sample_request.revision,
+    '$context.accepted_media_buy_revision'
+  );
+  assert.deepEqual(proposalSteps.get('read_controlled_proposal_buy').sample_request.media_buy_ids, [
+    '$context.proposal_controlled_media_buy_id',
+  ]);
+
+  const directSteps = new Map(steps(direct).map(step => [step.id, step]));
+  assert.equal(
+    directSteps.get('buy_compact_direct_product').sample_request.feed_version,
+    '$context.direct_feed_version'
+  );
+  assert.equal(
+    directSteps.get('cap_compact_direct_buy_daily_budget').sample_request.revision,
+    '$context.direct_buy_revision'
+  );
+  assert.deepEqual(directSteps.get('read_compact_direct_buy').sample_request.media_buy_ids, [
+    '$context.controlled_media_buy_id',
+  ]);
 });
 
 test('decline and expiry storyboards pin exact terminal-state sequences and errors', () => {
@@ -103,8 +156,15 @@ test('decline and expiry storyboards pin exact terminal-state sequences and erro
   assertTerminalError(expiredExecution, 'create_buy_from_expired_proposal', 'create_media_buy', 'PROPOSAL_EXPIRED');
 });
 
-test('every compact proposal mutation carries an explicit idempotency key', () => {
-  const mutationTasks = new Set(['request_proposals', 'refine_proposals', 'decline_proposals', 'accept_proposal']);
+test('every compact lifecycle mutation carries an explicit idempotency key', () => {
+  const mutationTasks = new Set([
+    'request_proposals',
+    'refine_proposals',
+    'decline_proposals',
+    'buy_products',
+    'accept_proposal',
+    'control_media_buy',
+  ]);
 
   for (const id of STORYBOARD_IDS) {
     const storyboard = getComplianceStoryboardById(id);
@@ -122,20 +182,38 @@ test('every compact proposal mutation carries an explicit idempotency key', () =
   }
 });
 
-test('the public CLI lists and renders the compact proposal lifecycle', () => {
+test('the public CLI lists and renders both complete compact lifecycles', () => {
   const listResult = runCli(['storyboard', 'list', '--json']);
   assert.equal(listResult.status, 0, listResult.stderr);
   const listing = JSON.parse(listResult.stdout);
-  assert.ok(listing.storyboards.some(storyboard => storyboard.id === STORYBOARD_IDS[0]));
+  for (const id of STORYBOARD_IDS.slice(0, 2)) {
+    assert.ok(listing.storyboards.some(storyboard => storyboard.id === id));
+  }
 
-  const showResult = runCli(['storyboard', 'show', STORYBOARD_IDS[0], '--json']);
-  assert.equal(showResult.status, 0, showResult.stderr);
-  const detail = JSON.parse(showResult.stdout);
-  assert.equal(detail.id, STORYBOARD_IDS[0]);
-  assert.deepEqual(
-    detail.phases
-      .flatMap(phase => phase.steps.map(step => step.task))
-      .filter(task => task !== 'comply_test_controller'),
-    ['list_products', 'request_proposals', 'refine_proposals', 'accept_proposal']
-  );
+  const expectedTasks = new Map([
+    [
+      STORYBOARD_IDS[0],
+      [
+        'list_products',
+        'request_proposals',
+        'refine_proposals',
+        'accept_proposal',
+        'control_media_buy',
+        'get_media_buys',
+      ],
+    ],
+    [STORYBOARD_IDS[1], ['list_products', 'buy_products', 'control_media_buy', 'get_media_buys']],
+  ]);
+  for (const [id, expected] of expectedTasks) {
+    const showResult = runCli(['storyboard', 'show', id, '--json']);
+    assert.equal(showResult.status, 0, showResult.stderr);
+    const detail = JSON.parse(showResult.stdout);
+    assert.equal(detail.id, id);
+    assert.deepEqual(
+      detail.phases
+        .flatMap(phase => phase.steps.map(step => step.task))
+        .filter(task => task !== 'comply_test_controller'),
+      expected
+    );
+  }
 });
