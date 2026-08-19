@@ -5101,6 +5101,7 @@ async function executeStep(
           responseProjection:
             effectiveStep.response_projection ??
             defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
+          mediaBuyLifecycleCompatibility: options.mediaBuyLifecycleCompatibility,
           signal: options.signal,
         });
       const run = await runStep(step.title, effectiveStep.task, async () => {

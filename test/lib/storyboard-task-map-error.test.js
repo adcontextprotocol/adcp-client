@@ -64,6 +64,94 @@ describe('executeStoryboardTask error normalization', () => {
   });
 });
 
+describe('executeStoryboardTask media-buy compatibility retries', () => {
+  test('reuses one generated idempotency key across rate-limit retries', async () => {
+    const calls = [];
+    let attempt = 0;
+    const coordinator = {
+      requestProposals: async request => {
+        calls.push(request);
+        if (attempt++ === 0) throw new Error('rate limit exceeded');
+        return { success: true, status: 'completed', data: { proposals: [] } };
+      },
+    };
+    const result = await executeStoryboardTask(
+      { negotiateMediaBuyLifecycle: async () => coordinator },
+      'request_proposals',
+      { brief: 'stable retry' },
+      { mediaBuyLifecycleCompatibility: { principalScope: 'storyboard-buyer' } }
+    );
+
+    assert.equal(result.success, true);
+    assert.equal(calls.length, 2);
+    assert.match(calls[0].idempotency_key, /^[A-Za-z0-9_.:-]{16,255}$/);
+    assert.equal(calls[1].idempotency_key, calls[0].idempotency_key);
+  });
+
+  test('compatibility mode preserves an explicit idempotency-key omission probe', async () => {
+    const calls = [];
+    const coordinator = {
+      requestProposals: async (request, _inputHandler, options) => {
+        calls.push({ request, options });
+        return { success: false, status: 'failed', error: 'idempotency_key is required' };
+      },
+    };
+
+    await executeStoryboardTask(
+      { negotiateMediaBuyLifecycle: async () => coordinator },
+      'request_proposals',
+      { brief: 'unkeyed compliance probe' },
+      {
+        mediaBuyLifecycleCompatibility: { principalScope: 'storyboard-buyer' },
+        skipIdempotencyAutoInject: true,
+      }
+    );
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].request.idempotency_key, undefined);
+    assert.equal(calls[0].options.skipIdempotencyAutoInject, true);
+  });
+
+  test('bounds compatibility coordinators cached per client', async () => {
+    let negotiations = 0;
+    let disposals = 0;
+    const client = {
+      negotiateMediaBuyLifecycle: async () => {
+        negotiations += 1;
+        const negotiation = negotiations;
+        return {
+          listProducts: async () => ({ success: true, data: { products: [] } }),
+          dispose: () => {
+            disposals += 1;
+            if (negotiation === 1) throw new Error('simulated dispose failure');
+          },
+        };
+      },
+    };
+    for (let index = 0; index < 40; index += 1) {
+      await executeStoryboardTask(
+        client,
+        'list_products',
+        {},
+        {
+          mediaBuyLifecycleCompatibility: { principalScope: `storyboard-buyer-${index}` },
+        }
+      );
+    }
+    await executeStoryboardTask(
+      client,
+      'list_products',
+      {},
+      {
+        mediaBuyLifecycleCompatibility: { principalScope: 'storyboard-buyer-0' },
+      }
+    );
+
+    assert.equal(negotiations, 41, 'the oldest coordinator should be evicted after the bounded cache fills');
+    assert.equal(disposals, 9, 'every evicted coordinator should release its task listeners and timers');
+  });
+});
+
 describe('executeStoryboardTask creative wire selection', () => {
   test('uses the canonical method for an explicit canonical 3.1 request without runner projection policy', async () => {
     const calls = [];

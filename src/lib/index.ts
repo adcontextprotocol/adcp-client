@@ -309,6 +309,21 @@ export {
   type InProcessAgentClientConfig,
 } from './core/AgentClient';
 export {
+  MediaBuyLifecycleCoordinator,
+  MediaBuyLifecycleCompatibilityError,
+  negotiateMediaBuyLifecycle,
+  type CompatibleProductsResponse,
+  type CompatibleProposalResponse,
+  type CompatibleAcceptProposalRequest,
+  type CompatibilityTaskResult,
+  type EstablishedProposalAcceptanceFallback,
+  type MediaBuyCompatibility,
+  type MediaBuyCompatibilityLoss,
+  type MediaBuyCompatibilityReport,
+  type MediaBuyLifecycle,
+  type MediaBuyLifecycleCoordinatorOptions,
+} from './media-buy/compatibility';
+export {
   ADCPMultiAgentClient,
   createADCPMultiAgentClient,
   type MultiAgentWebhookHandlerAdapter,

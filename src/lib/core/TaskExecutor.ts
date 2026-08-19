@@ -24,7 +24,7 @@ import {
 } from '../validation/client-hooks';
 import { formatIssues } from '../validation/schema-validator';
 import { ADCP_VERSION } from '../version';
-import { unwrapProtocolResponse, isTerminalAdcpError } from '../utils/response-unwrapper';
+import { unwrapProtocolResponse, isAdcpOperationSuccess } from '../utils/response-unwrapper';
 import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
 import { generateIdempotencyKey, requestUsesIdempotency, redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
@@ -395,12 +395,19 @@ function parseTimestamp(value: unknown): number {
  * Return the idempotency_key this task should use: the caller's value if
  * present, otherwise a fresh UUID v4 for mutating tasks, otherwise undefined.
  */
-function resolveIdempotencyKey(taskName: string, params: any): string | undefined {
+function resolveIdempotencyKey(taskName: string, params: any, serverVersion?: 'v2' | 'v3'): string | undefined {
   const callerSupplied =
     params && typeof params === 'object' && typeof params.idempotency_key === 'string'
       ? params.idempotency_key
       : undefined;
   if (callerSupplied) return callerSupplied;
+  // v2.5 mutations use buyer_ref as their stable replay identity. Request
+  // adaptation has already derived it from the caller's canonical key. Do
+  // not inject a fresh v3-only idempotency_key after adaptation: that makes
+  // identical retries differ on the wire and can defeat legacy dedupe.
+  if (serverVersion === 'v2') {
+    return params && typeof params === 'object' && typeof params.buyer_ref === 'string' ? params.buyer_ref : undefined;
+  }
   if (requestUsesIdempotency(taskName, params)) return generateIdempotencyKey();
   return undefined;
 }
@@ -718,9 +725,11 @@ export class TaskExecutor {
     // re-generating on retry defeats the whole point of the envelope.
     // `options.skipIdempotencyAutoInject` disables this for compliance testing
     // that needs to exercise server-side missing-key behavior.
-    const idempotencyKey = options.skipIdempotencyAutoInject ? undefined : resolveIdempotencyKey(taskName, params);
+    const idempotencyKey = options.skipIdempotencyAutoInject
+      ? undefined
+      : resolveIdempotencyKey(taskName, params, serverVersion);
     if (idempotencyKey) attachTaskDeadlineIdempotencyKey(options, idempotencyKey);
-    if (idempotencyKey && params && typeof params === 'object' && !params.idempotency_key) {
+    if (serverVersion !== 'v2' && idempotencyKey && params && typeof params === 'object' && !params.idempotency_key) {
       params = { ...params, idempotency_key: idempotencyKey };
     }
 
@@ -1419,7 +1428,7 @@ export class TaskExecutor {
    * Handles singular `error`, plural `errors` (AdCP schema), and `success: false`.
    */
   private isOperationSuccess(data: any, taskName?: string): boolean {
-    return data?.success !== false && !data?.error && !data?.adcp_error && !isTerminalAdcpError(data, taskName);
+    return isAdcpOperationSuccess(data, taskName);
   }
 
   /**
@@ -2497,7 +2506,7 @@ export class TaskExecutor {
    * Converts v2-style responses to v3 format before validation.
    * This ensures validation passes for both v2 and v3 server responses.
    */
-  private normalizeResponseForValidation(response: any, taskName: string): any {
+  private normalizeResponseForValidation(response: any, taskName: string, legacyWire = false): any {
     if (!response) return response;
 
     // Strip underscore-prefixed client-side annotations (`_message` is added
@@ -2511,8 +2520,14 @@ export class TaskExecutor {
         if (!k.startsWith('_')) stripped[k] = v;
       }
     } else {
-      return taskName === 'get_products' ? normalizeGetProductsResponse(response) : response;
+      return taskName === 'get_products' && !legacyWire ? normalizeGetProductsResponse(response) : response;
     }
+
+    // Validate v2.5 against the exact response that crossed the wire. Public
+    // canonicalization happens later in SingleAgentClient; applying it here
+    // would compare canonical `fixed_price`/`format_options` fields to the
+    // legacy schema that correctly requires `rate`/`is_fixed`/`format_ids`.
+    if (legacyWire) return stripped;
 
     switch (taskName) {
       case 'get_products':
@@ -2537,7 +2552,6 @@ export class TaskExecutor {
     const logViolations = this.config.logSchemaViolations !== false;
 
     try {
-      const normalizedResponse = this.normalizeResponseForValidation(response, taskName);
       // Validate against the version the agent actually spoke. Without
       // this, v2.5 sellers (e.g. Wonderstruck) return valid v2.5-shaped
       // responses and the SDK rejects them as malformed v3 — surfaces as
@@ -2548,6 +2562,7 @@ export class TaskExecutor {
         this.lastKnownServerVersion === 'v2'
           ? 'v2.5'
           : (this.responseAdcpVersionForValidation() ?? this.config.adcpVersion ?? ADCP_VERSION);
+      const normalizedResponse = this.normalizeResponseForValidation(response, taskName, validationVersion === 'v2.5');
       // TaskExecutor owns the user-facing log entry below. Passing debugLogs
       // into the lower-level hook would emit a second, unversioned duplicate.
       const outcome = validateIncomingResponse(taskName, normalizedResponse, mode, undefined, validationVersion);

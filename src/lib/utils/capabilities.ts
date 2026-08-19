@@ -6,6 +6,29 @@
  * the get_adcp_capabilities tool.
  */
 
+import { ConfigurationError } from '../errors';
+
+export const IDEMPOTENCY_REPLAY_TTL_SECONDS_MIN = 3_600;
+export const IDEMPOTENCY_REPLAY_TTL_SECONDS_MAX = 604_800;
+
+export function isValidIdempotencyReplayTtlSeconds(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= IDEMPOTENCY_REPLAY_TTL_SECONDS_MIN &&
+    value <= IDEMPOTENCY_REPLAY_TTL_SECONDS_MAX
+  );
+}
+
+export function assertValidIdempotencyReplayTtlSeconds(value: unknown): asserts value is number {
+  if (isValidIdempotencyReplayTtlSeconds(value)) return;
+  throw new ConfigurationError(
+    `adcp.idempotency.replay_ttl_seconds must be an integer between ` +
+      `${IDEMPOTENCY_REPLAY_TTL_SECONDS_MIN} and ${IDEMPOTENCY_REPLAY_TTL_SECONDS_MAX} seconds.`,
+    'adcp.idempotency.replay_ttl_seconds'
+  );
+}
+
 /**
  * Detected AdCP major version
  */
@@ -159,6 +182,13 @@ export interface AdcpCapabilities {
    */
   buildVersion?: string;
 
+  /**
+   * Release the seller actually selected for the capabilities request.
+   * This is the top-level response `adcp_version`, not the seller's build
+   * version or the complete set it advertises.
+   */
+  servedVersion?: string;
+
   /** Supported protocols */
   protocols: AdcpProtocol[];
 
@@ -170,6 +200,9 @@ export interface AdcpCapabilities {
 
   /** Compact media-buy lifecycle tools advertised by AdCP 3.2+ sellers. */
   mediaBuyLifecycleTools?: string[];
+
+  /** Tool names observed from authoritative protocol discovery. */
+  discoveredTools?: string[];
 
   /** Account management capabilities */
   account?: AccountCapabilities;
@@ -277,6 +310,17 @@ export const MEDIA_BUY_TOOLS = [
   'sync_event_sources',
   'sync_catalogs',
   'log_event',
+] as const;
+
+/** Compact lifecycle names whose presence in discovery is authoritative. */
+export const COMPACT_MEDIA_BUY_LIFECYCLE_TOOLS = [
+  'list_products',
+  'request_proposals',
+  'refine_proposals',
+  'decline_proposals',
+  'buy_products',
+  'accept_proposal',
+  'control_media_buy',
 ] as const;
 
 export const SIGNALS_TOOLS = ['get_signals', 'activate_signal'] as const;
@@ -403,9 +447,19 @@ function detectProtocolsFromTools(toolNames: Set<string>): AdcpProtocol[] {
  */
 export function augmentCapabilitiesFromTools(capabilities: AdcpCapabilities, tools: ToolInfo[]): AdcpCapabilities {
   const toolNames = new Set(tools.map(t => t.name));
+  const discoveredLifecycleTools = COMPACT_MEDIA_BUY_LIFECYCLE_TOOLS.filter(tool => toolNames.has(tool));
+  const withLifecycleTools = {
+    ...capabilities,
+    discoveredTools: [...toolNames],
+    ...(discoveredLifecycleTools.length > 0 && {
+      mediaBuyLifecycleTools: [
+        ...new Set([...(capabilities.mediaBuyLifecycleTools ?? []), ...discoveredLifecycleTools]),
+      ],
+    }),
+  };
   const hasComplianceTool = COMPLIANCE_TOOLS.some(t => toolNames.has(t));
-  if (!hasComplianceTool || capabilities.protocols.includes('compliance_testing')) {
-    return capabilities;
+  if (!hasComplianceTool || withLifecycleTools.protocols.includes('compliance_testing')) {
+    return withLifecycleTools;
   }
   console.error(
     `[AdCP] Agent exposes comply_test_controller but omits the \`compliance_testing\` capability block ` +
@@ -413,8 +467,8 @@ export function augmentCapabilitiesFromTools(capabilities: AdcpCapabilities, too
       `— not \`supported_protocols\`. The SDK is treating the agent as compliance-capable for this request.`
   );
   return {
-    ...capabilities,
-    protocols: [...capabilities.protocols, 'compliance_testing'],
+    ...withLifecycleTools,
+    protocols: [...withLifecycleTools.protocols, 'compliance_testing'],
   };
 }
 
@@ -488,6 +542,8 @@ export function buildSyntheticV3Capabilities(tools: ToolInfo[]): AdcpCapabilitie
     majorVersions: [3],
     protocols,
     features,
+    mediaBuyLifecycleTools: COMPACT_MEDIA_BUY_LIFECYCLE_TOOLS.filter(tool => toolNames.has(tool)),
+    discoveredTools: [...toolNames],
     extensions: [],
     _synthetic: true,
   };
@@ -567,6 +623,7 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
     ? (response.adcp.supported_versions as unknown[]).filter((v): v is string => typeof v === 'string')
     : undefined;
   const buildVersion = typeof response.adcp?.build_version === 'string' ? response.adcp.build_version : undefined;
+  const servedVersion = typeof response.adcp_version === 'string' ? response.adcp_version : undefined;
 
   // Per AdCP 3.0, `compliance_testing` is declared as a top-level
   // capability block, not as a value in `supported_protocols`. Normalize
@@ -617,9 +674,24 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
   // supports mutating tools. Absence is surfaced downstream as a fail-closed
   // error in getIdempotencyReplayTtlSeconds() — we deliberately do NOT default.
   let idempotency: IdempotencyCapabilities | undefined;
-  const rawTtl = response.adcp?.idempotency?.replay_ttl_seconds;
-  if (typeof rawTtl === 'number' && Number.isFinite(rawTtl) && rawTtl > 0) {
-    idempotency = { replayTtlSeconds: rawTtl };
+  const rawIdempotency = response.adcp?.idempotency;
+  if (rawIdempotency !== undefined) {
+    if (!isPlainObject(rawIdempotency) || typeof rawIdempotency.supported !== 'boolean') {
+      throw new ConfigurationError(
+        'adcp.idempotency.supported must explicitly declare whether replay protection is available.',
+        'adcp.idempotency.supported'
+      );
+    }
+    const rawTtl = rawIdempotency.replay_ttl_seconds;
+    if (rawIdempotency.supported) {
+      assertValidIdempotencyReplayTtlSeconds(rawTtl);
+      idempotency = { replayTtlSeconds: rawTtl };
+    } else if (rawTtl !== undefined) {
+      throw new ConfigurationError(
+        'adcp.idempotency.replay_ttl_seconds must be absent when replay protection is unsupported.',
+        'adcp.idempotency.replay_ttl_seconds'
+      );
+    }
   }
 
   return {
@@ -627,6 +699,7 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
     majorVersions,
     supportedVersions,
     buildVersion,
+    servedVersion,
     protocols,
     specialisms,
     features,

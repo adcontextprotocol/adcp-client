@@ -102,6 +102,9 @@ const SUCCESS_PAYLOAD_FIELD_GROUPS_BY_TOOL: Readonly<Record<string, readonly (re
   report_usage: [['accepted']],
   get_account_financials: [['account', 'currency', 'period', 'timezone']],
   get_products: [['products'], ['unchanged']],
+  request_proposals: [['outcome', 'proposals', 'products']],
+  refine_proposals: [['results', 'products']],
+  decline_proposals: [['results']],
   list_creative_formats: [['formats']],
   create_media_buy: [['media_buy_id', 'packages']],
   update_media_buy: [['media_buy_id']],
@@ -198,6 +201,16 @@ export function isTerminalAdcpError(response: unknown, toolName?: string): boole
     return !hasAdvisorySuccessPayload(obj, toolName);
   }
   return false;
+}
+
+/**
+ * Check whether an extracted AdCP operation payload represents success.
+ * A transport task may be `completed` while its operation payload is terminally
+ * unsuccessful, so callers must evaluate both layers.
+ */
+export function isAdcpOperationSuccess(response: unknown, toolName?: string): boolean {
+  const obj = response as Record<string, unknown> | null | undefined;
+  return obj?.success !== false && !obj?.error && !obj?.adcp_error && !isTerminalAdcpError(response, toolName);
 }
 
 /**

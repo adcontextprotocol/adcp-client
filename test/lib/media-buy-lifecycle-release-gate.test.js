@@ -1,0 +1,622 @@
+process.env.NODE_ENV = 'test';
+
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { z } = require('zod');
+const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
+const express = require('express');
+
+const { AgentClient } = require('../../dist/lib/index.js');
+const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server.js');
+const { createA2AAdapter } = require('../../dist/lib/server/a2a-adapter.js');
+const { validateRequest, validateResponse, formatIssues } = require('../../dist/lib/validation/index.js');
+const { createTestProduct } = require('./test-fixtures.js');
+
+const ACCOUNT = { account_id: 'release-gate-account' };
+const BRAND = { domain: 'buyer.example' };
+const START = '2027-01-01T00:00:00Z';
+const END = '2027-02-01T00:00:00Z';
+const PASSTHROUGH_INPUT = z.object({}).passthrough();
+
+function assertSchema(direction, tool, payload, version) {
+  const outcome =
+    direction === 'request' ? validateRequest(tool, payload, version) : validateResponse(tool, payload, version);
+  assert.equal(outcome.valid, true, `${version} ${tool} ${direction} schema failure: ${formatIssues(outcome.issues)}`);
+}
+
+function toolResult(tool, data, version) {
+  assertSchema('response', tool, data, version);
+  return {
+    content: [{ type: 'text', text: JSON.stringify(data) }],
+    structuredContent: data,
+  };
+}
+
+async function withHonestEstablishedSeller(version, run) {
+  const calls = [];
+  const mutations = [];
+  const replays = new Map();
+  const product = createTestProduct({
+    format_ids: [{ agent_url: 'https://creative.adcontextprotocol.org', id: 'display_300x250' }],
+  });
+  const proposal = {
+    proposal_id: 'legacy-proposal-1',
+    name: 'Legacy proposal',
+    proposal_status: 'committed',
+    expires_at: '2099-12-31T23:59:59Z',
+    allocations: [{ product_id: product.product_id, pricing_option_id: 'po-1', allocation_percentage: 100 }],
+  };
+  const mediaBuy = revision => ({
+    media_buy_id: 'legacy-media-buy-1',
+    status: revision > 1 ? 'active' : 'pending_creatives',
+    packages: [],
+    revision,
+    currency: 'USD',
+    total_budget: 1000,
+    confirmed_at: '2027-01-01T00:00:00Z',
+  });
+
+  const server = new McpServer({ name: `honest-${version}-seller`, version: '1.0.0' });
+  const register = (tool, handler) => {
+    server.registerTool(tool, { inputSchema: PASSTHROUGH_INPUT }, async args => {
+      assertSchema('request', tool, args, version);
+      calls.push({ tool, args: structuredClone(args) });
+      return handler(args);
+    });
+  };
+  const mutate = (tool, args, build) => {
+    const key = args.idempotency_key;
+    assert.equal(typeof key, 'string', `${tool} must carry an idempotency key`);
+    const fingerprint = JSON.stringify(args);
+    const replay = replays.get(`${tool}:${key}`);
+    if (replay) {
+      if (replay.fingerprint === fingerprint) return toolResult(tool, replay.data, version);
+      return {
+        isError: true,
+        content: [{ type: 'text', text: 'idempotency key reused with changed payload' }],
+        structuredContent: {
+          adcp_error: {
+            code: 'IDEMPOTENCY_CONFLICT',
+            message: 'idempotency key reused with changed payload',
+            recovery: 'terminal',
+          },
+        },
+      };
+    }
+    const data = build();
+    replays.set(`${tool}:${key}`, { fingerprint, data });
+    mutations.push({ tool, key, args: structuredClone(args) });
+    return toolResult(tool, data, version);
+  };
+
+  register('get_adcp_capabilities', () => {
+    const data = {
+      adcp: {
+        major_versions: [3],
+        idempotency: { supported: true, replay_ttl_seconds: 86400 },
+        ...(version.startsWith('3.1') && { supported_versions: ['3.0', '3.1'], build_version: version }),
+        ...(version.startsWith('3.2') && {
+          supported_versions: ['3.0', '3.1', '3.2-beta.2'],
+          build_version: version,
+        }),
+      },
+      supported_protocols: ['media_buy'],
+      media_buy: {
+        ...(version.startsWith('3.1') && { features: { canonical_creatives: true } }),
+      },
+      ...(version.startsWith('3.0') && {
+        account: {
+          require_operator_auth: false,
+          required_for_products: false,
+          sandbox: true,
+          supported_billing: ['operator'],
+        },
+      }),
+    };
+    return toolResult('get_adcp_capabilities', data, version);
+  });
+  register('get_products', args => {
+    const data =
+      args.buying_mode === 'wholesale'
+        ? {
+            products: [product],
+            cache_scope: 'public',
+            wholesale_feed_version: 'legacy-feed-1',
+            pricing_version: 'legacy-price-1',
+            pagination: { has_more: false },
+          }
+        : { products: [], proposals: [proposal], cache_scope: 'account' };
+    return toolResult('get_products', data, version);
+  });
+  register('create_media_buy', args => mutate('create_media_buy', args, () => mediaBuy(1)));
+  register('update_media_buy', args => mutate('update_media_buy', args, () => mediaBuy(args.revision + 1)));
+  register('get_media_buys', () => toolResult('get_media_buys', { media_buys: [mediaBuy(2)] }, version));
+  register('get_media_buy_delivery', () =>
+    toolResult(
+      'get_media_buy_delivery',
+      {
+        reporting_period: { start: START, end: END },
+        currency: 'USD',
+        media_buy_deliveries: [],
+      },
+      version
+    )
+  );
+
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const mcp = new Client({ name: `compact-buyer-for-${version}`, version: '1.0.0' });
+  await Promise.all([mcp.connect(clientTransport), server.connect(serverTransport)]);
+  const buyer = AgentClient.fromMCPClient(mcp, {
+    adcpVersion: '3.2.0-beta.2',
+    validation: { requests: 'strict', responses: 'strict' },
+  });
+  try {
+    await run({ buyer, calls, mutations, product });
+  } finally {
+    await Promise.allSettled([mcp.close(), server.close()]);
+  }
+}
+
+async function withHonestV25Seller(run) {
+  const version = 'v2.5';
+  const calls = [];
+  const mutations = [];
+  const replays = new Map();
+  const product = createTestProduct({
+    format_ids: [{ agent_url: 'https://creative.adcontextprotocol.org', id: 'display_300x250' }],
+  });
+  const server = new McpServer({ name: 'honest-v2.5-seller', version: '1.0.0' });
+  const register = (tool, handler) => {
+    server.registerTool(tool, { inputSchema: PASSTHROUGH_INPUT }, async args => {
+      assertSchema('request', tool, args, version);
+      calls.push({ tool, args: structuredClone(args) });
+      return handler(args);
+    });
+  };
+  const mutate = (tool, args, build) => {
+    const key = `${tool}:${args.buyer_ref ?? args.media_buy_id}`;
+    const fingerprint = JSON.stringify(args);
+    const replay = replays.get(key);
+    if (replay) {
+      if (replay.fingerprint === fingerprint) return toolResult(tool, replay.data, version);
+      return {
+        isError: true,
+        content: [{ type: 'text', text: 'buyer_ref reused with changed payload' }],
+        structuredContent: {
+          errors: [{ code: 'invalid_request', message: 'buyer_ref reused with changed payload' }],
+        },
+      };
+    }
+    const data = build();
+    replays.set(key, { fingerprint, data });
+    mutations.push({ tool, key, args: structuredClone(args) });
+    return toolResult(tool, data, version);
+  };
+
+  register('get_products', () => toolResult('get_products', { products: [product] }, version));
+  register('create_media_buy', args =>
+    mutate('create_media_buy', args, () => ({
+      media_buy_id: 'v25-media-buy-1',
+      buyer_ref: args.buyer_ref ?? args.media_buy_id,
+      packages: [],
+    }))
+  );
+  register('update_media_buy', args =>
+    mutate('update_media_buy', args, () => ({
+      media_buy_id: 'v25-media-buy-1',
+      buyer_ref: args.buyer_ref ?? args.media_buy_id,
+      affected_packages: [],
+    }))
+  );
+  register('get_media_buy_delivery', () =>
+    toolResult(
+      'get_media_buy_delivery',
+      {
+        reporting_period: { start: START, end: END },
+        currency: 'USD',
+        media_buy_deliveries: [],
+      },
+      version
+    )
+  );
+
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const mcp = new Client({ name: 'compact-buyer-for-v2.5', version: '1.0.0' });
+  await Promise.all([mcp.connect(clientTransport), server.connect(serverTransport)]);
+  const buyer = AgentClient.fromMCPClient(mcp, {
+    adcpVersion: '3.2.0-beta.2',
+    allowV2: true,
+    validation: { requests: 'strict', responses: 'strict' },
+  });
+  try {
+    await run({ buyer, calls, mutations, product });
+  } finally {
+    await Promise.allSettled([mcp.close(), server.close()]);
+  }
+}
+
+test('3.2 compact facade preserves the honest v2.5 direct subset and types unavailable capabilities', async () => {
+  await withHonestV25Seller(async ({ buyer, calls, mutations, product }) => {
+    const lifecycle = await buyer.negotiateMediaBuyLifecycle({
+      principalScope: 'release-gate-buyer',
+      allowedLosses: ['feed_version_not_atomic', 'pricing_version_not_atomic', 'revision_not_atomic'],
+    });
+    assert.equal(lifecycle.negotiated_version, '2.5');
+    assert.equal(lifecycle.lifecycle, 'established');
+    const listed = await lifecycle.listProducts({ brand: BRAND });
+    assert.equal(listed.success, true, JSON.stringify(listed));
+    assert.equal(listed.data.products[0].product_id, product.product_id);
+
+    const intent = {
+      idempotency_key: 'v25-direct-release-gate-0001',
+      account: ACCOUNT,
+      brand: BRAND,
+      feed_version: 'v25-unversioned-feed',
+      purchases: [{ product_id: product.product_id, pricing_option_id: 'po-1', budget: 1000 }],
+      start_time: START,
+      end_time: END,
+    };
+    const first = await lifecycle.buyProducts(intent);
+    const replay = await lifecycle.buyProducts(intent);
+    assert.equal(first.success, true, JSON.stringify(first));
+    assert.equal(replay.success, true, JSON.stringify(replay));
+    assert.equal(mutations.filter(call => call.tool === 'create_media_buy').length, 1);
+
+    const paused = await lifecycle.controlMediaBuy({
+      idempotency_key: 'v25-pause-release-gate-0001',
+      account: ACCOUNT,
+      media_buy_id: 'v25-media-buy-1',
+      revision: 1,
+      paused: true,
+    });
+    assert.equal(paused.success, true, JSON.stringify(paused));
+    assert.deepEqual(paused.compatibility.losses, ['revision_not_atomic']);
+    await assert.rejects(
+      lifecycle.getMediaBuyDelivery({
+        account: ACCOUNT,
+        media_buy_ids: ['v25-media-buy-1'],
+        start_date: '2027-01-01',
+        end_date: '2027-01-02',
+      }),
+      error => error.code === 'UNSUPPORTED_FEATURE' && error.feature === 'media_buy_delivery_readback'
+    );
+
+    for (const operation of [
+      () => lifecycle.listProducts({ brand: BRAND, max_results: 1 }),
+      () => lifecycle.requestProposals({ brief: 'test' }),
+      () => lifecycle.getMediaBuys({ account: ACCOUNT }),
+      () =>
+        lifecycle.controlMediaBuy({
+          account: ACCOUNT,
+          media_buy_id: 'v25-media-buy-1',
+          revision: 1,
+          canceled: true,
+        }),
+    ]) {
+      await assert.rejects(operation(), error => error.code === 'UNSUPPORTED_FEATURE');
+    }
+    assert.equal(calls[0].tool, 'get_products');
+    assert.equal(calls[0].args.buying_mode, undefined);
+    assert.equal(calls.find(call => call.tool === 'create_media_buy').args.idempotency_key, undefined);
+    assert.equal(calls.find(call => call.tool === 'create_media_buy').args.buyer_ref, intent.idempotency_key);
+  });
+});
+
+for (const version of ['3.0.24', '3.1.15', '3.2.0-beta.2']) {
+  test(`3.2 compact facade preserves the complete ${version} direct lifecycle over honest MCP wire`, async () => {
+    await withHonestEstablishedSeller(version, async ({ buyer, calls, mutations }) => {
+      const lifecycle = await buyer.negotiateMediaBuyLifecycle({
+        principalScope: 'release-gate-buyer',
+        allowedLosses: ['feed_version_not_atomic', 'pricing_version_not_atomic'],
+      });
+      const listed = await lifecycle.listProducts({ account: ACCOUNT, brand: BRAND, max_results: 1 });
+      assert.equal(listed.success, true, JSON.stringify(listed));
+      assert.equal(lifecycle.lifecycle, 'established');
+      assert.equal(
+        lifecycle.negotiated_version,
+        version.startsWith('3.2') ? '3.2-beta.2' : version.startsWith('3.1') ? '3.1' : '3.0'
+      );
+      assert.equal(listed.data.feed_version, 'legacy-feed-1');
+      assert.equal(listed.data.pricing_version, 'legacy-price-1');
+      assert.equal(listed.data.products.length, 1, JSON.stringify(listed.data));
+      assert.equal(listed.data.products[0].product_id, 'test-product-1');
+      assert.equal(listed.data.products[0].format_options.length, 1);
+
+      const purchase = {
+        product_id: 'test-product-1',
+        pricing_option_id: 'po-1',
+        budget: 1000,
+        agency_estimate_number: 'AE-1',
+        context: { buyer_ref: 'stable-package-reference' },
+        start_time: START,
+        end_time: END,
+        ext: {},
+        impressions: 10_000,
+        pacing: 'even',
+        targeting_overlay: {},
+        ...(!version.startsWith('3.0') && {
+          format_option_refs: [
+            {
+              scope: 'product',
+              format_option_id: listed.data.products[0].format_options[0].format_option_id,
+            },
+          ],
+        }),
+      };
+      const intent = {
+        idempotency_key: `direct-${version}-0001`,
+        account: ACCOUNT,
+        brand: BRAND,
+        feed_version: listed.data.feed_version,
+        pricing_version: listed.data.pricing_version,
+        purchases: [purchase],
+        start_time: START,
+        end_time: END,
+        ...(version.startsWith('3.2') && { total_budget: { amount: 1000, currency: 'USD' } }),
+        context: { buyer_ref: 'stable-buyer-reference' },
+      };
+      const first = await lifecycle.buyProducts(intent);
+      const replay = await lifecycle.buyProducts(intent);
+      assert.equal(first.success, true);
+      assert.equal(replay.success, true);
+      assert.equal(mutations.filter(call => call.tool === 'create_media_buy').length, 1);
+      assert.deepEqual(first.compatibility.losses, ['feed_version_not_atomic', 'pricing_version_not_atomic']);
+
+      const conflict = await lifecycle.buyProducts({
+        ...intent,
+        purchases: [{ ...intent.purchases[0], budget: 1100 }],
+      });
+      assert.equal(conflict.success, false);
+      assert.equal(mutations.filter(call => call.tool === 'create_media_buy').length, 1);
+
+      const pause = await lifecycle.controlMediaBuy({
+        idempotency_key: `pause-${version}-0001`,
+        account: ACCOUNT,
+        media_buy_id: 'legacy-media-buy-1',
+        revision: 1,
+        paused: true,
+      });
+      assert.equal(pause.success, true);
+      assert.equal(pause.data.revision, 2);
+      const readback = await lifecycle.getMediaBuys({ account: ACCOUNT, media_buy_ids: ['legacy-media-buy-1'] });
+      const delivery = await lifecycle.getMediaBuyDelivery({
+        account: ACCOUNT,
+        media_buy_ids: ['legacy-media-buy-1'],
+        start_date: '2027-01-01',
+        end_date: '2027-01-02',
+      });
+      assert.equal(readback.data.media_buys[0].media_buy_id, 'legacy-media-buy-1');
+      assert.equal(delivery.data.currency, 'USD');
+
+      const getProductsWire = calls.find(call => call.tool === 'get_products').args;
+      assert.equal(getProductsWire.buying_mode, 'wholesale');
+      assert.deepEqual(getProductsWire.pagination, { max_results: 1 });
+      assert.deepEqual(getProductsWire.account, ACCOUNT);
+      assert.deepEqual(getProductsWire.brand, BRAND);
+      const createWire = calls.find(call => call.tool === 'create_media_buy').args;
+      assert.equal(createWire.purchases, undefined);
+      assert.equal(createWire.feed_version, undefined);
+      assert.equal(createWire.pricing_version, undefined);
+      assert.equal(createWire.packages[0].product_id, 'test-product-1');
+      assert.equal(createWire.context.buyer_ref, 'stable-buyer-reference');
+      assert.equal(createWire.packages[0].context.buyer_ref, 'stable-package-reference');
+      assert.equal(createWire.packages[0].agency_estimate_number, 'AE-1');
+      assert.equal(createWire.packages[0].start_time, START);
+      assert.equal(createWire.packages[0].end_time, END);
+      assert.deepEqual(createWire.packages[0].ext, {});
+      assert.equal(createWire.packages[0].impressions, 10_000);
+      assert.equal(createWire.packages[0].pacing, 'even');
+      assert.deepEqual(createWire.packages[0].targeting_overlay, {});
+      if (version.startsWith('3.0')) assert.equal(createWire.packages[0].format_option_refs, undefined);
+      else assert.deepEqual(createWire.packages[0].format_option_refs, purchase.format_option_refs);
+    });
+  });
+
+  test(`3.2 compact facade preserves ordinary ${version} proposal execution with explicit losses`, async () => {
+    await withHonestEstablishedSeller(version, async ({ buyer, calls, mutations }) => {
+      const lifecycle = await buyer.negotiateMediaBuyLifecycle({
+        principalScope: 'release-gate-buyer',
+        allowedLosses: [
+          'proposal_terms_digest_not_enforced',
+          'proposal_terms_digest_unavailable',
+          'proposal_snapshot_not_immutable',
+        ],
+      });
+      const proposed = await lifecycle.requestProposals({
+        idempotency_key: `request-${version}-0001`,
+        account: ACCOUNT,
+        brand: BRAND,
+        brief: 'Reach readers with display inventory',
+        criteria: {
+          offer_filters: {
+            is_fixed_price: true,
+            required_performance_standards: [
+              {
+                metric: 'viewability',
+                threshold: 0.7,
+                vendor: { domain: 'measurement.example' },
+              },
+            ],
+            ...(!version.startsWith('3.0') && {
+              required_vendor_metrics: [{ vendor: { domain: 'measurement.example' } }],
+            }),
+          },
+        },
+      });
+      assert.equal(proposed.success, true, JSON.stringify(proposed));
+      assert.equal(proposed.data.proposals.length, 1, JSON.stringify(proposed.data));
+      assert.equal(proposed.data.proposals[0].proposal_id, 'legacy-proposal-1');
+      assert.equal(proposed.data.proposals[0].terms_digest, undefined);
+
+      const accepted = await lifecycle.acceptProposal({
+        idempotency_key: `accept-${version}-0001`,
+        account: ACCOUNT,
+        proposal_id: 'legacy-proposal-1',
+        total_budget: { amount: 1000, currency: 'USD' },
+        established_fallback: { brand: BRAND, start_time: START, end_time: END },
+      });
+      assert.equal(accepted.success, true);
+      assert.deepEqual(accepted.compatibility.losses, [
+        'proposal_terms_digest_not_enforced',
+        'proposal_terms_digest_unavailable',
+        'proposal_snapshot_not_immutable',
+      ]);
+      assert.equal(mutations.filter(call => call.tool === 'create_media_buy').length, 1);
+      const proposalWire = calls.find(call => call.tool === 'create_media_buy').args;
+      assert.equal(proposalWire.proposal_id, 'legacy-proposal-1');
+      assert.equal(proposalWire.proposal_terms_digest, undefined);
+      assert.equal(proposalWire.established_fallback, undefined);
+      assert.deepEqual(proposalWire.brand, BRAND);
+      assert.equal(proposalWire.start_time, START);
+      assert.equal(proposalWire.end_time, END);
+      const proposalReadWire = calls.find(
+        call => call.tool === 'get_products' && call.args.buying_mode === 'brief'
+      ).args;
+      assert.equal(proposalReadWire.filters.is_fixed_price, true);
+      assert.equal(proposalReadWire.filters.required_performance_standards[0].vendor.domain, 'measurement.example');
+      if (version.startsWith('3.0')) assert.equal(proposalReadWire.filters.required_vendor_metrics, undefined);
+      else assert.equal(proposalReadWire.filters.required_vendor_metrics[0].vendor.domain, 'measurement.example');
+    });
+  });
+}
+
+test('the same compact-first buyer facade projects established direct and proposal lifecycles over official A2A', async () => {
+  const calls = [];
+  const product = createTestProduct({
+    format_ids: [{ agent_url: 'https://creative.adcontextprotocol.org', id: 'display_300x250' }],
+  });
+  const adcp = createAdcpServer({
+    name: 'a2a-established-release-gate',
+    version: '1.0.0',
+    adcpVersion: '3.1.15',
+    capabilities: { supported_versions: ['3.0', '3.1'] },
+    validation: { requests: 'strict', responses: 'strict' },
+    mediaBuy: {
+      getProducts: async params => {
+        calls.push({ tool: 'get_products', args: structuredClone(params) });
+        if (params.buying_mode === 'brief') {
+          return {
+            products: [],
+            proposals: [
+              {
+                proposal_id: 'a2a-legacy-proposal-1',
+                name: 'A2A legacy proposal',
+                proposal_status: 'committed',
+                expires_at: '2099-12-31T23:59:59Z',
+                allocations: [
+                  { product_id: product.product_id, pricing_option_id: 'po-1', allocation_percentage: 100 },
+                ],
+              },
+            ],
+            cache_scope: 'account',
+          };
+        }
+        return {
+          products: [product],
+          cache_scope: 'public',
+          wholesale_feed_version: 'a2a-feed-1',
+          pricing_version: 'a2a-price-1',
+        };
+      },
+      createMediaBuy: async params => {
+        calls.push({ tool: 'create_media_buy', args: structuredClone(params) });
+        return {
+          media_buy_id: 'a2a-media-buy-1',
+          status: 'pending_creatives',
+          packages: [],
+          revision: 1,
+          currency: 'USD',
+          total_budget: 1000,
+          confirmed_at: '2027-01-01T00:00:00Z',
+        };
+      },
+    },
+  });
+  const app = express();
+  app.use(express.json());
+  const server = app.listen(0);
+  server.keepAliveTimeout = 60_000;
+  await new Promise(resolve => server.once('listening', resolve));
+  const url = `http://127.0.0.1:${server.address().port}/a2a`;
+  createA2AAdapter({
+    server: adcp,
+    async authenticate() {
+      return { token: 'release-gate', clientId: 'compact-buyer', scopes: ['media_buy'] };
+    },
+    agentCard: {
+      name: 'A2A established release gate',
+      description: 'Established lifecycle transport fixture',
+      url,
+      version: '1.0.0',
+      provider: { organization: 'AdCP test', url: 'https://adcontextprotocol.org' },
+      securitySchemes: {},
+    },
+  }).mount(app);
+
+  try {
+    const buyer = new AgentClient(
+      { id: 'a2a-release-gate', name: 'A2A release gate', agent_uri: url, protocol: 'a2a' },
+      { adcpVersion: '3.2.0-beta.2', validation: { requests: 'strict', responses: 'strict' } }
+    );
+    const lifecycle = await buyer.negotiateMediaBuyLifecycle({
+      principalScope: 'release-gate-buyer',
+      allowedLosses: [
+        'feed_version_not_atomic',
+        'pricing_version_not_atomic',
+        'proposal_terms_digest_not_enforced',
+        'proposal_terms_digest_unavailable',
+        'proposal_snapshot_not_immutable',
+      ],
+    });
+    const listed = await lifecycle.listProducts({ account: ACCOUNT, brand: BRAND });
+    assert.equal(listed.success, true, JSON.stringify(listed));
+    assert.equal(lifecycle.lifecycle, 'established');
+    assert.equal(listed.data.feed_version, 'a2a-feed-1');
+
+    const bought = await lifecycle.buyProducts({
+      idempotency_key: 'a2a-direct-release-gate-0001',
+      account: ACCOUNT,
+      brand: BRAND,
+      feed_version: listed.data.feed_version,
+      pricing_version: listed.data.pricing_version,
+      purchases: [{ product_id: product.product_id, pricing_option_id: 'po-1', budget: 1000 }],
+      start_time: START,
+      end_time: END,
+    });
+    assert.equal(bought.success, true, JSON.stringify(bought));
+    const proposed = await lifecycle.requestProposals({
+      idempotency_key: 'a2a-proposal-request-gate-0001',
+      account: ACCOUNT,
+      brand: BRAND,
+      brief: 'Reach readers with display inventory',
+    });
+    assert.equal(proposed.success, true, JSON.stringify(proposed));
+    assert.equal(proposed.data.proposals[0].proposal_id, 'a2a-legacy-proposal-1');
+    const accepted = await lifecycle.acceptProposal({
+      idempotency_key: 'a2a-proposal-accept-gate-0001',
+      account: ACCOUNT,
+      proposal_id: 'a2a-legacy-proposal-1',
+      total_budget: { amount: 1000, currency: 'USD' },
+      established_fallback: { brand: BRAND, start_time: START, end_time: END },
+    });
+    assert.equal(accepted.success, true, JSON.stringify(accepted));
+    assert.deepEqual(accepted.compatibility.losses, [
+      'proposal_terms_digest_not_enforced',
+      'proposal_terms_digest_unavailable',
+      'proposal_snapshot_not_immutable',
+    ]);
+    assert.deepEqual(
+      calls.map(call => call.tool),
+      ['get_products', 'create_media_buy', 'get_products', 'create_media_buy']
+    );
+    assert.equal(calls[1].args.packages[0].product_id, product.product_id);
+    assert.equal(calls[3].args.proposal_id, 'a2a-legacy-proposal-1');
+  } finally {
+    await new Promise((resolve, reject) => {
+      server.close(error => (error ? reject(error) : resolve()));
+      server.closeIdleConnections();
+    });
+  }
+});

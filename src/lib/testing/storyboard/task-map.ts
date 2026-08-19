@@ -10,7 +10,9 @@
 import type { TaskResult } from '../types';
 import type { AdcpErrorInfo } from '../../core/ConversationTypes';
 import { isTerminalAdcpError, readExtractionPath } from '../../utils/response-unwrapper';
+import { generateIdempotencyKey } from '../../utils/idempotency';
 import { BUILD_ASSETS_FROM_FORMAT_DIRECTIVE, findUnresolvedCreativeAssetDirectives } from './creative-assets';
+import type { MediaBuyLifecycleCoordinatorOptions } from '../../media-buy/compatibility';
 
 /**
  * Map of AdCP task names to SingleAgentClient method names.
@@ -88,6 +90,55 @@ const LEGACY_CREATIVE_TASK_TO_METHOD: Readonly<Record<string, string>> = {
   sync_creatives: 'syncCreativesLegacy',
   list_creatives: 'listCreativesLegacy',
 };
+
+const COMPATIBILITY_COORDINATOR_METHODS: Readonly<Record<string, string>> = {
+  list_products: 'listProducts',
+  request_proposals: 'requestProposals',
+  refine_proposals: 'refineProposals',
+  decline_proposals: 'declineProposals',
+  buy_products: 'buyProducts',
+  accept_proposal: 'acceptProposal',
+  control_media_buy: 'controlMediaBuy',
+  get_media_buys: 'getMediaBuys',
+  get_media_buy_delivery: 'getMediaBuyDelivery',
+};
+
+const compatibilityCoordinators = new WeakMap<object, Map<string, Promise<any>>>();
+const MAX_COMPATIBILITY_COORDINATORS_PER_CLIENT = 32;
+
+function compatibilityCoordinator(client: any, options: MediaBuyLifecycleCoordinatorOptions): Promise<any> {
+  let byOptions = compatibilityCoordinators.get(client);
+  if (!byOptions) {
+    byOptions = new Map();
+    compatibilityCoordinators.set(client, byOptions);
+  }
+  const key = JSON.stringify({
+    preferredLifecycle: options.preferredLifecycle ?? 'auto',
+    allowedLosses: [...(options.allowedLosses ?? [])].sort(),
+    principalScope: options.principalScope,
+  });
+  const existing = byOptions.get(key);
+  if (existing) {
+    byOptions.delete(key);
+    byOptions.set(key, existing);
+    return existing;
+  }
+  const created = Promise.resolve(client.negotiateMediaBuyLifecycle(options));
+  byOptions.set(key, created);
+  while (byOptions.size > MAX_COMPATIBILITY_COORDINATORS_PER_CLIENT) {
+    const oldest = byOptions.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    const evicted = byOptions.get(oldest);
+    byOptions.delete(oldest);
+    if (evicted) {
+      void evicted.then(coordinator => coordinator.dispose?.()).catch(() => undefined);
+    }
+  }
+  void created.catch(() => {
+    if (byOptions!.get(key) === created) byOptions!.delete(key);
+  });
+  return created;
+}
 
 /**
  * Schema-compliance steps grade seller evidence before SDK convenience
@@ -200,6 +251,7 @@ export async function executeStoryboardTask(
     skipIdempotencyAutoInject?: boolean;
     skipAccountValidation?: boolean;
     responseProjection?: 'raw';
+    mediaBuyLifecycleCompatibility?: MediaBuyLifecycleCoordinatorOptions;
     signal?: AbortSignal;
   } = {}
 ): Promise<TaskResult> {
@@ -233,6 +285,24 @@ export async function executeStoryboardTask(
     legacyMethodName && taskName !== 'get_products' && !forceRawProjection
       ? withLegacyCreativeWireHint(params)
       : params;
+  const compatibilityMethod = opts.mediaBuyLifecycleCompatibility
+    ? COMPATIBILITY_COORDINATOR_METHODS[taskName]
+    : undefined;
+  const compatibilityMutation = new Set([
+    'request_proposals',
+    'refine_proposals',
+    'decline_proposals',
+    'buy_products',
+    'accept_proposal',
+    'control_media_buy',
+  ]).has(taskName);
+  const stableCallParams =
+    compatibilityMethod &&
+    compatibilityMutation &&
+    !opts.skipIdempotencyAutoInject &&
+    typeof callParams.idempotency_key !== 'string'
+      ? { ...callParams, idempotency_key: generateIdempotencyKey() }
+      : callParams;
 
   // Only pass TaskOptions when a flag is actually set — avoids changing
   // behavior for the common path that relies on method defaults.
@@ -246,6 +316,15 @@ export async function executeStoryboardTask(
 
   let result;
   const invoke = async () => {
+    if (compatibilityMethod) {
+      const coordinator = await compatibilityCoordinator(client, opts.mediaBuyLifecycleCompatibility!);
+      if (typeof coordinator[compatibilityMethod] !== 'function') {
+        throw new Error(`Media-buy compatibility coordinator does not implement ${compatibilityMethod}`);
+      }
+      return taskOptions
+        ? coordinator[compatibilityMethod](stableCallParams, undefined, taskOptions)
+        : coordinator[compatibilityMethod](stableCallParams);
+    }
     if (methodName && typeof client[methodName] === 'function') {
       // Typed methods take (params, inputHandler?, options?). Pass options
       // only when set, otherwise they take their defaults.

@@ -1061,6 +1061,40 @@ function parseAgentOptions(args) {
   // NOT verify the assertion; if state is not actually seeded, scenarios
   // fail naturally on first stateful step. Spec: adcp-client#1626.
   const assertsSeededState = args.includes('--asserts-seeded-state');
+  const mediaBuyCompatibilityLossesIdx = args.indexOf('--media-buy-compat-losses');
+  const mediaBuyCompatibilityLossesValue =
+    mediaBuyCompatibilityLossesIdx !== -1 &&
+    mediaBuyCompatibilityLossesIdx + 1 < args.length &&
+    !args[mediaBuyCompatibilityLossesIdx + 1].startsWith('--')
+      ? args[mediaBuyCompatibilityLossesIdx + 1]
+      : (args.find(arg => arg.startsWith('--media-buy-compat-losses='))?.slice('--media-buy-compat-losses='.length) ??
+        null);
+  const forceEstablishedMediaBuyLifecycle = args.includes('--force-established-media-buy-lifecycle');
+  const mediaBuyPrincipalScopeIdx = args.indexOf('--media-buy-principal-scope');
+  const mediaBuyPrincipalScopeEqArg = args.find(arg => arg.startsWith('--media-buy-principal-scope='));
+  const mediaBuyPrincipalScopeValue =
+    mediaBuyPrincipalScopeIdx !== -1 &&
+    mediaBuyPrincipalScopeIdx + 1 < args.length &&
+    !args[mediaBuyPrincipalScopeIdx + 1].startsWith('--')
+      ? args[mediaBuyPrincipalScopeIdx + 1]
+      : (mediaBuyPrincipalScopeEqArg?.slice('--media-buy-principal-scope='.length) ?? null);
+  if ((mediaBuyPrincipalScopeIdx !== -1 || mediaBuyPrincipalScopeEqArg !== undefined) && !mediaBuyPrincipalScopeValue) {
+    console.error('Error: --media-buy-principal-scope requires a non-empty value.');
+    process.exit(2);
+  }
+  const mediaBuyLifecycleCompatibility =
+    args.includes('--media-buy-lifecycle-compat') || forceEstablishedMediaBuyLifecycle
+      ? {
+          preferredLifecycle: forceEstablishedMediaBuyLifecycle ? 'established' : 'auto',
+          allowedLosses: mediaBuyCompatibilityLossesValue
+            ? mediaBuyCompatibilityLossesValue
+                .split(',')
+                .map(value => value.trim())
+                .filter(Boolean)
+            : [],
+          principalScope: mediaBuyPrincipalScopeValue || `adcp-cli-run-${randomBytes(16).toString('hex')}`,
+        }
+      : undefined;
 
   // Webhook-receiver flags are captured here solely so their values are excluded
   // from `positionalArgs`. The authoritative parse lives in
@@ -1164,6 +1198,8 @@ function parseAgentOptions(args) {
     localAgentValue,
     formatValue,
     summaryOutputValue,
+    mediaBuyCompatibilityLossesValue,
+    mediaBuyPrincipalScopeValue,
     fileIndex !== -1 ? file : null,
     testKitIndex !== -1 ? testKitPath : null,
     summaryFileFlagValue,
@@ -1187,6 +1223,7 @@ function parseAgentOptions(args) {
     allowHttp,
     noSandbox,
     assertsSeededState,
+    mediaBuyLifecycleCompatibility,
     positionalArgs,
     localAgent: localAgentValue,
     format: formatValue,
@@ -2002,6 +2039,20 @@ RUN OPTIONS (full assessment):
                       not verify the assertion — scenarios still fail
                       naturally if state isn't actually present
                       (#1626).
+  --media-buy-lifecycle-compat
+                      Route compact media-buy storyboard steps through the
+                      SDK compatibility coordinator so the same storyboard can
+                      exercise established v2.5–3.2 sellers.
+  --media-buy-compat-losses LOSSES
+                      Comma-separated guarantee losses explicitly accepted by
+                      that coordinator (for example feed_version_not_atomic).
+  --media-buy-principal-scope SCOPE
+                      Stable, non-secret principal or tenant identity used to
+                      scope legacy proposal snapshots. A per-run value is
+                      generated when omitted.
+  --force-established-media-buy-lifecycle
+                      Force the coordinator's established lane on a dual-
+                      surface 3.2 seller. Implies --media-buy-lifecycle-compat.
   --summary-output PATH
                       Write a narrow, schema-stable summary artifact
                       to PATH (JSON: { schema_version, passed, failed,
@@ -2836,6 +2887,9 @@ async function handleStoryboardRun(args) {
     ...(fileSchemaRoot && { schemaRoot: fileSchemaRoot }),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
+    ...(opts.mediaBuyLifecycleCompatibility && {
+      mediaBuyLifecycleCompatibility: opts.mediaBuyLifecycleCompatibility,
+    }),
     ...(mergedRunHeaders && { headers: mergedRunHeaders }),
     ...(loadedTestKit && { test_kit: loadedTestKit }),
   };
@@ -3670,13 +3724,21 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
       createAgent,
       storyboards: storyboardsSpec,
       compliance: resolveOptions,
-      ...(opts.complianceVersion || opts.schemaRoot || opts.noSandbox || opts.assertsSeededState || opts.loadedTestKit
+      ...(opts.complianceVersion ||
+      opts.schemaRoot ||
+      opts.noSandbox ||
+      opts.assertsSeededState ||
+      opts.mediaBuyLifecycleCompatibility ||
+      opts.loadedTestKit
         ? {
             runStoryboardOptions: {
               ...(opts.complianceVersion && !opts.complianceDir && { adcpVersion: opts.complianceVersion }),
               ...(opts.schemaRoot && { schemaRoot: opts.schemaRoot }),
               ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
               ...(opts.assertsSeededState && { assertsSeededState: true }),
+              ...(opts.mediaBuyLifecycleCompatibility && {
+                mediaBuyLifecycleCompatibility: opts.mediaBuyLifecycleCompatibility,
+              }),
               ...(opts.loadedTestKit && { test_kit: opts.loadedTestKit }),
             },
           }
@@ -4094,6 +4156,9 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     ...(opts.schemaRoot && { schemaRoot: opts.schemaRoot }),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
+    ...(opts.mediaBuyLifecycleCompatibility && {
+      mediaBuyLifecycleCompatibility: opts.mediaBuyLifecycleCompatibility,
+    }),
     ...(opts.loadedTestKit && { test_kit: opts.loadedTestKit }),
   };
 
@@ -4358,6 +4423,9 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
     ...(opts.schemaRoot && { schemaRoot: opts.schemaRoot }),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
+    ...(opts.mediaBuyLifecycleCompatibility && {
+      mediaBuyLifecycleCompatibility: opts.mediaBuyLifecycleCompatibility,
+    }),
     ...(opts.loadedTestKit && { test_kit: opts.loadedTestKit }),
   };
 
@@ -4564,6 +4632,9 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     ...(webhookReceiverOpts ?? {}),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
+    ...(opts.mediaBuyLifecycleCompatibility && {
+      mediaBuyLifecycleCompatibility: opts.mediaBuyLifecycleCompatibility,
+    }),
     ...(mergedAssessmentHeaders && { headers: mergedAssessmentHeaders }),
     ...(loadedTestKit && { test_kit: loadedTestKit }),
     ...(opts.complianceVersion && { version: opts.complianceVersion }),
@@ -4709,8 +4780,16 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
 
 async function handleStoryboardStepCmd(args) {
   const { getComplianceStoryboardById, runStoryboardStep } = await import('../dist/lib/testing/storyboard/index.js');
-  const { authToken, authScheme, protocolFlag, jsonOutput, positionalArgs, complianceVersion, schemaRoot } =
-    parseAgentOptions(args);
+  const {
+    authToken,
+    authScheme,
+    protocolFlag,
+    jsonOutput,
+    positionalArgs,
+    complianceVersion,
+    schemaRoot,
+    mediaBuyLifecycleCompatibility,
+  } = parseAgentOptions(args);
   const { resolveOptions } = parseComplianceSelection(args);
 
   enforceStrictFlags(args, warnRemovedFlags(args));
@@ -4766,6 +4845,9 @@ async function handleStoryboardStepCmd(args) {
     request,
     ...(complianceVersion && { adcpVersion: complianceVersion }),
     ...(schemaRoot && { schemaRoot }),
+    ...(mediaBuyLifecycleCompatibility && {
+      mediaBuyLifecycleCompatibility,
+    }),
     ...buildResolvedAuthOption({
       resolvedAuth,
       resolvedAuthScheme,

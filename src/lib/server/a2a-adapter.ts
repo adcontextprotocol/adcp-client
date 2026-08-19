@@ -616,7 +616,7 @@ function a2aSkillToServerToolNames(skill: string): string[] {
 
 const DEFAULT_MODES = ['application/json'] as const;
 const DEFAULT_PROTOCOL_VERSION = '0.3.0';
-const PUBLIC_AGENT_CARD_EXCLUDED_SKILLS = new Set(['get_adcp_capabilities', 'comply_test_controller']);
+const PUBLIC_AGENT_CARD_EXCLUDED_SKILLS = new Set(['comply_test_controller']);
 
 /**
  * Derive one `AgentSkill` per registered AdCP tool. Skills without
@@ -658,6 +658,16 @@ function filterPublicAgentCardSkills(skills: AgentSkill[]): AgentSkill[] {
 function buildAgentCard(server: AdcpServer, overrides: A2AAgentCardOverrides): AgentCard {
   const tools = listRegisteredTools(server);
   const skills = filterPublicAgentCardSkills(overrides.skills ?? deriveSkills(tools));
+  // Capability discovery is an invocable AdCP skill and is required for safe
+  // version/lifecycle selection. Keep it visible even when sellers override
+  // their business-skill descriptions. Unlike native A2A JSON-RPC methods,
+  // every published skill here is callable through message/send.
+  if (
+    tools.includes('get_adcp_capabilities') &&
+    !skills.some(skill => skill.id === 'get_adcp_capabilities' || skill.name === 'get_adcp_capabilities')
+  ) {
+    skills.push(...deriveSkills(['get_adcp_capabilities']));
+  }
 
   const card: AgentCard = {
     name: overrides.name,

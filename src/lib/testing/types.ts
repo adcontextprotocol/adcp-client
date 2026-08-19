@@ -90,6 +90,13 @@ export interface TestOptions {
    */
   adcpVersion?: AdcpVersion | (string & {});
   /**
+   * Route compact media-buy storyboard steps through the SDK compatibility
+   * coordinator. This lets the same compact-first storyboard exercise native
+   * 3.2 sellers and established v2.5–3.2 sellers without task-name branching.
+   * Mutating guarantee losses remain fail-closed unless named here.
+   */
+  mediaBuyLifecycleCompatibility?: import('../media-buy/compatibility').MediaBuyLifecycleCoordinatorOptions;
+  /**
    * Optional wire-only AdCP version envelope override. Validation and schema
    * selection continue to use `adcpVersion`; request envelopes use this value.
    * Intended for hosted stable-line badges backed by prerelease caches.

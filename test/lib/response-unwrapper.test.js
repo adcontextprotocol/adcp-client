@@ -1302,6 +1302,23 @@ describe('Response Unwrapper', () => {
       assert.strictEqual(isAdcpSuccess(partialSuccess, 'report_usage'), true);
     });
 
+    test('compact media-buy success discriminators preserve advisory errors[]', () => {
+      const advisory = [{ code: 'PARTIAL_AVAILABILITY', message: 'One alternative was unavailable' }];
+      const cases = [
+        [
+          'request_proposals',
+          { outcome: 'proposed', status: 'completed', proposals: [], products: [], errors: advisory },
+        ],
+        ['refine_proposals', { results: [], products: [], errors: advisory }],
+        ['decline_proposals', { results: [], errors: advisory }],
+      ];
+
+      for (const [toolName, response] of cases) {
+        assert.strictEqual(hasAdvisorySuccessPayload(response, toolName), true, toolName);
+        assert.strictEqual(isTerminalAdcpError(response, toolName), false, toolName);
+      }
+    });
+
     test('explicit terminal status wins over advisory success fields', () => {
       const terminalPayload = {
         status: 'failed',

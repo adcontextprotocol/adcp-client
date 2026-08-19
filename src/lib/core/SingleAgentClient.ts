@@ -172,6 +172,7 @@ import {
   resolveFeature,
   listDeclaredFeatures,
   TASK_FEATURE_MAP,
+  assertValidIdempotencyReplayTtlSeconds,
 } from '../utils/capabilities';
 
 import { normalizeRequestParams } from '../utils/request-normalizer';
@@ -6784,6 +6785,7 @@ export class SingleAgentClient {
         // advertises get_adcp_capabilities but can't actually serve it).
         if (
           error instanceof AuthenticationRequiredError ||
+          error instanceof ConfigurationError ||
           error instanceof TaskTimeoutError ||
           isAbortOrTimeoutError(error)
         ) {
@@ -6953,7 +6955,10 @@ export class SingleAgentClient {
    */
   async getIdempotencyReplayTtlSeconds(): Promise<number | undefined> {
     const capabilities = await this.getCapabilities();
-    if (capabilities.idempotency) return capabilities.idempotency.replayTtlSeconds;
+    if (capabilities.idempotency) {
+      assertValidIdempotencyReplayTtlSeconds(capabilities.idempotency.replayTtlSeconds);
+      return capabilities.idempotency.replayTtlSeconds;
+    }
     if (capabilities.version !== 'v3') return undefined;
     throw new ConfigurationError(
       `Agent "${this.agent.id}" is v3 but does not declare adcp.idempotency.replay_ttl_seconds. ` +
@@ -7185,9 +7190,10 @@ export class SingleAgentClient {
         throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri);
       }
     }
-    if (!capabilities.idempotency?.replayTtlSeconds) {
+    if (capabilities.idempotency?.replayTtlSeconds === undefined) {
       throw new VersionUnsupportedError(taskType, 'idempotency', capabilities.version, this.agent.agent_uri);
     }
+    assertValidIdempotencyReplayTtlSeconds(capabilities.idempotency.replayTtlSeconds);
   }
 
   /**
