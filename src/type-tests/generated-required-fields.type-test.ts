@@ -17,12 +17,14 @@ import type {
   KeywordDeliveryMetrics as ToolKeywordDeliveryMetrics,
   PostalCountrySystem as ToolPostalCountrySystem,
   ProtocolEnvelope as ToolProtocolEnvelope,
+  RefineProposalsResponse,
   SignalDefinitionEnrichment as ToolSignalDefinitionEnrichment,
   SignalTargetingExpression as ToolSignalTargetingExpression,
   SyncCreativesSuccess as ToolSyncCreativesSuccess,
 } from '../lib/types/tools.generated';
 
 type Assert<T extends true> = T;
+type AssertFalse<T extends false> = T;
 type IsRequired<T, K extends keyof T> = {} extends Pick<T, K> ? false : true;
 type IsOptional<T, K extends keyof T> = {} extends Pick<T, K> ? true : false;
 type HasKey<T, K extends PropertyKey> = K extends keyof T ? true : false;
@@ -73,6 +75,47 @@ type _ToolAdCPVersionEnvelopeExport = ToolAdCPVersionEnvelope;
 type _ToolCanonicalFormatBaseExport = ToolCanonicalFormatBase;
 type _ToolSignalDefinitionEnrichmentExport = ToolSignalDefinitionEnrichment;
 type _ToolSignalTargetingExpressionExport = ToolSignalTargetingExpression;
+
+// Refine result branches narrow CanonicalProposal; they do not replace it.
+// Keep every canonical continuation field plus branch-specific lineage/status
+// requirements on the generated deep-import surface and its Zod derivative.
+type RefineCompleted = Extract<RefineProposalsResponse, { results: unknown }>;
+type RefineSubmitted = Extract<RefineProposalsResponse, { status: 'submitted' }>;
+type RefineResult = RefineCompleted['results'][number];
+type RevisedProposal = Extract<RefineResult, { outcome: 'revised' }>['proposals'][number];
+type PartialProposal = Extract<RefineResult, { outcome: 'partial' }>['proposals'][number];
+type FinalizedProposal = Extract<RefineResult, { outcome: 'finalized' }>['proposal'];
+type _RefineCompletedResultsRequired = Assert<IsRequired<RefineCompleted, 'results'>>;
+type _RefineCompletedProductsRequired = Assert<IsRequired<RefineCompleted, 'products'>>;
+type _RefineCompletedHasNoTaskId = AssertFalse<HasKey<RefineCompleted, 'task_id'>>;
+type _RefineCompletedRejectsMixedFinalizeBatch = AssertFalse<
+  [
+    Extract<RefineResult, { outcome: 'revised' }>,
+    Extract<RefineResult, { outcome: 'finalized' }>,
+  ] extends RefineCompleted['results']
+    ? true
+    : false
+>;
+type _RefineSubmittedRejectsMixedFinalizeBatch = AssertFalse<
+  [Extract<RefineResult, { outcome: 'revised' }>, Extract<RefineResult, { outcome: 'finalized' }>] extends NonNullable<
+    RefineSubmitted['results']
+  >
+    ? true
+    : false
+>;
+type _RevisedProposalIdRequired = Assert<IsRequired<RevisedProposal, 'proposal_id'>>;
+type _RevisedCommercialTermsRequired = Assert<IsRequired<RevisedProposal, 'commercial_terms'>>;
+type _RevisedTermsDigestRequired = Assert<IsRequired<RevisedProposal, 'terms_digest'>>;
+type _RevisedParentProposalIdRequired = Assert<IsRequired<RevisedProposal, 'parent_proposal_id'>>;
+type _PartialProposalIdRequired = Assert<IsRequired<PartialProposal, 'proposal_id'>>;
+type _PartialCommercialTermsRequired = Assert<IsRequired<PartialProposal, 'commercial_terms'>>;
+type _PartialTermsDigestRequired = Assert<IsRequired<PartialProposal, 'terms_digest'>>;
+type _PartialParentProposalIdRequired = Assert<IsRequired<PartialProposal, 'parent_proposal_id'>>;
+type _FinalizedProposalIdRequired = Assert<IsRequired<FinalizedProposal, 'proposal_id'>>;
+type _FinalizedCommercialTermsRequired = Assert<IsRequired<FinalizedProposal, 'commercial_terms'>>;
+type _FinalizedTermsDigestRequired = Assert<IsRequired<FinalizedProposal, 'terms_digest'>>;
+type _FinalizedParentProposalIdRequired = Assert<IsRequired<FinalizedProposal, 'parent_proposal_id'>>;
+type _FinalizedExpiresAtRequired = Assert<IsRequired<FinalizedProposal, 'expires_at'>>;
 
 // Buyer-side tool responses retain tolerance for legacy sellers that predate
 // the v3 breakdown identifiers. These aliases must stay distinct from the

@@ -693,6 +693,84 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
     established.dispose();
   });
 
+  test('decline cannot race a shared in-flight established acceptance', async () => {
+    const proposalId = 'pending-acceptance-decline-proposal';
+    const commercialTerms = {
+      brand: { domain: 'example.com' },
+      start_time: '2027-01-01T00:00:00Z',
+      end_time: '2027-02-01T00:00:00Z',
+      total_budget: { amount: 1000, currency: 'USD' },
+    };
+    const proposal = {
+      proposal_id: proposalId,
+      proposal_kind: 'new_media_buy',
+      proposal_status: 'committed',
+      expires_at: '2099-12-31T23:59:59Z',
+      commercial_terms: commercialTerms,
+      terms_digest: proposalTermsDigest(commercialTerms),
+    };
+    const agent = clientWithCaps(
+      capabilities({ tools: COMPACT_TOOLS, discoveredTools: ['get_products', 'create_media_buy'] })
+    );
+    agent.requestProposals = async () => completed('request_proposals', { outcome: 'proposed', proposals: [proposal] });
+    let resolveAcceptance;
+    let markAcceptanceStarted;
+    const acceptanceGate = new Promise(resolve => {
+      resolveAcceptance = resolve;
+    });
+    const acceptanceStarted = new Promise(resolve => {
+      markAcceptanceStarted = resolve;
+    });
+    let acceptanceDispatches = 0;
+    agent.createMediaBuy = async () => {
+      acceptanceDispatches += 1;
+      markAcceptanceStarted();
+      await acceptanceGate;
+      return completed('create_media_buy', { media_buy_id: 'accepted-without-decline-race', revision: 1 });
+    };
+    let declineDispatches = 0;
+    agent.declineProposals = async () => {
+      declineDispatches += 1;
+      return completed('decline_proposals', { results: [{ proposal_id: proposalId, outcome: 'declined' }] });
+    };
+
+    const principalScope = 'buyer-pending-acceptance-decline';
+    const compact = await agent.negotiateMediaBuyLifecycle({ principalScope });
+    const established = await agent.negotiateMediaBuyLifecycle({
+      principalScope,
+      preferredLifecycle: 'established',
+      allowedLosses: ['proposal_terms_digest_not_enforced'],
+    });
+    await compact.requestProposals({
+      idempotency_key: 'pending-acceptance-request-0001',
+      account: { account_id: 'account-1' },
+      brand: { domain: 'example.com' },
+      brief: 'Cache proposal before acceptance race',
+    });
+
+    const acceptance = established.acceptProposal({
+      idempotency_key: 'pending-acceptance-accept-0001',
+      account: { account_id: 'account-1' },
+      proposal_id: proposalId,
+      proposal_terms_digest: proposal.terms_digest,
+    });
+    await acceptanceStarted;
+    await assert.rejects(
+      compact.declineProposals({
+        idempotency_key: 'pending-acceptance-decline-0001',
+        declines: [{ proposal_id: proposalId, reason: 'other' }],
+      }),
+      error => error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'proposal_acceptance_pending'
+    );
+    assert.equal(acceptanceDispatches, 1);
+    assert.equal(declineDispatches, 0, 'decline must fail before seller dispatch while acceptance is unresolved');
+
+    resolveAcceptance();
+    assert.equal((await acceptance).success, true);
+    compact.dispose();
+    established.dispose();
+  });
+
   test('submitted refine completions enforce request semantics before caching executable proposals', async () => {
     const sourceProposalId = 'async-refine-source';
     const childProposalId = 'async-refine-invalid-finalized-child';
@@ -4103,8 +4181,7 @@ describe('MediaBuyLifecycleCoordinator mutation boundaries', () => {
         account: { account_id: 'account-1' },
         proposal_id: 'proposal-concurrent',
       }),
-      error =>
-        error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'proposal_snapshot/account_scope'
+      error => error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'proposal_acceptance_pending'
     );
     assert.equal(mutations, 1);
     releaseMutation();
@@ -4120,6 +4197,74 @@ describe('MediaBuyLifecycleCoordinator mutation boundaries', () => {
         error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'proposal_snapshot/account_scope'
     );
     assert.equal(mutations, 1);
+  });
+
+  test('legacy acceptance is one-shot across concurrent and sequential account representations', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.1' }));
+    agent.getProducts = async () =>
+      completed('get_products', {
+        proposals: [
+          {
+            proposal_id: 'proposal-variant-account',
+            proposal_kind: 'new_media_buy',
+            proposal_status: 'committed',
+            expires_at: '2099-12-31T23:59:59Z',
+            commercial_terms: {
+              brand: { domain: 'example.com' },
+              start_time: '2027-01-01T00:00:00Z',
+              end_time: '2027-02-01T00:00:00Z',
+            },
+          },
+        ],
+        cache_scope: 'account',
+      });
+    let releaseMutation;
+    const mutationGate = new Promise(resolve => {
+      releaseMutation = resolve;
+    });
+    let signalStarted;
+    const mutationStarted = new Promise(resolve => {
+      signalStarted = resolve;
+    });
+    let mutations = 0;
+    agent.createMediaBuy = async () => {
+      mutations += 1;
+      signalStarted();
+      await mutationGate;
+      return completed('create_media_buy', { media_buy_id: 'mb-variant-account' });
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-variant-account',
+      allowedLosses: [
+        'proposal_terms_digest_not_enforced',
+        'proposal_terms_digest_unavailable',
+        'proposal_snapshot_not_immutable',
+      ],
+    });
+    const firstAccount = { account_id: 'account-1', brand: { domain: 'one.example' } };
+    const secondAccount = { account_id: 'account-1', brand: { domain: 'two.example' } };
+    await coordinator.requestProposals({ brief: 'first representation', account: firstAccount });
+    await coordinator.requestProposals({ brief: 'second representation', account: secondAccount });
+
+    const firstAcceptance = coordinator.acceptProposal({
+      account: firstAccount,
+      proposal_id: 'proposal-variant-account',
+    });
+    await mutationStarted;
+    await assert.rejects(
+      coordinator.acceptProposal({ account: secondAccount, proposal_id: 'proposal-variant-account' }),
+      error => error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'proposal_acceptance_pending'
+    );
+    assert.equal(mutations, 1, 'the account alias must not dispatch while acceptance is in flight');
+
+    releaseMutation();
+    await firstAcceptance;
+    await assert.rejects(
+      coordinator.acceptProposal({ account: secondAccount, proposal_id: 'proposal-variant-account' }),
+      error =>
+        error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'proposal_snapshot/account_scope'
+    );
+    assert.equal(mutations, 1, 'the account alias must remain retired after terminal success');
   });
 
   test('ambiguous legacy acceptance permits only the exact pinned-key retry', async () => {
@@ -4823,8 +4968,7 @@ describe('MediaBuyLifecycleCoordinator mutation boundaries', () => {
     for (const listener of [...taskListeners]) listener(update('deferred'));
     await assert.rejects(
       coordinator.acceptProposal({ account, proposal_id: 'proposal-deferred-aborted' }),
-      error =>
-        error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'proposal_snapshot/account_scope'
+      error => error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'proposal_acceptance_pending'
     );
     for (const listener of [...taskListeners]) listener(update('aborted'));
     await assert.rejects(

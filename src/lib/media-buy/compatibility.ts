@@ -1050,6 +1050,10 @@ interface ProposalSnapshotEntry {
 
 interface ProposalSnapshotStore {
   entries: Map<string, ProposalSnapshotEntry>;
+  proposalAcceptances: Map<
+    string,
+    { snapshotKey: string; snapshot: ProposalSnapshotEntry; reservation: AcceptanceReservation }
+  >;
   retiredAcceptanceBits?: Uint8Array;
   retiredAcceptanceSalt?: Uint8Array;
   pendingDeclines: Set<PendingDeclineLease>;
@@ -1180,6 +1184,7 @@ function proposalSnapshotStoreFor(agent: AgentClient, principalScope?: string): 
   }
   const created: ProposalSnapshotStore = {
     entries: new Map(),
+    proposalAcceptances: new Map(),
     pendingDeclines: new Set(),
     pendingDeclineProposalIdCount: 0,
     pendingRefinements: new Set(),
@@ -1302,6 +1307,17 @@ export class MediaBuyLifecycleCoordinator {
 
   private beginPendingDecline(proposalIds: readonly string[]): PendingDeclineLease {
     const retainedProposalIds = [...new Set(proposalIds)];
+    if (
+      retainedProposalIds.some(
+        proposalId => this.proposalSnapshotStore.proposalAcceptances.get(proposalId)?.reservation.state === 'in-flight'
+      )
+    ) {
+      throw this.unsupported(
+        'declineProposals',
+        'proposal_acceptance_pending',
+        'A requested proposal has an in-flight acceptance in this principal scope. Wait for that acceptance to finish before declining it.'
+      );
+    }
     if (retainedProposalIds.some(proposalId => this.isProposalRefinementPending(proposalId))) {
       throw this.unsupported(
         'declineProposals',
@@ -2290,7 +2306,15 @@ export class MediaBuyLifecycleCoordinator {
     snapshot: ProposalSnapshotEntry,
     reservation: AcceptanceReservation
   ): boolean {
-    return this.proposalSnapshotStore.entries.get(snapshotKey) === snapshot && snapshot.acceptance === reservation;
+    const proposalId = String(snapshot.proposal.proposal_id);
+    const global = this.proposalSnapshotStore.proposalAcceptances.get(proposalId);
+    return (
+      this.proposalSnapshotStore.entries.get(snapshotKey) === snapshot &&
+      snapshot.acceptance === reservation &&
+      global?.snapshotKey === snapshotKey &&
+      global.snapshot === snapshot &&
+      global.reservation === reservation
+    );
   }
 
   private releaseAcceptanceOwnership(reservation: AcceptanceReservation): void {
@@ -2343,6 +2367,7 @@ export class MediaBuyLifecycleCoordinator {
     reservation: AcceptanceReservation
   ): void {
     if (!this.ownsAcceptance(snapshotKey, snapshot, reservation) || reservation.state !== 'in-flight') return;
+    this.proposalSnapshotStore.proposalAcceptances.delete(String(snapshot.proposal.proposal_id));
     this.releaseAcceptanceOwnership(reservation);
     delete snapshot.acceptance;
     snapshot.executable = true;
@@ -2354,11 +2379,22 @@ export class MediaBuyLifecycleCoordinator {
     reservation: AcceptanceReservation
   ): void {
     if (!this.ownsAcceptance(snapshotKey, snapshot, reservation) || reservation.state === 'retired') return;
+    const proposalId = String(snapshot.proposal.proposal_id);
     reservation.state = 'retired';
     snapshot.executable = false;
+    this.proposalSnapshotStore.proposalAcceptances.delete(proposalId);
     this.releaseAcceptanceOwnership(reservation);
-    this.removeProposalSnapshot(snapshotKey);
-    this.markRetiredAcceptanceKey(snapshotKey);
+    this.markTerminalProposal(proposalId);
+    for (const [key, sibling] of [...this.proposalSnapshotStore.entries]) {
+      if (sibling.principalScope !== this.principalScope || sibling.proposal.proposal_id !== proposalId) continue;
+      if (sibling.acceptance && sibling.acceptance !== reservation) {
+        sibling.acceptance.state = 'retired';
+        this.releaseAcceptanceOwnership(sibling.acceptance);
+      }
+      sibling.executable = false;
+      this.removeProposalSnapshot(key);
+      this.markRetiredAcceptanceKey(key);
+    }
   }
 
   private preserveAmbiguousAcceptance(
@@ -3571,8 +3607,24 @@ export class MediaBuyLifecycleCoordinator {
     }
     const accountScope = this.accountScope(input.account);
     const snapshotKey = accountScope ? this.snapshotKey(proposalId, accountScope) : undefined;
+    const globalAcceptance = this.proposalSnapshotStore.proposalAcceptances.get(proposalId);
+    if (globalAcceptance && globalAcceptance.snapshotKey !== snapshotKey) {
+      throw this.unsupported(
+        'acceptProposal',
+        'proposal_acceptance_pending',
+        'The proposal already has an acceptance reservation in this principal scope. Reuse the original account scope for an exact retry.'
+      );
+    }
+    if (globalAcceptance?.reservation.state === 'in-flight') {
+      throw this.unsupported(
+        'acceptProposal',
+        'proposal_acceptance_pending',
+        'The proposal already has an in-flight acceptance in this principal scope. Wait for it to finish before retrying.'
+      );
+    }
     const snapshot = snapshotKey ? this.proposalSnapshotStore.entries.get(snapshotKey) : undefined;
-    const retryableAcceptance = snapshot?.acceptance?.state === 'retryable' ? snapshot.acceptance : undefined;
+    const retryableAcceptance =
+      globalAcceptance?.reservation.state === 'retryable' ? globalAcceptance.reservation : undefined;
     if (!snapshot || (!snapshot.executable && !retryableAcceptance)) {
       throw this.unsupported(
         'acceptProposal',
@@ -3767,6 +3819,11 @@ export class MediaBuyLifecycleCoordinator {
     };
     snapshot.executable = false;
     snapshot.acceptance = reservation;
+    this.proposalSnapshotStore.proposalAcceptances.set(proposalId, {
+      snapshotKey: snapshotKey!,
+      snapshot,
+      reservation,
+    });
     this.ownedAcceptanceReservations.set(reservation, { snapshotKey: snapshotKey!, snapshot });
     acceptanceReservationOwners.set(reservation, this);
     const dispatchOptions = retryableAcceptance

@@ -12,6 +12,11 @@ describe('Zod Schema Validation', () => {
     assert.ok(schemas, 'Schemas should be importable');
   });
 
+  test('ESM package entry can be imported', async () => {
+    const sdk = await import('../../dist/lib/index.mjs');
+    assert.equal(typeof sdk.ADCP_VERSION, 'string', 'package root should expose its version');
+  });
+
   test('reference image and carousel fixtures conform to SDK schemas', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');
@@ -1228,6 +1233,7 @@ describe('Zod Schema Validation', () => {
       'IndividualImageAssetSchema',
       'GroupVideoAssetSchema',
       'CreativeVariantSchema',
+      'CanonicalProposalSchema',
     ];
 
     for (const name of schemasToCheck) {
@@ -1238,6 +1244,15 @@ describe('Zod Schema Validation', () => {
       assert.strictEqual(typeof schema.omit, 'function', `${name} should expose .omit()`);
       assert.strictEqual(typeof schema.pick, 'function', `${name} should expose .pick()`);
     }
+
+    const proposalSchema = schemas.CanonicalProposalSchema;
+    const picked = proposalSchema.pick({ proposal_id: true });
+    assert.equal(picked.safeParse({ proposal_id: 'proposal-1' }).success, true);
+    assert.equal(picked.safeParse({}).success, false);
+    const omitted = proposalSchema.omit({ description: true });
+    assert.ok(omitted.shape.proposal_id, 'omit() should return an operable object schema');
+    const extended = proposalSchema.extend({ extension_field: z.string() });
+    assert.ok(extended.shape.extension_field, 'extend() should return an operable object schema');
   });
 
   test('every generated tool request schema has an MCP input shape', async () => {
@@ -1627,5 +1642,379 @@ describe('Zod Schema Validation', () => {
     assert.ok(schemas.AssetRequirementsSchema, 'AssetRequirementsSchema should be exported');
     const bogus = schemas.AssetRequirementsSchema.safeParse('not-an-object');
     assert.ok(!bogus.success, 'AssetRequirementsSchema should reject non-object values');
+  });
+
+  test('RefineProposalsResponseSchema preserves exact canonical and refine-arm requirements', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+    const { proposalTermsDigest } = require('../../dist/lib/negotiation/verification.js');
+    const { getSchemaValidatorByRef } = require('../../dist/lib/validation/schema-loader.js');
+
+    const commercial_terms = {
+      brand: { domain: 'buyer.example' },
+      purchases: [
+        {
+          product_id: 'product-1',
+          pricing_option_id: 'price-1',
+          pricing: {
+            pricing_option_id: 'price-1',
+            pricing_model: 'cpm',
+            currency: 'USD',
+            fixed_price: 8,
+          },
+          impressions: 1_000_000,
+          start_time: '2027-01-01T00:00:00Z',
+          end_time: '2027-02-01T00:00:00Z',
+        },
+      ],
+      start_time: '2027-01-01T00:00:00Z',
+      end_time: '2027-02-01T00:00:00Z',
+      total_budget: { amount: 8_000, currency: 'USD' },
+    };
+    const canonicalProposal = (status, suffix) => ({
+      proposal_id: `proposal-${suffix}`,
+      proposal_kind: 'new_media_buy',
+      parent_proposal_id: 'proposal-source',
+      proposal_status: status,
+      name: `Proposal ${suffix}`,
+      commercial_terms,
+      terms_digest: proposalTermsDigest(commercial_terms),
+      ...(status === 'committed' && { expires_at: '2027-01-02T00:00:00Z' }),
+    });
+    const completed = result => ({ status: 'completed', results: [result], products: [] });
+    const dateEdgeProposal = (suffix, expires_at) => ({
+      ...canonicalProposal('draft', suffix),
+      expires_at,
+    });
+    const dateEdges = [
+      ['lowercase-date', '2027-01-02t00:00:00z'],
+      ['leap-second', '2016-12-31T23:59:60Z'],
+      ['space-separator', '2027-01-02 00:00:00Z'],
+      ['compact-offset', '2027-01-02T00:00:00+0100'],
+    ];
+    const exactValidator = getSchemaValidatorByRef('media-buy/refine-proposals-response.json', '3.2.0-beta.2');
+    assert.ok(exactValidator, 'exact refine_proposals response validator should be available');
+    const exactAccepts = payload => exactValidator(payload);
+    const zodAccepts = payload => schemas.RefineProposalsResponseSchema.safeParse(payload).success;
+
+    const valid = [
+      { status: 'submitted', task_id: 'task-refine-1' },
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'revised',
+        proposals: [canonicalProposal('draft', 'revised')],
+      }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'partial',
+        proposals: [canonicalProposal('draft', 'partial')],
+        reason_code: 'commercially_declined',
+        reason: 'Only part of the request can be offered',
+      }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'finalized',
+        proposal: {
+          ...canonicalProposal('committed', 'finalized'),
+          expires_at: '2027-01-02T01:00:00+01:00',
+        },
+      }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'revised',
+        proposals: dateEdges.map(([suffix, expiresAt]) => dateEdgeProposal(suffix, expiresAt)),
+      }),
+      ...dateEdges.map(([suffix, expiresAt]) =>
+        completed({
+          source_proposal_id: 'proposal-source',
+          outcome: 'finalized',
+          proposal: {
+            ...canonicalProposal('committed', `finalized-${suffix}`),
+            expires_at: expiresAt,
+          },
+        })
+      ),
+    ];
+    const incomplete = [
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'revised',
+        proposals: [{ proposal_status: 'draft', parent_proposal_id: 'proposal-source' }],
+      }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'partial',
+        proposals: [{ proposal_status: 'draft', parent_proposal_id: 'proposal-source' }],
+        reason_code: 'commercially_declined',
+        reason: 'Only part of the request can be offered',
+      }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'finalized',
+        proposal: {
+          proposal_status: 'committed',
+          parent_proposal_id: 'proposal-source',
+          expires_at: '2027-01-02T00:00:00Z',
+        },
+      }),
+    ];
+    const missingParentDraft = canonicalProposal('draft', 'missing-parent');
+    delete missingParentDraft.parent_proposal_id;
+    const missingParentCommitted = canonicalProposal('committed', 'missing-parent-finalized');
+    delete missingParentCommitted.parent_proposal_id;
+    const missingExpiry = canonicalProposal('committed', 'missing-expiry');
+    delete missingExpiry.expires_at;
+    const emptyProposalId = canonicalProposal('draft', 'empty-id');
+    emptyProposalId.proposal_id = '';
+    const malformedDigest = canonicalProposal('draft', 'bad-digest');
+    malformedDigest.terms_digest = 'sha256:not-a-digest';
+    const invalidExpiry = canonicalProposal('committed', 'invalid-expiry');
+    invalidExpiry.expires_at = 'tomorrow';
+    const invalidOptionalExpiry = canonicalProposal('draft', 'invalid-optional-expiry');
+    invalidOptionalExpiry.expires_at = 'tomorrow';
+    const invalidOptionalAcceptedAt = canonicalProposal('draft', 'invalid-optional-accepted-at');
+    invalidOptionalAcceptedAt.accepted_at = 'tomorrow';
+    const emptyPurchases = canonicalProposal('draft', 'empty-purchases');
+    emptyPurchases.commercial_terms = { ...commercial_terms, purchases: [] };
+    const missingResolvedPurchase = canonicalProposal('draft', 'missing-resolved-purchase');
+    missingResolvedPurchase.commercial_terms = {
+      ...commercial_terms,
+      purchases: [{ product_id: 'product-1', pricing_option_id: 'price-1' }],
+    };
+    const invalidCommercialFlight = canonicalProposal('draft', 'invalid-commercial-flight');
+    invalidCommercialFlight.commercial_terms = { ...commercial_terms, end_time: 'tomorrow' };
+    const invalidCommercialBudget = canonicalProposal('draft', 'invalid-commercial-budget');
+    invalidCommercialBudget.commercial_terms = {
+      ...commercial_terms,
+      total_budget: { amount: -1, currency: 'usd' },
+    };
+    const proposalWithTargetingOverlay = (suffix, targeting_overlay) => {
+      const proposal = canonicalProposal('draft', suffix);
+      proposal.commercial_terms = {
+        ...commercial_terms,
+        purchases: [{ ...commercial_terms.purchases[0], targeting_overlay }],
+      };
+      return proposal;
+    };
+    const missingFrequencyDependencies = proposalWithTargetingOverlay('frequency-dependencies', {
+      frequency_cap: { max_impressions: 3 },
+    });
+    const missingVerifiedAgeBasis = proposalWithTargetingOverlay('verified-age-basis', {
+      demographics: {
+        age: {
+          min: 18,
+          include_unknown: false,
+          accepted_verification_methods: ['digital_id'],
+          accepted_bases: ['declared'],
+        },
+      },
+    });
+    const emptyBiddingPolicy = canonicalProposal('draft', 'empty-bidding-policy');
+    emptyBiddingPolicy.commercial_terms = {
+      ...commercial_terms,
+      purchases: [{ ...commercial_terms.purchases[0], bidding: {} }],
+    };
+    const incompleteUpdate = {
+      ...canonicalProposal('draft', 'incomplete-update'),
+      proposal_kind: 'media_buy_update',
+    };
+    delete incompleteUpdate.media_buy_id;
+    delete incompleteUpdate.base_media_buy_revision;
+    const missingProducts = completed({
+      source_proposal_id: 'proposal-source',
+      outcome: 'revised',
+      proposals: [canonicalProposal('draft', 'missing-products')],
+    });
+    delete missingProducts.products;
+    const completedWithTaskId = {
+      ...completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'revised',
+        proposals: [canonicalProposal('draft', 'completed-task-id')],
+      }),
+      task_id: 'task-not-allowed-on-completed',
+    };
+    incomplete.push(
+      completed({ source_proposal_id: 'proposal-source', outcome: 'revised', proposals: [] }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'partial',
+        proposals: [],
+        reason_code: 'commercially_declined',
+        reason: 'No successor was produced',
+      }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'revised',
+        proposals: [missingParentDraft],
+      }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'partial',
+        proposals: [missingParentDraft],
+        reason_code: 'commercially_declined',
+        reason: 'Only part of the request can be offered',
+      }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'finalized',
+        proposal: missingParentCommitted,
+      }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'finalized',
+        proposal: missingExpiry,
+      }),
+      missingProducts,
+      { status: 'completed', results: [], products: [] },
+      completedWithTaskId,
+      {
+        status: 'completed',
+        results: [
+          {
+            source_proposal_id: 'proposal-source',
+            outcome: 'revised',
+            proposals: [canonicalProposal('draft', 'mixed-revised')],
+          },
+          {
+            source_proposal_id: 'proposal-source-2',
+            outcome: 'finalized',
+            proposal: {
+              ...canonicalProposal('committed', 'mixed-finalized'),
+              parent_proposal_id: 'proposal-source-2',
+            },
+          },
+        ],
+        products: [],
+      },
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'revised',
+        proposals: [canonicalProposal('draft', 'forbidden-reason')],
+        reason: 'not allowed on revised',
+      }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'partial',
+        proposals: [canonicalProposal('draft', 'partial-forbidden-proposal')],
+        proposal: canonicalProposal('draft', 'partial-singular'),
+        reason_code: 'commercially_declined',
+        reason: 'Partial response',
+      }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'finalized',
+        proposal: canonicalProposal('committed', 'finalized-forbidden-proposals'),
+        proposals: [canonicalProposal('draft', 'finalized-draft')],
+      }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'unable',
+        reason_code: 'source_unavailable',
+        reason: 'Source unavailable',
+        proposal: canonicalProposal('draft', 'unable-forbidden-proposal'),
+      }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'partial',
+        proposals: [canonicalProposal('draft', 'empty-suggestions')],
+        reason_code: 'commercially_declined',
+        reason: 'Partial response',
+        suggestions: [],
+      }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'partial',
+        proposals: [canonicalProposal('draft', 'empty-unsatisfied')],
+        reason_code: 'commercially_declined',
+        reason: 'Partial response',
+        unsatisfied_constraints: [],
+      }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'unable',
+        reason_code: 'constraint_unsatisfiable',
+        reason: 'No matching terms',
+      }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'partial',
+        proposals: [canonicalProposal('draft', 'duplicate-constraints')],
+        reason_code: 'constraint_unsatisfiable',
+        reason: 'Repeated constraint keys',
+        unsatisfied_constraints: ['budget', 'budget'],
+      }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'partial',
+        proposals: [canonicalProposal('draft', 'empty-constraint-name')],
+        reason_code: 'constraint_unsatisfiable',
+        reason: 'Empty constraint key',
+        unsatisfied_constraints: [''],
+      }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'partial',
+        proposals: [canonicalProposal('draft', 'empty-suggestion')],
+        reason_code: 'commercially_declined',
+        reason: 'Empty suggestion',
+        suggestions: [''],
+      }),
+      completed({ source_proposal_id: 'proposal-source', outcome: 'revised', proposals: [emptyProposalId] }),
+      completed({ source_proposal_id: 'proposal-source', outcome: 'revised', proposals: [malformedDigest] }),
+      completed({ source_proposal_id: 'proposal-source', outcome: 'revised', proposals: [incompleteUpdate] }),
+      completed({ source_proposal_id: 'proposal-source', outcome: 'finalized', proposal: invalidExpiry }),
+      completed({ source_proposal_id: 'proposal-source', outcome: 'revised', proposals: [invalidOptionalExpiry] }),
+      completed({ source_proposal_id: 'proposal-source', outcome: 'revised', proposals: [invalidOptionalAcceptedAt] }),
+      completed({ source_proposal_id: 'proposal-source', outcome: 'revised', proposals: [emptyPurchases] }),
+      completed({ source_proposal_id: 'proposal-source', outcome: 'revised', proposals: [missingResolvedPurchase] }),
+      completed({ source_proposal_id: 'proposal-source', outcome: 'revised', proposals: [invalidCommercialFlight] }),
+      completed({ source_proposal_id: 'proposal-source', outcome: 'revised', proposals: [invalidCommercialBudget] }),
+      completed({
+        source_proposal_id: 'proposal-source',
+        outcome: 'revised',
+        proposals: [missingFrequencyDependencies],
+      }),
+      completed({ source_proposal_id: 'proposal-source', outcome: 'revised', proposals: [missingVerifiedAgeBasis] }),
+      completed({ source_proposal_id: 'proposal-source', outcome: 'revised', proposals: [emptyBiddingPolicy] }),
+      {
+        status: 'submitted',
+        task_id: 'task-mixed-results',
+        results: [
+          {
+            source_proposal_id: 'proposal-source',
+            outcome: 'revised',
+            proposals: [canonicalProposal('draft', 'submitted-revised')],
+          },
+          {
+            source_proposal_id: 'proposal-source-2',
+            outcome: 'finalized',
+            proposal: {
+              ...canonicalProposal('committed', 'submitted-finalized'),
+              parent_proposal_id: 'proposal-source-2',
+            },
+          },
+        ],
+      }
+    );
+
+    for (const [index, payload] of valid.entries()) {
+      assert.equal(exactAccepts(payload), true, 'exact schema should accept a complete canonical proposal');
+      const parsed = schemas.RefineProposalsResponseSchema.safeParse(payload);
+      assert.equal(
+        parsed.success,
+        true,
+        `public Zod schema should accept complete canonical proposal ${index}: ${JSON.stringify(parsed.error?.issues)}`
+      );
+    }
+    for (const [index, payload] of incomplete.entries()) {
+      assert.equal(exactAccepts(payload), false, `exact schema should reject incomplete case ${index}`);
+      assert.equal(
+        zodAccepts(payload),
+        false,
+        `public Zod schema must reject incomplete case ${index}: ${JSON.stringify(payload)}`
+      );
+    }
   });
 });

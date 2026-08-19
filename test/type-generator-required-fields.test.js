@@ -59,6 +59,74 @@ writeFileSync(__OUTPUT__, JSON.stringify({
   assert.equal(result.originalBranchesRemainUntouched, true);
 });
 
+test('refine_proposals result overlays preserve the canonical proposal base', () => {
+  const result = runGeneratorHarness(`
+import { readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { applyCodegenSchemaWorkarounds, enforceStrictSchema } from __GENERATOR__;
+
+const root = __REPO_ROOT__;
+const source = JSON.parse(
+  readFileSync(path.join(root, 'schemas/cache/latest/media-buy/refine-proposals-response.json'), 'utf8')
+);
+const transformed = enforceStrictSchema(applyCodegenSchemaWorkarounds(source, 'RefineProposalsResponse'));
+const completed = transformed.oneOf.filter((branch: any) => branch.properties?.status?.const === 'completed');
+const submitted = transformed.oneOf.filter((branch: any) => branch.properties?.status?.const === 'submitted');
+const branches = completed.flatMap((branch: any) => branch.properties.results.items.oneOf);
+
+function inspectIntersection(schema: any) {
+  const members = schema.allOf ?? [];
+  const canonical = members.find((member: any) =>
+    typeof member?.$ref === 'string' && member.$ref.endsWith('/core/canonical-proposal.json')
+  );
+  const overlay = members.find((member: any) => member?.properties || member?.required);
+  return {
+    hasCanonicalRef: Boolean(canonical),
+    required: overlay?.required ?? [],
+    status: overlay?.properties?.proposal_status?.const,
+    hasExpiry: Boolean(overlay?.properties?.expires_at),
+    hasParentProposalIdProperty: overlay?.properties?.parent_proposal_id?.type === 'string',
+  };
+}
+
+writeFileSync(__OUTPUT__, JSON.stringify({
+  completedCount: completed.length,
+  completedRequired: completed.map((branch: any) => branch.required),
+  completedMinResults: completed.map((branch: any) => branch.properties.results.minItems),
+  completedHasTaskId: completed.map((branch: any) => 'task_id' in branch.properties),
+  outcomes: completed.map((branch: any) => branch.properties.results.items.oneOf.map((arm: any) => arm.properties.outcome.const)),
+  submittedCount: submitted.length,
+  submittedOutcomes: submitted.map((branch: any) => branch.properties.results.items.oneOf.map((arm: any) => arm.properties.outcome.const)),
+  revised: inspectIntersection(branches.find((arm: any) => arm.properties.outcome.const === 'revised').properties.proposals.items),
+  partial: inspectIntersection(branches.find((arm: any) => arm.properties.outcome.const === 'partial').properties.proposals.items),
+  finalized: inspectIntersection(branches.find((arm: any) => arm.properties.outcome.const === 'finalized').properties.proposal),
+}));
+`);
+
+  assert.equal(result.completedCount, 2);
+  for (const required of result.completedRequired) {
+    assert.ok(required.includes('results'));
+    assert.ok(required.includes('products'));
+  }
+  assert.deepEqual(result.completedMinResults, [1, 1]);
+  assert.deepEqual(result.completedHasTaskId, [false, false]);
+  assert.deepEqual(result.outcomes, [['revised', 'partial', 'unable'], ['finalized']]);
+  assert.equal(result.submittedCount, 2);
+  assert.deepEqual(result.submittedOutcomes, [['revised', 'partial', 'unable'], ['finalized']]);
+
+  for (const arm of [result.revised, result.partial, result.finalized]) {
+    assert.equal(arm.hasCanonicalRef, true);
+    assert.ok(arm.required.includes('proposal_status'));
+    assert.ok(arm.required.includes('parent_proposal_id'));
+    assert.equal(arm.hasParentProposalIdProperty, true);
+  }
+  assert.equal(result.revised.status, 'draft');
+  assert.equal(result.partial.status, 'draft');
+  assert.equal(result.finalized.status, 'committed');
+  assert.ok(result.finalized.required.includes('expires_at'));
+  assert.equal(result.finalized.hasExpiry, true);
+});
+
 test('GetMediaBuyDeliveryResponse isolates optional breakdown identifiers under unique compat titles', () => {
   const result = runGeneratorHarness(`
 import { readFileSync, writeFileSync } from 'node:fs';
