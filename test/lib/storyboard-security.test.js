@@ -26,6 +26,7 @@ const {
   CapabilityResolutionError,
 } = require('../../dist/lib/testing/storyboard/compliance');
 const { ADCPError, isADCPError } = require('../../dist/lib/errors');
+const { BrandJsonSchema } = require('../../dist/lib/types/wellknown-schemas.generated');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -1097,6 +1098,104 @@ describe('storyboard runner: auth-override dispatch', () => {
     }
   });
 
+  it('selects an advertised safe auth probe when the configured preference is inapplicable', async () => {
+    let seenTool;
+    const server = http.createServer(async (req, res) => {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (maybeHandleMcpHandshake(rpc, res)) return;
+      seenTool = rpc.params.name;
+      res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="x"' });
+      res.end('{}');
+    });
+    await new Promise(r => server.listen(0, r));
+    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+    try {
+      const storyboard = {
+        id: 'select_safe_probe',
+        version: '1.0.0',
+        title: 'Select safe probe',
+        category: 'security',
+        summary: '',
+        narrative: '',
+        agent: { interaction_model: '*', capabilities: [] },
+        caller: { role: 'buyer_agent' },
+        phases: [
+          {
+            id: 'p',
+            title: 'probe',
+            steps: [
+              {
+                id: 's1',
+                title: 'unauth probe',
+                task: '$test_kit.auth.probe_task',
+                task_default: 'list_creatives',
+                auth: 'none',
+                expect_error: true,
+                validations: [{ check: 'http_status_in', allowed_values: [401, 403], description: 'rejects unauth' }],
+              },
+            ],
+          },
+        ],
+      };
+      const result = await runStoryboard(agentUrl, storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        agentTools: ['get_signals'],
+        test_kit: { auth: { api_key: 'sk_test', probe_task: 'list_creatives' } },
+        _profile: { name: 'Test', tools: ['get_signals'] },
+        _client: { getAgentInfo: async () => ({ name: 'Test', tools: [{ name: 'get_signals' }] }) },
+      });
+      assert.strictEqual(seenTool, 'get_signals');
+      assert.strictEqual(result.overall_passed, true);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('grades SI-only auth probes not_applicable instead of calling a nonexistent session-list tool', async () => {
+    const storyboard = {
+      id: 'si_probe_not_applicable',
+      version: '1.0.0',
+      title: 'SI probe selection',
+      category: 'security',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      phases: [
+        {
+          id: 'p',
+          title: 'probe',
+          steps: [
+            {
+              id: 's1',
+              title: 'unauth probe',
+              task: '$test_kit.auth.probe_task',
+              task_default: 'list_creatives',
+              auth: 'none',
+              expect_error: true,
+              validations: [{ check: 'http_status_in', allowed_values: [401, 403], description: 'rejects unauth' }],
+            },
+          ],
+        },
+      ],
+    };
+    const siTools = ['si_get_offering', 'si_initiate_session', 'si_send_message', 'si_terminate_session'];
+    const result = await runStoryboard('https://si.example/mcp', storyboard, {
+      protocol: 'mcp',
+      agentTools: siTools,
+      test_kit: { auth: { api_key: 'sk_test', probe_task: 'list_creatives' } },
+      _profile: { name: 'SI', tools: siTools },
+      _client: { getAgentInfo: async () => ({ name: 'SI', tools: siTools.map(name => ({ name })) }) },
+    });
+    const step = result.phases[0].steps[0];
+    assert.strictEqual(step.passed, true);
+    assert.strictEqual(step.skipped, true);
+    assert.strictEqual(step.skip.reason, 'not_applicable');
+  });
+
   it('auth: none sends no Authorization header; value_strategy: random_invalid sends a random key', async () => {
     const observed = [];
     const server = http.createServer((req, res) => {
@@ -1367,6 +1466,81 @@ describe('storyboard runner: auth-override dispatch', () => {
     } finally {
       server.close();
     }
+  });
+});
+
+describe('storyboard runner: portfolio brand JWKS discovery', () => {
+  it('finds jwks_uri under a house portfolio brand agents array', async () => {
+    const brandJsonUrl = 'https://portfolio.example/.well-known/brand.json';
+    const jwksUrl = 'https://keys.example/jwks.json';
+    const fetchedUrls = [];
+    const manifest = {
+      house: { domain: 'portfolio.example', name: 'Publisher House', agents: [] },
+      brands: [
+        {
+          id: 'publisher-brand',
+          names: [{ en: 'Publisher Brand' }],
+          agents: [{ type: 'sales', id: 'publisher_sales', url: 'https://seller.example/mcp', jwks_uri: jwksUrl }],
+        },
+      ],
+    };
+    assert.doesNotThrow(() => BrandJsonSchema.parse(manifest));
+    const fetchFn = async input => {
+      const url = String(input);
+      fetchedUrls.push(url);
+      if (url === brandJsonUrl) {
+        return new Response(JSON.stringify(manifest), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (url === jwksUrl) {
+        return new Response(JSON.stringify({ keys: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`unexpected URL ${url}`);
+    };
+    const storyboard = {
+      id: 'portfolio_jwks',
+      version: '1.0.0',
+      title: 'Portfolio JWKS',
+      category: 'security',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      phases: [
+        {
+          id: 'jwks',
+          title: 'JWKS',
+          steps: [
+            {
+              id: 'fetch',
+              title: 'Fetch portfolio JWKS',
+              task: 'fetch_brand_jwks',
+              validations: [{ check: 'http_status', value: 200, description: 'JWKS is reachable' }],
+            },
+          ],
+        },
+      ],
+    };
+    const result = await runStoryboard('https://seller.example/mcp', storyboard, {
+      protocol: 'mcp',
+      agentTools: ['get_adcp_capabilities'],
+      transport: { trustedFetchFn: fetchFn },
+      _profile: {
+        name: 'Portfolio seller',
+        tools: ['get_adcp_capabilities'],
+        raw_capabilities: { identity: { brand_json_url: brandJsonUrl } },
+      },
+      _client: {
+        getAgentInfo: async () => ({ name: 'Portfolio seller', tools: [{ name: 'get_adcp_capabilities' }] }),
+      },
+    });
+    assert.strictEqual(result.overall_passed, true, JSON.stringify(result.phases[0].steps[0]));
+    assert.deepStrictEqual(fetchedUrls, [brandJsonUrl, jwksUrl]);
   });
 });
 
@@ -2137,7 +2311,6 @@ describe('validateTestKit', () => {
         'get_media_buy_delivery',
         'list_authorized_properties',
         'get_signals',
-        'list_si_sessions',
         'list_property_lists',
         'list_collection_lists',
         'list_content_standards',

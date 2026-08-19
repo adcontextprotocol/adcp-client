@@ -2957,6 +2957,124 @@ const COMPACT_MEDIA_BUY_LIFECYCLE_TOOLS = [
   'control_media_buy',
 ] as const;
 
+const ADCP_3_0_CAPABILITY_KEYS = {
+  root: [
+    'adcp',
+    'supported_protocols',
+    'account',
+    'media_buy',
+    'signals',
+    'governance',
+    'sponsored_intelligence',
+    'brand',
+    'creative',
+    'request_signing',
+    'webhook_signing',
+    'identity',
+    'compliance_testing',
+    'specialisms',
+    'extensions_supported',
+    'experimental_features',
+    'last_updated',
+    'errors',
+    'context',
+    'ext',
+  ],
+  adcp: ['major_versions', 'idempotency'],
+  account: [
+    'require_operator_auth',
+    'authorization_endpoint',
+    'supported_billing',
+    'required_for_products',
+    'account_financials',
+    'sandbox',
+  ],
+  media_buy: [
+    'supported_pricing_models',
+    'reporting_delivery_methods',
+    'offline_delivery_protocols',
+    'features',
+    'execution',
+    'audience_targeting',
+    'conversion_tracking',
+    'content_standards',
+    'portfolio',
+  ],
+  media_buy_features: ['inline_creative_management', 'property_list_filtering', 'catalog_management'],
+  signals: ['data_provider_domains', 'features'],
+  governance: ['aggregation_window_days', 'property_features', 'creative_features'],
+  creative: ['supports_compliance', 'has_creative_library', 'supports_generation', 'supports_transformation'],
+  request_signing: ['supported', 'covers_content_digest', 'required_for', 'warn_for', 'supported_for'],
+  identity: ['per_principal_key_isolation', 'key_origins', 'compromise_notification'],
+} as const;
+
+const ADCP_3_0_CAPABILITY_PROTOCOLS: ReadonlySet<string> = new Set([
+  'media_buy',
+  'signals',
+  'governance',
+  'sponsored_intelligence',
+  'creative',
+  'brand',
+]);
+
+const ADCP_3_0_CAPABILITY_SPECIALISMS: ReadonlySet<string> = new Set([
+  'audience-sync',
+  'brand-rights',
+  'collection-lists',
+  'content-standards',
+  'creative-ad-server',
+  'creative-generative',
+  'creative-template',
+  'governance-aware-seller',
+  'governance-delivery-monitor',
+  'governance-spend-authority',
+  'property-lists',
+  'sales-broadcast-tv',
+  'sales-catalog-driven',
+  'sales-guaranteed',
+  'sales-non-guaranteed',
+  'sales-proposal-mode',
+  'sales-social',
+  'signal-marketplace',
+  'signal-owned',
+  'signed-requests',
+]);
+
+const LEGACY_PRICING_MODELS = new Set(['cpm', 'vcpm', 'cpc', 'cpcv', 'cpv', 'cpp', 'cpa', 'flat_rate', 'time']);
+
+function retainCapabilityKeys(target: unknown, allowed: readonly string[]): void {
+  if (!isPlainObject(target)) return;
+  const keep = new Set<string>(allowed);
+  for (const key of Object.keys(target)) {
+    if (!keep.has(key)) delete target[key];
+  }
+}
+
+function projectAdcp30Capabilities(data: GetAdCPCapabilitiesResponse): void {
+  retainCapabilityKeys(data, ADCP_3_0_CAPABILITY_KEYS.root);
+  retainCapabilityKeys(data.adcp, ADCP_3_0_CAPABILITY_KEYS.adcp);
+  retainCapabilityKeys(data.account, ADCP_3_0_CAPABILITY_KEYS.account);
+  retainCapabilityKeys(data.media_buy, ADCP_3_0_CAPABILITY_KEYS.media_buy);
+  retainCapabilityKeys(data.media_buy?.features, ADCP_3_0_CAPABILITY_KEYS.media_buy_features);
+  retainCapabilityKeys(data.signals, ADCP_3_0_CAPABILITY_KEYS.signals);
+  retainCapabilityKeys(data.governance, ADCP_3_0_CAPABILITY_KEYS.governance);
+  retainCapabilityKeys(data.creative, ADCP_3_0_CAPABILITY_KEYS.creative);
+  retainCapabilityKeys(data.request_signing, ADCP_3_0_CAPABILITY_KEYS.request_signing);
+  retainCapabilityKeys(data.identity, ADCP_3_0_CAPABILITY_KEYS.identity);
+
+  if (Array.isArray(data.supported_protocols)) {
+    data.supported_protocols = data.supported_protocols.filter(protocol => ADCP_3_0_CAPABILITY_PROTOCOLS.has(protocol));
+  }
+  if (Array.isArray(data.specialisms)) {
+    data.specialisms = data.specialisms.filter(specialism => ADCP_3_0_CAPABILITY_SPECIALISMS.has(specialism));
+  }
+  if (Array.isArray(data.media_buy?.supported_pricing_models)) {
+    data.media_buy.supported_pricing_models = data.media_buy.supported_pricing_models.filter(model =>
+      LEGACY_PRICING_MODELS.has(model)
+    );
+  }
+}
+
 /** @internal Shared by the platform adapter's principal resolver and dispatcher gate. */
 export const COMPACT_MEDIA_BUY_MUTATION_TOOLS = new Set<string>([
   'request_proposals',
@@ -7375,16 +7493,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           );
         }
       }
-      const data = {
-        ...capabilitiesData,
-        adcp: { ...capabilitiesData.adcp },
-        ...(capabilitiesData.media_buy !== undefined && {
-          media_buy: {
-            ...capabilitiesData.media_buy,
-            features: { ...capabilitiesData.media_buy.features },
-          },
-        }),
-      } as GetAdCPCapabilitiesResponse;
+      const data = structuredClone(capabilitiesData) as GetAdCPCapabilitiesResponse;
       const selected = parseAdcpRelease(release.validationVersion);
       if (
         selected !== undefined &&
@@ -7395,7 +7504,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // temporarily accepts the legacy serialization during a rolling deploy.
         data.request_signing = { ...data.request_signing, covers_content_digest: 'required' };
       }
-      if (selected !== undefined && (selected.major < 3 || (selected.major === 3 && selected.minor < 2))) {
+      if (selected?.major === 3 && selected.minor === 0) projectAdcp30Capabilities(data);
+      if (selected?.major === 3 && selected.minor === 1) {
         delete (data.adcp as GetAdCPCapabilitiesResponse['adcp'] & { capability_changes?: unknown }).capability_changes;
         const forwardMediaBuy = data.media_buy as
           | (NonNullable<typeof data.media_buy> & {
@@ -7413,14 +7523,6 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             if (forwardMediaBuy.lifecycle_tools.length === 0) delete forwardMediaBuy.lifecycle_tools;
           }
         }
-      }
-      if (selected !== undefined && (selected.major < 3 || (selected.major === 3 && selected.minor < 1))) {
-        delete (data.adcp as GetAdCPCapabilitiesResponse['adcp'] & { supported_versions?: string[] })
-          .supported_versions;
-        if (data.media_buy?.features !== undefined) {
-          delete (data.media_buy.features as { canonical_creatives?: boolean }).canonical_creatives;
-        }
-        delete (data as unknown as Record<string, unknown>).library_version;
       }
       const ctx = requestParams.context;
       if (ctx !== null && typeof ctx === 'object' && !Array.isArray(ctx)) {

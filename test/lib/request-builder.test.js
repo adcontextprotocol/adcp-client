@@ -1177,6 +1177,24 @@ describe('Request Builder', () => {
       assert.deepStrictEqual(result.account, contextAccount);
       assert.deepStrictEqual(result.media_buy_ids, ['buy-7']);
     });
+
+    test('preserves a fixture natural-key operator while enforcing harness sandbox routing', () => {
+      const fixtureAccount = {
+        brand: { domain: 'advertiser.example' },
+        operator: 'buyer-agent.example',
+        sandbox: false,
+      };
+      const result = buildRequest(
+        step('get_media_buys', { sample_request: { account: fixtureAccount } }),
+        {},
+        { ...DEFAULT_OPTIONS, sandbox: true }
+      );
+      assert.deepStrictEqual(result.account, {
+        brand: { domain: 'advertiser.example' },
+        operator: 'buyer-agent.example',
+        sandbox: true,
+      });
+    });
   });
 
   describe('get_media_buy_delivery', () => {

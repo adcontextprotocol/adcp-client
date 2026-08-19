@@ -37,12 +37,27 @@ export const PROBE_TASK_ALLOWLIST: readonly string[] = Object.freeze([
   'get_media_buy_delivery',
   'list_authorized_properties',
   'get_signals',
-  'list_si_sessions',
   // governance specialism tools — all fields optional, auth-required, read-only
   'list_property_lists',
   'list_collection_lists',
   'list_content_standards',
 ]);
+
+/**
+ * Select an advertised auth probe without dispatching an inapplicable tool.
+ * The configured task is a preference, not permission to call a tool the
+ * agent did not advertise. Returns undefined when the agent has no safe,
+ * empty-body read probe (currently true for SI-only agents).
+ */
+export function selectProbeTask(
+  preferred: string | undefined,
+  advertisedTools: readonly string[] | undefined
+): string | undefined {
+  if (!advertisedTools) return preferred;
+  const advertised = new Set(advertisedTools);
+  if (preferred && PROBE_TASK_ALLOWLIST.includes(preferred) && advertised.has(preferred)) return preferred;
+  return PROBE_TASK_ALLOWLIST.find(task => advertised.has(task));
+}
 
 /**
  * Raised when a test kit violates the schema invariants above. Carries the

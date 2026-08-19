@@ -471,7 +471,28 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
         )
       : {};
     const result: Record<string, unknown> = { ...fixtureFields };
-    result.account = context.account ?? resolveAccount(options);
+    const resolvedAccount = context.account ?? resolveAccount(options);
+    const fixtureAccount = fixtureFields.account;
+    // Preserve the fixture-authored natural-key operator: it identifies the
+    // buyer acting for the brand and is not interchangeable with brand.domain.
+    // The harness still owns sandbox routing, and context.account (when a
+    // preceding step resolved a concrete account) remains authoritative.
+    if (
+      context.account === undefined &&
+      fixtureAccount !== null &&
+      typeof fixtureAccount === 'object' &&
+      !Array.isArray(fixtureAccount) &&
+      typeof (fixtureAccount as Record<string, unknown>).operator === 'string' &&
+      typeof (fixtureAccount as Record<string, unknown>).account_id !== 'string'
+    ) {
+      const sandbox = (resolvedAccount as { sandbox?: boolean }).sandbox;
+      result.account = {
+        ...(fixtureAccount as Record<string, unknown>),
+        ...(sandbox !== undefined && { sandbox }),
+      };
+    } else {
+      result.account = resolvedAccount;
+    }
     if (context.media_buy_id != null && result.media_buy_ids === undefined) {
       result.media_buy_ids = [context.media_buy_id];
     }

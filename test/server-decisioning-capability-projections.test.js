@@ -102,11 +102,36 @@ describe('Capability projections — declarative capability blocks on Decisionin
   });
 
   it('serves get_adcp_capabilities at the mutually selected 3.0 release', async () => {
-    const server = createAdcpServerFromPlatform(basePlatform({ supported_versions: ['3.0', '3.1'] }), {
-      name: 'capability-downshift',
-      version: '4.0.0',
-      validation: { requests: 'off', responses: 'off' },
-    });
+    const server = createAdcpServerFromPlatform(
+      basePlatform({
+        supported_versions: ['3.0', '3.1'],
+        overrides: {
+          oauth: { supported: true },
+          measurement: { supported: true },
+          wholesale_feed_versioning: { supported: true },
+          adcp: { capability_changes: { supported: true }, governance_enforcement: { mode: 'strict' } },
+          account: { timezone: { supported: true }, notifications: { supported: true } },
+          media_buy: {
+            buying_modes: ['brief'],
+            budget_capping: { supported: true },
+            supported_pricing_models: ['cpm', 'revenue_share'],
+            features: { canonical_creatives: true, seller_optimized_budget: true },
+          },
+          signals: { discovery_modes: ['brief'] },
+          governance: { runtime_attestations: { supported: true } },
+          creative: { supports_transformers: true, preview: { supported: true } },
+          request_signing: { protocol_methods_required_for: ['tools/call'] },
+          identity: { brand_json_url: 'https://seller.example/.well-known/brand.json' },
+          specialisms: ['sales-non-guaranteed', 'creative-transformers', 'sponsored-intelligence'],
+          supported_protocols: ['media_buy', 'measurement'],
+        },
+      }),
+      {
+        name: 'capability-downshift',
+        version: '4.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
 
     const result = await dispatchCapabilities(server, { adcp_version: '3.0' });
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
@@ -114,6 +139,23 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.strictEqual(result.structuredContent?.adcp?.supported_versions, undefined);
     assert.strictEqual(result.structuredContent?.media_buy?.features?.canonical_creatives, undefined);
     assert.strictEqual(result.structuredContent?.library_version, undefined);
+    assert.strictEqual(result.structuredContent?.oauth, undefined);
+    assert.strictEqual(result.structuredContent?.measurement, undefined);
+    assert.strictEqual(result.structuredContent?.wholesale_feed_versioning, undefined);
+    assert.strictEqual(result.structuredContent?.adcp?.capability_changes, undefined);
+    assert.strictEqual(result.structuredContent?.account?.timezone, undefined);
+    assert.strictEqual(result.structuredContent?.media_buy?.buying_modes, undefined);
+    assert.strictEqual(result.structuredContent?.media_buy?.budget_capping, undefined);
+    assert.strictEqual(result.structuredContent?.media_buy?.features?.seller_optimized_budget, undefined);
+    assert.strictEqual(result.structuredContent?.signals?.discovery_modes, undefined);
+    assert.strictEqual(result.structuredContent?.governance?.runtime_attestations, undefined);
+    assert.strictEqual(result.structuredContent?.creative?.supports_transformers, undefined);
+    assert.strictEqual(result.structuredContent?.creative?.preview, undefined);
+    assert.strictEqual(result.structuredContent?.request_signing?.protocol_methods_required_for, undefined);
+    assert.strictEqual(result.structuredContent?.identity?.brand_json_url, undefined);
+    assert.deepStrictEqual(result.structuredContent?.supported_protocols, ['media_buy']);
+    assert.deepStrictEqual(result.structuredContent?.specialisms, ['sales-non-guaranteed']);
+    assert.deepStrictEqual(result.structuredContent?.media_buy?.supported_pricing_models, ['cpm']);
   });
 
   it('canonical creative capability remains authoritative over adopter overrides', async () => {

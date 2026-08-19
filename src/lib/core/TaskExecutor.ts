@@ -24,7 +24,7 @@ import {
 } from '../validation/client-hooks';
 import { formatIssues } from '../validation/schema-validator';
 import { ADCP_VERSION } from '../version';
-import { unwrapProtocolResponse, isAdcpError, isTerminalAdcpError } from '../utils/response-unwrapper';
+import { unwrapProtocolResponse, isTerminalAdcpError } from '../utils/response-unwrapper';
 import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
 import { generateIdempotencyKey, requestUsesIdempotency, redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
@@ -1417,9 +1417,18 @@ export class TaskExecutor {
       const ae = data.adcp_error;
       return ae.message ? `${ae.code}: ${ae.message}` : ae.code;
     }
+    const pluralError = Array.isArray(data?.errors)
+      ? data.errors
+          .map((error: any) => error?.message || error?.code)
+          .filter((value: unknown): value is string => typeof value === 'string' && value.length > 0)
+          .join('; ')
+      : undefined;
     return (
       data?.error ||
-      (isAdcpError(data) ? data.errors.map((e: any) => e.message || e.code).join('; ') : null) ||
+      pluralError ||
+      data?.error_detail ||
+      data?.reason ||
+      data?.rejection_reason ||
       data?.message ||
       'Operation failed'
     );

@@ -873,6 +873,30 @@ function expandScenarios(storyboards: Storyboard[], resolveOptions: ResolveOptio
   return expanded;
 }
 
+/** @internal Capability applicability partition used by comply() after selection. */
+export function partitionStoryboardsByRequiredTools(
+  storyboards: Storyboard[],
+  discoveredTools: readonly string[]
+): { runnable: Storyboard[]; missing: NotApplicableStoryboard[] } {
+  const discoveredToolNames = new Set(discoveredTools);
+  const runnable: Storyboard[] = [];
+  const missing: NotApplicableStoryboard[] = [];
+  for (const sb of storyboards) {
+    const absent = (sb.required_tools ?? []).filter(tool => !discoveredToolNames.has(tool));
+    if (absent.length > 0) {
+      missing.push({
+        storyboard_id: sb.id,
+        storyboard_title: sb.title,
+        track: sb.track,
+        reason: `missing required_tools: ${absent.join(', ')}`,
+      });
+    } else {
+      runnable.push(sb);
+    }
+  }
+  return { runnable, missing };
+}
+
 /**
  * Group storyboard results by track.
  *
@@ -1321,34 +1345,17 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     }
     const applicableStoryboards = expandScenarios(initialStoryboards, resolveOptions);
 
-    // For capability-resolved runs, exclude storyboards and injected scenarios whose
-    // required_tools are absent from the agent's discovered toolset. These are
+    // Exclude storyboards and injected scenarios whose required_tools are absent
+    // from the agent's discovered toolset. These are
     // not-applicable — the agent doesn't claim the specialism being tested. Running
     // them produces cascading skips that pull the track to `partial`, which is a false
     // signal for AAO badge grading (adcp-client#1680).
-    // Explicit storyboard IDs (options.storyboards) bypass this filter — they are an
-    // operator override and should run regardless of required_tools.
-    let runnableStoryboards: Storyboard[];
-    if (explicitStoryboards?.length) {
-      runnableStoryboards = applicableStoryboards;
-    } else {
-      const discoveredToolNames = new Set(profile.tools);
-      const filtered: Storyboard[] = [];
-      for (const sb of applicableStoryboards) {
-        const missing = (sb.required_tools ?? []).filter(t => !discoveredToolNames.has(t));
-        if (missing.length > 0) {
-          missingToolStoryboards.push({
-            storyboard_id: sb.id,
-            storyboard_title: sb.title,
-            track: sb.track,
-            reason: `missing required_tools: ${missing.join(', ')}`,
-          });
-        } else {
-          filtered.push(sb);
-        }
-      }
-      runnableStoryboards = filtered;
-    }
+    // Explicit selection narrows which storyboards are considered; it does not make
+    // an unsupported specialism applicable. Call runStoryboard() directly when a
+    // developer intentionally needs to exercise an unsupported tool surface.
+    const applicability = partitionStoryboardsByRequiredTools(applicableStoryboards, profile.tools);
+    const runnableStoryboards = applicability.runnable;
+    missingToolStoryboards.push(...applicability.missing);
 
     // Run storyboards
     const storyboardResults: StoryboardResult[] = [];
