@@ -7138,8 +7138,7 @@ export class SingleAgentClient {
         capabilityPath: 'signals.discovery_modes',
         currentVersion: advertisedVersions.join(', ') || responseVersion || '3.0 (not advertised)',
         incompatibility: 'the target seller does not advertise AdCP 3.1 support',
-        suffix:
-          'Retry with a meaningful signal_spec, or probe signals.discovery_modes before issuing wholesale calls.',
+        suffix: 'Retry with a meaningful signal_spec, or probe signals.discovery_modes before issuing wholesale calls.',
       });
     }
   }

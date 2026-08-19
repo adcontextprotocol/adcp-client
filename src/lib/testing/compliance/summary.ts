@@ -420,15 +420,16 @@ export function formatComplianceSummaryText(s: ComplianceSummaryArtifact): strin
  */
 export function formatComplianceSummaryMarkdown(s: ComplianceSummaryArtifact): string {
   const lines: string[] = [];
-  const heading = s.completeness === 'timed_out'
-    ? `⏱️ Storyboard run timed out (status: ${s.overall_status})`
-    : !isHardFail(s)
-    ? s.overall_status === 'passing'
-      ? '✅ Storyboard run passed'
-      : `⚠️ Storyboard run ended ${s.overall_status} (wired but partly unexercised)`
-    : s.failures.length === 0
-      ? `❌ Storyboard run: ended ${s.overall_status} with no graded steps`
-      : `❌ Storyboard run: ${s.failures.length} failure(s)`;
+  const heading =
+    s.completeness === 'timed_out'
+      ? `⏱️ Storyboard run timed out (status: ${s.overall_status})`
+      : !isHardFail(s)
+        ? s.overall_status === 'passing'
+          ? '✅ Storyboard run passed'
+          : `⚠️ Storyboard run ended ${s.overall_status} (wired but partly unexercised)`
+        : s.failures.length === 0
+          ? `❌ Storyboard run: ended ${s.overall_status} with no graded steps`
+          : `❌ Storyboard run: ${s.failures.length} failure(s)`;
   lines.push(`## ${heading}`);
   lines.push('');
   lines.push(`- **Agent:** \`${s.agent_url}\``);

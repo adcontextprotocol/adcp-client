@@ -273,8 +273,7 @@ describe('modern client cold-call downgrade to a 3.0 seller', () => {
       const client = makeModernClientTargeting30(protocol, {}, { supportedVersions: undefined });
       await assert.rejects(
         () => client.getSignals({ discovery_mode: 'wholesale' }),
-        err =>
-          err instanceof ProtocolFeatureUnsupportedError && err.details.current_version === '3.0 (not advertised)'
+        err => err instanceof ProtocolFeatureUnsupportedError && err.details.current_version === '3.0 (not advertised)'
       );
     });
 
