@@ -56,7 +56,7 @@ function revise(overrides = {}) {
 }
 
 function request(refinements = [revise()]) {
-  return { adcp_version: '3.2', adcp_major_version: 3, idempotency_key: KEY, refinements };
+  return { adcp_version: '3.2-beta.2', adcp_major_version: 3, idempotency_key: KEY, refinements };
 }
 
 function completed(data) {
@@ -352,6 +352,38 @@ test('AgentClient.refineProposals dispatches through the official MCP client wit
 
   await mcpClient.close();
   await server.close();
+});
+
+test('ADCPMultiAgentClient.simple forwards an exact prerelease wire pin to proposal requests', async () => {
+  const { ADCPMultiAgentClient } = require('../../dist/lib/index.js');
+  const client = ADCPMultiAgentClient.simple('https://seller.example.com/mcp', {
+    adcpVersion: '3.2.0-beta.2',
+    wireAdcpVersion: '3.2.0-beta.1',
+  });
+  const agent = client.agent('default-agent');
+  let captured;
+  agent.client.executeTask = async (_taskName, request) => {
+    captured = request;
+    return {
+      success: false,
+      status: 'failed',
+      error: 'test transport stopped after request capture',
+      metadata: {
+        taskId: 'capture-1',
+        taskName: 'refine_proposals',
+        agent: { id: 'default-agent', name: 'Default Agent', protocol: 'mcp' },
+        responseTimeMs: 0,
+        timestamp: new Date().toISOString(),
+        clarificationRounds: 0,
+        status: 'failed',
+      },
+    };
+  };
+
+  await agent.refineProposals({ refinements: [revise()] });
+  assert.equal(client.getAdcpVersion(), '3.2.0-beta.2');
+  assert.equal(captured.adcp_version, '3.2-beta.1');
+  assert.equal(captured.adcp_major_version, 3);
 });
 
 test('seller handler commits a complete finalize batch atomically', async () => {

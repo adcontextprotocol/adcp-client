@@ -54,6 +54,36 @@ function makePre31Client(config = {}) {
   );
 }
 
+function makeModernClientTargeting30(protocol = 'mcp', config = {}, capabilityOverrides = {}) {
+  const client = new SingleAgentClient(
+    {
+      id: `seller-${protocol}`,
+      name: `Seller ${protocol}`,
+      agent_uri: protocol === 'mcp' ? 'https://seller.example.com/mcp' : 'https://seller.example.com',
+      protocol,
+    },
+    {
+      adcpVersion: '3.2.0-beta.2',
+      validateFeatures: false,
+      validation: { requests: 'off', responses: 'off' },
+      ...config,
+    }
+  );
+  const capabilities = {
+    version: 'v3',
+    majorVersions: [3],
+    supportedVersions: [ADCP_30_PIN],
+    protocols: ['signals', 'media_buy'],
+    features: {},
+    extensions: [],
+    _synthetic: false,
+    ...capabilityOverrides,
+  };
+  client.getCapabilities = async () => capabilities;
+  client.ensureEndpointDiscovered = async () => client.agent;
+  return client;
+}
+
 function assertPre31Unsupported(err, expected) {
   assert.ok(err instanceof FeatureUnsupportedError, `expected FeatureUnsupportedError, got ${err?.constructor?.name}`);
   assert.ok(
@@ -220,4 +250,135 @@ describe('get_signals wholesale against pre-3.1 client pin', () => {
       }
     );
   });
+});
+
+describe('modern client cold-call downgrade to a 3.0 seller', () => {
+  for (const protocol of ['mcp', 'a2a']) {
+    test(`${protocol.toUpperCase()} wholesale getSignals fails with a typed recovery path`, async () => {
+      const client = makeModernClientTargeting30(protocol);
+      await assert.rejects(
+        () => client.getSignals({ discovery_mode: 'wholesale' }),
+        err => {
+          assert.ok(err instanceof ProtocolFeatureUnsupportedError);
+          assert.match(err.message, /target seller does not advertise AdCP 3\.1 support/);
+          assert.strictEqual(err.details.current_version, ADCP_30_PIN);
+          assert.strictEqual(err.details.field, 'discovery_mode');
+          assert.match(err.adcpError.suggestion, /meaningful signal_spec/);
+          return true;
+        }
+      );
+    });
+
+    test(`${protocol.toUpperCase()} rejects wholesale when a legacy seller omits release metadata`, async () => {
+      const client = makeModernClientTargeting30(protocol, {}, { supportedVersions: undefined });
+      await assert.rejects(
+        () => client.getSignals({ discovery_mode: 'wholesale' }),
+        err => err instanceof ProtocolFeatureUnsupportedError && err.details.current_version === '3.0 (not advertised)'
+      );
+    });
+
+    test(`${protocol.toUpperCase()} ignores advisory buildVersion when supportedVersions is 3.0`, async () => {
+      const client = makeModernClientTargeting30(
+        protocol,
+        {},
+        {
+          buildVersion: '3.2.0',
+          supportedVersions: ['3.0'],
+          _raw: { adcp_version: '3.2-beta.2' },
+        }
+      );
+      await assert.rejects(
+        () => client.getSignals({ discovery_mode: 'wholesale' }),
+        err => err instanceof ProtocolFeatureUnsupportedError && err.details.current_version === '3.0'
+      );
+    });
+
+    test(`${protocol.toUpperCase()} accepts wholesale when the response envelope proves a 3.1+ wire release`, async () => {
+      const client = makeModernClientTargeting30(
+        protocol,
+        {},
+        { supportedVersions: undefined, _raw: { adcp_version: '3.2-beta.2' } }
+      );
+      const originalCallTool = ProtocolClient.callTool;
+      const calls = [];
+      ProtocolClient.callTool = async (_agent, taskName, params) => {
+        calls.push({ taskName, params });
+        return { status: 'completed', signals: [] };
+      };
+      try {
+        await client.getSignals({ discovery_mode: 'wholesale' });
+        assert.strictEqual(calls.length, 1);
+        assert.strictEqual(calls[0].params.discovery_mode, 'wholesale');
+      } finally {
+        ProtocolClient.callTool = originalCallTool;
+      }
+    });
+
+    test(`${protocol.toUpperCase()} strips explicit discovery webhook config for a 3.0 seller`, async () => {
+      const client = makeModernClientTargeting30(protocol);
+      const calls = [];
+      const originalCallTool = ProtocolClient.callTool;
+      ProtocolClient.callTool = async (_agent, taskName, params, options) => {
+        calls.push({ taskName, params, options });
+        return { status: 'completed', products: [] };
+      };
+      try {
+        const result = await client.getProducts({
+          buying_mode: 'brief',
+          brief: 'sports fans',
+          push_notification_config: { url: 'https://buyer.example.com/adcp-webhook' },
+        });
+        assert.strictEqual(calls.length, 1);
+        assert.strictEqual(calls[0].params.push_notification_config, undefined);
+        assert.ok(result.debug_logs.some(log => log.type === 'pre31_discovery_webhook_stripped'));
+      } finally {
+        ProtocolClient.callTool = originalCallTool;
+      }
+    });
+
+    test(`${protocol.toUpperCase()} strips explicit get_signals webhook config for a 3.0 seller`, async () => {
+      const client = makeModernClientTargeting30(protocol);
+      const calls = [];
+      const originalCallTool = ProtocolClient.callTool;
+      ProtocolClient.callTool = async (_agent, taskName, params, options) => {
+        calls.push({ taskName, params, options });
+        return { status: 'completed', signals: [] };
+      };
+      try {
+        const result = await client.getSignals({
+          signal_spec: 'sports fans',
+          push_notification_config: { url: 'https://buyer.example.com/adcp-webhook' },
+        });
+        assert.strictEqual(calls.length, 1);
+        assert.strictEqual(calls[0].params.push_notification_config, undefined);
+        assert.ok(result.debug_logs.some(log => log.type === 'pre31_discovery_webhook_stripped'));
+      } finally {
+        ProtocolClient.callTool = originalCallTool;
+      }
+    });
+
+    test(`${protocol.toUpperCase()} suppresses auto-injected discovery webhooks on the first 3.0 call`, async () => {
+      const client = makeModernClientTargeting30(protocol, {
+        webhookUrlTemplate: 'https://buyer.example.com/adcp-webhook/{task_type}/{agent_id}/{operation_id}',
+      });
+      const calls = [];
+      const originalCallTool = ProtocolClient.callTool;
+      ProtocolClient.callTool = async (_agent, taskName, params, options) => {
+        calls.push({ taskName, params, options });
+        return { status: 'completed', signals: [] };
+      };
+      try {
+        const result = await client.getSignals({ signal_spec: 'sports fans' });
+        assert.strictEqual(calls.length, 1);
+        assert.strictEqual(calls[0].params.push_notification_config, undefined);
+        assert.strictEqual(calls[0].options.webhookUrl, undefined);
+        const drift = result.debug_logs.find(log => log.type === 'pre31_webhook_degraded');
+        assert.ok(drift);
+        assert.match(drift.message, /target seller advertises only 3\.0\.12/);
+        assert.doesNotMatch(drift.message, /client is pinned to 3\.2/);
+      } finally {
+        ProtocolClient.callTool = originalCallTool;
+      }
+    });
+  }
 });

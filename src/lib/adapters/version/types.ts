@@ -18,6 +18,8 @@ export interface VersionDrift {
   message: string;
   /** Names of the fields removed from the request. */
   strippedFields?: string[];
+  /** Individual drift types when one adaptation aggregates multiple changes. */
+  constituentTypes?: string[];
 }
 
 export interface VersionAdapter {

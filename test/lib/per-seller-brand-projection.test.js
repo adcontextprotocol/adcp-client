@@ -25,7 +25,7 @@ const brand = {
 };
 
 const caps30 = { version: 'v3', majorVersions: [3], supportedVersions: ['3.0'], _synthetic: false };
-const caps31 = { version: 'v3', majorVersions: [3], buildVersion: '3.1.0', _synthetic: false };
+const caps31 = { version: 'v3', majorVersions: [3], supportedVersions: ['3.1'], _synthetic: false };
 
 test('resolveAdapterKey: returns 3.0 for pre-3.1 client', () => {
   assert.equal(resolveAdapterKey('3.0', caps31), '3.0');
@@ -99,7 +99,6 @@ test('sync_accounts: no strip when no account has brand_kit_override', () => {
 
 test('adapters return undefined for unregistered tools at 3.0', () => {
   assert.equal(getVersionAdapter('3.0', 'list_creative_formats'), undefined);
-  assert.equal(getVersionAdapter('3.0', 'get_signals'), undefined);
 });
 
 // pricing_currencies is an AdCP 3.1-only filter. 3.0 sellers return
@@ -131,11 +130,12 @@ test('get_products: no strip when filters absent entirely', () => {
   assert.equal(drift, undefined);
 });
 
-test('get_products: strips both brand_kit_override and pricing_currencies, emits first drift', () => {
+test('get_products: aggregates every stripped field into one observable drift', () => {
   const adapter = getVersionAdapter('3.0', 'get_products');
   const { params, drift } = adapter.adaptRequest({
     brand: { ...brand },
     filters: { pricing_currencies: ['USD'] },
+    push_notification_config: { url: 'https://buyer.example/webhook' },
     brief: 'Premium placements',
   });
   assert.deepEqual(params.brand, {
@@ -145,5 +145,17 @@ test('get_products: strips both brand_kit_override and pricing_currencies, emits
     data_subject_contestation: { email: 'p@goldpeaktea.com' },
   });
   assert.deepEqual(params.filters, {});
-  assert.ok(drift);
+  assert.equal(params.push_notification_config, undefined);
+  assert.equal(drift?.type, 'pre31_brand_fields_stripped');
+  assert.deepEqual(drift?.constituentTypes, [
+    'pre31_brand_fields_stripped',
+    'pre31_pricing_currencies_stripped',
+    'pre31_discovery_webhook_stripped',
+  ]);
+  assert.deepEqual(drift?.strippedFields, [
+    'brand_kit_override',
+    'filters.pricing_currencies',
+    'push_notification_config',
+  ]);
+  assert.match(drift?.message, /Poll for the result instead/);
 });

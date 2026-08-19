@@ -133,11 +133,24 @@ export function isPre31AdcpVersion(version: string | undefined): boolean {
   return Number.isFinite(minor) && minor < 1;
 }
 
-/** Does the seller advertise AdCP 3.1+ support (via get_adcp_capabilities)? */
-export function sellerAdvertises31(caps: { supportedVersions?: string[]; buildVersion?: string } | undefined): boolean {
+/**
+ * Does the seller authoritatively advertise AdCP 3.1+ support?
+ *
+ * `supportedVersions` is the negotiation field; the response envelope's
+ * `adcp_version` is direct evidence of the wire release the seller just
+ * served. `buildVersion` is advisory and MUST NOT select a wire shape.
+ */
+export function sellerAdvertises31(
+  caps: { supportedVersions?: string[]; buildVersion?: string; _raw?: Record<string, unknown> } | undefined
+): boolean {
   if (!caps) return false;
-  if (caps.buildVersion && !isPre31AdcpVersion(caps.buildVersion)) return true;
-  return (caps.supportedVersions ?? []).some(v => !isPre31AdcpVersion(v));
+  const supportedVersions = caps.supportedVersions ?? [];
+  if (supportedVersions.length > 0) {
+    return supportedVersions.some(v => !isPre31AdcpVersion(v));
+  }
+  const responseVersion = typeof caps._raw?.adcp_version === 'string' ? caps._raw.adcp_version : undefined;
+  if (responseVersion !== undefined && !isPre31AdcpVersion(responseVersion)) return true;
+  return false;
 }
 
 /**
@@ -148,7 +161,7 @@ export function sellerAdvertises31(caps: { supportedVersions?: string[]; buildVe
  */
 export function shouldOmit31Fields(
   resolvedClientVersion: string | undefined,
-  caps: { supportedVersions?: string[]; buildVersion?: string } | undefined
+  caps: { supportedVersions?: string[]; buildVersion?: string; _raw?: Record<string, unknown> } | undefined
 ): boolean {
   if (isPre31AdcpVersion(resolvedClientVersion)) return true;
   return !sellerAdvertises31(caps);

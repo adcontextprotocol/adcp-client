@@ -177,57 +177,12 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
       });
     }
 
-    // keyid is buyer-controlled (JWK spec places no charset restriction on
-    // `kid`). Bound it to a URL-safe shape — explicitly excluding `:` — before
-    // interpolating into the principal string, so downstream tenant-isolation
-    // checks that split `signing:<keyid>` on the first `:` can't be confused
-    // by a colon embedded in the signer's key id.
-    if (!SAFE_KEYID.test(result.keyid)) {
-      throw new AuthError('Signature key id contains unsupported characters.', {
-        cause: new Error(`keyid=${JSON.stringify(result.keyid)} fails /^[A-Za-z0-9._-]{1,256}$/`),
-      });
-    }
-
     const signer: VerifiedSigner = {
       keyid: result.keyid,
       verified_at: result.verified_at,
       ...(result.agent_url !== undefined ? { agent_url: result.agent_url } : {}),
     };
-
-    // Stamp the kind-discriminated `credential` variant for the framework's
-    // dispatcher and `BuyerAgentRegistry` resolution (Phase 1 Stage 3 of
-    // #1269). Per adcontextprotocol/adcp#3831, `agent_url` here is the
-    // verifier's `agentUrlForKeyid` lookup result — derived from the
-    // `agents[]` entry whose `jwks_uri` resolved the keyid.
-    //
-    // When `agent_url` is unset (verifier wired without a keyid→agent URL
-    // resolver), we OMIT the `credential` rather than synthesize an
-    // `http_sig` variant that would otherwise carry an empty agent_url —
-    // Stage 1's runtime guard rejects malformed http_sig credentials, so
-    // emitting one would just trip the guard and confuse the audit trail.
-    const credential =
-      signer.agent_url !== undefined
-        ? markVerifiedHttpSig({
-            kind: 'http_sig',
-            keyid: signer.keyid,
-            agent_url: signer.agent_url,
-            verified_at: signer.verified_at,
-          })
-        : undefined;
-
-    const principal = options.makePrincipal
-      ? options.makePrincipal(signer)
-      : {
-          principal: `signing:${signer.keyid}`,
-          claims: {
-            signature: {
-              keyid: signer.keyid,
-              verified_at: signer.verified_at,
-              ...(signer.agent_url !== undefined ? { agent_url: signer.agent_url } : {}),
-            },
-          },
-          ...(credential !== undefined && { credential }),
-        };
+    const principal = principalForVerifiedSigner(signer, options.makePrincipal);
 
     // Write the side-channel state only after the principal is fully built so
     // a throw from `makePrincipal` leaves `req.verifiedSigner` unset — the
@@ -238,6 +193,62 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
   };
 
   return tagAuthenticatorNeedsRawBody(authenticator);
+}
+
+/**
+ * Build the authenticated principal shared by the authenticate-hook and the
+ * auto-wired `signedRequests` verifier. A custom principal keeps its identity
+ * fields, while the framework still attaches the branded HTTP-signature
+ * credential unless the callback explicitly supplied a credential of its own.
+ *
+ * @internal
+ */
+export function principalForVerifiedSigner(
+  signer: VerifiedSigner,
+  makePrincipal?: (signer: VerifiedSigner) => AuthPrincipal
+): AuthPrincipal {
+  // keyid is buyer-controlled (JWK spec places no charset restriction on
+  // `kid`). Bound it to a URL-safe shape — explicitly excluding `:` — before
+  // interpolating into the principal string, so downstream tenant-isolation
+  // checks that split `signing:<keyid>` on the first `:` cannot be confused.
+  if (!SAFE_KEYID.test(signer.keyid)) {
+    throw new AuthError('Signature key id contains unsupported characters.', {
+      cause: new Error(`keyid=${JSON.stringify(signer.keyid)} fails /^[A-Za-z0-9._-]{1,256}$/`),
+    });
+  }
+
+  const credential =
+    signer.agent_url !== undefined
+      ? markVerifiedHttpSig({
+          kind: 'http_sig',
+          keyid: signer.keyid,
+          agent_url: signer.agent_url,
+          verified_at: signer.verified_at,
+        })
+      : undefined;
+  if (makePrincipal !== undefined) {
+    const custom = makePrincipal(signer);
+    if (
+      !custom ||
+      typeof custom !== 'object' ||
+      typeof (custom as AuthPrincipal).principal !== 'string' ||
+      (custom as AuthPrincipal).principal.length === 0
+    ) {
+      throw new AuthError('Signature key is not mapped to an authenticated principal.');
+    }
+    return credential !== undefined && custom.credential === undefined ? { ...custom, credential } : custom;
+  }
+  return {
+    principal: `signing:${signer.keyid}`,
+    claims: {
+      signature: {
+        keyid: signer.keyid,
+        verified_at: signer.verified_at,
+        ...(signer.agent_url !== undefined ? { agent_url: signer.agent_url } : {}),
+      },
+    },
+    ...(credential !== undefined && { credential }),
+  };
 }
 
 /**
