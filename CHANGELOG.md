@@ -1,5 +1,39 @@
 # Changelog
 
+## 14.0.0-beta.3
+
+### Major Changes
+
+- 8e47a8c: Harden PostgreSQL-backed server state: record and enforce MCP task ownership while preserving globally unique task IDs, deny unsafe unscoped task access by default (with an explicit trusted-worker/single-tenant opt-in), let authenticated stateless `serve()` deployments bind tasks to a server-controlled principal with `taskScope`, serialize replay-cache inserts per key and scope so concurrent requests cannot exceed the configured cap, and keep raw database failures out of public idempotency readiness errors.
+
+  Before deploying, stop task writers, drain active tasks, and rerun both `getMcpTasksMigration()` and `getReplayStoreMigration()`; both migrations are idempotent. Stopping writers avoids blocking application traffic while PostgreSQL builds the new ownership index. Pre-upgrade tasks have no recoverable session owner and remain available only through a separate store configured for the trusted task-ID-only worker path. Stateless single-tenant servers and trusted worker stores must explicitly set `allowUnscopedAccess: true`; authenticated multi-tenant `serve()` deployments should supply the PostgreSQL store and use `taskScopeFromPrincipal`, which stores a fixed-length digest of the canonical endpoint/principal tuple rather than raw principal material. Other client-facing integrations must pass a non-empty, server-controlled scope to every TaskStore operation. `taskScope` now fails fast without authentication, an explicit scope-enforcing store, or when combined with `reuseAgent`.
+
+  Principal-scoped tasks also require an allowed canonical host and a server built by `createAdcpServer()` or `createTaskCapableServer()`. They fail closed for raw, directly constructed `McpServer` instances whose queue state cannot be verified, and cannot be combined with `TaskMessageQueue` until queued messages carry the same principal ownership scope. Canonical public URLs now require HTTPS (except loopback development URLs), reject embedded credentials, and preserve an explicitly configured non-default public port in replay and ownership scopes.
+
+  Low-level transports that bypass `serve()` must use a distinct PostgreSQL idempotency `tableName` per agent or include an equivalent trusted canonical endpoint in `resolveIdempotencyPrincipal` when multiple hosted agents intentionally share a store. The canonical `serve()` MCP mount now rejects query strings because it routes only by pathname while replay protection scopes by the full signed target URI; accepting query variants would allow unbounded replay-cache scope creation.
+
+  `serve()` now automatically prefixes resolved idempotency principals with its canonical endpoint, preventing shared pooled tables from replaying cached responses across hosted agents. Existing cached entries use the pre-upgrade key shape and will not replay after upgrade. A safe rollout must stop mutations, drain in-flight work, wait at least the full configured replay TTL after the last accepted mutation (or migrate/dual-read the old keyspace), and then upgrade all instances without mixing old and new binaries. Low-level transports that bypass `serve()` still need distinct per-agent tables or an equivalent trusted endpoint discriminator.
+
+### Minor Changes
+
+- 5067771: Pin the signed AdCP 3.2.0-beta.2 bundle and ship complete compact proposal and direct-buy lifecycle storyboard coverage through the public runner and CLI.
+- 0de0f08: Preserve preview-renderer provenance while normalizing preview responses, and add a pure helper for resolving seller, publisher-placement, community-reference, and manifest preview authority without fetching or executing renderer code.
+- 1e24deb: Restore structural compatibility for generated nested open-object types while preserving historical generated-module exports.
+- e9be090: Expose typed storyboard agent-profile reuse so repeated matrix runs can skip redundant capability discovery while preserving tool gates.
+- a68bc96: Propagate compact product, proposal, and media-buy identifiers between storyboard steps while atomically replacing stale lifecycle aliases.
+- aad43d5: Adopt the AdCP 3.2 beta.1 schemas and compliance bundle, expose its compact
+  proposal, decline, and expiry lifecycle storyboards through the SDK runner and
+  CLI, and preserve beta.1's closed placement-presentation validation boundary.
+
+### Patch Changes
+
+- 9f07e94: Make external schema roots authoritative for storyboard request and response validation, including `latest` schema IDs pinned by a matching schema index, so pre-publish protocol builds are not rejected by the SDK's generated validator snapshot.
+- 8c01d10: Align `gradeRequestSigning`/`gradeOneVector` transport defaults to `'mcp'`, matching the storyboard runner behavior intended for the 13.0 release. Direct API callers against MCP agents no longer need to pass `transport: 'mcp'` explicitly (the raw REST replay 404s on MCP agents by construction). REST-binding callers must now pass `transport: 'raw'` or `--transport raw`. The MCP path now completes the official initialize lifecycle, carries the negotiated protocol version, and accurately skips URL-only vectors whose coverage cannot survive MCP reshaping.
+- 207d9c6: Honor `validation.logSchemaViolations: false` for console output and identify the AdCP schema version in enabled validation diagnostics.
+- f4be30d: Accept SDK-stamped version envelope fields when validating compact media-buy commitment responses.
+- 1c2778b: Reduce the published package size by sharing the exact generated schema declarations between ESM and CommonJS consumers.
+- 2a3d87f: Keep canonical projection declarations type-safe for AdCP 3.2 sample-render URLs and creative locale policies.
+
 ## 14.0.0-beta.2
 
 ### Minor Changes
