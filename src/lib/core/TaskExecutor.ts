@@ -24,7 +24,7 @@ import {
 } from '../validation/client-hooks';
 import { formatIssues } from '../validation/schema-validator';
 import { ADCP_VERSION } from '../version';
-import { unwrapProtocolResponse, isAdcpError, isTerminalAdcpError } from '../utils/response-unwrapper';
+import { unwrapProtocolResponse, isTerminalAdcpError } from '../utils/response-unwrapper';
 import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
 import { generateIdempotencyKey, requestUsesIdempotency, redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
@@ -1212,11 +1212,20 @@ export class TaskExecutor {
       case ADCP_STATUS.REJECTED:
       case ADCP_STATUS.CANCELED: {
         const failedData = this.extractResponseData(response, debugLogs, taskName);
-        const adcpErrorInfo = extractAdcpErrorInfo(failedData);
+        // Raw/in-process protocol clients may wrap the tool payload under
+        // `data` while carrying the task lifecycle status at the top level.
+        // The generic unwrapper intentionally preserves that wrapper, so
+        // select its nested payload here before extracting business errors.
+        const failedPayload =
+          response?.structuredContent === undefined &&
+          response?.content === undefined &&
+          response?.result === undefined &&
+          response?.data != null &&
+          typeof response.data === 'object'
+            ? response.data
+            : failedData;
+        const adcpErrorInfo = extractAdcpErrorInfo(failedPayload);
         const hasStructuredError = !!adcpErrorInfo;
-        const failedError = hasStructuredError
-          ? this.extractOperationError(failedData)
-          : response.error || response.message || `Task ${status}`;
         // Preserve failedData whenever the server returned a structured
         // payload — not just when extractAdcpErrorInfo recognizes an
         // `adcp_error`/`errors` envelope. Tool-level error shapes like
@@ -1226,17 +1235,22 @@ export class TaskExecutor {
         // Only drop `data` when there's literally no structured payload —
         // i.e. falsy or an empty object.
         const hasStructuredPayload =
-          failedData != null &&
-          typeof failedData === 'object' &&
-          (Array.isArray(failedData) || Object.keys(failedData).length > 0);
+          failedPayload != null &&
+          typeof failedPayload === 'object' &&
+          (Array.isArray(failedPayload) || Object.keys(failedPayload).length > 0);
+        const structuredMessage = hasStructuredPayload ? this.extractOperationError(failedPayload) : undefined;
+        const failedError =
+          structuredMessage && structuredMessage !== 'Operation failed'
+            ? structuredMessage
+            : response.error || response.message || structuredMessage || `Task ${status}`;
         return {
           success: false as const,
           status: 'failed' as const,
-          data: hasStructuredError || hasStructuredPayload ? failedData : undefined,
+          data: hasStructuredError || hasStructuredPayload ? failedPayload : undefined,
           error: typeof failedError === 'string' ? failedError : `Task ${status}`,
           adcpError: adcpErrorInfo,
           errorInstance: this.buildErrorInstance(taskId, adcpErrorInfo),
-          correlationId: extractCorrelationId(failedData),
+          correlationId: extractCorrelationId(failedPayload),
           metadata: this.buildMetadata({
             taskId,
             taskName,
@@ -1417,9 +1431,18 @@ export class TaskExecutor {
       const ae = data.adcp_error;
       return ae.message ? `${ae.code}: ${ae.message}` : ae.code;
     }
+    const pluralError = Array.isArray(data?.errors)
+      ? data.errors
+          .map((error: any) => error?.message || error?.code)
+          .filter((value: unknown): value is string => typeof value === 'string' && value.length > 0)
+          .join('; ')
+      : undefined;
     return (
       data?.error ||
-      (isAdcpError(data) ? data.errors.map((e: any) => e.message || e.code).join('; ') : null) ||
+      pluralError ||
+      data?.error_detail ||
+      data?.reason ||
+      data?.rejection_reason ||
       data?.message ||
       'Operation failed'
     );

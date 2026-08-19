@@ -81,7 +81,8 @@ import {
   generateRandomInvalidJwt,
 } from './probes';
 import { readBrandJsonUrl } from '../../signing/agent-resolver/capabilities-types';
-import { validateTestKit } from './test-kit';
+import { selectAgentByUrl } from '../../signing/agent-resolver/select-agent';
+import { selectProbeTask, validateTestKit } from './test-kit';
 import { validateStoryboardShape } from './loader';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
 import { createWebhookReceiver, type WebhookReceiver, type WebhookWaitResult } from './webhook-receiver';
@@ -4289,8 +4290,12 @@ async function runStoryboardStepBody(
   if (!clientResolution.reusedShared) {
     const discovered = await getOrDiscoverProfile(client, options);
     profile = discovered.profile;
-    if (profile && !options._profile) {
-      options = { ...options, _profile: profile };
+    if (profile && (!options._profile || !options.agentTools)) {
+      options = {
+        ...options,
+        ...(!options._profile && { _profile: profile }),
+        ...(!options.agentTools && { agentTools: normalizeAgentToolNames(profile.tools) }),
+      };
     }
   } else {
     profile = options._profile;
@@ -4534,6 +4539,26 @@ async function executeStep(
   // When the reference resolves to nothing, fall back to `task_default`.
   const resolvedTask = resolveTaskName(step, options);
   if (!resolvedTask) {
+    if (step.task === '$test_kit.auth.probe_task' && options.agentTools) {
+      const detail =
+        `Agent does not advertise an auth-required, read-only tool that accepts an empty request body; ` +
+        `security auth probes are not applicable to tools [${options.agentTools.join(', ')}].`;
+      return {
+        step_id: step.id,
+        phase_id: phaseId,
+        title: step.title,
+        task: step.task,
+        passed: true,
+        skipped: true,
+        skip_reason: 'not_applicable',
+        skip: buildSkip('not_applicable', detail),
+        duration_ms: 0,
+        validations: [],
+        context,
+        next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
+        extraction: { path: 'none' },
+      };
+    }
     return {
       step_id: step.id,
       phase_id: phaseId,
@@ -5953,7 +5978,7 @@ async function executeProbeStep(
   } else if (step.task === 'request_signing_probe') {
     httpResult = await probeRequestSigningVector(step.id, runState.agentUrl, options);
   } else if (step.task === 'fetch_brand_jwks') {
-    httpResult = await probeBrandJwks(options._profile?.raw_capabilities, probeOpts);
+    httpResult = await probeBrandJwks(options._profile?.raw_capabilities, runState.agentUrl, probeOpts);
   } else if (step.task === 'assert_jwks_purpose') {
     // Webhook delivery is signed with the agent's request-signing key; the
     // deprecated webhook-signing purpose is still accepted (adcontextprotocol/adcp#5555).
@@ -6987,6 +7012,7 @@ function rateLimitTripObservationToProbeResult(
 
 async function probeBrandJwks(
   rawCapabilities: unknown,
+  agentUrl: string,
   options: { allowPrivateIp?: boolean; fetchFn?: typeof fetch }
 ): Promise<HttpProbeResult> {
   const brandJsonUrl = readBrandJsonUrl(rawCapabilities);
@@ -7008,19 +7034,26 @@ async function probeBrandJwks(
     };
   }
 
-  const agents = brand.body && typeof brand.body === 'object' ? (brand.body as { agents?: unknown }).agents : undefined;
-  const jwksUri = Array.isArray(agents)
-    ? agents
-        .map(agent => (agent && typeof agent === 'object' ? (agent as { jwks_uri?: unknown }).jwks_uri : undefined))
-        .find((uri): uri is string => typeof uri === 'string' && uri.length > 0)
-    : undefined;
+  let jwksUri: string | undefined;
+  try {
+    const agent = selectAgentByUrl(brand.body, agentUrl);
+    jwksUri = typeof agent.jwks_uri === 'string' && agent.jwks_uri.length > 0 ? agent.jwks_uri : undefined;
+  } catch {
+    return {
+      url: brandJsonUrl,
+      status: 0,
+      headers: {},
+      body: brand.body,
+      error: 'brand.json agent portfolio did not uniquely match the agent under test',
+    };
+  }
   if (!jwksUri) {
     return {
       url: brandJsonUrl,
       status: 0,
       headers: {},
       body: brand.body,
-      error: 'brand.json agents[] did not contain a jwks_uri',
+      error: 'brand.json agent entry for the agent under test did not contain a jwks_uri',
     };
   }
 
@@ -7263,8 +7296,11 @@ function resolveTaskName(step: StoryboardStep, options: StoryboardRunOptions): s
     }
     value = (value as Record<string, unknown>)[segment];
   }
-  if (typeof value === 'string' && value.length > 0) return value;
-  return step.task_default;
+  const configured = typeof value === 'string' && value.length > 0 ? value : step.task_default;
+  if (step.task === '$test_kit.auth.probe_task') {
+    return selectProbeTask(configured, options.agentTools);
+  }
+  return configured;
 }
 
 /**

@@ -146,6 +146,29 @@ function runClockMs(runnerVars: RunnerVariables | undefined): number {
   return runnerVars?.runStartMs ?? Date.now();
 }
 
+function resolveMediaBuyReadAccount(fixtureAccount: unknown, contextAccount: unknown, options: TestOptions): unknown {
+  const resolvedAccount = contextAccount ?? resolveAccount(options);
+  // Preserve a fixture-authored natural-key operator: it identifies the
+  // buyer acting for the brand and is not interchangeable with brand.domain.
+  // A context account remains authoritative, while the harness still owns
+  // sandbox routing for fixture-authored natural keys.
+  if (
+    contextAccount === undefined &&
+    fixtureAccount !== null &&
+    typeof fixtureAccount === 'object' &&
+    !Array.isArray(fixtureAccount) &&
+    typeof (fixtureAccount as Record<string, unknown>).operator === 'string' &&
+    typeof (fixtureAccount as Record<string, unknown>).account_id !== 'string'
+  ) {
+    const sandbox = (resolvedAccount as { sandbox?: boolean }).sandbox;
+    return {
+      ...(fixtureAccount as Record<string, unknown>),
+      ...(sandbox !== undefined && { sandbox }),
+    };
+  }
+  return resolvedAccount;
+}
+
 function generatedIdSuffix(step: StoryboardStep, runnerVars: RunnerVariables | undefined, nowMs?: number): string {
   const timestamp = nowMs ?? runClockMs(runnerVars);
   if (runnerVars?.runStartMs === undefined) return String(timestamp);
@@ -471,7 +494,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
         )
       : {};
     const result: Record<string, unknown> = { ...fixtureFields };
-    result.account = context.account ?? resolveAccount(options);
+    result.account = resolveMediaBuyReadAccount(fixtureFields.account, context.account, options);
     if (context.media_buy_id != null && result.media_buy_ids === undefined) {
       result.media_buy_ids = [context.media_buy_id];
     }
@@ -489,7 +512,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
         )
       : {};
     const result: Record<string, unknown> = { ...fixtureFields };
-    result.account = context.account ?? resolveAccount(options);
+    result.account = resolveMediaBuyReadAccount(fixtureFields.account, context.account, options);
     if (context.media_buy_id != null && result.media_buy_ids === undefined) {
       result.media_buy_ids = [context.media_buy_id];
     }
