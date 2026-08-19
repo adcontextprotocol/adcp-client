@@ -70,7 +70,7 @@ import {
   readMcpAppResource,
   type AdcpMcpResourceDefinition,
 } from './mcp-app';
-import { createTaskCapableServer, InMemoryTaskStore } from './tasks';
+import { ADCP_TASK_MESSAGE_QUEUE, createTaskCapableServer, InMemoryTaskStore } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError, applyAdcpErrorAllowlist, sanitizeStructuredAdcpError } from './errors';
 import type { BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
@@ -88,6 +88,7 @@ import {
 import { ADCP_ERROR_FIELD_ALLOWLIST } from './envelope-allowlist';
 import { InMemoryStateStore } from './state-store';
 import type { AdcpStateStore } from './state-store';
+import { getServeRequestContext } from './auth';
 import {
   capabilitiesResponse,
   productsResponse,
@@ -1287,6 +1288,14 @@ export interface SignedRequestsConfig {
  * tests and for downstream frameworks that want the same wiring.
  */
 export const ADCP_PRE_TRANSPORT: unique symbol = Symbol.for('@adcp/client.preTransport');
+
+/**
+ * Per-request canonical endpoint scope stamped by `serve()` on the underlying
+ * SDK server while it dispatches a request. Internal transport contract; it
+ * is intentionally independent of authentication so anonymous deployments
+ * receive the same multi-host idempotency isolation.
+ */
+export const ADCP_SERVE_IDEMPOTENCY_SCOPE: unique symbol = Symbol.for('@adcp/client.serveIdempotencyScope');
 
 /**
  * Diagnostic snapshot of the signed-requests wiring on a returned server.
@@ -3730,14 +3739,21 @@ function buildSignedRequestsPreTransport(
   });
 
   return async function adcpPreTransport(req, res) {
+    const serveContext = getServeRequestContext(req);
+    const canonicalPublicUrl = serveContext?.publicUrl ? new URL(serveContext.publicUrl) : undefined;
     const reqShim: ExpressLike = {
       method: req.method ?? 'POST',
       url: req.url ?? '/mcp',
       originalUrl: req.url ?? '/mcp',
       headers: req.headers,
       rawBody: req.rawBody ?? '',
-      protocol: 'http',
+      protocol: canonicalPublicUrl?.protocol.replace(/:$/, '') ?? 'http',
       get(name: string) {
+        const normalizedName = name.toLowerCase();
+        if (canonicalPublicUrl && normalizedName === 'host') return canonicalPublicUrl.host;
+        if (canonicalPublicUrl && normalizedName === 'x-forwarded-proto') {
+          return canonicalPublicUrl.protocol.replace(/:$/, '');
+        }
         const v = req.headers[name.toLowerCase()];
         return Array.isArray(v) ? v.join(', ') : v;
       },
@@ -5844,10 +5860,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 ctx.callerMutationScope.account_id ?? null,
               ])
             : undefined;
-          const principal =
+          const resolvedPrincipal =
             (resolveIdempotencyPrincipal
               ? resolveIdempotencyPrincipal(ctx, params, toolName as AdcpServerToolName)
               : (callerMutationPrincipal ?? ctx.sessionKey)) ?? '';
+          const serveScope = (server as unknown as Record<symbol, unknown>)[ADCP_SERVE_IDEMPOTENCY_SCOPE];
+          const principal =
+            resolvedPrincipal && typeof serveScope === 'string' && serveScope.length > 0
+              ? JSON.stringify([serveScope, resolvedPrincipal])
+              : resolvedPrincipal;
           if (!principal) {
             logger.error('Idempotency principal unresolved', { tool: toolName });
             return finalize(
@@ -7592,6 +7613,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   });
   Object.defineProperty(wrapped, ADCP_STATE_STORE, {
     value: stateStore,
+    enumerable: false,
+    configurable: true,
+    writable: false,
+  });
+  Object.defineProperty(wrapped, ADCP_TASK_MESSAGE_QUEUE, {
+    value: Boolean(taskMessageQueue),
     enumerable: false,
     configurable: true,
     writable: false,

@@ -43,6 +43,13 @@ export interface ExpressMiddlewareOptions extends Omit<
    * store** (Redis, Postgres, etc.) — the default in-memory store does not
    * survive process boundaries, so a signature accepted on replica A is
    * invisible to replica B and can be replayed there within the signature window.
+   *
+   * Replay limits are scoped by the exact signed `@target-uri`, including its
+   * query string. This middleware cannot know whether multiple URLs route to
+   * the same application endpoint. Direct MCP mounts MUST reject unsupported
+   * query variants before this middleware (the higher-level `serve()` helper
+   * already enforces its exact mount path); this store is not a replacement
+   * for route validation or a global rate limiter.
    */
   replayStore?: VerifyRequestOptions['replayStore'];
   /**

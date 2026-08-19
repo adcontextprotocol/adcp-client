@@ -378,6 +378,8 @@ app.post(
 
 `replayStore` and `revocationStore` default to in-memory implementations — fine for single-process deployments.
 
+`createExpressVerifier()` scopes replay entries and their safety cap by the exact signed `@target-uri`, including the query string. It verifies signatures; it does not decide which URLs are equivalent application routes. If you mount it directly on an MCP endpoint such as `/mcp`, reject query-string variants before the verifier unless your router treats each variant as a distinct supported endpoint. Otherwise a valid signer could create many replay-cache scopes by varying the query. The higher-level `serve()` helper already rejects query variants on its MCP mount. Do not use the replay-cache cap as a global request rate limiter.
+
 **For multi-instance verifier deployments, the in-memory default is a real gap.** Each process has its own cache; an attacker who captures a signed request can replay it against a sibling instance whose cache hasn't seen the nonce. The replay-protection invariant is "this `(keyid, scope, nonce)` tuple has not been seen before" — that has to hold across the fleet, not per-process. RFC 9421 expiry bounds the window to 5 minutes, but that's plenty of time for an in-flight replay. Use a shared backend.
 
 The SDK ships `PostgresReplayStore` for this:
@@ -387,7 +389,9 @@ import { Pool } from 'pg';
 import { PostgresReplayStore, getReplayStoreMigration, sweepExpiredReplays } from '@adcp/sdk/signing/server';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-await pool.query(getReplayStoreMigration());                    // run once at boot
+// Run on every deploy before serving traffic. It is idempotent and upgrades
+// existing installations with the guarded-insert database function.
+await pool.query(getReplayStoreMigration());
 
 const replayStore = new PostgresReplayStore(pool);
 
@@ -404,7 +408,7 @@ app.use(createExpressVerifier({
 }));
 ```
 
-The schema is one table with `(keyid, scope, nonce)` as the primary key plus indexes on `expires_at` and `(keyid, scope, expires_at)`. Lookups are O(log n) on the composite index; insert is one round-trip CTE that handles the replay/cap/insert decision atomically. The sweeper exists because Postgres has no native row-level TTL — it's a `DELETE FROM replay_cache WHERE expires_at <= now()` you call on a schedule. Other backends (Redis, KeyDB, anything supporting atomic insert-if-absent with TTL) can implement the `ReplayStore` interface the same way.
+The schema uses one table with `(keyid, scope, nonce)` as the primary key, indexes on `expires_at` and `(keyid, scope, expires_at)`, and a table-specific guarded-insert function. Each insert attempt is one round trip to that function, which tries a transaction-scoped advisory lock and handles the replay/cap/insert decision atomically. Busy scopes use bounded client-side retry between queries, so pooled connections remain available to unrelated scopes. Rerun `getReplayStoreMigration()` before deploying an SDK upgrade so the function stays current; the migration is idempotent. The sweeper exists because Postgres has no native row-level TTL — it's a `DELETE FROM replay_cache WHERE expires_at <= now()` you call on a schedule. Other backends (Redis, KeyDB, anything supporting atomic insert-if-absent with TTL) can implement the `ReplayStore` interface the same way.
 
 On successful verification, `req.verifiedSigner` contains `{ keyid, agent_url?, verified_at }`. On failure, the middleware returns `401` with `WWW-Authenticate: Signature error="<code>"`.
 

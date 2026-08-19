@@ -105,9 +105,10 @@ function sellerConfig({
   return config;
 }
 
-async function startServer(factory) {
+async function startServer(factory, options = {}) {
   return new Promise(resolve => {
     const srv = serve(factory, {
+      ...options,
       port: 0,
       onListening: url => resolve({ server: srv, url, port: new URL(url).port }),
     });
@@ -173,17 +174,18 @@ function mcpUpdateMediaBuyBody() {
   });
 }
 
-async function postSigned({ url, body, sign, nonce }) {
+async function postSigned({ url, body, sign, nonce, signUrl = url, requestHeaders = {} }) {
   const parsed = new URL(url);
   const headers = {
     'Content-Type': 'application/json',
     Accept: 'application/json, text/event-stream',
+    ...requestHeaders,
   };
   if (sign) {
     const signOpts = { coverContentDigest: true };
     if (nonce !== undefined) signOpts.nonce = nonce;
     const signed = signRequest(
-      { method: 'POST', url, headers, body },
+      { method: 'POST', url: signUrl, headers, body },
       { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: edPrivate },
       signOpts
     );
@@ -415,6 +417,55 @@ describe('createAdcpServer: signedRequests auto-wiring', () => {
         /create_media_buy|keyid|nonce/i,
         'public error must not expose verifier details'
       );
+    });
+  });
+
+  describe('canonical public URL verification', () => {
+    let started;
+
+    before(async () => {
+      started = await startServer(
+        () => createAdcpServer(sellerConfig({ withSignedRequests: true, withSpecialism: true })),
+        {
+          publicUrl: 'https://seller.example.com/mcp',
+          trustForwardedHost: true,
+          allowedHosts: ['localhost', '127.0.0.1', 'seller.example.com'],
+        }
+      );
+    });
+
+    after(async () => {
+      if (started?.server) {
+        await new Promise(resolve => started.server.close(resolve));
+      }
+    });
+
+    it('binds auto-wired signatures to the HTTPS public URL instead of the internal listener', async () => {
+      const body = mcpCreateMediaBuyBody();
+      const requestHeaders = {
+        'X-Forwarded-Host': 'seller.example.com',
+        'X-Forwarded-Proto': 'https',
+      };
+
+      const wrongScheme = await postSigned({
+        url: started.url,
+        signUrl: 'http://seller.example.com/mcp',
+        body,
+        sign: true,
+        nonce: 'auto-wire-wrong-scheme-0001',
+        requestHeaders,
+      });
+      assert.strictEqual(wrongScheme.status, 401, 'an HTTP-bound signature must not authorize the HTTPS endpoint');
+
+      const canonical = await postSigned({
+        url: started.url,
+        signUrl: 'https://seller.example.com/mcp',
+        body,
+        sign: true,
+        nonce: 'auto-wire-canonical-url-0001',
+        requestHeaders,
+      });
+      assert.strictEqual(canonical.status, 200, 'a signature bound to the canonical HTTPS endpoint should pass');
     });
   });
 
@@ -895,6 +946,8 @@ describe('createAdcpServer: signedRequests auto-wiring', () => {
       const started = await new Promise(resolve => {
         const srv = serve(factory, {
           port: 0,
+          publicUrl: 'https://seller.example.com/mcp',
+          allowedHosts: ['localhost'],
           preTransport: async () => {
             preTransportCalls++;
             return false; // let MCP dispatch continue

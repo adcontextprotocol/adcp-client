@@ -1134,6 +1134,7 @@ export {
   InMemoryTaskStore,
   isTerminal,
   serve,
+  taskScopeFromPrincipal,
   UnknownHostError,
   hostname,
   resolveHost,

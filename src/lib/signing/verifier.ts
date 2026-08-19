@@ -209,21 +209,33 @@ export async function verifyRequestSignature(
   // same keyid. Canonicalize once and reuse for both pre-check and commit.
   const replayScope = canonicalTargetUri(request.url);
 
-  // Step 12 pre-checks (rate-abuse cap + replay hit) run before crypto so a
+  // Step 12 pre-checks (replay hit + rate-abuse cap) run before crypto so a
   // compromised-key cache cap or a replayed nonce short-circuits an expensive
-  // Ed25519/ECDSA verify. The committing insert happens after step 11.
-  if (await options.replayStore.isCapHit(jwk.kid, replayScope, now)) {
-    throw new RequestSignatureError(
-      'request_signature_rate_abuse',
-      12,
-      `Per-keyid replay cache cap exceeded for keyid=${jwk.kid}`
-    );
-  }
+  // Ed25519/ECDSA verify. Replay is checked first to preserve the store
+  // contract's replay-over-cap result precedence. The committing insert
+  // happens after step 11.
   if (await options.replayStore.has(jwk.kid, replayScope, parsedInput.params.nonce, now)) {
     throw new RequestSignatureError(
       'request_signature_replayed',
       12,
       `Replay of (keyid=${jwk.kid}, nonce=${parsedInput.params.nonce}) within signature window`
+    );
+  }
+  if (await options.replayStore.isCapHit(jwk.kid, replayScope, now)) {
+    // The nonce may have been committed between the first replay probe and
+    // the cap probe. Re-check so same-nonce losers retain the store
+    // contract's replay-over-cap classification under that race.
+    if (await options.replayStore.has(jwk.kid, replayScope, parsedInput.params.nonce, now)) {
+      throw new RequestSignatureError(
+        'request_signature_replayed',
+        12,
+        `Replay of (keyid=${jwk.kid}, nonce=${parsedInput.params.nonce}) within signature window`
+      );
+    }
+    throw new RequestSignatureError(
+      'request_signature_rate_abuse',
+      12,
+      `Per-keyid replay cache cap exceeded for keyid=${jwk.kid}`
     );
   }
 

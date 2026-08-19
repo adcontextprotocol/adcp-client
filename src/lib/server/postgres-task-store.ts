@@ -9,15 +9,30 @@
  * @example
  * ```typescript
  * import { Pool } from 'pg';
- * import { PostgresTaskStore, serve, createTaskCapableServer } from '@adcp/sdk';
+ * import {
+ *   PostgresTaskStore,
+ *   serve,
+ *   createTaskCapableServer,
+ *   verifyBearer,
+ *   taskScopeFromPrincipal,
+ * } from '@adcp/sdk';
  *
  * const pool = new Pool({ connectionString: process.env.DATABASE_URL });
  * const taskStore = new PostgresTaskStore(pool);
  *
  * serve(({ taskStore }) => createTaskCapableServer('My Agent', '1.0.0', { taskStore }), {
  *   taskStore,
+ *   authenticate: verifyBearer({ jwksUri, issuer, audience }),
+ *   taskScope: taskScopeFromPrincipal,
  * });
  * ```
+ *
+ * `serve()`'s legacy transport is stateless, so authenticated multi-caller
+ * deployments use `taskScope` to bind every TaskStore call to a stable,
+ * server-controlled principal. Direct TaskStore integrations pass that scope
+ * through the `sessionId` argument on every client-facing operation.
+ * Task-ID-only calls are reserved for trusted background workers; stateless
+ * single-tenant servers may explicitly set `allowUnscopedAccess: true`.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -38,8 +53,16 @@ export interface PgQueryable {
 
 /** Configuration for PostgresTaskStore. */
 export interface PostgresTaskStoreOptions {
-  /** Table name for task storage. Must contain only lowercase letters, digits, and underscores. Defaults to `"adcp_mcp_tasks"`. */
+  /** Table name for task storage. Lowercase letters, digits, underscores; at most 40 characters. Defaults to `"adcp_mcp_tasks"`. */
   tableName?: string;
+  /**
+   * Permit task operations without a session ID. Unscoped listing includes
+   * only unowned legacy/stateless tasks; task-ID operations act as privileged
+   * capability access for background workers. Disabled by default because
+   * callers cannot be isolated in a shared stateless namespace. Enable only
+   * on a separate trusted-worker store or a trusted single-tenant server.
+   */
+  allowUnscopedAccess?: boolean;
 }
 
 /** Default table name — vendor-prefixed to avoid collisions in consumer databases. */
@@ -47,6 +70,26 @@ const DEFAULT_TABLE = 'adcp_mcp_tasks';
 
 /** Validates a SQL identifier to prevent injection via table/constraint names. */
 const VALID_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
+const MAX_TABLE_NAME_LENGTH = 40;
+const MAX_POSTGRES_INTEGER = 2_147_483_647;
+
+function assertValidTableName(tableName: string): void {
+  if (!VALID_IDENTIFIER.test(tableName) || tableName.length > MAX_TABLE_NAME_LENGTH) {
+    throw new Error(
+      `Invalid table name "${tableName}": must match ${VALID_IDENTIFIER} and be at most ${MAX_TABLE_NAME_LENGTH} characters`
+    );
+  }
+}
+
+function assertNonNegativePostgresInteger(label: string, value: number): void {
+  if (!Number.isInteger(value) || value < 0 || value > MAX_POSTGRES_INTEGER) {
+    throw new TypeError(`${label} must be a non-negative PostgreSQL integer (0-${MAX_POSTGRES_INTEGER})`);
+  }
+}
+
+function databaseOperationError(operation: string, cause: unknown): Error {
+  return new Error(`PostgresTaskStore.${operation}: database operation failed`, { cause });
+}
 
 /** Page size for listTasks pagination (matches InMemoryTaskStore). */
 const PAGE_SIZE = 10;
@@ -66,12 +109,11 @@ const PAGE_SIZE = 10;
  */
 export function getMcpTasksMigration(options?: { tableName?: string }): string {
   const table = options?.tableName ?? DEFAULT_TABLE;
-  if (!VALID_IDENTIFIER.test(table)) {
-    throw new Error(`Invalid table name "${table}": must match ${VALID_IDENTIFIER}`);
-  }
+  assertValidTableName(table);
   return `
 CREATE TABLE IF NOT EXISTS ${table} (
   task_id         TEXT PRIMARY KEY,
+  session_id      TEXT,
   status          TEXT NOT NULL DEFAULT 'working',
   ttl             INTEGER,
   poll_interval   INTEGER NOT NULL DEFAULT 1000,
@@ -88,11 +130,15 @@ CREATE TABLE IF NOT EXISTS ${table} (
   )
 );
 
+-- Upgrade tables created before session ownership was recorded. Existing rows
+-- remain addressable by task ID, but are never exposed by session-scoped lists.
+ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS session_id TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_${table}_expires_at
   ON ${table}(expires_at) WHERE expires_at IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_${table}_created_at
-  ON ${table}(created_at);
+CREATE INDEX IF NOT EXISTS idx_${table}_session_created_at
+  ON ${table}(session_id, created_at, task_id);
 `.trim();
 }
 
@@ -101,6 +147,7 @@ export const MCP_TASKS_MIGRATION = getMcpTasksMigration();
 
 /** Row shape returned by SELECT queries. */
 interface TaskRow {
+  session_id: string | null;
   task_id: string;
   status: Task['status'];
   ttl: number | null;
@@ -144,14 +191,30 @@ const NOT_EXPIRED = `(expires_at IS NULL OR expires_at > NOW())`;
  */
 export class PostgresTaskStore implements TaskStore {
   private readonly table: string;
+  private readonly allowUnscopedAccess: boolean;
 
   constructor(
     private readonly db: PgQueryable,
     options?: PostgresTaskStoreOptions
   ) {
     this.table = options?.tableName ?? DEFAULT_TABLE;
-    if (!VALID_IDENTIFIER.test(this.table)) {
-      throw new Error(`Invalid table name "${this.table}": must match ${VALID_IDENTIFIER}`);
+    this.allowUnscopedAccess = options?.allowUnscopedAccess ?? false;
+    assertValidTableName(this.table);
+  }
+
+  private assertScope(operation: string, sessionId?: string): void {
+    if (!sessionId && !this.allowUnscopedAccess) {
+      throw new Error(
+        `PostgresTaskStore.${operation} requires a non-empty MCP session ID; set allowUnscopedAccess only on a trusted worker or single-tenant server`
+      );
+    }
+  }
+
+  private async query(operation: string, text: string, values?: unknown[]): ReturnType<PgQueryable['query']> {
+    try {
+      return await this.db.query(text, values);
+    } catch (err) {
+      throw databaseOperationError(operation, err);
     }
   }
 
@@ -163,18 +226,20 @@ export class PostgresTaskStore implements TaskStore {
    * SDK policy (matches typical request-id / session-id field lengths and keeps
    * the task_id index efficient) — Postgres TEXT itself imposes no limit.
    *
-   * The `task_id` namespace on this store is global (no tenant scoping in the schema
-   * today). Callers using caller-supplied IDs are responsible for namespace isolation;
-   * cross-tenant collisions surface as `already exists`. Track the schema fix
-   * (composite key on tenant + task_id) in a future SDK migration if production paths
-   * ever wire caller-supplied IDs.
+   * Task IDs remain globally unique, as required by MCP. When a session ID is
+   * supplied it is recorded as the task owner and enforced on session-bound
+   * reads and writes. Calls that omit `sessionId` address a task by its
+   * cryptographically random ID; this privileged/capability path is required by
+   * MCP background workers, which receive only the task ID. Caller-supplied
+   * IDs used without a session must therefore be unguessable.
    */
   async createTask(
     taskParams: CreateTaskOptions & { taskId?: string },
     requestId: RequestId,
     request: Request,
-    _sessionId?: string
+    sessionId?: string
   ): Promise<Task> {
+    this.assertScope('createTask', sessionId);
     if (taskParams.taskId !== undefined) {
       if (typeof taskParams.taskId !== 'string' || taskParams.taskId.length === 0) {
         throw new Error('taskId must be a non-empty string when supplied');
@@ -186,16 +251,18 @@ export class PostgresTaskStore implements TaskStore {
     const taskId = taskParams.taskId ?? randomBytes(16).toString('hex');
     const ttl = taskParams.ttl ?? null;
     const pollInterval = taskParams.pollInterval ?? 1000;
+    if (ttl !== null) assertNonNegativePostgresInteger('ttl', ttl);
+    assertNonNegativePostgresInteger('pollInterval', pollInterval);
 
     try {
       const { rows } = await this.db.query(
-        `INSERT INTO ${this.table} (task_id, status, ttl, poll_interval, request_id, request, expires_at)
-         VALUES ($1, 'working', $2, $3, $4, $5,
-                 CASE WHEN $2::integer IS NOT NULL
-                      THEN NOW() + ($2::integer || ' milliseconds')::interval
+        `INSERT INTO ${this.table} (session_id, task_id, status, ttl, poll_interval, request_id, request, expires_at)
+         VALUES ($1, $2, 'working', $3, $4, $5, $6,
+                 CASE WHEN $3::integer IS NOT NULL
+                      THEN NOW() + ($3::integer || ' milliseconds')::interval
                       ELSE NULL END)
          RETURNING *`,
-        [taskId, ttl, pollInterval, String(requestId), JSON.stringify(request)]
+        [sessionId ?? null, taskId, ttl, pollInterval, String(requestId), JSON.stringify(request)]
       );
 
       return rowToTask(rows[0] as unknown as TaskRow);
@@ -203,15 +270,23 @@ export class PostgresTaskStore implements TaskStore {
       // Unique constraint violation — a task with this ID already exists.
       if (typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '23505') {
         throw new Error(
-          `Task with ID ${taskId} already exists. Use a different taskId or retrieve the existing task via getTask().`
+          `Task with ID ${taskId} already exists. Use a different taskId or retrieve the existing task via getTask().`,
+          { cause: err }
         );
       }
-      throw err;
+      throw databaseOperationError('createTask', err);
     }
   }
 
-  async getTask(taskId: string, _sessionId?: string): Promise<Task | null> {
-    const { rows } = await this.db.query(`SELECT * FROM ${this.table} WHERE task_id = $1 AND ${NOT_EXPIRED}`, [taskId]);
+  async getTask(taskId: string, sessionId?: string): Promise<Task | null> {
+    this.assertScope('getTask', sessionId);
+    const sessionFilter = sessionId === undefined ? '' : 'AND session_id = $2';
+    const values = sessionId === undefined ? [taskId] : [taskId, sessionId];
+    const { rows } = await this.query(
+      'getTask',
+      `SELECT * FROM ${this.table} WHERE task_id = $1 ${sessionFilter} AND ${NOT_EXPIRED}`,
+      values
+    );
     return rows.length > 0 ? rowToTask(rows[0] as unknown as TaskRow) : null;
   }
 
@@ -219,10 +294,12 @@ export class PostgresTaskStore implements TaskStore {
     taskId: string,
     status: 'completed' | 'failed',
     result: Result,
-    _sessionId?: string
+    sessionId?: string
   ): Promise<void> {
+    this.assertScope('storeTaskResult', sessionId);
     // Atomic check-and-update: only modify if task exists and is non-terminal.
-    const { rowCount, rows } = await this.db.query(
+    const { rowCount, rows } = await this.query(
+      'storeTaskResult',
       `UPDATE ${this.table}
        SET status = $2,
            result = $3,
@@ -231,17 +308,20 @@ export class PostgresTaskStore implements TaskStore {
                              THEN NOW() + (ttl || ' milliseconds')::interval
                              ELSE NULL END
        WHERE task_id = $1
+         AND ($4::text IS NULL OR session_id = $4)
          AND status NOT IN ('completed', 'failed', 'cancelled')
          AND ${NOT_EXPIRED}
        RETURNING status`,
-      [taskId, status, JSON.stringify(result)]
+      [taskId, status, JSON.stringify(result), sessionId ?? null]
     );
 
     if (!rowCount || rows.length === 0) {
       // Distinguish "not found" / "expired" from "already terminal".
-      const { rows: existing } = await this.db.query(
-        `SELECT status FROM ${this.table} WHERE task_id = $1 AND ${NOT_EXPIRED}`,
-        [taskId]
+      const { rows: existing } = await this.query(
+        'storeTaskResult',
+        `SELECT status FROM ${this.table}
+         WHERE task_id = $1 AND ($2::text IS NULL OR session_id = $2) AND ${NOT_EXPIRED}`,
+        [taskId, sessionId ?? null]
       );
       if (existing.length === 0) {
         throw new Error(`Task with ID ${taskId} not found`);
@@ -252,10 +332,14 @@ export class PostgresTaskStore implements TaskStore {
     }
   }
 
-  async getTaskResult(taskId: string, _sessionId?: string): Promise<Result> {
-    const { rows } = await this.db.query(`SELECT result FROM ${this.table} WHERE task_id = $1 AND ${NOT_EXPIRED}`, [
-      taskId,
-    ]);
+  async getTaskResult(taskId: string, sessionId?: string): Promise<Result> {
+    this.assertScope('getTaskResult', sessionId);
+    const { rows } = await this.query(
+      'getTaskResult',
+      `SELECT result FROM ${this.table}
+       WHERE task_id = $1 AND ($2::text IS NULL OR session_id = $2) AND ${NOT_EXPIRED}`,
+      [taskId, sessionId ?? null]
+    );
 
     if (rows.length === 0) {
       throw new Error(`Task with ID ${taskId} not found`);
@@ -271,10 +355,12 @@ export class PostgresTaskStore implements TaskStore {
     taskId: string,
     status: Task['status'],
     statusMessage?: string,
-    _sessionId?: string
+    sessionId?: string
   ): Promise<void> {
+    this.assertScope('updateTaskStatus', sessionId);
     // Atomic: only update if not already in a terminal state.
-    const { rowCount, rows } = await this.db.query(
+    const { rowCount, rows } = await this.query(
+      'updateTaskStatus',
       `UPDATE ${this.table}
        SET status = $2,
            status_message = COALESCE($3, status_message),
@@ -284,16 +370,19 @@ export class PostgresTaskStore implements TaskStore {
                THEN NOW() + (ttl || ' milliseconds')::interval
              ELSE expires_at END
        WHERE task_id = $1
+         AND ($4::text IS NULL OR session_id = $4)
          AND status NOT IN ('completed', 'failed', 'cancelled')
          AND ${NOT_EXPIRED}
        RETURNING status`,
-      [taskId, status, statusMessage ?? null]
+      [taskId, status, statusMessage ?? null, sessionId ?? null]
     );
 
     if (!rowCount || rows.length === 0) {
-      const { rows: existing } = await this.db.query(
-        `SELECT status FROM ${this.table} WHERE task_id = $1 AND ${NOT_EXPIRED}`,
-        [taskId]
+      const { rows: existing } = await this.query(
+        'updateTaskStatus',
+        `SELECT status FROM ${this.table}
+         WHERE task_id = $1 AND ($2::text IS NULL OR session_id = $2) AND ${NOT_EXPIRED}`,
+        [taskId, sessionId ?? null]
       );
       if (existing.length === 0) {
         throw new Error(`Task with ID ${taskId} not found`);
@@ -304,7 +393,9 @@ export class PostgresTaskStore implements TaskStore {
     }
   }
 
-  async listTasks(cursor?: string, _sessionId?: string): Promise<{ tasks: Task[]; nextCursor?: string }> {
+  async listTasks(cursor?: string, sessionId?: string): Promise<{ tasks: Task[]; nextCursor?: string }> {
+    this.assertScope('listTasks', sessionId);
+    const sessionValue = sessionId ?? null;
     let rawRows: Record<string, unknown>[];
 
     if (cursor) {
@@ -320,21 +411,25 @@ export class PostgresTaskStore implements TaskStore {
         throw new Error(`Invalid cursor: ${cursor}`);
       }
 
-      ({ rows: rawRows } = await this.db.query(
+      ({ rows: rawRows } = await this.query(
+        'listTasks',
         `SELECT *, created_at::text AS created_at_raw FROM ${this.table}
          WHERE ${NOT_EXPIRED}
+           AND session_id IS NOT DISTINCT FROM $3
            AND (created_at, task_id) > ($1::timestamptz, $2)
          ORDER BY created_at, task_id
-         LIMIT $3`,
-        [cursorCreatedAt, cursorTaskId, PAGE_SIZE + 1]
+         LIMIT $4`,
+        [cursorCreatedAt, cursorTaskId, sessionValue, PAGE_SIZE + 1]
       ));
     } else {
-      ({ rows: rawRows } = await this.db.query(
+      ({ rows: rawRows } = await this.query(
+        'listTasks',
         `SELECT *, created_at::text AS created_at_raw FROM ${this.table}
          WHERE ${NOT_EXPIRED}
+           AND session_id IS NOT DISTINCT FROM $1
          ORDER BY created_at, task_id
-         LIMIT $1`,
-        [PAGE_SIZE + 1]
+         LIMIT $2`,
+        [sessionValue, PAGE_SIZE + 1]
       ));
     }
 
@@ -366,7 +461,8 @@ export class PostgresTaskStore implements TaskStore {
    * @returns The number of deleted rows.
    */
   async cleanupExpired(): Promise<number> {
-    const { rowCount } = await this.db.query(
+    const { rowCount } = await this.query(
+      'cleanupExpired',
       `DELETE FROM ${this.table} WHERE expires_at IS NOT NULL AND expires_at <= NOW()`
     );
     return rowCount ?? 0;
@@ -390,9 +486,12 @@ export class PostgresTaskStore implements TaskStore {
  * @returns The number of deleted rows.
  */
 export async function cleanupExpiredTasks(db: PgQueryable, tableName: string = DEFAULT_TABLE): Promise<number> {
-  if (!VALID_IDENTIFIER.test(tableName)) {
-    throw new Error(`Invalid table name "${tableName}": must match ${VALID_IDENTIFIER}`);
+  assertValidTableName(tableName);
+  let rowCount: number | null;
+  try {
+    ({ rowCount } = await db.query(`DELETE FROM ${tableName} WHERE expires_at IS NOT NULL AND expires_at <= NOW()`));
+  } catch (err) {
+    throw databaseOperationError('cleanupExpiredTasks', err);
   }
-  const { rowCount } = await db.query(`DELETE FROM ${tableName} WHERE expires_at IS NOT NULL AND expires_at <= NOW()`);
   return rowCount ?? 0;
 }

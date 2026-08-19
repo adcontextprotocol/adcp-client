@@ -28,6 +28,7 @@ Before deploying SDK 14 from SDK 12:
 8. Make synchronous completion-webhook behavior explicit if you temporarily depend on duplicate inline and webhook delivery.
 9. Add AdCP 3.2 tools only behind capability checks; retain established 3.0/3.1 lifecycle fallbacks.
 10. Update request signing for the versioned 3.2 profile and return media-buy business state as `media_buy_status`.
+11. Before the endpoint-scoped idempotency key rollout, stop mutations, drain in-flight work, and wait a full replay TTL (or migrate/dual-read old keys); do not mix old and new server binaries.
 
 The detailed SDK 13 changes remain documented in [Migrating from 12.x to 13.x](migration-12-to-13.md). The sections below collect the changes required to complete a direct 12→14 rollout rather than requiring a temporary SDK 13 deployment.
 
@@ -123,11 +124,14 @@ no cache-backed replay protection. Catalog, brief, and non-finalizing
 refinement calls remain read-only.
 
 SDK 14 includes tool and trusted resolved session/account identity in replay
-comparison. If a durable cache still contains an SDK 12 entry, the stronger
-identity returns `IDEMPOTENCY_CONFLICT` rather than re-executing the mutation;
-reconcile by natural key until the original replay TTL expires. SDK 14's buyer
-retry policy escalates conflicts for this check and never automatically mints
-a replacement key.
+comparison. The PostgreSQL security hardening release also prefixes requests
+served through `serve()` with a canonical endpoint scope, so its keys do not
+match SDK 12 durable entries and an exact retry could execute again. Before
+deploying, stop accepting mutations, drain in-flight work, and wait at least
+the full configured replay TTL after the last accepted mutation, or migrate or
+dual-read the old keyspace. Upgrade all instances together; do not mix binaries
+using the old and new key shapes. During the TTL window, reconcile uncertain
+outcomes by natural key rather than minting a replacement idempotency key.
 
 For `refine_proposals`, respect the advertised batch, alternative, and dimension limits; keep hard constraints distinct from the soft filters used by legacy `get_products`. Verify proposal expiry immediately before acceptance. See [AdCP 3.2 proposal negotiation](migration-adcp-3.1-to-3.2-proposals.md).
 

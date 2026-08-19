@@ -557,9 +557,12 @@ describe('serve() + publicUrl + protectedResource', () => {
     });
     try {
       const path = '/.well-known/oauth-protected-resource/mcp';
-      const headers = { 'x-forwarded-host': 'unknown-prm.example' };
-      const first = await fetchPath(ctx.port, path, { headers });
-      const second = await fetchPath(ctx.port, path, { headers });
+      const first = await fetchPath(ctx.port, path, {
+        headers: { 'x-forwarded-host': 'unknown-prm.example:443' },
+      });
+      const second = await fetchPath(ctx.port, path, {
+        headers: { 'x-forwarded-host': 'unknown-prm%2eexample' },
+      });
       assert.strictEqual(first.status, 404);
       assert.strictEqual(second.status, 404);
       assert.strictEqual(publicCalls, 2);

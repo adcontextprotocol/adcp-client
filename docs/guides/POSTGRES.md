@@ -14,6 +14,29 @@ When you wire `pool` on `createAdcpServerFromPlatform`, the framework creates an
 
 **Run `getAllAdcpMigrations()` once per database at deploy time.** Idempotent: safe to re-run on every boot.
 
+`getAllAdcpMigrations()` installs one default idempotency table. The official
+`serve()` path automatically includes its canonical, server-controlled host in
+every resolved idempotency principal, so multiple hosted agents remain isolated
+when they share that table. Low-level integrations that do not enter through
+`serve()` must create a distinct table/store per logical agent (or add an
+equivalent trusted host discriminator themselves):
+
+```ts
+await pool.query(getIdempotencyMigration({ tableName: 'seller_a_idempotency' }));
+await pool.query(getIdempotencyMigration({ tableName: 'seller_b_idempotency' }));
+
+const sellerAIdempotency = createIdempotencyStore({
+  backend: pgBackend(pool, { tableName: 'seller_a_idempotency' }),
+});
+const sellerBIdempotency = createIdempotencyStore({
+  backend: pgBackend(pool, { tableName: 'seller_b_idempotency' }),
+});
+```
+
+Pass the matching store as the `idempotency` option to each low-level server.
+The separate tables preserve the framework's normal authenticated/session/account
+principal chain without relying on untrusted request fields.
+
 ## Schema + index rationale
 
 ### `adcp_idempotency`
@@ -188,7 +211,7 @@ async function cleanupOldTasks() {
 
 ## Multi-tenant deployments (TenantRegistry)
 
-The SDK shares one Postgres database across tenants. `account_id` is included in `scoped_key` for idempotency + ctx_metadata, so cross-tenant collisions are impossible at the storage layer. For `adcp_decisioning_tasks`, the SDK relies on `accounts.resolve(ref, ctx)` returning each tenant's own Account — the registry sees `account_id` strings that should be tenant-prefixed in adopter code (e.g., `id: \`tenant_${tenantId}_${accountId}\``).
+The SDK shares one Postgres database across tenants. `account_id` is included in `scoped_key` for idempotency + ctx_metadata, so cross-tenant collisions are impossible at the storage layer within one logical agent. `serve()` additionally scopes idempotency by canonical host for multi-host agents; direct transports must apply the per-agent-table recipe above. For `adcp_decisioning_tasks`, the SDK relies on `accounts.resolve(ref, ctx)` returning each tenant's own Account — the registry sees `account_id` strings that should be tenant-prefixed in adopter code (e.g., `id: \`tenant_${tenantId}_${accountId}\``).
 
 The `tasks_get` wire handler enforces the `account_id` boundary before returning any task record, so adopters do not need to add additional authorization checks in platform code.
 

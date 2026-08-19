@@ -43,6 +43,13 @@ import type { ToolTaskHandler, TaskToolExecution } from '@modelcontextprotocol/s
 // Re-export SDK task primitives so publishers don't import from experimental paths
 import { InMemoryTaskStore as _InMemoryTaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js';
 export { _InMemoryTaskStore as InMemoryTaskStore };
+
+/**
+ * Internal tri-state contract for whether a server has a TaskMessageQueue.
+ * `serve()` treats an absent marker as unverifiable and fails closed when
+ * principal task scoping is enabled.
+ */
+export const ADCP_TASK_MESSAGE_QUEUE: unique symbol = Symbol.for('@adcp/client.taskMessageQueue');
 export { isTerminal } from '@modelcontextprotocol/sdk/experimental/tasks/interfaces.js';
 export type {
   TaskStore,
@@ -142,7 +149,7 @@ export function createTaskCapableServer(
 ): McpServer {
   const taskStore = options?.taskStore ?? new _InMemoryTaskStore();
 
-  return new McpServer({ name, version }, {
+  const server = new McpServer({ name, version }, {
     capabilities: {
       tasks: {
         list: {},
@@ -158,4 +165,13 @@ export function createTaskCapableServer(
     taskMessageQueue: options?.taskMessageQueue,
     instructions: options?.instructions,
   } as ConstructorParameters<typeof McpServer>[1]);
+
+  Object.defineProperty(server, ADCP_TASK_MESSAGE_QUEUE, {
+    value: Boolean(options?.taskMessageQueue),
+    enumerable: false,
+    configurable: true,
+    writable: false,
+  });
+
+  return server;
 }
