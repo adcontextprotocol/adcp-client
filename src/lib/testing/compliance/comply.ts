@@ -1542,6 +1542,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     return {
       agent_url: safeAgentUrl,
       adcp_version: complianceIndex.adcp_version,
+      completeness: stoppedForTimeoutBudget ? 'timed_out' : 'complete',
       agent_profile: profile,
       overall_status: overallStatus,
       tracks: trackResults,
@@ -1815,6 +1816,7 @@ async function runWithDegradedProfile(
   return {
     agent_url: safeAgentUrl,
     adcp_version: adcpVersion,
+    completeness: stoppedForTimeoutBudget ? 'timed_out' : 'complete',
     agent_profile: profile,
     overall_status: overallStatus,
     tracks: trackResults,
@@ -1860,6 +1862,7 @@ async function buildUnreachableResult(
   return {
     agent_url: redactOAuthUrlForOutput(agentUrl),
     adcp_version: adcpVersion,
+    completeness: 'complete',
     agent_profile: profile,
     overall_status: (isAuth ? 'auth_required' : 'unreachable') as OverallStatus,
     tracks: [],
@@ -2079,6 +2082,12 @@ export function formatComplianceResults(result: ComplianceResult): string {
 
   // Summary line
   output += `${result.summary.headline}\n\n`;
+  if (result.completeness === 'timed_out') {
+    const timeoutObservation = result.observations.find(
+      observation => observation.source?.code === 'timeout-budget-exceeded'
+    );
+    output += `⚠️  INCOMPLETE RUN: ${timeoutObservation?.message ?? 'The compliance timeout budget was reached before every selected storyboard ran.'}\n\n`;
+  }
   if (
     result.summary.steps_passed !== undefined ||
     result.summary.steps_failed !== undefined ||

@@ -317,6 +317,7 @@ describe('comply() timeout_ms option', () => {
 
       assert.notStrictEqual(result.overall_status, 'unreachable');
       assert.strictEqual(result.overall_status, 'partial');
+      assert.strictEqual(result.completeness, 'timed_out');
       assert.deepStrictEqual(result.storyboards_executed, ['slow_timeout_one']);
       assert.strictEqual(agent.requests.filter(r => r.tool === '__test_probe').length, 1);
       assert.ok(result.tested_tracks.length > 0, 'expected the completed storyboard to produce a tested track');
@@ -350,6 +351,7 @@ describe('comply() timeout_ms option', () => {
       });
 
       assert.strictEqual(result.overall_status, 'partial');
+      assert.strictEqual(result.completeness, 'timed_out');
       assert.deepStrictEqual(result.storyboards_executed, []);
       assert.strictEqual(agent.requests.filter(r => r.tool === '__test_probe').length, 0);
       assert.ok(result.observations.some(o => o.source?.code === 'timeout-budget-exceeded'));
@@ -371,6 +373,7 @@ describe('comply() timeout_ms option', () => {
       });
 
       assert.strictEqual(result.overall_status, 'partial');
+      assert.strictEqual(result.completeness, 'timed_out');
       assert.deepStrictEqual(result.storyboards_executed, []);
       assert.ok(result.tracks.some(t => t.track === 'core' && t.status === 'skip'));
       assert.ok(result.skipped_tracks.some(t => t.track === 'core'));

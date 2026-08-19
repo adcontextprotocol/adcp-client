@@ -18,6 +18,7 @@ const {
   buildComplianceSummaryMarkdown,
   buildStoryboardSummaryMarkdown,
   escapeMarkdownCell,
+  defaultComplianceTimeoutSeconds,
 } = require('../../bin/adcp-storyboard-summary.js');
 
 // ----------------------------------------------------------------------------
@@ -121,6 +122,32 @@ test('compliance summary: surfaces specialisms when present on the agent profile
   );
 
   assert.match(md, /\*\*Specialisms:\*\* sales-non-guaranteed, creative-template/);
+});
+
+test('compliance summary: timeout truncation is structurally visible', () => {
+  const md = buildComplianceSummaryMarkdown(
+    {
+      overall_status: 'partial',
+      completeness: 'timed_out',
+      summary: { steps_passed: 8, steps_failed: 0, steps_skipped: 1 },
+      observations: [
+        {
+          message: 'Stopped after 8/12 selected storyboard(s).',
+          source: { code: 'timeout-budget-exceeded' },
+        },
+      ],
+    },
+    'https://agent.example.com'
+  );
+  assert.match(md, /\*\*Incomplete:\*\* Stopped after 8\/12 selected storyboard\(s\)\./);
+});
+
+test('default compliance timeout scales with selected storyboards', () => {
+  assert.strictEqual(defaultComplianceTimeoutSeconds(undefined), 120);
+  assert.strictEqual(defaultComplianceTimeoutSeconds(5), 120);
+  assert.strictEqual(defaultComplianceTimeoutSeconds(12), 120);
+  assert.strictEqual(defaultComplianceTimeoutSeconds(13), 130);
+  assert.strictEqual(defaultComplianceTimeoutSeconds(61), 610);
 });
 
 // ----------------------------------------------------------------------------

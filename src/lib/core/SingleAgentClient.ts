@@ -3276,14 +3276,6 @@ export class SingleAgentClient {
     });
     this.assertRequestSupportedByConfiguredVersion(taskType, normalizedParams, options);
 
-    // Degrade an auto-injected discovery webhook to polling for pre-3.1 pins
-    // (get_products / get_signals). `effectiveOptions` carries disableWebhook
-    // so no push_notification_config reaches a seller that can't accept it.
-    const { options: effectiveOptions, driftLog: webhookDriftLog } = this.suppressPre31DiscoveryWebhook(
-      taskType,
-      options
-    );
-
     // Inject an idempotency_key for mutating tools before schema validation
     // so callers don't have to supply one. TaskExecutor also guards against
     // missing keys, but validation happens here first — do the injection up
@@ -3354,6 +3346,12 @@ export class SingleAgentClient {
     };
     const serverVersion = await this.detectServerVersion(detectionOptions);
     throwIfAborted(options?.signal);
+    this.assertRequestSupportedByTargetVersion(taskType, normalizedParams, capabilityDiscoveryContext.capabilities);
+    const { options: effectiveOptions, driftLog: webhookDriftLog } = this.suppressPre31DiscoveryWebhook(
+      taskType,
+      options,
+      capabilityDiscoveryContext.capabilities
+    );
     const inputSchemaStripLogs: any[] = [];
     const { params: adaptedParams, driftLogs: adaptDriftLogs } = this.adaptRequest(
       taskType,
@@ -5784,14 +5782,6 @@ export class SingleAgentClient {
       });
       this.assertRequestSupportedByConfiguredVersion(taskName, normalizedParams, options);
 
-      // Degrade an auto-injected discovery webhook to polling for pre-3.1 pins
-      // (get_products / get_signals). `effectiveOptions` carries disableWebhook
-      // so no push_notification_config reaches a seller that can't accept it.
-      const { options: effectiveOptions, driftLog: webhookDriftLog } = this.suppressPre31DiscoveryWebhook(
-        taskName,
-        options
-      );
-
       await this.validateTaskFeatures(taskName, options);
       if (this.config.requireV3ForMutations && requestUsesIdempotency(taskName, normalizedParams)) {
         await this.requireSupportedMajor(taskName, options);
@@ -5814,6 +5804,12 @@ export class SingleAgentClient {
         [CAPABILITY_DISCOVERY_CONTEXT]: capabilityDiscoveryContext,
       };
       const serverVersion = await this.detectServerVersion(detectionOptions);
+      this.assertRequestSupportedByTargetVersion(taskName, normalizedParams, capabilityDiscoveryContext.capabilities);
+      const { options: effectiveOptions, driftLog: webhookDriftLog } = this.suppressPre31DiscoveryWebhook(
+        taskName,
+        options,
+        capabilityDiscoveryContext.capabilities
+      );
       const inputSchemaStripLogs: any[] = [];
       const { params: adaptedParams, driftLogs: adaptDriftLogs } = this.adaptRequest(
         taskName,
@@ -7076,45 +7072,95 @@ export class SingleAgentClient {
    */
   private suppressPre31DiscoveryWebhook(
     taskName: string,
-    options?: TaskOptions
+    options?: TaskOptions,
+    capabilities?: AdcpCapabilities
   ): { options: TaskOptions | undefined; driftLog?: Record<string, unknown> } {
-    if (!isPre31AdcpVersion(this.resolvedAdcpVersion)) return { options };
+    if (resolveAdapterKey(this.resolvedAdcpVersion, capabilities) !== '3.0') return { options };
     if (taskName !== 'get_products' && taskName !== 'get_signals') return { options };
     if (options?.disableWebhook) return { options };
     if (selectWebhookTemplate(this.config.webhookUrlTemplate, taskName) === undefined) return { options };
 
+    const clientPinnedPre31 = isPre31AdcpVersion(this.resolvedAdcpVersion);
+    const targetVersions = capabilities?.supportedVersions ?? [];
+    const reason = clientPinnedPre31
+      ? `this client is pinned to ${this.resolvedAdcpVersion}`
+      : targetVersions.length > 0
+        ? `the target seller advertises only ${targetVersions.join(', ')}`
+        : 'the target seller does not advertise AdCP 3.1 support';
     return {
       options: { ...options, disableWebhook: true },
       driftLog: {
         type: 'pre31_webhook_degraded',
         message:
           `${taskName} discovery webhook degraded to polling: discovery-task push_notification_config ` +
-          `requires AdCP 3.1, but this client is pinned to ${this.resolvedAdcpVersion}. ` +
+          `requires AdCP 3.1, but ${reason}. ` +
           'The seller will not receive a push webhook; poll for the result instead.',
         timestamp: new Date().toISOString(),
         taskName,
         clientVersion: this.resolvedAdcpVersion,
+        ...(targetVersions.length > 0 ? { targetVersions } : {}),
       },
     };
+  }
+
+  /**
+   * Reject shape-changing 3.1 requests after seller capability discovery.
+   * This second gate covers a modern client talking to a 3.0 seller on the
+   * first (cold-cache) call; the configured-version gate above still catches
+   * an explicitly pre-3.1 client before validation or network I/O.
+   */
+  private assertRequestSupportedByTargetVersion(
+    taskName: string,
+    params: unknown,
+    capabilities: AdcpCapabilities | undefined
+  ): void {
+    if (isPre31AdcpVersion(this.resolvedAdcpVersion)) return;
+    // supportedVersions is the authoritative negotiation field. Legacy 3.0
+    // sellers omit it; buildVersion is advisory and must not select a newer
+    // wire shape. Shape-breaking wholesale discovery therefore requires
+    // positive 3.1+ support from a declared v3 seller. The response envelope's
+    // adcp_version is also direct evidence of the wire release the seller just
+    // served (distinct from advisory adcp.build_version). Synthetic discovery
+    // alone is not enough evidence to classify the seller as 3.0.
+    const advertisedVersions = capabilities?.supportedVersions ?? [];
+    if (advertisedVersions.some(version => !isPre31AdcpVersion(version))) return;
+    const responseVersion =
+      typeof capabilities?._raw?.adcp_version === 'string' ? capabilities._raw.adcp_version : undefined;
+    if (advertisedVersions.length === 0 && responseVersion !== undefined && !isPre31AdcpVersion(responseVersion)) {
+      return;
+    }
+    const declaredLegacyV3 = capabilities?.version === 'v3' && capabilities._synthetic === false;
+    if (advertisedVersions.length === 0 && !declaredLegacyV3) return;
+    const request =
+      params && typeof params === 'object' && !Array.isArray(params) ? (params as Record<string, unknown>) : {};
+    if (taskName === 'get_signals' && request.discovery_mode === 'wholesale') {
+      this.throwPre31UnsupportedFeature(taskName, 'discovery_mode', 'get_signals.discovery_mode=wholesale', {
+        capabilityPath: 'signals.discovery_modes',
+        currentVersion: advertisedVersions.join(', ') || responseVersion || '3.0 (not advertised)',
+        incompatibility: 'the target seller does not advertise AdCP 3.1 support',
+        suffix:
+          'Retry with a meaningful signal_spec, or probe signals.discovery_modes before issuing wholesale calls.',
+      });
+    }
   }
 
   private throwPre31UnsupportedFeature(
     taskName: string,
     field: string,
     feature: string,
-    opts: { capabilityPath: string; suffix: string }
+    opts: { capabilityPath: string; suffix: string; currentVersion?: string; incompatibility?: string }
   ): never {
+    const currentVersion = opts.currentVersion ?? this.resolvedAdcpVersion;
+    const incompatibility = opts.incompatibility ?? `this client is pinned to ${this.resolvedAdcpVersion}`;
     throw new ProtocolFeatureUnsupportedError([feature], [], this.agent.agent_uri, {
-      message:
-        `${taskName} ${field} requires AdCP 3.1 or later; ` +
-        `this client is pinned to ${this.resolvedAdcpVersion}. ${opts.suffix}`,
+      message: `${taskName} ${field} requires AdCP 3.1 or later; ` + `${incompatibility}. ${opts.suffix}`,
       field,
       suggestion: opts.suffix,
       details: {
         feature,
         required_version: '3.1',
         capability_path: opts.capabilityPath,
-        current_version: this.resolvedAdcpVersion,
+        current_version: currentVersion,
         tool: taskName,
         field,
       },

@@ -17,6 +17,14 @@ const PRICING_FILTERS_DRIFT: VersionDrift = {
   strippedFields: ['filters.pricing_currencies'],
 };
 
+const PUSH_NOTIFICATION_DRIFT: VersionDrift = {
+  type: 'pre31_discovery_webhook_stripped',
+  message:
+    'push_notification_config stripped from get_products: discovery-task webhooks require AdCP 3.1, ' +
+    'but the target seller does not advertise 3.1 support. Poll for the result instead.',
+  strippedFields: ['push_notification_config'],
+};
+
 export const getProductsAdapter: VersionAdapter = {
   toolName: 'get_products',
   adaptRequest(params) {
@@ -45,7 +53,24 @@ export const getProductsAdapter: VersionAdapter = {
       }
     }
 
+    if ('push_notification_config' in adapted) {
+      const { push_notification_config: _, ...rest } = adapted;
+      adapted = rest;
+      drifts.push(PUSH_NOTIFICATION_DRIFT);
+    }
+
     if (adapted === req) return { params };
-    return { params: adapted, drift: drifts[0] };
+    if (drifts.length === 1) return { params: adapted, drift: drifts[0] };
+    return {
+      params: adapted,
+      drift: {
+        // Preserve the established first-drift type for monitoring clients;
+        // constituentTypes makes every aggregated change machine-readable.
+        type: drifts[0]!.type,
+        message: drifts.map(drift => drift.message).join(' '),
+        strippedFields: drifts.flatMap(drift => drift.strippedFields ?? []),
+        constituentTypes: drifts.map(drift => drift.type),
+      },
+    };
   },
 };

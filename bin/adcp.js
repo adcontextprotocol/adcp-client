@@ -47,6 +47,7 @@ const {
   buildStoryboardSummaryMarkdown,
   writeSummaryFile,
   printSoftFailBlock,
+  defaultComplianceTimeoutSeconds,
 } = require('./adcp-storyboard-summary.js');
 const { scheduleVersionCheck } = require('./adcp-version-check.js');
 const { formatStoryboardResultsAsJUnit } = require('../dist/lib/testing/storyboard/junit.js');
@@ -1984,7 +1985,7 @@ RUN OPTIONS (full assessment):
                       line is required for storyboard resolution.
   --timeout SECONDS   Soft budget in seconds: stop starting new storyboards
                       after this budget, without aborting an active storyboard
-                      (default: 120)
+                      (default: max(120, 10 × selected storyboard count))
   --brief TEXT        Custom brief for product discovery
   --no-sandbox        Force production-path responses (#841). Sets
                       account.sandbox=false on every request AND stamps
@@ -4504,8 +4505,10 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     storyboards = rawArgs[storyboardsIndex + 1].split(',');
   }
   const complianceResolveOptions = parseComplianceSelection(rawArgs).resolveOptions;
+  const { listAllComplianceStoryboards, listBundles, resolveBundleOrStoryboard } =
+    await import('../dist/lib/testing/storyboard/index.js');
+  let selectedStoryboardCount = listAllComplianceStoryboards(complianceResolveOptions).length;
   if (storyboards?.length) {
-    const { listAllComplianceStoryboards, listBundles } = await import('../dist/lib/testing/storyboard/index.js');
     try {
       const knownStoryboardIds = new Set(listAllComplianceStoryboards(complianceResolveOptions).map(s => s.id));
       const knownBundleIds = new Set(listBundles(complianceResolveOptions).map(b => b.id));
@@ -4515,15 +4518,21 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
         console.error(`Run 'adcp storyboard list' to see all options.\n`);
         process.exit(2);
       }
+      selectedStoryboardCount = new Set(
+        storyboards.flatMap(id =>
+          resolveBundleOrStoryboard(id, complianceResolveOptions).map(storyboard => storyboard.id)
+        )
+      ).size;
     } catch (err) {
       console.error(`ERROR: ${err.message}`);
       process.exit(1);
     }
   }
 
-  // Parse --timeout (seconds, default 120)
+  // Parse --timeout (seconds). The implicit budget scales with the selected
+  // set so spec releases that add storyboards do not silently truncate runs.
   const timeoutFlagIndex = rawArgs.indexOf('--timeout');
-  const DEFAULT_TIMEOUT_S = 120;
+  const DEFAULT_TIMEOUT_S = defaultComplianceTimeoutSeconds(selectedStoryboardCount);
   let timeoutMs = DEFAULT_TIMEOUT_S * 1000;
   if (timeoutFlagIndex !== -1) {
     if (timeoutFlagIndex + 1 >= rawArgs.length || rawArgs[timeoutFlagIndex + 1].startsWith('--')) {

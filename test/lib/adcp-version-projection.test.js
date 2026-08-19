@@ -6,12 +6,17 @@ const {
   omit31BrandFields,
 } = require('../../dist/lib/utils/adcp-version-config.js');
 
-test('sellerAdvertises31: true when buildVersion >= 3.1', () => {
-  assert.equal(sellerAdvertises31({ buildVersion: '3.1.0' }), true);
-  assert.equal(sellerAdvertises31({ buildVersion: '3.2.1' }), true);
+test('sellerAdvertises31: buildVersion is advisory and never used for negotiation', () => {
+  assert.equal(sellerAdvertises31({ buildVersion: '3.1.0' }), false);
+  assert.equal(sellerAdvertises31({ buildVersion: '3.2.1', supportedVersions: ['3.0'] }), false);
 });
 test('sellerAdvertises31: true when supportedVersions contains a >=3.1 release', () => {
   assert.equal(sellerAdvertises31({ supportedVersions: ['3.0', '3.1'] }), true);
+  assert.equal(sellerAdvertises31({ _raw: { adcp_version: '3.2-beta.2' } }), true);
+  assert.equal(
+    sellerAdvertises31({ supportedVersions: ['3.0'], _raw: { adcp_version: '3.2-beta.2' } }),
+    false
+  );
 });
 test('sellerAdvertises31: false for legacy 3.0-only sellers / missing fields', () => {
   assert.equal(sellerAdvertises31(undefined), false);
@@ -23,7 +28,8 @@ test('shouldOmit31Fields: client pinned <3.1 always omits', () => {
 });
 test('shouldOmit31Fields: 3.1 client omits for legacy sellers, sends to 3.1 sellers', () => {
   assert.equal(shouldOmit31Fields('3.1', { supportedVersions: ['3.0'] }), true);
-  assert.equal(shouldOmit31Fields('3.1', { buildVersion: '3.1.0' }), false);
+  assert.equal(shouldOmit31Fields('3.1', { supportedVersions: ['3.1'], buildVersion: '3.0.99' }), false);
+  assert.equal(shouldOmit31Fields('3.1', { buildVersion: '3.1.0' }), true);
   assert.equal(shouldOmit31Fields('3.1', undefined), true);
 });
 test('omit31BrandFields strips brand_kit_override only, preserves AdCP 3.0 fields', () => {

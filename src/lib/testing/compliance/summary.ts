@@ -52,6 +52,8 @@ export interface ComplianceSummaryArtifact {
   sdk_version: string;
   adcp_version: string;
   overall_status: OverallStatus;
+  /** Whether the global timeout budget truncated the selected storyboard set. */
+  completeness?: 'complete' | 'timed_out';
   passed: number;
   failed: number;
   /** Failed advisory validations; does not affect the failed-step count. */
@@ -105,6 +107,7 @@ export function buildComplianceSummary(result: ComplianceResult, opts: BuildSumm
     sdk_version: opts.sdkVersion,
     adcp_version: opts.adcpVersion,
     overall_status: result.overall_status,
+    ...(result.completeness !== undefined ? { completeness: result.completeness } : {}),
     passed: result.summary.steps_passed ?? 0,
     failed: result.summary.steps_failed ?? 0,
     ...(result.summary.validations_advisory_failed
@@ -352,6 +355,9 @@ export function formatComplianceSummaryText(s: ComplianceSummaryArtifact): strin
   lines.push(`Agent:     ${s.agent_url}`);
   lines.push(`SDK:       @adcp/sdk ${s.sdk_version} (AdCP ${s.adcp_version})`);
   lines.push(`Status:    ${s.overall_status}`);
+  if (s.completeness === 'timed_out') {
+    lines.push('Incomplete: global timeout budget expired before every selected storyboard could run');
+  }
   lines.push(
     `Steps:     ${s.passed} passed, ${s.failed} failed, ${s.validations_advisory_failed ?? 0} advisory validation(s) failed, ${s.skipped} skipped, ${s.not_selected_count} not selected`
   );
@@ -383,7 +389,9 @@ export function formatComplianceSummaryText(s: ComplianceSummaryArtifact): strin
   lines.push('');
 
   if (!isHardFail(s)) {
-    if (s.overall_status === 'passing') {
+    if (s.completeness === 'timed_out') {
+      lines.push(`STORYBOARD-INCOMPLETE ${s.passed} steps passed before the timeout budget expired`);
+    } else if (s.overall_status === 'passing') {
       lines.push(`STORYBOARD-OK ${s.passed}/${s.passed + s.failed + s.skipped} selected steps passed`);
     } else {
       // `partial` and `silent` — some tracks were wired but not exercised.
@@ -412,7 +420,9 @@ export function formatComplianceSummaryText(s: ComplianceSummaryArtifact): strin
  */
 export function formatComplianceSummaryMarkdown(s: ComplianceSummaryArtifact): string {
   const lines: string[] = [];
-  const heading = !isHardFail(s)
+  const heading = s.completeness === 'timed_out'
+    ? `⏱️ Storyboard run timed out (status: ${s.overall_status})`
+    : !isHardFail(s)
     ? s.overall_status === 'passing'
       ? '✅ Storyboard run passed'
       : `⚠️ Storyboard run ended ${s.overall_status} (wired but partly unexercised)`
@@ -424,6 +434,9 @@ export function formatComplianceSummaryMarkdown(s: ComplianceSummaryArtifact): s
   lines.push(`- **Agent:** \`${s.agent_url}\``);
   lines.push(`- **SDK:** \`@adcp/sdk ${s.sdk_version}\` (AdCP \`${s.adcp_version}\`)`);
   lines.push(`- **Status:** \`${s.overall_status}\``);
+  if (s.completeness === 'timed_out') {
+    lines.push('- **Incomplete:** Global timeout budget expired before every selected storyboard could run.');
+  }
   lines.push(
     `- **Steps:** ${s.passed} passed, ${s.failed} failed, ${s.validations_advisory_failed ?? 0} advisory validation(s) failed, ${s.skipped} skipped, ${s.not_selected_count} not selected`
   );
@@ -500,6 +513,7 @@ export function buildCrashSummary(opts: BuildCrashSummaryOptions): ComplianceSum
     sdk_version: opts.sdkVersion,
     adcp_version: opts.adcpVersion,
     overall_status: 'unreachable',
+    completeness: 'complete',
     passed: 0,
     failed: 1,
     skipped: 0,

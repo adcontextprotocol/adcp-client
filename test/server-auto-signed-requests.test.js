@@ -9,6 +9,7 @@ const {
   InMemoryStateStore,
   ADCP_PRE_TRANSPORT,
   ADCP_SIGNED_REQUESTS_STATE,
+  BuyerAgentRegistry,
 } = require('../dist/lib/server/legacy/v5/index.js');
 const { StaticJwksResolver, InMemoryReplayStore, InMemoryRevocationStore } = require('../dist/lib/signing/server.js');
 const { signRequest } = require('../dist/lib/signing/signer.js');
@@ -138,7 +139,7 @@ function mcpGetProductsBody() {
     method: 'tools/call',
     params: {
       name: 'get_products',
-      arguments: { brief: 'test' },
+      arguments: { buying_mode: 'brief', brief: 'test' },
     },
   });
 }
@@ -935,6 +936,123 @@ describe('createAdcpServer: signedRequests auto-wiring', () => {
         'agentUrlForKeyid return value MUST surface on VerifyResult.agent_url'
       );
       assert.deepStrictEqual(resolverCalls, ['test-ed25519-2026']);
+    });
+
+    it('bridges the verified signer into handler auth and BuyerAgentRegistry resolution', async () => {
+      const buyerAgent = {
+        agent_url: 'https://buyer.example.com',
+        display_name: 'Buyer',
+        status: 'active',
+        billing_capabilities: new Set(['operator']),
+      };
+      let registryUrl;
+      let capturedContext;
+      const config = sellerConfig({ withSignedRequests: true, withSpecialism: true });
+      config.signedRequests.agentUrlForKeyid = () => buyerAgent.agent_url;
+      config.agentRegistry = BuyerAgentRegistry.signingOnly({
+        resolveByAgentUrl: async agentUrl => {
+          registryUrl = agentUrl;
+          return buyerAgent;
+        },
+      });
+      config.mediaBuy.getProducts = async (_params, ctx) => {
+        capturedContext = ctx;
+        return { products: [] };
+      };
+
+      const started = await startServer(() => createAdcpServer(config));
+      try {
+        const body = mcpGetProductsBody();
+        const res = await postSigned({ url: started.url, body, sign: true, nonce: 'auto-identity-bridge-01' });
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual(registryUrl, buyerAgent.agent_url);
+        assert.strictEqual(capturedContext.authInfo.credential.kind, 'http_sig');
+        assert.strictEqual(capturedContext.authInfo.credential.keyid, 'test-ed25519-2026');
+        assert.strictEqual(capturedContext.authInfo.credential.agent_url, buyerAgent.agent_url);
+        assert.strictEqual(capturedContext.agent.agent_url, buyerAgent.agent_url);
+      } finally {
+        await new Promise(resolve => started.server.close(resolve));
+      }
+    });
+
+    it('combines matching authenticate-hook and signer identities', async () => {
+      let capturedContext;
+      const config = sellerConfig({ withSignedRequests: true, withSpecialism: true });
+      config.signedRequests.agentUrlForKeyid = () => 'https://buyer.example.com';
+      config.signedRequests.makePrincipal = () => ({ principal: 'internal-user-42' });
+      config.mediaBuy.getProducts = async (_params, ctx) => {
+        capturedContext = ctx;
+        return { products: [] };
+      };
+
+      const started = await startServer(() => createAdcpServer(config), {
+        authenticate: async () => ({
+          principal: 'internal-user-42',
+          token: 'request-local-token',
+          credential: { kind: 'api_key', key_id: 'api-key-42' },
+        }),
+      });
+      try {
+        const body = mcpGetProductsBody();
+        const res = await postSigned({ url: started.url, body, sign: true, nonce: 'auto-identity-merge-01' });
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual(capturedContext.authInfo.clientId, 'internal-user-42');
+        assert.strictEqual(capturedContext.authInfo.token, 'request-local-token');
+        assert.strictEqual(capturedContext.authInfo.credential.kind, 'http_sig');
+      } finally {
+        await new Promise(resolve => started.server.close(resolve));
+      }
+    });
+
+    it('rejects mismatched authenticate-hook and signer identities before handler dispatch', async () => {
+      let handlerCalled = false;
+      const config = sellerConfig({ withSignedRequests: true, withSpecialism: true });
+      config.signedRequests.agentUrlForKeyid = () => 'https://buyer.example.com';
+      config.mediaBuy.getProducts = async () => {
+        handlerCalled = true;
+        return { products: [] };
+      };
+
+      const started = await startServer(() => createAdcpServer(config), {
+        authenticate: async () => ({
+          principal: 'internal-user-42',
+          token: 'request-local-token',
+          credential: { kind: 'api_key', key_id: 'api-key-42' },
+        }),
+      });
+      try {
+        const body = mcpGetProductsBody();
+        const res = await postSigned({ url: started.url, body, sign: true, nonce: 'auto-identity-mismatch-01' });
+        assert.strictEqual(res.status, 401);
+        assert.match(res.headers.get('www-authenticate'), /error="request_signature_invalid"/);
+        assert.strictEqual((await res.json()).error, 'request_signature_invalid');
+        assert.strictEqual(handlerCalled, false);
+      } finally {
+        await new Promise(resolve => started.server.close(resolve));
+      }
+    });
+
+    it('fails closed when signedRequests.makePrincipal does not map the signer', async () => {
+      let handlerCalled = false;
+      const config = sellerConfig({ withSignedRequests: true, withSpecialism: true });
+      config.signedRequests.agentUrlForKeyid = () => 'https://buyer.example.com';
+      config.signedRequests.makePrincipal = () => null;
+      config.mediaBuy.getProducts = async () => {
+        handlerCalled = true;
+        return { products: [] };
+      };
+
+      const started = await startServer(() => createAdcpServer(config));
+      try {
+        const body = mcpGetProductsBody();
+        const res = await postSigned({ url: started.url, body, sign: true, nonce: 'auto-identity-unmapped-01' });
+        assert.strictEqual(res.status, 401);
+        assert.match(res.headers.get('www-authenticate'), /error="request_signature_invalid"/);
+        assert.strictEqual((await res.json()).error, 'request_signature_invalid');
+        assert.strictEqual(handlerCalled, false);
+      } finally {
+        await new Promise(resolve => started.server.close(resolve));
+      }
     });
   });
 

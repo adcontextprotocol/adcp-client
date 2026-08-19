@@ -40,6 +40,14 @@ function buildComplianceSummaryMarkdown(result, agentUrl) {
       `${s.steps_passed ?? 0} passed / ${s.steps_failed ?? 0} failed / ${s.steps_skipped ?? 0} skipped / ` +
       `${s.steps_not_selected ?? 0} not selected`
   );
+  if (result.completeness === 'timed_out') {
+    const timeoutObservation = result.observations?.find(
+      observation => observation.source?.code === 'timeout-budget-exceeded'
+    );
+    lines.push(
+      `**Incomplete:** ${timeoutObservation?.message || 'The compliance timeout budget was reached before every selected storyboard ran.'}`
+    );
+  }
   const notSelectedReasons = formatReasonCounts(s.not_selected_by_reason);
   if (notSelectedReasons) lines.push(`**Not selected:** ${notSelectedReasons}`);
   const skippedReasons = formatReasonCounts(s.skipped_by_reason);
@@ -67,6 +75,16 @@ function buildComplianceSummaryMarkdown(result, agentUrl) {
     lines.push('');
   }
   return lines.join('\n');
+}
+
+/**
+ * Scale the implicit compliance budget with the selected storyboard set.
+ * Keep the historical 120-second floor for small/unknown selections and
+ * reserve ten seconds per selected storyboard for larger release lines.
+ */
+function defaultComplianceTimeoutSeconds(selectedStoryboardCount) {
+  if (!Number.isSafeInteger(selectedStoryboardCount) || selectedStoryboardCount <= 0) return 120;
+  return Math.max(120, selectedStoryboardCount * 10);
 }
 
 function formatReasonCounts(counts) {
@@ -164,4 +182,5 @@ module.exports = {
   buildStoryboardSummaryMarkdown,
   writeSummaryFile,
   printSoftFailBlock,
+  defaultComplianceTimeoutSeconds,
 };
