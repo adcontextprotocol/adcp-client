@@ -28,6 +28,12 @@
  * inspect it (and `unmapped_macros`) so a missing consent signal is caught
  * rather than shipped as a degraded pixel.
  *
+ * A `native` mapping is trusted syntax and is therefore validated before any
+ * URL is emitted. If any native entry contains an ASCII C0 control character
+ * (U+0000-U+001F) or DEL (U+007F), this function throws
+ * {@link UnsafeNativeMappingError}. Validation is mapping-scoped: an unsafe
+ * entry is rejected even when its macro does not occur in `input_pixel_url`.
+ *
  * URLSearchParams is intentionally avoided — it force-encodes values and would
  * corrupt native ad-server tokens (e.g. `%%GDPR%%`).  Query manipulation is
  * done textually so native tokens remain raw and value-encoding is controlled.
@@ -62,6 +68,9 @@ const CONSENT_MACROS = new Set<string>([
   '{LIMIT_AD_TRACKING}',
 ]);
 
+/** ASCII control characters forbidden in native mapping entries. */
+const UNSAFE_NATIVE_CHARACTER = /[\u0000-\u001F\u007F]/;
+
 /**
  * A mapping from universal macro token (e.g. `'{GDPR}'`) to either:
  *   - `{ native: string }` — inserted verbatim (not percent-encoded), for
@@ -70,6 +79,29 @@ const CONSENT_MACROS = new Set<string>([
  *     percent-encoding, for seller-supplied data values.
  */
 export type MacroMapping = Record<string, { native: string } | { value: string }>;
+
+/**
+ * Thrown when a native mapping contains an ASCII control character.
+ *
+ * The error intentionally identifies the mapping key but does not retain the
+ * unsafe value, so callers can report the failure without propagating control
+ * characters into logs or error envelopes. `message` escapes control
+ * characters in the key for log safety; `macro` preserves the exact offending
+ * key for programmatic handling and must be escaped before logging.
+ */
+export class UnsafeNativeMappingError extends Error {
+  readonly code = 'unsafe_native_mapping' as const;
+  readonly macro: string;
+
+  constructor(macro: string) {
+    const escapedMacro = JSON.stringify(macro).replace(/[\u007F-\u009F\u2028\u2029]/g, character => {
+      return `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`;
+    });
+    super(`Native mapping for ${escapedMacro} contains a forbidden ASCII control character`);
+    this.name = 'UnsafeNativeMappingError';
+    this.macro = macro;
+  }
+}
 
 /** Result of {@link translateUniversalMacros}. */
 export interface TranslateResult {
@@ -95,6 +127,13 @@ export interface TranslateResult {
    */
   dropped_consent_macros: string[];
   /**
+   * Consent/privacy macros supplied through a `value` entry. These values are
+   * still RFC 3986 encoded and translated, but are reported because freezing a
+   * consent signal at translation time can make it stale. Mapping-scoped,
+   * mapping-property ordered, and deduplicated.
+   */
+  frozen_consent_macros?: string[];
+  /**
    * Macro tokens whose `value` entry looks like a native ad-server token
    * (`%%…%%`, `{{…}}`, `${…}`, `[UPPER_SNAKE]`). Such a value will be
    * percent-encoded and break at impression time — almost always it should
@@ -112,12 +151,29 @@ export interface TranslateResult {
  * Translate universal macro tokens in the query-parameter values of
  * `input_pixel_url` using `mapping`. See module-level documentation for the
  * substitution rules and the privacy note on dropped parameters.
+ *
+ * @throws {UnsafeNativeMappingError} If any native mapping entry contains
+ * U+0000-U+001F or U+007F. The whole mapping is checked before translation,
+ * including entries not referenced by `input_pixel_url`.
  */
 export function translateUniversalMacros(input_pixel_url: string, mapping: MacroMapping): TranslateResult {
   const suspect_native_values: string[] = [];
   const suspectSeen = new Set<string>();
+  const frozen_consent_macros: string[] = [];
+  const frozenConsentSeen = new Set<string>();
   for (const [macro, entry] of Object.entries(mapping)) {
-    if ('value' in entry && NATIVE_TOKEN_SHAPE.test(entry.value) && !suspectSeen.has(macro)) {
+    if ('native' in entry) {
+      if (UNSAFE_NATIVE_CHARACTER.test(entry.native)) {
+        throw new UnsafeNativeMappingError(macro);
+      }
+      continue;
+    }
+
+    if (CONSENT_MACROS.has(macro) && !frozenConsentSeen.has(macro)) {
+      frozenConsentSeen.add(macro);
+      frozen_consent_macros.push(macro);
+    }
+    if (NATIVE_TOKEN_SHAPE.test(entry.value) && !suspectSeen.has(macro)) {
       suspectSeen.add(macro);
       suspect_native_values.push(macro);
     }
@@ -136,6 +192,7 @@ export function translateUniversalMacros(input_pixel_url: string, mapping: Macro
       dropped_params: [],
       unmapped_macros: [],
       dropped_consent_macros: [],
+      frozen_consent_macros,
       suspect_native_values,
     };
   }
@@ -200,5 +257,12 @@ export function translateUniversalMacros(input_pixel_url: string, mapping: Macro
   const newQuery = outputParts.join('&');
   const url = newQuery ? `${base}?${newQuery}${fragment}` : `${base}${fragment}`;
 
-  return { url, dropped_params, unmapped_macros, dropped_consent_macros, suspect_native_values };
+  return {
+    url,
+    dropped_params,
+    unmapped_macros,
+    dropped_consent_macros,
+    frozen_consent_macros,
+    suspect_native_values,
+  };
 }
