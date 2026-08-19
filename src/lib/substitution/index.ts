@@ -60,5 +60,5 @@ export type {
   TrackerUrlRecord,
 } from './types';
 
-export { translateUniversalMacros } from './translate';
+export { translateUniversalMacros, UnsafeNativeMappingError } from './translate';
 export type { MacroMapping, TranslateResult } from './translate';

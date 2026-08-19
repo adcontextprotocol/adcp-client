@@ -517,6 +517,31 @@ for (const m of matches) {
 
 Unencoded substitution is a common XSS / scheme-injection vector. `CATALOG_MACRO_VECTORS` exports the seven canonical test bindings (`url-scheme-injection-neutralized`, `reserved-character-breakout`, `nested-expansion-preserved-as-literal`, etc.). For preview-URL fetches, `observer.fetch_and_parse(url)` enforces an SSRF policy — DNS revalidation, bare-IP rejection, cloud-metadata deny — before the HTTP connect.
 
+For pixel URLs that mix AdCP universal macros with a platform's native macro syntax, use `translateUniversalMacros`. Native mappings are inserted verbatim; literal values are RFC 3986 encoded. A native mapping containing U+0000–U+001F or U+007F throws `UnsafeNativeMappingError` before any URL is emitted, even when that mapping is unused. Consent macros frozen through literal `value` mappings remain encoded and are reported in `frozen_consent_macros` for advisory handling:
+
+```typescript
+import { translateUniversalMacros, UnsafeNativeMappingError } from '@adcp/sdk';
+
+try {
+  const translated = translateUniversalMacros(pixelUrl, {
+    '{CACHEBUSTER}': { native: '%%CACHEBUSTER%%' },
+    '{GPP_STRING}': { value: consentSnapshot },
+  });
+  if ((translated.frozen_consent_macros?.length ?? 0) > 0) {
+    auditConsentSnapshot(translated.frozen_consent_macros ?? []);
+  }
+  emitPixel(translated.url);
+} catch (error) {
+  if (error instanceof UnsafeNativeMappingError) {
+    // `message` includes the exact mapping key in a log-safe escaped form.
+    rejectMapping(error.code, error.message);
+  }
+  throw error;
+}
+```
+
+These policies follow the language-neutral fixture ratified in [AdCP #6674](https://github.com/adcontextprotocol/adcp/issues/6674).
+
 ---
 
 ## The fork-matrix: canonical adapter → compliance
