@@ -460,6 +460,7 @@
     "compliance/cache/**/*",
     "!compliance/cache/*.previous/**/*",
     "!compliance/cache/3.2.0-beta.0/**/*",
+    "!compliance/cache/3.2.0-beta.1/**/*",
     "ADCP_VERSION",
     "docs/llms.txt",
     "docs/releases/**/*.md",
@@ -670,7 +671,7 @@
     },
     "minimatch": "^10.2.1"
   },
-  "adcp_version": "3.2.0-beta.1",
+  "adcp_version": "3.2.0-beta.2",
   "sideEffects": [
     "**/default-invariants.*"
   ]

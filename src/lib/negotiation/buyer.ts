@@ -1,5 +1,6 @@
 import { generateIdempotencyKey, isValidIdempotencyKey } from '../utils/idempotency';
 import type { TaskResult } from '../core/ConversationTypes';
+import { ADCP_VERSION, toReleasePrecisionVersion } from '../version';
 import type {
   ProposalRefinement,
   ProposalRefinementCapabilities,
@@ -15,6 +16,7 @@ import { assertRefineProposalsResponse, isStrictDateTime } from './verification'
 
 export const MAX_PROPOSAL_REFINEMENTS = 25;
 export const MAX_PROPOSAL_ALTERNATIVES = 10;
+const ADCP_32_RELEASE = /^3\.2(?:-[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)?$/;
 
 /**
  * Read AdCP 3.2 proposal discovery from a raw get_adcp_capabilities response,
@@ -94,8 +96,8 @@ export function validateRefineProposalsRequest(
 ): asserts request is RefineProposalsRequest {
   if (!isRecord(request)) fail('request must be an object');
   assertAllowedKeys(request, REQUEST_KEYS, 'request');
-  if (request.adcp_version !== '3.2') {
-    fail('refine_proposals requires adcp_version 3.2', 'adcp_version');
+  if (typeof request.adcp_version !== 'string' || !ADCP_32_RELEASE.test(request.adcp_version)) {
+    fail('refine_proposals requires an adcp_version on the 3.2 release line', 'adcp_version');
   }
   if (request.adcp_major_version !== 3) {
     fail('refine_proposals requires adcp_major_version 3', 'adcp_major_version');
@@ -361,11 +363,12 @@ function validateConstraints(refinement: Extract<ProposalRefinement, { action: '
 /** Build and preflight a request before any transport call. */
 export function buildRefineProposalsRequest(
   input: RefineProposalsInput,
-  capabilities?: ProposalRefinementCapabilities
+  capabilities?: ProposalRefinementCapabilities,
+  defaultAdcpVersion = ADCP_VERSION
 ): RefineProposalsRequest {
   if (!isRecord(input)) fail('request input must be an object');
-  if (input.adcp_version !== undefined && input.adcp_version !== '3.2') {
-    fail('refine_proposals requires adcp_version 3.2', 'adcp_version');
+  if (input.adcp_version !== undefined && !ADCP_32_RELEASE.test(input.adcp_version)) {
+    fail('refine_proposals requires an adcp_version on the 3.2 release line', 'adcp_version');
   }
   if (input.adcp_major_version !== undefined && input.adcp_major_version !== 3) {
     fail('refine_proposals requires adcp_major_version 3', 'adcp_major_version');
@@ -373,7 +376,8 @@ export function buildRefineProposalsRequest(
   const snapshot = structuredClone(input) as RefineProposalsInput;
   const request: RefineProposalsRequest = {
     ...snapshot,
-    adcp_version: '3.2',
+    adcp_version: (snapshot.adcp_version ??
+      toReleasePrecisionVersion(defaultAdcpVersion)) as RefineProposalsRequest['adcp_version'],
     adcp_major_version: 3,
     idempotency_key: snapshot.idempotency_key ?? generateIdempotencyKey(),
   };

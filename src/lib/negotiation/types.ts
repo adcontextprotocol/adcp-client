@@ -113,6 +113,8 @@ export interface FinalizeProposalRefinement {
 
 export type ProposalRefinement = ReviseProposalRefinement | FinalizeProposalRefinement;
 
+export type Adcp32Version = '3.2' | `3.2-${string}`;
+
 export interface RefineProposalsRequest {
   idempotency_key: string;
   refinements: ProposalRefinement[];
@@ -120,7 +122,7 @@ export interface RefineProposalsRequest {
   context?: Record<string, unknown>;
   governance_context?: string;
   push_notification_config?: Record<string, unknown>;
-  adcp_version: '3.2';
+  adcp_version: Adcp32Version;
   adcp_major_version: 3;
 }
 
@@ -129,7 +131,7 @@ export type RefineProposalsInput = Omit<
   'idempotency_key' | 'adcp_version' | 'adcp_major_version'
 > & {
   idempotency_key?: string;
-  adcp_version?: '3.2';
+  adcp_version?: Adcp32Version;
   adcp_major_version?: 3;
 };
 
