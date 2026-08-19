@@ -109,13 +109,27 @@ describe('Capability projections — declarative capability blocks on Decisionin
           oauth: { supported: true },
           measurement: { supported: true },
           wholesale_feed_versioning: { supported: true },
-          adcp: { capability_changes: { supported: true }, governance_enforcement: { mode: 'strict' } },
+          adcp: {
+            capability_changes: { supported: true },
+            governance_enforcement: { mode: 'strict' },
+            idempotency: { supported: true, replay_ttl_seconds: 3600, in_flight_max_seconds: 30 },
+          },
           account: { timezone: { supported: true }, notifications: { supported: true } },
           media_buy: {
             buying_modes: ['brief'],
             budget_capping: { supported: true },
             supported_pricing_models: ['cpm', 'revenue_share'],
             features: { canonical_creatives: true, seller_optimized_budget: true },
+            execution: {
+              targeting: {
+                geo_postal_areas: {
+                  us_zip: true,
+                  us_zip_plus_four: true,
+                  US: ['zip', 'zip_plus_four'],
+                  NL: ['postal_code'],
+                },
+              },
+            },
           },
           signals: { discovery_modes: ['brief'] },
           governance: { runtime_attestations: { supported: true } },
@@ -129,7 +143,7 @@ describe('Capability projections — declarative capability blocks on Decisionin
       {
         name: 'capability-downshift',
         version: '4.0.0',
-        validation: { requests: 'off', responses: 'off' },
+        validation: { requests: 'off', responses: 'strict' },
       }
     );
 
@@ -143,10 +157,19 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.strictEqual(result.structuredContent?.measurement, undefined);
     assert.strictEqual(result.structuredContent?.wholesale_feed_versioning, undefined);
     assert.strictEqual(result.structuredContent?.adcp?.capability_changes, undefined);
+    assert.strictEqual(result.structuredContent?.adcp?.idempotency?.in_flight_max_seconds, undefined);
+    assert.strictEqual(result.structuredContent?.adcp?.idempotency?.replay_ttl_seconds, 3600);
     assert.strictEqual(result.structuredContent?.account?.timezone, undefined);
     assert.strictEqual(result.structuredContent?.media_buy?.buying_modes, undefined);
     assert.strictEqual(result.structuredContent?.media_buy?.budget_capping, undefined);
     assert.strictEqual(result.structuredContent?.media_buy?.features?.seller_optimized_budget, undefined);
+    assert.strictEqual(result.structuredContent?.media_buy?.execution?.targeting?.geo_postal_areas?.US, undefined);
+    assert.strictEqual(result.structuredContent?.media_buy?.execution?.targeting?.geo_postal_areas?.NL, undefined);
+    assert.strictEqual(result.structuredContent?.media_buy?.execution?.targeting?.geo_postal_areas?.us_zip, true);
+    assert.strictEqual(
+      result.structuredContent?.media_buy?.execution?.targeting?.geo_postal_areas?.us_zip_plus_four,
+      true
+    );
     assert.strictEqual(result.structuredContent?.signals?.discovery_modes, undefined);
     assert.strictEqual(result.structuredContent?.governance?.runtime_attestations, undefined);
     assert.strictEqual(result.structuredContent?.creative?.supports_transformers, undefined);

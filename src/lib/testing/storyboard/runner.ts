@@ -81,7 +81,7 @@ import {
   generateRandomInvalidJwt,
 } from './probes';
 import { readBrandJsonUrl } from '../../signing/agent-resolver/capabilities-types';
-import { collectAgentEntries } from '../../signing/agent-resolver/select-agent';
+import { selectAgentByUrl } from '../../signing/agent-resolver/select-agent';
 import { selectProbeTask, validateTestKit } from './test-kit';
 import { validateStoryboardShape } from './loader';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
@@ -4290,8 +4290,12 @@ async function runStoryboardStepBody(
   if (!clientResolution.reusedShared) {
     const discovered = await getOrDiscoverProfile(client, options);
     profile = discovered.profile;
-    if (profile && !options._profile) {
-      options = { ...options, _profile: profile };
+    if (profile && (!options._profile || !options.agentTools)) {
+      options = {
+        ...options,
+        ...(!options._profile && { _profile: profile }),
+        ...(!options.agentTools && { agentTools: normalizeAgentToolNames(profile.tools) }),
+      };
     }
   } else {
     profile = options._profile;
@@ -5974,7 +5978,7 @@ async function executeProbeStep(
   } else if (step.task === 'request_signing_probe') {
     httpResult = await probeRequestSigningVector(step.id, runState.agentUrl, options);
   } else if (step.task === 'fetch_brand_jwks') {
-    httpResult = await probeBrandJwks(options._profile?.raw_capabilities, probeOpts);
+    httpResult = await probeBrandJwks(options._profile?.raw_capabilities, runState.agentUrl, probeOpts);
   } else if (step.task === 'assert_jwks_purpose') {
     // Webhook delivery is signed with the agent's request-signing key; the
     // deprecated webhook-signing purpose is still accepted (adcontextprotocol/adcp#5555).
@@ -7008,6 +7012,7 @@ function rateLimitTripObservationToProbeResult(
 
 async function probeBrandJwks(
   rawCapabilities: unknown,
+  agentUrl: string,
   options: { allowPrivateIp?: boolean; fetchFn?: typeof fetch }
 ): Promise<HttpProbeResult> {
   const brandJsonUrl = readBrandJsonUrl(rawCapabilities);
@@ -7029,16 +7034,26 @@ async function probeBrandJwks(
     };
   }
 
-  const jwksUri = collectAgentEntries(brand.body)
-    .map(agent => agent.jwks_uri)
-    .find((uri): uri is string => typeof uri === 'string' && uri.length > 0);
+  let jwksUri: string | undefined;
+  try {
+    const agent = selectAgentByUrl(brand.body, agentUrl);
+    jwksUri = typeof agent.jwks_uri === 'string' && agent.jwks_uri.length > 0 ? agent.jwks_uri : undefined;
+  } catch {
+    return {
+      url: brandJsonUrl,
+      status: 0,
+      headers: {},
+      body: brand.body,
+      error: 'brand.json agent portfolio did not uniquely match the agent under test',
+    };
+  }
   if (!jwksUri) {
     return {
       url: brandJsonUrl,
       status: 0,
       headers: {},
       body: brand.body,
-      error: 'brand.json agent portfolio did not contain a jwks_uri',
+      error: 'brand.json agent entry for the agent under test did not contain a jwks_uri',
     };
   }
 

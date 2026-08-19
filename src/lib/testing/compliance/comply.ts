@@ -882,13 +882,14 @@ export function partitionStoryboardsByRequiredTools(
   const runnable: Storyboard[] = [];
   const missing: NotApplicableStoryboard[] = [];
   for (const sb of storyboards) {
-    const absent = (sb.required_tools ?? []).filter(tool => !discoveredToolNames.has(tool));
-    if (absent.length > 0) {
+    const required = sb.required_tools ?? [];
+    const hasApplicableTool = required.length === 0 || required.some(tool => discoveredToolNames.has(tool));
+    if (!hasApplicableTool) {
       missing.push({
         storyboard_id: sb.id,
         storyboard_title: sb.title,
         track: sb.track,
-        reason: `missing required_tools: ${absent.join(', ')}`,
+        reason: `missing required_tools: ${required.join(', ')}`,
       });
     } else {
       runnable.push(sb);
@@ -1199,16 +1200,36 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     // Discover agent capabilities once and share across all storyboards.
     // External cancellation still aborts discovery; timeout_ms is enforced
     // later as a soft storyboard-start budget.
-    const discoveryOptions =
-      testOptions.versionEnvelope === undefined
-        ? { ...effectiveOptions, versionEnvelope: 'major-only' as const }
-        : effectiveOptions;
-    const discoveryClient = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', discoveryOptions);
-    const { profile, step: profileStep } = await discoverAgentProfile(
+    // Discover with the configured release pin first. A major-only discovery
+    // forces modern same-major sellers to project their capabilities as 3.0,
+    // hiding the very fields needed to select current storyboards. Strict
+    // legacy sellers still get a compatibility retry below.
+    let discoveryOptions = effectiveOptions;
+    let discoveryClient = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', discoveryOptions);
+    let { profile, step: profileStep } = await discoverAgentProfile(
       discoveryClient,
       signal,
       complianceIndex.adcp_version
     );
+    if (
+      testOptions.versionEnvelope === undefined &&
+      profile.tools.includes('get_adcp_capabilities') &&
+      profile.raw_capabilities === undefined
+    ) {
+      const legacyDiscoveryOptions = { ...effectiveOptions, versionEnvelope: 'major-only' as const };
+      const legacyDiscoveryClient = createTestClient(
+        agentUrl,
+        effectiveOptions.protocol ?? 'mcp',
+        legacyDiscoveryOptions
+      );
+      const legacyDiscovery = await discoverAgentProfile(legacyDiscoveryClient, signal, complianceIndex.adcp_version);
+      if (legacyDiscovery.profile.raw_capabilities !== undefined) {
+        discoveryOptions = legacyDiscoveryOptions;
+        discoveryClient = legacyDiscoveryClient;
+        profile = legacyDiscovery.profile;
+        profileStep = legacyDiscovery.step;
+      }
+    }
     effectiveOptions = applyNegotiatedComplianceVersionOptions(profile, effectiveOptions, {
       complianceVersion: complianceIndex.adcp_version,
       ...(hostedStableLineAlias !== undefined && { hostedStableLineAlias }),
@@ -1345,17 +1366,21 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     }
     const applicableStoryboards = expandScenarios(initialStoryboards, resolveOptions);
 
-    // Exclude storyboards and injected scenarios whose required_tools are absent
-    // from the agent's discovered toolset. These are
+    // For capability-resolved runs, exclude storyboards and injected scenarios whose
+    // required_tools are absent from the agent's discovered toolset. These are
     // not-applicable — the agent doesn't claim the specialism being tested. Running
     // them produces cascading skips that pull the track to `partial`, which is a false
     // signal for AAO badge grading (adcp-client#1680).
-    // Explicit selection narrows which storyboards are considered; it does not make
-    // an unsupported specialism applicable. Call runStoryboard() directly when a
-    // developer intentionally needs to exercise an unsupported tool surface.
-    const applicability = partitionStoryboardsByRequiredTools(applicableStoryboards, profile.tools);
-    const runnableStoryboards = applicability.runnable;
-    missingToolStoryboards.push(...applicability.missing);
+    // Explicit storyboard IDs remain an operator override. Some targeted conformance
+    // runs intentionally exercise the storyboard's own missing-tool skip semantics.
+    let runnableStoryboards: Storyboard[];
+    if (explicitStoryboards?.length) {
+      runnableStoryboards = applicableStoryboards;
+    } else {
+      const applicability = partitionStoryboardsByRequiredTools(applicableStoryboards, profile.tools);
+      runnableStoryboards = applicability.runnable;
+      missingToolStoryboards.push(...applicability.missing);
+    }
 
     // Run storyboards
     const storyboardResults: StoryboardResult[] = [];

@@ -25,6 +25,7 @@ describe('compliance storyboard required-tool applicability', () => {
     const result = partitionStoryboardsByRequiredTools(
       [
         storyboard('si_baseline', ['si_initiate_session']),
+        storyboard('si_partial_surface', ['si_initiate_session', 'si_optional_tool']),
         storyboard('media_buy', ['get_products']),
         storyboard('creative_transformers', ['list_transformers']),
       ],
@@ -33,7 +34,7 @@ describe('compliance storyboard required-tool applicability', () => {
 
     assert.deepStrictEqual(
       result.runnable.map(item => item.id),
-      ['si_baseline']
+      ['si_baseline', 'si_partial_surface']
     );
     assert.deepStrictEqual(
       result.missing.map(item => item.storyboard_id),

@@ -2957,122 +2957,165 @@ const COMPACT_MEDIA_BUY_LIFECYCLE_TOOLS = [
   'control_media_buy',
 ] as const;
 
-const ADCP_3_0_CAPABILITY_KEYS = {
-  root: [
-    'adcp',
-    'supported_protocols',
-    'account',
-    'media_buy',
-    'signals',
-    'governance',
-    'sponsored_intelligence',
-    'brand',
-    'creative',
-    'request_signing',
-    'webhook_signing',
-    'identity',
-    'compliance_testing',
-    'specialisms',
-    'extensions_supported',
-    'experimental_features',
-    'last_updated',
-    'errors',
-    'context',
-    'ext',
-  ],
-  adcp: ['major_versions', 'idempotency'],
-  account: [
-    'require_operator_auth',
-    'authorization_endpoint',
-    'supported_billing',
-    'required_for_products',
-    'account_financials',
-    'sandbox',
-  ],
-  media_buy: [
-    'supported_pricing_models',
-    'reporting_delivery_methods',
-    'offline_delivery_protocols',
-    'features',
-    'execution',
-    'audience_targeting',
-    'conversion_tracking',
-    'content_standards',
-    'portfolio',
-  ],
-  media_buy_features: ['inline_creative_management', 'property_list_filtering', 'catalog_management'],
-  signals: ['data_provider_domains', 'features'],
-  governance: ['aggregation_window_days', 'property_features', 'creative_features'],
-  creative: ['supports_compliance', 'has_creative_library', 'supports_generation', 'supports_transformation'],
-  request_signing: ['supported', 'covers_content_digest', 'required_for', 'warn_for', 'supported_for'],
-  identity: ['per_principal_key_isolation', 'key_origins', 'compromise_notification'],
-} as const;
+type ProjectionSchema = Record<string, unknown>;
 
-const ADCP_3_0_CAPABILITY_PROTOCOLS: ReadonlySet<string> = new Set([
-  'media_buy',
-  'signals',
-  'governance',
-  'sponsored_intelligence',
-  'creative',
-  'brand',
-]);
+const OMIT_PROJECTED_VALUE = Symbol('omit-projected-value');
 
-const ADCP_3_0_CAPABILITY_SPECIALISMS: ReadonlySet<string> = new Set([
-  'audience-sync',
-  'brand-rights',
-  'collection-lists',
-  'content-standards',
-  'creative-ad-server',
-  'creative-generative',
-  'creative-template',
-  'governance-aware-seller',
-  'governance-delivery-monitor',
-  'governance-spend-authority',
-  'property-lists',
-  'sales-broadcast-tv',
-  'sales-catalog-driven',
-  'sales-guaranteed',
-  'sales-non-guaranteed',
-  'sales-proposal-mode',
-  'sales-social',
-  'signal-marketplace',
-  'signal-owned',
-  'signed-requests',
-]);
-
-const LEGACY_PRICING_MODELS = new Set(['cpm', 'vcpm', 'cpc', 'cpcv', 'cpv', 'cpp', 'cpa', 'flat_rate', 'time']);
-
-function retainCapabilityKeys(target: unknown, allowed: readonly string[]): void {
-  if (!isPlainObject(target)) return;
-  const keep = new Set<string>(allowed);
-  for (const key of Object.keys(target)) {
-    if (!keep.has(key)) delete target[key];
-  }
+function asProjectionSchema(value: unknown): ProjectionSchema | undefined {
+  return isPlainObject(value) ? value : undefined;
 }
 
-function projectAdcp30Capabilities(data: GetAdCPCapabilitiesResponse): void {
-  retainCapabilityKeys(data, ADCP_3_0_CAPABILITY_KEYS.root);
-  retainCapabilityKeys(data.adcp, ADCP_3_0_CAPABILITY_KEYS.adcp);
-  retainCapabilityKeys(data.account, ADCP_3_0_CAPABILITY_KEYS.account);
-  retainCapabilityKeys(data.media_buy, ADCP_3_0_CAPABILITY_KEYS.media_buy);
-  retainCapabilityKeys(data.media_buy?.features, ADCP_3_0_CAPABILITY_KEYS.media_buy_features);
-  retainCapabilityKeys(data.signals, ADCP_3_0_CAPABILITY_KEYS.signals);
-  retainCapabilityKeys(data.governance, ADCP_3_0_CAPABILITY_KEYS.governance);
-  retainCapabilityKeys(data.creative, ADCP_3_0_CAPABILITY_KEYS.creative);
-  retainCapabilityKeys(data.request_signing, ADCP_3_0_CAPABILITY_KEYS.request_signing);
-  retainCapabilityKeys(data.identity, ADCP_3_0_CAPABILITY_KEYS.identity);
+function resolveLocalProjectionRef(root: ProjectionSchema, schema: ProjectionSchema): ProjectionSchema {
+  const ref = schema.$ref;
+  if (typeof ref !== 'string' || !ref.startsWith('#/')) return schema;
+  let current: unknown = root;
+  for (const encodedSegment of ref.slice(2).split('/')) {
+    if (!isPlainObject(current)) return schema;
+    const segment = encodedSegment.replace(/~1/g, '/').replace(/~0/g, '~');
+    current = current[segment];
+  }
+  return asProjectionSchema(current) ?? schema;
+}
 
-  if (Array.isArray(data.supported_protocols)) {
-    data.supported_protocols = data.supported_protocols.filter(protocol => ADCP_3_0_CAPABILITY_PROTOCOLS.has(protocol));
+function projectionDiscriminatorMatch(
+  root: ProjectionSchema,
+  schema: ProjectionSchema,
+  value: unknown
+): boolean | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const resolved = resolveLocalProjectionRef(root, schema);
+  const properties = asProjectionSchema(resolved.properties);
+  if (!properties) return undefined;
+  let found = false;
+  for (const [key, propertySchemaValue] of Object.entries(properties)) {
+    const propertySchema = asProjectionSchema(propertySchemaValue);
+    if (!propertySchema || !Object.hasOwn(propertySchema, 'const')) continue;
+    found = true;
+    if (value[key] !== propertySchema.const) return false;
   }
-  if (Array.isArray(data.specialisms)) {
-    data.specialisms = data.specialisms.filter(specialism => ADCP_3_0_CAPABILITY_SPECIALISMS.has(specialism));
+  return found ? true : undefined;
+}
+
+function collectProjectionSchemas(
+  root: ProjectionSchema,
+  schema: ProjectionSchema,
+  value: unknown,
+  depth = 0
+): ProjectionSchema[] {
+  if (depth > 64) return [];
+  const resolved = resolveLocalProjectionRef(root, schema);
+  const schemas: ProjectionSchema[] = [resolved];
+  for (const keyword of ['allOf'] as const) {
+    const branches = resolved[keyword];
+    if (!Array.isArray(branches)) continue;
+    for (const branch of branches) {
+      const branchSchema = asProjectionSchema(branch);
+      if (branchSchema) schemas.push(...collectProjectionSchemas(root, branchSchema, value, depth + 1));
+    }
   }
-  if (Array.isArray(data.media_buy?.supported_pricing_models)) {
-    data.media_buy.supported_pricing_models = data.media_buy.supported_pricing_models.filter(model =>
-      LEGACY_PRICING_MODELS.has(model)
-    );
+  for (const keyword of ['oneOf', 'anyOf'] as const) {
+    const branches = resolved[keyword];
+    if (!Array.isArray(branches)) continue;
+    const branchSchemas = branches.map(asProjectionSchema).filter((branch): branch is ProjectionSchema => !!branch);
+    const matched = branchSchemas.filter(branch => projectionDiscriminatorMatch(root, branch, value) === true);
+    const selected = matched.length > 0 ? matched : branchSchemas;
+    for (const branch of selected) {
+      schemas.push(...collectProjectionSchemas(root, branch, value, depth + 1));
+    }
   }
+  return schemas;
+}
+
+function projectValueToCapabilitySchema(
+  root: ProjectionSchema,
+  schema: ProjectionSchema,
+  value: unknown,
+  depth = 0
+): unknown | typeof OMIT_PROJECTED_VALUE {
+  if (depth > 64) return OMIT_PROJECTED_VALUE;
+  const schemas = collectProjectionSchemas(root, schema, value, depth);
+
+  const allowedValues = schemas.flatMap(candidate => (Array.isArray(candidate.enum) ? candidate.enum : []));
+  if (allowedValues.length > 0 && !allowedValues.some(allowed => Object.is(allowed, value))) {
+    return OMIT_PROJECTED_VALUE;
+  }
+  const constants = schemas.filter(candidate => Object.hasOwn(candidate, 'const')).map(candidate => candidate.const);
+  if (constants.length > 0 && !constants.some(constant => Object.is(constant, value))) {
+    return OMIT_PROJECTED_VALUE;
+  }
+
+  if (Array.isArray(value)) {
+    const itemSchemas = schemas.map(candidate => asProjectionSchema(candidate.items)).filter(Boolean);
+    if (itemSchemas.length === 0) return value;
+    const itemSchema: ProjectionSchema = { allOf: itemSchemas };
+    return value
+      .map(item => projectValueToCapabilitySchema(root, itemSchema, item, depth + 1))
+      .filter(item => item !== OMIT_PROJECTED_VALUE);
+  }
+
+  if (!isPlainObject(value)) return value;
+
+  const propertySchemas = new Map<string, ProjectionSchema[]>();
+  for (const candidate of schemas) {
+    const properties = asProjectionSchema(candidate.properties);
+    if (!properties) continue;
+    for (const [key, propertySchemaValue] of Object.entries(properties)) {
+      const propertySchema = asProjectionSchema(propertySchemaValue);
+      if (!propertySchema) continue;
+      const existing = propertySchemas.get(key) ?? [];
+      existing.push(propertySchema);
+      propertySchemas.set(key, existing);
+    }
+  }
+
+  if (propertySchemas.size === 0) {
+    const mapValueSchema = schemas
+      .map(candidate => asProjectionSchema(candidate.additionalProperties))
+      .find((candidate): candidate is ProjectionSchema => !!candidate);
+    if (!mapValueSchema) return value;
+    const projectedMap: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      const projected = projectValueToCapabilitySchema(root, mapValueSchema, entry, depth + 1);
+      if (projected !== OMIT_PROJECTED_VALUE) projectedMap[key] = projected;
+    }
+    return projectedMap;
+  }
+
+  const projectedObject: Record<string, unknown> = {};
+  for (const [key, candidateSchemas] of propertySchemas) {
+    if (!Object.hasOwn(value, key)) continue;
+    const projected = projectValueToCapabilitySchema(root, { allOf: candidateSchemas }, value[key], depth + 1);
+    if (projected !== OMIT_PROJECTED_VALUE) projectedObject[key] = projected;
+  }
+  return projectedObject;
+}
+
+function projectCapabilitiesToVersion(data: GetAdCPCapabilitiesResponse, version: string): GetAdCPCapabilitiesResponse {
+  const validator = getValidator('get_adcp_capabilities', 'sync', version);
+  const schema = asProjectionSchema((validator as { schema?: unknown } | undefined)?.schema);
+  if (!schema) return data;
+  const projected = projectValueToCapabilitySchema(schema, schema, data);
+  if (!isPlainObject(projected)) return data;
+  const result = projected as unknown as GetAdCPCapabilitiesResponse;
+
+  // The 3.0 response contract predates account inference: every media-buy
+  // seller must advertise a billing party even when the modern source
+  // capability relied on implicit-account defaults.
+  if (result.supported_protocols?.includes('media_buy')) {
+    if (!result.account) {
+      result.account = { supported_billing: ['agent'] };
+    } else if (!Array.isArray(result.account.supported_billing) || result.account.supported_billing.length === 0) {
+      result.account.supported_billing = ['agent'];
+    }
+  }
+
+  // A modern request-signing block can contain only post-3.0 fields. After
+  // projection, omit that empty optional block rather than emitting an object
+  // that violates 3.0's required `supported` discriminator.
+  if (result.request_signing && Object.keys(result.request_signing).length === 0) {
+    delete result.request_signing;
+  }
+  return result;
 }
 
 /** @internal Shared by the platform adapter's principal resolver and dispatcher gate. */
@@ -7493,7 +7536,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           );
         }
       }
-      const data = structuredClone(capabilitiesData) as GetAdCPCapabilitiesResponse;
+      let data = structuredClone(capabilitiesData) as GetAdCPCapabilitiesResponse;
       const selected = parseAdcpRelease(release.validationVersion);
       if (
         selected !== undefined &&
@@ -7504,7 +7547,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // temporarily accepts the legacy serialization during a rolling deploy.
         data.request_signing = { ...data.request_signing, covers_content_digest: 'required' };
       }
-      if (selected?.major === 3 && selected.minor === 0) projectAdcp30Capabilities(data);
+      if (selected?.major === 3 && selected.minor === 0) {
+        data = projectCapabilitiesToVersion(data, release.validationVersion);
+      }
       if (selected?.major === 3 && selected.minor === 1) {
         delete (data.adcp as GetAdCPCapabilitiesResponse['adcp'] & { capability_changes?: unknown }).capability_changes;
         const forwardMediaBuy = data.media_buy as

@@ -1237,6 +1237,26 @@ describe('Request Builder', () => {
       assert.deepStrictEqual(result.account, contextAccount);
       assert.deepStrictEqual(result.media_buy_ids, ['buy-11']);
     });
+
+    test('preserves a fixture natural-key operator and timezone while enforcing harness sandbox routing', () => {
+      const fixtureAccount = {
+        brand: { domain: 'advertiser.example' },
+        operator: 'buyer-agent.example',
+        timezone: 'America/New_York',
+        sandbox: false,
+      };
+      const result = buildRequest(
+        step('get_media_buy_delivery', { sample_request: { account: fixtureAccount } }),
+        {},
+        { ...DEFAULT_OPTIONS, sandbox: true }
+      );
+      assert.deepStrictEqual(result.account, {
+        brand: { domain: 'advertiser.example' },
+        operator: 'buyer-agent.example',
+        timezone: 'America/New_York',
+        sandbox: true,
+      });
+    });
   });
 
   describe('update_media_buy', () => {

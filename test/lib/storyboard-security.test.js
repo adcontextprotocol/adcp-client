@@ -13,7 +13,7 @@ const {
   rawMcpProbe,
   rawA2aProbe,
 } = require('../../dist/lib/testing/storyboard/probes');
-const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner');
+const { runStoryboard, runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner');
 const { loadStoryboardFile } = require('../../dist/lib/testing/storyboard/loader');
 const { comply, detectAuthRejection } = require('../../dist/lib/testing/compliance/comply');
 const {
@@ -1154,6 +1154,75 @@ describe('storyboard runner: auth-override dispatch', () => {
     }
   });
 
+  it('standalone steps select an advertised auth probe after discovering tools', async () => {
+    let seenTool;
+    const server = http.createServer(async (req, res) => {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      if (chunks.length === 0) {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (maybeHandleMcpHandshake(rpc, res)) return;
+      if (rpc.method === 'tools/list') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: rpc.id,
+            result: { tools: [{ name: 'get_signals', inputSchema: { type: 'object' } }] },
+          })
+        );
+        return;
+      }
+      seenTool = rpc.params.name;
+      res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="x"' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, error: { code: -32001, message: 'auth required' } }));
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+    const storyboard = {
+      id: 'standalone_safe_probe',
+      version: '1.0.0',
+      title: 'Standalone safe probe',
+      category: 'security',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      phases: [
+        {
+          id: 'p',
+          title: 'probe',
+          steps: [
+            {
+              id: 's1',
+              title: 'unauth probe',
+              task: '$test_kit.auth.probe_task',
+              task_default: 'list_creatives',
+              auth: 'none',
+              expect_error: true,
+              validations: [{ check: 'http_status_in', allowed_values: [401, 403], description: 'rejects unauth' }],
+            },
+          ],
+        },
+      ],
+    };
+    try {
+      const result = await runStoryboardStep(agentUrl, storyboard, 's1', {
+        protocol: 'mcp',
+        allow_http: true,
+        test_kit: { auth: { api_key: 'sk_test', probe_task: 'list_creatives' } },
+      });
+      assert.strictEqual(seenTool, 'get_signals');
+      assert.strictEqual(result.passed, true, JSON.stringify(result));
+    } finally {
+      server.close();
+    }
+  });
+
   it('grades SI-only auth probes not_applicable instead of calling a nonexistent session-list tool', async () => {
     const storyboard = {
       id: 'si_probe_not_applicable',
@@ -1475,7 +1544,18 @@ describe('storyboard runner: portfolio brand JWKS discovery', () => {
     const jwksUrl = 'https://keys.example/jwks.json';
     const fetchedUrls = [];
     const manifest = {
-      house: { domain: 'portfolio.example', name: 'Publisher House', agents: [] },
+      house: {
+        domain: 'portfolio.example',
+        name: 'Publisher House',
+        agents: [
+          {
+            type: 'sales',
+            id: 'other_sales',
+            url: 'https://other-seller.example/mcp',
+            jwks_uri: 'https://other-keys.example/jwks.json',
+          },
+        ],
+      },
       brands: [
         {
           id: 'publisher-brand',
