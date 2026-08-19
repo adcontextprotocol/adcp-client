@@ -113,6 +113,49 @@ On a dual-surface 3.2 seller, compact is preferred. Use
 lane and only when capability discovery includes the corresponding established
 tool. Forcing established against a compact-only advertisement returns a typed
 error before dispatch; the SDK does not assume a hidden alias is callable.
+Auto negotiation applies the same rule per operation: if a partial 3.2 surface
+advertises neither the requested compact tool nor its established counterpart,
+the coordinator returns `MediaBuyLifecycleCompatibilityError` with
+`feature: 'lifecycle_tool_not_advertised'`. It never probes an unadvertised
+mutation.
+
+Compatibility responses retain useful public types instead of reducing wire
+rows to `unknown`. `CompatibleProduct` is the canonical-or-established product
+union, and `CompatibleProposal` is the canonical-or-established proposal union.
+Proposal calls return operation-specific discriminants:
+
+- `requestProposals`: `operation: 'request'` with `outcome: 'proposed' |
+  'rejected' | 'legacy_unavailable'`.
+- `refineProposals`: `operation: 'refine'` with native per-refinement
+  `results[].outcome` arms, or an explicit `legacy_projected` /
+  `legacy_unavailable` top-level outcome.
+- `declineProposals`: `operation: 'decline'` with typed native results, or
+  `legacy_unconfirmed` plus `results[].outcome: 'unconfirmed'` when the caller
+  opted into legacy omit semantics.
+
+Those projection discriminants exist only after `result.status ===
+'completed'`. `CompatibilityTaskResult<TCompleted, TWire>` is status-aware:
+submitted, working, input-required, deferred, and failed branches expose the
+SDK-returned compact or canonical-established source data instead of claiming
+a completed outcome. On a completed projection, the typed `raw` member retains
+that SDK source object. The established source is a
+`CanonicalGetProductsResponse`, including `projection.diagnostics`; it is not
+the untouched seller emission. Migration and conformance tooling that truly
+needs the legacy wire must use the explicit `getProductsLegacy()` API outside
+the coordinator. The coordinator's `CompatibleRefinementResult` also restores
+the canonical proposal base on revised, partial, and finalized arms while the
+separate beta.3 generator defect remains tracked in #2619. The compatibility
+boundary runtime-validates those child proposals before exposing that stronger
+type and rechecks the full refinement request semantics on immediate, polled,
+tracked, and deferred completions before caching a successor. Compact decline
+result arms are runtime-validated and correlated in request order; the coordinator
+accepts both beta.2 rows that echo `proposal_id` and generated ordered rows that
+omit it, while rejecting a conflicting echoed ID.
+Because compact proposals are immutable, refinement places every source under
+a shared principal-scoped execution fence before dispatch. Only a verified
+`unable` result restores that exact source snapshot; a validated successor adds
+new acceptance evidence under its own proposal ID. In-flight, malformed,
+ambiguous, disposed, and expired refinements leave the source non-executable.
 
 ## Buyer projection policy
 
@@ -151,14 +194,17 @@ server-controlled identity; never accept it from buyer-supplied request
 content. Never share a coordinator or its `AgentClient` across authentication
 principals.
 
-Proposal snapshots are shared and bounded per `AgentClient` (256 entries,
-256 KiB per entry, 4 MiB total), so creating additional coordinators for the
-same authenticated seller client cannot multiply the cache ceiling.
+Proposal snapshots are shared and bounded per `AgentClient` and
+`principalScope` partition (256 entries, 256 KiB per entry, 4 MiB total), so
+one authenticated principal cannot consume another principal's snapshot or
+tombstone quota. An `AgentClient` retains at most 256 principal partitions.
+Negotiating a 257th fails closed unless an empty, tombstone-free partition has
+no live coordinator and can be reclaimed.
 The first retired acceptance lazily allocates a separate, fixed 256 KiB salted
-probabilistic tombstone filter for that client. It prevents rediscovery from
-reauthorizing a consumed proposal without retaining proposal IDs. At very high
-lifetime acceptance counts, a false positive rejects an unused proposal rather
-than risking a duplicate mutation; it never fails open.
+probabilistic tombstone filter for that principal partition. It prevents
+rediscovery from reauthorizing a consumed proposal without retaining proposal
+IDs. At very high lifetime acceptance counts, a false positive rejects an
+unused proposal rather than risking a duplicate mutation; it never fails open.
 Only successful completed proposal responses become executable snapshots.
 Working, failed, unsafe, oversized, or unserializable same-ID responses
 invalidate older evidence. Async results are projected and retained only after
@@ -167,7 +213,29 @@ a successful completion is observed through `waitForCompletion()`, `track()`,
 built-in webhook completion updates). Task-update proposal listeners expire
 after five minutes; call `dispose()` to release them earlier. A later explicit
 `track()` or `waitForCompletion()` still projects and retains a successful
-completion after that listener window.
+completion after that listener window while the coordinator remains active.
+Disposal is terminal: in-flight responses and previously returned task
+continuations reject instead of projecting into a partition that may have been
+reclaimed. If a decline was already dispatched or its continuation was already
+polling, disposal also retires the affected proposal IDs so a new coordinator
+cannot accept terms the seller may already have declined. Outstanding decline
+leases are capped at 256 operations and 1,024 proposal IDs; an additional
+decline fails before dispatch. An abandoned lease expires after five minutes
+by conservatively retiring its proposal IDs. While any lease covers a proposal,
+an established `acceptProposal` projection for the same principal fails before
+dispatch. An `unable` decline releases the lease without revoking the snapshot,
+so the original proposal remains executable. Input/auth pauses keep the fence;
+an ambiguous dispatch failure conservatively retires the affected proposal
+instead of permitting a potentially conflicting acceptance.
+
+Refinement uses the same fail-closed model. Outstanding refinement leases are
+bounded to 256 operations and 1,024 proposal IDs, overlap with another pending
+refinement or decline is rejected before dispatch, and task-update completions
+are validated before a fence is settled. A verified compact `unable` restores
+the immutable source. Every other outcome retires it; transport ambiguity,
+malformed continuations, disposal, and five-minute expiry also retire it. This
+prevents another coordinator for the same principal from accepting stale terms
+while the seller may already have revised or finalized them.
 
 The same idempotency key is preserved when a compact mutation is projected to
 an established tool. A changed payload still needs a new key. The coordinator
@@ -232,7 +300,9 @@ never label the weaker mutation as equivalent.
 The coordinator test matrix covers SDK 14 compact-first callers against v2.5,
 3.0, 3.1, 3.2 legacy-only, 3.2 dual-surface (compact preferred and established
 forced), and 3.2 compact-only discovery. Honest raw-MCP 3.0.24, 3.1.15, and
-3.2 legacy-only fixtures execute complete direct and ordinary legacy-proposal purchases while
+3.2 legacy-only fixtures execute direct purchase; pause, resume, cancellation,
+and readback; plus request, finalize, decline, accept, post-accept control, and
+readback for ordinary legacy proposals while
 validating every request and response against the corresponding cached wire
 bundle. Those lanes assert canonical format projection, pagination,
 feed/pricing provenance, account/brand/context/currency continuity, exact
@@ -240,14 +310,21 @@ replay, changed-payload conflict, no duplicate mutation, control, and shared
 readback. The honest v2.5 fixture executes its complete representable direct
 subset, validates exact legacy wire, and asserts typed failures for pagination,
 proposals, cancellation, unsupported create/update fields, and media-buy
-readback. A2A integration proves the
-same coordinator selects and projects both established direct and proposal
-paths through the official A2A client/server stack.
+readback. Versioned MCP fixtures also preserve submitted and input-required
+proposal states without inventing completed outcomes. A normal 3.2 server
+profile is exercised by 3.0 and 3.1 buyers through hidden established routes,
+including proposal refinement/decline/acceptance, budget and date changes,
+pause/resume/cancel, and readback. A2A integration proves the same coordinator
+selects and projects the established direct, proposal, budget-control, and
+media-buy/delivery-readback paths through the official A2A client/server stack;
+date changes are asserted as a pre-dispatch typed boundary because compact
+operational control deliberately excludes flight changes.
 
 The strict public-API MCP integration lanes validate compact 3.2, legacy 3.1,
 and legacy 3.0 discovery requests against their selected wire bundles. Native
-compact direct and proposal journeys are runnable through the public CLI
-storyboards. Pass `--media-buy-lifecycle-compat` to route those compact steps
+compact wire gates cover typed request/refine/decline outcomes, acceptance,
+pause, resume, budget control, cancellation, and authoritative readback in
+addition to the public CLI storyboards. Pass `--media-buy-lifecycle-compat` to route those compact steps
 through the same coordinator against an external established seller. Named
 mutation losses remain fail-closed unless supplied with
 `--media-buy-compat-losses`; use

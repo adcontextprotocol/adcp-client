@@ -129,7 +129,10 @@ Use a stable, non-secret `principalScope` derived from authenticated,
 server-controlled identity for established proposal acceptance; never take it
 from buyer-supplied request content. Without it, the coordinator deliberately
 does not cache executable proposal snapshots and acceptance fails before
-mutation.
+mutation. Snapshot and tombstone quotas are isolated per principal. One
+`AgentClient` retains at most 256 principal partitions and fails closed when no
+empty, inactive partition is safe to reclaim. Treat `dispose()` as terminal:
+in-flight results and saved task continuations reject after disposal.
 
 Proposal hard constraints, alternatives, criteria, and amendment kinds are
 never softened into legacy discovery filters. A requested proposal digest is
@@ -372,6 +375,29 @@ The outer `status` remains the asynchronous task state (`completed`, `working`, 
 ## Type and schema changes
 
 Regenerated 3.2 types include new tools, error codes, canonical formats, measurement surfaces, and more exact intersections/tuples. If application code imported broad generated types or runtime schemas, expect TypeScript to reveal newly exhaustive unions.
+
+The media-buy compatibility coordinator does not expose `unknown[]` rows or a
+`Record<string, unknown>` escape hatch. Product and proposal collections use
+`CompatibleProduct` / `CompatibleProposal`, proposal methods return separate
+request/refine/decline response types with stable `operation` and `outcome`
+discriminants, and each `raw` member is the SDK-returned compact or
+canonical-established source response union. Established `raw` is a
+`CanonicalGetProductsResponse` with `projection.diagnostics`, not untouched
+seller emission; use `getProductsLegacy()` outside the coordinator only when
+raw legacy wire inspection is actually required. `CompatibleRefinementResult` restores the canonical proposal
+base on revised, partial, and finalized result arms at this boundary; the
+underlying beta.3 generator correction is tracked separately in #2619. The
+coordinator validates that full canonical child shape at runtime, correlates
+ordered compact decline results whether or not they echo `proposal_id`, and
+blocks projected legacy acceptance while a decline for that proposal remains
+unresolved. Refinement likewise fences every source before dispatch and restores
+it only for a verified compact `unable`; ambiguous or malformed refinement paths
+retire the source rather than permitting stale acceptance. These checks also run
+on submitted, tracked, deferred, and task-update completions before proposal
+state is cached or a mutation fence is released.
+The result union is status-aware: narrow `result.status === 'completed'` before
+reading those completed-only discriminants. Intermediate and failure branches
+retain the SDK-returned source response instead of fabricating a proposal outcome.
 
 Use focused imports where possible:
 

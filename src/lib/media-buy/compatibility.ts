@@ -1,6 +1,13 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { AgentClient, CanonicalProjectionTaskOptions, ProposalRefinementTaskOptions } from '../core/AgentClient';
-import type { InputHandler, TaskOptions, TaskResult } from '../core/ConversationTypes';
+import type {
+  InputHandler,
+  TaskOptions,
+  TaskResult,
+  TaskResultCompleted,
+  TaskResultFailure,
+  TaskResultIntermediate,
+} from '../core/ConversationTypes';
 import { generateIdempotencyKey, isValidIdempotencyKey, type MutatingRequestInput } from '../utils/idempotency';
 import { canonicalize } from '../utils/jcs';
 import { assertValidIdempotencyReplayTtlSeconds, type AdcpCapabilities } from '../utils/capabilities';
@@ -10,16 +17,25 @@ import type {
   AcceptProposalResponse,
   BuyProductsRequest,
   BuyProductsResponse,
+  CanonicalProduct,
+  CanonicalProposal,
   ControlMediaBuyRequest,
   ControlMediaBuyResponse,
   CreateMediaBuyResponse,
   DeclineProposalsRequest,
+  DeclineProposalsResponse,
+  GetProductsResponse,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
   GetMediaBuysRequest,
   GetMediaBuysResponse,
   ListProductsRequest,
+  ListProductsResponse,
+  Product,
+  Proposal,
+  RefineProposalsResponse,
   RequestProposalsRequest,
+  RequestProposalsResponse,
   UpdateMediaBuyResponse,
 } from '../types/tools.generated';
 import type {
@@ -28,8 +44,14 @@ import type {
   CanonicalUpdateMediaBuyRequest,
 } from '../v2/projection/creative-delivery';
 import type { RefineProposalsInput } from '../negotiation/types';
-import { isStrictDateTime, proposalTermsDigest } from '../negotiation/verification';
+import {
+  assertRefineProposalsResponse,
+  isStrictDateTime,
+  proposalTermsDigest,
+  validateRefineProposalsResponseShape,
+} from '../negotiation/verification';
 import { isAdcpOperationSuccess } from '../utils/response-unwrapper';
+import { ConfigurationError } from '../errors';
 
 export type MediaBuyLifecycle = 'compact' | 'established';
 export type MediaBuyCompatibility = 'native' | 'lossless_projection' | 'lossy_projection';
@@ -401,34 +423,171 @@ export interface MediaBuyCompatibilityReport {
   losses: MediaBuyCompatibilityLoss[];
 }
 
-export type CompatibilityTaskResult<T> = TaskResult<T> & { compatibility: MediaBuyCompatibilityReport };
+type WithCompatibility<T> = T & { compatibility: MediaBuyCompatibilityReport };
+
+export type CompatibilityDeferredContinuation<TCompleted, TWire> = Omit<
+  NonNullable<TaskResultIntermediate<TWire>['deferred']>,
+  'resume'
+> & {
+  resume: (input: unknown) => Promise<CompatibilityTaskResult<TCompleted, TWire>>;
+};
+
+export type CompatibilitySubmittedContinuation<TCompleted, TWire> = Omit<
+  NonNullable<TaskResultIntermediate<TWire>['submitted']>,
+  'waitForCompletion'
+> & {
+  waitForCompletion: (
+    pollInterval?: number,
+    signal?: AbortSignal
+  ) => Promise<CompatibilityTaskResult<TCompleted, TWire>>;
+};
+
+type CompatibilityTaskResultIntermediate<TCompleted, TWire> = Omit<
+  TaskResultIntermediate<TWire>,
+  'deferred' | 'submitted'
+> & {
+  deferred?: CompatibilityDeferredContinuation<TCompleted, TWire>;
+  submitted?: CompatibilitySubmittedContinuation<TCompleted, TWire>;
+};
+
+/**
+ * A projected compatibility result is status-aware: completed success data is
+ * the stable compatibility view, while non-terminal and failure data remains
+ * the SDK-returned compact or canonical-established source shape until a
+ * completed result can be projected.
+ */
+export type CompatibilityTaskResult<TCompleted, TWire = TCompleted> =
+  | WithCompatibility<TaskResultCompleted<TCompleted>>
+  | WithCompatibility<CompatibilityTaskResultIntermediate<TCompleted, TWire>>
+  | WithCompatibility<TaskResultFailure<TWire>>;
+
+export type CompatibleProduct = Product | CanonicalProduct;
+export type CompatibleProposal = Proposal | CanonicalProposal;
+
+type CompactRefinementResult = NonNullable<RefineProposalsResponse['results']>[number];
+type CompactRevisedResult = Extract<CompactRefinementResult, { outcome: 'revised' }>;
+type CompactPartialResult = Extract<CompactRefinementResult, { outcome: 'partial' }>;
+type CompactFinalizedResult = Extract<CompactRefinementResult, { outcome: 'finalized' }>;
+type CompactUnableResult = Extract<CompactRefinementResult, { outcome: 'unable' }>;
+
+/**
+ * Refine result with the canonical proposal base restored at the coordinator
+ * boundary. The beta.3 generated response drops those fields from three
+ * result arms (#2619); callers of this compatibility API must still receive
+ * a useful, discriminated proposal type.
+ */
+export type CompatibleRefinementResult =
+  | (Omit<CompactRevisedResult, 'proposals'> & {
+      proposals: (CanonicalProposal & { proposal_status: 'draft'; parent_proposal_id: string })[];
+    })
+  | (Omit<CompactPartialResult, 'proposals'> & {
+      proposals: (CanonicalProposal & { proposal_status: 'draft'; parent_proposal_id: string })[];
+    })
+  | (Omit<CompactFinalizedResult, 'proposal'> & {
+      proposal: CanonicalProposal & {
+        proposal_status: 'committed';
+        parent_proposal_id: string;
+        expires_at: string;
+      };
+    })
+  | CompactUnableResult;
+
+export type CompatibleDeclineResult =
+  | { proposal_id: string; outcome: 'declined' }
+  | { proposal_id: string; outcome: 'unable'; reason: string };
+export type CompatibleProjectedDeclineResult = {
+  proposal_id: string;
+  /** Legacy get_products omit is not a seller-confirmed terminal decline. */
+  outcome: 'unconfirmed';
+};
+
+type CompatibleErrors =
+  | NonNullable<GetProductsResponse['errors']>
+  | NonNullable<RequestProposalsResponse['errors']>
+  | NonNullable<RefineProposalsResponse['errors']>
+  | NonNullable<DeclineProposalsResponse['errors']>;
+type CompatibleContext =
+  | NonNullable<GetProductsResponse['context']>
+  | NonNullable<ListProductsResponse['context']>
+  | NonNullable<RequestProposalsResponse['context']>
+  | NonNullable<RefineProposalsResponse['context']>
+  | NonNullable<DeclineProposalsResponse['context']>;
 
 export interface CompatibleProductsResponse {
   /** Present only when the seller returned product rows (conditional reads may return only `unchanged`). */
-  products?: unknown[];
-  proposals?: unknown[];
+  products?: CompatibleProduct[];
+  proposals?: CompatibleProposal[];
   feed_version?: string;
   pricing_version?: string;
   unchanged?: true;
   /** Lifecycle-neutral cursor for the next page. */
   next_cursor?: string;
-  pagination?: unknown;
+  pagination?: GetProductsResponse['pagination'];
   cache_scope?: 'public' | 'account';
-  errors?: unknown[];
-  context?: unknown;
+  errors?: CompatibleErrors;
+  context?: CompatibleContext;
   /** SDK-returned source object, retained for fields outside the stable compatibility view. */
-  raw: Record<string, unknown>;
+  raw: ListProductsResponse | EstablishedProductsWireResponse;
 }
 
-export interface CompatibleProposalResponse {
-  /** Present only when the seller returned a proposal collection or proposal object. */
-  proposals?: unknown[];
-  products?: unknown[];
-  errors?: unknown[];
-  context?: unknown;
-  /** SDK-returned source object; no digest or proposal state is synthesized. */
-  raw: Record<string, unknown>;
+interface CompatibleProposalResponseBase {
+  proposals?: CompatibleProposal[];
+  products?: CompatibleProduct[];
+  errors?: CompatibleErrors;
+  context?: CompatibleContext;
 }
+
+export interface CompatibleRequestProposalsResponse extends CompatibleProposalResponseBase {
+  operation: 'request';
+  /** `legacy_unavailable` never overstates an empty legacy response as a seller rejection. */
+  outcome: 'proposed' | 'rejected' | 'legacy_unavailable';
+  reason?: string;
+  suggestions?: string[];
+  raw: RequestProposalsResponse | EstablishedProductsWireResponse;
+}
+
+export interface CompatibleRefineProposalsResponse extends CompatibleProposalResponseBase {
+  operation: 'refine';
+  /** Native result arms remain available in `results`; legacy projection is explicitly named. */
+  outcome: 'native_results' | 'legacy_projected' | 'legacy_unavailable';
+  results?: CompatibleRefinementResult[];
+  reason?: string;
+  suggestions?: string[];
+  raw: RefineProposalsResponse | EstablishedProductsWireResponse;
+}
+
+export interface CompatibleDeclineProposalsResponse extends CompatibleProposalResponseBase {
+  operation: 'decline';
+  outcome: 'native_results' | 'legacy_unconfirmed';
+  results: (CompatibleDeclineResult | CompatibleProjectedDeclineResult)[];
+  raw: DeclineProposalsResponse | EstablishedProductsWireResponse;
+}
+
+export type CompatibleProposalResponse =
+  | CompatibleRequestProposalsResponse
+  | CompatibleRefineProposalsResponse
+  | CompatibleDeclineProposalsResponse;
+
+type TaskResultData<TResult> = TResult extends TaskResult<infer TData> ? TData : never;
+/** Canonical SDK source returned by established `get_products`, including projection diagnostics. */
+export type EstablishedProductsWireResponse = TaskResultData<Awaited<ReturnType<AgentClient['getProducts']>>>;
+
+/** SDK-returned source data retained before a completed list response is projected. */
+export type CompatibleProductsWireResponse =
+  | TaskResultData<Awaited<ReturnType<AgentClient['listProducts']>>>
+  | EstablishedProductsWireResponse;
+/** SDK-returned source data retained while a proposal request is non-terminal or failed. */
+export type CompatibleRequestProposalsWireResponse =
+  | TaskResultData<Awaited<ReturnType<AgentClient['requestProposals']>>>
+  | EstablishedProductsWireResponse;
+/** SDK-returned source data retained while proposal refinement is non-terminal or failed. */
+export type CompatibleRefineProposalsWireResponse =
+  | TaskResultData<Awaited<ReturnType<AgentClient['refineProposals']>>>
+  | EstablishedProductsWireResponse;
+/** SDK-returned source data retained while proposal decline is non-terminal or failed. */
+export type CompatibleDeclineProposalsWireResponse =
+  | TaskResultData<Awaited<ReturnType<AgentClient['declineProposals']>>>
+  | EstablishedProductsWireResponse;
 
 export interface MediaBuyLifecycleCoordinatorOptions {
   /** Prefer compact when advertised. Established is useful for a dual-surface test lane. */
@@ -671,38 +830,30 @@ function negotiatedVersion(capabilities: AdcpCapabilities, clientVersion: string
   return '3.0';
 }
 
-function attachCompatibility<T>(
-  result: TaskResult<T>,
-  report: MediaBuyCompatibilityReport
-): CompatibilityTaskResult<T> {
-  return Object.assign(result, { compatibility: report });
-}
-
 function projectProducts(data: unknown, lifecycle: MediaBuyLifecycle): CompatibleProductsResponse {
   const source = record(data);
   const feedVersion = optionalString(lifecycle === 'compact' ? source.feed_version : source.wholesale_feed_version);
   const pricingVersion = optionalString(source.pricing_version);
   const nextCursor = optionalString(lifecycle === 'compact' ? source.next_cursor : record(source.pagination).cursor);
   return {
-    ...(Array.isArray(source.products) && { products: source.products }),
-    ...(Array.isArray(source.proposals) && { proposals: source.proposals }),
+    ...(Array.isArray(source.products) && { products: source.products as CompatibleProduct[] }),
+    ...(Array.isArray(source.proposals) && { proposals: source.proposals as CompatibleProposal[] }),
     ...(feedVersion && { feed_version: feedVersion }),
     ...(pricingVersion && { pricing_version: pricingVersion }),
     ...((source.unchanged === true || source.outcome === 'unchanged') && { unchanged: true as const }),
     ...(nextCursor && { next_cursor: nextCursor }),
-    ...(source.pagination !== undefined && { pagination: source.pagination }),
+    ...(source.pagination !== undefined && { pagination: source.pagination as GetProductsResponse['pagination'] }),
     ...((source.cache_scope === 'public' || source.cache_scope === 'account') && {
       cache_scope: source.cache_scope,
     }),
-    ...(Array.isArray(source.errors) && { errors: source.errors }),
-    ...(source.context !== undefined && { context: source.context }),
-    raw: source,
+    ...(Array.isArray(source.errors) && { errors: source.errors as CompatibleErrors }),
+    ...(source.context !== undefined && { context: source.context as CompatibleContext }),
+    raw: source as ListProductsResponse | EstablishedProductsWireResponse,
   };
 }
 
-function projectProposals(data: unknown): CompatibleProposalResponse {
-  const source = record(data);
-  const proposals: unknown[] = [];
+function proposalRows(source: Record<string, unknown>): CompatibleProposal[] | undefined {
+  const proposals: CompatibleProposal[] = [];
   let sawProposalContainer = false;
   const visit = (value: unknown): void => {
     if (Array.isArray(value)) {
@@ -713,21 +864,169 @@ function projectProposals(data: unknown): CompatibleProposalResponse {
     const candidate = record(value);
     if (optionalString(candidate.proposal_id)) {
       sawProposalContainer = true;
-      proposals.push(candidate);
+      proposals.push(candidate as CompatibleProposal);
     }
-    for (const key of ['proposals', 'proposal', 'results']) {
+    for (const key of ['proposals', 'proposal']) {
       if (candidate[key] !== undefined) visit(candidate[key]);
     }
   };
-  visit(source.proposals ?? source.results ?? source.proposal);
-  const projected: CompatibleProposalResponse = {
-    ...(Array.isArray(source.products) && { products: source.products }),
-    ...(Array.isArray(source.errors) && { errors: source.errors }),
-    ...(source.context !== undefined && { context: source.context }),
-    raw: source,
+  if (source.proposals !== undefined) visit(source.proposals);
+  if (source.proposal !== undefined) visit(source.proposal);
+  for (const result of array(source.results)) {
+    const row = record(result);
+    if (row.proposals !== undefined) visit(row.proposals);
+    if (row.proposal !== undefined) visit(row.proposal);
+  }
+  return sawProposalContainer ? proposals : undefined;
+}
+
+function proposalResponseBase(source: Record<string, unknown>): CompatibleProposalResponseBase {
+  const proposals = proposalRows(source);
+  return {
+    ...(proposals !== undefined && { proposals }),
+    ...(Array.isArray(source.products) && { products: source.products as CompatibleProduct[] }),
+    ...(Array.isArray(source.errors) && { errors: source.errors as CompatibleErrors }),
+    ...(source.context !== undefined && { context: source.context as CompatibleContext }),
   };
-  if (sawProposalContainer) projected.proposals = proposals;
-  return projected;
+}
+
+function projectRequestProposals(data: unknown, lifecycle: MediaBuyLifecycle): CompatibleRequestProposalsResponse {
+  const source = record(data);
+  const base = proposalResponseBase(source);
+  const nativeOutcome = source.outcome === 'proposed' || source.outcome === 'rejected' ? source.outcome : undefined;
+  const outcome =
+    nativeOutcome ??
+    (lifecycle === 'established' && (base.proposals?.length ?? 0) > 0 ? 'proposed' : 'legacy_unavailable');
+  return {
+    ...base,
+    operation: 'request',
+    outcome,
+    ...(typeof source.reason === 'string' && { reason: source.reason }),
+    ...(Array.isArray(source.suggestions) && { suggestions: source.suggestions as string[] }),
+    raw: source as RequestProposalsResponse | EstablishedProductsWireResponse,
+  };
+}
+
+function projectRefineProposals(
+  data: unknown,
+  lifecycle: MediaBuyLifecycle,
+  refinements: RefineProposalsInput['refinements']
+): CompatibleRefineProposalsResponse {
+  const source = record(data);
+  const base = proposalResponseBase(source);
+  const sourceResults = array(source.results);
+  const proposalIds = refinements.map(refinement => refinement.proposal_id);
+  if (lifecycle === 'compact') {
+    if (sourceResults.length !== proposalIds.length) {
+      throw new TypeError('refine_proposals returned a different result count than the requested refinement count.');
+    }
+    sourceResults.forEach((value, index) => {
+      const result = record(value);
+      const requestedProposalId = proposalIds[index];
+      const sourceProposalId = optionalString(result.source_proposal_id);
+      if (requestedProposalId === undefined || sourceProposalId !== requestedProposalId) {
+        throw new TypeError(
+          `refine_proposals result ${index} did not identify the corresponding source proposal from the request.`
+        );
+      }
+      const children = [...array(result.proposals), ...(result.proposal === undefined ? [] : [result.proposal])];
+      if (result.outcome === 'revised' || result.outcome === 'partial' || result.outcome === 'finalized') {
+        const shape = validateRefineProposalsResponseShape({ results: [result], products: [] });
+        if (!shape.ok) {
+          throw new TypeError(`refine_proposals result ${index} did not contain complete canonical proposal data.`);
+        }
+        const expectedStatus = result.outcome === 'finalized' ? 'committed' : 'draft';
+        if (children.some(child => record(child).proposal_status !== expectedStatus)) {
+          throw new TypeError(
+            `refine_proposals result ${index} returned a proposal with an invalid status for its ${String(result.outcome)} outcome.`
+          );
+        }
+        if (result.outcome === 'finalized' && children.some(child => !isStrictDateTime(record(child).expires_at))) {
+          throw new TypeError(`refine_proposals result ${index} returned a finalized proposal without a valid expiry.`);
+        }
+      }
+      children.forEach(child => {
+        if (optionalString(record(child).parent_proposal_id) !== sourceProposalId) {
+          throw new TypeError(
+            `refine_proposals result ${index} returned a proposal with invalid parent_proposal_id lineage.`
+          );
+        }
+      });
+    });
+    assertRefineProposalsResponse({ refinements }, source);
+  }
+  const nativeResults = Array.isArray(source.results) ? (sourceResults as CompatibleRefinementResult[]) : undefined;
+  const outcome =
+    lifecycle === 'compact'
+      ? 'native_results'
+      : (base.proposals?.length ?? 0) > 0
+        ? 'legacy_projected'
+        : 'legacy_unavailable';
+  return {
+    ...base,
+    operation: 'refine',
+    outcome,
+    ...(nativeResults !== undefined && { results: nativeResults }),
+    ...(typeof source.reason === 'string' && { reason: source.reason }),
+    ...(Array.isArray(source.suggestions) && { suggestions: source.suggestions as string[] }),
+    raw: source as RefineProposalsResponse | EstablishedProductsWireResponse,
+  };
+}
+
+function projectDeclineProposals(
+  data: unknown,
+  lifecycle: MediaBuyLifecycle,
+  proposalIds: readonly string[]
+): CompatibleDeclineProposalsResponse {
+  const source = record(data);
+  const base = proposalResponseBase(source);
+  const sourceResults = array(source.results);
+  if (lifecycle === 'compact' && sourceResults.length !== proposalIds.length) {
+    throw new TypeError('decline_proposals returned a different result count than the requested proposal count.');
+  }
+  const results =
+    lifecycle === 'compact'
+      ? sourceResults.map((result, index) => {
+          const row = record(result);
+          const requestedProposalId = proposalIds[index];
+          const sellerProposalId = optionalString(row.proposal_id);
+          if (requestedProposalId === undefined) {
+            throw new TypeError('decline_proposals returned more result rows than requested proposals.');
+          }
+          if (Object.keys(row).some(key => !['proposal_id', 'outcome', 'reason'].includes(key))) {
+            throw new TypeError(`decline_proposals result ${index} contained an undeclared field.`);
+          }
+          if (Object.hasOwn(row, 'proposal_id') && sellerProposalId === undefined) {
+            throw new TypeError(`decline_proposals result ${index} contained an invalid proposal_id.`);
+          }
+          if (sellerProposalId !== undefined && sellerProposalId !== requestedProposalId) {
+            throw new TypeError(
+              `decline_proposals result ${index} identified a different proposal than the corresponding request.`
+            );
+          }
+          if (row.outcome === 'declined') {
+            if (Object.hasOwn(row, 'reason')) {
+              throw new TypeError(`decline_proposals declined result ${index} must not contain a reason.`);
+            }
+            return { proposal_id: requestedProposalId, outcome: 'declined' as const };
+          }
+          if (row.outcome === 'unable') {
+            const reason = optionalString(row.reason);
+            if (!reason) {
+              throw new TypeError(`decline_proposals unable result ${index} requires a non-empty reason.`);
+            }
+            return { proposal_id: requestedProposalId, outcome: 'unable' as const, reason };
+          }
+          throw new TypeError(`decline_proposals result ${index} contained an invalid outcome.`);
+        })
+      : proposalIds.map(proposal_id => ({ proposal_id, outcome: 'unconfirmed' as const }));
+  return {
+    ...base,
+    operation: 'decline',
+    outcome: lifecycle === 'compact' ? 'native_results' : 'legacy_unconfirmed',
+    results,
+    raw: source as DeclineProposalsResponse | EstablishedProductsWireResponse,
+  };
 }
 
 interface AcceptanceReservation {
@@ -753,12 +1052,37 @@ interface ProposalSnapshotStore {
   entries: Map<string, ProposalSnapshotEntry>;
   retiredAcceptanceBits?: Uint8Array;
   retiredAcceptanceSalt?: Uint8Array;
+  pendingDeclines: Set<PendingDeclineLease>;
+  pendingDeclineProposalIdCount: number;
+  pendingRefinements: Set<PendingRefinementLease>;
+  pendingRefinementProposalIdCount: number;
   bytes: number;
+  registry: ProposalSnapshotStoreRegistry;
+  activeCoordinators: number;
+}
+
+interface ProposalSnapshotStoreRegistry {
+  stores: Map<string, ProposalSnapshotStore>;
 }
 
 interface SafeProposalSnapshot {
   proposal: Record<string, unknown>;
   canonicalTermsDigest?: string;
+}
+
+interface PendingDeclineLease {
+  proposalIds: readonly string[];
+  active: boolean;
+  owner: object;
+  timer?: ReturnType<typeof setTimeout>;
+}
+
+interface PendingRefinementLease {
+  proposalIds: readonly string[];
+  sources: readonly { key: string; entry: ProposalSnapshotEntry }[];
+  active: boolean;
+  owner: object;
+  timer?: ReturnType<typeof setTimeout>;
 }
 
 const SNAPSHOT_COMMERCIAL_TERM_FIELDS = [
@@ -820,17 +1144,51 @@ function safeProposalSnapshot(candidate: Record<string, unknown>): SafeProposalS
   return { proposal, ...(canonicalTermsDigest && { canonicalTermsDigest }) };
 }
 
-const proposalSnapshotStores = new WeakMap<AgentClient, ProposalSnapshotStore>();
+const proposalSnapshotStores = new WeakMap<AgentClient, ProposalSnapshotStoreRegistry>();
 const acceptanceReservationOwners = new WeakMap<AcceptanceReservation, MediaBuyLifecycleCoordinator>();
+const MAX_PRINCIPAL_STORES_PER_AGENT = 256;
 
-function proposalSnapshotStoreFor(agent: AgentClient): ProposalSnapshotStore {
-  const existing = proposalSnapshotStores.get(agent);
-  if (existing) return existing;
+function proposalSnapshotStoreFor(agent: AgentClient, principalScope?: string): ProposalSnapshotStore {
+  let registry = proposalSnapshotStores.get(agent);
+  if (!registry) {
+    registry = { stores: new Map() };
+    proposalSnapshotStores.set(agent, registry);
+  }
+  const key = principalScope === undefined ? '\u0000unscoped' : `principal:${principalScope}`;
+  const existing = registry.stores.get(key);
+  if (existing) {
+    existing.activeCoordinators += 1;
+    return existing;
+  }
+  if (registry.stores.size >= MAX_PRINCIPAL_STORES_PER_AGENT) {
+    for (const [candidateKey, candidate] of registry.stores) {
+      if (
+        candidate.activeCoordinators === 0 &&
+        candidate.entries.size === 0 &&
+        candidate.retiredAcceptanceBits === undefined
+      ) {
+        registry.stores.delete(candidateKey);
+        break;
+      }
+    }
+  }
+  if (registry.stores.size >= MAX_PRINCIPAL_STORES_PER_AGENT) {
+    throw new ConfigurationError(
+      `Media-buy lifecycle principal partitions are limited to ${MAX_PRINCIPAL_STORES_PER_AGENT} per AgentClient. Dispose inactive coordinators or use a separate AgentClient.`,
+      'mediaBuy.principalScope'
+    );
+  }
   const created: ProposalSnapshotStore = {
     entries: new Map(),
+    pendingDeclines: new Set(),
+    pendingDeclineProposalIdCount: 0,
+    pendingRefinements: new Set(),
+    pendingRefinementProposalIdCount: 0,
     bytes: 0,
+    registry,
+    activeCoordinators: 1,
   };
-  proposalSnapshotStores.set(agent, created);
+  registry.stores.set(key, created);
   return created;
 }
 
@@ -850,7 +1208,15 @@ export class MediaBuyLifecycleCoordinator {
   private readonly preferredLifecycle: 'auto' | MediaBuyLifecycle;
   private readonly principalScope?: string;
   private readonly proposalSnapshotStore: ProposalSnapshotStore;
-  private readonly pendingProposalTasks = new Map<string, { accountScope?: string }>();
+  private readonly pendingProposalTasks = new Map<
+    string,
+    {
+      accountScope?: string;
+      project?: (data: unknown) => unknown;
+      retainProposals: boolean;
+      onTerminalFailure?: () => void;
+    }
+  >();
   private readonly pendingProposalTaskTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private proposalTaskUnsubscribe?: () => void;
   private readonly pendingAcceptanceTasks = new Map<
@@ -863,12 +1229,20 @@ export class MediaBuyLifecycleCoordinator {
   >();
   private readonly pendingAcceptanceTaskTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly acceptanceRetryExpiryTimers = new Map<AcceptanceReservation, ReturnType<typeof setTimeout>>();
+  private readonly proposalDispatchUnsubscribes = new Set<() => void>();
+  private readonly declineLeaseOwner = {};
+  private readonly refinementLeaseOwner = {};
   private acceptanceTaskUnsubscribe?: () => void;
+  private disposed = false;
   private readonly idempotencyReplayTtlMs?: number;
   private static readonly MAX_PROPOSAL_SNAPSHOTS = 256;
   private static readonly MAX_PROPOSAL_SNAPSHOT_BYTES = 256 * 1024;
   private static readonly MAX_PROPOSAL_SNAPSHOT_TOTAL_BYTES = 4 * 1024 * 1024;
   private static readonly MAX_PRINCIPAL_SCOPE_BYTES = 256;
+  private static readonly MAX_PENDING_DECLINES = 256;
+  private static readonly MAX_PENDING_DECLINE_PROPOSAL_IDS = 1024;
+  private static readonly MAX_PENDING_REFINEMENTS = 256;
+  private static readonly MAX_PENDING_REFINEMENT_PROPOSAL_IDS = 1024;
   private static readonly PROPOSAL_TASK_WATCH_TTL_MS = 5 * 60 * 1000;
 
   private constructor(
@@ -880,7 +1254,6 @@ export class MediaBuyLifecycleCoordinator {
     this.tools = new Set([...(capabilities.mediaBuyLifecycleTools ?? []), ...(capabilities.discoveredTools ?? [])]);
     this.preferredLifecycle = options.preferredLifecycle ?? 'auto';
     this.allowedLosses = new Set(options.allowedLosses ?? []);
-    this.proposalSnapshotStore = proposalSnapshotStoreFor(agent);
     const replayTtlSeconds = capabilities.idempotency?.replayTtlSeconds;
     if (replayTtlSeconds !== undefined) {
       assertValidIdempotencyReplayTtlSeconds(replayTtlSeconds);
@@ -904,6 +1277,7 @@ export class MediaBuyLifecycleCoordinator {
     }
     this.principalScope = options.principalScope?.trim();
     this.lifecycle = this.selectLifecycle('list_products');
+    this.proposalSnapshotStore = proposalSnapshotStoreFor(agent, this.principalScope);
   }
 
   static async negotiate(
@@ -918,18 +1292,212 @@ export class MediaBuyLifecycleCoordinator {
     return this.makeReport(this.lifecycle, [], []);
   }
 
+  private assertActive(operation: string): void {
+    if (!this.disposed) return;
+    throw new ConfigurationError(
+      `Cannot call ${operation} after disposing the media-buy lifecycle coordinator. Negotiate a new coordinator.`,
+      'mediaBuy.lifecycleCoordinator'
+    );
+  }
+
+  private beginPendingDecline(proposalIds: readonly string[]): PendingDeclineLease {
+    const retainedProposalIds = [...new Set(proposalIds)];
+    if (retainedProposalIds.some(proposalId => this.isProposalRefinementPending(proposalId))) {
+      throw this.unsupported(
+        'declineProposals',
+        'proposal_refinement_pending',
+        'A requested proposal has an unresolved refinement in this principal scope. Wait for that refinement to finish before declining it.'
+      );
+    }
+    if (
+      this.proposalSnapshotStore.pendingDeclines.size >= MediaBuyLifecycleCoordinator.MAX_PENDING_DECLINES ||
+      this.proposalSnapshotStore.pendingDeclineProposalIdCount + retainedProposalIds.length >
+        MediaBuyLifecycleCoordinator.MAX_PENDING_DECLINE_PROPOSAL_IDS
+    ) {
+      throw new ConfigurationError(
+        'Too many media-buy proposal declines are still pending. Complete, cancel, or dispose outstanding decline tasks before dispatching another.',
+        'mediaBuy.pendingDeclines'
+      );
+    }
+    const lease: PendingDeclineLease = {
+      proposalIds: retainedProposalIds,
+      active: true,
+      owner: this.declineLeaseOwner,
+    };
+    this.proposalSnapshotStore.pendingDeclines.add(lease);
+    this.proposalSnapshotStore.pendingDeclineProposalIdCount += retainedProposalIds.length;
+    lease.timer = setTimeout(() => {
+      if (!lease.active) return;
+      this.invalidateProposalSnapshots(lease.proposalIds, undefined, false, true);
+      this.finishPendingDecline(lease);
+    }, MediaBuyLifecycleCoordinator.PROPOSAL_TASK_WATCH_TTL_MS);
+    lease.timer.unref?.();
+    return lease;
+  }
+
+  private finishPendingDecline(lease: PendingDeclineLease): void {
+    if (!lease.active) return;
+    lease.active = false;
+    if (lease.timer) clearTimeout(lease.timer);
+    lease.timer = undefined;
+    this.proposalSnapshotStore.pendingDeclines.delete(lease);
+    this.proposalSnapshotStore.pendingDeclineProposalIdCount -= lease.proposalIds.length;
+  }
+
+  private retirePendingDecline(lease: PendingDeclineLease): void {
+    if (!lease.active) return;
+    this.invalidateProposalSnapshots(lease.proposalIds, undefined, false, true);
+    this.finishPendingDecline(lease);
+  }
+
+  private preparePendingDeclineSettlement(
+    lease: PendingDeclineLease,
+    response: CompatibleDeclineProposalsResponse
+  ): () => void {
+    const locallyTerminalIds = response.results
+      .filter(result => result.outcome === 'declined' || result.outcome === 'unconfirmed')
+      .map(result => result.proposal_id);
+    return () => {
+      if (!lease.active) return;
+      this.invalidateProposalSnapshots(locallyTerminalIds, undefined, false, true);
+      this.finishPendingDecline(lease);
+    };
+  }
+
+  private isProposalDeclinePending(proposalId: string): boolean {
+    for (const lease of this.proposalSnapshotStore.pendingDeclines) {
+      if (lease.active && lease.proposalIds.includes(proposalId)) return true;
+    }
+    return false;
+  }
+
+  private beginPendingRefinement(proposalIds: readonly string[]): PendingRefinementLease {
+    const retainedProposalIds = [...new Set(proposalIds)];
+    if (
+      retainedProposalIds.some(
+        proposalId => this.isProposalRefinementPending(proposalId) || this.isProposalDeclinePending(proposalId)
+      )
+    ) {
+      throw this.unsupported(
+        'refineProposals',
+        'proposal_mutation_pending',
+        'A requested proposal already has an unresolved refinement or decline in this principal scope. Wait for it to finish before refining again.'
+      );
+    }
+    const wanted = new Set(retainedProposalIds);
+    const sources = [...this.proposalSnapshotStore.entries].flatMap(([key, entry]) =>
+      entry.principalScope === this.principalScope && wanted.has(String(entry.proposal.proposal_id))
+        ? [{ key, entry }]
+        : []
+    );
+    if (sources.some(({ entry }) => entry.acceptance !== undefined)) {
+      throw this.unsupported(
+        'refineProposals',
+        'proposal_acceptance_pending',
+        'A requested proposal is already being accepted in this principal scope. No refinement was sent.'
+      );
+    }
+    if (
+      this.proposalSnapshotStore.pendingRefinements.size >= MediaBuyLifecycleCoordinator.MAX_PENDING_REFINEMENTS ||
+      this.proposalSnapshotStore.pendingRefinementProposalIdCount + retainedProposalIds.length >
+        MediaBuyLifecycleCoordinator.MAX_PENDING_REFINEMENT_PROPOSAL_IDS
+    ) {
+      throw new ConfigurationError(
+        'Too many media-buy proposal refinements are still pending. Complete, cancel, or dispose outstanding refinement tasks before dispatching another.',
+        'mediaBuy.pendingRefinements'
+      );
+    }
+    const lease: PendingRefinementLease = {
+      proposalIds: retainedProposalIds,
+      sources,
+      active: true,
+      owner: this.refinementLeaseOwner,
+    };
+    for (const { entry } of sources) entry.executable = false;
+    this.proposalSnapshotStore.pendingRefinements.add(lease);
+    this.proposalSnapshotStore.pendingRefinementProposalIdCount += retainedProposalIds.length;
+    lease.timer = setTimeout(
+      () => this.retirePendingRefinement(lease),
+      MediaBuyLifecycleCoordinator.PROPOSAL_TASK_WATCH_TTL_MS
+    );
+    lease.timer.unref?.();
+    return lease;
+  }
+
+  private finishPendingRefinement(lease: PendingRefinementLease): void {
+    if (!lease.active) return;
+    lease.active = false;
+    if (lease.timer) clearTimeout(lease.timer);
+    lease.timer = undefined;
+    this.proposalSnapshotStore.pendingRefinements.delete(lease);
+    this.proposalSnapshotStore.pendingRefinementProposalIdCount -= lease.proposalIds.length;
+  }
+
+  private retirePendingRefinement(lease: PendingRefinementLease): void {
+    if (!lease.active) return;
+    this.finishPendingRefinement(lease);
+    this.invalidateProposalSnapshots(lease.proposalIds, undefined, false, true);
+  }
+
+  private settlePendingRefinement(lease: PendingRefinementLease, response: CompatibleRefineProposalsResponse): void {
+    this.preparePendingRefinementSettlement(lease, response)();
+  }
+
+  private preparePendingRefinementSettlement(
+    lease: PendingRefinementLease,
+    response: CompatibleRefineProposalsResponse
+  ): () => void {
+    const unableProposalIds = new Set(
+      response.outcome === 'native_results'
+        ? (response.results ?? [])
+            .filter(result => result.outcome === 'unable')
+            .map(result => result.source_proposal_id)
+        : []
+    );
+    const replacementProposalIds = new Set(
+      response.outcome === 'legacy_projected'
+        ? (response.proposals ?? [])
+            .map(proposal => optionalString(record(proposal).proposal_id))
+            .filter((proposalId): proposalId is string => proposalId !== undefined)
+        : []
+    );
+    return () => {
+      if (!lease.active) return;
+      this.finishPendingRefinement(lease);
+      const replacementSourceIds = lease.proposalIds.filter(proposalId => replacementProposalIds.has(proposalId));
+      const terminalProposalIds = lease.proposalIds.filter(
+        proposalId => !unableProposalIds.has(proposalId) && !replacementProposalIds.has(proposalId)
+      );
+      this.invalidateProposalSnapshots(replacementSourceIds);
+      this.invalidateProposalSnapshots(terminalProposalIds, undefined, false, true);
+      for (const { key, entry } of lease.sources) {
+        const proposalId = String(entry.proposal.proposal_id);
+        if (
+          unableProposalIds.has(proposalId) &&
+          this.proposalSnapshotStore.entries.get(key) === entry &&
+          !this.isTerminalProposal(proposalId)
+        ) {
+          entry.executable = true;
+        }
+      }
+    };
+  }
+
+  private isProposalRefinementPending(proposalId: string): boolean {
+    for (const lease of this.proposalSnapshotStore.pendingRefinements) {
+      if (lease.active && lease.proposalIds.includes(proposalId)) return true;
+    }
+    return false;
+  }
+
   private selectLifecycle(compactTool: string): MediaBuyLifecycle {
+    const establishedTool = ESTABLISHED_TOOL_FOR_COMPACT[compactTool as CompactLifecycleToolName];
     if (this.preferredLifecycle === 'established') {
-      const establishedTool = ESTABLISHED_TOOL_FOR_COMPACT[compactTool as CompactLifecycleToolName];
-      if (
-        isCompactRelease(this.negotiated_version) &&
-        this.tools.has(compactTool) &&
-        !this.tools.has(establishedTool)
-      ) {
+      if (isCompactRelease(this.negotiated_version) && !this.tools.has(establishedTool)) {
         throw this.unsupported(
           compactTool,
           'established_lifecycle_not_advertised',
-          `The seller advertises ${compactTool} but provides no evidence that ${establishedTool} is callable. ` +
+          `The seller provides no discovery evidence that ${establishedTool} is callable. ` +
             'The forced established diagnostic lane was not selected.',
           'compact'
         );
@@ -944,7 +1512,25 @@ export class MediaBuyLifecycleCoordinator {
         `The negotiated ${this.negotiated_version} lifecycle does not advertise ${compactTool}.`
       );
     }
+    if (isCompactRelease(this.negotiated_version) && !this.tools.has(establishedTool)) {
+      throw this.unsupported(
+        compactTool,
+        'lifecycle_tool_not_advertised',
+        `The seller advertises neither ${compactTool} nor its established counterpart ${establishedTool}. No request was sent.`,
+        'compact'
+      );
+    }
     return 'established';
+  }
+
+  private assertSharedToolAdvertised(tool: 'get_media_buys' | 'get_media_buy_delivery'): void {
+    if (!isCompactRelease(this.negotiated_version) || this.tools.has(tool)) return;
+    throw this.unsupported(
+      tool,
+      'lifecycle_tool_not_advertised',
+      `The negotiated ${this.negotiated_version} seller does not advertise ${tool}. No request was sent.`,
+      this.lifecycle
+    );
   }
 
   private makeReport(
@@ -1261,8 +1847,15 @@ export class MediaBuyLifecycleCoordinator {
 
   private removeProposalSnapshot(key: string): void {
     const existing = this.proposalSnapshotStore.entries.get(key);
-    if (existing) this.proposalSnapshotStore.bytes -= existing.bytes;
+    if (existing) {
+      this.proposalSnapshotStore.bytes -= existing.bytes;
+    }
     this.proposalSnapshotStore.entries.delete(key);
+  }
+
+  private retainProposalSnapshot(key: string, entry: ProposalSnapshotEntry): void {
+    this.proposalSnapshotStore.entries.set(key, entry);
+    this.proposalSnapshotStore.bytes += entry.bytes;
   }
 
   private isRetiredAcceptanceKey(key: string): boolean {
@@ -1283,13 +1876,27 @@ export class MediaBuyLifecycleCoordinator {
     }
   }
 
+  private terminalProposalKey(proposalId: string): string {
+    return `${this.principalScope ?? 'missing-principal-scope'}\u0000terminal-proposal\u0000${proposalId}`;
+  }
+
+  private isTerminalProposal(proposalId: string): boolean {
+    return this.isRetiredAcceptanceKey(this.terminalProposalKey(proposalId));
+  }
+
+  private markTerminalProposal(proposalId: string): void {
+    this.markRetiredAcceptanceKey(this.terminalProposalKey(proposalId));
+  }
+
   private enforceProposalSnapshotLimits(): void {
     while (
       this.proposalSnapshotStore.entries.size > MediaBuyLifecycleCoordinator.MAX_PROPOSAL_SNAPSHOTS ||
       this.proposalSnapshotStore.bytes > MediaBuyLifecycleCoordinator.MAX_PROPOSAL_SNAPSHOT_TOTAL_BYTES
     ) {
       const oldest = [...this.proposalSnapshotStore.entries].find(
-        ([, entry]) => entry.acceptance?.state !== 'in-flight'
+        ([, entry]) =>
+          entry.acceptance?.state !== 'in-flight' &&
+          !this.isProposalRefinementPending(String(entry.proposal.proposal_id))
       );
       if (!oldest) break;
       const [key, entry] = oldest;
@@ -1304,27 +1911,31 @@ export class MediaBuyLifecycleCoordinator {
   private invalidateProposalSnapshots(
     proposalIds: readonly string[],
     accountScope?: string,
-    preserveScope = false
+    preserveScope = false,
+    retireAcceptances = false
   ): void {
     if (!this.principalScope) return;
+    if (retireAcceptances) proposalIds.forEach(proposalId => this.markTerminalProposal(proposalId));
     const wanted = new Set(proposalIds);
     for (const [key, entry] of [...this.proposalSnapshotStore.entries]) {
       if (entry.principalScope !== this.principalScope) continue;
       if (!wanted.has(String(entry.proposal.proposal_id))) continue;
       if (accountScope !== undefined && entry.accountScope !== accountScope) continue;
-      if (entry.acceptance) continue;
+      if (entry.acceptance) {
+        if (retireAcceptances) this.retireAcceptance(key, entry, entry.acceptance);
+        continue;
+      }
       if (preserveScope && entry.accountScope) {
         this.removeProposalSnapshot(key);
         const proposal = { proposal_id: entry.proposal.proposal_id };
         const bytes = new TextEncoder().encode(`${key}${JSON.stringify(proposal)}`).byteLength;
-        this.proposalSnapshotStore.entries.set(key, {
+        this.retainProposalSnapshot(key, {
           proposal,
           bytes,
           principalScope: entry.principalScope,
           executable: false,
           accountScope: entry.accountScope,
         });
-        this.proposalSnapshotStore.bytes += bytes;
       } else {
         this.removeProposalSnapshot(key);
       }
@@ -1453,7 +2064,11 @@ export class MediaBuyLifecycleCoordinator {
   private captureProposalDispatch<T, U>(
     accountScope: string | undefined,
     dispatch: () => Promise<TaskResult<T>>,
-    adapt: (result: TaskResult<T>) => U
+    adapt: (result: TaskResult<T>) => U,
+    projectCompletion?: (data: T) => unknown,
+    onCompletionFailure?: () => void,
+    retainCompletionProposals = true,
+    prepareMatchedCompletion?: (projected: unknown) => () => void
   ): Promise<U> {
     const captured = new Map<
       string,
@@ -1461,18 +2076,41 @@ export class MediaBuyLifecycleCoordinator {
           kind: 'success';
           proposalIds: string[];
           payload?: { snapshots: SafeProposalSnapshot[] };
+          settle?: () => void;
           bytes: number;
         }
       | { kind: 'failure'; proposalIds: string[]; bytes: number }
     >();
     let capturedPayloadBytes = 0;
     let captureOverflowed = false;
-    const unsubscribe = this.agent.onTaskUpdate(task => {
+    const releaseTaskListener = this.agent.onTaskUpdate(task => {
+      if (this.disposed) return;
       if (['pending', 'running', 'working', 'submitted'].includes(task.status)) return;
-      const success =
+      const operationSucceeded =
         task.status === 'completed' && task.result !== undefined && isAdcpOperationSuccess(task.result, task.taskType);
-      const safe = success ? this.safeProposalPayload(task.result) : undefined;
-      const proposalIds = task.result === undefined ? [] : this.cachedProposalIdsIn(task.result, accountScope);
+      let projectedResult = task.result;
+      let projectionSucceeded = operationSucceeded;
+      if (operationSucceeded && projectCompletion) {
+        try {
+          projectedResult = projectCompletion(task.result as T);
+        } catch {
+          projectionSucceeded = false;
+        }
+      }
+      let settle: (() => void) | undefined;
+      if (projectionSucceeded && prepareMatchedCompletion) {
+        try {
+          settle = prepareMatchedCompletion(projectedResult);
+        } catch {
+          projectionSucceeded = false;
+        }
+      }
+      const safe =
+        projectionSucceeded && retainCompletionProposals ? this.safeProposalPayload(projectedResult) : undefined;
+      const proposalIds =
+        retainCompletionProposals && projectedResult !== undefined
+          ? this.cachedProposalIdsIn(projectedResult, accountScope)
+          : [];
       const metadataBytes = new TextEncoder().encode(JSON.stringify(proposalIds)).byteLength;
       const safeBytes = safe ? new TextEncoder().encode(JSON.stringify(safe)).byteLength : 0;
       const retainSafe =
@@ -1484,8 +2122,14 @@ export class MediaBuyLifecycleCoordinator {
       captured.delete(task.taskId);
       captured.set(
         task.taskId,
-        success
-          ? { kind: 'success', proposalIds, ...(retainSafe && { payload: safe }), bytes }
+        projectionSucceeded
+          ? {
+              kind: 'success',
+              proposalIds,
+              ...(retainSafe && { payload: safe }),
+              ...(settle && { settle }),
+              bytes,
+            }
           : { kind: 'failure', proposalIds, bytes }
       );
       capturedPayloadBytes += bytes;
@@ -1493,8 +2137,14 @@ export class MediaBuyLifecycleCoordinator {
         const oldestWithPayload = [...captured].find(([, entry]) => entry.kind === 'success' && entry.payload);
         if (!oldestWithPayload) break;
         const [taskId, entry] = oldestWithPayload;
+        if (entry.kind !== 'success') continue;
         capturedPayloadBytes -= entry.bytes;
-        captured.set(taskId, { kind: 'success', proposalIds: entry.proposalIds, bytes: 0 });
+        captured.set(taskId, {
+          kind: 'success',
+          proposalIds: entry.proposalIds,
+          ...(entry.settle && { settle: entry.settle }),
+          bytes: 0,
+        });
       }
       while (captured.size > 32) {
         const oldest = captured.keys().next().value as string | undefined;
@@ -1504,11 +2154,28 @@ export class MediaBuyLifecycleCoordinator {
         captureOverflowed = true;
       }
     });
-    return dispatch()
+    let released = false;
+    const unsubscribe = (): void => {
+      if (released) return;
+      released = true;
+      releaseTaskListener();
+      this.proposalDispatchUnsubscribes.delete(unsubscribe);
+    };
+    this.proposalDispatchUnsubscribes.add(unsubscribe);
+    let dispatched: Promise<TaskResult<T>>;
+    try {
+      dispatched = dispatch();
+    } catch (error) {
+      unsubscribe();
+      return Promise.reject(error);
+    }
+    return dispatched
       .then(
         result => {
+          this.assertActive('proposal dispatch completion');
           const racedCompletion = captured.get(result.metadata.taskId);
           if (racedCompletion?.kind === 'success') {
+            racedCompletion.settle?.();
             this.invalidateProposalSnapshots(racedCompletion.proposalIds, accountScope);
             if (racedCompletion.payload) {
               for (const snapshot of racedCompletion.payload.snapshots) {
@@ -1517,12 +2184,14 @@ export class MediaBuyLifecycleCoordinator {
             }
           } else if (racedCompletion?.kind === 'failure') {
             this.invalidateProposalSnapshots(racedCompletion.proposalIds, accountScope);
+            onCompletionFailure?.();
           } else if (captureOverflowed) {
             // The dispatch task ID is not knowable until dispatch returns. If
             // unrelated terminal events overflow the bounded correlation map,
             // a missing match might be the evicted task. Retire every mutable
             // snapshot in scope rather than leave stale execution evidence.
             this.invalidateProposalSnapshots(this.cachedProposalIds(accountScope), accountScope);
+            onCompletionFailure?.();
           }
           // adaptProjectedResult installs the long-lived watcher, when needed,
           // before this pre-dispatch listener is released.
@@ -1531,12 +2200,14 @@ export class MediaBuyLifecycleCoordinator {
           return output;
         },
         error => {
+          if (this.disposed) throw error;
           // A terminal event can beat a transport failure. Without the
           // dispatch result there is no trustworthy task ID for correlation,
           // so any captured terminal evidence makes every mutable snapshot in
           // this scope unsafe to reuse.
           if (captured.size > 0 || captureOverflowed) {
             this.invalidateProposalSnapshots(this.cachedProposalIds(accountScope), accountScope);
+            onCompletionFailure?.();
           }
           throw error;
         }
@@ -1544,10 +2215,21 @@ export class MediaBuyLifecycleCoordinator {
       .finally(unsubscribe);
   }
 
-  private watchProposalTask(taskId: string | undefined, accountScope: string | undefined): void {
+  private watchProposalTask(
+    taskId: string | undefined,
+    accountScope: string | undefined,
+    project: ((data: unknown) => unknown) | undefined,
+    retainProposals: boolean,
+    onTerminalFailure?: () => void
+  ): void {
     if (!taskId || !this.principalScope) return;
     this.pendingProposalTasks.delete(taskId);
-    this.pendingProposalTasks.set(taskId, { accountScope });
+    this.pendingProposalTasks.set(taskId, {
+      accountScope,
+      ...(project && { project }),
+      retainProposals,
+      ...(onTerminalFailure && { onTerminalFailure }),
+    });
     const priorTimer = this.pendingProposalTaskTimers.get(taskId);
     if (priorTimer) clearTimeout(priorTimer);
     const timer = setTimeout(
@@ -1562,6 +2244,7 @@ export class MediaBuyLifecycleCoordinator {
       this.forgetProposalTask(oldest);
     }
     const handleUpdate = (task: import('../core/ConversationTypes').TaskInfo): void => {
+      if (this.disposed) return;
       const pending = this.pendingProposalTasks.get(task.taskId);
       if (!pending) return;
       if (
@@ -1569,13 +2252,20 @@ export class MediaBuyLifecycleCoordinator {
         task.result !== undefined &&
         isAdcpOperationSuccess(task.result, task.taskType)
       ) {
-        this.rememberProposals(task.result, pending.accountScope);
+        try {
+          const projected = pending.project ? pending.project(task.result) : task.result;
+          if (pending.retainProposals) this.rememberProposals(projected, pending.accountScope);
+        } catch {
+          this.invalidateProposalSnapshots(this.proposalIdsIn(task.result), pending.accountScope);
+          pending.onTerminalFailure?.();
+        }
       } else if (['pending', 'running', 'working', 'submitted'].includes(task.status)) {
         return;
       } else {
         if (task.result !== undefined) {
           this.invalidateProposalSnapshots(this.proposalIdsIn(task.result), pending.accountScope);
         }
+        pending.onTerminalFailure?.();
       }
       this.forgetProposalTask(task.taskId);
     };
@@ -1779,6 +2469,7 @@ export class MediaBuyLifecycleCoordinator {
     timer.unref?.();
     this.pendingAcceptanceTaskTimers.set(taskId, timer);
     const handleUpdate = (task: import('../core/ConversationTypes').TaskInfo): void => {
+      if (this.disposed) return;
       const pending = this.pendingAcceptanceTasks.get(task.taskId);
       if (!pending) return;
       this.transitionAcceptanceTask(task, pending.snapshotKey, pending.snapshot, pending.reservation, task.taskId);
@@ -1807,6 +2498,7 @@ export class MediaBuyLifecycleCoordinator {
     snapshot: ProposalSnapshotEntry,
     reservation: AcceptanceReservation
   ): TaskResult<T> {
+    this.assertActive('acceptance result projection');
     const localTaskId = result.metadata.taskId;
     this.transitionAcceptanceResult(result, snapshotKey, snapshot, reservation);
     if (result.submitted) {
@@ -1815,21 +2507,29 @@ export class MediaBuyLifecycleCoordinator {
         ...submitted,
         track: async (transport?: import('../protocols').TransportOptions) => {
           try {
+            this.assertActive('acceptance track continuation');
             const task = await submitted.track(transport);
+            this.assertActive('acceptance track continuation');
             this.transitionAcceptanceTask(task, snapshotKey, snapshot, reservation, localTaskId);
             return task;
           } catch (error) {
-            this.preserveAmbiguousAcceptance(snapshotKey, snapshot, reservation, localTaskId);
+            if (!this.disposed) {
+              this.preserveAmbiguousAcceptance(snapshotKey, snapshot, reservation, localTaskId);
+            }
             throw error;
           }
         },
         waitForCompletion: async (pollInterval?: number, signal?: AbortSignal) => {
           try {
+            this.assertActive('acceptance completion continuation');
             const completed = await submitted.waitForCompletion(pollInterval, signal);
+            this.assertActive('acceptance completion continuation');
             this.transitionAcceptanceResult(completed, snapshotKey, snapshot, reservation);
             return completed;
           } catch (error) {
-            this.preserveAmbiguousAcceptance(snapshotKey, snapshot, reservation, localTaskId);
+            if (!this.disposed) {
+              this.preserveAmbiguousAcceptance(snapshotKey, snapshot, reservation, localTaskId);
+            }
             throw error;
           }
         },
@@ -1841,11 +2541,15 @@ export class MediaBuyLifecycleCoordinator {
         ...deferred,
         resume: async (input: unknown) => {
           try {
+            this.assertActive('acceptance resume continuation');
             const resumed = await deferred.resume(input);
+            this.assertActive('acceptance resume continuation');
             this.transitionAcceptanceResult(resumed, snapshotKey, snapshot, reservation);
             return resumed;
           } catch (error) {
-            this.preserveAmbiguousAcceptance(snapshotKey, snapshot, reservation, localTaskId);
+            if (!this.disposed) {
+              this.preserveAmbiguousAcceptance(snapshotKey, snapshot, reservation, localTaskId);
+            }
             throw error;
           }
         },
@@ -1855,6 +2559,17 @@ export class MediaBuyLifecycleCoordinator {
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const unsubscribe of [...this.proposalDispatchUnsubscribes]) unsubscribe();
+    for (const decline of [...this.proposalSnapshotStore.pendingDeclines]) {
+      if (decline.owner !== this.declineLeaseOwner) continue;
+      this.retirePendingDecline(decline);
+    }
+    for (const refinement of [...this.proposalSnapshotStore.pendingRefinements]) {
+      if (refinement.owner !== this.refinementLeaseOwner) continue;
+      this.retirePendingRefinement(refinement);
+    }
     for (const taskId of [...this.pendingProposalTasks.keys()]) this.forgetProposalTask(taskId);
     this.proposalTaskUnsubscribe?.();
     this.proposalTaskUnsubscribe = undefined;
@@ -1864,10 +2579,11 @@ export class MediaBuyLifecycleCoordinator {
     }
     this.acceptanceTaskUnsubscribe?.();
     this.acceptanceTaskUnsubscribe = undefined;
+    this.proposalSnapshotStore.activeCoordinators -= 1;
   }
 
   private rememberProposals(data: unknown, accountScope?: string): void {
-    if (!this.principalScope) return;
+    if (this.disposed || !this.principalScope) return;
     const seen = new WeakSet<object>();
     const visit = (value: unknown): void => {
       if (Array.isArray(value)) {
@@ -1881,8 +2597,9 @@ export class MediaBuyLifecycleCoordinator {
       seen.add(candidate);
       const proposalId = optionalString(candidate.proposal_id);
       if (proposalId) {
+        if (this.isProposalRefinementPending(proposalId)) return;
         const key = this.snapshotKey(proposalId, accountScope);
-        if (this.isRetiredAcceptanceKey(key)) return;
+        if (this.isTerminalProposal(proposalId) || this.isRetiredAcceptanceKey(key)) return;
         if (this.proposalSnapshotStore.entries.get(key)?.acceptance) return;
         // A newly observed seller representation supersedes the prior one.
         // Invalidate first so an unsafe, oversized, or unserializable
@@ -1905,16 +2622,23 @@ export class MediaBuyLifecycleCoordinator {
   }
 
   private rememberSafeProposalSnapshot(snapshot: SafeProposalSnapshot, accountScope?: string): void {
-    if (!this.principalScope) return;
+    if (this.disposed || !this.principalScope) return;
     const proposalId = optionalString(snapshot.proposal.proposal_id);
     if (!proposalId) return;
+    if (this.isProposalRefinementPending(proposalId)) return;
     const key = this.snapshotKey(proposalId, accountScope);
-    if (this.isRetiredAcceptanceKey(key) || this.proposalSnapshotStore.entries.get(key)?.acceptance) return;
+    if (
+      this.isTerminalProposal(proposalId) ||
+      this.isRetiredAcceptanceKey(key) ||
+      this.proposalSnapshotStore.entries.get(key)?.acceptance
+    ) {
+      return;
+    }
     this.removeProposalSnapshot(key);
     const bytes = new TextEncoder().encode(`${key}${JSON.stringify(snapshot)}`).byteLength;
     if (bytes > MediaBuyLifecycleCoordinator.MAX_PROPOSAL_SNAPSHOT_BYTES) return;
     const retained = structuredClone(snapshot);
-    this.proposalSnapshotStore.entries.set(key, {
+    this.retainProposalSnapshot(key, {
       proposal: retained.proposal,
       bytes,
       principalScope: this.principalScope,
@@ -1922,7 +2646,6 @@ export class MediaBuyLifecycleCoordinator {
       ...(accountScope && { accountScope }),
       ...(retained.canonicalTermsDigest && { canonicalTermsDigest: retained.canonicalTermsDigest }),
     });
-    this.proposalSnapshotStore.bytes += bytes;
     this.enforceProposalSnapshotLimits();
   }
 
@@ -1931,23 +2654,39 @@ export class MediaBuyLifecycleCoordinator {
     report: MediaBuyCompatibilityReport,
     project: (data: T) => U,
     accountScope?: string,
-    retainProposals = false
-  ): CompatibilityTaskResult<U> {
+    retainProposals = false,
+    pendingDecline?: PendingDeclineLease,
+    pendingRefinement?: PendingRefinementLease
+  ): CompatibilityTaskResult<U, T> {
     const localTaskId = result.metadata.taskId;
-    const adapt = (current: TaskResult<T>): CompatibilityTaskResult<U> => {
+    const adapt = (current: TaskResult<T>): CompatibilityTaskResult<U, T> => {
+      this.assertActive('lifecycle result projection');
       if (
         current.success &&
         current.status === 'completed' &&
         isAdcpOperationSuccess(current.data, current.metadata.taskName)
       ) {
-        if (retainProposals) this.rememberProposals(current.data, accountScope);
-        (current as TaskResult<unknown>).data = project(current.data);
+        const projected = project(current.data);
+        if (retainProposals) this.rememberProposals(projected, accountScope);
+        (current as TaskResult<unknown>).data = projected;
       } else if (retainProposals && current.data !== undefined) {
         this.invalidateProposalSnapshots(this.proposalIdsIn(current.data), accountScope);
       }
-      if (retainProposals && ['working', 'submitted'].includes(current.status)) {
-        this.watchProposalTask(localTaskId, accountScope);
-      } else if (retainProposals) {
+      if (
+        (retainProposals || pendingDecline || pendingRefinement) &&
+        ['working', 'submitted'].includes(current.status)
+      ) {
+        this.watchProposalTask(
+          localTaskId,
+          accountScope,
+          data => project(data as T),
+          retainProposals,
+          () => {
+            if (pendingDecline && !this.disposed) this.retirePendingDecline(pendingDecline);
+            if (pendingRefinement && !this.disposed) this.retirePendingRefinement(pendingRefinement);
+          }
+        );
+      } else if (retainProposals || pendingDecline || pendingRefinement) {
         this.forgetProposalTask(localTaskId);
       }
 
@@ -1957,35 +2696,93 @@ export class MediaBuyLifecycleCoordinator {
         (output as { submitted?: unknown }).submitted = {
           ...submitted,
           track: async (transport?: import('../protocols').TransportOptions) => {
-            const task = await submitted.track(transport);
-            if (
-              task.status === 'completed' &&
-              task.result !== undefined &&
-              isAdcpOperationSuccess(task.result, task.taskType)
-            ) {
-              if (retainProposals) this.rememberProposals(task.result, accountScope);
-              task.result = project(task.result as T);
-              if (retainProposals) this.forgetProposalTask(localTaskId);
-            } else if (retainProposals && !['pending', 'running', 'working', 'submitted'].includes(task.status)) {
-              if (task.result !== undefined) {
-                this.invalidateProposalSnapshots(this.proposalIdsIn(task.result), accountScope);
+            try {
+              this.assertActive('lifecycle track continuation');
+              const task = await submitted.track(transport);
+              this.assertActive('lifecycle track continuation');
+              const completedSuccessfully =
+                task.status === 'completed' &&
+                task.result !== undefined &&
+                isAdcpOperationSuccess(task.result, task.taskType);
+              if (completedSuccessfully) {
+                const projected = project(task.result as T);
+                if (retainProposals) this.rememberProposals(projected, accountScope);
+                task.result = projected;
+                if (retainProposals) this.forgetProposalTask(localTaskId);
+              } else if (retainProposals && !['pending', 'running', 'working', 'submitted'].includes(task.status)) {
+                if (task.result !== undefined) {
+                  this.invalidateProposalSnapshots(this.proposalIdsIn(task.result), accountScope);
+                }
+                this.forgetProposalTask(localTaskId);
               }
-              this.forgetProposalTask(localTaskId);
+              if (
+                pendingDecline &&
+                !['pending', 'running', 'working', 'submitted', 'input-required', 'auth-required', 'deferred'].includes(
+                  task.status
+                )
+              ) {
+                if (completedSuccessfully) this.finishPendingDecline(pendingDecline);
+                else this.retirePendingDecline(pendingDecline);
+              }
+              if (
+                pendingRefinement &&
+                !completedSuccessfully &&
+                !['pending', 'running', 'working', 'submitted', 'input-required', 'auth-required', 'deferred'].includes(
+                  task.status
+                )
+              ) {
+                this.retirePendingRefinement(pendingRefinement);
+              }
+              return task;
+            } catch (error) {
+              if (pendingDecline && !this.disposed) this.retirePendingDecline(pendingDecline);
+              if (pendingRefinement && !this.disposed) this.retirePendingRefinement(pendingRefinement);
+              throw error;
             }
-            return task;
           },
-          waitForCompletion: async (pollInterval?: number, signal?: AbortSignal) =>
-            adapt(await submitted.waitForCompletion(pollInterval, signal)),
+          waitForCompletion: async (pollInterval?: number, signal?: AbortSignal) => {
+            try {
+              this.assertActive('lifecycle completion continuation');
+              return adapt(await submitted.waitForCompletion(pollInterval, signal));
+            } catch (error) {
+              if (pendingDecline && !this.disposed) this.retirePendingDecline(pendingDecline);
+              if (pendingRefinement && !this.disposed) this.retirePendingRefinement(pendingRefinement);
+              throw error;
+            }
+          },
         };
       }
       if (current.deferred) {
         const deferred = current.deferred;
         (output as { deferred?: unknown }).deferred = {
           ...deferred,
-          resume: async (input: unknown) => adapt(await deferred.resume(input)),
+          resume: async (input: unknown) => {
+            try {
+              this.assertActive('lifecycle resume continuation');
+              return adapt(await deferred.resume(input));
+            } catch (error) {
+              if (pendingDecline && !this.disposed) this.retirePendingDecline(pendingDecline);
+              if (pendingRefinement && !this.disposed) this.retirePendingRefinement(pendingRefinement);
+              throw error;
+            }
+          },
         };
       }
-      return attachCompatibility(output, report);
+      if (pendingDecline && current.status === 'completed') {
+        if (isAdcpOperationSuccess(current.data, current.metadata.taskName)) this.finishPendingDecline(pendingDecline);
+        else this.retirePendingDecline(pendingDecline);
+      } else if (pendingDecline && (current.status === 'failed' || current.status === 'governance-denied')) {
+        this.retirePendingDecline(pendingDecline);
+      }
+      if (
+        pendingRefinement &&
+        ((current.status === 'completed' && !isAdcpOperationSuccess(current.data, current.metadata.taskName)) ||
+          current.status === 'failed' ||
+          current.status === 'governance-denied')
+      ) {
+        this.retirePendingRefinement(pendingRefinement);
+      }
+      return Object.assign(output, { compatibility: report }) as unknown as CompatibilityTaskResult<U, T>;
     };
     return adapt(result);
   }
@@ -1994,7 +2791,8 @@ export class MediaBuyLifecycleCoordinator {
     params: ListProductsRequest,
     inputHandler?: InputHandler,
     options?: CanonicalProjectionTaskOptions
-  ): Promise<CompatibilityTaskResult<CompatibleProductsResponse>> {
+  ): Promise<CompatibilityTaskResult<CompatibleProductsResponse, CompatibleProductsWireResponse>> {
+    this.assertActive('listProducts');
     const input = record(params);
     const lifecycle = this.selectLifecycle('list_products');
     this.assertLegacyReferenceShapes('listProducts', input);
@@ -2073,7 +2871,8 @@ export class MediaBuyLifecycleCoordinator {
     params: MutatingRequestInput<RequestProposalsRequest>,
     inputHandler?: InputHandler,
     options?: CanonicalProjectionTaskOptions
-  ): Promise<CompatibilityTaskResult<CompatibleProposalResponse>> {
+  ): Promise<CompatibilityTaskResult<CompatibleRequestProposalsResponse, CompatibleRequestProposalsWireResponse>> {
+    this.assertActive('requestProposals');
     const input = record(params);
     const lifecycle = this.selectLifecycle('request_proposals');
     this.assertLegacyReferenceShapes('requestProposals', input);
@@ -2087,10 +2886,11 @@ export class MediaBuyLifecycleCoordinator {
           this.adaptProjectedResult(
             result,
             this.makeReport(lifecycle, ['request_proposals'], []),
-            projectProposals,
+            data => projectRequestProposals(data, lifecycle),
             accountScope,
             true
-          )
+          ),
+        data => projectRequestProposals(data, lifecycle)
       );
     }
 
@@ -2204,10 +3004,11 @@ export class MediaBuyLifecycleCoordinator {
         this.adaptProjectedResult(
           result,
           this.makeReport(lifecycle, ['get_products'], []),
-          projectProposals,
+          data => projectRequestProposals(data, lifecycle),
           accountScope,
           true
-        )
+        ),
+      data => projectRequestProposals(data, lifecycle)
     );
   }
 
@@ -2215,26 +3016,51 @@ export class MediaBuyLifecycleCoordinator {
     params: RefineProposalsInput,
     inputHandler?: InputHandler,
     options?: ProposalRefinementTaskOptions
-  ): Promise<CompatibilityTaskResult<CompatibleProposalResponse>> {
+  ): Promise<CompatibilityTaskResult<CompatibleRefineProposalsResponse, CompatibleRefineProposalsWireResponse>> {
+    this.assertActive('refineProposals');
     const lifecycle = this.selectLifecycle('refine_proposals');
     this.assertValidCompactRequest('refine_proposals', params, lifecycle, true);
     if (lifecycle === 'compact') {
       const proposalIds = params.refinements.map(refinement => refinement.proposal_id);
       const scopes = this.proposalScopes(proposalIds);
       const accountScope = scopes.length === 1 ? scopes[0] : undefined;
-      this.invalidateProposalSnapshots(proposalIds, undefined, true);
-      return this.captureProposalDispatch(
-        accountScope,
-        () => this.agent.refineProposals(params, inputHandler, options),
-        result =>
-          this.adaptProjectedResult(
-            result,
-            this.makeReport(lifecycle, ['refine_proposals'], []),
-            projectProposals,
-            accountScope,
-            true
-          )
-      );
+      const pendingRefinement = this.beginPendingRefinement(proposalIds);
+      const projectOnly = (data: CompatibleRefineProposalsWireResponse) =>
+        projectRefineProposals(data, lifecycle, params.refinements);
+      const projectAndSettle = (data: CompatibleRefineProposalsWireResponse) => {
+        try {
+          const projected = projectOnly(data);
+          this.settlePendingRefinement(pendingRefinement, projected);
+          return projected;
+        } catch (error) {
+          if (!this.disposed) this.retirePendingRefinement(pendingRefinement);
+          throw error;
+        }
+      };
+      try {
+        return await this.captureProposalDispatch(
+          accountScope,
+          () => this.agent.refineProposals(params, inputHandler, options),
+          result =>
+            this.adaptProjectedResult(
+              result,
+              this.makeReport(lifecycle, ['refine_proposals'], []),
+              projectAndSettle,
+              accountScope,
+              true,
+              undefined,
+              pendingRefinement
+            ),
+          projectOnly,
+          () => this.retirePendingRefinement(pendingRefinement),
+          true,
+          projected =>
+            this.preparePendingRefinementSettlement(pendingRefinement, projected as CompatibleRefineProposalsResponse)
+        );
+      } catch (error) {
+        if (!this.disposed) this.retirePendingRefinement(pendingRefinement);
+        throw error;
+      }
     }
 
     this.assertProposalLifecycleAvailable('refineProposals');
@@ -2351,32 +3177,94 @@ export class MediaBuyLifecycleCoordinator {
     const proposalIds = params.refinements.map(refinement => refinement.proposal_id);
     const scopes = this.proposalScopes(proposalIds);
     const accountScope = scopes.length === 1 ? scopes[0] : undefined;
-    this.invalidateProposalSnapshots(proposalIds, undefined, true);
-    return this.captureProposalDispatch(
-      accountScope,
-      () => this.agent.getProducts(request, inputHandler, options),
-      result =>
-        this.adaptProjectedResult(
-          result,
-          this.makeReport(lifecycle, ['get_products'], []),
-          projectProposals,
-          accountScope,
-          true
-        )
-    );
+    const pendingRefinement = this.beginPendingRefinement(proposalIds);
+    const projectOnly = (data: CompatibleRefineProposalsWireResponse) =>
+      projectRefineProposals(data, lifecycle, params.refinements);
+    const projectAndSettle = (data: CompatibleRefineProposalsWireResponse) => {
+      try {
+        const projected = projectOnly(data);
+        this.settlePendingRefinement(pendingRefinement, projected);
+        return projected;
+      } catch (error) {
+        if (!this.disposed) this.retirePendingRefinement(pendingRefinement);
+        throw error;
+      }
+    };
+    try {
+      return await this.captureProposalDispatch(
+        accountScope,
+        () => this.agent.getProducts(request, inputHandler, options),
+        result =>
+          this.adaptProjectedResult(
+            result,
+            this.makeReport(lifecycle, ['get_products'], []),
+            projectAndSettle,
+            accountScope,
+            true,
+            undefined,
+            pendingRefinement
+          ),
+        projectOnly,
+        () => this.retirePendingRefinement(pendingRefinement),
+        true,
+        projected =>
+          this.preparePendingRefinementSettlement(pendingRefinement, projected as CompatibleRefineProposalsResponse)
+      );
+    } catch (error) {
+      if (!this.disposed) this.retirePendingRefinement(pendingRefinement);
+      throw error;
+    }
   }
 
   async declineProposals(
     params: MutatingRequestInput<DeclineProposalsRequest>,
     inputHandler?: InputHandler,
     options?: CanonicalProjectionTaskOptions
-  ): Promise<CompatibilityTaskResult<CompatibleProposalResponse>> {
+  ): Promise<CompatibilityTaskResult<CompatibleDeclineProposalsResponse, CompatibleDeclineProposalsWireResponse>> {
+    this.assertActive('declineProposals');
     const input = record(params);
     const lifecycle = this.selectLifecycle('decline_proposals');
+    const projectOnly = (data: unknown, proposalIds: readonly string[]) =>
+      projectDeclineProposals(data, lifecycle, proposalIds);
     if (lifecycle === 'compact') {
       this.assertValidCompactRequest('decline_proposals', params, lifecycle, true);
-      const result = await this.agent.declineProposals(params, inputHandler, options);
-      return this.adaptProjectedResult(result, this.makeReport(lifecycle, ['decline_proposals'], []), projectProposals);
+      const proposalIds = array(input.declines)
+        .map(value => optionalString(record(value).proposal_id))
+        .filter((value): value is string => value !== undefined);
+      const pendingDecline = this.beginPendingDecline(proposalIds);
+      const projectAndSettle = (data: unknown) => {
+        try {
+          const projected = projectOnly(data, proposalIds);
+          this.preparePendingDeclineSettlement(pendingDecline, projected)();
+          return projected;
+        } catch (error) {
+          if (!this.disposed) this.retirePendingDecline(pendingDecline);
+          throw error;
+        }
+      };
+      try {
+        return await this.captureProposalDispatch(
+          undefined,
+          () => this.agent.declineProposals(params, inputHandler, options),
+          result =>
+            this.adaptProjectedResult(
+              result,
+              this.makeReport(lifecycle, ['decline_proposals'], []),
+              projectAndSettle,
+              undefined,
+              false,
+              pendingDecline
+            ),
+          data => projectOnly(data, proposalIds),
+          () => this.retirePendingDecline(pendingDecline),
+          false,
+          projected =>
+            this.preparePendingDeclineSettlement(pendingDecline, projected as CompatibleDeclineProposalsResponse)
+        );
+      } catch (error) {
+        if (!this.disposed) this.retirePendingDecline(pendingDecline);
+        throw error;
+      }
     }
 
     this.assertProposalLifecycleAvailable('declineProposals');
@@ -2427,15 +3315,44 @@ export class MediaBuyLifecycleCoordinator {
       ...(input.context !== undefined && { context: input.context as CanonicalGetProductsRequest['context'] }),
     };
     this.assertValidCompactRequest('decline_proposals', params, lifecycle, true);
-    const result = await this.agent.getProducts(request, inputHandler, options);
-    return this.adaptProjectedResult(
-      result,
-      this.makeReport(lifecycle, ['get_products'], losses, [
-        'Legacy proposal omit is not a seller-confirmed terminal decline.',
-        'Legacy proposal omit cannot forward the compact decline reason or detail.',
-      ]),
-      projectProposals
-    );
+    const proposalIds = declines.map(decline => String(decline.proposal_id));
+    const pendingDecline = this.beginPendingDecline(proposalIds);
+    const projectAndSettle = (data: unknown) => {
+      try {
+        const projected = projectOnly(data, proposalIds);
+        this.preparePendingDeclineSettlement(pendingDecline, projected)();
+        return projected;
+      } catch (error) {
+        if (!this.disposed) this.retirePendingDecline(pendingDecline);
+        throw error;
+      }
+    };
+    try {
+      return await this.captureProposalDispatch(
+        undefined,
+        () => this.agent.getProducts(request, inputHandler, options),
+        result =>
+          this.adaptProjectedResult(
+            result,
+            this.makeReport(lifecycle, ['get_products'], losses, [
+              'Legacy proposal omit is not a seller-confirmed terminal decline.',
+              'Legacy proposal omit cannot forward the compact decline reason or detail.',
+            ]),
+            projectAndSettle,
+            undefined,
+            false,
+            pendingDecline
+          ),
+        data => projectOnly(data, proposalIds),
+        () => this.retirePendingDecline(pendingDecline),
+        false,
+        projected =>
+          this.preparePendingDeclineSettlement(pendingDecline, projected as CompatibleDeclineProposalsResponse)
+      );
+    } catch (error) {
+      if (!this.disposed) this.retirePendingDecline(pendingDecline);
+      throw error;
+    }
   }
 
   async buyProducts(
@@ -2443,6 +3360,7 @@ export class MediaBuyLifecycleCoordinator {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<CompatibilityTaskResult<BuyProductsResponse | CreateMediaBuyResponse>> {
+    this.assertActive('buyProducts');
     const input = record(params);
     const lifecycle = this.selectLifecycle('buy_products');
     this.assertLegacyReferenceShapes('buyProducts', input);
@@ -2593,6 +3511,7 @@ export class MediaBuyLifecycleCoordinator {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<CompatibilityTaskResult<AcceptProposalResponse | CreateMediaBuyResponse>> {
+    this.assertActive('acceptProposal');
     const input = record(params);
     const lifecycle = this.selectLifecycle('accept_proposal');
     this.assertLegacyReferenceShapes('acceptProposal', input);
@@ -2634,6 +3553,20 @@ export class MediaBuyLifecycleCoordinator {
         'acceptProposal',
         'principal_scope',
         'Established proposal acceptance requires a stable, non-secret principalScope when negotiating the coordinator. No mutation was sent.'
+      );
+    }
+    if (this.isProposalDeclinePending(proposalId)) {
+      throw this.unsupported(
+        'acceptProposal',
+        'proposal_decline_pending',
+        'The proposal has an unresolved decline in this principal scope. Wait for that decline to finish before accepting it.'
+      );
+    }
+    if (this.isProposalRefinementPending(proposalId)) {
+      throw this.unsupported(
+        'acceptProposal',
+        'proposal_refinement_pending',
+        'The proposal has an unresolved refinement in this principal scope. Wait for that refinement to finish before accepting it.'
       );
     }
     const accountScope = this.accountScope(input.account);
@@ -2866,6 +3799,7 @@ export class MediaBuyLifecycleCoordinator {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<CompatibilityTaskResult<ControlMediaBuyResponse | UpdateMediaBuyResponse>> {
+    this.assertActive('controlMediaBuy');
     const input = record(params);
     const lifecycle = this.selectLifecycle('control_media_buy');
     this.assertLegacyReferenceShapes('controlMediaBuy', input);
@@ -3163,6 +4097,7 @@ export class MediaBuyLifecycleCoordinator {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<CompatibilityTaskResult<GetMediaBuysResponse>> {
+    this.assertActive('getMediaBuys');
     if (compareRelease(this.negotiated_version, '3.0') < 0) {
       throw this.unsupported(
         'getMediaBuys',
@@ -3170,6 +4105,7 @@ export class MediaBuyLifecycleCoordinator {
         `The negotiated ${this.negotiated_version} seller has no get_media_buys tool.`
       );
     }
+    this.assertSharedToolAdvertised('get_media_buys');
     const input = record(params);
     this.assertLegacyReferenceShapes('getMediaBuys', input);
     if (compareRelease(this.negotiated_version, '3.1') < 0) {
@@ -3187,6 +4123,7 @@ export class MediaBuyLifecycleCoordinator {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<CompatibilityTaskResult<GetMediaBuyDeliveryResponse>> {
+    this.assertActive('getMediaBuyDelivery');
     if (compareRelease(this.negotiated_version, '3.0') < 0) {
       throw this.unsupported(
         'getMediaBuyDelivery',
@@ -3194,6 +4131,7 @@ export class MediaBuyLifecycleCoordinator {
         `The negotiated ${this.negotiated_version} delivery request cannot safely represent the compact account-scoped readback.`
       );
     }
+    this.assertSharedToolAdvertised('get_media_buy_delivery');
     const input = record(params);
     if (compareRelease(this.negotiated_version, '3.1') < 0) {
       this.assertCompactWireFieldsAbsent('getMediaBuyDelivery', input, [

@@ -102,7 +102,7 @@ const SUCCESS_PAYLOAD_FIELD_GROUPS_BY_TOOL: Readonly<Record<string, readonly (re
   report_usage: [['accepted']],
   get_account_financials: [['account', 'currency', 'period', 'timezone']],
   get_products: [['products'], ['unchanged']],
-  request_proposals: [['outcome', 'proposals', 'products']],
+  request_proposals: [['outcome']],
   refine_proposals: [['results', 'products']],
   decline_proposals: [['results']],
   list_creative_formats: [['formats']],

@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { z } = require('zod');
 
-const { serve } = require('../../dist/lib/index.js');
+const { AgentClient, serve } = require('../../dist/lib/index.js');
 const { proposalTermsDigest } = require('../../dist/lib/negotiation/verification.js');
 const { ADCP_CAPABILITIES, getSdkServer } = require('../../dist/lib/server/adcp-server.js');
 const { createIdempotencyStore, memoryBackend } = require('../../dist/lib/server/idempotency/index.js');
@@ -89,6 +89,7 @@ async function createLifecycleServer() {
     packageId: undefined,
     acceptedProposal: undefined,
     dailyBudgetCap: undefined,
+    mediaBuyStatus: 'pending_creatives',
   };
 
   function record(method, request) {
@@ -100,6 +101,7 @@ async function createLifecycleServer() {
     state.packageId = `${mediaBuyId}-package`;
     state.acceptedProposal = acceptedProposal;
     state.revision = 1;
+    state.mediaBuyStatus = 'pending_creatives';
     return {
       status: 'completed',
       media_buy_id: mediaBuyId,
@@ -200,6 +202,14 @@ async function createLifecycleServer() {
       return commitment('proposal-media-buy', accepted);
     },
 
+    async declineProposals(request) {
+      record('declineProposals', request);
+      assertBeta2Envelope(request);
+      return {
+        results: request.declines.map(decline => ({ proposal_id: decline.proposal_id, outcome: 'declined' })),
+      };
+    },
+
     async buyProducts(request) {
       record('buyProducts', request);
       assertBeta2Envelope(request);
@@ -220,14 +230,21 @@ async function createLifecycleServer() {
       assertBeta2Envelope(request);
       assert.equal(request.media_buy_id, state.mediaBuyId);
       assert.equal(request.revision, state.revision);
-      assert.equal(request.daily_budget_cap, 100);
       state.revision += 1;
-      state.dailyBudgetCap = request.daily_budget_cap;
+      if (request.daily_budget_cap !== undefined) state.dailyBudgetCap = request.daily_budget_cap;
+      state.mediaBuyStatus =
+        request.canceled === true
+          ? 'canceled'
+          : request.paused === true
+            ? 'paused'
+            : request.paused === false
+              ? 'active'
+              : state.mediaBuyStatus;
       return {
         status: 'completed',
         media_buy_id: state.mediaBuyId,
         revision: state.revision,
-        media_buy_status: 'pending_creatives',
+        media_buy_status: state.mediaBuyStatus,
         available_actions: AVAILABLE_ACTIONS,
       };
     },
@@ -243,7 +260,7 @@ async function createLifecycleServer() {
             accepted_proposal_id: state.acceptedProposal.proposal_id,
             accepted_proposal_terms_digest: state.acceptedProposal.terms_digest,
             accepted_proposal: state.acceptedProposal,
-            status: 'pending_creatives',
+            status: state.mediaBuyStatus,
             available_actions: AVAILABLE_ACTIONS,
             currency: 'USD',
             total_budget: 1000,
@@ -331,6 +348,7 @@ async function runLifecycle(id) {
         'list_products',
         'request_proposals',
         'refine_proposals',
+        'decline_proposals',
         'accept_proposal',
         'buy_products',
         'control_media_buy',
@@ -366,4 +384,106 @@ test('public storyboard runner executes the complete compact direct-buy lifecycl
     'controlMediaBuy',
     'getMediaBuys',
   ]);
+});
+
+test('compact-first coordinator executes proposal outcomes and the full control matrix over validated beta.2 MCP', async () => {
+  const { calls, server, url } = await createLifecycleServer();
+  try {
+    const buyer = new AgentClient(
+      {
+        id: 'compact-wire-release-gate',
+        name: 'Compact wire release gate',
+        agent_uri: url,
+        protocol: 'mcp',
+      },
+      { adcpVersion: ADCP_VERSION, validation: { requests: 'strict', responses: 'strict' } }
+    );
+    const lifecycle = await buyer.negotiateMediaBuyLifecycle({ principalScope: 'compact-lifecycle-wire-buyer' });
+    assert.equal(lifecycle.lifecycle, 'compact');
+
+    const listed = await lifecycle.listProducts({
+      account: ACCOUNT,
+      criteria: { product_ids: ['compact_lifecycle_video'] },
+    });
+    assert.equal(listed.data.products[0].product_id, 'compact_lifecycle_video');
+
+    const requestedForDecline = await lifecycle.requestProposals({
+      idempotency_key: 'compact-wire-request-decline-0001',
+      account: ACCOUNT,
+      brief: 'Proposal to decline',
+      criteria: { product_ids: ['compact_lifecycle_video'] },
+    });
+    assert.equal(requestedForDecline.success, true, JSON.stringify(requestedForDecline));
+    assert.equal(requestedForDecline.status, 'completed', JSON.stringify(requestedForDecline));
+    assert.equal(requestedForDecline.data.operation, 'request');
+    assert.equal(requestedForDecline.data.outcome, 'proposed');
+    const declined = await lifecycle.declineProposals({
+      idempotency_key: 'compact-wire-decline-0001',
+      declines: [{ proposal_id: requestedForDecline.data.proposals[0].proposal_id, reason: 'budget_changed' }],
+    });
+    assert.equal(declined.success, true, JSON.stringify(declined));
+    assert.equal(declined.status, 'completed', JSON.stringify(declined));
+    assert.equal(declined.data.operation, 'decline');
+    assert.equal(declined.data.outcome, 'native_results');
+    assert.equal(declined.data.results[0].outcome, 'declined');
+
+    const requested = await lifecycle.requestProposals({
+      idempotency_key: 'compact-wire-request-accept-0001',
+      account: ACCOUNT,
+      brief: 'Proposal to accept',
+      criteria: { product_ids: ['compact_lifecycle_video'] },
+    });
+    assert.equal(requested.success, true, JSON.stringify(requested));
+    assert.equal(requested.status, 'completed', JSON.stringify(requested));
+    const finalized = await lifecycle.refineProposals({
+      idempotency_key: 'compact-wire-finalize-0001',
+      refinements: [{ proposal_id: requested.data.proposals[0].proposal_id, action: 'finalize' }],
+    });
+    assert.equal(finalized.success, true, JSON.stringify(finalized));
+    assert.equal(finalized.status, 'completed', JSON.stringify(finalized));
+    assert.equal(finalized.data.operation, 'refine');
+    assert.equal(finalized.data.outcome, 'native_results');
+    assert.equal(finalized.data.results[0].outcome, 'finalized');
+    assert.equal(finalized.data.results[0].proposal.proposal_id, 'proposal-committed');
+
+    const accepted = await lifecycle.acceptProposal({
+      idempotency_key: 'compact-wire-accept-0001',
+      account: ACCOUNT,
+      proposal_id: finalized.data.results[0].proposal.proposal_id,
+      proposal_terms_digest: finalized.data.results[0].proposal.terms_digest,
+    });
+    assert.equal(accepted.success, true, JSON.stringify(accepted));
+
+    const controls = [
+      { idempotency_key: 'compact-wire-pause-0001', revision: 1, paused: true },
+      { idempotency_key: 'compact-wire-resume-0001', revision: 2, paused: false },
+      { idempotency_key: 'compact-wire-budget-0001', revision: 3, daily_budget_cap: 100 },
+      {
+        idempotency_key: 'compact-wire-cancel-0001',
+        revision: 4,
+        canceled: true,
+        cancellation_reason: 'buyer_request',
+      },
+    ];
+    for (const control of controls) {
+      const result = await lifecycle.controlMediaBuy({
+        account: ACCOUNT,
+        media_buy_id: 'proposal-media-buy',
+        ...control,
+      });
+      assert.equal(result.success, true, JSON.stringify(result));
+    }
+    const readback = await lifecycle.getMediaBuys({
+      account: ACCOUNT,
+      media_buy_ids: ['proposal-media-buy'],
+    });
+    assert.equal(readback.data.media_buys[0].revision, 5);
+    assert.equal(readback.data.media_buys[0].status, 'canceled');
+    assert.equal(readback.data.media_buys[0].daily_budget_cap, 100);
+
+    assert.ok(calls.some(call => call.method === 'declineProposals'));
+    assert.equal(calls.filter(call => call.method === 'controlMediaBuy').length, 4);
+  } finally {
+    await closeServer(server);
+  }
 });
