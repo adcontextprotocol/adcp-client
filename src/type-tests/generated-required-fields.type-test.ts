@@ -3,6 +3,7 @@ import type {
   GeoDeliveryMetrics,
   KeywordDeliveryMetrics,
   PostalCountrySystem,
+  SyncCreativesSuccess as CoreSyncCreativesSuccess,
   TasksGetResponse,
 } from '../lib/types/core.generated';
 import type {
@@ -18,11 +19,13 @@ import type {
   ProtocolEnvelope as ToolProtocolEnvelope,
   SignalDefinitionEnrichment as ToolSignalDefinitionEnrichment,
   SignalTargetingExpression as ToolSignalTargetingExpression,
+  SyncCreativesSuccess as ToolSyncCreativesSuccess,
 } from '../lib/types/tools.generated';
 
 type Assert<T extends true> = T;
 type IsRequired<T, K extends keyof T> = {} extends Pick<T, K> ? false : true;
 type IsOptional<T, K extends keyof T> = {} extends Pick<T, K> ? true : false;
+type HasKey<T, K extends PropertyKey> = K extends keyof T ? true : false;
 
 // Canonical core types must preserve every required property declared by their
 // source JSON Schema. Compatibility widening belongs on tool-specific response
@@ -35,6 +38,27 @@ type _ContentIdIsRequired = Assert<IsRequired<CatalogItemDeliveryMetrics, 'conte
 type _PostalCountryIsRequired = Assert<IsRequired<PostalCountrySystem, 'country'>>;
 type _PostalSystemIsRequired = Assert<IsRequired<PostalCountrySystem, 'system'>>;
 type _TaskProtocolIsRequired = Assert<IsRequired<TasksGetResponse, 'protocol'>>;
+
+// The core copy is also reached through MCPWebhookPayload's broad async
+// response union. Keep that generation path from erasing the inline
+// sync_creatives result item to `{}` while the tool-local copy stays intact.
+type CoreSyncCreative = CoreSyncCreativesSuccess['creatives'][number];
+type ToolSyncCreative = ToolSyncCreativesSuccess['creatives'][number];
+type _CoreSyncCreativeIdIsRequired = Assert<IsRequired<CoreSyncCreative, 'creative_id'>>;
+type _CoreSyncCreativeActionIsRequired = Assert<IsRequired<CoreSyncCreative, 'action'>>;
+type _CoreSyncCreativeHasAccount = Assert<HasKey<CoreSyncCreative, 'account'>>;
+type _CoreSyncCreativeHasStatus = Assert<HasKey<CoreSyncCreative, 'status'>>;
+type _CoreSyncCreativeHasPlatformId = Assert<HasKey<CoreSyncCreative, 'platform_id'>>;
+type _CoreSyncCreativeHasLocalization = Assert<HasKey<CoreSyncCreative, 'localization'>>;
+type _CoreSyncCreativeHasChanges = Assert<HasKey<CoreSyncCreative, 'changes'>>;
+type _CoreSyncCreativeHasErrors = Assert<HasKey<CoreSyncCreative, 'errors'>>;
+type _CoreSyncCreativeHasWarnings = Assert<HasKey<CoreSyncCreative, 'warnings'>>;
+type _CoreSyncCreativeHasPreviewUrl = Assert<HasKey<CoreSyncCreative, 'preview_url'>>;
+type _CoreSyncCreativeHasExpiresAt = Assert<HasKey<CoreSyncCreative, 'expires_at'>>;
+type _CoreSyncCreativeHasAssignedTo = Assert<HasKey<CoreSyncCreative, 'assigned_to'>>;
+type _CoreSyncCreativeHasAssignmentErrors = Assert<HasKey<CoreSyncCreative, 'assignment_errors'>>;
+type _ToolSyncCreativeIdIsRequired = Assert<IsRequired<ToolSyncCreative, 'creative_id'>>;
+type _ToolSyncCreativeActionIsRequired = Assert<IsRequired<ToolSyncCreative, 'action'>>;
 
 // The published @adcp/sdk/types/tools.generated deep import historically
 // exported these canonical names. Keep them as strict core re-exports.

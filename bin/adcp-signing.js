@@ -12,6 +12,7 @@ const {
   StaticJwksResolver,
   verifyRequestSignature,
 } = require('../dist/lib/signing/index.js');
+const { writeJsonOutput } = require('./adcp-json-stdout.js');
 
 function generateKey(argv) {
   let alg = 'ed25519';
@@ -164,7 +165,7 @@ async function verifyVector(argv) {
       operation,
       adcpVersion: vector.signing_profile_version ?? '3.1',
     });
-    console.log(JSON.stringify({ outcome: 'accepted', verified_signer: verified, operation }, null, 2));
+    await writeJsonOutput({ outcome: 'accepted', verified_signer: verified, operation });
     return { accepted: true };
   } catch (err) {
     if (err instanceof RequestSignatureError) {
@@ -174,7 +175,7 @@ async function verifyVector(argv) {
         failed_step: err.failedStep,
         message: err.message,
       };
-      console.log(JSON.stringify(payload, null, 2));
+      await writeJsonOutput(payload);
       return { accepted: false, code: err.code };
     }
     throw err;

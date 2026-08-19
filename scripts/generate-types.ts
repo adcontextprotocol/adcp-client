@@ -100,6 +100,18 @@ const PRIORITY_CANONICAL_SCHEMAS = [
   'property/validate-property-delivery-response.json',
 ] as const;
 
+// Extract only these declarations from their authoritative schemas before
+// broad aggregate roots compile. Compiling the entire schema early would also
+// claim every referenced type and cause large, unrelated declaration-order
+// churn in core.generated.ts.
+const PRIORITY_EXTRACTED_TYPES = [
+  {
+    ref: 'creative/sync-creatives-response.json',
+    typeName: 'SyncCreativesSuccess',
+    reason: 'the async-response-data webhook union can collapse the conditional creatives[] item to an empty object',
+  },
+] as const;
+
 const PRIORITY_CANONICAL_TYPE_NAMES = new Set([
   'ExtensionObject',
   'CreativeBrief',
@@ -3534,6 +3546,40 @@ async function generateTypes() {
     }
   }
   console.log(`✅ Generated ${PRIORITY_CANONICAL_SCHEMAS.length} priority canonical schemas`);
+
+  for (const { ref, typeName, reason } of PRIORITY_EXTRACTED_TYPES) {
+    try {
+      const schema = loadCachedSchema(ref);
+      if (!schema) throw new Error(`Schema ${ref} not found in cache`);
+      const rootTypeName =
+        typeof schema.title === 'string' ? schema.title.replace(/[^A-Za-z0-9]/g, '') : schemaPathToTypeName(ref);
+      const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema)));
+      const types = await compile(strictSchema, rootTypeName, {
+        bannerComment: '',
+        style: { semi: true, singleQuote: true },
+        additionalProperties: false,
+        strictIndexSignatures: true,
+        $refOptions: { resolve: { cache: refResolver } },
+      });
+      const emittedNames = collectExportedTypeNames(types);
+      if (!emittedNames.has(typeName)) {
+        throw new Error(`Expected ${typeName} was not emitted from ${ref}`);
+      }
+
+      // Suppress every auxiliary declaration from this compile. Those types
+      // retain their normal first-definition ownership later in generation.
+      const suppressedNames = new Set([...generatedCoreTypes, ...emittedNames].filter(name => name !== typeName));
+      const extractedType = filterDuplicateTypeDefinitions(types, suppressedNames);
+      if (!new RegExp(`^export (?:type|interface) ${typeName}\\b`, 'm').test(extractedType)) {
+        throw new Error(`Unable to isolate ${typeName} from ${ref}`);
+      }
+      generatedCoreTypes.add(typeName);
+      coreTypes += `// ${typeName.toUpperCase()} PRIORITY EXTRACTED TYPE\n${extractedType}\n`;
+    } catch (error) {
+      console.error(`❌ Failed to generate priority extracted type ${typeName} (${reason}):`, error.message);
+    }
+  }
+  console.log(`✅ Generated ${PRIORITY_EXTRACTED_TYPES.length} priority extracted types`);
 
   for (const schemaName of ADCP_CORE_SCHEMAS) {
     try {

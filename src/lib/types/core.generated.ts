@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.2.0-beta.2
-// Generated at: 2026-08-19T05:52:36.208Z
+// Generated at: 2026-08-19T10:59:40.427Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -10183,6 +10183,76 @@ export interface AuthorizationResult {
     message: string;
   };
 }
+// SYNCCREATIVESSUCCESS PRIORITY EXTRACTED TYPE
+/**
+ * Success response - sync operation processed creatives (may include per-item failures)
+ */
+export interface SyncCreativesSuccess {
+  /**
+   * Whether this was a dry run (no actual changes made)
+   */
+  dry_run?: boolean;
+  /**
+   * Results for each creative processed. Items with action='failed' indicate per-item validation/processing failures, not operation-level failures.
+   */
+  creatives: {
+    /**
+     * Creative ID from the request
+     */
+    creative_id: string;
+    account?: Account;
+    action: CreativeAction;
+    status?: CreativeStatus;
+    /**
+     * Platform-specific ID assigned to the creative
+     */
+    platform_id?: string;
+    localization?: CreativeLocalizationReadback;
+    /**
+     * Field names that were modified (only present when action='updated')
+     */
+    changes?: string[];
+    /**
+     * Validation or processing errors (only present when action='failed')
+     */
+    errors?: Error[];
+    /**
+     * Non-fatal warnings about this creative
+     */
+    warnings?: string[];
+    /**
+     * Preview URL for generative creatives (only present for generative formats)
+     */
+    preview_url?: string;
+    /**
+     * ISO 8601 timestamp when preview link expires (only present when preview_url exists)
+     * @format date-time
+     */
+    expires_at?: string;
+    /**
+     * Package IDs this creative was successfully assigned to (only present when assignments were requested)
+     */
+    assigned_to?: string[];
+    /**
+     * Assignment errors by package ID (only present when assignment failures occurred)
+     */
+    assignment_errors?: {
+      /**
+       * Error message for this package assignment
+       *
+       * This interface was referenced by `undefined`'s JSON-Schema definition
+       * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+       */
+      [k: string]: string | undefined;
+    };
+  }[];
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
 // MEDIA-BUY SCHEMA
 /**
  * Pending or rejected operator-identity transition. While present, the top-level operator and operator_unit remain the current canonical identity. Re-read list_accounts until the request is applied (canonical fields change and this object disappears) or rejected.
@@ -20035,26 +20105,6 @@ export interface BuildCreativeAsyncSubmitted {
    * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
    */
   errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Success response - sync operation processed creatives (may include per-item failures)
- */
-export interface SyncCreativesSuccess {
-  /**
-   * Whether this was a dry run (no actual changes made)
-   */
-  dry_run?: boolean;
-  /**
-   * Results for each creative processed. Items with action='failed' indicate per-item validation/processing failures, not operation-level failures.
-   */
-  creatives: {
-  }[];
-  /**
-   * When true, this response contains simulated data from sandbox mode.
-   */
-  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }

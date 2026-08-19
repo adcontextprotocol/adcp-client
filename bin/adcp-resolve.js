@@ -18,6 +18,7 @@
 
 const { resolveAgent, AgentResolverError } = require('../dist/lib/signing/server');
 const { createMCPClient, createA2AClient } = require('../dist/lib/protocols');
+const { writeJsonOutput } = require('./adcp-json-stdout.js');
 
 function parseArgs(argv) {
   const opts = { json: false, fresh: false, quiet: false, protocol: 'mcp', allowPrivateIp: false };
@@ -95,7 +96,7 @@ async function handleResolveCommand(argv) {
       fetchCapabilities,
     });
     if (opts.json) {
-      process.stdout.write(JSON.stringify(serialize(resolution), null, 2) + '\n');
+      await writeJsonOutput(serialize(resolution));
     } else {
       printText(resolution, { quiet: opts.quiet });
     }
@@ -103,18 +104,12 @@ async function handleResolveCommand(argv) {
   } catch (err) {
     if (err instanceof AgentResolverError) {
       if (opts.json) {
-        process.stdout.write(
-          JSON.stringify(
-            {
-              ok: false,
-              code: err.code,
-              message: err.message,
-              detail: err.detail,
-            },
-            null,
-            2
-          ) + '\n'
-        );
+        await writeJsonOutput({
+          ok: false,
+          code: err.code,
+          message: err.message,
+          detail: err.detail,
+        });
       } else {
         process.stderr.write(`✖ ${err.code}\n  ${err.message}\n`);
         for (const [k, v] of Object.entries(err.detail)) {

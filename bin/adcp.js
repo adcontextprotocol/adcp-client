@@ -518,7 +518,7 @@ async function displayAgentInfo(agentConfig, jsonOutput) {
       ...info,
       ...(capabilities && { capabilities }),
     };
-    console.log(JSON.stringify(output, null, 2));
+    await writeJsonOutput(output);
   } else {
     console.log(`\n📋 Agent Information\n`);
     console.log(`Name: ${info.name}`);
@@ -732,7 +732,7 @@ async function handleTestCommand(args) {
         if (useOAuth) {
           // Only error on expired tokens if --oauth flag was explicitly passed
           if (jsonOutput) {
-            console.log(
+            await writeJsonOutput(
               JSON.stringify({
                 success: false,
                 error: 'OAuth tokens expired',
@@ -813,7 +813,7 @@ async function handleTestCommand(args) {
     const result = await runAgentTests(agentUrl, scenario, testOptions);
 
     if (jsonOutput) {
-      console.log(formatTestResultsJSON(result));
+      await writeJsonOutput(formatTestResultsJSON(result));
     } else {
       console.log(formatTestResults(result));
     }
@@ -1224,7 +1224,7 @@ async function maybeRunInlineOAuth(agentArg, args, { jsonOutput } = {}) {
     } catch (err) {
       const hint = `Run: adcp --save-auth ${agentArg} ${saved.url} --oauth to re-register`;
       if (jsonOutput) {
-        console.log(
+        await writeJsonOutput(
           JSON.stringify({
             success: false,
             error: 'oauth_flow_failed',
@@ -1249,7 +1249,7 @@ async function maybeRunInlineOAuth(agentArg, args, { jsonOutput } = {}) {
     // non-zero instead of silently running and failing N minutes later on
     // a 401 from the storyboard runner.
     if (jsonOutput) {
-      console.log(
+      await writeJsonOutput(
         JSON.stringify({
           success: false,
           error: 'oauth_requires_alias',
@@ -1627,12 +1627,12 @@ function prepareTestKitComplianceSelection(args, opts) {
   };
 }
 
-function exitTestKitSelectionError(error, jsonOutput) {
+async function exitTestKitSelectionError(error, jsonOutput) {
   const message = error instanceof Error ? error.message : String(error);
   const code = error?.code || 'TEST_KIT_LOAD_FAILED';
   const details = error?.details || {};
   if (jsonOutput) {
-    process.stdout.write(`${JSON.stringify({ success: false, error: { code, message, ...details } })}\n`);
+    await writeJsonOutput(JSON.stringify({ success: false, error: { code, message, ...details } }));
   } else {
     console.error(`ERROR: ${message}`);
   }
@@ -2643,7 +2643,7 @@ async function handleStoryboardRun(args) {
     args = prepared.args;
     opts = prepared.opts;
   } catch (err) {
-    exitTestKitSelectionError(err, jsonOutput);
+    await exitTestKitSelectionError(err, jsonOutput);
   }
 
   ({
@@ -4907,7 +4907,7 @@ EXAMPLES:
     const report = await checker.check();
 
     if (jsonOutput) {
-      console.log(JSON.stringify(report, null, 2));
+      await writeJsonOutput(report);
       process.exit(report.summary.totalIssues > 0 ? 1 : 0);
       return;
     }
@@ -5087,7 +5087,7 @@ EXAMPLES:
   });
 
   if (jsonOutput) {
-    console.log(JSON.stringify(report, null, 2));
+    await writeJsonOutput(report);
     process.exit(hasLikelyHypothesis(report) ? 1 : 0);
   }
 
@@ -5215,7 +5215,8 @@ async function main() {
   // Handle subcommands before global --help so their own --help works
   if (args[0] === 'registry') {
     const code = await handleRegistryCommand(args.slice(1));
-    process.exit(code);
+    process.exitCode = code;
+    return;
   }
 
   if (args[0] === 'test') {
@@ -6364,7 +6365,7 @@ credential material — never sync or commit.
         await mcpClient.close();
 
         if (jsonOutput) {
-          console.log(JSON.stringify({ tools: toolsResult.tools, protocol: 'mcp', oauth: true }, null, 2));
+          await writeJsonOutput({ tools: toolsResult.tools, protocol: 'mcp', oauth: true });
         } else {
           console.log(`\n📋 Agent Information (OAuth)\n`);
           console.log(`Protocol: MCP`);
@@ -6544,20 +6545,14 @@ credential material — never sync or commit.
         }
 
         if (jsonOutput) {
-          console.log(
-            JSON.stringify(
-              {
-                data: resultData,
-                metadata: {
-                  protocol: 'mcp',
-                  responseTimeMs: responseTime,
-                  oauth: true,
-                },
-              },
-              null,
-              2
-            )
-          );
+          await writeJsonOutput({
+            data: resultData,
+            metadata: {
+              protocol: 'mcp',
+              responseTimeMs: responseTime,
+              oauth: true,
+            },
+          });
         } else {
           console.log('\n✅ SUCCESS\n');
           console.log('Response:');
@@ -6612,7 +6607,7 @@ credential material — never sync or commit.
 
           // Output webhook response
           if (jsonOutput) {
-            console.log(JSON.stringify(webhookResponse.result || webhookResponse, null, 2));
+            await writeJsonOutput(webhookResponse.result || webhookResponse);
           } else {
             console.log('\n✅ ASYNC RESPONSE RECEIVED\n');
             console.log('Response:');
@@ -6650,26 +6645,20 @@ credential material — never sync or commit.
     if (result.success) {
       if (jsonOutput) {
         // Raw JSON output - include protocol metadata and warnings
-        console.log(
-          JSON.stringify(
-            {
-              data: result.data,
-              metadata: {
-                taskId: result.metadata.taskId,
-                protocol: result.metadata.agent.protocol,
-                responseTimeMs: result.metadata.responseTimeMs,
-                ...(result.conversation &&
-                  result.conversation.length > 0 && {
-                    protocolMessage: extractProtocolMessage(result.conversation, result.metadata.agent.protocol),
-                    contextId: result.metadata.taskId, // Using taskId as context identifier
-                  }),
-              },
-              ...(deprecationWarnings.length > 0 && { warnings: deprecationWarnings }),
-            },
-            null,
-            2
-          )
-        );
+        await writeJsonOutput({
+          data: result.data,
+          metadata: {
+            taskId: result.metadata.taskId,
+            protocol: result.metadata.agent.protocol,
+            responseTimeMs: result.metadata.responseTimeMs,
+            ...(result.conversation &&
+              result.conversation.length > 0 && {
+                protocolMessage: extractProtocolMessage(result.conversation, result.metadata.agent.protocol),
+                contextId: result.metadata.taskId, // Using taskId as context identifier
+              }),
+          },
+          ...(deprecationWarnings.length > 0 && { warnings: deprecationWarnings }),
+        });
       } else {
         // Pretty output
         console.log('\n✅ SUCCESS\n');
@@ -6760,20 +6749,14 @@ credential material — never sync or commit.
 
       if (!canAutoBrowse) {
         if (jsonOutput) {
-          console.log(
-            JSON.stringify(
-              {
-                error: {
-                  code: error.code,
-                  subCode: error.subCode,
-                  message: error.message,
-                  requirements: error.requirements,
-                },
-              },
-              null,
-              2
-            )
-          );
+          await writeJsonOutput({
+            error: {
+              code: error.code,
+              subCode: error.subCode,
+              message: error.message,
+              requirements: error.requirements,
+            },
+          });
         } else {
           console.error('\n🔐 Agent requires OAuth authorization.');
           console.error(`   Authorization server: ${safe(error.requirements.authorizationServer) ?? '(unknown)'}`);
@@ -6895,16 +6878,10 @@ credential material — never sync or commit.
             }
 
             if (jsonOutput) {
-              console.log(
-                JSON.stringify(
-                  {
-                    data: resultData,
-                    metadata: { protocol: 'mcp', responseTimeMs: responseTime, oauth: true },
-                  },
-                  null,
-                  2
-                )
-              );
+              await writeJsonOutput({
+                data: resultData,
+                metadata: { protocol: 'mcp', responseTimeMs: responseTime, oauth: true },
+              });
             } else {
               console.log('\n✅ SUCCESS\n');
               console.log('Response:');
@@ -6921,7 +6898,7 @@ credential material — never sync or commit.
             await mcpClient.close();
 
             if (jsonOutput) {
-              console.log(JSON.stringify({ tools: toolsResult.tools, protocol: 'mcp', oauth: true }, null, 2));
+              await writeJsonOutput({ tools: toolsResult.tools, protocol: 'mcp', oauth: true });
             } else {
               console.log(`\n📋 Agent Information (OAuth)\n`);
               console.log(`Protocol: MCP`);
