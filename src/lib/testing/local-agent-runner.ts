@@ -111,10 +111,13 @@ export interface RunAgainstLocalAgentOptions {
 
   /**
    * Extra options forwarded to {@link serve}. `port`, `onListening`,
-   * `publicUrl`, `taskStore`, and `protectedResource` are managed by the
+   * `publicUrl`, `taskStore`, `taskScope`, and `protectedResource` are managed by the
    * helper and values passed here are ignored.
    */
-  serveOptions?: Omit<ServeOptions, 'port' | 'onListening' | 'publicUrl' | 'protectedResource' | 'taskStore'>;
+  serveOptions?: Omit<
+    ServeOptions,
+    'port' | 'onListening' | 'publicUrl' | 'protectedResource' | 'taskStore' | 'taskScope'
+  >;
 
   /**
    * Forwarded to every `runStoryboard` call. `webhook_receiver` is set by
@@ -240,7 +243,11 @@ export async function runAgainstLocalAgent(options: RunAgainstLocalAgentOptions)
   // Bootstrap the factory once with a synthetic host so seeding and
   // fixture preparation run before the server ever binds. `serve()` will
   // pass the real per-request host when it calls the factory again.
-  const ctx: ServeContext = { taskStore, host: '' };
+  const ctx: ServeContext = {
+    taskStore,
+    host: '',
+    idempotencyScope: JSON.stringify(['local-agent-bootstrap', mountPath]),
+  };
 
   let auth: TestAuthorizationServer | undefined;
   let httpServer: HttpServer | undefined;

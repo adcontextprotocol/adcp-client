@@ -21,6 +21,7 @@
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { PARSE_ERROR, isJsonContentType } from '@modelcontextprotocol/server';
 import { hostHeaderValidation, originValidation } from '@modelcontextprotocol/node';
+import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server as HttpServer } from 'http';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { TaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/interfaces.js';
@@ -34,8 +35,14 @@ import {
   respondUnauthorized,
   signatureErrorCodeFromCause,
 } from './auth';
-import { ADCP_PRE_TRANSPORT, ADCP_INSTRUCTIONS_FN, type AdcpPreTransport } from './create-adcp-server';
-import { isAdcpServer, type AdcpServer } from './adcp-server';
+import {
+  ADCP_PRE_TRANSPORT,
+  ADCP_INSTRUCTIONS_FN,
+  ADCP_SERVE_IDEMPOTENCY_SCOPE,
+  type AdcpPreTransport,
+} from './create-adcp-server';
+import { ADCP_TASK_MESSAGE_QUEUE } from './tasks';
+import { getSdkServer, isAdcpServer, type AdcpServer } from './adcp-server';
 import { createModernMcpServerAdapter } from './mcp-modern-server';
 
 /**
@@ -63,6 +70,12 @@ export interface ServeContext {
    * `publicUrl` / `protectedResource` resolver functions.
    */
   host: string;
+  /**
+   * Stable, server-controlled endpoint identity used for persistence scopes.
+   * Prefer this over `host` for idempotency or ownership keys because raw Host
+   * port suffixes are client-controlled.
+   */
+  idempotencyScope: string;
 }
 
 /**
@@ -156,6 +169,35 @@ export interface ServeOptions {
   taskStore?: TaskStore;
 
   /**
+   * Bind all TaskStore operations for a request to a stable, server-controlled
+   * scope derived from the authenticated principal. Use this with shared
+   * persistent task stores when the legacy HTTP transport is stateless.
+   *
+   * The resolver's third argument is the canonical, server-controlled endpoint
+   * scope (not the raw Host header). It requires {@link authenticate}, must return a non-empty
+   * string, and cannot be combined with `reuseAgent` because a reused MCP
+   * server retains the TaskStore supplied when it was first constructed. It
+   * also cannot be combined with a `TaskMessageQueue`: queued messages do not
+   * carry the principal scope and could otherwise cross ownership boundaries.
+   * The factory must return a server built by `createAdcpServer()` or
+   * `createTaskCapableServer()` so queue absence can be verified; directly
+   * constructed raw `McpServer` instances fail closed.
+   * An explicit scope-enforcing {@link taskStore} is required because the
+   * SDK's default in-memory store ignores session IDs. Client-supplied MCP
+   * session IDs are ignored by the scoped facade.
+   *
+   * @example
+   * ```ts
+   * serve(createAgent, {
+   *   authenticate: verifyBearer({ jwksUri, issuer, audience }),
+   *   taskStore: new PostgresTaskStore(pool),
+   *   taskScope: taskScopeFromPrincipal,
+   * });
+   * ```
+   */
+  taskScope?: (principal: AuthPrincipal, request: IncomingMessage, endpointScope: string) => string;
+
+  /**
    * Canonical public URL of this MCP endpoint (e.g. `https://my-agent.example.com/mcp`).
    * Required when `protectedResource` is configured — the RFC 9728 `resource`
    * field, the RFC 6750 `resource_metadata` URL on 401 challenges, and the
@@ -167,7 +209,8 @@ export interface ServeOptions {
    *
    * **Multi-host.** Pass a function `(host) => string` when one process
    * fronts multiple hostnames (white-label publishers, multi-brand
-   * adapters). The resolver must be side-effect-free and idempotent. Its
+   * adapters). The resolver receives a lowercased, WHATWG-canonical hostname
+   * with no port and must be side-effect-free and idempotent. Its
    * returned URL is cached in a 128-host process-local LRU and used as the RFC 9728 `resource`, the 401-challenge
    * `resource_metadata`, and the JWT audience for that host. Each
    * resolved URL's path must match the mount path, same as the static
@@ -311,6 +354,58 @@ export interface ServeOptions {
  * @returns The http.Server instance. Use the `onListening` callback or
  *   listen for the 'listening' event to know when it's ready.
  */
+async function closeRejectedAgent(agentServer: AdcpServer | McpServer): Promise<void> {
+  try {
+    await agentServer.close();
+  } catch (err) {
+    const errName = err instanceof Error ? err.name : 'UnknownError';
+    console.error(`[adcp/serve] failed to close rejected agent: ${errName}`);
+  }
+}
+
+function bindTaskStoreScope(taskStore: TaskStore, scope: string): TaskStore {
+  return {
+    createTask: (taskParams, requestId, request) => taskStore.createTask(taskParams, requestId, request, scope),
+    getTask: taskId => taskStore.getTask(taskId, scope),
+    storeTaskResult: (taskId, status, result) => taskStore.storeTaskResult(taskId, status, result, scope),
+    getTaskResult: taskId => taskStore.getTaskResult(taskId, scope),
+    updateTaskStatus: (taskId, status, statusMessage) =>
+      taskStore.updateTaskStatus(taskId, status, statusMessage, scope),
+    listTasks: cursor => taskStore.listTasks(cursor, scope),
+  };
+}
+
+/**
+ * Build a stable, collision-resistant task scope from the canonical endpoint
+ * scope supplied by `serve()` and the authenticated principal. The tuple is
+ * hashed to keep the value fixed-length before it reaches an indexed database
+ * column and to avoid persisting raw authentication principal material.
+ *
+ * Built-in bearer authentication uses `"unknown"` when a valid token has no
+ * `client_id` or `sub`. Reject that sentinel so identity-less tokens cannot
+ * collapse into one shared task namespace. Custom authenticators must likewise
+ * assign a stable, collision-free principal for every caller allowed to use
+ * persisted tasks. Including the endpoint scope keeps the same principal
+ * isolated when one process and TaskStore serve multiple agents.
+ */
+export function taskScopeFromPrincipal(
+  principal: AuthPrincipal,
+  _request: IncomingMessage,
+  endpointScope: string
+): string {
+  if (
+    typeof principal.principal !== 'string' ||
+    principal.principal.length === 0 ||
+    principal.principal === 'unknown'
+  ) {
+    throw new Error('taskScopeFromPrincipal(): authenticated principal must have a stable non-empty identity');
+  }
+  const digest = createHash('sha256')
+    .update(JSON.stringify([endpointScope, principal.principal]), 'utf8')
+    .digest('hex');
+  return `serve:v1:${digest}`;
+}
+
 export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer, options?: ServeOptions): HttpServer {
   const envPort = process.env.PORT ? parseInt(process.env.PORT, 10) : undefined;
   if (envPort !== undefined && (Number.isNaN(envPort) || envPort < 0 || envPort > 65535)) {
@@ -324,6 +419,22 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
   const maxRequestBytes = options?.maxRequestBytes ?? 2 * 1024 * 1024;
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
     throw new Error('serve(): `maxRequestBytes` must be a positive safe integer');
+  }
+  if (options?.taskScope && !options.authenticate) {
+    throw new Error('serve(): `taskScope` requires `authenticate` so task ownership is server-controlled');
+  }
+  if (options?.taskScope && !options.taskStore) {
+    throw new Error('serve(): `taskScope` requires an explicit scope-enforcing `taskStore`');
+  }
+  if (options?.taskScope && options.taskStore instanceof InMemoryTaskStore) {
+    throw new Error(
+      'serve(): `taskScope` cannot use InMemoryTaskStore because it ignores ownership scopes; provide a scope-enforcing store'
+    );
+  }
+  if (options?.taskScope && reuseAgent) {
+    throw new Error(
+      'serve(): `taskScope` cannot be combined with `reuseAgent`; create a fresh scoped agent per request'
+    );
   }
 
   // Per-instance mutex chain for `reuseAgent: true`. The MCP SDK's
@@ -347,6 +458,7 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
   const protectedResourceOption = options?.protectedResource;
   const publicUrlIsFn = typeof publicUrlOption === 'function';
   const prmIsFn = typeof protectedResourceOption === 'function';
+  const authenticationNeedsRawBody = authenticatorNeedsRawBody(options?.authenticate);
 
   // Static publicUrl — validate once at construction. Function form validates
   // lazily per host so a stale factory for one host can't prevent boot.
@@ -367,17 +479,19 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
   const hostMetadataCache = new Map<string, HostMetadataCacheEntry>();
 
   const getHostMetadata = (host: string): HostMetadataCacheEntry | undefined => {
-    const entry = hostMetadataCache.get(host);
+    const cacheKey = canonicalHostnameForScope(host);
+    const entry = hostMetadataCache.get(cacheKey);
     if (!entry) return undefined;
-    hostMetadataCache.delete(host);
-    hostMetadataCache.set(host, entry);
+    hostMetadataCache.delete(cacheKey);
+    hostMetadataCache.set(cacheKey, entry);
     return entry;
   };
 
   const updateHostMetadata = (host: string, update: HostMetadataCacheEntry): HostMetadataCacheEntry => {
-    const entry = { ...hostMetadataCache.get(host), ...update };
-    hostMetadataCache.delete(host);
-    hostMetadataCache.set(host, entry);
+    const cacheKey = canonicalHostnameForScope(host);
+    const entry = { ...hostMetadataCache.get(cacheKey), ...update };
+    hostMetadataCache.delete(cacheKey);
+    hostMetadataCache.set(cacheKey, entry);
     while (hostMetadataCache.size > MAX_HOST_METADATA_CACHE_ENTRIES) {
       const oldestHost = hostMetadataCache.keys().next().value as string | undefined;
       if (oldestHost === undefined) break;
@@ -391,7 +505,7 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
     if (!publicUrlIsFn) return undefined;
     const cached = getHostMetadata(host);
     if (cached?.publicUrl !== undefined) return cached.publicUrl;
-    const publicUrl = (publicUrlOption as (h: string) => string)(host);
+    const publicUrl = (publicUrlOption as (h: string) => string)(canonicalHostnameForScope(host));
     const publicOrigin = validatePublicUrl(publicUrl, mountPath);
     updateHostMetadata(host, { publicUrl, publicOrigin });
     return publicUrl;
@@ -409,7 +523,9 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
     if (!prmIsFn) return protectedResourceOption as ProtectedResourceMetadata;
     const cached = getHostMetadata(host);
     if (cached?.protectedResource !== undefined) return cached.protectedResource;
-    const protectedResource = (protectedResourceOption as (h: string) => ProtectedResourceMetadata)(host);
+    const protectedResource = (protectedResourceOption as (h: string) => ProtectedResourceMetadata)(
+      canonicalHostnameForScope(host)
+    );
     updateHostMetadata(host, { protectedResource });
     return protectedResource;
   };
@@ -426,8 +542,30 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
   const protectedResourcePath = `/.well-known/oauth-protected-resource${mountPath}`;
 
   const httpServer = createServer(async (req, res) => {
-    const { pathname } = new URL(req.url || '', 'http://localhost');
+    const rawRequestUrl = req.url || '';
+    const requestUrl = new URL(rawRequestUrl, 'http://localhost');
+    const { pathname } = requestUrl;
     const host = resolveHost(req, { trustForwardedHost });
+    const rawMountTarget = rawRequestUrl === mountPath || rawRequestUrl === `${mountPath}/`;
+    const parsedMountTarget = pathname === mountPath || pathname === `${mountPath}/`;
+
+    // `serve()` routes the MCP endpoint by pathname, while RFC 9421 replay
+    // identity correctly includes the full @target-uri. Accepting arbitrary
+    // query variants would therefore let a valid signer create unbounded
+    // replay-cache scopes and bypass the per-scope cap without selecting a
+    // different route. The canonical MCP mount has no query parameters, so
+    // reject them before authentication/signature verification.
+    if (parsedMountTarget && !rawMountTarget) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          error: { code: -32600, message: 'MCP endpoint requires its exact origin-form path' },
+          id: null,
+        })
+      );
+      return;
+    }
 
     // RFC 9728 protected-resource metadata — intentionally auth-free so
     // clients can discover the authorization server before they have a token.
@@ -440,7 +578,7 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
       } catch (err) {
         // Resolve the pair transactionally: a permissive publicUrl resolver
         // must not leave a partial entry when protectedResource rejects host.
-        hostMetadataCache.delete(host);
+        hostMetadataCache.delete(canonicalHostnameForScope(host));
         if (err instanceof UnknownHostError) {
           // Operator signalled "this host isn't in my routing table." 404
           // lets the OAuth grader probe fall through cleanly and doesn't
@@ -473,7 +611,7 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
       return;
     }
 
-    if (pathname === mountPath || pathname === `${mountPath}/`) {
+    if (rawMountTarget) {
       // Resolve per-request `resource_metadata` URL for 401 challenges and
       // the per-host `publicUrl` authenticators read via
       // {@link getServeRequestContext}. Resolving both up front means
@@ -512,6 +650,52 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
         : { host };
       (req as IncomingMessage & { [ADCP_SERVE_REQUEST_CONTEXT]?: ServeRequestContext })[ADCP_SERVE_REQUEST_CONTEXT] =
         serveRequestContext;
+      const idempotencyScope = canonicalServeIdempotencyScope(
+        resolvedPublicUrl,
+        host,
+        mountPath,
+        port === 0 ? req.socket.localPort : port
+      );
+      const preAuthAllowedHosts =
+        options?.allowedHosts ??
+        (authenticationNeedsRawBody || options?.taskScope
+          ? resolvedPublicUrl
+            ? [new URL(resolvedPublicUrl).hostname]
+            : ['localhost', '127.0.0.1', '[::1]']
+          : undefined);
+      const hostGuardApplied = preAuthAllowedHosts !== undefined;
+      if (preAuthAllowedHosts) {
+        const preAuthAllowedOrigins = options?.allowedOrigins ?? preAuthAllowedHosts;
+        // Signature authenticators commit replay nonces during authenticate().
+        // Reject untrusted Host/Origin variants before body verification so
+        // requests that cannot dispatch cannot consume replay capacity.
+        if (
+          !hostHeaderValidation(preAuthAllowedHosts)(req, res) ||
+          !originValidation(preAuthAllowedOrigins)(req, res)
+        ) {
+          return;
+        }
+      }
+      if (
+        authenticationNeedsRawBody &&
+        !signatureAuthorityMatches(
+          req,
+          resolvedPublicUrl,
+          host,
+          port === 0 ? req.socket.localPort : port,
+          trustForwardedHost
+        )
+      ) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            error: { code: -32600, message: 'Signature target authority does not match the canonical endpoint' },
+            id: null,
+          })
+        );
+        return;
+      }
 
       // Body buffering happens at most once per request. An idempotent helper
       // lets the auth path (for signature authenticators) and the preTransport
@@ -535,7 +719,7 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
       // RFC 9421 signature authenticators need `req.rawBody` for Content-Digest
       // recompute, so buffer before authentication runs when the authenticator
       // (or any branch of an anyOf composition) carries the needs-raw-body tag.
-      if (authenticatorNeedsRawBody(options?.authenticate)) {
+      if (authenticationNeedsRawBody) {
         try {
           await ensureRawBody();
         } catch (err) {
@@ -553,6 +737,7 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
       }
 
       // Enforce authentication before transport work.
+      let authenticatedPrincipal: AuthPrincipal | undefined;
       if (options?.authenticate) {
         let principal: AuthPrincipal | null;
         try {
@@ -593,6 +778,7 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
         }
         // Propagate to MCP transport so tool handlers see `extra.authInfo`.
         attachAuthInfo(req, principal);
+        authenticatedPrincipal = principal;
       }
 
       // Create the agent first so we can inspect it for an auto-wired
@@ -602,7 +788,15 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
       // implementations).
       let agentServer: AdcpServer | McpServer;
       try {
-        agentServer = createAgent({ taskStore, host });
+        let requestTaskStore = taskStore;
+        if (options?.taskScope) {
+          const scope = options.taskScope(authenticatedPrincipal!, req, idempotencyScope);
+          if (typeof scope !== 'string' || scope.length === 0) {
+            throw new Error('serve(): `taskScope` must return a non-empty string');
+          }
+          requestTaskStore = bindTaskStoreScope(taskStore, scope);
+        }
+        agentServer = createAgent({ taskStore: requestTaskStore, host, idempotencyScope });
       } catch (err) {
         if (err instanceof UnknownHostError) {
           // Factory signalled "this host isn't routable." 404 keeps the
@@ -617,6 +811,20 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
         // handler as an unhandled rejection (async callback), which
         // could crash a node process with `--unhandled-rejections=strict`.
         console.error('[adcp/serve] factory threw:', err);
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Internal server error' }));
+        }
+        return;
+      }
+      const taskMessageQueueState = (agentServer as unknown as Record<symbol, unknown>)[ADCP_TASK_MESSAGE_QUEUE];
+      if (options?.taskScope && taskMessageQueueState !== false) {
+        const reason =
+          taskMessageQueueState === true
+            ? 'the server has a TaskMessageQueue, whose messages cannot be bound to the authenticated principal scope'
+            : 'the raw server does not expose the SDK queue-absence marker; build it with createAdcpServer() or createTaskCapableServer()';
+        console.error(`[adcp/serve] refusing taskScope because ${reason}`);
+        await closeRejectedAgent(agentServer);
         if (!res.headersSent) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Internal server error' }));
@@ -642,6 +850,7 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
             'The function fires once per agent instance lifetime (at MCP initialize) and would not re-evaluate on subsequent sessions under server reuse. ' +
             hint
         );
+        await closeRejectedAgent(agentServer);
         if (!res.headersSent) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(
@@ -653,11 +862,48 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
         }
         return;
       }
+      const frameworkAgent = isAdcpServer(agentServer) ? agentServer : undefined;
+      if (frameworkAgent && !hostGuardApplied) {
+        const defaultAllowedHosts = resolvedPublicUrl
+          ? [new URL(resolvedPublicUrl).hostname]
+          : ['localhost', '127.0.0.1', '[::1]'];
+        const allowedHosts = options?.allowedHosts ?? defaultAllowedHosts;
+        const allowedOrigins = options?.allowedOrigins ?? allowedHosts;
+        // Validate before signed-request middleware. The verifier's replay
+        // scope includes @target-uri, so allowing a rejected Host to reach it
+        // would let a valid signer consume replay capacity with arbitrary
+        // Host variants that never dispatch.
+        if (!hostHeaderValidation(allowedHosts)(req, res) || !originValidation(allowedOrigins)(req, res)) {
+          if (!reuseAgent) await agentServer.close();
+          return;
+        }
+      }
       const attached = (agentServer as unknown as Record<symbol, unknown>)[ADCP_PRE_TRANSPORT];
       const autoWiredPreTransport = typeof attached === 'function' ? (attached as AdcpPreTransport) : undefined;
       const activePreTransport = explicitPreTransport ?? autoWiredPreTransport;
 
       if (activePreTransport) {
+        if (
+          activePreTransport === autoWiredPreTransport &&
+          !signatureAuthorityMatches(
+            req,
+            resolvedPublicUrl,
+            host,
+            port === 0 ? req.socket.localPort : port,
+            trustForwardedHost
+          )
+        ) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              error: { code: -32600, message: 'Signature target authority does not match the canonical endpoint' },
+              id: null,
+            })
+          );
+          if (!reuseAgent) await agentServer.close();
+          return;
+        }
         try {
           await ensureRawBody();
           const handled = await activePreTransport(req as import('http').IncomingMessage & { rawBody?: string }, res);
@@ -690,7 +936,11 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
       // request — no shared instance, no lock needed.
       const runTransportCycle = async (): Promise<void> => {
         let modernAdapter: ReturnType<typeof createModernMcpServerAdapter> | undefined;
+        const frameworkSdkServer = frameworkAgent ? getSdkServer(frameworkAgent) : undefined;
         try {
+          if (frameworkSdkServer) {
+            (frameworkSdkServer as unknown as Record<symbol, unknown>)[ADCP_SERVE_IDEMPOTENCY_SCOPE] = idempotencyScope;
+          }
           // The official v2 classifier and Node adapter both need the parsed
           // body after auth/signing middleware may have drained the stream.
           // Buffer once, then pass the same parsed value to whichever era owns
@@ -726,17 +976,6 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
           // surface (resources, prompts, custom handlers, Tasks extras).
           // Only the framework-owned AdcpServer can be mirrored losslessly
           // onto the 2026-07-28 tool transport.
-          const frameworkAgent = isAdcpServer(agentServer) ? agentServer : undefined;
-          if (frameworkAgent) {
-            const defaultAllowedHosts = resolvedPublicUrl
-              ? [new URL(resolvedPublicUrl).hostname]
-              : ['localhost', '127.0.0.1', '[::1]'];
-            const allowedHosts = options?.allowedHosts ?? defaultAllowedHosts;
-            const allowedOrigins = options?.allowedOrigins ?? allowedHosts;
-            if (!hostHeaderValidation(allowedHosts)(req, res)) return;
-            if (!originValidation(allowedOrigins)(req, res)) return;
-          }
-
           let legacyRequest = true;
           if (frameworkAgent) {
             modernAdapter = createModernMcpServerAdapter(frameworkAgent);
@@ -765,6 +1004,9 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
             res.end(JSON.stringify({ error: 'Internal server error' }));
           }
         } finally {
+          if (frameworkSdkServer) {
+            delete (frameworkSdkServer as unknown as Record<symbol, unknown>)[ADCP_SERVE_IDEMPOTENCY_SCOPE];
+          }
           await modernAdapter?.close();
           // close() here releases the transport AND (in reuseAgent mode)
           // resets `_transport = undefined` on the cached server so the
@@ -852,11 +1094,22 @@ function validatePublicUrl(publicUrl: string, mountPath: string): string {
   } catch {
     throw new Error(`serve(): \`publicUrl\` is not a valid URL: ${publicUrl}`);
   }
+  if (parsed.username || parsed.password) {
+    throw new Error('serve(): `publicUrl` must not include username or password credentials');
+  }
+  const loopbackHost =
+    parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '[::1]';
+  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopbackHost)) {
+    throw new Error('serve(): `publicUrl` must use https (http is allowed only for loopback development URLs)');
+  }
   if (trimTrailingSlashes(parsed.pathname) !== trimTrailingSlashes(mountPath)) {
     throw new Error(
       `serve(): \`publicUrl\` path (${parsed.pathname}) must match mount path (${mountPath}). ` +
         'The public URL is the full MCP endpoint URL, including the path.'
     );
+  }
+  if (publicUrl.includes('?') || publicUrl.includes('#')) {
+    throw new Error('serve(): `publicUrl` must not include query parameters or a fragment');
   }
   return parsed.origin;
 }
@@ -995,6 +1248,87 @@ function firstHeaderValue(value: string | string[] | undefined): string | undefi
   if (typeof value === 'string') return value;
   if (Array.isArray(value) && value.length > 0) return value[0];
   return undefined;
+}
+
+function canonicalServeIdempotencyScope(
+  publicUrl: string | undefined,
+  host: string,
+  mountPath: string,
+  listeningPort: number | undefined
+): string {
+  const canonicalPath = trimTrailingSlashes(mountPath) || '/';
+  if (publicUrl) {
+    const parsed = new URL(publicUrl);
+    // Keep the routed hostname in the tuple even when publicUrl is static.
+    // A single serve() instance may allow several hosts and branch its agent
+    // factory on each one; a static advertised URL must not collapse those
+    // logical agents into one replay namespace. `hostname()` deliberately
+    // removes only the client-controlled port spelling.
+    // Function-form resolvers receive a canonical hostname with no
+    // client-controlled port. Preserve the resolver's returned origin so an
+    // explicitly configured non-default public port remains part of the
+    // server-controlled replay namespace.
+    const canonicalOrigin = parsed.origin;
+    return JSON.stringify([`${canonicalOrigin}${canonicalPath}`, canonicalHostnameForScope(host)]);
+  }
+
+  // Without an explicit public URL, bind the scope to server-controlled
+  // listener configuration plus the normalized hostname. Ignore the
+  // client-controlled Host port: spelling the same endpoint with arbitrary
+  // port suffixes must not mint fresh replay namespaces.
+  return JSON.stringify([canonicalHostnameForScope(host), listeningPort ?? null, canonicalPath]);
+}
+
+function canonicalHostnameForScope(host: string): string {
+  try {
+    // Match the WHATWG hostname normalization used by the MCP SDK's Host
+    // allowlist (percent-decoding, IPv4 shorthand expansion, IPv6
+    // canonicalization) so two spellings accepted as the same host cannot
+    // create distinct persistence namespaces.
+    return new URL(`http://${host}`).hostname.toLowerCase();
+  } catch {
+    // Host validation rejects malformed values before framework dispatch.
+    // Retain a deterministic value here for raw McpServer factories, which do
+    // not use the framework-owned Host guard.
+    return hostname(host).toLowerCase();
+  }
+}
+
+function signatureAuthorityMatches(
+  req: IncomingMessage,
+  publicUrl: string | undefined,
+  resolvedHost: string,
+  listeningPort: number | undefined,
+  trustForwardedHost: boolean
+): boolean {
+  const encrypted = (req.socket as { encrypted?: boolean } | undefined)?.encrypted === true;
+  const fallbackProtocol = encrypted ? 'https:' : 'http:';
+  const expected = publicUrl
+    ? new URL(publicUrl)
+    : new URL(
+        `${fallbackProtocol}//${canonicalHostnameForScope(resolvedHost)}${listeningPort == null ? '' : `:${listeningPort}`}/`
+      );
+  const incomingAuthority = trustForwardedHost ? resolvedHost : firstHeaderValue(req.headers.host);
+  if (!incomingAuthority) return false;
+
+  let incoming: URL;
+  try {
+    incoming = new URL(`${expected.protocol}//${incomingAuthority}/`);
+  } catch {
+    return false;
+  }
+  if (incoming.hostname !== expected.hostname || effectivePort(incoming) !== effectivePort(expected)) return false;
+
+  const forwardedProto = firstHeaderValue(req.headers['x-forwarded-proto']);
+  if (forwardedProto && `${forwardedProto.toLowerCase().replace(/:$/, '')}:` !== expected.protocol) return false;
+  return true;
+}
+
+function effectivePort(url: URL): string {
+  if (url.port) return url.port;
+  if (url.protocol === 'https:') return '443';
+  if (url.protocol === 'http:') return '80';
+  return '';
 }
 
 function attachAuthInfo(req: IncomingMessage, principal: AuthPrincipal): void {

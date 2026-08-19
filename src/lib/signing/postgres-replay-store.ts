@@ -14,7 +14,9 @@
  * import { PostgresReplayStore, getReplayStoreMigration } from '@adcp/sdk/signing/server';
  *
  * const pool = new Pool({ connectionString: process.env.DATABASE_URL });
- * await pool.query(getReplayStoreMigration());          // run once at boot
+ * // Run on every deploy before traffic; this idempotently upgrades the
+ * // guarded-insert function as well as creating the table and indexes.
+ * await pool.query(getReplayStoreMigration());
  *
  * const replayStore = new PostgresReplayStore(pool);
  *
@@ -38,37 +40,49 @@ import type { PgQueryable } from '../server/postgres-task-store';
 import type { ReplayInsertResult, ReplayStore } from './replay';
 
 const DEFAULT_TABLE = 'adcp_replay_cache';
+const REPLAY_ISOLATION_SQLSTATE = 'AD001';
 const DEFAULT_CAP = 100_000;
+const LOCK_RETRY_ATTEMPTS = 40;
 const VALID_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
+const MAX_TABLE_NAME_LENGTH = 40;
+const MAX_UNIX_SECONDS = 253_402_300_799; // 9999-12-31T23:59:59Z
+
+function assertValidTableName(tableName: string): void {
+  if (!VALID_IDENTIFIER.test(tableName) || tableName.length > MAX_TABLE_NAME_LENGTH) {
+    throw new Error(
+      `Invalid table name: "${tableName}". Must match /^[a-z_][a-z0-9_]*$/ and be at most ${MAX_TABLE_NAME_LENGTH} characters.`
+    );
+  }
+}
 
 /**
  * Reject non-finite or out-of-range timestamps before they reach Postgres.
  * `to_timestamp(NaN)` raises a parse error and `to_timestamp(±Infinity)`
  * silently produces an `infinity` timestamp — neither would lapse replay
  * protection, but a buggy `options.now()` injection point could DoS the
- * verifier with PG errors. Bound to JS-safe-integer territory; verifiers
- * pass UNIX seconds, not microseconds, so the upper bound is effectively
- * "year 9999 plus epsilon."
+ * verifier with PG errors. Bound conservatively to year 9999, well within
+ * PostgreSQL's `timestamptz` range and sufficient for UNIX epoch values.
  */
 function assertFiniteSeconds(label: string, value: number): void {
-  if (!Number.isFinite(value) || value < 0 || value > Number.MAX_SAFE_INTEGER) {
+  if (!Number.isFinite(value) || value < 0 || value > MAX_UNIX_SECONDS) {
     throw new TypeError(`PostgresReplayStore: ${label} must be a finite non-negative number; received ${value}`);
   }
 }
 
+function replayDatabaseError(operation: string, cause: unknown): Error {
+  return new Error(`PostgresReplayStore.${operation}: database operation failed`, { cause });
+}
+
 export interface PostgresReplayStoreOptions {
-  /** Table name. Lowercase letters, digits, underscores only. Defaults to `adcp_replay_cache`. */
+  /** Table name. Lowercase letters, digits, underscores; at most 40 characters. Defaults to `adcp_replay_cache`. */
   tableName?: string;
   /**
    * Max retained (unexpired) nonces per `(keyid, scope)` pair before
    * `insert` returns `'rate_abuse'`. Mirrors `InMemoryReplayStore`'s
    * `maxEntriesPerKeyid`. Defaults to 100,000.
    *
-   * The cap is **best-effort** under concurrency: two simultaneous inserts
-   * at `cap-1` can both observe `n = cap-1` from the same MVCC snapshot
-   * and both insert, briefly overshooting by one. This matches
-   * `InMemoryReplayStore` semantics — the cap is a soft DoS guard, not a
-   * hard invariant.
+   * Inserts for the same `(keyid, scope)` are serialized with a PostgreSQL
+   * advisory lock, so the cap remains a hard invariant under concurrency.
    */
   cap?: number;
 }
@@ -82,15 +96,14 @@ export interface PostgresReplayStoreOptions {
 export const REPLAY_CACHE_MIGRATION: string = renderReplayStoreMigration(DEFAULT_TABLE);
 
 /**
- * Generate the SQL DDL for the replay-cache table. Idempotent — safe to
- * run on existing tables. Run once at server startup, before constructing
- * `PostgresReplayStore`.
+ * Generate the SQL DDL for the replay-cache table and guarded-insert function.
+ * Idempotent — rerun on every deploy before constructing
+ * `PostgresReplayStore`, including for existing tables.
  *
  * Schema:
- * - `(keyid, scope, nonce)` is the primary key, so concurrent inserts of
- *   the same tuple serialize against the unique index — the second insert
- *   silently fails via `ON CONFLICT DO NOTHING`, which the adapter detects
- *   to return `'replayed'`.
+ * - `(keyid, scope, nonce)` is the primary key. A table-specific function
+ *   serializes each `(keyid, scope)` with a transaction advisory lock, checks
+ *   replay and cap precedence, and recycles expired same-nonce rows atomically.
  * - `expires_at` carries the per-row TTL since Postgres has no native TTL.
  *   Lookups filter `expires_at > now()`; expired rows are deleted by the
  *   exported {@link sweepExpiredReplays} helper which callers schedule
@@ -101,9 +114,7 @@ export function getReplayStoreMigration(tableName: string = DEFAULT_TABLE): stri
 }
 
 function renderReplayStoreMigration(tableName: string): string {
-  if (!VALID_IDENTIFIER.test(tableName)) {
-    throw new Error(`Invalid table name: "${tableName}". Must match /^[a-z_][a-z0-9_]*$/.`);
-  }
+  assertValidTableName(tableName);
   return `
     CREATE TABLE IF NOT EXISTS ${tableName} (
       keyid       TEXT NOT NULL,
@@ -118,6 +129,70 @@ function renderReplayStoreMigration(tableName: string): string {
 
     CREATE INDEX IF NOT EXISTS idx_${tableName}_keyid_scope_active
       ON ${tableName}(keyid, scope, expires_at);
+
+    -- Keep the lock, replay check, cap check, and insert on one PostgreSQL
+    -- backend even when the caller uses a query-only pool or PgBouncer. The
+    -- transaction-scoped lock is released automatically at commit/rollback;
+    -- as a VOLATILE PL/pgSQL function, each SQL command receives the current
+    -- READ COMMITTED snapshot after the lock has been acquired.
+    CREATE OR REPLACE FUNCTION ${tableName}_insert_guarded(
+      p_keyid TEXT,
+      p_scope TEXT,
+      p_nonce TEXT,
+      p_now DOUBLE PRECISION,
+      p_expires_at DOUBLE PRECISION,
+      p_cap BIGINT
+    ) RETURNS TEXT
+    LANGUAGE plpgsql
+    VOLATILE
+    AS $adcp_replay_guard$
+    DECLARE
+      active_count BIGINT;
+    BEGIN
+      IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION
+          'adcp replay insertion requires READ COMMITTED transaction isolation'
+          USING ERRCODE = '${REPLAY_ISOLATION_SQLSTATE}';
+      END IF;
+
+      IF NOT pg_try_advisory_xact_lock(
+        hashtextextended(jsonb_build_array(p_keyid, p_scope)::text, 0)
+      ) THEN
+        RETURN 'lock_busy';
+      END IF;
+
+      IF EXISTS (
+        SELECT 1 FROM ${tableName}
+        WHERE keyid = p_keyid
+          AND scope = p_scope
+          AND nonce = p_nonce
+          AND expires_at > to_timestamp(p_now)
+      ) THEN
+        RETURN 'replayed';
+      END IF;
+
+      SELECT count(*) INTO active_count
+      FROM ${tableName}
+      WHERE keyid = p_keyid
+        AND scope = p_scope
+        AND expires_at > to_timestamp(p_now);
+
+      IF active_count >= p_cap THEN
+        RETURN 'rate_abuse';
+      END IF;
+
+      INSERT INTO ${tableName} (keyid, scope, nonce, expires_at)
+      VALUES (p_keyid, p_scope, p_nonce, to_timestamp(p_expires_at))
+      ON CONFLICT (keyid, scope, nonce) DO UPDATE
+        SET expires_at = EXCLUDED.expires_at
+        WHERE ${tableName}.expires_at <= to_timestamp(p_now);
+
+      IF FOUND THEN
+        RETURN 'ok';
+      END IF;
+      RETURN 'replayed';
+    END
+    $adcp_replay_guard$;
   `;
 }
 
@@ -128,17 +203,27 @@ export class PostgresReplayStore implements ReplayStore {
 
   constructor(db: PgQueryable, options: PostgresReplayStoreOptions = {}) {
     const tableName = options.tableName ?? DEFAULT_TABLE;
-    if (!VALID_IDENTIFIER.test(tableName)) {
-      throw new Error(`Invalid table name: "${tableName}". Must match /^[a-z_][a-z0-9_]*$/.`);
-    }
+    assertValidTableName(tableName);
     this.db = db;
     this.tableName = tableName;
     this.cap = options.cap ?? DEFAULT_CAP;
+    if (!Number.isSafeInteger(this.cap) || this.cap <= 0) {
+      throw new Error(`PostgresReplayStore: cap must be a positive safe integer. Got ${this.cap}.`);
+    }
+  }
+
+  private async query(operation: string, text: string, values?: unknown[]): ReturnType<PgQueryable['query']> {
+    try {
+      return await this.db.query(text, values);
+    } catch (err) {
+      throw replayDatabaseError(operation, err);
+    }
   }
 
   async has(keyid: string, scope: string, nonce: string, now: number): Promise<boolean> {
     assertFiniteSeconds('now', now);
-    const result = await this.db.query(
+    const result = await this.query(
+      'has',
       `SELECT 1 FROM ${this.tableName}
        WHERE keyid = $1 AND scope = $2 AND nonce = $3 AND expires_at > to_timestamp($4)
        LIMIT 1`,
@@ -149,7 +234,8 @@ export class PostgresReplayStore implements ReplayStore {
 
   async isCapHit(keyid: string, scope: string, now: number): Promise<boolean> {
     assertFiniteSeconds('now', now);
-    const result = await this.db.query(
+    const result = await this.query(
+      'isCapHit',
       `SELECT count(*)::bigint AS active FROM ${this.tableName}
        WHERE keyid = $1 AND scope = $2 AND expires_at > to_timestamp($3)`,
       [keyid, scope, now]
@@ -162,9 +248,9 @@ export class PostgresReplayStore implements ReplayStore {
   }
 
   /**
-   * Atomically check replay → cap → insert in a single MVCC-snapshotted
-   * statement. Result precedence matches `InMemoryReplayStore`: replay
-   * wins over rate_abuse wins over ok.
+   * Atomically check replay → cap → insert inside the migration-installed
+   * PostgreSQL function. Result precedence matches `InMemoryReplayStore`:
+   * replay wins over rate_abuse wins over ok.
    *
    * Recycles expired rows in place via `ON CONFLICT DO UPDATE WHERE
    * existing-is-expired`. Without that, a same-nonce insert *after* the
@@ -173,12 +259,13 @@ export class PostgresReplayStore implements ReplayStore {
    * prunes expired entries before the existence check, so we have to
    * achieve the same semantics here without a separate prune step.
    *
-   * The `RETURNING 1` is empty when (a) the cap blocked the insert
-   * (`WHERE` clause filtered the conditional INSERT to zero rows) or
-   * (b) the concurrent-same-nonce race lost — another transaction
-   * inserted the same `(keyid, scope, nonce)` between this statement's
-   * snapshot and our `ON CONFLICT`. Both branches are handled by the
-   * outer `CASE`.
+   * The function tries a transaction-scoped advisory lock before it reads.
+   * Busy scopes retry outside the query, releasing pooled connections between
+   * attempts so one hot signer cannot starve unrelated persistence work. Keeping
+   * each attempt server-side preserves connection affinity for pools, transaction
+   * wrappers, and transaction-pooling proxies alike. The function fails closed
+   * outside READ COMMITTED, where an outer transaction's stale snapshot could
+   * otherwise outlive a lock wait.
    */
   async insert(
     keyid: string,
@@ -190,40 +277,52 @@ export class PostgresReplayStore implements ReplayStore {
     assertFiniteSeconds('now', now);
     assertFiniteSeconds('ttlSeconds', ttlSeconds);
     const expiresAt = now + ttlSeconds;
-    const result = await this.db.query(
-      `WITH
-        existing AS (
-          SELECT 1 FROM ${this.tableName}
-          WHERE keyid = $1 AND scope = $2 AND nonce = $3 AND expires_at > to_timestamp($4)
-        ),
-        active AS (
-          SELECT count(*)::bigint AS n FROM ${this.tableName}
-          WHERE keyid = $1 AND scope = $2 AND expires_at > to_timestamp($4)
-        ),
-        upsert AS (
-          INSERT INTO ${this.tableName} (keyid, scope, nonce, expires_at)
-          SELECT $1, $2, $3, to_timestamp($5)
-          WHERE NOT EXISTS (SELECT 1 FROM existing)
-            AND (SELECT n FROM active) < $6::bigint
-          ON CONFLICT (keyid, scope, nonce) DO UPDATE
-            SET expires_at = EXCLUDED.expires_at
-            WHERE ${this.tableName}.expires_at <= to_timestamp($4)
-          RETURNING 1
-        )
-      SELECT
-        CASE
-          WHEN EXISTS (SELECT 1 FROM existing) THEN 'replayed'
-          WHEN (SELECT n FROM active) >= $6::bigint THEN 'rate_abuse'
-          WHEN EXISTS (SELECT 1 FROM upsert) THEN 'ok'
-          ELSE 'replayed'
-        END AS result`,
-      [keyid, scope, nonce, now, expiresAt, this.cap]
-    );
-    const row = result.rows[0] as { result: ReplayInsertResult } | undefined;
-    if (!row) {
-      throw new Error('PostgresReplayStore.insert: query returned no rows');
+    assertFiniteSeconds('expiresAt', expiresAt);
+    for (let attempt = 0; attempt <= LOCK_RETRY_ATTEMPTS; attempt++) {
+      let result: Awaited<ReturnType<PgQueryable['query']>>;
+      try {
+        result = await this.db.query(
+          `SELECT ${this.tableName}_insert_guarded($1, $2, $3, $4, $5, $6)::text AS result`,
+          [keyid, scope, nonce, now, expiresAt, this.cap]
+        );
+      } catch (err) {
+        if (typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '42883') {
+          throw new Error(
+            `PostgresReplayStore database migration is outdated: rerun getReplayStoreMigration("${this.tableName}") before serving traffic.`,
+            { cause: err }
+          );
+        }
+        if (typeof err === 'object' && err !== null && (err as { code?: unknown }).code === REPLAY_ISOLATION_SQLSTATE) {
+          throw new Error('PostgresReplayStore.insert requires READ COMMITTED transaction isolation.', {
+            cause: err,
+          });
+        }
+        throw replayDatabaseError('insert', err);
+      }
+
+      const row = result.rows[0] as { result?: unknown } | undefined;
+      if (!row) {
+        throw new Error('PostgresReplayStore.insert: query returned no rows');
+      }
+      const guardedResult = row.result;
+      if (
+        guardedResult !== 'ok' &&
+        guardedResult !== 'replayed' &&
+        guardedResult !== 'rate_abuse' &&
+        guardedResult !== 'lock_busy'
+      ) {
+        throw new Error('PostgresReplayStore.insert: guarded database function returned an unexpected value');
+      }
+      if (guardedResult !== 'lock_busy') return guardedResult;
+      if (attempt === LOCK_RETRY_ATTEMPTS) {
+        throw new Error('PostgresReplayStore.insert: replay scope remained busy after bounded lock retries');
+      }
+
+      // Linear bounded backoff with small jitter avoids a lock-step retry herd.
+      const delayMs = Math.min(2 + attempt, 10) + Math.floor(Math.random() * 3);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
     }
-    return row.result;
+    throw new Error('PostgresReplayStore.insert: exhausted replay lock retries');
   }
 }
 
@@ -263,21 +362,30 @@ export async function sweepExpiredReplays(
   options: SweepExpiredReplaysOptions = {}
 ): Promise<{ deleted: number }> {
   const tableName = options.tableName ?? DEFAULT_TABLE;
-  if (!VALID_IDENTIFIER.test(tableName)) {
-    throw new Error(`Invalid table name: "${tableName}". Must match /^[a-z_][a-z0-9_]*$/.`);
-  }
+  assertValidTableName(tableName);
   const now = options.now ?? Math.floor(Date.now() / 1000);
   const batchSize = options.batchSize;
+  assertFiniteSeconds('sweep now', now);
+  if (batchSize !== undefined && (!Number.isSafeInteger(batchSize) || batchSize <= 0)) {
+    throw new TypeError('PostgresReplayStore: sweep batchSize must be a positive safe integer');
+  }
 
   if (batchSize === undefined) {
-    const result = await db.query(`DELETE FROM ${tableName} WHERE expires_at <= to_timestamp($1)`, [now]);
+    let result: Awaited<ReturnType<PgQueryable['query']>>;
+    try {
+      result = await db.query(`DELETE FROM ${tableName} WHERE expires_at <= to_timestamp($1)`, [now]);
+    } catch (err) {
+      throw replayDatabaseError('sweepExpiredReplays', err);
+    }
     return { deleted: result.rowCount ?? 0 };
   }
   // Bounded sweep — use a CTE to delete only `batchSize` rows. Useful when
   // the table has accumulated a long tail and a single DELETE would
   // hold a long table lock.
-  const result = await db.query(
-    `WITH expired AS (
+  let result: Awaited<ReturnType<PgQueryable['query']>>;
+  try {
+    result = await db.query(
+      `WITH expired AS (
       SELECT keyid, scope, nonce
       FROM ${tableName}
       WHERE expires_at <= to_timestamp($1)
@@ -287,8 +395,12 @@ export async function sweepExpiredReplays(
     USING expired
     WHERE ${tableName}.keyid = expired.keyid
       AND ${tableName}.scope = expired.scope
-      AND ${tableName}.nonce = expired.nonce`,
-    [now, batchSize]
-  );
+      AND ${tableName}.nonce = expired.nonce
+      AND ${tableName}.expires_at <= to_timestamp($1)`,
+      [now, batchSize]
+    );
+  } catch (err) {
+    throw replayDatabaseError('sweepExpiredReplays', err);
+  }
   return { deleted: result.rowCount ?? 0 };
 }

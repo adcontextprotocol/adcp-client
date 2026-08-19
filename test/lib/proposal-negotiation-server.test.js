@@ -21,11 +21,26 @@ const request = (key, proposalId = 'source-1') => ({
   refinements: [{ proposal_id: proposalId, action: 'finalize' }],
 });
 
-async function call(server, name, args, clientId) {
-  return server.dispatchTestRequest(
-    { method: 'tools/call', params: { name, arguments: args } },
-    clientId ? { authInfo: { token: 'redacted', clientId, scopes: [] } } : undefined
-  );
+async function call(server, name, args, clientId, serveScope) {
+  const sdkServer = server[Symbol.for('@adcp/client.sdkServer')];
+  const serveScopeSymbol = Symbol.for('@adcp/client.serveIdempotencyScope');
+  if (serveScope) sdkServer[serveScopeSymbol] = serveScope;
+  try {
+    return await server.dispatchTestRequest(
+      { method: 'tools/call', params: { name, arguments: args } },
+      clientId
+        ? {
+            authInfo: {
+              token: 'redacted',
+              clientId,
+              scopes: [],
+            },
+          }
+        : undefined
+    );
+  } finally {
+    if (serveScope) delete sdkServer[serveScopeSymbol];
+  }
 }
 
 function negotiationServer(onCall, options = {}) {
@@ -65,6 +80,23 @@ function negotiationServer(onCall, options = {}) {
 }
 
 describe('refine_proposals server integration', () => {
+  test('idempotency replays are isolated by the canonical serve host', async () => {
+    let handlerCalls = 0;
+    const server = negotiationServer(() => {
+      handlerCalls += 1;
+    });
+    const args = request('host_scoped_key_123456');
+
+    const first = await call(server, 'refine_proposals', args, 'buyer-a', 'seller-a.example.com');
+    const sameHostReplay = await call(server, 'refine_proposals', args, 'buyer-a', 'seller-a.example.com');
+    const otherHost = await call(server, 'refine_proposals', args, 'buyer-a', 'seller-b.example.com');
+
+    assert.equal(first.isError, undefined);
+    assert.equal(sameHostReplay.structuredContent.replayed, true);
+    assert.equal(otherHost.structuredContent.replayed, undefined);
+    assert.equal(handlerCalls, 2);
+  });
+
   test('modern platform seam auto-pins to an advertised 3.2 release', async () => {
     const server = createAdcpServerFromPlatform(
       {

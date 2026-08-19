@@ -47,6 +47,9 @@ describe('PostgresReplayStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' 
     assert.ok(sql.includes('PRIMARY KEY (keyid, scope, nonce)'));
     assert.ok(sql.includes('idx_adcp_replay_cache_expires_at'));
     assert.ok(sql.includes('idx_adcp_replay_cache_keyid_scope_active'));
+    assert.ok(sql.includes('adcp_replay_cache_insert_guarded'));
+    assert.ok(sql.includes("ERRCODE = 'AD001'"));
+    assert.ok(sql.includes('pg_try_advisory_xact_lock'));
   });
 
   test('custom table name flows through migration and queries', async () => {
@@ -67,6 +70,15 @@ describe('PostgresReplayStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' 
     assert.throws(() => getReplayStoreMigration('DROP TABLE; --'), /Invalid table name/);
     assert.throws(() => new PostgresReplayStore(pool, { tableName: 'Mixed' }), /Invalid table name/);
     assert.throws(() => new PostgresReplayStore(pool, { tableName: '1bad' }), /Invalid table name/);
+    assert.doesNotThrow(() => getReplayStoreMigration(`t${'x'.repeat(39)}`));
+    assert.throws(() => getReplayStoreMigration(`t${'x'.repeat(40)}`), /at most 40 characters/);
+  });
+
+  test('rejects invalid caps', () => {
+    for (const cap of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+      assert.throws(() => new PostgresReplayStore(pool, { cap }), /cap must be a positive safe integer/);
+    }
+    assert.doesNotThrow(() => new PostgresReplayStore(pool, { cap: Number.MAX_SAFE_INTEGER }));
   });
 
   // ====== Core insert / has / replay-vs-rate_abuse ======
@@ -238,6 +250,43 @@ describe('PostgresReplayStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' 
     assert.strictEqual(second.deleted, 2);
   });
 
+  test('bounded sweep preserves a nonce refreshed while its delete waits', async () => {
+    const refreshClient = await pool.connect();
+    const sweepClient = await pool.connect();
+    const store = new PostgresReplayStore(pool);
+    const refreshStore = new PostgresReplayStore(refreshClient);
+    const now = 1_700_000_850;
+
+    try {
+      await store.insert('kid-A', 'https://seller/op', 'refresh-race', 30, now);
+
+      await refreshClient.query('BEGIN');
+      assert.strictEqual(await refreshStore.insert('kid-A', 'https://seller/op', 'refresh-race', 600, now + 60), 'ok');
+
+      const sweep = sweepExpiredReplays(sweepClient, { now: now + 60, batchSize: 10 });
+      let waiting = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const activity = await pool.query('SELECT wait_event_type FROM pg_stat_activity WHERE pid = $1', [
+          sweepClient.processID,
+        ]);
+        if (activity.rows[0]?.wait_event_type === 'Lock') {
+          waiting = true;
+          break;
+        }
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.strictEqual(waiting, true, 'the sweep must reach the row lock before refresh commits');
+
+      await refreshClient.query('COMMIT');
+      assert.deepStrictEqual(await sweep, { deleted: 0 });
+      assert.strictEqual(await store.has('kid-A', 'https://seller/op', 'refresh-race', now + 60), true);
+    } finally {
+      await refreshClient.query('ROLLBACK').catch(() => {});
+      refreshClient.release();
+      sweepClient.release();
+    }
+  });
+
   // ====== Concurrency ======
 
   test('concurrent inserts of the same nonce — exactly one returns ok, others return replayed', async () => {
@@ -252,6 +301,124 @@ describe('PostgresReplayStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' 
     const replayedCount = results.filter(r => r === 'replayed').length;
     assert.strictEqual(okCount, 1, 'exactly one concurrent insert succeeds');
     assert.strictEqual(replayedCount, 9, 'the rest report replayed');
+  });
+
+  test('concurrent distinct nonces cannot overshoot the per-scope cap', async () => {
+    const cap = 5;
+    // Deliberately expose only query(): atomicity must not depend on a
+    // Pool.connect() escape hatch or client-side connection affinity.
+    const queryOnlyPool = { query: (...args) => pool.query(...args) };
+    const store = new PostgresReplayStore(queryOnlyPool, { cap });
+    const now = 1_700_000_950;
+
+    const results = await Promise.all(
+      Array.from({ length: 25 }, (_, index) =>
+        store.insert('kid-cap-race', 'https://seller/capped-op', `nonce-${index}`, 60, now)
+      )
+    );
+
+    assert.strictEqual(results.filter(result => result === 'ok').length, cap, 'exactly cap inserts may succeed');
+    assert.strictEqual(
+      results.filter(result => result === 'rate_abuse').length,
+      results.length - cap,
+      'every insert beyond the cap must be rejected'
+    );
+    const persisted = await pool.query(
+      `SELECT count(*)::int AS count FROM ${TABLE}
+       WHERE keyid = $1 AND scope = $2 AND expires_at > to_timestamp($3)`,
+      ['kid-cap-race', 'https://seller/capped-op', now]
+    );
+    assert.strictEqual(persisted.rows[0].count, cap, 'the substrate must never retain more than cap active rows');
+  });
+
+  test('transaction-scoped replay lock remains held until an outer transaction commits', async () => {
+    const clientA = await pool.connect();
+    const clientB = await pool.connect();
+    const now = 1_700_000_975;
+    const storeA = new PostgresReplayStore(clientA, { cap: 1 });
+    const storeB = new PostgresReplayStore(clientB, { cap: 1 });
+
+    try {
+      await clientA.query('BEGIN');
+      assert.strictEqual(await storeA.insert('kid-outer-tx', 'https://seller/tx', 'nonce-a', 60, now), 'ok');
+
+      let secondSettled = false;
+      const second = storeB.insert('kid-outer-tx', 'https://seller/tx', 'nonce-b', 60, now).finally(() => {
+        secondSettled = true;
+      });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      assert.strictEqual(secondSettled, false, 'the next insert waits for the first transaction to commit');
+
+      await clientA.query('COMMIT');
+      assert.strictEqual(await second, 'rate_abuse');
+    } finally {
+      await clientA.query('ROLLBACK').catch(() => {});
+      clientA.release();
+      clientB.release();
+    }
+  });
+
+  test('same-scope lock contention does not starve unrelated scopes in the shared pool', async () => {
+    const lockHolder = await pool.connect();
+    const now = 1_700_000_977;
+    const heldStore = new PostgresReplayStore(lockHolder, { cap: 1 });
+    const pooledStore = new PostgresReplayStore(pool, { cap: 1 });
+
+    try {
+      await lockHolder.query('BEGIN');
+      assert.strictEqual(await heldStore.insert('kid-hot', 'https://seller/hot', 'held', 60, now), 'ok');
+
+      const hotWaiters = Promise.all(
+        Array.from({ length: 20 }, (_, index) =>
+          pooledStore.insert('kid-hot', 'https://seller/hot', `waiting-${index}`, 60, now)
+        )
+      );
+      const unrelated = await Promise.race([
+        pooledStore.insert('kid-cold', 'https://seller/cold', 'unrelated', 60, now),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('unrelated scope was starved')), 250)),
+      ]);
+      assert.strictEqual(unrelated, 'ok');
+
+      await lockHolder.query('COMMIT');
+      assert.ok((await hotWaiters).every(result => result === 'rate_abuse'));
+    } finally {
+      await lockHolder.query('ROLLBACK').catch(() => {});
+      lockHolder.release();
+    }
+  });
+
+  test('exhausted lock retries fail as backend contention, not signer rate abuse', async () => {
+    const lockHolder = await pool.connect();
+    const now = 1_700_000_978;
+    const heldStore = new PostgresReplayStore(lockHolder, { cap: 10 });
+    const contender = new PostgresReplayStore(pool, { cap: 10 });
+
+    try {
+      await lockHolder.query('BEGIN');
+      assert.strictEqual(await heldStore.insert('kid-busy', 'https://seller/busy', 'held', 60, now), 'ok');
+      await assert.rejects(
+        () => contender.insert('kid-busy', 'https://seller/busy', 'contender', 60, now),
+        /remained busy after bounded lock retries/
+      );
+    } finally {
+      await lockHolder.query('ROLLBACK').catch(() => {});
+      lockHolder.release();
+    }
+  });
+
+  test('fails closed when an outer transaction uses a stale-snapshot isolation level', async () => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+      const store = new PostgresReplayStore(client);
+      await assert.rejects(
+        () => store.insert('kid-repeatable-read', 'https://seller/tx', 'nonce-a', 60, 1_700_000_980),
+        /requires READ COMMITTED/
+      );
+    } finally {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release();
+    }
   });
 
   // ====== Wiring with the verifier ======
@@ -425,4 +592,116 @@ describe('PostgresReplayStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' 
       err => err instanceof RequestSignatureError && err.code === 'request_signature_replayed'
     );
   });
+});
+
+test('missing guarded-insert migration produces an actionable error', async () => {
+  const { PostgresReplayStore } = require('../../dist/lib/signing/server.js');
+  const missingFunction = Object.assign(new Error('internal database details'), { code: '42883' });
+  const store = new PostgresReplayStore({
+    query: async () => {
+      throw missingFunction;
+    },
+  });
+
+  await assert.rejects(store.insert('kid', 'scope', 'nonce', 60, 1_700_000_000), error => {
+    assert.match(error.message, /rerun getReplayStoreMigration/);
+    assert.strictEqual(error.cause, missingFunction);
+    return true;
+  });
+});
+
+test('non-READ-COMMITTED transactions produce a sanitized actionable error', async () => {
+  const { PostgresReplayStore } = require('../../dist/lib/signing/server.js');
+  const isolationError = Object.assign(new Error('postgres://secret-host/internal_replay_table'), {
+    code: 'AD001',
+  });
+  const store = new PostgresReplayStore({
+    query: async () => {
+      throw isolationError;
+    },
+  });
+
+  await assert.rejects(
+    () => store.insert('kid', 'scope', 'nonce', 60, 1_700_000_000),
+    error => {
+      assert.strictEqual(error.message, 'PostgresReplayStore.insert requires READ COMMITTED transaction isolation.');
+      assert.doesNotMatch(error.message, /secret-host|internal_replay_table/);
+      assert.strictEqual(error.cause, isolationError);
+      return true;
+    }
+  );
+});
+
+test('unexpected guarded-insert results fail closed', async () => {
+  const { PostgresReplayStore } = require('../../dist/lib/signing/server.js');
+  const store = new PostgresReplayStore({
+    query: async () => ({ rows: [{ result: null }], rowCount: 1 }),
+  });
+
+  await assert.rejects(
+    store.insert('kid', 'scope', 'nonce', 60, 1_700_000_000),
+    /guarded database function returned an unexpected value/
+  );
+});
+
+test('PostgresReplayStore rejects expiry overflow before querying PostgreSQL', async () => {
+  const { PostgresReplayStore } = require('../../dist/lib/signing/server.js');
+  let queryCalls = 0;
+  const store = new PostgresReplayStore({
+    query: async () => {
+      queryCalls++;
+      throw new Error('query should not run');
+    },
+  });
+
+  await assert.rejects(store.insert('kid', 'scope', 'nonce', 0, Number.MAX_SAFE_INTEGER), /now must be/);
+  await assert.rejects(store.insert('kid', 'scope', 'nonce', Number.MAX_SAFE_INTEGER, 0), /ttlSeconds must be/);
+  await assert.rejects(store.insert('kid', 'scope', 'nonce', 1, 253_402_300_799), /expiresAt must be/);
+  assert.strictEqual(queryCalls, 0);
+});
+
+test('sweepExpiredReplays rejects invalid time and batch size before querying PostgreSQL', async () => {
+  const { sweepExpiredReplays } = require('../../dist/lib/signing/server.js');
+  let queryCalls = 0;
+  const db = {
+    query: async () => {
+      queryCalls++;
+      throw new Error('query should not run');
+    },
+  };
+
+  for (const now of [-1, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER]) {
+    await assert.rejects(sweepExpiredReplays(db, { now }), /sweep now must be a finite non-negative number/);
+  }
+  for (const batchSize of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+    await assert.rejects(sweepExpiredReplays(db, { now: 1_700_000_000, batchSize }), /positive safe integer/);
+  }
+  assert.strictEqual(queryCalls, 0);
+});
+
+test('PostgresReplayStore redacts driver errors from every database operation', async () => {
+  const { PostgresReplayStore, sweepExpiredReplays } = require('../../dist/lib/signing/server.js');
+  const driverError = Object.assign(new Error('postgres://secret-host/internal_replay_table'), { code: 'XX000' });
+  const db = {
+    query: async () => {
+      throw driverError;
+    },
+  };
+  const store = new PostgresReplayStore(db);
+  const operations = [
+    () => store.has('kid', 'scope', 'nonce', 1_700_000_000),
+    () => store.isCapHit('kid', 'scope', 1_700_000_000),
+    () => store.insert('kid', 'scope', 'nonce', 60, 1_700_000_000),
+    () => sweepExpiredReplays(db, { now: 1_700_000_000 }),
+    () => sweepExpiredReplays(db, { now: 1_700_000_000, batchSize: 10 }),
+  ];
+
+  for (const operation of operations) {
+    await assert.rejects(operation, error => {
+      assert.match(error.message, /^PostgresReplayStore\.[A-Za-z]+: database operation failed$/);
+      assert.doesNotMatch(error.message, /secret-host|internal_replay_table/);
+      assert.strictEqual(error.cause, driverError);
+      return true;
+    });
+  }
 });

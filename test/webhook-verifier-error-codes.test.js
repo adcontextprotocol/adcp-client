@@ -469,6 +469,47 @@ describe('webhook verifier: step 9a / 13 rate_abuse', () => {
     assert.strictEqual(thrown.failedStep, 9);
   });
 
+  test('replay pre-check takes precedence when the cap is also hit', async () => {
+    const cappedReplayStore = {
+      has: async () => true,
+      isCapHit: async () => true,
+      insert: async () => 'ok',
+    };
+    let thrown;
+    try {
+      await runWithStore(cappedReplayStore);
+    } catch (err) {
+      thrown = err;
+    }
+    assert.ok(thrown instanceof WebhookSignatureError);
+    assert.strictEqual(thrown.code, 'webhook_signature_replayed');
+    assert.strictEqual(thrown.failedStep, 12);
+  });
+
+  test('rechecks replay when a concurrent same-nonce insert fills the cap', async () => {
+    let hasCalls = 0;
+    let insertCalls = 0;
+    const racyCappedStore = {
+      has: async () => ++hasCalls === 2,
+      isCapHit: async () => true,
+      insert: async () => {
+        insertCalls += 1;
+        return 'ok';
+      },
+    };
+    let thrown;
+    try {
+      await runWithStore(racyCappedStore);
+    } catch (err) {
+      thrown = err;
+    }
+    assert.ok(thrown instanceof WebhookSignatureError);
+    assert.strictEqual(thrown.code, 'webhook_signature_replayed');
+    assert.strictEqual(thrown.failedStep, 12);
+    assert.strictEqual(hasCalls, 2);
+    assert.strictEqual(insertCalls, 0);
+  });
+
   test('insert returns rate_abuse at commit phase', async () => {
     const commitStore = {
       has: async () => false,

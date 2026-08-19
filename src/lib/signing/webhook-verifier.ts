@@ -230,24 +230,34 @@ export async function verifyWebhookSignature(
   // reuse for both pre-check and commit.
   const replayScope = canonicalTargetUri(request.url);
 
-  // Step 9a: per-keyid rate abuse. Distinct code from step 12's replay —
-  // cap exhaustion is a compromised-key / misconfig signal that SHOULD
-  // alert operators, not "same nonce twice."
-  if (await options.replayStore.isCapHit(jwk.kid, replayScope, now)) {
-    throw new WebhookSignatureError(
-      'webhook_signature_rate_abuse',
-      9,
-      `Per-keyid replay cache cap exceeded for keyid=${jwk.kid}.`
-    );
-  }
-
   // Pre-check step 12's replay before crypto so a replayed nonce short-
-  // circuits an expensive Ed25519/ECDSA verify.
+  // circuits an expensive Ed25519/ECDSA verify. Replay precedes the cap
+  // check to match every replay store's atomic insert result precedence.
   if (await options.replayStore.has(jwk.kid, replayScope, parsedInput.params.nonce, now)) {
     throw new WebhookSignatureError(
       'webhook_signature_replayed',
       12,
       `Replay of (keyid=${jwk.kid}, nonce=${parsedInput.params.nonce}) within signature window.`
+    );
+  }
+
+  // Step 9a: per-keyid rate abuse. Distinct code from step 12's replay —
+  // cap exhaustion is a compromised-key / misconfig signal that SHOULD
+  // alert operators for new nonces.
+  if (await options.replayStore.isCapHit(jwk.kid, replayScope, now)) {
+    // A concurrent request may have committed this nonce after the first
+    // replay probe and filled the cap. Preserve replay-over-cap precedence.
+    if (await options.replayStore.has(jwk.kid, replayScope, parsedInput.params.nonce, now)) {
+      throw new WebhookSignatureError(
+        'webhook_signature_replayed',
+        12,
+        `Replay of (keyid=${jwk.kid}, nonce=${parsedInput.params.nonce}) within signature window.`
+      );
+    }
+    throw new WebhookSignatureError(
+      'webhook_signature_rate_abuse',
+      9,
+      `Per-keyid replay cache cap exceeded for keyid=${jwk.kid}.`
     );
   }
 

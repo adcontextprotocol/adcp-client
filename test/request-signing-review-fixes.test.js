@@ -460,6 +460,57 @@ describe('verifier: kid consistency + replay TTL floor (protocol/security findin
     );
     assert.strictEqual(stillPresentMuchLater, true);
   });
+
+  test('replay pre-check takes precedence when the per-scope cap is also hit', async () => {
+    const req = buildReq({ keyid: 'test-ed25519-2026' });
+    const replayStore = {
+      has: async () => true,
+      isCapHit: async () => true,
+      insert: async () => 'ok',
+    };
+
+    await assert.rejects(
+      verifyRequestSignature(req, {
+        capability: { supported: true, covers_content_digest: 'either', required_for: ['create_media_buy'] },
+        jwks: new StaticJwksResolver([publicJwk]),
+        replayStore,
+        revocationStore: new InMemoryRevocationStore(),
+        now: () => 1776520800,
+        operation: 'create_media_buy',
+        adcpVersion: '3.1',
+      }),
+      err => err instanceof RequestSignatureError && err.code === 'request_signature_replayed'
+    );
+  });
+
+  test('rechecks replay when a concurrent same-nonce insert fills the cap', async () => {
+    const req = buildReq({ keyid: 'test-ed25519-2026' });
+    let hasCalls = 0;
+    let insertCalls = 0;
+    const replayStore = {
+      has: async () => ++hasCalls === 2,
+      isCapHit: async () => true,
+      insert: async () => {
+        insertCalls += 1;
+        return 'ok';
+      },
+    };
+
+    await assert.rejects(
+      verifyRequestSignature(req, {
+        capability: { supported: true, covers_content_digest: 'either', required_for: ['create_media_buy'] },
+        jwks: new StaticJwksResolver([publicJwk]),
+        replayStore,
+        revocationStore: new InMemoryRevocationStore(),
+        now: () => 1776520800,
+        operation: 'create_media_buy',
+        adcpVersion: '3.1',
+      }),
+      err => err instanceof RequestSignatureError && err.code === 'request_signature_replayed'
+    );
+    assert.strictEqual(hasCalls, 2);
+    assert.strictEqual(insertCalls, 0);
+  });
 });
 
 describe('middleware: rawBody + failed_step hardening (security findings)', () => {

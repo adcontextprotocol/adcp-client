@@ -28,6 +28,7 @@ import type { PgQueryable } from '../../postgres-task-store';
 
 const DEFAULT_TABLE = 'adcp_idempotency';
 const VALID_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
+const MAX_TABLE_NAME_LENGTH = 48;
 
 export interface PgBackendOptions {
   /** Table name. Must be lowercase letters/digits/underscores. Defaults to `"adcp_idempotency"`. */
@@ -41,10 +42,16 @@ export interface PgBackendOptions {
  * have to happen here.
  */
 function quoteIdent(name: string): string {
-  if (!VALID_IDENTIFIER.test(name)) {
-    throw new Error(`Invalid SQL identifier "${name}": must match ${VALID_IDENTIFIER}`);
+  if (!VALID_IDENTIFIER.test(name) || name.length > MAX_TABLE_NAME_LENGTH) {
+    throw new Error(
+      `Invalid SQL identifier "${name}": must match ${VALID_IDENTIFIER} and be at most ${MAX_TABLE_NAME_LENGTH} characters`
+    );
   }
   return `"${name}"`;
+}
+
+function pgDatabaseError(operation: string, cause: unknown): Error {
+  return new Error(`pgBackend.${operation}: database operation failed`, { cause });
 }
 
 /**
@@ -86,6 +93,24 @@ export const IDEMPOTENCY_MIGRATION = getIdempotencyMigration();
  * table name. Run `getIdempotencyMigration()` once per deployment to
  * create the table.
  *
+ * **Multi-agent namespace.** The official `serve()` path automatically adds
+ * its canonical host to the idempotency principal before this backend sees a
+ * key. Low-level integrations that bypass `serve()` and can receive the same
+ * principal/key on multiple logical agents MUST use distinct `tableName`
+ * values (or separate schemas/databases). Construct one store per logical
+ * agent and pass the matching store to that agent's server factory:
+ *
+ * ```ts
+ * await pool.query(getIdempotencyMigration({ tableName: 'seller_a_idempotency' }));
+ * const sellerAIdempotency = createIdempotencyStore({
+ *   backend: pgBackend(pool, { tableName: 'seller_a_idempotency' }),
+ * });
+ * ```
+ *
+ * Reusing one table without an equivalent trusted host discriminator can
+ * replay one agent's cached response on another when their server-controlled
+ * principal and buyer key collide.
+ *
  * **Startup probe.** Call `store.probe()` (or `probeIdempotencyStore(store)`)
  * before your server starts accepting traffic to catch a bad `DATABASE_URL`
  * at boot rather than on the first mutating request. Wire it via:
@@ -108,24 +133,33 @@ export function pgBackend(db: PgQueryable, options: PgBackendOptions = {}): Idem
   // tableName is trusted SDK config (compile-time / startup), not user input —
   // quoteIdent validates the identifier shape and is safe to interpolate.
   const table = quoteIdent(options.tableName ?? DEFAULT_TABLE);
+  const query = async (operation: string, text: string, values?: unknown[]): ReturnType<PgQueryable['query']> => {
+    try {
+      return await db.query(text, values);
+    } catch (err) {
+      throw pgDatabaseError(operation, err);
+    }
+  };
 
   return {
     async probe(): Promise<void> {
       try {
         await db.query(`SELECT 1 FROM ${table} LIMIT 0`);
       } catch (err) {
-        const cause = err instanceof Error ? err.message : String(err);
         throw new Error(
           `idempotency backend probe failed: cannot reach the "${options.tableName ?? DEFAULT_TABLE}" table. ` +
             `The pool is unreachable or the table has not been migrated — the server would advertise ` +
             `IdempotencySupported but every mutating call would fail. ` +
-            `Run getIdempotencyMigration() to create the table, or check DATABASE_URL. Cause: ${cause}`
+            `Run getIdempotencyMigration() to create the table, or check DATABASE_URL. ` +
+            `See server logs for the underlying cause.`,
+          { cause: err }
         );
       }
     },
 
     async get(scopedKey: string): Promise<IdempotencyCacheEntry | null> {
-      const result = await db.query(
+      const result = await query(
+        'get',
         `SELECT payload_hash, response, EXTRACT(EPOCH FROM expires_at)::BIGINT AS expires_at FROM ${table} WHERE scoped_key = $1`,
         [scopedKey]
       );
@@ -139,7 +173,8 @@ export function pgBackend(db: PgQueryable, options: PgBackendOptions = {}): Idem
     },
 
     async put(scopedKey: string, entry: IdempotencyCacheEntry): Promise<void> {
-      await db.query(
+      await query(
+        'put',
         `INSERT INTO ${table} (scoped_key, payload_hash, response, expires_at)
          VALUES ($1, $2, $3::jsonb, TO_TIMESTAMP($4))
          ON CONFLICT (scoped_key) DO UPDATE SET
@@ -153,7 +188,8 @@ export function pgBackend(db: PgQueryable, options: PgBackendOptions = {}): Idem
     async putIfAbsent(scopedKey: string, entry: IdempotencyCacheEntry): Promise<boolean> {
       // Insert only if absent OR the existing row is expired — this lets a
       // stale claim from a crashed handler be reclaimed on retry.
-      const result = await db.query(
+      const result = await query(
+        'putIfAbsent',
         `INSERT INTO ${table} (scoped_key, payload_hash, response, expires_at)
          VALUES ($1, $2, $3::jsonb, TO_TIMESTAMP($4))
          ON CONFLICT (scoped_key) DO UPDATE SET
@@ -168,7 +204,7 @@ export function pgBackend(db: PgQueryable, options: PgBackendOptions = {}): Idem
     },
 
     async delete(scopedKey: string): Promise<void> {
-      await db.query(`DELETE FROM ${table} WHERE scoped_key = $1`, [scopedKey]);
+      await query('delete', `DELETE FROM ${table} WHERE scoped_key = $1`, [scopedKey]);
     },
   };
 }
@@ -179,6 +215,11 @@ export function pgBackend(db: PgQueryable, options: PgBackendOptions = {}): Idem
  */
 export async function cleanupExpiredIdempotency(db: PgQueryable, options: PgBackendOptions = {}): Promise<number> {
   const table = quoteIdent(options.tableName ?? DEFAULT_TABLE);
-  const result = await db.query(`DELETE FROM ${table} WHERE expires_at < NOW()`);
+  let result: Awaited<ReturnType<PgQueryable['query']>>;
+  try {
+    result = await db.query(`DELETE FROM ${table} WHERE expires_at < NOW()`);
+  } catch (err) {
+    throw pgDatabaseError('cleanupExpiredIdempotency', err);
+  }
   return result.rowCount ?? 0;
 }

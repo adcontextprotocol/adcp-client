@@ -53,10 +53,16 @@ proposal-manager framework must wire the same durable idempotency store used
 by their other commercial mutations.
 
 SDK 14 also hardens replay-cache isolation by including the tool and trusted
-resolved session/account identity in canonical replay identity. Existing-tool
-cache keys retain both their SDK 13 scope and bare `authInfo.clientId`
-principal format, so an older durable entry cannot be missed and executed
-twice during a rolling upgrade. The new 3.2 compact mutation tools instead use
+resolved session/account identity in canonical replay identity. The original
+SDK 14 key shape retained the SDK 13 scope and bare `authInfo.clientId`
+principal format. The PostgreSQL security hardening release additionally
+prefixes requests served through `serve()` with a canonical endpoint scope;
+that stronger key does not match pre-upgrade durable entries. Before deploying
+that release, stop accepting mutations, drain in-flight work, and wait at least
+the full configured replay TTL after the last accepted mutation (or migrate or
+dual-read the old keyspace). Upgrade all instances together: a mixed rolling
+deployment can execute the same retry once under each key shape. The new 3.2
+compact mutation tools use
 credential-kind-prefixed principals such as `oauth:<client_id>`,
 `api_key:<key_id>`, or `agent:<agent_url>` and do not fall back to session or
 account identity. Those tools have no SDK 13 cache entries to migrate.

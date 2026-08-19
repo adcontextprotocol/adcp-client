@@ -238,7 +238,7 @@ export type {
   SeedFixtureCache,
 } from './test-controller';
 
-export { serve, UnknownHostError, hostname, resolveHost } from './serve';
+export { serve, taskScopeFromPrincipal, UnknownHostError, hostname, resolveHost } from './serve';
 export type { ServeContext, ServeOptions, ProtectedResourceMetadata } from './serve';
 
 export { createExpressAdapter } from './express-adapter';

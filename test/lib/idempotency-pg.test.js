@@ -60,10 +60,41 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
     assert.throws(() => getIdempotencyMigration({ tableName: 'DROP TABLE; --' }), /Invalid SQL identifier/);
     assert.throws(() => getIdempotencyMigration({ tableName: '123bad' }), /Invalid SQL identifier/);
     assert.throws(() => getIdempotencyMigration({ tableName: 'MixedCase' }), /Invalid SQL identifier/);
+    assert.doesNotThrow(() => getIdempotencyMigration({ tableName: `t${'x'.repeat(47)}` }));
+    assert.throws(() => getIdempotencyMigration({ tableName: `t${'x'.repeat(48)}` }), /at most 48 characters/);
   });
 
   test('pgBackend constructor rejects invalid table names', () => {
     assert.throws(() => pgBackend(pool, { tableName: 'Robert; DROP TABLE--' }), /Invalid SQL identifier/);
+  });
+
+  test('distinct per-agent tables isolate identical scoped keys', async () => {
+    const agentATable = 'agent_a_idempotency';
+    const agentBTable = 'agent_b_idempotency';
+    await pool.query(`DROP TABLE IF EXISTS ${agentATable}, ${agentBTable} CASCADE`);
+    await pool.query(getIdempotencyMigration({ tableName: agentATable }));
+    await pool.query(getIdempotencyMigration({ tableName: agentBTable }));
+
+    try {
+      const agentA = pgBackend(pool, { tableName: agentATable });
+      const agentB = pgBackend(pool, { tableName: agentBTable });
+      const expiresAt = Math.floor(Date.now() / 1000) + 3600;
+      await agentA.put('same-principal-and-key', {
+        payloadHash: 'agent-a',
+        response: { agent: 'a' },
+        expiresAt,
+      });
+      await agentB.put('same-principal-and-key', {
+        payloadHash: 'agent-b',
+        response: { agent: 'b' },
+        expiresAt,
+      });
+
+      assert.deepEqual((await agentA.get('same-principal-and-key')).response, { agent: 'a' });
+      assert.deepEqual((await agentB.get('same-principal-and-key')).response, { agent: 'b' });
+    } finally {
+      await pool.query(`DROP TABLE IF EXISTS ${agentATable}, ${agentBTable} CASCADE`);
+    }
   });
 
   // ────────── backend primitives ──────────
@@ -282,4 +313,49 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
     const got = await backend.get('p\u001fjson');
     assert.deepEqual(got.response, response);
   });
+});
+
+test('pgBackend probe sanitizes database errors and preserves the original cause', async () => {
+  const { pgBackend } = require('../../dist/lib/server/index.js');
+  const databaseError = new Error('connect ECONNREFUSED 10.0.0.7 password=hunter2');
+  const backend = pgBackend({
+    query: async () => {
+      throw databaseError;
+    },
+  });
+
+  await assert.rejects(backend.probe(), error => {
+    assert.match(error.message, /idempotency backend probe failed/);
+    assert.doesNotMatch(error.message, /ECONNREFUSED|10\.0\.0\.7|hunter2/);
+    assert.strictEqual(error.cause, databaseError);
+    return true;
+  });
+});
+
+test('pgBackend redacts driver errors from every runtime operation', async () => {
+  const { pgBackend, cleanupExpiredIdempotency } = require('../../dist/lib/server/index.js');
+  const driverError = new Error('postgres://secret-host/internal_idempotency_table');
+  const db = {
+    query: async () => {
+      throw driverError;
+    },
+  };
+  const backend = pgBackend(db);
+  const entry = { payloadHash: 'hash', response: {}, expiresAt: 1_700_000_000 };
+  const operations = [
+    () => backend.get('scoped-key'),
+    () => backend.put('scoped-key', entry),
+    () => backend.putIfAbsent('scoped-key', entry),
+    () => backend.delete('scoped-key'),
+    () => cleanupExpiredIdempotency(db),
+  ];
+
+  for (const operation of operations) {
+    await assert.rejects(operation, error => {
+      assert.match(error.message, /^pgBackend\.[A-Za-z]+: database operation failed$/);
+      assert.doesNotMatch(error.message, /secret-host|internal_idempotency_table/);
+      assert.strictEqual(error.cause, driverError);
+      return true;
+    });
+  }
 });

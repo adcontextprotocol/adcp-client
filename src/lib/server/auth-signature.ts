@@ -52,6 +52,7 @@ import {
   type AuthResult,
   type Authenticator,
   authenticatorNeedsRawBody,
+  getServeRequestContext,
   tagAuthenticatorNeedsRawBody,
   tagAuthenticatorPresenceGated,
 } from './auth';
@@ -554,6 +555,14 @@ function nonEmptyHeader(v: string | string[] | undefined): boolean {
 }
 
 function defaultUrl(req: IncomingMessage): string {
+  const serveContext = getServeRequestContext(req);
+  if (serveContext?.publicUrl) {
+    const canonical = new URL(serveContext.publicUrl);
+    // `serve()` restricts requests to the exact origin-form mount target.
+    // Preserve that path while deriving authority and scheme exclusively from
+    // the validated server-owned public URL, never raw proxy headers.
+    return new URL(req.url ?? canonical.pathname, canonical.origin).toString();
+  }
   const forwardedProto = firstHeader(req.headers['x-forwarded-proto']);
   const encrypted = (req.socket as { encrypted?: boolean } | undefined)?.encrypted === true;
   const proto = forwardedProto ?? (encrypted ? 'https' : 'http');

@@ -32,7 +32,9 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
     // Fresh table each run for schema safety
     await pool.query(`DROP TABLE IF EXISTS ${TABLE} CASCADE`);
     await pool.query(MCP_TASKS_MIGRATION);
-    store = new PostgresTaskStore(pool);
+    // Most legacy CRUD tests exercise the explicit trusted-worker/single-tenant
+    // compatibility mode. Session-isolation tests construct the secure default.
+    store = new PostgresTaskStore(pool, { allowUnscopedAccess: true });
   });
 
   afterEach(async () => {
@@ -50,6 +52,11 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
 
   test('default table name is adcp_mcp_tasks', () => {
     assert.ok(MCP_TASKS_MIGRATION.includes('adcp_mcp_tasks'), 'Migration should use adcp_mcp_tasks');
+    assert.ok(MCP_TASKS_MIGRATION.includes('session_id'), 'Migration should scope tasks by MCP session');
+    assert.ok(
+      MCP_TASKS_MIGRATION.includes('task_id         TEXT PRIMARY KEY'),
+      'Task IDs should remain globally unique'
+    );
     assert.ok(MCP_TASKS_MIGRATION.includes('adcp_mcp_tasks_valid_status'), 'Constraint should be namespaced to table');
     assert.ok(MCP_TASKS_MIGRATION.includes('idx_adcp_mcp_tasks_expires_at'), 'Index should be namespaced to table');
   });
@@ -59,13 +66,68 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
     assert.ok(sql.includes('CREATE TABLE IF NOT EXISTS my_tasks'));
     assert.ok(sql.includes('my_tasks_valid_status'));
     assert.ok(sql.includes('idx_my_tasks_expires_at'));
-    assert.ok(sql.includes('idx_my_tasks_created_at'));
+    assert.ok(sql.includes('idx_my_tasks_session_created_at'));
+  });
+
+  test('getMcpTasksMigration upgrades globally-keyed tables without losing legacy tasks', async () => {
+    const legacyTable = 'legacy_tasks';
+    await pool.query(`DROP TABLE IF EXISTS ${legacyTable} CASCADE`);
+    await pool.query(`
+      CREATE TABLE ${legacyTable} (
+        task_id TEXT PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'working',
+        ttl INTEGER,
+        poll_interval INTEGER NOT NULL DEFAULT 1000,
+        status_message TEXT,
+        request_id TEXT NOT NULL,
+        request JSONB NOT NULL,
+        result JSONB,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMPTZ
+      )
+    `);
+    await pool.query(`INSERT INTO ${legacyTable} (task_id, request_id, request) VALUES ('shared-id', '1', $1::jsonb)`, [
+      JSON.stringify(fakeRequest),
+    ]);
+
+    try {
+      await pool.query(getMcpTasksMigration({ tableName: legacyTable }));
+      // The generated migration must also be safe to run repeatedly.
+      await pool.query(getMcpTasksMigration({ tableName: legacyTable }));
+
+      const pk = await pool.query(`
+        SELECT a.attname
+        FROM pg_index i
+        JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS key_column(attnum, ordinality) ON TRUE
+        JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = key_column.attnum
+        WHERE i.indrelid = '${legacyTable}'::regclass AND i.indisprimary
+        ORDER BY key_column.ordinality
+      `);
+      assert.deepStrictEqual(
+        pk.rows.map(row => row.attname),
+        ['task_id']
+      );
+
+      const legacyStore = new PostgresTaskStore(pool, { tableName: legacyTable, allowUnscopedAccess: true });
+      assert.ok(await legacyStore.getTask('shared-id'), 'legacy row should remain addressable by its task ID');
+      assert.strictEqual(await legacyStore.getTask('shared-id', 'session-a'), null);
+      await assert.rejects(
+        () => legacyStore.createTask({ taskId: 'shared-id' }, '2', fakeRequest, 'session-a'),
+        /already exists/,
+        'MCP task IDs remain globally unique after migration'
+      );
+    } finally {
+      await pool.query(`DROP TABLE IF EXISTS ${legacyTable} CASCADE`);
+    }
   });
 
   test('getMcpTasksMigration rejects invalid table names', () => {
     assert.throws(() => getMcpTasksMigration({ tableName: 'DROP TABLE; --' }), /Invalid table name/);
     assert.throws(() => getMcpTasksMigration({ tableName: '123bad' }), /Invalid table name/);
     assert.throws(() => getMcpTasksMigration({ tableName: 'MixedCase' }), /Invalid table name/);
+    assert.doesNotThrow(() => getMcpTasksMigration({ tableName: `t${'x'.repeat(39)}` }));
+    assert.throws(() => getMcpTasksMigration({ tableName: `t${'x'.repeat(40)}` }), /at most 40 characters/);
   });
 
   test('constructor rejects invalid table names', () => {
@@ -77,7 +139,7 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
     await pool.query(`DROP TABLE IF EXISTS ${customTable} CASCADE`);
     await pool.query(getMcpTasksMigration({ tableName: customTable }));
 
-    const customStore = new PostgresTaskStore(pool, { tableName: customTable });
+    const customStore = new PostgresTaskStore(pool, { tableName: customTable, allowUnscopedAccess: true });
     const task = await customStore.createTask({ ttl: 60000 }, '1', fakeRequest);
     assert.ok(task.taskId);
 
@@ -171,6 +233,56 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
     assert.strictEqual(result, null);
   });
 
+  test('task CRUD and listing are isolated by MCP session', async () => {
+    const secureStore = new PostgresTaskStore(pool);
+    await assert.rejects(() => secureStore.createTask({}, '0', fakeRequest), /requires a non-empty MCP session ID/);
+    const taskA = await secureStore.createTask({ taskId: 'session-a-task' }, '1', fakeRequest, 'session-a');
+    const taskB = await secureStore.createTask({ taskId: 'session-b-task' }, '2', fakeRequest, 'session-b');
+
+    assert.strictEqual(await secureStore.getTask(taskA.taskId, 'session-c'), null);
+    assert.strictEqual(await secureStore.getTask(taskB.taskId, 'session-a'), null);
+    await secureStore.updateTaskStatus(taskA.taskId, 'input_required', 'session A only', 'session-a');
+
+    assert.strictEqual((await secureStore.getTask(taskA.taskId, 'session-a')).status, 'input_required');
+    assert.strictEqual((await secureStore.getTask(taskB.taskId, 'session-b')).status, 'working');
+    assert.deepStrictEqual(
+      (await secureStore.listTasks(undefined, 'session-a')).tasks.map(task => task.taskId),
+      [taskA.taskId]
+    );
+    assert.deepStrictEqual(
+      (await secureStore.listTasks(undefined, 'session-b')).tasks.map(task => task.taskId),
+      [taskB.taskId]
+    );
+    assert.deepStrictEqual((await secureStore.listTasks(undefined, 'session-c')).tasks, []);
+
+    await assert.rejects(
+      () => secureStore.storeTaskResult(taskA.taskId, 'completed', { content: [] }, 'session-c'),
+      /not found/
+    );
+
+    await assert.rejects(() => secureStore.getTask(taskA.taskId), /requires a non-empty MCP session ID/);
+    await assert.rejects(
+      () => secureStore.storeTaskResult(taskA.taskId, 'completed', { content: [] }),
+      /requires a non-empty MCP session ID/
+    );
+
+    // A separate trusted worker store can explicitly use task IDs as capabilities.
+    const workerStore = new PostgresTaskStore(pool, { allowUnscopedAccess: true });
+    await workerStore.storeTaskResult(taskA.taskId, 'completed', { content: [] });
+    assert.strictEqual((await workerStore.getTask(taskA.taskId)).status, 'completed');
+  });
+
+  test('unscoped access is an explicit single-tenant opt-in and listing excludes owned tasks', async () => {
+    const singleTenantStore = new PostgresTaskStore(pool, { allowUnscopedAccess: true });
+    const unowned = await singleTenantStore.createTask({}, '1', fakeRequest);
+    await singleTenantStore.createTask({}, '2', fakeRequest, 'owned-session');
+
+    assert.deepStrictEqual(
+      (await singleTenantStore.listTasks()).tasks.map(task => task.taskId),
+      [unowned.taskId]
+    );
+  });
+
   test('storeTaskResult sets status and result', async () => {
     const task = await store.createTask({ ttl: 60000 }, '1', fakeRequest);
 
@@ -231,29 +343,31 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
   // ====== PAGINATION ======
 
   test('listTasks returns tasks ordered by creation time', async () => {
+    const sessionId = 'pagination-session';
     const tasks = [];
     for (let i = 0; i < 3; i++) {
-      tasks.push(await store.createTask({}, String(i), fakeRequest));
+      tasks.push(await store.createTask({}, String(i), fakeRequest, sessionId));
     }
 
-    const { tasks: listed } = await store.listTasks();
+    const { tasks: listed } = await store.listTasks(undefined, sessionId);
     assert.strictEqual(listed.length, 3);
     assert.strictEqual(listed[0].taskId, tasks[0].taskId);
     assert.strictEqual(listed[2].taskId, tasks[2].taskId);
   });
 
   test('listTasks paginates with cursor', async () => {
+    const sessionId = 'pagination-session';
     // Create 15 tasks (more than PAGE_SIZE=10)
     const created = [];
     for (let i = 0; i < 15; i++) {
-      created.push(await store.createTask({}, String(i), fakeRequest));
+      created.push(await store.createTask({}, String(i), fakeRequest, sessionId));
     }
 
-    const page1 = await store.listTasks();
+    const page1 = await store.listTasks(undefined, sessionId);
     assert.strictEqual(page1.tasks.length, 10);
     assert.ok(page1.nextCursor, 'Should have nextCursor');
 
-    const page2 = await store.listTasks(page1.nextCursor);
+    const page2 = await store.listTasks(page1.nextCursor, sessionId);
     assert.strictEqual(page2.tasks.length, 5);
     assert.strictEqual(page2.nextCursor, undefined);
 
@@ -263,7 +377,7 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
   });
 
   test('listTasks with invalid cursor throws', async () => {
-    await assert.rejects(() => store.listTasks('bad-cursor'), /Invalid cursor/);
+    await assert.rejects(() => store.listTasks('bad-cursor', 'pagination-session'), /Invalid cursor/);
   });
 
   // ====== EXPIRATION ======
@@ -282,16 +396,17 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
   });
 
   test('expired tasks are invisible to listTasks', async () => {
+    const sessionId = 'expiry-session';
     // Insert expired task
     await pool.query(
-      `INSERT INTO ${TABLE} (task_id, status, ttl, poll_interval, request_id, request, expires_at)
-       VALUES ('expired-list-1', 'working', 1, 1000, '1', $1, NOW() - interval '1 second')`,
-      [JSON.stringify(fakeRequest)]
+      `INSERT INTO ${TABLE} (task_id, session_id, status, ttl, poll_interval, request_id, request, expires_at)
+       VALUES ('expired-list-1', $1, 'working', 1, 1000, '1', $2, NOW() - interval '1 second')`,
+      [sessionId, JSON.stringify(fakeRequest)]
     );
     // Insert live task
-    await store.createTask({ ttl: null }, '2', fakeRequest);
+    await store.createTask({ ttl: null }, '2', fakeRequest, sessionId);
 
-    const { tasks } = await store.listTasks();
+    const { tasks } = await store.listTasks(undefined, sessionId);
     assert.strictEqual(tasks.length, 1, 'Only live task should be listed');
   });
 
@@ -387,4 +502,64 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
 
     await assert.rejects(() => store.storeTaskResult('expired-store-1', 'completed', { content: [] }), /not found/);
   });
+});
+
+test('PostgresTaskStore rejects invalid timing fields before querying PostgreSQL', async () => {
+  const { PostgresTaskStore } = require('../../dist/lib/index.js');
+  let queryCalls = 0;
+  const store = new PostgresTaskStore(
+    {
+      query: async () => {
+        queryCalls++;
+        throw new Error('query should not run');
+      },
+    },
+    { allowUnscopedAccess: true }
+  );
+  const request = { jsonrpc: '2.0', method: 'tools/call', id: 1, params: { name: 'test' } };
+
+  for (const ttl of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648]) {
+    await assert.rejects(
+      () => store.createTask({ ttl }, '1', request),
+      /ttl must be a non-negative PostgreSQL integer/
+    );
+  }
+  for (const pollInterval of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648]) {
+    await assert.rejects(
+      () => store.createTask({ pollInterval }, '1', request),
+      /pollInterval must be a non-negative PostgreSQL integer/
+    );
+  }
+  assert.strictEqual(queryCalls, 0);
+});
+
+test('PostgresTaskStore redacts database driver errors from every public operation', async () => {
+  const { PostgresTaskStore, cleanupExpiredTasks } = require('../../dist/lib/index.js');
+  const driverError = Object.assign(new Error('postgres://secret-host/internal_table'), { code: 'XX000' });
+  const db = {
+    query: async () => {
+      throw driverError;
+    },
+  };
+  const store = new PostgresTaskStore(db, { allowUnscopedAccess: true });
+  const request = { jsonrpc: '2.0', method: 'tools/call', id: 1, params: { name: 'test' } };
+  const operations = [
+    () => store.createTask({}, '1', request),
+    () => store.getTask('task-1'),
+    () => store.storeTaskResult('task-1', 'completed', { content: [] }),
+    () => store.getTaskResult('task-1'),
+    () => store.updateTaskStatus('task-1', 'cancelled'),
+    () => store.listTasks(),
+    () => store.cleanupExpired(),
+    () => cleanupExpiredTasks(db),
+  ];
+
+  for (const operation of operations) {
+    await assert.rejects(operation, error => {
+      assert.match(error.message, /^PostgresTaskStore\.[A-Za-z]+: database operation failed$/);
+      assert.doesNotMatch(error.message, /secret-host|internal_table/);
+      assert.strictEqual(error.cause, driverError);
+      return true;
+    });
+  }
 });
