@@ -2,6 +2,7 @@
 
 const { gradeRequestSigning } = require('../dist/lib/testing/storyboard/request-signing/index.js');
 const { gradeSigner } = require('../dist/lib/testing/storyboard/signer-grader/index.js');
+const { writeJsonOutput } = require('./adcp-json-stdout.js');
 
 const USAGE_REQUEST_SIGNING = `Usage: adcp grade request-signing <agent-url> [options]
 
@@ -244,7 +245,7 @@ async function runRequestSigningGrader(args) {
     }
     const report = await gradeRequestSigning(agentUrl, options);
     if (emitJson) {
-      process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+      await writeJsonOutput(report);
     } else {
       printHumanReport(report, options);
     }
@@ -361,7 +362,7 @@ async function runSignerGrader(args) {
   try {
     const report = await gradeSigner(options);
     if (emitJson) {
-      process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+      await writeJsonOutput(report);
     } else {
       printSignerReport(report);
     }
