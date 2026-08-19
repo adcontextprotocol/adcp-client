@@ -7550,7 +7550,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       if (selected?.major === 3 && selected.minor === 0) {
         data = projectCapabilitiesToVersion(data, release.validationVersion);
       }
-      if (selected?.major === 3 && selected.minor === 1) {
+      if (selected !== undefined && (selected.major < 3 || (selected.major === 3 && selected.minor === 1))) {
         delete (data.adcp as GetAdCPCapabilitiesResponse['adcp'] & { capability_changes?: unknown }).capability_changes;
         const forwardMediaBuy = data.media_buy as
           | (NonNullable<typeof data.media_buy> & {
@@ -7568,6 +7568,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             if (forwardMediaBuy.lifecycle_tools.length === 0) delete forwardMediaBuy.lifecycle_tools;
           }
         }
+      }
+      if (selected !== undefined && selected.major < 3) {
+        delete (data.adcp as GetAdCPCapabilitiesResponse['adcp'] & { supported_versions?: string[] })
+          .supported_versions;
+        if (data.media_buy?.features !== undefined) {
+          delete (data.media_buy.features as { canonical_creatives?: boolean }).canonical_creatives;
+        }
+        delete (data as unknown as Record<string, unknown>).library_version;
       }
       const ctx = requestParams.context;
       if (ctx !== null && typeof ctx === 'object' && !Array.isArray(ctx)) {

@@ -181,6 +181,32 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.deepStrictEqual(result.structuredContent?.media_buy?.supported_pricing_models, ['cpm']);
   });
 
+  it('rejects 2.x capability negotiation before response projection', async () => {
+    const server = createAdcpServerFromPlatform(
+      basePlatform({
+        supported_versions: ['2.5', '3.2'],
+        overrides: {
+          adcp: { capability_changes: { supported: true } },
+          media_buy: {
+            lifecycle_tools: ['create_media_buy', 'sync_media_buy'],
+            proposal_refinement: { supported: true },
+            features: { canonical_creatives: true },
+          },
+        },
+      }),
+      {
+        name: 'capability-2x-downshift',
+        version: '4.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const result = await dispatchCapabilities(server, { adcp_version: '2.5' });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent?.adcp_error?.code, 'VERSION_UNSUPPORTED');
+    assert.match(result.structuredContent?.adcp_error?.message ?? '', /not defined.*2\.5/i);
+  });
+
   it('canonical creative capability remains authoritative over adopter overrides', async () => {
     const server = createAdcpServerFromPlatform(
       basePlatform({
