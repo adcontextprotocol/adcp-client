@@ -246,6 +246,11 @@ export interface AsyncHandlerConfig {
     response: CanonicalListCreativesResponse,
     metadata: WebhookMetadata
   ) => void | Promise<void>;
+  onPreviewCreativeStatusChange?: (
+    response: CanonicalCreativeResponse<PreviewCreativeResponse>,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
+  /** @deprecated Use `onPreviewCreativeStatusChange`. */
   onPreviewCreativeLegacyStatusChange?: (
     response: PreviewCreativeResponse,
     metadata: WebhookMetadata
@@ -372,9 +377,12 @@ export class AsyncHandler {
   async handleWebhook({
     result,
     metadata,
+    previewHandler,
   }: {
     result: AdCPAsyncResponseData | undefined;
     metadata: WebhookMetadata;
+    /** @internal Preserves the originating preview API across async completion. */
+    previewHandler?: 'canonical' | 'legacy';
   }): Promise<void> {
     if (await this.isDuplicate(metadata)) {
       await this.emitActivity({
@@ -431,7 +439,7 @@ export class AsyncHandler {
 
     // All status changes go through the specific handler
     // The handler receives metadata with status and can act accordingly
-    await this.handleCompletion(metadata.task_type, result, metadata);
+    await this.handleCompletion(metadata.task_type, result, metadata, previewHandler);
   }
 
   /**
@@ -440,7 +448,8 @@ export class AsyncHandler {
   private async handleCompletion(
     taskType: string,
     result: AdCPAsyncResponseData | undefined,
-    metadata: WebhookMetadata
+    metadata: WebhookMetadata,
+    previewHandler?: 'canonical' | 'legacy'
   ): Promise<void> {
     let handler: ((result: any, metadata: any) => void | Promise<void>) | undefined;
 
@@ -455,7 +464,10 @@ export class AsyncHandler {
         break;
 
       case 'preview_creative':
-        handler = this.config.onPreviewCreativeLegacyStatusChange;
+        handler =
+          previewHandler === 'legacy'
+            ? (this.config.onPreviewCreativeLegacyStatusChange ?? this.config.onPreviewCreativeStatusChange)
+            : (this.config.onPreviewCreativeStatusChange ?? this.config.onPreviewCreativeLegacyStatusChange);
         break;
 
       case 'build_creative':

@@ -304,6 +304,7 @@ describe('webhook registration provenance', () => {
       store.putIfAbsent({ ...registration, callbackUrl: 'https://attacker.example/webhook' }),
       /different trusted provenance/
     );
+    await assert.rejects(store.putIfAbsent({ ...registration, previewMode: 'legacy' }), /different trusted provenance/);
   });
 
   test('TaskExecutor persists the single prepared call before dispatch', async () => {

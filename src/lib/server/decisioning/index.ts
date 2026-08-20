@@ -177,6 +177,7 @@ export type {
   LegacyBuildCreativeReturn,
   LegacyBuildCreativePayload,
   LegacyBuildCreativeMultiPayload,
+  PreviewCreativePayload,
   LegacyPreviewCreativePayload,
   LegacyListCreativeFormatsPayload,
   // Deprecated aliases — kept for one-release source compat. Both
@@ -192,6 +193,7 @@ export type {
   LegacyBuildCreativeReturn as CreativeAdServerLegacyBuildCreativeReturn,
   LegacyBuildCreativePayload as CreativeAdServerLegacyBuildCreativePayload,
   LegacyBuildCreativeMultiPayload as CreativeAdServerLegacyBuildCreativeMultiPayload,
+  PreviewCreativePayload as CreativeAdServerPreviewCreativePayload,
   LegacyPreviewCreativePayload as CreativeAdServerLegacyPreviewCreativePayload,
   LegacyListCreativeFormatsPayload as CreativeAdServerLegacyListCreativeFormatsPayload,
   ListCreativesPayload as CreativeAdServerListCreativesPayload,

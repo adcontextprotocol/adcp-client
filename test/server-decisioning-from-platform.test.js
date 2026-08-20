@@ -2697,6 +2697,142 @@ describe('CreativeBuilderPlatform + AudiencePlatform wiring', () => {
     assert.ok(sawReq, 'creative.buildCreative should be invoked');
   });
 
+  it('preview_creative dispatches canonical capability and creative-library routes through previewCreative', async () => {
+    const seen = [];
+    const platform = {
+      ...buildCreativeOnlyPlatform({ specialisms: ['creative-template'] }),
+      creative: {
+        buildCreativeLegacy: async () => ({ manifest_id: 'mf_1', assets: [] }),
+        previewCreative: async req => {
+          seen.push(req);
+          return { response_type: 'single', previews: [] };
+        },
+      },
+    };
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'canonical-preview',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const requests = [
+      {
+        request_type: 'single',
+        target_capability_id: 'display.responsive',
+        creative_manifest: { manifest_id: 'mf_inline', assets: [] },
+      },
+      { request_type: 'single', creative_id: 'creative_library_1' },
+    ];
+    for (const args of requests) {
+      const result = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: { name: 'preview_creative', arguments: args },
+      });
+      assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    }
+
+    assert.deepStrictEqual(seen, requests);
+  });
+
+  it('preview_creative keeps format_id requests on previewCreativeLegacy when both aliases exist', async () => {
+    const calls = [];
+    const platform = {
+      ...buildCreativeOnlyPlatform({ specialisms: ['creative-template'] }),
+      creative: {
+        buildCreativeLegacy: async () => ({ manifest_id: 'mf_1', assets: [] }),
+        previewCreative: async () => {
+          calls.push('canonical');
+          return { response_type: 'single', previews: [] };
+        },
+        previewCreativeLegacy: async () => {
+          calls.push('legacy');
+          return { response_type: 'single', previews: [] };
+        },
+      },
+    };
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'legacy-preview-alias',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'preview_creative',
+        arguments: {
+          request_type: 'single',
+          format_id: { id: 'legacy', agent_url: 'https://creative.example/mcp' },
+        },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.deepStrictEqual(calls, ['legacy']);
+  });
+
+  it('preview_creative treats a batch item format_id as legacy identity', async () => {
+    const calls = [];
+    const legacyBatch = {
+      request_type: 'batch',
+      requests: [
+        {
+          creative_id: 'creative_legacy',
+          format_id: { id: 'legacy', agent_url: 'https://creative.example/mcp' },
+        },
+      ],
+    };
+    const platform = {
+      ...buildCreativeOnlyPlatform({ specialisms: ['creative-template'] }),
+      creative: {
+        buildCreativeLegacy: async () => ({ manifest_id: 'mf_1', assets: [] }),
+        previewCreative: async () => {
+          calls.push('canonical');
+          return { response_type: 'batch', previews: [] };
+        },
+        previewCreativeLegacy: async () => {
+          calls.push('legacy');
+          return { response_type: 'batch', previews: [] };
+        },
+      },
+    };
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'legacy-preview-batch-alias',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'preview_creative', arguments: legacyBatch },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.deepStrictEqual(calls, ['legacy']);
+
+    const canonicalOnly = createAdcpServerFromPlatform(
+      {
+        ...platform,
+        creative: {
+          buildCreativeLegacy: platform.creative.buildCreativeLegacy,
+          previewCreative: platform.creative.previewCreative,
+        },
+      },
+      {
+        name: 'canonical-only-preview-batch',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+    const rejected = await canonicalOnly.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'preview_creative', arguments: legacyBatch },
+    });
+
+    assert.strictEqual(rejected.isError, true, JSON.stringify(rejected.structuredContent));
+    assert.match(JSON.stringify(rejected.structuredContent), /UNSUPPORTED_FEATURE/);
+    assert.deepStrictEqual(calls, ['legacy']);
+  });
+
   it('F13: creative-generative specialism accepts the merged CreativeBuilderPlatform shape', async () => {
     // Pre-merge, creative-generative required CreativeGenerativePlatform
     // (which had `refineCreative` required and no previewCreative). After

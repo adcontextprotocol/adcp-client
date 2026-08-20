@@ -15,6 +15,8 @@ import type {
   PackageUpdate,
   Package,
   Placement,
+  PreviewCreativeRequest,
+  PreviewCreativeResponse,
   Product,
   SyncCreativesRequest,
   SyncCreativesResponse,
@@ -142,6 +144,80 @@ export type CanonicalSyncCreativesResponse = CanonicalCreativeResponse<SyncCreat
 export type CanonicalGetMediaBuysResponse = CanonicalCreativeResponse<GetMediaBuysResponse>;
 export type CanonicalGetMediaBuyDeliveryResponse = CanonicalCreativeResponse<GetMediaBuyDeliveryResponse>;
 export type CanonicalGetCreativeDeliveryResponse = CanonicalCreativeResponse<GetCreativeDeliveryResponse>;
+
+type PreviewInput = NonNullable<PreviewCreativeRequest['inputs']>[number];
+type PreviewBatchItem = NonNullable<PreviewCreativeRequest['requests']>[number];
+
+type CanonicalPreviewRenderOptions = {
+  inputs?: CanonicalCreativeResponse<PreviewInput>[];
+  template_id?: PreviewCreativeRequest['template_id'];
+  quality?: PreviewCreativeRequest['quality'];
+  output_format?: PreviewCreativeRequest['output_format'];
+  item_limit?: PreviewCreativeRequest['item_limit'];
+};
+
+type CanonicalPreviewSource =
+  | {
+      creative_manifest: CanonicalCreativeResponse<NonNullable<PreviewCreativeRequest['creative_manifest']>>;
+      creative_id?: never;
+    }
+  | {
+      creative_id: NonNullable<PreviewCreativeRequest['creative_id']>;
+      creative_manifest?: never;
+    };
+
+type CanonicalPreviewBatchSource =
+  | {
+      creative_manifest: CanonicalCreativeResponse<NonNullable<PreviewBatchItem['creative_manifest']>>;
+      creative_id?: never;
+    }
+  | {
+      creative_id: NonNullable<PreviewBatchItem['creative_id']>;
+      creative_manifest?: never;
+    };
+
+type CanonicalPreviewCreativeBatchItem = CanonicalPreviewRenderOptions &
+  CanonicalPreviewBatchSource & {
+    target_capability_id?: PreviewBatchItem['target_capability_id'];
+    format_id?: never;
+  };
+
+type CanonicalPreviewRequestEnvelope = Pick<PreviewCreativeRequest, 'adcp_version' | 'adcp_major_version'> & {
+  allow_async?: PreviewCreativeRequest['allow_async'];
+  push_notification_config?: PreviewCreativeRequest['push_notification_config'];
+  context?: PreviewCreativeRequest['context'];
+  ext?: PreviewCreativeRequest['ext'];
+  format_id?: never;
+};
+
+/** Primary preview request: a strict canonical union with no named-format identity at any depth. */
+export type CanonicalPreviewCreativeRequest = CanonicalPreviewRequestEnvelope &
+  (
+    | (CanonicalPreviewRenderOptions &
+        CanonicalPreviewSource & {
+          request_type: 'single';
+          target_capability_id?: PreviewCreativeRequest['target_capability_id'];
+          requests?: never;
+          variant_id?: never;
+        })
+    | (CanonicalPreviewRenderOptions & {
+        request_type: 'batch';
+        target_capability_id?: PreviewCreativeRequest['target_capability_id'];
+        requests: CanonicalPreviewCreativeBatchItem[];
+        creative_manifest?: never;
+        creative_id?: never;
+        variant_id?: never;
+      })
+    | {
+        request_type: 'variant';
+        variant_id: NonNullable<PreviewCreativeRequest['variant_id']>;
+        creative_id?: PreviewCreativeRequest['creative_id'];
+        creative_manifest?: never;
+        target_capability_id?: never;
+        requests?: never;
+      }
+  );
+export type CanonicalPreviewCreativeResponse = CanonicalCreativeResponse<PreviewCreativeResponse>;
 
 export type CanonicalCreativeFilters = Omit<CanonicalCreativeResponse<CreativeFilters>, 'format_ids'> & {
   format_ids?: never;

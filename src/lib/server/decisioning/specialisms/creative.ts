@@ -24,12 +24,16 @@ import type {
   BuildCreativeRequest,
   BuildCreativeSuccess,
   BuildCreativeMultiSuccess,
-  PreviewCreativeRequest,
-  PreviewCreativeResponse,
+  PreviewCreativeRequest as LegacyPreviewCreativeRequest,
+  PreviewCreativeResponse as LegacyPreviewCreativeResponse,
   ListCreativeFormatsRequest,
   ListCreativeFormatsResponse,
 } from '../../../types/tools.generated';
-import type { CanonicalSyncCreativeAsset } from '../../../v2/projection/creative-delivery';
+import type {
+  CanonicalPreviewCreativeRequest,
+  CanonicalPreviewCreativeResponse,
+  CanonicalSyncCreativeAsset,
+} from '../../../v2/projection/creative-delivery';
 import type { SyncCreativesRow } from './sales';
 
 type SyncCreative = CanonicalSyncCreativeAsset;
@@ -37,7 +41,8 @@ type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
 export type LegacyBuildCreativePayload = ServerPayload<BuildCreativeSuccess>;
 export type LegacyBuildCreativeMultiPayload = ServerPayload<BuildCreativeMultiSuccess>;
-export type LegacyPreviewCreativePayload = ServerPayload<PreviewCreativeResponse>;
+export type PreviewCreativePayload = ServerPayload<CanonicalPreviewCreativeResponse>;
+export type LegacyPreviewCreativePayload = ServerPayload<LegacyPreviewCreativeResponse>;
 export type LegacyListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsResponse>;
 
 /**
@@ -138,8 +143,11 @@ export interface CreativeBuilderPlatform<TCtxMeta = Record<string, unknown>> {
    * when `accounts.resolve(undefined)` returned null. Narrow before reading
    * `ctx.account.ctx_metadata`. See {@link NoAccountCtx}.
    */
+  previewCreative?(req: CanonicalPreviewCreativeRequest, ctx: NoAccountCtx<TCtxMeta>): Promise<PreviewCreativePayload>;
+
+  /** @deprecated Migration-only alias for requests using legacy `format_id`. */
   previewCreativeLegacy?(
-    req: PreviewCreativeRequest,
+    req: LegacyPreviewCreativeRequest,
     ctx: NoAccountCtx<TCtxMeta>
   ): Promise<LegacyPreviewCreativePayload>;
 
