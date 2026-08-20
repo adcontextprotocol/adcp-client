@@ -143,14 +143,14 @@ export function classifyProbeUrl(url: string): ProbePolicyResult {
     };
   }
 
-  // IMDS / IPv6 link-local: ALWAYS refused. Cloud metadata reach is never
-  // a legitimate buyer-side use case — refuse even when the operator has
-  // explicitly opted into private probes.
+  // IMDS / IPv6 link-local / unsafe translation: ALWAYS refused. Cloud
+  // metadata reach is never a legitimate buyer-side use case — refuse even
+  // when the operator has explicitly opted into private probes.
   if (isAlwaysBlocked(host)) {
     return {
       allowed: false,
       code: 'always_blocked',
-      reason: `Refusing to probe '${host}': cloud-metadata or link-local address.`,
+      reason: `Refusing to probe '${host}': always-blocked local, metadata, or translation address.`,
     };
   }
 

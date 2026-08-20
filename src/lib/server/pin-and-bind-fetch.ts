@@ -29,20 +29,22 @@
  * resolves to *any* denied IP is treated as suspect and rejected wholesale.
  */
 
-import { Agent, fetch as undiciFetch, type Dispatcher } from 'undici';
+import { Agent, fetch as undiciFetch, Request as UndiciRequest, type Dispatcher } from 'undici';
 import { lookup as nativeDnsLookup, type LookupAddress } from 'node:dns';
 import { isIPv6 } from 'node:net';
 
+import { isAlwaysBlocked, isLoopbackIp, isPrivateIp } from '../net/address-guards';
 import { enforceSsrfPolicy, enforceSsrfPolicyResolved } from '../substitution/observer/ssrf';
 import type { SsrfPolicy } from '../substitution/types';
 
 /**
- * Default SSRF policy for outbound webhook delivery. Stricter than
+ * Default SSRF policy for outbound webhook delivery. Differs from
  * `DEFAULT_SSRF_POLICY` (substitution observer) only in that it allows
  * `host_literal_policy: 'allow'` — webhook URLs MAY use IP literals
- * (e.g. `https://203.0.113.10/cb`) as long as the IP is not in a denied
- * CIDR range. Schemes restricted to https; signed webhooks SHOULD be
- * delivered over TLS.
+ * (e.g. `https://203.0.113.10/cb`) as long as the IP is allowed by both
+ * the contract CIDRs and the SDK's shared private-address classifier.
+ * Schemes are restricted to https; signed webhooks SHOULD be delivered
+ * over TLS.
  *
  * For storyboard / in-process tests where the receiver runs on
  * `http://127.0.0.1:port`, use {@link LOOPBACK_OK_WEBHOOK_SSRF_POLICY}
@@ -81,6 +83,7 @@ export const WEBHOOK_SSRF_POLICY: SsrfPolicy = Object.freeze({
     'fd00:ec2::254',
   ]),
   host_literal_policy: 'allow',
+  shared_private_address_policy: 'deny',
 }) as SsrfPolicy;
 
 /**
@@ -88,9 +91,10 @@ export const WEBHOOK_SSRF_POLICY: SsrfPolicy = Object.freeze({
  * adopters can enable pin-and-bind for production webhook delivery while
  * keeping storyboard / in-process tests working — `createWebhookReceiver`
  * listens on `http://127.0.0.1:port`. Every other private CIDR, metadata
- * host, and link-local range is still denied, so loopback is the only
- * relaxation. Pass to `createPinAndBindFetch({ policy })` from your test
- * fixture or storyboard runner harness; do NOT use in production.
+ * host, and shared private range is still denied, so native IPv4/IPv6
+ * loopback is the only address relaxation. Pass to
+ * `createPinAndBindFetch({ policy })` from your test fixture or storyboard
+ * runner harness; do NOT use in production.
  */
 export const LOOPBACK_OK_WEBHOOK_SSRF_POLICY: SsrfPolicy = Object.freeze({
   schemes_allowed: Object.freeze(['http', 'https']),
@@ -122,6 +126,7 @@ export const LOOPBACK_OK_WEBHOOK_SSRF_POLICY: SsrfPolicy = Object.freeze({
     'fd00:ec2::254',
   ]),
   host_literal_policy: 'allow',
+  shared_private_address_policy: 'allow_loopback',
 }) as SsrfPolicy;
 
 /**
@@ -139,7 +144,11 @@ export interface PinAndBindFetchOptions {
   /**
    * SSRF policy to enforce against resolved IPs. Defaults to
    * {@link WEBHOOK_SSRF_POLICY} (https-only, all private/loopback/metadata
-   * ranges denied, IP literals allowed).
+   * ranges denied, IP literals allowed). The built-in strict and loopback
+   * presets inherit the SDK's full shared private-address classification;
+   * custom policies own their private ranges. Cloud metadata, link-local, and
+   * opaque translation/tunnel targets in the shared always-blocked tier can
+   * never be enabled by a policy override.
    */
   policy?: SsrfPolicy;
   /**
@@ -216,9 +225,22 @@ export function createPinAndBindFetch(options: PinAndBindFetchOptions = {}): typ
       // rebinding defense.
       const url = new URL(`https://${bracketIfV6(hostname)}`);
       const ips = addresses.map(a => a.address);
+      if (ips.some(isAlwaysBlocked)) {
+        callback(makeSsrfError(`Host ${hostname} resolves to an always-blocked address`, 'always_blocked_address'));
+        return;
+      }
       const result = enforceSsrfPolicyResolved(url, ips, policy);
       if (!result.allowed) {
-        callback(makeSsrfError(result.message ?? 'SSRF policy denied resolved address', result.rule ?? 'ssrf'));
+        callback(makeSsrfError(`Host ${hostname} resolves to an address denied by SSRF policy`, result.rule ?? 'ssrf'));
+        return;
+      }
+      if (ips.some(ip => isSharedPrivateAddressDenied(ip, policy))) {
+        callback(
+          makeSsrfError(
+            `Host ${hostname} resolves to a private, non-routable, or reserved address`,
+            'shared_private_address'
+          )
+        );
         return;
       }
 
@@ -253,11 +275,19 @@ export function createPinAndBindFetch(options: PinAndBindFetchOptions = {}): typ
     // This pre-check enforces the same SSRF policy on URLs like
     // `https://127.0.0.1/cb` or `https://[::1]/cb`.
     const url = resolveRequestUrl(input);
-    if (url) {
-      const sync = enforceSsrfPolicy(url, policy);
-      if (!sync.allowed) {
-        throw makeSsrfError(sync.message ?? 'SSRF policy denied URL', sync.rule ?? 'ssrf');
-      }
+    if (!url) {
+      throw makeSsrfError('Unsupported or invalid URL input', 'invalid_url');
+    }
+    const hostname = url.hostname.replace(/^\[|\]$/g, '');
+    if (isAlwaysBlocked(hostname)) {
+      throw makeSsrfError(`Host ${hostname} is an always-blocked address`, 'always_blocked_address');
+    }
+    const sync = enforceSsrfPolicy(url, policy);
+    if (!sync.allowed) {
+      throw makeSsrfError(sync.message ?? 'SSRF policy denied URL', sync.rule ?? 'ssrf');
+    }
+    if (isSharedPrivateAddressDenied(hostname, policy)) {
+      throw makeSsrfError(`Host ${hostname} is a private, non-routable, or reserved address`, 'shared_private_address');
     }
     // Redirects are never followed, and this is not caller-overridable.
     //
@@ -276,7 +306,12 @@ export function createPinAndBindFetch(options: PinAndBindFetchOptions = {}): typ
     // need to follow a hop should re-enter this fetch with the new URL, which
     // re-runs the full policy on it.
     const redirect = (init as { redirect?: string } | undefined)?.redirect === 'error' ? 'error' : 'manual';
-    return undiciFetch(input as Parameters<typeof undiciFetch>[0], {
+    const runtimeInput: unknown = input;
+    const checkedInput =
+      runtimeInput instanceof globalThis.Request || runtimeInput instanceof UndiciRequest
+        ? new UndiciRequest(url.href, runtimeInput as unknown as ConstructorParameters<typeof UndiciRequest>[1])
+        : url.href;
+    return undiciFetch(checkedInput as Parameters<typeof undiciFetch>[0], {
       ...(init as Parameters<typeof undiciFetch>[1]),
       redirect,
       dispatcher: dispatcher as unknown as Dispatcher,
@@ -286,20 +321,20 @@ export function createPinAndBindFetch(options: PinAndBindFetchOptions = {}): typ
   return wrapped as typeof fetch;
 }
 
-function resolveRequestUrl(input: Parameters<typeof fetch>[0]): URL | null {
+function isSharedPrivateAddressDenied(address: string, policy: SsrfPolicy): boolean {
+  if (!isPrivateIp(address)) return false;
+  if (policy.shared_private_address_policy === 'deny') return true;
+  if (policy.shared_private_address_policy === 'allow_loopback') return !isLoopbackIp(address);
+  return false;
+}
+
+function resolveRequestUrl(input: unknown): URL | null {
   try {
     if (typeof input === 'string') return new URL(input);
-    if (input instanceof URL) return input;
-    if (
-      typeof input === 'object' &&
-      input !== null &&
-      'url' in input &&
-      typeof (input as { url: unknown }).url === 'string'
-    ) {
-      return new URL((input as { url: string }).url);
-    }
+    if (input instanceof URL) return new URL(input.href);
+    if (input instanceof globalThis.Request || input instanceof UndiciRequest) return new URL(input.url);
   } catch {
-    // Let undici surface the parse error in its own shape.
+    // The wrapper converts parse failures into a fail-closed SSRF refusal.
     return null;
   }
   return null;

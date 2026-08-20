@@ -121,9 +121,19 @@ export interface SsrfPolicy {
   /**
    * - `reject`: bare IP literal (v4 or v6) in the URL is rejected regardless of range.
    *   Forces resolution through a public DNS name (AdCP Verified behavior).
-   * - `allow`: IP literal is permitted subject only to the CIDR deny lists. Local-dev default.
+   * - `allow`: IP literal is permitted subject to the CIDR deny lists and the
+   *   SDK shared-address setting below. Local-dev default.
    */
   host_literal_policy: 'reject' | 'allow';
+  /**
+   * SDK extension controlling the shared private/non-routable classifier in
+   * addition to the explicit contract CIDRs. Built-in policies set this so
+   * spread-based policy overrides retain their security posture.
+   *
+   * When omitted, custom policies own their private CIDR rules. The shared
+   * always-blocked tier is enforced regardless of this setting.
+   */
+  shared_private_address_policy?: 'deny' | 'allow' | 'allow_loopback';
 }
 
 export interface PolicyResult {

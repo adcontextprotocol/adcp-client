@@ -5,6 +5,7 @@
  */
 
 import { BlockList, isIP, isIPv4, isIPv6 } from 'node:net';
+import { isAlwaysBlocked, isLoopbackIp, isPrivateIp } from '../../net/address-guards';
 import type { PolicyResult, SsrfPolicy } from '../types';
 
 /**
@@ -12,7 +13,11 @@ import type { PolicyResult, SsrfPolicy } from '../types';
  * `compliance/cache/latest/test-kits/substitution-observer-runner.yaml`.
  * Callers SHOULD use this constant — overriding the policy is
  * intended for local-dev workflows (`host_literal_policy: 'allow'`),
- * not for loosening deny lists.
+ * not for loosening deny lists. Runtime enforcement supplements these
+ * contract CIDRs with the SDK's shared address classifier so newly reserved
+ * ranges cannot drift between outbound-fetch implementations. The SDK-only
+ * policy marker is deliberately enumerable so spread-based overrides retain
+ * that behavior.
  */
 export const DEFAULT_SSRF_POLICY: SsrfPolicy = Object.freeze({
   schemes_allowed: Object.freeze(['https']),
@@ -45,6 +50,7 @@ export const DEFAULT_SSRF_POLICY: SsrfPolicy = Object.freeze({
     'fd00:ec2::254',
   ]),
   host_literal_policy: 'reject',
+  shared_private_address_policy: 'deny',
 }) as SsrfPolicy;
 
 interface CompiledPolicy {
@@ -75,7 +81,7 @@ function compile(policy: SsrfPolicy): CompiledPolicy {
     policy,
     ipv4,
     ipv6,
-    metadataHostnames: new Set(policy.hosts_denied_metadata.map(h => h.toLowerCase())),
+    metadataHostnames: new Set(policy.hosts_denied_metadata.map(normalizeHostname)),
     schemesAllowed: new Set(policy.schemes_allowed.map(s => s.toLowerCase())),
     schemesDenied: new Set(policy.schemes_denied.map(s => s.toLowerCase())),
   };
@@ -109,7 +115,7 @@ export function enforceSsrfPolicy(url: URL, policy: SsrfPolicy = DEFAULT_SSRF_PO
     };
   }
 
-  const hostname = stripBrackets(url.hostname).toLowerCase();
+  const hostname = normalizeHostname(url.hostname);
 
   if (compiled.metadataHostnames.has(hostname)) {
     return {
@@ -169,7 +175,7 @@ function checkIp(ip: string, compiled: CompiledPolicy): PolicyResult {
         message: `Resolved address ${ip} is in a denied IPv4 range.`,
       };
     }
-    return { allowed: true };
+    return checkSharedAddressPolicy(ip, compiled);
   }
   if (isIPv6(ip)) {
     const normalized = normalizeIpv6(ip);
@@ -189,13 +195,42 @@ function checkIp(ip: string, compiled: CompiledPolicy): PolicyResult {
         message: `Resolved address ${ip} is in a denied IPv6 range.`,
       };
     }
-    return { allowed: true };
+    return checkSharedAddressPolicy(ip, compiled);
   }
   return {
     allowed: false,
     rule: 'invalid_ip',
     message: `Address ${ip} is not a valid IPv4 or IPv6 literal.`,
   };
+}
+
+function checkSharedAddressPolicy(ip: string, compiled: CompiledPolicy): PolicyResult {
+  if (isAlwaysBlocked(ip)) {
+    return {
+      allowed: false,
+      rule: 'always_blocked_address',
+      message: 'Address is always blocked (local, metadata, or unsafe translation).',
+    };
+  }
+  if (compiled.policy.shared_private_address_policy === 'deny' && isPrivateIp(ip)) {
+    return {
+      allowed: false,
+      rule: 'shared_private_address',
+      message: 'Address is private, non-routable, or reserved.',
+    };
+  }
+  if (compiled.policy.shared_private_address_policy === 'allow_loopback' && isPrivateIp(ip) && !isLoopbackIp(ip)) {
+    return {
+      allowed: false,
+      rule: 'shared_private_address',
+      message: 'Address is private, non-routable, or reserved.',
+    };
+  }
+  return { allowed: true };
+}
+
+function normalizeHostname(host: string): string {
+  return stripBrackets(host).replace(/\.$/, '').toLowerCase();
 }
 
 function stripBrackets(host: string): string {

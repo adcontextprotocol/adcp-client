@@ -13,6 +13,7 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert');
 const { createServer } = require('node:http');
+const { Request: UndiciRequest } = require('undici');
 
 const {
   createPinAndBindFetch,
@@ -44,6 +45,16 @@ function ssrfErrorThrown(err) {
     cur = cur.cause;
   }
   return false;
+}
+
+function errorChainText(err) {
+  const messages = [];
+  let cur = err;
+  while (cur) {
+    if (cur.message) messages.push(cur.message);
+    cur = cur.cause;
+  }
+  return messages.join(' — ');
 }
 
 async function expectSsrfBlocked(promise) {
@@ -79,6 +90,21 @@ describe('createPinAndBindFetch: DNS rebinding defense', () => {
       lookup: stubLookup([{ address: '10.0.0.5', family: 4 }]),
     });
     await expectSsrfBlocked(fetch('https://rebind.attacker.test/leak'));
+  });
+
+  test('does not expose a DNS-resolved private address in the rejection chain', async () => {
+    const privateAddress = '10.23.45.67';
+    const fetch = createPinAndBindFetch({
+      lookup: stubLookup([{ address: privateAddress, family: 4 }]),
+    });
+
+    try {
+      await fetch('https://rebind.attacker.test/leak');
+      assert.fail('expected fetch to reject with SSRF error');
+    } catch (err) {
+      assert.ok(ssrfErrorThrown(err));
+      assert.doesNotMatch(errorChainText(err), new RegExp(privateAddress.replaceAll('.', '\\.')));
+    }
   });
 
   test('blocks RFC 1918 private (192.168.1.1)', async () => {
@@ -121,6 +147,24 @@ describe('createPinAndBindFetch: DNS rebinding defense', () => {
       lookup: stubLookup([{ address: '::ffff:10.0.0.1', family: 6 }]),
     });
     await expectSsrfBlocked(fetch('https://rebind.attacker.test/leak'));
+  });
+
+  test('always blocks unsafe IPv6 translation and tunnel targets returned by DNS', async () => {
+    for (const address of ['64:ff9b:1::1', '2001::1', '2002:a9fe:a9fe::']) {
+      const fetch = createPinAndBindFetch({
+        lookup: stubLookup([{ address, family: 6 }]),
+      });
+      await expectSsrfBlocked(fetch('https://rebind.attacker.test/leak'));
+    }
+  });
+
+  test('default webhook policy inherits every shared non-routable IPv6 classification', async () => {
+    for (const address of ['::2', 'fec0::1', '100:0:0:1::1', '2001:2::1', '3ffe::1', '3fff::1', '5f00::1']) {
+      const fetch = createPinAndBindFetch({
+        lookup: stubLookup([{ address, family: 6 }]),
+      });
+      await expectSsrfBlocked(fetch('https://rebind.attacker.test/leak'));
+    }
   });
 
   test('blocks split-resolution: ANY private IP rejects whole hostname (mixed A records)', async () => {
@@ -172,6 +216,7 @@ describe('createPinAndBindFetch: policy override', () => {
     const relaxed = {
       ...WEBHOOK_SSRF_POLICY,
       hosts_denied_ipv4_cidrs: WEBHOOK_SSRF_POLICY.hosts_denied_ipv4_cidrs.filter(c => c !== '127.0.0.0/8'),
+      shared_private_address_policy: 'allow_loopback',
     };
     const fetch = createPinAndBindFetch({
       policy: relaxed,
@@ -207,6 +252,103 @@ describe('createPinAndBindFetch: policy override', () => {
     }
   });
 
+  test('LOOPBACK_OK_WEBHOOK_SSRF_POLICY relaxes only loopback from the shared private tier', async () => {
+    for (const address of ['::2', 'fec0::1', '100:0:0:1::1', '2001:2::1', '3ffe::1', '3fff::1', '5f00::1']) {
+      const fetch = createPinAndBindFetch({
+        policy: LOOPBACK_OK_WEBHOOK_SSRF_POLICY,
+        lookup: stubLookup([{ address, family: 6 }]),
+      });
+      await expectSsrfBlocked(fetch('https://rebind.attacker.test/leak'));
+    }
+  });
+
+  test('built-in webhook presets apply the shared classifier to literal hosts', async () => {
+    for (const policy of [WEBHOOK_SSRF_POLICY, LOOPBACK_OK_WEBHOOK_SSRF_POLICY]) {
+      const fetch = createPinAndBindFetch({ policy });
+      await expectSsrfBlocked(fetch('https://[3ffe::1]/leak'));
+    }
+  });
+
+  test('spread-based built-in policy overrides retain shared private blocking', async () => {
+    for (const policy of [{ ...WEBHOOK_SSRF_POLICY }, { ...WEBHOOK_SSRF_POLICY, schemes_allowed: ['http', 'https'] }]) {
+      const fetch = createPinAndBindFetch({ policy });
+      await expectSsrfBlocked(fetch('https://[3ffe::1]/leak'));
+    }
+  });
+
+  test('rejects nonstandard coercible inputs before validation and fetch can diverge', async () => {
+    let coercions = 0;
+    const input = {
+      toString() {
+        coercions += 1;
+        return coercions === 1 ? 'https://public.example/' : 'http://127.0.0.1/';
+      },
+    };
+    const fetch = createPinAndBindFetch();
+    await expectSsrfBlocked(fetch(input));
+    assert.equal(coercions, 0);
+  });
+
+  test('normalizes global and undici Request inputs without losing fetch semantics', async () => {
+    const observations = [];
+    const server = createServer((req, res) => {
+      const chunks = [];
+      req.on('data', chunk => chunks.push(chunk));
+      req.on('end', () => {
+        observations.push({
+          method: req.method,
+          requestHeader: req.headers['x-request'],
+          initHeader: req.headers['x-init'],
+          body: Buffer.concat(chunks).toString('utf8'),
+        });
+        res.writeHead(204);
+        res.end();
+      });
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const port = server.address().port;
+
+    try {
+      for (const RequestCtor of [Request, UndiciRequest]) {
+        const request = new RequestCtor(`http://127.0.0.1:${port}/request`, {
+          method: 'POST',
+          headers: { 'x-request': 'request' },
+          body: 'payload',
+          duplex: 'half',
+        });
+        const fetch = createPinAndBindFetch({ policy: LOOPBACK_OK_WEBHOOK_SSRF_POLICY });
+        const response = await fetch(request, { headers: { 'x-init': 'override' } });
+        assert.equal(response.status, 204);
+
+        const controller = new AbortController();
+        const abortedRequest = new RequestCtor(`http://127.0.0.1:${port}/aborted`, {
+          signal: controller.signal,
+        });
+        controller.abort();
+        await assert.rejects(
+          () => fetch(abortedRequest),
+          err => err?.name === 'AbortError'
+        );
+      }
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
+
+    assert.deepEqual(observations, [
+      { method: 'POST', requestHeader: undefined, initHeader: 'override', body: 'payload' },
+      { method: 'POST', requestHeader: undefined, initHeader: 'override', body: 'payload' },
+    ]);
+  });
+
+  test('LOOPBACK_OK_WEBHOOK_SSRF_POLICY allows native loopback literals', async () => {
+    const fetch = createPinAndBindFetch({ policy: LOOPBACK_OK_WEBHOOK_SSRF_POLICY });
+    try {
+      await fetch('http://[::1]:9/path');
+    } catch (err) {
+      assert.ok(!ssrfErrorThrown(err), `loopback-OK preset must not raise SSRF; got ${err?.code}: ${err?.message}`);
+    }
+  });
+
   test('LOOPBACK_OK_WEBHOOK_SSRF_POLICY still blocks cloud metadata (regression guard)', async () => {
     // The preset relaxes ONLY loopback. Every other deny range — link-local,
     // RFC 1918, CGNAT, IPv6 ULA, metadata hosts — must still fire. A copy
@@ -215,6 +357,26 @@ describe('createPinAndBindFetch: policy override', () => {
     const fetch = createPinAndBindFetch({
       policy: LOOPBACK_OK_WEBHOOK_SSRF_POLICY,
       lookup: stubLookup([{ address: '169.254.169.254', family: 4 }]),
+    });
+    await expectSsrfBlocked(fetch('https://rebind.attacker.test/leak'));
+  });
+
+  test('policy overrides cannot enable shared always-blocked addresses', async () => {
+    const permissive = {
+      ...LOOPBACK_OK_WEBHOOK_SSRF_POLICY,
+      hosts_denied_ipv4_cidrs: [],
+      hosts_denied_ipv6_cidrs: [],
+      hosts_denied_metadata: [],
+    };
+
+    for (const url of ['https://[fd00:ec2::254]/leak', 'https://[64:ff9b:1::1]/leak', 'https://[2001::1]/leak']) {
+      const fetch = createPinAndBindFetch({ policy: permissive });
+      await expectSsrfBlocked(fetch(url));
+    }
+
+    const fetch = createPinAndBindFetch({
+      policy: permissive,
+      lookup: stubLookup([{ address: '64:ff9b:1::1', family: 6 }]),
     });
     await expectSsrfBlocked(fetch('https://rebind.attacker.test/leak'));
   });

@@ -104,3 +104,60 @@ test('agent transport supports an explicit per-client private DNS opt-in', async
   await guarded('https://agent.corp/mcp');
   assert.equal(called, true);
 });
+
+test('agent transport never allows AWS IPv6 IMDS through the private DNS opt-in', async () => {
+  let calls = 0;
+  const guarded = createAgentTransportFetch('https://agent.corp/mcp', {
+    allowPrivateIp: true,
+    lookup: async () => [{ address: 'fd00:ec2::254', family: 6 }],
+    networkFetch: async () => {
+      calls += 1;
+      return new Response('{}');
+    },
+  });
+
+  await assert.rejects(() => guarded('https://agent.corp/mcp'), /always-blocked address/);
+  assert.equal(calls, 0, 'the network fetch must not run for IPv6 IMDS');
+});
+
+test('agent transport never passes a literal AWS IPv6 IMDS URL to a trusted fetch', async () => {
+  let calls = 0;
+  const guarded = createAgentTransportFetch('http://[fd00:ec2::254]/mcp', {
+    allowPrivateIp: true,
+    trustedFetchFn: async () => {
+      calls += 1;
+      return new Response('{}');
+    },
+  });
+
+  await assert.rejects(() => guarded('http://[fd00:ec2::254]/mcp'), /always-blocked address/);
+  assert.equal(calls, 0, 'the trusted fetch must not run for a literal IPv6 IMDS URL');
+});
+
+test('agent transport still permits an ordinary private literal through an explicit trusted-fetch opt-in', async () => {
+  let calls = 0;
+  const guarded = createAgentTransportFetch('http://[fd00::1]/mcp', {
+    allowPrivateIp: true,
+    trustedFetchFn: async () => {
+      calls += 1;
+      return new Response('{}');
+    },
+  });
+
+  await guarded('http://[fd00::1]/mcp');
+  assert.equal(calls, 1);
+});
+
+test('agent transport revalidates a literal AWS IPv6 IMDS trusted-fetch redirect', async () => {
+  const calls = [];
+  const guarded = createAgentTransportFetch('https://agent.example.com/mcp', {
+    allowPrivateIp: true,
+    trustedFetchFn: async url => {
+      calls.push(url.toString());
+      return new Response('', { status: 302, headers: { location: 'http://[fd00:ec2::254]/latest' } });
+    },
+  });
+
+  await assert.rejects(() => guarded('https://agent.example.com/mcp'), /always-blocked address/);
+  assert.deepEqual(calls, ['https://agent.example.com/mcp']);
+});

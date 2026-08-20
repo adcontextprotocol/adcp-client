@@ -180,6 +180,11 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
   } catch {
     throw new SsrfRefusedError('invalid_url', `Invalid URL: ${url}`, { url });
   }
+  const checkedUrl = parsed.href;
+  // From this point onward use the immutable serialization that was checked.
+  // This also prevents stateful string coercion in untyped JavaScript callers
+  // from presenting a different target to diagnostics or result metadata.
+  url = checkedUrl;
 
   // `URL.hostname` wraps IPv6 literals in brackets (`https://[::1]/` →
   // `[::1]`). `dns.lookup` and the address classifier both want the bare
@@ -211,7 +216,7 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
     if (isAlwaysBlocked(hostname)) {
       throw new SsrfRefusedError(
         'always_blocked_address',
-        'Refusing to fetch an always-blocked address (link-local or cloud metadata)',
+        'Refusing to fetch an always-blocked address (local, metadata, or unsafe translation)',
         { url, hostname, address: hostname }
       );
     }
@@ -267,7 +272,7 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
         if (isAlwaysBlocked(a.address)) {
           throw new SsrfRefusedError(
             'always_blocked_address',
-            `Refusing to fetch: ${hostname} resolves to an always-blocked address (link-local or cloud metadata)`,
+            `Refusing to fetch: ${hostname} resolves to an always-blocked address (local, metadata, or unsafe translation)`,
             { url, hostname, address: a.address }
           );
         }
@@ -313,14 +318,14 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
     }
 
     const res = options.trustedFetchFn
-      ? await options.trustedFetchFn(url, {
+      ? await options.trustedFetchFn(checkedUrl, {
           method: options.method ?? 'GET',
           redirect: 'manual',
           signal: ac.signal,
           headers: options.headers,
           ...(options.body !== undefined && { body: options.body as BodyInit }),
         })
-      : await undiciFetch(url, {
+      : await undiciFetch(checkedUrl, {
           method: options.method ?? 'GET',
           redirect: 'manual',
           signal: ac.signal,
