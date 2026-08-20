@@ -588,6 +588,37 @@ function postProcessCreativeBriefRequiredDisclosures(content: string): string {
   return content.slice(0, schemaStart) + correctedBlock + content.slice(schemaEnd);
 }
 
+/** Restore native PostalArea.values minItems: 1 after tuple relaxation. */
+function postProcessPostalAreaValues(content: string): string {
+  const schemaStart = content.indexOf('export const PostalAreaSchema = ');
+  const schemaEnd = content.indexOf('\n\nexport const ', schemaStart + 1);
+  if (schemaStart === -1 || schemaEnd === -1) {
+    throw new Error('postProcessPostalAreaValues: unable to locate PostalAreaSchema.');
+  }
+
+  const block = content.slice(schemaStart, schemaEnd);
+  if (block.includes('native postal values must contain at least one entry')) {
+    return content;
+  }
+  const correctedBlock = block.replace(
+    /;\s*$/,
+    `.superRefine((value, ctx) => {
+  const postal = value as { country?: unknown; values?: unknown };
+  if (typeof postal.country === "string" && (!Array.isArray(postal.values) || postal.values.length === 0)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["values"],
+      message: "native postal values must contain at least one entry",
+    });
+  }
+});`
+  );
+  if (correctedBlock === block) {
+    throw new Error('postProcessPostalAreaValues: unable to append native values refinement.');
+  }
+  return content.slice(0, schemaStart) + correctedBlock + content.slice(schemaEnd);
+}
+
 /** Replace the lossy TS round-trip with Zod generated from the dereferenced canonical wire schema. */
 function postProcessCanonicalProposalRuntimeConstraints(content: string, exactSchemaExpression: string): string {
   const schemaStart = content.indexOf('export const CanonicalProposalSchema = ');
@@ -2629,6 +2660,7 @@ async function generateZodSchemas() {
     zodSchemas = postProcessCanonicalFormatMarkerIntersections(zodSchemas);
     zodSchemas = postProcessCanonicalFormatSlots(zodSchemas);
     zodSchemas = postProcessCreativeBriefRequiredDisclosures(zodSchemas);
+    zodSchemas = postProcessPostalAreaValues(zodSchemas);
     const refineResponseSource = JSON.parse(
       readFileSync(
         path.join(__dirname, '../schemas/cache/latest/bundled/media-buy/refine-proposals-response.json'),

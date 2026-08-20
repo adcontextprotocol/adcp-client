@@ -130,6 +130,68 @@ describe('discoverAgentProfile: AbortSignal honored (#1612)', () => {
     assert.strictEqual(profile.capabilities_probe_error, 'get_adcp_capabilities returned no data');
   });
 
+  test('marks VERSION_UNSUPPORTED capability discovery as a hard failure with the version delta', async () => {
+    const client = {
+      getAgentInfo: async () => ({
+        name: 'Older prerelease seller',
+        tools: [{ name: 'get_adcp_capabilities' }, { name: 'get_products' }],
+      }),
+      getAdcpVersion: () => '3.2-beta.3',
+      getAdcpCapabilities: async () => ({
+        success: false,
+        error: 'AdCP version 3.2-beta.3 is not supported',
+        adcpError: {
+          code: 'VERSION_UNSUPPORTED',
+          message: 'AdCP version 3.2-beta.3 is not supported',
+          details: {
+            adcp_version: '3.2-beta.3',
+            supported_versions: ['3.1-rc.15', '3.2-beta.2'],
+          },
+        },
+      }),
+    };
+
+    const { profile, step } = await discoverAgentProfile(client);
+    assert.strictEqual(step.passed, false);
+    assert.match(step.error, /^VERSION_UNSUPPORTED:/);
+    assert.match(step.error, /3\.2-beta\.3/);
+    assert.match(step.error, /3\.2-beta\.2/);
+    assert.strictEqual(profile.capabilities_probe_error, step.error);
+    assert.strictEqual(profile.adcp_version, undefined, 'must not synthesize a v2 capability profile');
+  });
+
+  test('detects VERSION_UNSUPPORTED returned as successful tool data', async () => {
+    const client = {
+      getAgentInfo: async () => ({
+        name: 'Public test seller',
+        tools: [{ name: 'get_adcp_capabilities' }, { name: 'list_products' }],
+      }),
+      getAdcpVersion: () => '3.2-beta.3',
+      getAdcpCapabilities: async () => ({
+        success: true,
+        data: {
+          adcp_error: {
+            code: 'VERSION_UNSUPPORTED',
+            message: 'AdCP version 3.2-beta.3 is not supported',
+            details: {
+              adcp_version: '3.2-beta.3',
+              supported_versions: ['3.2-beta.2'],
+            },
+          },
+        },
+      }),
+    };
+
+    const { profile, step } = await discoverAgentProfile(client);
+    assert.strictEqual(step.passed, false);
+    assert.match(step.error, /^VERSION_UNSUPPORTED:/);
+    assert.match(step.error, /3\.2-beta\.2/);
+    assert.strictEqual(profile.capabilities_probe_error, step.error);
+    assert.strictEqual(profile.adcp_version, undefined, 'must not parse an error envelope as v2 capabilities');
+    assert.strictEqual(profile.raw_capabilities, undefined, 'must not publish an error envelope as capabilities');
+    assert.strictEqual(profile.capabilities_schema_issues, undefined, 'must not validate an error as success data');
+  });
+
   // code-reviewer follow-up on #1612: the wrapper covers the second
   // `getAdcpCapabilities()` call, not just the first `getAgentInfo()`.
   // Cover that path explicitly so a future refactor that bypasses

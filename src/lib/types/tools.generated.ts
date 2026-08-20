@@ -430,7 +430,15 @@ export type SignalTargeting =
  * Postal area values. Prefer the native country + postal system form. Deprecated legacy country-fused postal-system tokens remain accepted for compatibility.
  */
 export type PostalArea = PostalArea1 | PostalAreaWithFusedSystem;
-export type PostalArea1 = PostalCountrySystem;
+export type PostalCountryArea = PostalCountrySystem & {
+  values: [string, ...string[]];
+};
+/**
+ * Re-export of `PostalCountryArea` under the legacy codegen artifact name.
+ *
+ * @deprecated Use `PostalCountryArea` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type PostalArea1 = PostalCountryArea;
 /**
  * Buyer policy for evaluating Product.audience_evidence. In required mode, sellers MUST apply the evidence_presence and admissibility semantics and exclude non-matching products; they MUST NOT ignore an unsupported hard requirement. In preferred mode, sellers use matches for ranking and explain the evidence selected. Buyers SHOULD inspect media_buy.audience_evidence capabilities before sending this object.
  */
@@ -15041,10 +15049,38 @@ export interface PackageStatus {
    * Approval status for each creative assigned to this package. Absent when no creatives have been assigned.
    */
   creative_approvals?: {
-    indicator_types_evaluated?: ('creative_fatigue' | 'creative_quality_opportunity')[];
-    indicators?: {
+    /**
+     * Creative identifier
+     */
+    creative_id: string;
+    approval_status?: CreativeApprovalStatus;
+    /**
+     * Human-readable explanation of why the creative was rejected. Present only when approval_status is 'rejected'.
+     */
+    rejection_reason?: string;
+    /**
+     * Complete, disjoint publisher/placement approval partition when approval_status is partially_approved. A normalized scope appears once. For one publisher, use either one publisher-wide row or placement-specific rows, never both. Omit when one approval_status applies uniformly to the whole assignment. The same scoped outcomes are mirrored on list_creatives.
+     */
+    approval_scopes?: ScopedCreativeApproval[];
+    /**
+     * Current seller indicators that are true for this creative in this package. The enclosing media buy, package, and creative approval supply the default delivery scope; an indicator may narrow further with scope. Omitted means unknown or not evaluated. A present empty array means the seller completed the evaluation identified by indicators_evaluated_scope at indicators_as_of and asserts no current indicator in that evaluated scope.
+     */
+    indicators?: (Indicator & {
       type?: 'creative_fatigue' | 'creative_quality_opportunity';
-    }[];
+    })[];
+    /**
+     * Indicator types covered by this assignment snapshot. Required whenever indicators is present; omitted types remain unknown.
+     */
+    indicator_types_evaluated?: (IndicatorType & ('creative_fatigue' | 'creative_quality_opportunity'))[];
+    /**
+     * When the seller last completed the evaluation represented by indicators for this relationship. Required whenever indicators is present, including an empty array.
+     * @format date-time
+     */
+    indicators_as_of?: string;
+    /**
+     * Optional publisher or placement scopes covered by this evaluation. Omit when indicators covers the whole package–creative assignment. When present, scopes not listed remain unknown; every returned indicator.scope entry MUST be contained by this set.
+     */
+    indicators_evaluated_scope?: IndicatorScope[];
   }[];
   /**
    * The immutable canonical creative contracts established for this package at booking time. Each entry is the selected Product.format_options declaration, or the equivalent declaration normalized from a direct format_kind + params selector. Compare this full checklist with formats_pending to determine current creative readiness.
@@ -15123,6 +15159,36 @@ export interface PackageStatus {
       | 'pacing_risk'
       | 'budget_constrained';
   }[];
+}
+/**
+ * Publisher or placement to which this approval outcome applies.
+ */
+export interface IndicatorScope {
+  /**
+   * Domain where the publisher's adagents.json is hosted.
+   */
+  publisher_domain: string;
+  /**
+   * Optional placement ID within publisher_domain. Omit to scope the assertion or evaluation to all delivery for the publisher in the enclosing object.
+   */
+  placement_id?: string;
+}
+/**
+ * A compact current seller assertion identifying a material risk or optimization opportunity that warrants buyer attention on the containing media buy, package, or package–creative relationship. An indicator is read-side state, not an error, warning, durable event record, authorization, executable action, or independently addressable resource. The responding seller is the source. Different sellers may use different methodologies for the same standard type; native scores, evaluation windows, suggested actions, deep links, and upstream attribution belong in ext.
+ */
+export interface Indicator {
+  type: IndicatorType;
+  /**
+   * When the seller first detected the current uninterrupted occurrence of this indicator. Keep this value stable while the condition remains present. If the condition clears and is later detected again, use the new detection time. Optional because some upstream platforms expose current assessments without an original detection timestamp.
+   */
+  detected_at?: string;
+  /**
+   * Optional narrower publisher or placement scope within the enclosing media buy, package, or package–creative assignment. Omit only when the seller evaluated and asserts the indicator across the whole enclosing resource/relationship. When partial indicators_evaluated_scope is declared, every returned indicator MUST include scope and every entry MUST fall within that coverage. This is scope, not source: the responding seller remains the source.
+   *
+   * @minItems 1
+   */
+  scope?: [IndicatorScope, ...IndicatorScope[]];
+  ext?: ExtensionObject;
 }
 /**
  * Request parameters for retrieving comprehensive delivery metrics

@@ -52,6 +52,7 @@ const {
 const { scheduleVersionCheck } = require('./adcp-version-check.js');
 const { formatStoryboardResultsAsJUnit } = require('../dist/lib/testing/storyboard/junit.js');
 const { LIBRARY_VERSION } = require('../dist/lib/version.js');
+const { appendBuiltInVersionUnsupportedHint } = require('./adcp-version-unsupported-hint.js');
 const {
   createCLIOAuthProvider,
   hasValidOAuthTokens,
@@ -4727,7 +4728,8 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
       setAgentTesterLogger({ info: () => {}, error: () => {}, warn: () => {}, debug: () => {} });
     }
 
-    const result = await comply(agentUrl, testOptions);
+    let result = await comply(agentUrl, testOptions);
+    result = appendBuiltInVersionUnsupportedHint(result, agentArg, BUILT_IN_AGENTS);
 
     if (opts.summaryFile) {
       writeSummaryFile(opts.summaryFile, buildComplianceSummaryMarkdown(result, agentUrl));

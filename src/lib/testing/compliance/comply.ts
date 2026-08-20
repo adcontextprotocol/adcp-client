@@ -1214,7 +1214,8 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     if (
       testOptions.versionEnvelope === undefined &&
       profile.tools.includes('get_adcp_capabilities') &&
-      profile.raw_capabilities === undefined
+      profile.raw_capabilities === undefined &&
+      !profileStep.error?.startsWith('VERSION_UNSUPPORTED:')
     ) {
       const legacyDiscoveryOptions = { ...effectiveOptions, versionEnvelope: 'major-only' as const };
       const legacyDiscoveryClient = createTestClient(
@@ -1311,12 +1312,10 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       // universal/security_baseline, which is designed precisely to diagnose
       // agents that mishandle auth. Fall back to the unreachable result only
       // when no such storyboards are available.
-      const authCheck = await detectAuthRejection(
-        agentUrl,
-        profileStep.error,
-        signal,
-        effectiveOptions.transport?.trustedFetchFn
-      );
+      const isVersionUnsupported = profileStep.error?.startsWith('VERSION_UNSUPPORTED:') === true;
+      const authCheck = isVersionUnsupported
+        ? { isAuth: false, observations: [] }
+        : await detectAuthRejection(agentUrl, profileStep.error, signal, effectiveOptions.transport?.trustedFetchFn);
       if (authCheck.isAuth) {
         const degraded: AgentProfile = { name: profile.name || 'Unknown (auth required)', tools: [] };
         const candidate = explicitStoryboards?.length
@@ -1851,12 +1850,10 @@ async function buildUnreachableResult(
   adcpVersion: string,
   signal?: AbortSignal
 ): Promise<ComplianceResult> {
-  const { isAuth, observations } = await detectAuthRejection(
-    agentUrl,
-    errorMsg,
-    signal,
-    effectiveOptions.transport?.trustedFetchFn
-  );
+  const isVersionUnsupported = errorMsg?.startsWith('VERSION_UNSUPPORTED:') === true;
+  const { isAuth, observations } = isVersionUnsupported
+    ? { isAuth: false, observations: [] }
+    : await detectAuthRejection(agentUrl, errorMsg, signal, effectiveOptions.transport?.trustedFetchFn);
   const err = redactOAuthUrlsInText(errorMsg || 'Unknown error');
   const headline = isAuth ? `Authentication required` : `Agent unreachable — ${err}`;
   return {

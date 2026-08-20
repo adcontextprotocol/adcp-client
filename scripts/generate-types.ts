@@ -378,6 +378,19 @@ function intersectCodegenPropertySchemas(parent: any, branch: any): any {
   return merged;
 }
 
+function mergeCodegenPropertyMaps(
+  base: Record<string, any> | undefined,
+  overlay: Record<string, any> | undefined
+): Record<string, any> {
+  const merged: Record<string, any> = { ...(base ?? {}) };
+  for (const [name, overlayProperty] of Object.entries(overlay ?? {})) {
+    merged[name] = Object.hasOwn(merged, name)
+      ? intersectCodegenPropertySchemas(merged[name], overlayProperty)
+      : overlayProperty;
+  }
+  return merged;
+}
+
 /**
  * Rewrite a discriminated `oneOf` whose branches are mutual-exclusion clauses
  * into explicit closed shapes. Without this, json-schema-to-typescript sees a
@@ -833,11 +846,52 @@ function shouldPreserveOpenIndexSignature(schema: any): boolean {
   );
 }
 
+function normalizePostalAreaForCodegen(schema: any): any {
+  if (!schema || typeof schema !== 'object' || !Array.isArray(schema.anyOf)) return schema;
+  const nativeBranchIndex = schema.anyOf.findIndex(
+    (branch: any) =>
+      branch?.title === 'PostalArea' &&
+      branch?.type === 'object' &&
+      Array.isArray(branch.allOf) &&
+      branch.properties?.values
+  );
+  if (nativeBranchIndex === -1) return schema;
+
+  const nativeBranch = schema.anyOf[nativeBranchIndex];
+  const nativeValues = nativeBranch.properties.values;
+  const normalizedNativeBranch = {
+    ...nativeBranch,
+    title: 'Postal Country Area',
+    properties: {
+      ...nativeBranch.properties,
+      values: {
+        ...nativeValues,
+        // The general generator relaxes array cardinality for legacy
+        // interoperability. PostalArea is a wire discriminator: an empty
+        // values list is never meaningful, so retain the source minItems: 1
+        // constraint in the public TypeScript surface.
+        tsType: '[string, ...string[]]',
+      },
+    },
+  };
+  // The branch repeats country/system alongside PostalCountrySystem. Keep
+  // the complete local shape and remove the allOf ref so jsts cannot
+  // collapse the branch to the referenced base and lose values.
+  delete normalizedNativeBranch.allOf;
+  return {
+    ...schema,
+    anyOf: schema.anyOf.map((branch: any, index: number) =>
+      index === nativeBranchIndex ? normalizedNativeBranch : branch
+    ),
+  };
+}
+
 export function enforceStrictSchema(schema: any): any {
   if (!schema || typeof schema !== 'object') {
     return schema;
   }
 
+  schema = normalizePostalAreaForCodegen(schema);
   schema = expandConditionalRequiredDiscriminator(schema);
   schema = preservePostalCountrySystemRequiredness(schema);
   schema = dropValidationOnlyAnyOf(schema);
@@ -1716,6 +1770,10 @@ export function applyCodegenSchemaWorkarounds(schema: any, schemaName: string): 
     return isolateGetMediaBuyDeliveryCompatBreakdowns(schema);
   }
 
+  if (schemaName === 'PostalArea' && Array.isArray(schema.anyOf)) {
+    return normalizePostalAreaForCodegen(schema);
+  }
+
   if (schemaName === 'GetMediaBuysResponse') {
     const item = schema.properties?.media_buys?.items;
     if (item && typeof item === 'object' && !Array.isArray(item)) {
@@ -1734,13 +1792,14 @@ export function applyCodegenSchemaWorkarounds(schema: any, schemaName: string): 
         // that root, then remove allOf so nested conditionals inside the
         // duplicated MediaBuy member cannot make jsts discard the base type.
         const structuralProperties = cleanedItem.allOf.reduce(
-          (properties: Record<string, unknown>, member: any) => ({
-            ...properties,
-            ...(member && typeof member === 'object' && !Array.isArray(member) ? member.properties : undefined),
-          }),
+          (properties: Record<string, any>, member: any) =>
+            mergeCodegenPropertyMaps(
+              properties,
+              member && typeof member === 'object' && !Array.isArray(member) ? member.properties : undefined
+            ),
           {}
         );
-        cleanedItem.properties = { ...cleanedItem.properties, ...structuralProperties };
+        cleanedItem.properties = mergeCodegenPropertyMaps(cleanedItem.properties, structuralProperties);
         delete cleanedItem.allOf;
       }
       const packageItems = cleanedItem.properties?.packages?.items;
@@ -1749,16 +1808,47 @@ export function applyCodegenSchemaWorkarounds(schema: any, schemaName: string): 
         // root. Its allOf/dependencies members are runtime-only validation
         // overlays; leaving them in lets jsts emit only the indicator fields.
         const packageStructuralProperties = (packageItems.allOf ?? []).reduce(
-          (properties: Record<string, unknown>, member: any) => ({
-            ...properties,
-            ...(member && typeof member === 'object' && !Array.isArray(member) ? member.properties : undefined),
-          }),
+          (properties: Record<string, any>, member: any) =>
+            mergeCodegenPropertyMaps(
+              properties,
+              member && typeof member === 'object' && !Array.isArray(member) ? member.properties : undefined
+            ),
           {}
         );
         const cleanedPackageItems = {
           ...packageItems,
-          properties: { ...packageItems.properties, ...packageStructuralProperties },
+          properties: mergeCodegenPropertyMaps(packageItems.properties, packageStructuralProperties),
         };
+
+        const approvalItems = cleanedPackageItems.properties?.creative_approvals?.items;
+        if (approvalItems && typeof approvalItems === 'object' && !Array.isArray(approvalItems)) {
+          const approvalStructuralProperties = (approvalItems.allOf ?? []).reduce(
+            (properties: Record<string, any>, member: any) =>
+              mergeCodegenPropertyMaps(
+                properties,
+                member && typeof member === 'object' && !Array.isArray(member) ? member.properties : undefined
+              ),
+            {}
+          );
+          const cleanedApprovalItems = {
+            ...approvalItems,
+            properties: mergeCodegenPropertyMaps(approvalItems.properties, approvalStructuralProperties),
+          };
+          // The root owns the complete approval surface; the allOf members
+          // only narrow indicators or enforce runtime conditionals. Folding
+          // the structural overlay retains those enum refinements while the
+          // untouched signed schema remains authoritative for conditionals.
+          for (const keyword of ['allOf', 'dependencies', 'not', 'if', 'then', 'else']) {
+            delete cleanedApprovalItems[keyword];
+          }
+          cleanedPackageItems.properties = {
+            ...cleanedPackageItems.properties,
+            creative_approvals: {
+              ...cleanedPackageItems.properties.creative_approvals,
+              items: cleanedApprovalItems,
+            },
+          };
+        }
         for (const keyword of ['allOf', 'dependencies', 'not', 'if', 'then', 'else']) {
           delete cleanedPackageItems[keyword];
         }
@@ -2532,7 +2622,24 @@ export interface PriceBreakdown {
 }
 
 function namePostalAreaCountryBranch(typeDefinitions: string): string {
-  return typeDefinitions.replace(
+  const collapsedAlias = 'export type PostalArea1 = PostalCountrySystem;';
+  if (typeDefinitions.includes(collapsedAlias)) {
+    return typeDefinitions.replace(
+      collapsedAlias,
+      [
+        'export type PostalCountryArea = PostalCountrySystem & {',
+        '  values: [string, ...string[]];',
+        '};',
+        '/**',
+        ' * Re-export of `PostalCountryArea` under the legacy codegen artifact name.',
+        ' *',
+        ' * @deprecated Use `PostalCountryArea` from `@adcp/sdk/types`. Slated for removal in the next major.',
+        ' */',
+        'export type PostalArea1 = PostalCountryArea;',
+      ].join('\n')
+    );
+  }
+  const namedDefinitions = typeDefinitions.replace(
     /(export interface )PostalArea1(\s*\{[\s\S]*?\n\})/,
     [
       '$1PostalCountryArea$2',
@@ -2544,6 +2651,13 @@ function namePostalAreaCountryBranch(typeDefinitions: string): string {
       'export type PostalArea1 = PostalCountryArea;',
     ].join('\n')
   );
+  if (
+    !namedDefinitions.includes('export type PostalArea1 = PostalCountryArea;') &&
+    /export (?:interface|type) PostalCountryArea\b/.test(namedDefinitions)
+  ) {
+    return `${namedDefinitions}\n\n/**\n * Re-export of \`PostalCountryArea\` under the legacy codegen artifact name.\n *\n * @deprecated Use \`PostalCountryArea\` from \`@adcp/sdk/types\`. Slated for removal in the next major.\n */\nexport type PostalArea1 = PostalCountryArea;`;
+  }
+  return namedDefinitions;
 }
 
 /**

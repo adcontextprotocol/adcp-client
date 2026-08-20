@@ -156,16 +156,20 @@ async function startTimeoutAgent(options = {}) {
       return okTool(res, rpc.id, { probed: true });
     }
     if (toolName === 'get_adcp_capabilities') {
-      return okTool(res, rpc.id, {
-        adcp: {
-          major_versions: [3],
-          supported_versions: ['3.1-rc.10'],
-          build_version: ADCP_VERSION,
-          idempotency: { supported: false },
-        },
-        supported_protocols: ['brand'],
-        specialisms: [],
-      });
+      return okTool(
+        res,
+        rpc.id,
+        options.capabilitiesResponse ?? {
+          adcp: {
+            major_versions: [3],
+            supported_versions: ['3.1-rc.10'],
+            build_version: ADCP_VERSION,
+            idempotency: { supported: false },
+          },
+          supported_protocols: ['brand'],
+          specialisms: [],
+        }
+      );
     }
 
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -239,6 +243,48 @@ describe('comply() signal option', () => {
         return true;
       }
     );
+  });
+});
+
+describe('comply() exact-version capability refusal', () => {
+  test('does not retry major-only or misclassify VERSION_UNSUPPORTED as auth', async () => {
+    const complianceDir = writeTimeoutComplianceCache();
+    const agent = await startTimeoutAgent({
+      capabilitiesResponse: {
+        adcp_error: {
+          code: 'VERSION_UNSUPPORTED',
+          message: 'AdCP version 3.2-beta.3 is not supported',
+          details: {
+            adcp_version: '3.2-beta.3',
+            supported_versions: ['3.2-beta.2'],
+          },
+        },
+      },
+    });
+
+    try {
+      const result = await comply(agent.url, {
+        allow_http: true,
+        complianceDir,
+        storyboards: ['slow_timeout_one'],
+      });
+
+      assert.strictEqual(result.overall_status, 'unreachable');
+      assert.match(result.summary.headline, /VERSION_UNSUPPORTED/);
+      assert.match(result.summary.headline, /requested "3\.2-beta\.3"/);
+      assert.match(result.summary.headline, /seller supports "3\.2-beta\.2"/);
+      assert.deepStrictEqual(result.storyboards_executed, []);
+      assert.deepStrictEqual(result.tracks, []);
+      assert.strictEqual(result.agent_profile.raw_capabilities, undefined);
+      assert.strictEqual(
+        agent.requests.filter(request => request.tool === 'get_adcp_capabilities').length,
+        1,
+        'must not retry with a major-only version envelope'
+      );
+    } finally {
+      await closeServer(agent.server);
+      fs.rmSync(complianceDir, { recursive: true, force: true });
+    }
   });
 });
 

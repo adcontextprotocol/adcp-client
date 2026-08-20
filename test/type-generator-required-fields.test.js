@@ -59,6 +59,83 @@ writeFileSync(__OUTPUT__, JSON.stringify({
   assert.equal(result.originalBranchesRemainUntouched, true);
 });
 
+test('PostalArea preserves the native branch fields and non-empty values type', () => {
+  const result = runGeneratorHarness(`
+import { readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { applyCodegenSchemaWorkarounds, enforceStrictSchema } from __GENERATOR__;
+
+const source = JSON.parse(
+  readFileSync(path.join(__REPO_ROOT__, 'schemas/cache/latest/core/postal-area.json'), 'utf8')
+);
+const transformed = applyCodegenSchemaWorkarounds(source, 'PostalArea');
+const native = transformed.anyOf.find((branch: any) => branch.title === 'Postal Country Area');
+const nested = enforceStrictSchema({ type: 'object', properties: { postal: source } })
+  .properties.postal.anyOf.find((branch: any) => branch.title === 'Postal Country Area');
+writeFileSync(__OUTPUT__, JSON.stringify({
+  hasAllOf: Array.isArray(native.allOf),
+  required: native.required,
+  properties: Object.keys(native.properties),
+  valuesMinItems: native.properties.values.minItems,
+  valuesTsType: native.properties.values.tsType,
+  nestedHasAllOf: Array.isArray(nested.allOf),
+  nestedProperties: Object.keys(nested.properties),
+}));
+`);
+
+  assert.equal(result.hasAllOf, false);
+  assert.deepEqual(result.required, ['country', 'system', 'values']);
+  assert.deepEqual(result.properties, ['country', 'system', 'values']);
+  assert.equal(result.valuesMinItems, 1);
+  assert.equal(result.valuesTsType, '[string, ...string[]]');
+  assert.equal(result.nestedHasAllOf, false);
+  assert.deepEqual(result.nestedProperties, ['country', 'system', 'values']);
+});
+
+test('GetMediaBuysResponse folds creative approval refinements without dropping base fields', () => {
+  const result = runGeneratorHarness(`
+import { readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { applyCodegenSchemaWorkarounds } from __GENERATOR__;
+
+const source = JSON.parse(
+  readFileSync(path.join(__REPO_ROOT__, 'schemas/cache/latest/media-buy/get-media-buys-response.json'), 'utf8')
+);
+const transformed = applyCodegenSchemaWorkarounds(source, 'GetMediaBuysResponse');
+const approval = transformed.properties.media_buys.items.properties.packages.items
+  .properties.creative_approvals.items;
+const indicatorTypeOverlay = (approval.properties.indicators.items.allOf ?? [])
+  .find((member: any) => member.properties?.type);
+const evaluatedTypeOverlay = (approval.properties.indicator_types_evaluated.items.allOf ?? [])
+  .find((member: any) => member.enum);
+writeFileSync(__OUTPUT__, JSON.stringify({
+  hasAllOf: Array.isArray(approval.allOf),
+  required: approval.required,
+  properties: Object.keys(approval.properties),
+  indicatorTypes: evaluatedTypeOverlay.enum,
+  indicatorKinds: indicatorTypeOverlay.properties.type.enum,
+}));
+`);
+
+  assert.equal(result.hasAllOf, false);
+  assert.ok(result.required.includes('creative_id'));
+  assert.ok(result.required.includes('approval_status'));
+  for (const field of [
+    'creative_id',
+    'approval_status',
+    'rejection_reason',
+    'approval_scopes',
+    'indicators',
+    'indicator_types_evaluated',
+    'indicators_as_of',
+    'indicators_evaluated_scope',
+  ]) {
+    assert.ok(result.properties.includes(field), `${field} should remain in the approval shape`);
+  }
+  assert.deepEqual(result.indicatorTypes, ['creative_fatigue', 'creative_quality_opportunity']);
+  assert.deepEqual(result.indicatorKinds, ['creative_fatigue', 'creative_quality_opportunity']);
+});
+
 test('refine_proposals result overlays preserve the canonical proposal base', () => {
   const result = runGeneratorHarness(`
 import { readFileSync, writeFileSync } from 'node:fs';
