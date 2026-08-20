@@ -268,6 +268,36 @@ describe('address-guards — bypass resistance', () => {
     assert.strictEqual(isPrivateIp('2002:0808:0808::'), true);
   });
 
+  it('blocks non-routable IPv6 special-purpose ranges', () => {
+    const specialPurposeAddresses = [
+      '::192.0.2.1', // deprecated IPv4-compatible
+      '::ffff:0:192.0.2.1', // deprecated IPv4-translated
+      'fec0::1', // deprecated site-local
+      'feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff', // end of deprecated site-local /10
+      '100:0:0:1::1', // dummy prefix
+      '2001:2::1', // benchmarking
+      '2001:10::1', // deprecated ORCHID
+      '3fff:fff::1', // documentation
+      '5f00::1', // segment-routing SID
+      '64:ff9b:1::8.8.8.8', // local-use IPv4/IPv6 translation
+    ];
+
+    for (const address of specialPurposeAddresses) {
+      assert.strictEqual(isPrivateIp(address), true, `${address} should be refused`);
+    }
+  });
+
+  it('does not overblock addresses immediately outside the denied prefixes', () => {
+    assert.strictEqual(isPrivateIp('::1:0:0:0'), false); // outside deprecated ::/96
+    assert.strictEqual(isPrivateIp('::ffff:1:0:0'), false); // outside deprecated ::ffff:0:0:0/96
+    assert.strictEqual(isPrivateIp('100:0:0:2::1'), false); // after dummy-prefix /64
+    assert.strictEqual(isPrivateIp('2001:3::1'), false); // AMT, after benchmarking /48
+    assert.strictEqual(isPrivateIp('2001:20::1'), false); // ORCHIDv2, outside deprecated 2001:10::/28
+    assert.strictEqual(isPrivateIp('3fff:1000::1'), false); // immediately after 3fff::/20
+    assert.strictEqual(isPrivateIp('5f01::1'), false); // immediately after SRv6 SID /16
+    assert.strictEqual(isPrivateIp('64:ff9b:2::1'), false); // outside local-use 64:ff9b:1::/48
+  });
+
   it('allows real public addresses', () => {
     assert.strictEqual(isPrivateIp('8.8.8.8'), false);
     assert.strictEqual(isPrivateIp('1.1.1.1'), false);

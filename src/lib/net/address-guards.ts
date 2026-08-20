@@ -5,11 +5,11 @@
  *   - {@link isAlwaysBlocked}: link-local + cloud metadata endpoints (IMDS).
  *     Refused even when the caller opts into private networks (dev loops).
  *   - {@link isPrivateIp}: RFC 1918, loopback, CGNAT, IPv6 ULA/link-local,
- *     multicast, broadcast, unspecified, plus defense-in-depth on IPv6
- *     wrappers (NAT64 well-known prefix, 6to4) so a v4-in-v6 address can't
- *     sneak a private target past the classifier. Refused by default; allowed
- *     when the caller passes `allowPrivateIp: true` (storyboard runner's
- *     `--allow-http`).
+ *     multicast, broadcast, unspecified, non-routable special-purpose ranges,
+ *     plus defense-in-depth on IPv6 wrappers (NAT64, IPv4-translated, 6to4)
+ *     so a v4-in-v6 address can't sneak a private target past the classifier.
+ *     Refused by default; allowed when the caller passes `allowPrivateIp: true`
+ *     (storyboard runner's `--allow-http`).
  *
  * Classifiers normalize before matching:
  *   - Zone IDs (`%eth0`) are stripped — they're a host-local concept, not part
@@ -72,15 +72,24 @@ privateIp.addAddress('255.255.255.255', 'ipv4'); // limited broadcast
 // v6
 privateIp.addAddress('::', 'ipv6'); // unspecified
 privateIp.addAddress('::1', 'ipv6'); // loopback
+privateIp.addSubnet('::', 96, 'ipv6'); // deprecated IPv4-compatible addresses (RFC 4291)
 privateIp.addSubnet('fe80::', 10, 'ipv6'); // link-local
+privateIp.addSubnet('fec0::', 10, 'ipv6'); // deprecated site-local addresses (RFC 3879)
 privateIp.addSubnet('fc00::', 7, 'ipv6'); // ULA
 privateIp.addSubnet('ff00::', 8, 'ipv6'); // multicast
 privateIp.addSubnet('100::', 64, 'ipv6'); // discard-only (RFC 6666)
+privateIp.addSubnet('100:0:0:1::', 64, 'ipv6'); // dummy prefix (RFC 9780)
+privateIp.addSubnet('2001:2::', 48, 'ipv6'); // benchmarking (RFC 5180)
+privateIp.addSubnet('2001:10::', 28, 'ipv6'); // deprecated ORCHID (RFC 4843)
 privateIp.addSubnet('2001:db8::', 32, 'ipv6'); // documentation
-// Wrapper prefixes — refuse unconditionally. Tunnels at the caller's edge can
-// translate these into private targets we can't see; safer to refuse than to
-// hope the gateway is configured the way we expect.
+privateIp.addSubnet('3fff::', 20, 'ipv6'); // documentation (RFC 9637)
+privateIp.addSubnet('5f00::', 16, 'ipv6'); // segment-routing SIDs, not globally reachable (RFC 9602)
+// Wrapper prefixes — refuse the entire prefix by default. Tunnels at the
+// caller's edge can translate these into private targets we can't see; safer
+// to refuse than to hope the gateway is configured the way we expect.
+privateIp.addSubnet('::ffff:0:0:0', 96, 'ipv6'); // deprecated IPv4-translated (RFC 2765)
 privateIp.addSubnet('64:ff9b::', 96, 'ipv6'); // NAT64 well-known
+privateIp.addSubnet('64:ff9b:1::', 48, 'ipv6'); // local-use IPv4/IPv6 translation (RFC 8215)
 privateIp.addSubnet('2002::', 16, 'ipv6'); // 6to4
 
 /**
@@ -100,9 +109,10 @@ export function isAlwaysBlocked(address: string): boolean {
 
 /**
  * Reject loopback, link-local, RFC 1918 private ranges, CGNAT (RFC 6598),
- * broadcast, multicast, the unspecified address, NAT64/6to4 wrapper prefixes,
- * and IPv6 equivalents. BlockList handles IPv4-mapped IPv6 canonicalization
- * natively so `::ffff:10.0.0.1` is matched against the v4 rule set.
+ * broadcast, multicast, the unspecified address, non-routable special-purpose
+ * ranges, NAT64/6to4 wrapper prefixes, and IPv6 equivalents. BlockList handles
+ * IPv4-mapped IPv6 canonicalization natively so `::ffff:10.0.0.1` is matched
+ * against the v4 rule set.
  *
  * Returns `false` for non-IP inputs (hostnames).
  */
