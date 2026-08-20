@@ -381,7 +381,7 @@ export class AsyncHandler {
   }: {
     result: AdCPAsyncResponseData | undefined;
     metadata: WebhookMetadata;
-    /** @internal Preserves the originating preview API across async completion. */
+    /** Preserves the originating preview API across async completion. */
     previewHandler?: 'canonical' | 'legacy';
   }): Promise<void> {
     if (await this.isDuplicate(metadata)) {
