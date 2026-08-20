@@ -52,6 +52,7 @@ import {
 } from '../negotiation/verification';
 import { isAdcpOperationSuccess } from '../utils/response-unwrapper';
 import { ConfigurationError } from '../errors';
+import { formatIssues, validateResponse } from '../validation/schema-validator';
 
 export type MediaBuyLifecycle = 'compact' | 'established';
 export type MediaBuyCompatibility = 'native' | 'lossless_projection' | 'lossy_projection';
@@ -471,10 +472,10 @@ type CompactFinalizedResult = Extract<CompactRefinementResult, { outcome: 'final
 type CompactUnableResult = Extract<CompactRefinementResult, { outcome: 'unable' }>;
 
 /**
- * Refine result with the canonical proposal base restored at the coordinator
- * boundary. The beta.3 generated response drops those fields from three
- * result arms (#2619); callers of this compatibility API must still receive
- * a useful, discriminated proposal type.
+ * Refine result with the canonical proposal base exposed at the coordinator
+ * boundary. The generated response keeps the native outcome discriminants;
+ * this compatibility view additionally makes the canonical proposal fields
+ * explicit for callers on every proposal-bearing result arm.
  */
 export type CompatibleRefinementResult =
   | (Omit<CompactRevisedResult, 'proposals'> & {
@@ -758,16 +759,18 @@ function containsPresignedUrl(value: unknown, seen = new WeakSet<object>()): boo
 interface ParsedRelease {
   major: number;
   minor: number;
+  patch: number;
   prerelease?: string;
 }
 
 function parseRelease(value: string): ParsedRelease | undefined {
-  const match = /^v?(\d+)\.(\d+)(?:\.\d+)?(?:-([A-Za-z0-9.-]+))?(?:\+[A-Za-z0-9.-]+)?$/.exec(value.trim());
+  const match = /^v?(\d+)\.(\d+)(?:\.(\d+))?(?:-([A-Za-z0-9.-]+))?(?:\+[A-Za-z0-9.-]+)?$/.exec(value.trim());
   if (!match) return undefined;
   return {
     major: Number(match[1]),
     minor: Number(match[2]),
-    ...(match[3] !== undefined && { prerelease: match[3] }),
+    patch: Number(match[3] ?? 0),
+    ...(match[4] !== undefined && { prerelease: match[4] }),
   };
 }
 
@@ -796,7 +799,7 @@ function compareRelease(left: string, right: string): number {
   const a = parseRelease(left);
   const b = parseRelease(right);
   if (!a || !b) return 0;
-  return a.major - b.major || a.minor - b.minor || comparePrerelease(a.prerelease, b.prerelease);
+  return a.major - b.major || a.minor - b.minor || a.patch - b.patch || comparePrerelease(a.prerelease, b.prerelease);
 }
 
 function isCompactRelease(value: string): boolean {
@@ -806,17 +809,24 @@ function isCompactRelease(value: string): boolean {
 
 function negotiatedVersion(capabilities: AdcpCapabilities, clientVersion: string): string {
   if (capabilities.version === 'v2') return '2.5';
-  if (capabilities.servedVersion && parseRelease(capabilities.servedVersion)) return capabilities.servedVersion;
-  const candidates = capabilities.supportedVersions?.filter(
+  if (capabilities.servedVersion && parseRelease(capabilities.servedVersion)) {
+    if (compareRelease(capabilities.servedVersion, clientVersion) > 0) {
+      const displayedServedVersion = capabilities.servedVersion.slice(0, 64);
+      throw new ConfigurationError(
+        `The seller served AdCP ${displayedServedVersion}, which is newer than the client pin ${clientVersion}; the response cannot be interpreted safely.`
+      );
+    }
+    return capabilities.servedVersion;
+  }
+  const advertisedVersions = capabilities.supportedVersions?.filter(version => parseRelease(version) !== undefined);
+  const candidates = advertisedVersions?.filter(
     version => parseRelease(version) !== undefined && compareRelease(version, clientVersion) <= 0
   );
   if (candidates?.length) return [...candidates].sort(compareRelease).at(-1)!;
-  if (
-    capabilities.buildVersion &&
-    parseRelease(capabilities.buildVersion) &&
-    compareRelease(capabilities.buildVersion, clientVersion) <= 0
-  ) {
-    return capabilities.buildVersion;
+  if (advertisedVersions?.length) {
+    throw new ConfigurationError(
+      `The seller advertises only AdCP versions newer than the client pin ${clientVersion}; no compatible wire version can be negotiated.`
+    );
   }
   if (capabilities._synthetic && capabilities.mediaBuyLifecycleTools?.length && isCompactRelease(clientVersion)) {
     // Compact tool names are authoritative wire evidence. A failed
@@ -830,8 +840,37 @@ function negotiatedVersion(capabilities: AdcpCapabilities, clientVersion: string
   return '3.0';
 }
 
+const MAX_PROPOSAL_TRAVERSAL_NODES = 4096;
+const COMPACT_REQUEST_PROPOSALS_RESPONSE_FIELDS = new Set([
+  'adcp_version',
+  'outcome',
+  'reason',
+  'suggestions',
+  'proposals',
+  'products',
+  'targeting_resolution',
+  'status',
+  'task_id',
+  'message',
+  'errors',
+  'context',
+  'ext',
+  'replayed',
+]);
+const COMPACT_DECLINE_PROPOSALS_RESPONSE_FIELDS = new Set([
+  'adcp_version',
+  'results',
+  'status',
+  'task_id',
+  'message',
+  'errors',
+  'context',
+  'ext',
+  'replayed',
+]);
+
 function projectProducts(data: unknown, lifecycle: MediaBuyLifecycle): CompatibleProductsResponse {
-  const source = record(data);
+  const source = compactWirePayload(data);
   const feedVersion = optionalString(lifecycle === 'compact' ? source.feed_version : source.wholesale_feed_version);
   const pricingVersion = optionalString(source.pricing_version);
   const nextCursor = optionalString(lifecycle === 'compact' ? source.next_cursor : record(source.pagination).cursor);
@@ -855,27 +894,45 @@ function projectProducts(data: unknown, lifecycle: MediaBuyLifecycle): Compatibl
 function proposalRows(source: Record<string, unknown>): CompatibleProposal[] | undefined {
   const proposals: CompatibleProposal[] = [];
   let sawProposalContainer = false;
-  const visit = (value: unknown): void => {
+  const roots: unknown[] = [];
+  if (source.proposals !== undefined) roots.push(source.proposals);
+  if (source.proposal !== undefined) roots.push(source.proposal);
+  const results = array(source.results);
+  if (results.length > MAX_PROPOSAL_TRAVERSAL_NODES) {
+    throw new TypeError('proposal response exceeded the bounded traversal limit.');
+  }
+  for (const result of results) {
+    const row = record(result);
+    if (row.proposals !== undefined) roots.push(row.proposals);
+    if (row.proposal !== undefined) roots.push(row.proposal);
+  }
+  const stack = roots.reverse();
+  const seen = new WeakSet<object>();
+  let visited = 0;
+  while (stack.length > 0) {
+    const value = stack.pop();
+    if (value === null || typeof value !== 'object' || seen.has(value)) continue;
+    seen.add(value);
+    visited += 1;
+    if (visited > MAX_PROPOSAL_TRAVERSAL_NODES) {
+      throw new TypeError('proposal response exceeded the bounded traversal limit.');
+    }
     if (Array.isArray(value)) {
       sawProposalContainer = true;
-      value.forEach(visit);
-      return;
+      if (stack.length + value.length > MAX_PROPOSAL_TRAVERSAL_NODES) {
+        throw new TypeError('proposal response exceeded the bounded traversal limit.');
+      }
+      for (let index = value.length - 1; index >= 0; index -= 1) stack.push(value[index]);
+      continue;
     }
-    const candidate = record(value);
+    const candidate = value as Record<string, unknown>;
     if (optionalString(candidate.proposal_id)) {
       sawProposalContainer = true;
       proposals.push(candidate as CompatibleProposal);
     }
-    for (const key of ['proposals', 'proposal']) {
-      if (candidate[key] !== undefined) visit(candidate[key]);
-    }
-  };
-  if (source.proposals !== undefined) visit(source.proposals);
-  if (source.proposal !== undefined) visit(source.proposal);
-  for (const result of array(source.results)) {
-    const row = record(result);
-    if (row.proposals !== undefined) visit(row.proposals);
-    if (row.proposal !== undefined) visit(row.proposal);
+    // Reverse push preserves the prior depth-first proposals-then-proposal order.
+    if (candidate.proposal !== undefined) stack.push(candidate.proposal);
+    if (candidate.proposals !== undefined) stack.push(candidate.proposals);
   }
   return sawProposalContainer ? proposals : undefined;
 }
@@ -890,8 +947,49 @@ function proposalResponseBase(source: Record<string, unknown>): CompatiblePropos
   };
 }
 
-function projectRequestProposals(data: unknown, lifecycle: MediaBuyLifecycle): CompatibleRequestProposalsResponse {
+/**
+ * Remove SDK-only response annotations before validating or exposing the
+ * seller's wire payload. `_message` is synthesized by the response unwrapper
+ * from MCP/A2A text parts after schema validation; it never crossed the AdCP
+ * tool boundary and therefore must not be mistaken for an undeclared seller
+ * field. Keep this allowlist deliberately narrow so seller-controlled
+ * underscore fields still fail closed.
+ */
+function compactWirePayload(data: unknown): Record<string, unknown> {
   const source = record(data);
+  if (!Object.hasOwn(source, '_message')) return source;
+  const { _message: _sdkMessage, ...wire } = source;
+  return wire;
+}
+
+function assertCompactRequestProposalsCompletion(source: Record<string, unknown>, negotiatedVersion: string): void {
+  const unsupportedFields = Object.keys(source).filter(field => !COMPACT_REQUEST_PROPOSALS_RESPONSE_FIELDS.has(field));
+  if (unsupportedFields.length > 0) {
+    throw new TypeError(
+      `request_proposals returned a malformed compact completion: undeclared fields ${unsupportedFields.join(', ')}.`
+    );
+  }
+  const normalized = source.status === undefined ? { ...source, status: 'completed' } : source;
+  if (normalized.status !== 'completed' || Object.hasOwn(normalized, 'task_id')) {
+    throw new TypeError(
+      'request_proposals returned a malformed compact completion: the completed sync arm must not contain submitted status or task_id.'
+    );
+  }
+  const validation = validateResponse('request_proposals', normalized, negotiatedVersion);
+  if (!validation.valid) {
+    throw new TypeError(
+      `request_proposals returned a malformed compact completion: ${formatIssues(validation.issues)}`
+    );
+  }
+}
+
+function projectRequestProposals(
+  data: unknown,
+  lifecycle: MediaBuyLifecycle,
+  negotiatedVersion?: string
+): CompatibleRequestProposalsResponse {
+  const source = compactWirePayload(data);
+  if (lifecycle === 'compact') assertCompactRequestProposalsCompletion(source, negotiatedVersion ?? '3.2');
   const base = proposalResponseBase(source);
   const nativeOutcome = source.outcome === 'proposed' || source.outcome === 'rejected' ? source.outcome : undefined;
   const outcome =
@@ -912,10 +1010,15 @@ function projectRefineProposals(
   lifecycle: MediaBuyLifecycle,
   refinements: RefineProposalsInput['refinements']
 ): CompatibleRefineProposalsResponse {
-  const source = record(data);
+  const source = compactWirePayload(data);
+  const proposalIds = refinements.map(refinement => refinement.proposal_id);
+  if (lifecycle === 'compact') {
+    // Verify the complete response root before following any seller-controlled
+    // proposal container or result branch.
+    assertRefineProposalsResponse({ refinements }, source);
+  }
   const base = proposalResponseBase(source);
   const sourceResults = array(source.results);
-  const proposalIds = refinements.map(refinement => refinement.proposal_id);
   if (lifecycle === 'compact') {
     if (sourceResults.length !== proposalIds.length) {
       throw new TypeError('refine_proposals returned a different result count than the requested refinement count.');
@@ -953,7 +1056,6 @@ function projectRefineProposals(
         }
       });
     });
-    assertRefineProposalsResponse({ refinements }, source);
   }
   const nativeResults = Array.isArray(source.results) ? (sourceResults as CompatibleRefinementResult[]) : undefined;
   const outcome =
@@ -976,9 +1078,26 @@ function projectRefineProposals(
 function projectDeclineProposals(
   data: unknown,
   lifecycle: MediaBuyLifecycle,
-  proposalIds: readonly string[]
+  proposalIds: readonly string[],
+  negotiatedVersion?: string
 ): CompatibleDeclineProposalsResponse {
-  const source = record(data);
+  const source = compactWirePayload(data);
+  if (lifecycle === 'compact') {
+    const unsupportedFields = Object.keys(source).filter(
+      field => !COMPACT_DECLINE_PROPOSALS_RESPONSE_FIELDS.has(field)
+    );
+    if (unsupportedFields.length > 0) {
+      throw new TypeError(
+        `decline_proposals returned a malformed compact completion: undeclared fields ${unsupportedFields.join(', ')}.`
+      );
+    }
+    const validation = validateResponse('decline_proposals', source, negotiatedVersion ?? '3.2');
+    if (!validation.valid || validation.variant !== 'sync') {
+      throw new TypeError(
+        `decline_proposals returned a malformed compact completion: ${formatIssues(validation.issues)}`
+      );
+    }
+  }
   const base = proposalResponseBase(source);
   const sourceResults = array(source.results);
   if (lifecycle === 'compact' && sourceResults.length !== proposalIds.length) {
@@ -1030,6 +1149,7 @@ function projectDeclineProposals(
 }
 
 interface AcceptanceReservation {
+  kind: 'native' | 'established';
   state: 'in-flight' | 'retryable' | 'retired';
   retryKind?: 'paused' | 'commit-uncertain';
   requestFingerprint: string;
@@ -1047,6 +1167,8 @@ interface ProposalSnapshotEntry {
   accountScope?: string;
   canonicalTermsDigest?: string;
   acceptance?: AcceptanceReservation;
+  /** Synthetic entry used only to share a native acceptance fence. */
+  nativeAcceptanceOnly?: boolean;
 }
 
 interface ProposalSnapshotStore {
@@ -1075,19 +1197,28 @@ interface SafeProposalSnapshot {
   canonicalTermsDigest?: string;
 }
 
-interface PendingDeclineLease {
+type ProposalMutationState = 'in-flight' | 'paused' | 'commit-uncertain' | 'retired';
+
+interface ProposalMutationReservation {
   proposalIds: readonly string[];
-  active: boolean;
+  state: ProposalMutationState;
+  requestFingerprint: string;
+  idempotencyKey?: string;
+  skipIdempotencyAutoInject: boolean;
+  /** Fixed from the seller's advertised replay TTL at the first dispatch. */
+  readonly retryDeadlineMs?: number;
+  attemptEpoch: number;
   owner: object;
   timer?: ReturnType<typeof setTimeout>;
 }
 
-interface PendingRefinementLease {
-  proposalIds: readonly string[];
+interface PendingDeclineLease extends ProposalMutationReservation {
+  operation: 'decline';
+}
+
+interface PendingRefinementLease extends ProposalMutationReservation {
+  operation: 'refine';
   sources: readonly { key: string; entry: ProposalSnapshotEntry }[];
-  active: boolean;
-  owner: object;
-  timer?: ReturnType<typeof setTimeout>;
 }
 
 const SNAPSHOT_COMMERCIAL_TERM_FIELDS = [
@@ -1224,6 +1355,10 @@ export class MediaBuyLifecycleCoordinator {
       accountScope?: string;
       project?: (data: unknown) => unknown;
       retainProposals: boolean;
+      onPause?: () => void;
+      onAuthoritativeFailure?: () => void;
+      authoritativeTaskNames?: ReadonlySet<string>;
+      preserveAuthoritativeProposals?: boolean;
       onTerminalFailure?: () => void;
     }
   >();
@@ -1310,8 +1445,180 @@ export class MediaBuyLifecycleCoordinator {
     );
   }
 
-  private beginPendingDecline(proposalIds: readonly string[]): PendingDeclineLease {
+  private pendingDeclineRetryCandidate(proposalIds: readonly string[]): PendingDeclineLease | undefined {
+    const wanted = new Set(proposalIds);
+    const overlapping = [...this.proposalSnapshotStore.pendingDeclines].filter(
+      lease => lease.state !== 'retired' && lease.proposalIds.some(proposalId => wanted.has(proposalId))
+    );
+    const candidate = overlapping.length === 1 ? overlapping[0] : undefined;
+    return candidate &&
+      candidate.proposalIds.length === wanted.size &&
+      candidate.proposalIds.every(proposalId => wanted.has(proposalId)) &&
+      (candidate.state === 'paused' || candidate.state === 'commit-uncertain')
+      ? candidate
+      : undefined;
+  }
+
+  private pendingRefinementRetryCandidate(proposalIds: readonly string[]): PendingRefinementLease | undefined {
+    const wanted = new Set(proposalIds);
+    const overlapping = [...this.proposalSnapshotStore.pendingRefinements].filter(
+      lease => lease.state !== 'retired' && lease.proposalIds.some(proposalId => wanted.has(proposalId))
+    );
+    const candidate = overlapping.length === 1 ? overlapping[0] : undefined;
+    return candidate &&
+      candidate.proposalIds.length === wanted.size &&
+      candidate.proposalIds.every(proposalId => wanted.has(proposalId)) &&
+      (candidate.state === 'paused' || candidate.state === 'commit-uncertain')
+      ? candidate
+      : undefined;
+  }
+
+  private mutationAttemptIsCurrent(
+    reservation: PendingDeclineLease | PendingRefinementLease,
+    attemptEpoch: number
+  ): boolean {
+    return reservation.state !== 'retired' && reservation.attemptEpoch === attemptEpoch;
+  }
+
+  private scheduleProposalMutationTimer(
+    reservation: PendingDeclineLease | PendingRefinementLease,
+    attemptEpoch: number
+  ): void {
+    if (reservation.timer) clearTimeout(reservation.timer);
+    reservation.timer = undefined;
+    if (!this.mutationAttemptIsCurrent(reservation, attemptEpoch)) return;
+    const now = Date.now();
+    const deadline = reservation.retryDeadlineMs;
+    if (reservation.state !== 'in-flight' && (deadline === undefined || deadline <= now)) {
+      this.retireAmbiguousProposalMutation(reservation, attemptEpoch);
+      return;
+    }
+    const delay =
+      reservation.state === 'in-flight'
+        ? Math.min(
+            MediaBuyLifecycleCoordinator.PROPOSAL_TASK_WATCH_TTL_MS,
+            deadline === undefined ? Number.POSITIVE_INFINITY : deadline - now
+          )
+        : deadline! - now;
+    const timer = setTimeout(() => {
+      if (!this.mutationAttemptIsCurrent(reservation, attemptEpoch) || reservation.timer !== timer) return;
+      reservation.timer = undefined;
+      if (reservation.state === 'in-flight' && deadline !== undefined && Date.now() < deadline) {
+        reservation.state = 'commit-uncertain';
+        this.scheduleProposalMutationTimer(reservation, attemptEpoch);
+        return;
+      }
+      this.retireAmbiguousProposalMutation(reservation, attemptEpoch);
+    }, delay);
+    timer.unref?.();
+    reservation.timer = timer;
+  }
+
+  private assertProposalMutationRetryWindow(
+    reservation: PendingDeclineLease | PendingRefinementLease,
+    operation: 'declineProposals' | 'refineProposals'
+  ): void {
+    if (reservation.idempotencyKey && reservation.retryDeadlineMs && reservation.retryDeadlineMs > Date.now()) return;
+    this.retireAmbiguousProposalMutation(reservation, reservation.attemptEpoch);
+    throw this.unsupported(
+      operation,
+      operation === 'declineProposals' ? 'proposal_decline_retry_window' : 'proposal_refinement_retry_window',
+      'The seller no longer guarantees idempotent replay of this proposal mutation. Reconcile its outcome before any different mutation.'
+    );
+  }
+
+  private beginProposalMutationRetry<T extends PendingDeclineLease | PendingRefinementLease>(
+    reservation: T,
+    owner: object,
+    operation: 'declineProposals' | 'refineProposals'
+  ): T {
+    this.assertProposalMutationRetryWindow(reservation, operation);
+    if (reservation.timer) clearTimeout(reservation.timer);
+    reservation.timer = undefined;
+    reservation.attemptEpoch += 1;
+    reservation.state = 'in-flight';
+    reservation.owner = owner;
+    this.scheduleProposalMutationTimer(reservation, reservation.attemptEpoch);
+    return reservation;
+  }
+
+  private preserveAmbiguousProposalMutation(
+    reservation: PendingDeclineLease | PendingRefinementLease,
+    attemptEpoch: number,
+    state: 'paused' | 'commit-uncertain' = 'commit-uncertain'
+  ): void {
+    if (!this.mutationAttemptIsCurrent(reservation, attemptEpoch)) return;
+    if (!reservation.idempotencyKey || !reservation.retryDeadlineMs || reservation.retryDeadlineMs <= Date.now()) {
+      this.retireAmbiguousProposalMutation(reservation, attemptEpoch);
+      return;
+    }
+    // Once an attempt is commit-uncertain, a later local pause cannot weaken
+    // the fence back to merely paused.
+    if (reservation.state !== 'commit-uncertain') reservation.state = state;
+    this.scheduleProposalMutationTimer(reservation, attemptEpoch);
+  }
+
+  private retireAmbiguousProposalMutation(
+    reservation: PendingDeclineLease | PendingRefinementLease,
+    attemptEpoch: number
+  ): void {
+    if (!this.mutationAttemptIsCurrent(reservation, attemptEpoch)) return;
+    reservation.proposalIds.forEach(proposalId => this.markCommitUncertainProposalMutation(proposalId));
+    if (reservation.operation === 'decline') this.retirePendingDecline(reservation, attemptEpoch);
+    else this.retirePendingRefinement(reservation, attemptEpoch);
+  }
+
+  private proposalMutationIdempotency(
+    callerValue: unknown,
+    retry: PendingDeclineLease | PendingRefinementLease | undefined,
+    skipIdempotencyAutoInject: boolean
+  ): { idempotencyKey?: string; skipIdempotencyAutoInject: boolean } {
+    const callerKey = optionalString(callerValue);
+    const retrySkip = retry?.skipIdempotencyAutoInject;
+    const effectiveSkip = retrySkip ?? skipIdempotencyAutoInject;
+    const idempotencyKey =
+      callerKey ?? retry?.idempotencyKey ?? (!effectiveSkip && !retry ? generateIdempotencyKey() : undefined);
+    return {
+      ...(idempotencyKey && { idempotencyKey }),
+      skipIdempotencyAutoInject: effectiveSkip,
+    };
+  }
+
+  private beginPendingDecline(
+    proposalIds: readonly string[],
+    requestFingerprintValue: string,
+    idempotencyKey: string | undefined,
+    skipIdempotencyAutoInject: boolean
+  ): PendingDeclineLease {
     const retainedProposalIds = [...new Set(proposalIds)];
+    const retry = this.pendingDeclineRetryCandidate(retainedProposalIds);
+    const hasPendingDecline = retainedProposalIds.some(proposalId => this.isProposalDeclinePending(proposalId));
+    if (hasPendingDecline) {
+      if (retry) this.assertProposalMutationRetryWindow(retry, 'declineProposals');
+      if (
+        retry &&
+        retry.idempotencyKey !== undefined &&
+        retry.requestFingerprint === requestFingerprintValue &&
+        retry.idempotencyKey === idempotencyKey &&
+        retry.skipIdempotencyAutoInject === skipIdempotencyAutoInject
+      ) {
+        return this.beginProposalMutationRetry(retry, this.declineLeaseOwner, 'declineProposals');
+      }
+      throw this.unsupported(
+        'declineProposals',
+        retry ? 'proposal_decline_retry' : 'proposal_decline_pending',
+        retry
+          ? 'A paused proposal decline may retry only the exact same request and idempotency key. No mutation was sent.'
+          : 'A requested proposal already has an unresolved decline in this principal scope. Wait for it to finish before declining again.'
+      );
+    }
+    if (retainedProposalIds.some(proposalId => this.isCommitUncertainProposalMutation(proposalId))) {
+      throw this.unsupported(
+        'declineProposals',
+        'proposal_mutation_commit_uncertain',
+        'A prior mutation of a requested proposal has an unreconciled outcome. No decline was sent.'
+      );
+    }
     if (
       retainedProposalIds.some(proposalId => {
         const reservation = this.proposalSnapshotStore.proposalAcceptances.get(proposalId)?.reservation;
@@ -1334,6 +1641,13 @@ export class MediaBuyLifecycleCoordinator {
         'A requested proposal has an acceptance whose commit outcome is unknown. Reconcile the media buy by natural key before sending a different mutation.'
       );
     }
+    if (retainedProposalIds.some(proposalId => this.isAcceptedProposal(proposalId))) {
+      throw this.unsupported(
+        'declineProposals',
+        'proposal_terminal',
+        'A requested proposal has already been accepted in this principal scope. No decline was sent.'
+      );
+    }
     if (retainedProposalIds.some(proposalId => this.isProposalRefinementPending(proposalId))) {
       throw this.unsupported(
         'declineProposals',
@@ -1352,71 +1666,108 @@ export class MediaBuyLifecycleCoordinator {
       );
     }
     const lease: PendingDeclineLease = {
+      operation: 'decline',
       proposalIds: retainedProposalIds,
-      active: true,
+      state: 'in-flight',
+      requestFingerprint: requestFingerprintValue,
+      ...(idempotencyKey && { idempotencyKey }),
+      skipIdempotencyAutoInject,
+      attemptEpoch: 1,
       owner: this.declineLeaseOwner,
     };
+    if (this.idempotencyReplayTtlMs !== undefined) {
+      Object.defineProperty(lease, 'retryDeadlineMs', {
+        value: Date.now() + this.idempotencyReplayTtlMs,
+        enumerable: true,
+        writable: false,
+        configurable: false,
+      });
+    }
     this.proposalSnapshotStore.pendingDeclines.add(lease);
     this.proposalSnapshotStore.pendingDeclineProposalIdCount += retainedProposalIds.length;
-    lease.timer = setTimeout(() => {
-      if (!lease.active) return;
-      this.invalidateProposalSnapshots(lease.proposalIds, undefined, false, true);
-      this.finishPendingDecline(lease);
-    }, MediaBuyLifecycleCoordinator.PROPOSAL_TASK_WATCH_TTL_MS);
-    lease.timer.unref?.();
+    this.scheduleProposalMutationTimer(lease, lease.attemptEpoch);
     return lease;
   }
 
-  private finishPendingDecline(lease: PendingDeclineLease): void {
-    if (!lease.active) return;
-    lease.active = false;
+  private finishPendingDecline(lease: PendingDeclineLease, attemptEpoch = lease.attemptEpoch): void {
+    if (!this.mutationAttemptIsCurrent(lease, attemptEpoch)) return;
+    lease.state = 'retired';
     if (lease.timer) clearTimeout(lease.timer);
     lease.timer = undefined;
     this.proposalSnapshotStore.pendingDeclines.delete(lease);
     this.proposalSnapshotStore.pendingDeclineProposalIdCount -= lease.proposalIds.length;
   }
 
-  private retirePendingDecline(lease: PendingDeclineLease): void {
-    if (!lease.active) return;
+  private retirePendingDecline(lease: PendingDeclineLease, attemptEpoch = lease.attemptEpoch): void {
+    if (!this.mutationAttemptIsCurrent(lease, attemptEpoch)) return;
     this.invalidateProposalSnapshots(lease.proposalIds, undefined, false, true);
-    this.finishPendingDecline(lease);
+    this.finishPendingDecline(lease, attemptEpoch);
+  }
+
+  private pausePendingDecline(lease: PendingDeclineLease, attemptEpoch = lease.attemptEpoch): void {
+    this.preserveAmbiguousProposalMutation(lease, attemptEpoch, 'paused');
   }
 
   private preparePendingDeclineSettlement(
     lease: PendingDeclineLease,
-    response: CompatibleDeclineProposalsResponse
+    response: CompatibleDeclineProposalsResponse,
+    attemptEpoch = lease.attemptEpoch
   ): () => void {
     const locallyTerminalIds = response.results
       .filter(result => result.outcome === 'declined' || result.outcome === 'unconfirmed')
       .map(result => result.proposal_id);
     return () => {
-      if (!lease.active) return;
+      if (!this.mutationAttemptIsCurrent(lease, attemptEpoch)) return;
       this.invalidateProposalSnapshots(locallyTerminalIds, undefined, false, true);
-      this.finishPendingDecline(lease);
+      this.finishPendingDecline(lease, attemptEpoch);
     };
   }
 
   private isProposalDeclinePending(proposalId: string): boolean {
     for (const lease of this.proposalSnapshotStore.pendingDeclines) {
-      if (lease.active && lease.proposalIds.includes(proposalId)) return true;
+      if (lease.state !== 'retired' && lease.proposalIds.includes(proposalId)) return true;
     }
     return false;
   }
 
   private beginPendingRefinement(
     proposalIds: readonly string[],
-    rejectTerminalProposal = false
+    rejectTerminalProposal: boolean,
+    requestFingerprintValue: string,
+    idempotencyKey: string | undefined,
+    skipIdempotencyAutoInject: boolean
   ): PendingRefinementLease {
     const retainedProposalIds = [...new Set(proposalIds)];
+    const retry = this.pendingRefinementRetryCandidate(retainedProposalIds);
     if (
       retainedProposalIds.some(
         proposalId => this.isProposalRefinementPending(proposalId) || this.isProposalDeclinePending(proposalId)
       )
     ) {
+      if (retry) this.assertProposalMutationRetryWindow(retry, 'refineProposals');
+      if (
+        retry &&
+        !retainedProposalIds.some(proposalId => this.isProposalDeclinePending(proposalId)) &&
+        retry.idempotencyKey !== undefined &&
+        retry.requestFingerprint === requestFingerprintValue &&
+        retry.idempotencyKey === idempotencyKey &&
+        retry.skipIdempotencyAutoInject === skipIdempotencyAutoInject
+      ) {
+        return this.beginProposalMutationRetry(retry, this.refinementLeaseOwner, 'refineProposals');
+      }
       throw this.unsupported(
         'refineProposals',
-        'proposal_mutation_pending',
-        'A requested proposal already has an unresolved refinement or decline in this principal scope. Wait for it to finish before refining again.'
+        retry ? 'proposal_refinement_retry' : 'proposal_mutation_pending',
+        retry
+          ? 'A paused proposal refinement may retry only the exact same request and idempotency key. No mutation was sent.'
+          : 'A requested proposal already has an unresolved refinement or decline in this principal scope. Wait for it to finish before refining again.'
+      );
+    }
+    if (retainedProposalIds.some(proposalId => this.isCommitUncertainProposalMutation(proposalId))) {
+      throw this.unsupported(
+        'refineProposals',
+        'proposal_mutation_commit_uncertain',
+        'A prior mutation of a requested proposal has an unreconciled outcome. No refinement was sent.'
       );
     }
     if (retainedProposalIds.some(proposalId => this.proposalSnapshotStore.proposalAcceptances.has(proposalId))) {
@@ -1467,44 +1818,77 @@ export class MediaBuyLifecycleCoordinator {
       );
     }
     const lease: PendingRefinementLease = {
+      operation: 'refine',
       proposalIds: retainedProposalIds,
       sources,
-      active: true,
+      state: 'in-flight',
+      requestFingerprint: requestFingerprintValue,
+      ...(idempotencyKey && { idempotencyKey }),
+      skipIdempotencyAutoInject,
+      attemptEpoch: 1,
       owner: this.refinementLeaseOwner,
     };
+    if (this.idempotencyReplayTtlMs !== undefined) {
+      Object.defineProperty(lease, 'retryDeadlineMs', {
+        value: Date.now() + this.idempotencyReplayTtlMs,
+        enumerable: true,
+        writable: false,
+        configurable: false,
+      });
+    }
     for (const { entry } of sources) entry.executable = false;
     this.proposalSnapshotStore.pendingRefinements.add(lease);
     this.proposalSnapshotStore.pendingRefinementProposalIdCount += retainedProposalIds.length;
-    lease.timer = setTimeout(
-      () => this.retirePendingRefinement(lease),
-      MediaBuyLifecycleCoordinator.PROPOSAL_TASK_WATCH_TTL_MS
-    );
-    lease.timer.unref?.();
+    this.scheduleProposalMutationTimer(lease, lease.attemptEpoch);
     return lease;
   }
 
-  private finishPendingRefinement(lease: PendingRefinementLease): void {
-    if (!lease.active) return;
-    lease.active = false;
+  private finishPendingRefinement(lease: PendingRefinementLease, attemptEpoch = lease.attemptEpoch): void {
+    if (!this.mutationAttemptIsCurrent(lease, attemptEpoch)) return;
+    lease.state = 'retired';
     if (lease.timer) clearTimeout(lease.timer);
     lease.timer = undefined;
     this.proposalSnapshotStore.pendingRefinements.delete(lease);
     this.proposalSnapshotStore.pendingRefinementProposalIdCount -= lease.proposalIds.length;
   }
 
-  private retirePendingRefinement(lease: PendingRefinementLease): void {
-    if (!lease.active) return;
-    this.finishPendingRefinement(lease);
+  private restorePendingRefinement(lease: PendingRefinementLease, attemptEpoch = lease.attemptEpoch): void {
+    if (!this.mutationAttemptIsCurrent(lease, attemptEpoch)) return;
+    this.finishPendingRefinement(lease, attemptEpoch);
+    for (const { key, entry } of lease.sources) {
+      const proposalId = String(entry.proposal.proposal_id);
+      if (
+        this.proposalSnapshotStore.entries.get(key) === entry &&
+        !this.isTerminalProposal(proposalId) &&
+        !this.isCommitUncertainProposalMutation(proposalId)
+      ) {
+        entry.executable = true;
+      }
+    }
+  }
+
+  private retirePendingRefinement(lease: PendingRefinementLease, attemptEpoch = lease.attemptEpoch): void {
+    if (!this.mutationAttemptIsCurrent(lease, attemptEpoch)) return;
+    this.finishPendingRefinement(lease, attemptEpoch);
     this.invalidateProposalSnapshots(lease.proposalIds, undefined, false, true);
   }
 
-  private settlePendingRefinement(lease: PendingRefinementLease, response: CompatibleRefineProposalsResponse): void {
-    this.preparePendingRefinementSettlement(lease, response)();
+  private pausePendingRefinement(lease: PendingRefinementLease, attemptEpoch = lease.attemptEpoch): void {
+    this.preserveAmbiguousProposalMutation(lease, attemptEpoch, 'paused');
+  }
+
+  private settlePendingRefinement(
+    lease: PendingRefinementLease,
+    response: CompatibleRefineProposalsResponse,
+    attemptEpoch = lease.attemptEpoch
+  ): void {
+    this.preparePendingRefinementSettlement(lease, response, attemptEpoch)();
   }
 
   private preparePendingRefinementSettlement(
     lease: PendingRefinementLease,
-    response: CompatibleRefineProposalsResponse
+    response: CompatibleRefineProposalsResponse,
+    attemptEpoch = lease.attemptEpoch
   ): () => void {
     const unableProposalIds = new Set(
       response.outcome === 'native_results'
@@ -1521,13 +1905,17 @@ export class MediaBuyLifecycleCoordinator {
         : []
     );
     return () => {
-      if (!lease.active) return;
-      this.finishPendingRefinement(lease);
+      if (!this.mutationAttemptIsCurrent(lease, attemptEpoch)) return;
+      this.finishPendingRefinement(lease, attemptEpoch);
       const replacementSourceIds = lease.proposalIds.filter(proposalId => replacementProposalIds.has(proposalId));
       const terminalProposalIds = lease.proposalIds.filter(
         proposalId => !unableProposalIds.has(proposalId) && !replacementProposalIds.has(proposalId)
       );
-      this.invalidateProposalSnapshots(replacementSourceIds);
+      // A legacy exact replay after an ambiguous first attempt cannot prove
+      // that a same-ID proposal row is a fresh immutable source rather than
+      // the already-consumed pre-mutation snapshot. Keep that source retired;
+      // distinct child proposal IDs returned by the replay are still cached.
+      this.invalidateProposalSnapshots(replacementSourceIds, undefined, false, attemptEpoch > 1);
       this.invalidateProposalSnapshots(terminalProposalIds, undefined, false, true);
       for (const { key, entry } of lease.sources) {
         const proposalId = String(entry.proposal.proposal_id);
@@ -1544,7 +1932,7 @@ export class MediaBuyLifecycleCoordinator {
 
   private isProposalRefinementPending(proposalId: string): boolean {
     for (const lease of this.proposalSnapshotStore.pendingRefinements) {
-      if (lease.active && lease.proposalIds.includes(proposalId)) return true;
+      if (lease.state !== 'retired' && lease.proposalIds.includes(proposalId)) return true;
     }
     return false;
   }
@@ -1979,6 +2367,18 @@ export class MediaBuyLifecycleCoordinator {
     this.markRetiredAcceptanceKey(this.terminalAcceptanceProposalKey(proposalId));
   }
 
+  private acceptedProposalKey(proposalId: string): string {
+    return `${this.principalScope ?? 'missing-principal-scope'}\u0000accepted-proposal\u0000${proposalId}`;
+  }
+
+  private isAcceptedProposal(proposalId: string): boolean {
+    return this.isRetiredAcceptanceKey(this.acceptedProposalKey(proposalId));
+  }
+
+  private markAcceptedProposal(proposalId: string): void {
+    this.markRetiredAcceptanceKey(this.acceptedProposalKey(proposalId));
+  }
+
   private commitUncertainProposalKey(proposalId: string): string {
     return `${this.principalScope ?? 'missing-principal-scope'}\u0000commit-uncertain-proposal\u0000${proposalId}`;
   }
@@ -1989,6 +2389,18 @@ export class MediaBuyLifecycleCoordinator {
 
   private markCommitUncertainProposal(proposalId: string): void {
     this.markRetiredAcceptanceKey(this.commitUncertainProposalKey(proposalId));
+  }
+
+  private commitUncertainProposalMutationKey(proposalId: string): string {
+    return `${this.principalScope ?? 'missing-principal-scope'}\u0000commit-uncertain-proposal-mutation\u0000${proposalId}`;
+  }
+
+  private isCommitUncertainProposalMutation(proposalId: string): boolean {
+    return this.isRetiredAcceptanceKey(this.commitUncertainProposalMutationKey(proposalId));
+  }
+
+  private markCommitUncertainProposalMutation(proposalId: string): void {
+    this.markRetiredAcceptanceKey(this.commitUncertainProposalMutationKey(proposalId));
   }
 
   private enforceProposalSnapshotLimits(): void {
@@ -2048,21 +2460,26 @@ export class MediaBuyLifecycleCoordinator {
   private proposalIdsIn(data: unknown): string[] {
     const ids = new Set<string>();
     const seen = new WeakSet<object>();
-    const visit = (value: unknown): void => {
-      if (value === null || typeof value !== 'object' || seen.has(value)) return;
+    const stack = [data];
+    let visited = 0;
+    while (stack.length > 0) {
+      const value = stack.pop();
+      if (value === null || typeof value !== 'object' || seen.has(value)) continue;
       seen.add(value);
+      visited += 1;
+      if (visited > MAX_PROPOSAL_TRAVERSAL_NODES) return this.cachedProposalIds();
       if (Array.isArray(value)) {
-        value.forEach(visit);
-        return;
+        if (stack.length + value.length > MAX_PROPOSAL_TRAVERSAL_NODES) return this.cachedProposalIds();
+        for (let index = value.length - 1; index >= 0; index -= 1) stack.push(value[index]);
+        continue;
       }
-      const candidate = record(value);
+      const candidate = value as Record<string, unknown>;
       const proposalId = optionalString(candidate.proposal_id);
       if (proposalId) ids.add(proposalId);
-      for (const key of ['proposals', 'proposal', 'results']) {
-        if (candidate[key] !== undefined) visit(candidate[key]);
-      }
-    };
-    visit(data);
+      if (candidate.results !== undefined) stack.push(candidate.results);
+      if (candidate.proposal !== undefined) stack.push(candidate.proposal);
+      if (candidate.proposals !== undefined) stack.push(candidate.proposals);
+    }
     return [...ids];
   }
 
@@ -2082,24 +2499,28 @@ export class MediaBuyLifecycleCoordinator {
     if (wanted.size === 0) return [];
     const found: string[] = [];
     const seen = new WeakSet<object>();
-    const visit = (value: unknown): void => {
-      if (wanted.size === 0 || value === null || typeof value !== 'object' || seen.has(value)) return;
+    const stack = [data];
+    let visited = 0;
+    while (stack.length > 0 && wanted.size > 0) {
+      const value = stack.pop();
+      if (value === null || typeof value !== 'object' || seen.has(value)) continue;
       seen.add(value);
+      visited += 1;
+      if (visited > MAX_PROPOSAL_TRAVERSAL_NODES) return this.cachedProposalIds(accountScope);
       if (Array.isArray(value)) {
-        for (const item of value) {
-          visit(item);
-          if (wanted.size === 0) break;
+        if (stack.length + value.length > MAX_PROPOSAL_TRAVERSAL_NODES) {
+          return this.cachedProposalIds(accountScope);
         }
-        return;
+        for (let index = value.length - 1; index >= 0; index -= 1) stack.push(value[index]);
+        continue;
       }
-      const candidate = record(value);
+      const candidate = value as Record<string, unknown>;
       const proposalId = optionalString(candidate.proposal_id);
       if (proposalId && wanted.delete(proposalId)) found.push(proposalId);
-      for (const key of ['proposals', 'proposal', 'results']) {
-        if (candidate[key] !== undefined) visit(candidate[key]);
-      }
-    };
-    visit(data);
+      if (candidate.results !== undefined) stack.push(candidate.results);
+      if (candidate.proposal !== undefined) stack.push(candidate.proposal);
+      if (candidate.proposals !== undefined) stack.push(candidate.proposals);
+    }
     return found;
   }
 
@@ -2108,54 +2529,60 @@ export class MediaBuyLifecycleCoordinator {
     const seen = new WeakSet<object>();
     let bytes = 0;
     let overflowed = false;
-    const visit = (value: unknown): void => {
-      if (overflowed) return;
-      if (value === null || typeof value !== 'object' || seen.has(value)) return;
-      seen.add(value);
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          visit(item);
-          if (overflowed) break;
-        }
-        return;
-      }
-      const candidate = record(value);
-      const proposalId = optionalString(candidate.proposal_id);
-      if (proposalId) {
-        if (!snapshots.has(proposalId) && snapshots.size >= MediaBuyLifecycleCoordinator.MAX_PROPOSAL_SNAPSHOTS) {
+    const stack = [data];
+    let visited = 0;
+    try {
+      while (stack.length > 0 && !overflowed) {
+        const value = stack.pop();
+        if (value === null || typeof value !== 'object' || seen.has(value)) continue;
+        seen.add(value);
+        visited += 1;
+        if (visited > MAX_PROPOSAL_TRAVERSAL_NODES) {
           overflowed = true;
-          return;
+          break;
         }
-        const prior = snapshots.get(proposalId);
-        if (prior) bytes -= prior.bytes;
-        const safe = safeProposalSnapshot(candidate);
-        if (safe) {
-          // Detach while this listener still owns the checked representation.
-          // Later task-update listeners may mutate the shared TaskInfo object.
-          const detached = structuredClone(safe);
-          const candidateBytes = new TextEncoder().encode(JSON.stringify(detached.proposal)).byteLength;
-          if (
-            candidateBytes > MediaBuyLifecycleCoordinator.MAX_PROPOSAL_SNAPSHOT_BYTES ||
-            bytes + candidateBytes > MediaBuyLifecycleCoordinator.MAX_PROPOSAL_SNAPSHOT_TOTAL_BYTES
-          ) {
+        if (Array.isArray(value)) {
+          if (stack.length + value.length > MAX_PROPOSAL_TRAVERSAL_NODES) {
+            overflowed = true;
+            break;
+          }
+          for (let index = value.length - 1; index >= 0; index -= 1) stack.push(value[index]);
+          continue;
+        }
+        const candidate = value as Record<string, unknown>;
+        const proposalId = optionalString(candidate.proposal_id);
+        if (proposalId) {
+          if (!snapshots.has(proposalId) && snapshots.size >= MediaBuyLifecycleCoordinator.MAX_PROPOSAL_SNAPSHOTS) {
             overflowed = true;
             return;
           }
-          snapshots.set(proposalId, { snapshot: detached, bytes: candidateBytes });
-          bytes += candidateBytes;
-        } else {
-          // Preserve last-observation semantics: a later unsafe duplicate must
-          // revoke an earlier safe representation of the same proposal ID.
-          snapshots.set(proposalId, null);
+          const prior = snapshots.get(proposalId);
+          if (prior) bytes -= prior.bytes;
+          const safe = safeProposalSnapshot(candidate);
+          if (safe) {
+            // Detach while this listener still owns the checked representation.
+            // Later task-update listeners may mutate the shared TaskInfo object.
+            const detached = structuredClone(safe);
+            const candidateBytes = new TextEncoder().encode(JSON.stringify(detached.proposal)).byteLength;
+            if (
+              candidateBytes > MediaBuyLifecycleCoordinator.MAX_PROPOSAL_SNAPSHOT_BYTES ||
+              bytes + candidateBytes > MediaBuyLifecycleCoordinator.MAX_PROPOSAL_SNAPSHOT_TOTAL_BYTES
+            ) {
+              overflowed = true;
+              return;
+            }
+            snapshots.set(proposalId, { snapshot: detached, bytes: candidateBytes });
+            bytes += candidateBytes;
+          } else {
+            // Preserve last-observation semantics: a later unsafe duplicate must
+            // revoke an earlier safe representation of the same proposal ID.
+            snapshots.set(proposalId, null);
+          }
         }
+        if (candidate.results !== undefined) stack.push(candidate.results);
+        if (candidate.proposal !== undefined) stack.push(candidate.proposal);
+        if (candidate.proposals !== undefined) stack.push(candidate.proposals);
       }
-      for (const key of ['proposals', 'proposal', 'results']) {
-        if (candidate[key] !== undefined) visit(candidate[key]);
-        if (overflowed) break;
-      }
-    };
-    try {
-      visit(data);
     } catch {
       return undefined;
     }
@@ -2171,7 +2598,8 @@ export class MediaBuyLifecycleCoordinator {
     projectCompletion?: (data: T) => unknown,
     onCompletionFailure?: () => void,
     retainCompletionProposals = true,
-    prepareMatchedCompletion?: (projected: unknown) => () => void
+    prepareMatchedCompletion?: (projected: unknown) => () => void,
+    onAuthoritativeFailure?: () => void
   ): Promise<U> {
     const captured = new Map<
       string,
@@ -2182,7 +2610,7 @@ export class MediaBuyLifecycleCoordinator {
           settle?: () => void;
           bytes: number;
         }
-      | { kind: 'failure'; proposalIds: string[]; bytes: number }
+      | { kind: 'failure'; proposalIds: string[]; authoritative: boolean; bytes: number }
     >();
     let capturedPayloadBytes = 0;
     let captureOverflowed = false;
@@ -2191,6 +2619,12 @@ export class MediaBuyLifecycleCoordinator {
       if (['pending', 'running', 'working', 'submitted'].includes(task.status)) return;
       const operationSucceeded =
         task.status === 'completed' && task.result !== undefined && isAdcpOperationSuccess(task.result, task.taskType);
+      const authoritativeFailure =
+        task.status === 'failed' ||
+        task.status === 'governance-denied' ||
+        (task.status === 'completed' &&
+          task.result !== undefined &&
+          !isAdcpOperationSuccess(task.result, task.taskType));
       let projectedResult = task.result;
       let projectionSucceeded = operationSucceeded;
       if (operationSucceeded && projectCompletion) {
@@ -2233,7 +2667,7 @@ export class MediaBuyLifecycleCoordinator {
               ...(settle && { settle }),
               bytes,
             }
-          : { kind: 'failure', proposalIds, bytes }
+          : { kind: 'failure', proposalIds, authoritative: authoritativeFailure, bytes }
       );
       capturedPayloadBytes += bytes;
       while (capturedPayloadBytes > MediaBuyLifecycleCoordinator.MAX_PROPOSAL_SNAPSHOT_TOTAL_BYTES) {
@@ -2286,8 +2720,12 @@ export class MediaBuyLifecycleCoordinator {
               }
             }
           } else if (racedCompletion?.kind === 'failure') {
-            this.invalidateProposalSnapshots(racedCompletion.proposalIds, accountScope);
-            onCompletionFailure?.();
+            if (racedCompletion.authoritative && onAuthoritativeFailure) {
+              onAuthoritativeFailure();
+            } else {
+              this.invalidateProposalSnapshots(racedCompletion.proposalIds, accountScope);
+              onCompletionFailure?.();
+            }
           } else if (captureOverflowed) {
             // The dispatch task ID is not knowable until dispatch returns. If
             // unrelated terminal events overflow the bounded correlation map,
@@ -2323,7 +2761,11 @@ export class MediaBuyLifecycleCoordinator {
     accountScope: string | undefined,
     project: ((data: unknown) => unknown) | undefined,
     retainProposals: boolean,
-    onTerminalFailure?: () => void
+    onPause?: () => void,
+    onTerminalFailure?: () => void,
+    onAuthoritativeFailure?: () => void,
+    preserveAuthoritativeProposals = false,
+    authoritativeTaskNames: ReadonlySet<string> = new Set()
   ): void {
     if (!taskId || !this.principalScope) return;
     this.pendingProposalTasks.delete(taskId);
@@ -2331,14 +2773,20 @@ export class MediaBuyLifecycleCoordinator {
       accountScope,
       ...(project && { project }),
       retainProposals,
+      ...(onPause && { onPause }),
+      ...(onAuthoritativeFailure && { onAuthoritativeFailure }),
+      authoritativeTaskNames,
+      ...(preserveAuthoritativeProposals && { preserveAuthoritativeProposals }),
       ...(onTerminalFailure && { onTerminalFailure }),
     });
     const priorTimer = this.pendingProposalTaskTimers.get(taskId);
     if (priorTimer) clearTimeout(priorTimer);
-    const timer = setTimeout(
-      () => this.forgetProposalTask(taskId),
-      MediaBuyLifecycleCoordinator.PROPOSAL_TASK_WATCH_TTL_MS
-    );
+    const timer = setTimeout(() => {
+      const pending = this.pendingProposalTasks.get(taskId);
+      if (!pending || this.pendingProposalTaskTimers.get(taskId) !== timer) return;
+      pending.onTerminalFailure?.();
+      this.forgetProposalTask(taskId);
+    }, MediaBuyLifecycleCoordinator.PROPOSAL_TASK_WATCH_TTL_MS);
     timer.unref?.();
     this.pendingProposalTaskTimers.set(taskId, timer);
     while (this.pendingProposalTasks.size > MediaBuyLifecycleCoordinator.MAX_PROPOSAL_SNAPSHOTS) {
@@ -2353,6 +2801,7 @@ export class MediaBuyLifecycleCoordinator {
       if (
         task.status === 'completed' &&
         task.result !== undefined &&
+        pending.authoritativeTaskNames?.has(task.taskType) &&
         isAdcpOperationSuccess(task.result, task.taskType)
       ) {
         try {
@@ -2364,6 +2813,16 @@ export class MediaBuyLifecycleCoordinator {
         }
       } else if (['pending', 'running', 'working', 'submitted'].includes(task.status)) {
         return;
+      } else if (task.status === 'input-required' || task.status === 'auth-required') {
+        pending.onPause?.();
+      } else if (
+        (task.status === 'failed' || task.status === 'governance-denied' || task.status === 'completed') &&
+        pending.authoritativeTaskNames?.has(task.taskType)
+      ) {
+        if (task.result !== undefined && !pending.preserveAuthoritativeProposals) {
+          this.invalidateProposalSnapshots(this.proposalIdsIn(task.result), pending.accountScope);
+        }
+        pending.onAuthoritativeFailure?.();
       } else {
         if (task.result !== undefined) {
           this.invalidateProposalSnapshots(this.proposalIdsIn(task.result), pending.accountScope);
@@ -2457,14 +2916,15 @@ export class MediaBuyLifecycleCoordinator {
     this.proposalSnapshotStore.proposalAcceptances.delete(String(snapshot.proposal.proposal_id));
     this.releaseAcceptanceOwnership(reservation);
     delete snapshot.acceptance;
-    snapshot.executable = true;
+    if (snapshot.nativeAcceptanceOnly) this.removeProposalSnapshot(snapshotKey);
+    else snapshot.executable = true;
   }
 
   private retireAcceptance(
     snapshotKey: string,
     snapshot: ProposalSnapshotEntry,
     reservation: AcceptanceReservation,
-    disposition: 'terminal' | 'commit-uncertain' = reservation.retryKind === 'commit-uncertain'
+    disposition: 'terminal' | 'accepted' | 'commit-uncertain' = reservation.retryKind === 'commit-uncertain'
       ? 'commit-uncertain'
       : 'terminal'
   ): void {
@@ -2474,6 +2934,7 @@ export class MediaBuyLifecycleCoordinator {
       this.markCommitUncertainProposal(proposalId);
     } else {
       this.markTerminalAcceptanceProposal(proposalId);
+      if (disposition === 'accepted') this.markAcceptedProposal(proposalId);
     }
     reservation.state = 'retired';
     snapshot.executable = false;
@@ -2523,7 +2984,7 @@ export class MediaBuyLifecycleCoordinator {
     reservation: AcceptanceReservation
   ): void {
     if (!this.ownsAcceptance(snapshotKey, snapshot, reservation) || reservation.state !== 'in-flight') return;
-    if (result.status === 'input-required' || result.status === 'auth-required') {
+    if (result.status === 'input-required' || result.status === 'auth-required' || result.status === 'deferred') {
       this.preserveAmbiguousAcceptance(snapshotKey, snapshot, reservation, result.metadata.taskId, 'paused');
       return;
     }
@@ -2545,11 +3006,11 @@ export class MediaBuyLifecycleCoordinator {
       this.forgetAcceptanceTask(result.metadata.taskId, reservation);
       return;
     }
-    if (result.status === 'working' || result.status === 'submitted' || result.status === 'deferred') {
+    if (result.status === 'working' || result.status === 'submitted') {
       this.watchAcceptanceTask(result.metadata.taskId, snapshotKey, snapshot, reservation);
       return;
     }
-    this.retireAcceptance(snapshotKey, snapshot, reservation);
+    this.retireAcceptance(snapshotKey, snapshot, reservation, 'accepted');
     this.forgetAcceptanceTask(result.metadata.taskId, reservation);
   }
 
@@ -2561,14 +3022,14 @@ export class MediaBuyLifecycleCoordinator {
     watchedTaskId = task.taskId
   ): void {
     if (!this.ownsAcceptance(snapshotKey, snapshot, reservation) || reservation.state !== 'in-flight') return;
-    if (['input-required', 'auth-required', 'needs_input'].includes(task.status)) {
+    if (['input-required', 'auth-required', 'needs_input', 'deferred'].includes(task.status)) {
       this.preserveAmbiguousAcceptance(snapshotKey, snapshot, reservation, watchedTaskId, 'paused');
       return;
     }
     if (['pending', 'running', 'working', 'submitted', 'deferred'].includes(task.status)) return;
     if (task.status === 'completed') {
       if (isAdcpOperationSuccess(task.result, task.taskType)) {
-        this.retireAcceptance(snapshotKey, snapshot, reservation);
+        this.retireAcceptance(snapshotKey, snapshot, reservation, 'accepted');
       } else {
         this.restoreAcceptance(snapshotKey, snapshot, reservation);
       }
@@ -2677,10 +3138,27 @@ export class MediaBuyLifecycleCoordinator {
         resume: async (input: unknown) => {
           try {
             this.assertActive('acceptance resume continuation');
+            if (
+              !this.ownsAcceptance(snapshotKey, snapshot, reservation) ||
+              reservation.state !== 'retryable' ||
+              reservation.retryKind !== 'paused'
+            ) {
+              throw this.unsupported(
+                'acceptProposal',
+                'proposal_acceptance_continuation_stale',
+                'This deferred acceptance continuation no longer owns the shared reservation. No continuation was sent.'
+              );
+            }
+            this.assertAcceptanceRetryWindow(snapshotKey, snapshot, reservation);
+            if (reservation.taskId) this.forgetAcceptanceTask(reservation.taskId, reservation);
+            const retryTimer = this.acceptanceRetryExpiryTimers.get(reservation);
+            if (retryTimer) clearTimeout(retryTimer);
+            this.acceptanceRetryExpiryTimers.delete(reservation);
+            reservation.state = 'in-flight';
+            delete reservation.retryKind;
             const resumed = await deferred.resume(input);
             this.assertActive('acceptance resume continuation');
-            this.transitionAcceptanceResult(resumed, snapshotKey, snapshot, reservation);
-            return resumed;
+            return this.attachAcceptanceTransitions(resumed, snapshotKey, snapshot, reservation);
           } catch (error) {
             if (!this.disposed) {
               this.preserveAmbiguousAcceptance(snapshotKey, snapshot, reservation, localTaskId);
@@ -2699,11 +3177,11 @@ export class MediaBuyLifecycleCoordinator {
     for (const unsubscribe of [...this.proposalDispatchUnsubscribes]) unsubscribe();
     for (const decline of [...this.proposalSnapshotStore.pendingDeclines]) {
       if (decline.owner !== this.declineLeaseOwner) continue;
-      this.retirePendingDecline(decline);
+      this.preserveAmbiguousProposalMutation(decline, decline.attemptEpoch);
     }
     for (const refinement of [...this.proposalSnapshotStore.pendingRefinements]) {
       if (refinement.owner !== this.refinementLeaseOwner) continue;
-      this.retirePendingRefinement(refinement);
+      this.preserveAmbiguousProposalMutation(refinement, refinement.attemptEpoch);
     }
     for (const taskId of [...this.pendingProposalTasks.keys()]) this.forgetProposalTask(taskId);
     this.proposalTaskUnsubscribe?.();
@@ -2727,40 +3205,49 @@ export class MediaBuyLifecycleCoordinator {
   private rememberProposals(data: unknown, accountScope?: string): void {
     if (this.disposed || !this.principalScope) return;
     const seen = new WeakSet<object>();
-    const visit = (value: unknown): void => {
-      if (Array.isArray(value)) {
-        if (seen.has(value)) return;
-        seen.add(value);
-        value.forEach(visit);
+    const stack = [data];
+    let visited = 0;
+    while (stack.length > 0) {
+      const value = stack.pop();
+      if (value === null || typeof value !== 'object' || seen.has(value)) continue;
+      seen.add(value);
+      visited += 1;
+      if (visited > MAX_PROPOSAL_TRAVERSAL_NODES) {
+        this.invalidateProposalSnapshots(this.cachedProposalIds(accountScope), accountScope);
         return;
       }
-      const candidate = record(value);
-      if (Object.keys(candidate).length === 0 || seen.has(candidate)) return;
-      seen.add(candidate);
+      if (Array.isArray(value)) {
+        if (stack.length + value.length > MAX_PROPOSAL_TRAVERSAL_NODES) {
+          this.invalidateProposalSnapshots(this.cachedProposalIds(accountScope), accountScope);
+          return;
+        }
+        for (let index = value.length - 1; index >= 0; index -= 1) stack.push(value[index]);
+        continue;
+      }
+      const candidate = value as Record<string, unknown>;
       const proposalId = optionalString(candidate.proposal_id);
       if (proposalId) {
-        if (this.isProposalRefinementPending(proposalId)) return;
+        if (this.isProposalRefinementPending(proposalId)) continue;
         const key = this.snapshotKey(proposalId, accountScope);
-        if (this.isTerminalProposal(proposalId) || this.isRetiredAcceptanceKey(key)) return;
-        if (this.proposalSnapshotStore.entries.get(key)?.acceptance) return;
+        if (this.isTerminalProposal(proposalId) || this.isRetiredAcceptanceKey(key)) continue;
+        if (this.proposalSnapshotStore.entries.get(key)?.acceptance) continue;
         // A newly observed seller representation supersedes the prior one.
         // Invalidate first so an unsafe, oversized, or unserializable
         // replacement cannot leave stale executable terms behind.
         this.removeProposalSnapshot(key);
         try {
           const safeSnapshot = safeProposalSnapshot(candidate);
-          if (!safeSnapshot) return;
+          if (!safeSnapshot) continue;
           this.rememberSafeProposalSnapshot(safeSnapshot, accountScope);
         } catch {
           // Seller responses must be JSON. An unserializable proposal is not a
           // safe immutable acceptance snapshot, so leave it out of the cache.
         }
       }
-      for (const key of ['proposals', 'proposal', 'results']) {
-        if (candidate[key] !== undefined) visit(candidate[key]);
-      }
-    };
-    visit(data);
+      if (candidate.results !== undefined) stack.push(candidate.results);
+      if (candidate.proposal !== undefined) stack.push(candidate.proposal);
+      if (candidate.proposals !== undefined) stack.push(candidate.proposals);
+    }
   }
 
   private rememberSafeProposalSnapshot(snapshot: SafeProposalSnapshot, accountScope?: string): void {
@@ -2798,23 +3285,53 @@ export class MediaBuyLifecycleCoordinator {
     accountScope?: string,
     retainProposals = false,
     pendingDecline?: PendingDeclineLease,
-    pendingRefinement?: PendingRefinementLease
+    pendingRefinement?: PendingRefinementLease,
+    mutationAttemptEpoch?: number
   ): CompatibilityTaskResult<U, T> {
     const localTaskId = result.metadata.taskId;
+    const mutationReservation = pendingDecline ?? pendingRefinement;
+    const attemptEpoch = mutationAttemptEpoch ?? mutationReservation?.attemptEpoch;
+    const mutationAttemptIsCurrent = (): boolean =>
+      !mutationReservation ||
+      (attemptEpoch !== undefined && this.mutationAttemptIsCurrent(mutationReservation, attemptEpoch));
     const adapt = (current: TaskResult<T>): CompatibilityTaskResult<U, T> => {
       this.assertActive('lifecycle result projection');
+      const attemptWasCurrent = mutationAttemptIsCurrent();
+      const currentTaskIsAuthoritative = report.tools_used.includes(current.metadata.taskName);
+      const currentAuthoritativeFailure =
+        currentTaskIsAuthoritative &&
+        (current.status === 'failed' ||
+          current.status === 'governance-denied' ||
+          (current.status === 'completed' && !isAdcpOperationSuccess(current.data, current.metadata.taskName)));
       if (
         current.success &&
         current.status === 'completed' &&
         isAdcpOperationSuccess(current.data, current.metadata.taskName)
       ) {
-        const projected = project(current.data);
-        if (retainProposals) this.rememberProposals(projected, accountScope);
+        let projected: U;
+        try {
+          projected = project(current.data);
+        } catch (error) {
+          if (retainProposals && attemptWasCurrent) {
+            // A malformed replacement is still authoritative evidence that
+            // the seller re-used this proposal ID. Revoke any older executable
+            // snapshot before surfacing the projection error.
+            this.invalidateProposalSnapshots(this.proposalIdsIn(current.data), accountScope);
+          }
+          throw error;
+        }
+        if (retainProposals && attemptWasCurrent) this.rememberProposals(projected, accountScope);
         (current as TaskResult<unknown>).data = projected;
-      } else if (retainProposals && current.data !== undefined) {
+      } else if (
+        retainProposals &&
+        mutationAttemptIsCurrent() &&
+        current.data !== undefined &&
+        !(pendingRefinement && currentAuthoritativeFailure)
+      ) {
         this.invalidateProposalSnapshots(this.proposalIdsIn(current.data), accountScope);
       }
       if (
+        mutationAttemptIsCurrent() &&
         (retainProposals || pendingDecline || pendingRefinement) &&
         ['working', 'submitted'].includes(current.status)
       ) {
@@ -2824,11 +3341,25 @@ export class MediaBuyLifecycleCoordinator {
           data => project(data as T),
           retainProposals,
           () => {
-            if (pendingDecline && !this.disposed) this.retirePendingDecline(pendingDecline);
-            if (pendingRefinement && !this.disposed) this.retirePendingRefinement(pendingRefinement);
-          }
+            if (attemptEpoch === undefined) return;
+            if (pendingDecline && !this.disposed) this.pausePendingDecline(pendingDecline, attemptEpoch);
+            if (pendingRefinement && !this.disposed) this.pausePendingRefinement(pendingRefinement, attemptEpoch);
+          },
+          () => {
+            if (attemptEpoch === undefined) return;
+            if (pendingDecline && !this.disposed) this.preserveAmbiguousProposalMutation(pendingDecline, attemptEpoch);
+            if (pendingRefinement && !this.disposed)
+              this.preserveAmbiguousProposalMutation(pendingRefinement, attemptEpoch);
+          },
+          () => {
+            if (attemptEpoch === undefined) return;
+            if (pendingDecline && !this.disposed) this.retirePendingDecline(pendingDecline, attemptEpoch);
+            if (pendingRefinement && !this.disposed) this.restorePendingRefinement(pendingRefinement, attemptEpoch);
+          },
+          pendingRefinement !== undefined,
+          new Set(report.tools_used)
         );
-      } else if (retainProposals || pendingDecline || pendingRefinement) {
+      } else if (mutationAttemptIsCurrent() && (retainProposals || pendingDecline || pendingRefinement)) {
         this.forgetProposalTask(localTaskId);
       }
 
@@ -2845,17 +3376,39 @@ export class MediaBuyLifecycleCoordinator {
               const completedSuccessfully =
                 task.status === 'completed' &&
                 task.result !== undefined &&
+                report.tools_used.includes(task.taskType) &&
                 isAdcpOperationSuccess(task.result, task.taskType);
+              const authoritativeFailure =
+                report.tools_used.includes(task.taskType) &&
+                (task.status === 'failed' ||
+                  task.status === 'governance-denied' ||
+                  (task.status === 'completed' &&
+                    task.result !== undefined &&
+                    !isAdcpOperationSuccess(task.result, task.taskType)));
               if (completedSuccessfully) {
-                const projected = project(task.result as T);
-                if (retainProposals) this.rememberProposals(projected, accountScope);
+                const continuationWasCurrent = mutationAttemptIsCurrent();
+                let projected: U;
+                try {
+                  projected = project(task.result as T);
+                } catch (error) {
+                  if (retainProposals && continuationWasCurrent) {
+                    this.invalidateProposalSnapshots(this.proposalIdsIn(task.result), accountScope);
+                  }
+                  throw error;
+                }
+                if (retainProposals && continuationWasCurrent) this.rememberProposals(projected, accountScope);
                 task.result = projected;
-                if (retainProposals) this.forgetProposalTask(localTaskId);
-              } else if (retainProposals && !['pending', 'running', 'working', 'submitted'].includes(task.status)) {
+                if (retainProposals && continuationWasCurrent) this.forgetProposalTask(localTaskId);
+              } else if (
+                retainProposals &&
+                mutationAttemptIsCurrent() &&
+                !(pendingRefinement && authoritativeFailure) &&
+                !['pending', 'running', 'working', 'submitted'].includes(task.status)
+              ) {
                 if (task.result !== undefined) {
                   this.invalidateProposalSnapshots(this.proposalIdsIn(task.result), accountScope);
                 }
-                this.forgetProposalTask(localTaskId);
+                if (mutationAttemptIsCurrent()) this.forgetProposalTask(localTaskId);
               }
               if (
                 pendingDecline &&
@@ -2863,8 +3416,10 @@ export class MediaBuyLifecycleCoordinator {
                   task.status
                 )
               ) {
-                if (completedSuccessfully) this.finishPendingDecline(pendingDecline);
-                else this.retirePendingDecline(pendingDecline);
+                if (attemptEpoch !== undefined) {
+                  if (completedSuccessfully) this.finishPendingDecline(pendingDecline, attemptEpoch);
+                  else this.retirePendingDecline(pendingDecline, attemptEpoch);
+                }
               }
               if (
                 pendingRefinement &&
@@ -2873,12 +3428,26 @@ export class MediaBuyLifecycleCoordinator {
                   task.status
                 )
               ) {
-                this.retirePendingRefinement(pendingRefinement);
+                if (attemptEpoch !== undefined) {
+                  if (authoritativeFailure) this.restorePendingRefinement(pendingRefinement, attemptEpoch);
+                  else this.preserveAmbiguousProposalMutation(pendingRefinement, attemptEpoch);
+                }
+              }
+              if (task.status === 'input-required' || task.status === 'auth-required') {
+                if (attemptEpoch !== undefined) {
+                  if (pendingDecline) this.pausePendingDecline(pendingDecline, attemptEpoch);
+                  if (pendingRefinement) this.pausePendingRefinement(pendingRefinement, attemptEpoch);
+                }
+                this.forgetProposalTask(localTaskId);
               }
               return task;
             } catch (error) {
-              if (pendingDecline && !this.disposed) this.retirePendingDecline(pendingDecline);
-              if (pendingRefinement && !this.disposed) this.retirePendingRefinement(pendingRefinement);
+              if (attemptEpoch !== undefined) {
+                if (pendingDecline && !this.disposed)
+                  this.preserveAmbiguousProposalMutation(pendingDecline, attemptEpoch);
+                if (pendingRefinement && !this.disposed)
+                  this.preserveAmbiguousProposalMutation(pendingRefinement, attemptEpoch);
+              }
               throw error;
             }
           },
@@ -2887,8 +3456,12 @@ export class MediaBuyLifecycleCoordinator {
               this.assertActive('lifecycle completion continuation');
               return adapt(await submitted.waitForCompletion(pollInterval, signal));
             } catch (error) {
-              if (pendingDecline && !this.disposed) this.retirePendingDecline(pendingDecline);
-              if (pendingRefinement && !this.disposed) this.retirePendingRefinement(pendingRefinement);
+              if (attemptEpoch !== undefined) {
+                if (pendingDecline && !this.disposed)
+                  this.preserveAmbiguousProposalMutation(pendingDecline, attemptEpoch);
+                if (pendingRefinement && !this.disposed)
+                  this.preserveAmbiguousProposalMutation(pendingRefinement, attemptEpoch);
+              }
               throw error;
             }
           },
@@ -2899,22 +3472,58 @@ export class MediaBuyLifecycleCoordinator {
         (output as { deferred?: unknown }).deferred = {
           ...deferred,
           resume: async (input: unknown) => {
+            let resumedEpoch = attemptEpoch;
             try {
               this.assertActive('lifecycle resume continuation');
-              return adapt(await deferred.resume(input));
+              if (mutationReservation) {
+                if (
+                  attemptEpoch === undefined ||
+                  !this.mutationAttemptIsCurrent(mutationReservation, attemptEpoch) ||
+                  mutationReservation.state !== 'paused'
+                ) {
+                  throw this.unsupported(
+                    pendingDecline ? 'declineProposals' : 'refineProposals',
+                    'proposal_mutation_continuation_stale',
+                    'This deferred proposal-mutation continuation no longer owns the shared reservation. No continuation was sent.'
+                  );
+                }
+                const operation = pendingDecline ? 'declineProposals' : 'refineProposals';
+                const owner = pendingDecline ? this.declineLeaseOwner : this.refinementLeaseOwner;
+                this.beginProposalMutationRetry(mutationReservation, owner, operation);
+                resumedEpoch = mutationReservation.attemptEpoch;
+              }
+              const resumed = await deferred.resume(input);
+              if (!mutationReservation) return adapt(resumed);
+              return this.adaptProjectedResult(
+                resumed,
+                report,
+                project,
+                accountScope,
+                retainProposals,
+                pendingDecline,
+                pendingRefinement,
+                resumedEpoch
+              );
             } catch (error) {
-              if (pendingDecline && !this.disposed) this.retirePendingDecline(pendingDecline);
-              if (pendingRefinement && !this.disposed) this.retirePendingRefinement(pendingRefinement);
+              if (resumedEpoch !== undefined) {
+                if (pendingDecline && !this.disposed)
+                  this.preserveAmbiguousProposalMutation(pendingDecline, resumedEpoch);
+                if (pendingRefinement && !this.disposed)
+                  this.preserveAmbiguousProposalMutation(pendingRefinement, resumedEpoch);
+              }
               throw error;
             }
           },
         };
       }
       if (pendingDecline && current.status === 'completed') {
-        if (isAdcpOperationSuccess(current.data, current.metadata.taskName)) this.finishPendingDecline(pendingDecline);
-        else this.retirePendingDecline(pendingDecline);
+        if (attemptEpoch !== undefined) {
+          if (isAdcpOperationSuccess(current.data, current.metadata.taskName))
+            this.finishPendingDecline(pendingDecline, attemptEpoch);
+          else this.retirePendingDecline(pendingDecline, attemptEpoch);
+        }
       } else if (pendingDecline && (current.status === 'failed' || current.status === 'governance-denied')) {
-        this.retirePendingDecline(pendingDecline);
+        if (attemptEpoch !== undefined) this.retirePendingDecline(pendingDecline, attemptEpoch);
       }
       if (
         pendingRefinement &&
@@ -2922,7 +3531,16 @@ export class MediaBuyLifecycleCoordinator {
           current.status === 'failed' ||
           current.status === 'governance-denied')
       ) {
-        this.retirePendingRefinement(pendingRefinement);
+        if (attemptEpoch !== undefined) {
+          if (currentAuthoritativeFailure) this.restorePendingRefinement(pendingRefinement, attemptEpoch);
+          else this.preserveAmbiguousProposalMutation(pendingRefinement, attemptEpoch);
+        }
+      }
+      if (current.status === 'input-required' || current.status === 'auth-required' || current.status === 'deferred') {
+        if (attemptEpoch !== undefined) {
+          if (pendingDecline) this.pausePendingDecline(pendingDecline, attemptEpoch);
+          if (pendingRefinement) this.pausePendingRefinement(pendingRefinement, attemptEpoch);
+        }
       }
       return Object.assign(output, { compatibility: report }) as unknown as CompatibilityTaskResult<U, T>;
     };
@@ -2988,12 +3606,13 @@ export class MediaBuyLifecycleCoordinator {
       ...(input.account !== undefined && { account: input.account as CanonicalGetProductsRequest['account'] }),
       ...(input.brand !== undefined && { brand: input.brand as CanonicalGetProductsRequest['brand'] }),
       ...(Array.isArray(input.fields) && { fields: input.fields as CanonicalGetProductsRequest['fields'] }),
-      ...(compareRelease(this.negotiated_version, '3.0') >= 0 && {
-        pagination: {
-          ...(input.cursor !== undefined && { cursor: input.cursor }),
-          max_results: input.max_results ?? 25,
-        } as CanonicalGetProductsRequest['pagination'],
-      }),
+      ...(compareRelease(this.negotiated_version, '3.0') >= 0 &&
+        (input.cursor !== undefined || input.max_results !== undefined) && {
+          pagination: {
+            ...(input.cursor !== undefined && { cursor: input.cursor }),
+            ...(input.max_results !== undefined && { max_results: input.max_results }),
+          } as CanonicalGetProductsRequest['pagination'],
+        }),
       ...(input.if_feed_version !== undefined && { if_wholesale_feed_version: input.if_feed_version as string }),
       ...(input.if_pricing_version !== undefined && { if_pricing_version: input.if_pricing_version as string }),
       ...(input.context !== undefined && { context: input.context as CanonicalGetProductsRequest['context'] }),
@@ -3028,11 +3647,11 @@ export class MediaBuyLifecycleCoordinator {
           this.adaptProjectedResult(
             result,
             this.makeReport(lifecycle, ['request_proposals'], []),
-            data => projectRequestProposals(data, lifecycle),
+            data => projectRequestProposals(data, lifecycle, this.negotiated_version),
             accountScope,
             true
           ),
-        data => projectRequestProposals(data, lifecycle)
+        data => projectRequestProposals(data, lifecycle, this.negotiated_version)
       );
     }
 
@@ -3164,25 +3783,44 @@ export class MediaBuyLifecycleCoordinator {
     this.assertValidCompactRequest('refine_proposals', params, lifecycle, true);
     if (lifecycle === 'compact') {
       const proposalIds = params.refinements.map(refinement => refinement.proposal_id);
+      const retry = this.pendingRefinementRetryCandidate(proposalIds);
+      const identity = this.proposalMutationIdempotency(
+        params.idempotency_key,
+        retry,
+        Boolean(options?.skipIdempotencyAutoInject)
+      );
+      const request: RefineProposalsInput = identity.idempotencyKey
+        ? { ...params, idempotency_key: identity.idempotencyKey }
+        : params;
       const scopes = this.proposalScopes(proposalIds);
       const accountScope = scopes.length === 1 ? scopes[0] : undefined;
-      const pendingRefinement = this.beginPendingRefinement(proposalIds, true);
+      const pendingRefinement = this.beginPendingRefinement(
+        proposalIds,
+        true,
+        requestFingerprint(request),
+        identity.idempotencyKey,
+        identity.skipIdempotencyAutoInject
+      );
+      const attemptEpoch = pendingRefinement.attemptEpoch;
+      const dispatchOptions = retry
+        ? { ...options, skipIdempotencyAutoInject: retry.skipIdempotencyAutoInject }
+        : options;
       const projectOnly = (data: CompatibleRefineProposalsWireResponse) =>
         projectRefineProposals(data, lifecycle, params.refinements);
       const projectAndSettle = (data: CompatibleRefineProposalsWireResponse) => {
         try {
           const projected = projectOnly(data);
-          this.settlePendingRefinement(pendingRefinement, projected);
+          this.settlePendingRefinement(pendingRefinement, projected, attemptEpoch);
           return projected;
         } catch (error) {
-          if (!this.disposed) this.retirePendingRefinement(pendingRefinement);
+          if (!this.disposed) this.preserveAmbiguousProposalMutation(pendingRefinement, attemptEpoch);
           throw error;
         }
       };
       try {
         return await this.captureProposalDispatch(
           accountScope,
-          () => this.agent.refineProposals(params, inputHandler, options),
+          () => this.agent.refineProposals(request, inputHandler, dispatchOptions),
           result =>
             this.adaptProjectedResult(
               result,
@@ -3191,16 +3829,22 @@ export class MediaBuyLifecycleCoordinator {
               accountScope,
               true,
               undefined,
-              pendingRefinement
+              pendingRefinement,
+              attemptEpoch
             ),
           projectOnly,
-          () => this.retirePendingRefinement(pendingRefinement),
+          () => this.preserveAmbiguousProposalMutation(pendingRefinement, attemptEpoch),
           true,
           projected =>
-            this.preparePendingRefinementSettlement(pendingRefinement, projected as CompatibleRefineProposalsResponse)
+            this.preparePendingRefinementSettlement(
+              pendingRefinement,
+              projected as CompatibleRefineProposalsResponse,
+              attemptEpoch
+            ),
+          () => this.restorePendingRefinement(pendingRefinement, attemptEpoch)
         );
       } catch (error) {
-        if (!this.disposed) this.retirePendingRefinement(pendingRefinement);
+        if (!this.disposed) this.preserveAmbiguousProposalMutation(pendingRefinement, attemptEpoch);
         throw error;
       }
     }
@@ -3302,40 +3946,52 @@ export class MediaBuyLifecycleCoordinator {
         legacyRefine.push({ scope: 'product', product_id: productId, action });
       }
     }
+    const proposalIds = params.refinements.map(refinement => refinement.proposal_id);
+    const retry = this.pendingRefinementRetryCandidate(proposalIds);
+    const identity = this.proposalMutationIdempotency(
+      params.idempotency_key,
+      retry,
+      Boolean(options?.skipIdempotencyAutoInject)
+    );
     const request: CanonicalGetProductsRequest = {
       buying_mode: 'refine',
       refine: legacyRefine as CanonicalGetProductsRequest['refine'],
-      ...(optionalString(params.idempotency_key)
-        ? { idempotency_key: optionalString(params.idempotency_key) }
-        : !options?.skipIdempotencyAutoInject
-          ? { idempotency_key: generateIdempotencyKey() }
-          : {}),
+      ...(identity.idempotencyKey && { idempotency_key: identity.idempotencyKey }),
       ...(params.push_notification_config !== undefined && {
         push_notification_config:
           params.push_notification_config as unknown as CanonicalGetProductsRequest['push_notification_config'],
       }),
       ...(params.context !== undefined && { context: params.context as CanonicalGetProductsRequest['context'] }),
     };
-    const proposalIds = params.refinements.map(refinement => refinement.proposal_id);
     const scopes = this.proposalScopes(proposalIds);
     const accountScope = scopes.length === 1 ? scopes[0] : undefined;
-    const pendingRefinement = this.beginPendingRefinement(proposalIds);
+    const pendingRefinement = this.beginPendingRefinement(
+      proposalIds,
+      true,
+      requestFingerprint(request),
+      identity.idempotencyKey,
+      identity.skipIdempotencyAutoInject
+    );
+    const attemptEpoch = pendingRefinement.attemptEpoch;
+    const dispatchOptions = retry
+      ? { ...options, skipIdempotencyAutoInject: retry.skipIdempotencyAutoInject }
+      : options;
     const projectOnly = (data: CompatibleRefineProposalsWireResponse) =>
       projectRefineProposals(data, lifecycle, params.refinements);
     const projectAndSettle = (data: CompatibleRefineProposalsWireResponse) => {
       try {
         const projected = projectOnly(data);
-        this.settlePendingRefinement(pendingRefinement, projected);
+        this.settlePendingRefinement(pendingRefinement, projected, attemptEpoch);
         return projected;
       } catch (error) {
-        if (!this.disposed) this.retirePendingRefinement(pendingRefinement);
+        if (!this.disposed) this.preserveAmbiguousProposalMutation(pendingRefinement, attemptEpoch);
         throw error;
       }
     };
     try {
       return await this.captureProposalDispatch(
         accountScope,
-        () => this.agent.getProducts(request, inputHandler, options),
+        () => this.agent.getProducts(request, inputHandler, dispatchOptions),
         result =>
           this.adaptProjectedResult(
             result,
@@ -3344,16 +4000,22 @@ export class MediaBuyLifecycleCoordinator {
             accountScope,
             true,
             undefined,
-            pendingRefinement
+            pendingRefinement,
+            attemptEpoch
           ),
         projectOnly,
-        () => this.retirePendingRefinement(pendingRefinement),
+        () => this.preserveAmbiguousProposalMutation(pendingRefinement, attemptEpoch),
         true,
         projected =>
-          this.preparePendingRefinementSettlement(pendingRefinement, projected as CompatibleRefineProposalsResponse)
+          this.preparePendingRefinementSettlement(
+            pendingRefinement,
+            projected as CompatibleRefineProposalsResponse,
+            attemptEpoch
+          ),
+        () => this.restorePendingRefinement(pendingRefinement, attemptEpoch)
       );
     } catch (error) {
-      if (!this.disposed) this.retirePendingRefinement(pendingRefinement);
+      if (!this.disposed) this.preserveAmbiguousProposalMutation(pendingRefinement, attemptEpoch);
       throw error;
     }
   }
@@ -3367,27 +4029,43 @@ export class MediaBuyLifecycleCoordinator {
     const input = record(params);
     const lifecycle = this.selectLifecycle('decline_proposals');
     const projectOnly = (data: unknown, proposalIds: readonly string[]) =>
-      projectDeclineProposals(data, lifecycle, proposalIds);
+      projectDeclineProposals(data, lifecycle, proposalIds, this.negotiated_version);
     if (lifecycle === 'compact') {
       this.assertValidCompactRequest('decline_proposals', params, lifecycle, true);
       const proposalIds = array(input.declines)
         .map(value => optionalString(record(value).proposal_id))
         .filter((value): value is string => value !== undefined);
-      const pendingDecline = this.beginPendingDecline(proposalIds);
+      const retry = this.pendingDeclineRetryCandidate(proposalIds);
+      const identity = this.proposalMutationIdempotency(
+        input.idempotency_key,
+        retry,
+        Boolean(options?.skipIdempotencyAutoInject)
+      );
+      const request = identity.idempotencyKey ? { ...params, idempotency_key: identity.idempotencyKey } : params;
+      const pendingDecline = this.beginPendingDecline(
+        proposalIds,
+        requestFingerprint(request),
+        identity.idempotencyKey,
+        identity.skipIdempotencyAutoInject
+      );
+      const attemptEpoch = pendingDecline.attemptEpoch;
+      const dispatchOptions = retry
+        ? { ...options, skipIdempotencyAutoInject: retry.skipIdempotencyAutoInject }
+        : options;
       const projectAndSettle = (data: unknown) => {
         try {
           const projected = projectOnly(data, proposalIds);
-          this.preparePendingDeclineSettlement(pendingDecline, projected)();
+          this.preparePendingDeclineSettlement(pendingDecline, projected, attemptEpoch)();
           return projected;
         } catch (error) {
-          if (!this.disposed) this.retirePendingDecline(pendingDecline);
+          if (!this.disposed) this.preserveAmbiguousProposalMutation(pendingDecline, attemptEpoch);
           throw error;
         }
       };
       try {
         return await this.captureProposalDispatch(
           undefined,
-          () => this.agent.declineProposals(params, inputHandler, options),
+          () => this.agent.declineProposals(request, inputHandler, dispatchOptions),
           result =>
             this.adaptProjectedResult(
               result,
@@ -3395,16 +4073,22 @@ export class MediaBuyLifecycleCoordinator {
               projectAndSettle,
               undefined,
               false,
-              pendingDecline
+              pendingDecline,
+              undefined,
+              attemptEpoch
             ),
           data => projectOnly(data, proposalIds),
-          () => this.retirePendingDecline(pendingDecline),
+          () => this.preserveAmbiguousProposalMutation(pendingDecline, attemptEpoch),
           false,
           projected =>
-            this.preparePendingDeclineSettlement(pendingDecline, projected as CompatibleDeclineProposalsResponse)
+            this.preparePendingDeclineSettlement(
+              pendingDecline,
+              projected as CompatibleDeclineProposalsResponse,
+              attemptEpoch
+            )
         );
       } catch (error) {
-        if (!this.disposed) this.retirePendingDecline(pendingDecline);
+        if (!this.disposed) this.preserveAmbiguousProposalMutation(pendingDecline, attemptEpoch);
         throw error;
       }
     }
@@ -3442,14 +4126,17 @@ export class MediaBuyLifecycleCoordinator {
       const decline = record(item);
       return { scope: 'proposal', proposal_id: decline.proposal_id, action: 'omit' };
     });
+    const proposalIds = declines.map(decline => String(decline.proposal_id));
+    const retry = this.pendingDeclineRetryCandidate(proposalIds);
+    const identity = this.proposalMutationIdempotency(
+      input.idempotency_key,
+      retry,
+      Boolean(options?.skipIdempotencyAutoInject)
+    );
     const request: CanonicalGetProductsRequest = {
       buying_mode: 'refine',
       refine: declines as CanonicalGetProductsRequest['refine'],
-      ...(optionalString(input.idempotency_key)
-        ? { idempotency_key: optionalString(input.idempotency_key) }
-        : !options?.skipIdempotencyAutoInject
-          ? { idempotency_key: generateIdempotencyKey() }
-          : {}),
+      ...(identity.idempotencyKey && { idempotency_key: identity.idempotencyKey }),
       ...(input.push_notification_config !== undefined && {
         push_notification_config:
           input.push_notification_config as CanonicalGetProductsRequest['push_notification_config'],
@@ -3457,22 +4144,30 @@ export class MediaBuyLifecycleCoordinator {
       ...(input.context !== undefined && { context: input.context as CanonicalGetProductsRequest['context'] }),
     };
     this.assertValidCompactRequest('decline_proposals', params, lifecycle, true);
-    const proposalIds = declines.map(decline => String(decline.proposal_id));
-    const pendingDecline = this.beginPendingDecline(proposalIds);
+    const pendingDecline = this.beginPendingDecline(
+      proposalIds,
+      requestFingerprint(request),
+      identity.idempotencyKey,
+      identity.skipIdempotencyAutoInject
+    );
+    const attemptEpoch = pendingDecline.attemptEpoch;
+    const dispatchOptions = retry
+      ? { ...options, skipIdempotencyAutoInject: retry.skipIdempotencyAutoInject }
+      : options;
     const projectAndSettle = (data: unknown) => {
       try {
         const projected = projectOnly(data, proposalIds);
-        this.preparePendingDeclineSettlement(pendingDecline, projected)();
+        this.preparePendingDeclineSettlement(pendingDecline, projected, attemptEpoch)();
         return projected;
       } catch (error) {
-        if (!this.disposed) this.retirePendingDecline(pendingDecline);
+        if (!this.disposed) this.preserveAmbiguousProposalMutation(pendingDecline, attemptEpoch);
         throw error;
       }
     };
     try {
       return await this.captureProposalDispatch(
         undefined,
-        () => this.agent.getProducts(request, inputHandler, options),
+        () => this.agent.getProducts(request, inputHandler, dispatchOptions),
         result =>
           this.adaptProjectedResult(
             result,
@@ -3483,16 +4178,22 @@ export class MediaBuyLifecycleCoordinator {
             projectAndSettle,
             undefined,
             false,
-            pendingDecline
+            pendingDecline,
+            undefined,
+            attemptEpoch
           ),
         data => projectOnly(data, proposalIds),
-        () => this.retirePendingDecline(pendingDecline),
+        () => this.preserveAmbiguousProposalMutation(pendingDecline, attemptEpoch),
         false,
         projected =>
-          this.preparePendingDeclineSettlement(pendingDecline, projected as CompatibleDeclineProposalsResponse)
+          this.preparePendingDeclineSettlement(
+            pendingDecline,
+            projected as CompatibleDeclineProposalsResponse,
+            attemptEpoch
+          )
       );
     } catch (error) {
-      if (!this.disposed) this.retirePendingDecline(pendingDecline);
+      if (!this.disposed) this.preserveAmbiguousProposalMutation(pendingDecline, attemptEpoch);
       throw error;
     }
   }
@@ -3659,11 +4360,25 @@ export class MediaBuyLifecycleCoordinator {
     this.assertLegacyReferenceShapes('acceptProposal', input);
     if (lifecycle === 'compact') {
       const proposalId = optionalString(input.proposal_id);
-      if (proposalId && this.proposalSnapshotStore.proposalAcceptances.has(proposalId)) {
+      if (proposalId && this.isProposalDeclinePending(proposalId)) {
         throw this.unsupported(
           'acceptProposal',
-          'proposal_acceptance_pending',
-          'The proposal already has an established acceptance reservation in this principal scope. Only its exact idempotent retry is allowed.'
+          'proposal_decline_pending',
+          'The proposal has an unresolved decline in this principal scope. Wait for or reconcile that decline before accepting it.'
+        );
+      }
+      if (proposalId && this.isProposalRefinementPending(proposalId)) {
+        throw this.unsupported(
+          'acceptProposal',
+          'proposal_refinement_pending',
+          'The proposal has an unresolved refinement in this principal scope. Wait for or reconcile that refinement before accepting it.'
+        );
+      }
+      if (proposalId && this.isCommitUncertainProposalMutation(proposalId)) {
+        throw this.unsupported(
+          'acceptProposal',
+          'proposal_mutation_commit_uncertain',
+          'The proposal has a decline or refinement whose commit outcome is unknown. Reconcile it before sending an acceptance.'
         );
       }
       if (proposalId && this.isCommitUncertainProposal(proposalId)) {
@@ -3680,14 +4395,104 @@ export class MediaBuyLifecycleCoordinator {
           'The proposal is terminal in this principal scope. No acceptance was sent.'
         );
       }
+      if (proposalId && this.isTerminalProposal(proposalId)) {
+        throw this.unsupported(
+          'acceptProposal',
+          'proposal_terminal',
+          'The proposal was already consumed by a terminal lifecycle mutation in this principal scope. No acceptance was sent.'
+        );
+      }
       const { established_fallback: _fallback, ...compactInput } = input;
       this.assertValidCompactRequest('accept_proposal', compactInput, lifecycle, true);
-      const result = await this.agent.acceptProposal(
-        compactInput as MutatingRequestInput<AcceptProposalRequest>,
-        inputHandler,
-        options
-      );
-      return this.adaptProjectedResult(result, this.makeReport(lifecycle, ['accept_proposal'], []), data => data);
+      if (!proposalId) {
+        throw this.unsupported('acceptProposal', 'proposal_id', 'Native proposal acceptance requires a proposal_id.');
+      }
+      const prior = this.proposalSnapshotStore.proposalAcceptances.get(proposalId);
+      if (prior?.reservation.state === 'in-flight' || prior?.reservation.kind === 'established') {
+        throw this.unsupported(
+          'acceptProposal',
+          'proposal_acceptance_pending',
+          'The proposal already has an acceptance reservation in this principal scope. Wait for it to finish before retrying.'
+        );
+      }
+      const retryable = prior?.reservation.state === 'retryable' ? prior.reservation : undefined;
+      if (retryable) this.assertAcceptanceRetryWindow(prior!.snapshotKey, prior!.snapshot, retryable);
+      const skipIdempotencyAutoInject =
+        retryable?.skipIdempotencyAutoInject ?? Boolean(options?.skipIdempotencyAutoInject);
+      const idempotencyKey =
+        optionalString(compactInput.idempotency_key) ??
+        retryable?.idempotencyKey ??
+        (!skipIdempotencyAutoInject ? generateIdempotencyKey() : undefined);
+      const request = {
+        ...compactInput,
+        ...(idempotencyKey && { idempotency_key: idempotencyKey }),
+      } as MutatingRequestInput<AcceptProposalRequest>;
+      const fingerprint = requestFingerprint(request);
+      if (
+        retryable &&
+        (retryable.kind !== 'native' ||
+          retryable.requestFingerprint !== fingerprint ||
+          retryable.idempotencyKey !== idempotencyKey ||
+          retryable.skipIdempotencyAutoInject !== skipIdempotencyAutoInject)
+      ) {
+        throw this.unsupported(
+          'acceptProposal',
+          'proposal_acceptance_retry',
+          'A paused or commit-uncertain native acceptance may retry only the exact same request and idempotency key. No mutation was sent.'
+        );
+      }
+      if (retryable?.taskId) this.forgetAcceptanceTask(retryable.taskId, retryable);
+      if (retryable) this.releaseAcceptanceOwnership(retryable);
+      const accountScope = this.accountScope(compactInput.account);
+      const snapshotKey = prior?.snapshotKey ?? `${this.snapshotKey(proposalId, accountScope)}\u0000native-acceptance`;
+      const snapshot =
+        prior?.snapshot ??
+        ({
+          proposal: { proposal_id: proposalId },
+          bytes: new TextEncoder().encode(snapshotKey).byteLength,
+          principalScope: this.principalScope ?? '',
+          executable: false,
+          nativeAcceptanceOnly: true,
+          ...(accountScope && { accountScope }),
+        } satisfies ProposalSnapshotEntry);
+      if (!prior) {
+        this.retainProposalSnapshot(snapshotKey, snapshot);
+        this.enforceProposalSnapshotLimits();
+        if (this.proposalSnapshotStore.entries.get(snapshotKey) !== snapshot) {
+          throw new ConfigurationError(
+            'The media-buy proposal snapshot limit could not retain a native acceptance fence.',
+            'mediaBuy.proposalSnapshots'
+          );
+        }
+      }
+      const retryDeadlineMs =
+        retryable?.retryDeadlineMs ??
+        (this.idempotencyReplayTtlMs !== undefined ? Date.now() + this.idempotencyReplayTtlMs : undefined);
+      const reservation: AcceptanceReservation = {
+        kind: 'native',
+        state: 'in-flight',
+        requestFingerprint: fingerprint,
+        skipIdempotencyAutoInject,
+        ...(idempotencyKey && { idempotencyKey }),
+        ...(retryDeadlineMs !== undefined && { retryDeadlineMs }),
+      };
+      snapshot.executable = false;
+      snapshot.acceptance = reservation;
+      this.proposalSnapshotStore.proposalAcceptances.set(proposalId, { snapshotKey, snapshot, reservation });
+      this.ownedAcceptanceReservations.set(reservation, { snapshotKey, snapshot });
+      acceptanceReservationOwners.set(reservation, this);
+      let result: TaskResult<AcceptProposalResponse>;
+      try {
+        result = await this.agent.acceptProposal(request, inputHandler, {
+          ...options,
+          skipIdempotencyAutoInject,
+        });
+      } catch (error) {
+        this.preserveAmbiguousAcceptance(snapshotKey, snapshot, reservation);
+        throw error;
+      }
+      const transitioned = this.attachAcceptanceTransitions(result, snapshotKey, snapshot, reservation);
+      return this.adaptProjectedResult(transitioned, this.makeReport(lifecycle, ['accept_proposal'], []), data => data);
     }
 
     this.assertProposalLifecycleAvailable('acceptProposal');
@@ -3938,6 +4743,7 @@ export class MediaBuyLifecycleCoordinator {
     // concurrent rediscovery from reauthorizing the proposal. Only an exact
     // paused retry can reuse it; ambiguous outcomes remain fail-closed.
     const reservation: AcceptanceReservation = {
+      kind: 'established',
       state: 'in-flight',
       requestFingerprint: fingerprint,
       skipIdempotencyAutoInject:

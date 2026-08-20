@@ -248,6 +248,63 @@ describe('runParallelDispatches (process_local)', () => {
     assert.ok(resolvedIds.every(id => id === 'mb_winner'));
   });
 
+  it('routes every initial and retry arm through compatibility on an established-only client', async () => {
+    const attempts = new Map();
+    const calls = [];
+    let negotiations = 0;
+    const coordinator = {
+      requestProposals: async (request, _inputHandler, invocationOptions) => {
+        const correlationId = request.context.correlation_id;
+        const attempt = (attempts.get(correlationId) ?? 0) + 1;
+        attempts.set(correlationId, attempt);
+        calls.push({ correlationId, attempt, invocationOptions, idempotencyKey: request.idempotency_key });
+        if (attempt === 1) {
+          return {
+            success: false,
+            data: { adcp_error: { code: 'IDEMPOTENCY_IN_FLIGHT', message: 'wait', retry_after: 0.05 } },
+          };
+        }
+        return { success: true, data: { proposals: [], outcome: 'proposed' } };
+      },
+    };
+    const client = {
+      negotiateMediaBuyLifecycle: async options => {
+        negotiations += 1;
+        assert.deepStrictEqual(options, { principalScope: 'established-only-buyer' });
+        return coordinator;
+      },
+    };
+
+    const cr = await runParallelDispatches(
+      client,
+      'request_proposals',
+      { idempotency_key: 'shared-established-key', context: {} },
+      {
+        spec: { count: 2, same_idempotency_key: true, barrier_timeout_ms: 5000 },
+        keyMinter: () => 'should_not_be_called',
+        correlationPrefix: 'established_retry',
+        taskOptions: {
+          mediaBuyLifecycleCompatibility: { principalScope: 'established-only-buyer' },
+          skipIdempotencyAutoInject: true,
+          skipAccountValidation: true,
+        },
+      }
+    );
+
+    assert.strictEqual(negotiations, 1, 'parallel arms should share one compatibility coordinator');
+    assert.strictEqual(cr.resolved.length, 2);
+    assert.deepStrictEqual([...attempts.values()], [2, 2]);
+    assert.strictEqual(calls.length, 4);
+    assert.ok(calls.every(call => call.idempotencyKey === 'shared-established-key'));
+    assert.ok(
+      calls.every(
+        call =>
+          call.invocationOptions.skipIdempotencyAutoInject === true &&
+          call.invocationOptions.skipAccountValidation === true
+      )
+    );
+  });
+
   it('mints distinct idempotency_keys when same_idempotency_key is false', async () => {
     const seenKeys = new Set();
     const client = makeStubClient(async (taskName, params) => {

@@ -8,9 +8,10 @@ const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
 const express = require('express');
 
-const { AgentClient } = require('../../dist/lib/index.js');
+const { AgentClient, proposalTermsDigest } = require('../../dist/lib/index.js');
 const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server.js');
 const { createA2AAdapter } = require('../../dist/lib/server/a2a-adapter.js');
+const { AdcpError } = require('../../dist/lib/server/decisioning/index.js');
 const { validateRequest, validateResponse, formatIssues } = require('../../dist/lib/validation/index.js');
 const { createTestProduct } = require('./test-fixtures.js');
 
@@ -945,6 +946,384 @@ test('the same compact-first buyer facade projects established direct and propos
     assert.equal(calls[1].args.packages[0].product_id, product.product_id);
     assert.equal(calls[4].args.packages[0].budget, 900);
     assert.equal(calls[11].args.proposal_id, 'a2a-legacy-proposal-1');
+  } finally {
+    await new Promise((resolve, reject) => {
+      server.close(error => (error ? reject(error) : resolve()));
+      server.closeIdleConnections();
+    });
+  }
+});
+
+test('the compact-first buyer uses the native 3.2 lifecycle discovered over official A2A', async () => {
+  const calls = [];
+  const product = {
+    product_id: 'a2a-compact-product-1',
+    name: 'A2A compact product',
+    pricing_options: [
+      {
+        pricing_option_id: 'a2a-compact-price-1',
+        pricing_model: 'cpm',
+        currency: 'USD',
+        fixed_price: 10,
+      },
+    ],
+  };
+  const commercialTerms = {
+    brand: BRAND,
+    start_time: START,
+    end_time: END,
+    total_budget: { amount: 1000, currency: 'USD' },
+    purchases: [
+      {
+        product_id: product.product_id,
+        pricing_option_id: 'a2a-compact-price-1',
+        pricing: product.pricing_options[0],
+        start_time: START,
+        end_time: END,
+      },
+    ],
+  };
+  const draftProposal = {
+    proposal_id: 'a2a-compact-proposal-1',
+    proposal_kind: 'new_media_buy',
+    proposal_status: 'draft',
+    expires_at: '2099-12-31T23:59:59Z',
+    name: 'A2A compact proposal',
+    commercial_terms: commercialTerms,
+    terms_digest: proposalTermsDigest(commercialTerms),
+  };
+  const declinedProposal = { ...draftProposal, proposal_id: 'a2a-compact-proposal-2' };
+  const committedProposal = {
+    ...draftProposal,
+    proposal_id: 'a2a-compact-proposal-final-1',
+    parent_proposal_id: draftProposal.proposal_id,
+    proposal_status: 'committed',
+  };
+  const mediaBuys = new Map();
+  const accepted = (proposal, mediaBuyId) => ({
+    ...proposal,
+    proposal_status: 'accepted',
+    media_buy_id: mediaBuyId,
+    accepted_at: '2026-08-20T00:00:00Z',
+  });
+  const commitment = (proposal, mediaBuyId, packageId) => ({
+    status: 'completed',
+    media_buy_id: mediaBuyId,
+    media_buy_status: 'active',
+    revision: 1,
+    accepted_proposal: accepted(proposal, mediaBuyId),
+    purchase_bindings: [{ purchase_index: 0, product_id: product.product_id, package_id: packageId }],
+    available_actions: [],
+  });
+  const readback = (commitmentResult, account, context) => ({
+    media_buy_id: commitmentResult.media_buy_id,
+    accepted_proposal_id: commitmentResult.accepted_proposal.proposal_id,
+    accepted_proposal_terms_digest: commitmentResult.accepted_proposal.terms_digest,
+    accepted_proposal: commitmentResult.accepted_proposal,
+    account: { ...account, name: 'Release gate account', status: 'active' },
+    status: commitmentResult.media_buy_status,
+    revision: commitmentResult.revision,
+    currency: 'USD',
+    total_budget: 1000,
+    start_time: START,
+    end_time: END,
+    confirmed_at: '2026-08-20T00:00:00Z',
+    available_actions: [],
+    context,
+    packages: [
+      {
+        package_id: commitmentResult.purchase_bindings[0].package_id,
+        product_id: product.product_id,
+        budget: 1000,
+      },
+    ],
+  });
+  const refineProposals = async params => {
+    calls.push({ tool: 'refine_proposals', args: structuredClone(params) });
+    return {
+      results: [
+        {
+          source_proposal_id: draftProposal.proposal_id,
+          outcome: 'finalized',
+          proposal: committedProposal,
+        },
+      ],
+      products: [product],
+    };
+  };
+  const adcp = createAdcpServer({
+    name: 'a2a-compact-release-gate',
+    version: '1.0.0',
+    adcpVersion: '3.2.0-beta.2',
+    capabilities: { supported_versions: ['3.0', '3.1', '3.2-beta.2'] },
+    validation: { requests: 'strict', responses: 'strict' },
+    mediaBuy: {
+      listProducts: async params => {
+        calls.push({ tool: 'list_products', args: structuredClone(params) });
+        return {
+          outcome: 'listed',
+          products: [product],
+          feed_version: 'a2a-compact-feed-1',
+          pricing_version: 'a2a-compact-price-version-1',
+          cache_scope: 'account',
+        };
+      },
+      requestProposals: async params => {
+        calls.push({ tool: 'request_proposals', args: structuredClone(params) });
+        return { outcome: 'proposed', proposals: [draftProposal, declinedProposal], products: [product] };
+      },
+      declineProposals: async params => {
+        calls.push({ tool: 'decline_proposals', args: structuredClone(params) });
+        return { results: [{ proposal_id: declinedProposal.proposal_id, outcome: 'declined' }] };
+      },
+      acceptProposal: async params => {
+        calls.push({ tool: 'accept_proposal', args: structuredClone(params) });
+        const result = commitment(committedProposal, 'a2a-compact-proposal-buy-1', 'a2a-compact-proposal-package-1');
+        mediaBuys.set(result.media_buy_id, readback(result, params.account, { internal_campaign_id: 'proposal-1' }));
+        return result;
+      },
+      buyProducts: async params => {
+        calls.push({ tool: 'buy_products', args: structuredClone(params) });
+        const directTerms = {
+          brand: params.brand,
+          start_time: params.start_time,
+          end_time: params.end_time,
+          total_budget: { amount: 1000, currency: 'USD' },
+          purchases: commercialTerms.purchases,
+        };
+        const directProposal = {
+          proposal_id: 'a2a-compact-direct-proposal-1',
+          proposal_kind: 'new_media_buy',
+          proposal_status: 'draft',
+          name: 'A2A compact direct purchase',
+          commercial_terms: directTerms,
+          terms_digest: proposalTermsDigest(directTerms),
+        };
+        const result = commitment(directProposal, 'a2a-compact-direct-buy-1', 'a2a-compact-direct-package-1');
+        mediaBuys.set(result.media_buy_id, readback(result, params.account, params.context));
+        return result;
+      },
+      controlMediaBuy: async params => {
+        calls.push({ tool: 'control_media_buy', args: structuredClone(params) });
+        const current = mediaBuys.get(params.media_buy_id);
+        if (params.revision !== current.revision) {
+          throw new AdcpError('CONFLICT', { message: 'The supplied media-buy revision is stale.' });
+        }
+        current.revision += 1;
+        current.status = params.canceled === true ? 'canceled' : params.paused === true ? 'paused' : 'active';
+        if (params.canceled === true) {
+          current.cancellation = {
+            canceled_at: '2026-08-20T00:05:00Z',
+            canceled_by: 'buyer',
+            reason: params.cancellation_reason,
+          };
+        }
+        return {
+          status: 'completed',
+          media_buy_id: params.media_buy_id,
+          media_buy_status: current.status,
+          revision: current.revision,
+          available_actions: [],
+        };
+      },
+      getMediaBuys: async params => {
+        calls.push({ tool: 'get_media_buys', args: structuredClone(params) });
+        return { media_buys: params.media_buy_ids.map(id => mediaBuys.get(id)) };
+      },
+      getMediaBuyDelivery: async params => {
+        calls.push({ tool: 'get_media_buy_delivery', args: structuredClone(params) });
+        return {
+          reporting_period: { start: START, end: END },
+          currency: 'USD',
+          media_buy_deliveries: params.media_buy_ids.map(mediaBuyId => ({
+            media_buy_id: mediaBuyId,
+            status: mediaBuys.get(mediaBuyId).status,
+            totals: { spend: 25, impressions: 2500 },
+            by_package: [],
+          })),
+        };
+      },
+    },
+    proposalNegotiation: {
+      capabilities: { supported_dimensions: [] },
+      resolveScope: () => ({ tenant_id: 'a2a-compact-seller', principal_id: 'compact-buyer' }),
+      refineProposals,
+    },
+  });
+  const app = express();
+  app.use(express.json());
+  const server = app.listen(0);
+  server.keepAliveTimeout = 60_000;
+  await new Promise(resolve => server.once('listening', resolve));
+  const url = `http://127.0.0.1:${server.address().port}/a2a`;
+  createA2AAdapter({
+    server: adcp,
+    async authenticate() {
+      return { token: 'release-gate', clientId: 'compact-buyer', scopes: ['media_buy'] };
+    },
+    agentCard: {
+      name: 'A2A compact release gate',
+      description: 'Native compact lifecycle transport fixture',
+      url,
+      version: '1.0.0',
+      provider: { organization: 'AdCP test', url: 'https://adcontextprotocol.org' },
+      securitySchemes: {},
+    },
+  }).mount(app);
+
+  try {
+    const buyer = new AgentClient(
+      { id: 'a2a-compact-release-gate', name: 'A2A compact release gate', agent_uri: url, protocol: 'a2a' },
+      { adcpVersion: '3.2.0-beta.2', validation: { requests: 'strict', responses: 'strict' } }
+    );
+    const capabilities = await buyer.getAdcpCapabilities({});
+    assert.equal(capabilities.success, true, JSON.stringify(capabilities));
+    const lifecycle = await buyer.negotiateMediaBuyLifecycle({ principalScope: 'release-gate-buyer' });
+    assert.equal(lifecycle.lifecycle, 'compact');
+    assert.equal(lifecycle.negotiated_version, '3.2-beta.2');
+
+    const listed = await lifecycle.listProducts({ account: ACCOUNT, brand: BRAND });
+    assert.equal(listed.success, true, JSON.stringify(listed));
+    assert.equal(listed.compatibility.lifecycle, 'compact');
+    assert.equal(listed.data.products[0].product_id, product.product_id);
+
+    const proposed = await lifecycle.requestProposals({
+      idempotency_key: 'a2a-compact-request-0001',
+      account: ACCOUNT,
+      brand: BRAND,
+      brief: 'Reach readers',
+      context: { internal_campaign_id: 'proposal-1' },
+    });
+    assert.equal(proposed.success, true, JSON.stringify(proposed));
+    assert.equal(proposed.data.outcome, 'proposed');
+    assert.deepEqual(
+      proposed.data.proposals.map(proposal => proposal.proposal_id),
+      [draftProposal.proposal_id, declinedProposal.proposal_id]
+    );
+
+    const finalized = await lifecycle.refineProposals({
+      idempotency_key: 'a2a-compact-refine-0001',
+      refinements: [{ proposal_id: draftProposal.proposal_id, action: 'finalize' }],
+    });
+    assert.equal(finalized.success, true, JSON.stringify(finalized));
+    assert.equal(finalized.data.results[0].proposal.proposal_id, committedProposal.proposal_id);
+
+    const declined = await lifecycle.declineProposals({
+      idempotency_key: 'a2a-compact-decline-0001',
+      declines: [{ proposal_id: declinedProposal.proposal_id, reason: 'budget_changed' }],
+    });
+    assert.equal(declined.success, true, JSON.stringify(declined));
+    assert.equal(declined.data.results[0].outcome, 'declined');
+
+    const proposalBuy = await lifecycle.acceptProposal({
+      idempotency_key: 'a2a-compact-accept-0001',
+      account: ACCOUNT,
+      proposal_id: committedProposal.proposal_id,
+      proposal_terms_digest: committedProposal.terms_digest,
+    });
+    assert.equal(proposalBuy.success, true, JSON.stringify(proposalBuy));
+    assert.equal(proposalBuy.data.accepted_proposal.proposal_id, committedProposal.proposal_id);
+
+    const bought = await lifecycle.buyProducts({
+      idempotency_key: 'a2a-compact-buy-0001',
+      account: ACCOUNT,
+      brand: BRAND,
+      feed_version: listed.data.feed_version,
+      pricing_version: listed.data.pricing_version,
+      purchases: [{ product_id: product.product_id, pricing_option_id: 'a2a-compact-price-1', budget: 1000 }],
+      start_time: START,
+      end_time: END,
+      context: { internal_campaign_id: 'direct-1' },
+    });
+    assert.equal(bought.success, true, JSON.stringify(bought));
+    assert.equal(bought.data.media_buy_id, 'a2a-compact-direct-buy-1');
+
+    for (const [journey, mediaBuyId] of [
+      ['proposal', proposalBuy.data.media_buy_id],
+      ['direct', bought.data.media_buy_id],
+    ]) {
+      for (const [index, control] of [{ paused: true }, { paused: false }, { canceled: true }].entries()) {
+        const controlled = await lifecycle.controlMediaBuy({
+          idempotency_key: `a2a-compact-${journey}-control-${index}-0001`,
+          account: ACCOUNT,
+          media_buy_id: mediaBuyId,
+          revision: index + 1,
+          ...control,
+          ...(control.canceled && { cancellation_reason: 'buyer_request' }),
+        });
+        assert.equal(controlled.success, true, JSON.stringify(controlled));
+        assert.equal(controlled.data.revision, index + 2);
+      }
+    }
+
+    const callsBeforeConflict = calls.length;
+    const conflict = await lifecycle.controlMediaBuy({
+      idempotency_key: 'a2a-compact-stale-control-0001',
+      account: ACCOUNT,
+      media_buy_id: bought.data.media_buy_id,
+      revision: 1,
+      paused: true,
+    });
+    assert.equal(conflict.success, false, JSON.stringify(conflict));
+    assert.equal(conflict.adcpError.code, 'CONFLICT');
+    assert.equal(calls.length, callsBeforeConflict + 1);
+
+    const mediaBuyIds = [proposalBuy.data.media_buy_id, bought.data.media_buy_id];
+    const read = await lifecycle.getMediaBuys({ account: ACCOUNT, media_buy_ids: mediaBuyIds });
+    assert.equal(read.success, true, JSON.stringify(read));
+    assert.deepEqual(
+      read.data.media_buys.map(mediaBuy => [mediaBuy.media_buy_id, mediaBuy.revision, mediaBuy.status]),
+      mediaBuyIds.map(id => [id, 4, 'canceled'])
+    );
+    assert.deepEqual(
+      read.data.media_buys.map(mediaBuy => mediaBuy.account.account_id),
+      [ACCOUNT.account_id, ACCOUNT.account_id]
+    );
+    assert.deepEqual(
+      read.data.media_buys.map(mediaBuy => mediaBuy.context.internal_campaign_id),
+      ['proposal-1', 'direct-1']
+    );
+    assert.deepEqual(
+      read.data.media_buys.map(mediaBuy => mediaBuy.currency),
+      ['USD', 'USD']
+    );
+    const delivery = await lifecycle.getMediaBuyDelivery({
+      account: ACCOUNT,
+      media_buy_ids: mediaBuyIds,
+      start_date: '2027-01-01',
+      end_date: '2027-01-02',
+    });
+    assert.deepEqual(
+      delivery.data.media_buy_deliveries.map(row => row.media_buy_id),
+      mediaBuyIds
+    );
+    assert.equal(delivery.data.currency, 'USD');
+
+    assert.deepEqual(calls[0].args.account, ACCOUNT);
+    assert.deepEqual(calls[1].args.brand, BRAND);
+    assert.equal(calls[1].args.context.internal_campaign_id, 'proposal-1');
+    assert.deepEqual(calls[4].args.account, ACCOUNT);
+    assert.equal(calls[5].args.context.internal_campaign_id, 'direct-1');
+    assert.deepEqual(
+      calls.map(call => call.tool),
+      [
+        'list_products',
+        'request_proposals',
+        'refine_proposals',
+        'decline_proposals',
+        'accept_proposal',
+        'buy_products',
+        'control_media_buy',
+        'control_media_buy',
+        'control_media_buy',
+        'control_media_buy',
+        'control_media_buy',
+        'control_media_buy',
+        'control_media_buy',
+        'get_media_buys',
+        'get_media_buy_delivery',
+      ]
+    );
   } finally {
     await new Promise((resolve, reject) => {
       server.close(error => (error ? reject(error) : resolve()));

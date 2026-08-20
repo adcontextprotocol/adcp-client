@@ -131,3 +131,32 @@ test('--media-buy-principal-scope value is not mistaken for the agent argument',
   assert.match(result.stderr, /Usage: adcp storyboard run/);
   assert.doesNotMatch(result.stderr, /requires a non-empty value/);
 });
+
+test('--media-buy-compat-losses requires lifecycle compatibility to be enabled', () => {
+  for (const args of [
+    ['storyboard', 'run', '--media-buy-compat-losses', 'feed_version_not_atomic'],
+    ['storyboard', 'run', '--media-buy-compat-losses=feed_version_not_atomic'],
+  ]) {
+    const result = runCli(args);
+    assert.strictEqual(result.status, 2);
+    assert.match(
+      result.stderr,
+      /--media-buy-compat-losses requires --media-buy-lifecycle-compat or --force-established-media-buy-lifecycle/
+    );
+  }
+});
+
+test('--media-buy-compat-losses is accepted with either lifecycle compatibility mode', () => {
+  for (const compatibilityFlag of ['--media-buy-lifecycle-compat', '--force-established-media-buy-lifecycle']) {
+    const result = runCli([
+      'storyboard',
+      'run',
+      compatibilityFlag,
+      '--media-buy-compat-losses',
+      'feed_version_not_atomic',
+    ]);
+    assert.strictEqual(result.status, 2, `expected the missing-agent usage exit for ${compatibilityFlag}`);
+    assert.match(result.stderr, /Usage: adcp storyboard run/);
+    assert.doesNotMatch(result.stderr, /--media-buy-compat-losses requires/);
+  }
+});

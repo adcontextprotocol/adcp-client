@@ -22,7 +22,7 @@
  */
 
 import type { TaskResult } from '../types';
-import { executeStoryboardTask } from './task-map';
+import { executeStoryboardTask, type StoryboardTaskExecutionOptions } from './task-map';
 import type { CrossResponseDispatch, CrossResponseSet } from './validations';
 import type { ParallelDispatchSpec } from './types';
 
@@ -93,6 +93,8 @@ export interface DispatchOnceOptions {
    * last-seen error code.
    */
   deadlineMs: number;
+  /** Invocation policy applied identically to the initial call and every retry. */
+  taskOptions?: StoryboardTaskExecutionOptions;
 }
 
 /**
@@ -143,7 +145,7 @@ export async function dispatchOnceWithInflightRetry(
   let lastError: string | undefined;
   for (let attempt = 0; attempt < IN_FLIGHT_RETRY_BUDGET; attempt++) {
     try {
-      const tr = await executeStoryboardTask(client, taskName, request);
+      const tr = await executeStoryboardTask(client, taskName, request, opts.taskOptions);
       lastTaskResult = tr;
       lastError = undefined;
       if (tr.success) {
@@ -165,6 +167,7 @@ export async function dispatchOnceWithInflightRetry(
       }
       await sleep(Math.min(sleepMs, remaining));
     } catch (e) {
+      if (opts.taskOptions?.signal?.aborted) throw e;
       lastError = e instanceof Error ? e.message : String(e);
       const remaining = opts.deadlineMs - Date.now();
       if (remaining <= 0) break;
@@ -220,6 +223,8 @@ export interface RunParallelDispatchesOptions {
    * to the storyboard step id.
    */
   correlationPrefix?: string;
+  /** Storyboard invocation policy shared by every dispatch arm and retry. */
+  taskOptions?: StoryboardTaskExecutionOptions;
 }
 
 export async function runParallelDispatches(
@@ -229,7 +234,7 @@ export async function runParallelDispatches(
   baseRequest: Record<string, unknown>,
   opts: RunParallelDispatchesOptions
 ): Promise<CrossResponseSet> {
-  const { spec, keyMinter, correlationPrefix = 'parallel_dispatch' } = opts;
+  const { spec, keyMinter, correlationPrefix = 'parallel_dispatch', taskOptions } = opts;
   const barrierMs = spec.barrier_timeout_ms ?? PARALLEL_DISPATCH_DEFAULT_BARRIER_MS;
   const sameKey = spec.same_idempotency_key !== false;
   const deadlineMs = Date.now() + barrierMs;
@@ -252,7 +257,7 @@ export async function runParallelDispatches(
     }
 
     const started = Date.now();
-    return dispatchWithBarrier(client, taskName, request, deadlineMs).then(outcome => {
+    return dispatchWithBarrier(client, taskName, request, deadlineMs, taskOptions).then(outcome => {
       const dispatch: CrossResponseDispatch = {
         correlation_id: correlationId,
         duration_ms: Date.now() - started,
@@ -282,9 +287,10 @@ async function dispatchWithBarrier(
   client: any,
   taskName: string,
   request: Record<string, unknown>,
-  deadlineMs: number
+  deadlineMs: number,
+  taskOptions?: StoryboardTaskExecutionOptions
 ): Promise<DispatchOutcome> {
-  const work = dispatchOnceWithInflightRetry(client, taskName, request, { deadlineMs });
+  const work = dispatchOnceWithInflightRetry(client, taskName, request, { deadlineMs, taskOptions });
   const remaining = deadlineMs - Date.now();
   if (remaining <= 0) {
     return { timed_out: true };

@@ -143,11 +143,14 @@ that SDK source object. The established source is a
 the untouched seller emission. Migration and conformance tooling that truly
 needs the legacy wire must use the explicit `getProductsLegacy()` API outside
 the coordinator. The coordinator's `CompatibleRefinementResult` also restores
-the canonical proposal base on revised, partial, and finalized arms while the
-separate beta.3 generator defect remains tracked in #2619. The compatibility
-boundary runtime-validates those child proposals before exposing that stronger
-type and rechecks the full refinement request semantics on immediate, polled,
-tracked, and deferred completions before caching a successor. Compact decline
+the canonical proposal base on revised, partial, and finalized arms. The beta.3
+generator defect tracked in #2619 is fixed in this SDK: proposal rows and their
+outcome discriminants remain available to TypeScript callers. The compatibility
+boundary runtime-validates request-proposal outcome branches and refinement
+child proposals before exposing the stronger types, even when general client
+response validation is disabled. It also rechecks the full refinement request
+semantics on immediate, polled, tracked, and deferred completions before caching
+a successor. Compact decline
 result arms are runtime-validated and correlated in request order; the coordinator
 accepts both beta.2 rows that echo `proposal_id` and generated ordered rows that
 omit it, while rejecting a conflicting echoed ID.
@@ -161,7 +164,7 @@ ambiguous, disposed, and expired refinements leave the source non-executable.
 
 | Coordinator operation | Compact tool | Established projection | Boundary |
 |---|---|---|---|
-| `listProducts` | `list_products` | `get_products(buying_mode='wholesale')` | Structured compact `criteria` is rejected unless a normative mapping exists. Actual `wholesale_feed_version` is renamed to `feed_version`; no value is invented. The stable response exposes `next_cursor` and `unchanged` in both lanes, and established requests preserve compact's default page size of 25. v2.5 pagination/field selection, pre-3.1 conditional feed/pricing reads, and response-field names absent from the negotiated enum are typed unsupported. |
+| `listProducts` | `list_products` | `get_products(buying_mode='wholesale')` | Structured compact `criteria` is rejected unless a normative mapping exists. Actual `wholesale_feed_version` is renamed to `feed_version`; no value is invented. The stable response exposes `next_cursor` and `unchanged` in both lanes. The established request includes `pagination` only when the caller supplies a cursor or `max_results`; the SDK does not fabricate a page-size default. v2.5 pagination/field selection, pre-3.1 conditional feed/pricing reads, and response-field names absent from the negotiated enum are typed unsupported. |
 | `requestProposals` | `request_proposals` | `get_products(buying_mode='brief')` | Only offer-filter fields and metric values defined by the negotiated release map field-by-field, plus policy IDs. Compact catalog selection lacks the complete legacy catalog metadata and fails closed. Targeting-overlay requirements are forwarded only to a 3.2 established surface; 3.0/3.1 cannot represent them. Product-ID filters, compact-only offer prerequisites, `ext`, opportunity, and governance context fail preflight. |
 | `refineProposals` | `refine_proposals` | `get_products(buying_mode='refine')` | Ask and product include/omit map for revisions. Finalize maps only when it contains no additional refinement fields. Hard constraints, alternatives, criteria, amendment kinds, and finalize extras fail before dispatch. |
 | `declineProposals` | `decline_proposals` | proposal-scoped legacy omit | Rejected by default because omit is not a terminal decline and cannot carry the required compact reason/detail. Explicit opt-in reports `proposal_decline_not_terminal` and `proposal_decline_reason_not_forwarded`. |
@@ -222,17 +225,29 @@ after five minutes; call `dispose()` to release them earlier. A later explicit
 completion after that listener window while the coordinator remains active.
 Disposal is terminal: in-flight responses and previously returned task
 continuations reject instead of projecting into a partition that may have been
-reclaimed. If a decline was already dispatched or its continuation was already
-polling, disposal also retires the affected proposal IDs so a new coordinator
-cannot accept terms the seller may already have declined. Outstanding decline
-leases are capped at 256 operations and 1,024 proposal IDs; an additional
-decline fails before dispatch. An abandoned lease expires after five minutes
-by conservatively retiring its proposal IDs. While any lease covers a proposal,
-an established `acceptProposal` projection for the same principal fails before
-dispatch. An `unable` decline releases the lease without revoking the snapshot,
-so the original proposal remains executable. A decline input/auth pause keeps
-the fence; an ambiguous decline dispatch failure conservatively retires the
-affected proposal instead of permitting a potentially conflicting acceptance.
+reclaimed. If a decline or refinement was already dispatched, disposal keeps
+its shared principal-scoped reservation and changes an in-flight attempt to
+commit-uncertain; a newly negotiated coordinator can therefore perform only
+the exact replay described below. Outstanding decline leases are capped at 256
+operations and 1,024 proposal IDs; an additional decline fails before
+dispatch. While any lease covers a proposal, an established `acceptProposal`
+projection for the same principal fails before dispatch. A verified `unable`
+decline releases the lease without revoking the snapshot, so the original
+proposal remains executable. An input/auth pause retains a paused fence.
+
+The five-minute mutation watcher is an observation deadline, not an
+idempotency deadline. If a decline or refinement is still in flight when that
+watcher expires, its reservation becomes commit-uncertain and remains fenced.
+A transport error, malformed continuation, or coordinator disposal makes the
+same transition immediately. While the seller's advertised replay window
+remains open, only the exact same request with the same idempotency key
+may retry that reservation. The replay deadline is fixed from the first
+attempt and cannot be extended by retries or a new coordinator. Once that
+immutable deadline passes—or immediately when the seller advertised no replay
+guarantee—the SDK retires the reservation into the principal's bounded
+tombstone summary. Different refinements, declines, and acceptances remain
+blocked before dispatch until the application reconciles the outcome.
+
 An unresolved established acceptance is treated as possibly
 committed when transport fails, its working-task watcher expires, or its
 coordinator is disposed. Only the exact idempotent acceptance retry is allowed
@@ -245,10 +260,11 @@ Refinement uses the same fail-closed model. Outstanding refinement leases are
 bounded to 256 operations and 1,024 proposal IDs, overlap with another pending
 refinement or decline is rejected before dispatch, and task-update completions
 are validated before a fence is settled. A verified compact `unable` restores
-the immutable source. Every other outcome retires it; transport ambiguity,
-malformed continuations, disposal, and five-minute expiry also retire it. This
-prevents another coordinator for the same principal from accepting stale terms
-while the seller may already have revised or finalized them.
+the immutable source. A verified revision or finalization retires that source.
+Ambiguous outcomes follow the shared watcher, exact-replay, and eventual
+principal-tombstone rules above, preventing another coordinator for the same
+principal from accepting stale terms while the seller may already have revised
+or finalized them.
 
 The same idempotency key is preserved when a compact mutation is projected to
 an established tool. A changed payload still needs a new key. The coordinator
@@ -331,7 +347,11 @@ pause/resume/cancel, and readback. A2A integration proves the same coordinator
 selects and projects the established direct, proposal, budget-control, and
 media-buy/delivery-readback paths through the official A2A client/server stack;
 date changes are asserted as a pre-dispatch typed boundary because compact
-operational control deliberately excludes flight changes.
+operational control deliberately excludes flight changes. A separate native
+compact A2A lane covers successful proposal request, finalization, decline,
+acceptance, direct purchase, pause/resume/cancel for both purchase paths,
+stale-revision conflict, media-buy and delivery readback, identity continuity,
+and the exact tool sequence.
 
 The strict public-API MCP integration lanes validate compact 3.2, legacy 3.1,
 and legacy 3.0 discovery requests against their selected wire bundles. Native

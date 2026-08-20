@@ -1062,14 +1062,24 @@ function parseAgentOptions(args) {
   // fail naturally on first stateful step. Spec: adcp-client#1626.
   const assertsSeededState = args.includes('--asserts-seeded-state');
   const mediaBuyCompatibilityLossesIdx = args.indexOf('--media-buy-compat-losses');
+  const mediaBuyCompatibilityLossesEqArg = args.find(arg => arg.startsWith('--media-buy-compat-losses='));
   const mediaBuyCompatibilityLossesValue =
     mediaBuyCompatibilityLossesIdx !== -1 &&
     mediaBuyCompatibilityLossesIdx + 1 < args.length &&
     !args[mediaBuyCompatibilityLossesIdx + 1].startsWith('--')
       ? args[mediaBuyCompatibilityLossesIdx + 1]
-      : (args.find(arg => arg.startsWith('--media-buy-compat-losses='))?.slice('--media-buy-compat-losses='.length) ??
-        null);
+      : (mediaBuyCompatibilityLossesEqArg?.slice('--media-buy-compat-losses='.length) ?? null);
   const forceEstablishedMediaBuyLifecycle = args.includes('--force-established-media-buy-lifecycle');
+  if (
+    (mediaBuyCompatibilityLossesIdx !== -1 || mediaBuyCompatibilityLossesEqArg !== undefined) &&
+    !args.includes('--media-buy-lifecycle-compat') &&
+    !forceEstablishedMediaBuyLifecycle
+  ) {
+    console.error(
+      'Error: --media-buy-compat-losses requires --media-buy-lifecycle-compat or --force-established-media-buy-lifecycle.'
+    );
+    process.exit(2);
+  }
   const mediaBuyPrincipalScopeIdx = args.indexOf('--media-buy-principal-scope');
   const mediaBuyPrincipalScopeEqArg = args.find(arg => arg.startsWith('--media-buy-principal-scope='));
   const mediaBuyPrincipalScopeValue =
