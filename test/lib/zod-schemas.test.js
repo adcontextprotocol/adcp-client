@@ -17,13 +17,51 @@ describe('Zod Schema Validation', () => {
     assert.equal(typeof sdk.ADCP_VERSION, 'string', 'package root should expose its version');
   });
 
-  test('beta.4 accepts flexible-window forecast dimensions and availability', async () => {
+  test('beta.4 enforces flexible-window and outcome-target constraints', async () => {
     if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
     assert.equal(
       schemas.ForecastPointDimensionsSchema.safeParse([
         { kind: 'time', start_time: '2027-01-01T00:00:00Z', end_time: '2027-01-02T00:00:00Z' },
       ]).success,
       true
+    );
+    assert.equal(
+      schemas.TimeForecastDimensionSchema.safeParse({
+        kind: 'time',
+        start_time: 'not-a-date-time',
+        end_time: 'also-invalid',
+      }).success,
+      false
+    );
+    const horizon = {
+      start_time: '2027-01-01T00:00:00Z',
+      end_time: '2027-02-01T00:00:00Z',
+    };
+    assert.equal(schemas.ProductOfferFiltersSchema.safeParse({ availability_horizon: horizon }).success, true);
+    assert.equal(
+      schemas.ProductOfferFiltersSchema.safeParse({
+        availability_horizon: { ...horizon, start_time: 'not-a-date-time' },
+      }).success,
+      false
+    );
+    assert.equal(
+      schemas.ProductOfferFiltersSchema.safeParse({ availability_horizon: horizon, start_date: '2027-01-01' }).success,
+      false
+    );
+    assert.equal(
+      schemas.OutcomeTargetSchema.safeParse({ goal: { kind: 'metric', metric: 'impressions' }, volume: 0 }).success,
+      false
+    );
+    assert.equal(
+      schemas.OutcomeTargetSchema.safeParse({ goal: { kind: 'event', event_type: 'custom' }, volume: 1 }).success,
+      false
+    );
+    assert.equal(
+      schemas.OutcomeTargetSchema.safeParse({
+        goal: { kind: 'event', event_type: 'custom', custom_event_name: '' },
+        volume: 1,
+      }).success,
+      false
     );
     assert.equal(schemas.AvailabilityStatusSchema.safeParse('available').success, true);
   });
@@ -112,6 +150,14 @@ describe('Zod Schema Validation', () => {
       },
       {
         ...listed,
+        purchase_continuation: {
+          ...listed.purchase_continuation,
+          product_ids: [listed.products[0].product_id, 'missing-product'],
+        },
+        products: [listed.products[0], { ...listed.products[0] }],
+      },
+      {
+        ...listed,
         products: [...listed.products, { ...listed.products[0], product_id: 'extra-product' }],
       },
       {
@@ -185,6 +231,40 @@ describe('Zod Schema Validation', () => {
       assert.strictEqual(schemas.CreativeManifestSchema.safeParse(manifest).success, true);
       assert.strictEqual(schemas.ProductFormatDeclarationSchema.safeParse(declaration).success, true);
       assert.strictEqual(prepare({ manifest, declaration }).ok, true);
+    }
+  });
+
+  test('PreviewCreativeRequestSchema enforces mode and one-generation batch routing', async () => {
+    if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
+    const legacyFormat = { agent_url: 'https://creative.example', id: 'display' };
+    const validBatch = {
+      request_type: 'batch',
+      target_capability_id: 'preview_capability',
+      requests: [{ creative_id: 'creative-1' }, { target_capability_id: 'item_capability', creative_id: 'creative-2' }],
+    };
+    assert.equal(schemas.PreviewCreativeRequestSchema.safeParse(validBatch).success, true);
+    for (const invalid of [
+      { request_type: 'single' },
+      { request_type: 'single', creative_id: 'one', creative_manifest: {} },
+      { request_type: 'single', creative_id: 'one', requests: [] },
+      { request_type: 'single', creative_id: 'one', requests: [{}] },
+      { request_type: 'variant' },
+      { request_type: 'variant', variant_id: undefined },
+      { request_type: 'batch' },
+      { request_type: 'batch', requests: [] },
+      { request_type: 'batch', requests: Array.from({ length: 51 }, (_, index) => ({ creative_id: `c-${index}` })) },
+      { request_type: 'batch', requests: [{}] },
+      { request_type: 'batch', requests: [{ creative_id: 'one', creative_manifest: {} }] },
+      { ...validBatch, format_id: legacyFormat },
+      {
+        request_type: 'batch',
+        requests: [
+          { target_capability_id: 'canonical', creative_id: 'one' },
+          { format_id: legacyFormat, creative_id: 'two' },
+        ],
+      },
+    ]) {
+      assert.equal(schemas.PreviewCreativeRequestSchema.safeParse(invalid).success, false);
     }
   });
 

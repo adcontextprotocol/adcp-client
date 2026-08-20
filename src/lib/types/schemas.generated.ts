@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-20T20:23:01.187Z
+// Generated at: 2026-08-20T22:13:35.407Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -547,8 +547,8 @@ export const AudienceForecastDimensionSchema = z.object({
 
 export const TimeForecastDimensionSchema = z.object({
     kind: z.literal("time"),
-    start_time: z.string(),
-    end_time: z.string()
+    start_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+    end_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")
 }).passthrough();
 
 export const SignalRefSchema = z.union([z.object({
@@ -6945,10 +6945,14 @@ export const OutcomeTargetSchema = z.object({
         }).passthrough(), z.object({
             kind: z.literal("event"),
             event_type: EventTypeSchema,
-            custom_event_name: z.string().optional()
+            custom_event_name: z.string().min(1).optional()
         }).passthrough()]),
-    volume: z.number()
-}).passthrough();
+    volume: z.number().gt(0)
+}).passthrough().superRefine((value, ctx) => {
+    if (value.goal.kind === "event" && value.goal.event_type === "custom" && !value.goal.custom_event_name) {
+        ctx.addIssue({ code: "custom", path: ["goal", "custom_event_name"], message: "custom_event_name is required for a custom event" });
+    }
+});
 
 export const ProductResponseFieldsSchema = z.tuple([z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("audio_distribution_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("reporting_capabilities"), z.literal("measurement_terms"), z.literal("performance_standards"), z.literal("catalog_types"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_rules"), z.literal("demographic_targeting"), z.literal("audience_evidence"), z.literal("audience_evidence_selections"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("brief_relevance"), z.literal("expires_at"), z.literal("allowed_actions")])]).rest(z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("audio_distribution_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("reporting_capabilities"), z.literal("measurement_terms"), z.literal("performance_standards"), z.literal("catalog_types"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_rules"), z.literal("demographic_targeting"), z.literal("audience_evidence"), z.literal("audience_evidence_selections"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("brief_relevance"), z.literal("expires_at"), z.literal("allowed_actions")]));
 
@@ -8831,7 +8835,46 @@ export const PreviewCreativeRequestSchema: z.ZodObject<{ request_type: z.ZodType
     push_notification_config: PushNotificationConfigSchema.optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
-}).passthrough());
+}).passthrough()).superRefine((value, ctx) => {
+    const defined = (field: string): boolean => value[field as keyof typeof value] !== undefined;
+    const rejectPair = (left: string, right: string): void => {
+        if (defined(left) && defined(right)) {
+            ctx.addIssue({ code: "custom", path: [right], message: "the paired fields are mutually exclusive" });
+        }
+    };
+    rejectPair("target_capability_id", "format_id");
+    rejectPair("creative_manifest", "creative_id");
+    if (value.requests !== undefined) {
+        if (value.requests.length < 1 || value.requests.length > 50) {
+            ctx.addIssue({ code: "custom", path: ["requests"], message: "preview requests must contain 1 to 50 items" });
+        }
+        const canonicalRouting = defined("target_capability_id") || value.requests.some(item => item.target_capability_id !== undefined);
+        const legacyRouting = defined("format_id") || value.requests.some(item => item.format_id !== undefined);
+        if (canonicalRouting && legacyRouting) {
+            ctx.addIssue({ code: "custom", path: ["requests"], message: "preview requests cannot mix canonical and legacy routing selectors" });
+        }
+        for (const [index, item] of value.requests.entries()) {
+            const hasManifest = item.creative_manifest !== undefined;
+            const hasCreativeId = item.creative_id !== undefined;
+            if (hasManifest === hasCreativeId) {
+                ctx.addIssue({ code: "custom", path: ["requests", index, "creative_manifest"], message: "each preview request requires exactly one of creative_manifest or creative_id" });
+            }
+        }
+    }
+    if (value.request_type === "single") {
+        const hasManifest = defined("creative_manifest");
+        const hasCreativeId = defined("creative_id");
+        if (hasManifest === hasCreativeId) {
+            ctx.addIssue({ code: "custom", path: ["creative_manifest"], message: "single preview requires exactly one of creative_manifest or creative_id" });
+        }
+    } else if (value.request_type === "batch") {
+        if (value.requests === undefined) {
+            ctx.addIssue({ code: "custom", path: ["requests"], message: "batch preview requires 1 to 50 requests" });
+        }
+    } else if (value.request_type === "variant" && !defined("variant_id")) {
+        ctx.addIssue({ code: "custom", path: ["variant_id"], message: "variant_id is required for variant preview" });
+    }
+});
 
 export const PreviewCreativeBatchResponseSchema = z.object({
     response_type: z.literal("batch"),
@@ -13762,11 +13805,11 @@ export const ProductOfferFiltersSchema = z.object({}).passthrough().merge(z.obje
     format_option_refs: z.array(FormatOptionReferenceSchema).optional(),
     standard_formats_only: z.boolean().optional(),
     min_exposures: z.number().optional(),
-    start_date: z.string().optional(),
-    end_date: z.string().optional(),
+    start_date: z.iso.date().optional(),
+    end_date: z.iso.date().optional(),
     availability_horizon: z.object({
-        start_time: z.string(),
-        end_time: z.string()
+        start_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+        end_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")
     }).passthrough().optional(),
     budget_range: BudgetRangeSchema.optional(),
     countries: z.array(z.string()).optional(),
@@ -13804,7 +13847,11 @@ export const ProductOfferFiltersSchema = z.object({}).passthrough().merge(z.obje
     required_vendor_metrics: z.tuple([z.union([z.object({}).passthrough(), z.object({}).passthrough()])]).rest(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).optional(),
     audience_evidence_requirements: ProductAudienceEvidenceRequirementsSchema.optional(),
     ext: ExtensionObjectSchema.optional()
-}).passthrough());
+}).passthrough()).superRefine((value, ctx) => {
+    if (value.availability_horizon !== undefined && (value.start_date !== undefined || value.end_date !== undefined)) {
+        ctx.addIssue({ code: "custom", path: ["availability_horizon"], message: "availability_horizon is mutually exclusive with start_date and end_date" });
+    }
+});
 
 export const CollectionPayloadSchema = z.object({
     collection_rid: z.uuid().optional(),
@@ -16840,7 +16887,12 @@ export const RequestProposalsResponseSchema = z.union([z.object({
                 ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "product_ids must be unique" });
             }
             const returnedIds = (value.products ?? []).map(product => product.product_id);
-            if (returnedIds.length !== ids.length || !returnedIds.every(productId => ids.includes(productId))) {
+            const returnedIdSet = new Set(returnedIds);
+            if (
+                returnedIds.length !== ids.length ||
+                returnedIdSet.size !== returnedIds.length ||
+                ids.some(productId => !returnedIdSet.has(productId))
+            ) {
                 ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "listed product_ids must exactly match returned products" });
             }
             for (const [index, product] of (value.products ?? []).entries()) {

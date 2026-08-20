@@ -459,6 +459,110 @@ function postProcessPriceBreakdownConstraints(content: string): string {
   return content.slice(0, breakdownStart) + breakdown + content.slice(breakdownEnd);
 }
 
+/** Restore beta.4 constraints that TypeScript cannot fully encode for Zod generation. */
+function postProcessBeta4OfferAndOutcomeConstraints(content: string): string {
+  const replaceBlock = (schemaName: string, transform: (block: string) => string): void => {
+    const start = content.indexOf(`export const ${schemaName}Schema = `);
+    const end = content.indexOf('\n\nexport const ', start + 1);
+    if (start < 0 || end < 0) throw new Error(`Unable to locate ${schemaName}Schema boundary`);
+    const block = content.slice(start, end);
+    const corrected = transform(block);
+    if (corrected === block) throw new Error(`Unable to restore ${schemaName}Schema constraints`);
+    content = content.slice(0, start) + corrected + content.slice(end);
+  };
+
+  replaceBlock('TimeForecastDimension', block =>
+    block
+      .replace('start_time: z.string(),', 'start_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),')
+      .replace('end_time: z.string()', 'end_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")')
+  );
+
+  replaceBlock('ProductOfferFilters', block => {
+    const corrected = block
+      .replace('start_date: z.string().optional(),', 'start_date: z.iso.date().optional(),')
+      .replace('end_date: z.string().optional(),', 'end_date: z.iso.date().optional(),')
+      .replace(
+        'start_time: z.string(),\n        end_time: z.string()',
+        'start_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),\n        end_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")'
+      );
+    return corrected.replace(
+      /;\s*$/,
+      `.superRefine((value, ctx) => {
+    if (value.availability_horizon !== undefined && (value.start_date !== undefined || value.end_date !== undefined)) {
+        ctx.addIssue({ code: "custom", path: ["availability_horizon"], message: "availability_horizon is mutually exclusive with start_date and end_date" });
+    }
+});`
+    );
+  });
+
+  replaceBlock('OutcomeTarget', block => {
+    const corrected = block
+      .replace('custom_event_name: z.string().optional()', 'custom_event_name: z.string().min(1).optional()')
+      .replace('volume: z.number()', 'volume: z.number().gt(0)');
+    return corrected.replace(
+      /;\s*$/,
+      `.superRefine((value, ctx) => {
+    if (value.goal.kind === "event" && value.goal.event_type === "custom" && !value.goal.custom_event_name) {
+        ctx.addIssue({ code: "custom", path: ["goal", "custom_event_name"], message: "custom_event_name is required for a custom event" });
+    }
+});`
+    );
+  });
+
+  return content;
+}
+
+/** Restore preview mode and batch routing constraints that TypeScript cannot encode. */
+function postProcessPreviewCreativeRequestConstraints(content: string): string {
+  const schemaStart = content.indexOf('export const PreviewCreativeRequestSchema');
+  const schemaEnd = content.indexOf('\n\nexport const PreviewCreativeBatchResponseSchema = ', schemaStart);
+  if (schemaStart < 0 || schemaEnd < 0) throw new Error('Could not locate PreviewCreativeRequestSchema.');
+  const block = content.slice(schemaStart, schemaEnd);
+  const suffix = '}).passthrough());';
+  if (!block.endsWith(suffix)) throw new Error('PreviewCreativeRequestSchema has an unexpected generated suffix.');
+  const refined = `${block.slice(0, -suffix.length)}}).passthrough()).superRefine((value, ctx) => {
+    const defined = (field: string): boolean => value[field as keyof typeof value] !== undefined;
+    const rejectPair = (left: string, right: string): void => {
+        if (defined(left) && defined(right)) {
+            ctx.addIssue({ code: "custom", path: [right], message: "the paired fields are mutually exclusive" });
+        }
+    };
+    rejectPair("target_capability_id", "format_id");
+    rejectPair("creative_manifest", "creative_id");
+    if (value.requests !== undefined) {
+        if (value.requests.length < 1 || value.requests.length > 50) {
+            ctx.addIssue({ code: "custom", path: ["requests"], message: "preview requests must contain 1 to 50 items" });
+        }
+        const canonicalRouting = defined("target_capability_id") || value.requests.some(item => item.target_capability_id !== undefined);
+        const legacyRouting = defined("format_id") || value.requests.some(item => item.format_id !== undefined);
+        if (canonicalRouting && legacyRouting) {
+            ctx.addIssue({ code: "custom", path: ["requests"], message: "preview requests cannot mix canonical and legacy routing selectors" });
+        }
+        for (const [index, item] of value.requests.entries()) {
+            const hasManifest = item.creative_manifest !== undefined;
+            const hasCreativeId = item.creative_id !== undefined;
+            if (hasManifest === hasCreativeId) {
+                ctx.addIssue({ code: "custom", path: ["requests", index, "creative_manifest"], message: "each preview request requires exactly one of creative_manifest or creative_id" });
+            }
+        }
+    }
+    if (value.request_type === "single") {
+        const hasManifest = defined("creative_manifest");
+        const hasCreativeId = defined("creative_id");
+        if (hasManifest === hasCreativeId) {
+            ctx.addIssue({ code: "custom", path: ["creative_manifest"], message: "single preview requires exactly one of creative_manifest or creative_id" });
+        }
+    } else if (value.request_type === "batch") {
+        if (value.requests === undefined) {
+            ctx.addIssue({ code: "custom", path: ["requests"], message: "batch preview requires 1 to 50 requests" });
+        }
+    } else if (value.request_type === "variant" && !defined("variant_id")) {
+        ctx.addIssue({ code: "custom", path: ["variant_id"], message: "variant_id is required for variant preview" });
+    }
+});`;
+  return content.slice(0, schemaStart) + refined + content.slice(schemaEnd);
+}
+
 /**
  * Post-process generated Zod schemas to strip .and(z.record(...)) intersections
  * and equivalent record-only union intersections from object schemas that
@@ -727,7 +831,12 @@ function postProcessLegacyPurchaseContinuationResponse(content: string): string 
                 ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "product_ids must be unique" });
             }
             const returnedIds = (value.products ?? []).map(product => product.product_id);
-            if (returnedIds.length !== ids.length || !returnedIds.every(productId => ids.includes(productId))) {
+            const returnedIdSet = new Set(returnedIds);
+            if (
+                returnedIds.length !== ids.length ||
+                returnedIdSet.size !== returnedIds.length ||
+                ids.some(productId => !returnedIdSet.has(productId))
+            ) {
                 ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "listed product_ids must exactly match returned products" });
             }
             for (const [index, product] of (value.products ?? []).entries()) {
@@ -2761,6 +2870,8 @@ async function generateZodSchemas() {
     zodSchemas = postProcessUnionStringLengthConstraints(zodSchemas);
     zodSchemas = postProcessForecastRangeConstraint(zodSchemas);
     zodSchemas = postProcessPriceBreakdownConstraints(zodSchemas);
+    zodSchemas = postProcessBeta4OfferAndOutcomeConstraints(zodSchemas);
+    zodSchemas = postProcessPreviewCreativeRequestConstraints(zodSchemas);
 
     // TypeScript cannot retain JSON Schema `format: uri` or root oneOf
     // exclusivity. Restore both for legacy/canonical creative identity.

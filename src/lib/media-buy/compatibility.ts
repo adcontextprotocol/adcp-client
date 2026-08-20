@@ -11,6 +11,7 @@ import type {
 import { attachMatch } from '../core/match';
 import { generateIdempotencyKey, isValidIdempotencyKey, type MutatingRequestInput } from '../utils/idempotency';
 import { canonicalize } from '../utils/jcs';
+import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
 import { assertValidIdempotencyReplayTtlSeconds, type AdcpCapabilities } from '../utils/capabilities';
 import { TOOL_REQUEST_SCHEMAS } from '../utils/tool-request-schemas';
 import type {
@@ -55,6 +56,7 @@ import {
 } from '../negotiation/verification';
 import { isAdcpOperationSuccess } from '../utils/response-unwrapper';
 import { ConfigurationError } from '../errors';
+import { createAbortError, isAbortOrTimeoutError, MAX_TIMER_DELAY_MS, withAbortSignal } from '../protocols/abort';
 import { formatIssues, validateResponse } from '../validation/schema-validator';
 import { validateRequest } from '../validation/schema-validator';
 import {
@@ -1606,10 +1608,9 @@ export class MediaBuyLifecycleCoordinator {
     }
     const delay =
       reservation.state === 'in-flight'
-        ? Math.min(
-            MediaBuyLifecycleCoordinator.PROPOSAL_TASK_WATCH_TTL_MS,
-            deadline === undefined ? Number.POSITIVE_INFINITY : deadline - now
-          )
+        ? deadline === undefined
+          ? MediaBuyLifecycleCoordinator.PROPOSAL_TASK_WATCH_TTL_MS
+          : Math.min(MediaBuyLifecycleCoordinator.PROPOSAL_TASK_WATCH_TTL_MS, deadline - now)
         : deadline! - now;
     const timer = setTimeout(() => {
       if (!this.mutationAttemptIsCurrent(reservation, attemptEpoch) || reservation.timer !== timer) return;
@@ -2423,16 +2424,10 @@ export class MediaBuyLifecycleCoordinator {
     )
       return data;
     if (!this.principalScope) {
-      throw new ConfigurationError(
-        'Products-only legacy proposal projection requires a stable, non-secret principalScope. No continuation was issued.',
-        'mediaBuy.principalScope'
-      );
+      return data;
     }
     if (!accountScope) {
-      throw new ConfigurationError(
-        'Products-only legacy proposal projection requires an explicit account. No continuation was issued.',
-        'mediaBuy.account'
-      );
+      return data;
     }
     if (containsCredentialShapedKey(source) || containsPresignedUrl(source)) {
       throw new LegacyPurchaseContinuationError(
@@ -2451,6 +2446,17 @@ export class MediaBuyLifecycleCoordinator {
     if (productIds.some(productId => productId === undefined) || new Set(productIds).size !== productIds.length) {
       throw new TypeError('The legacy products-only response did not contain distinct non-empty product IDs.');
     }
+    const hasBoundPricingOptions = source.products.every(product => {
+      const pricingOptionIds = array(record(product).pricing_options).map(option =>
+        optionalString(record(option).pricing_option_id)
+      );
+      return (
+        pricingOptionIds.length > 0 &&
+        pricingOptionIds.every(pricingOptionId => pricingOptionId !== undefined) &&
+        new Set(pricingOptionIds).size === pricingOptionIds.length
+      );
+    });
+    if (!hasBoundPricingOptions) return data;
     const binding = this.legacyPurchaseBinding(accountScope);
     const sourceAdcpVersion = binding.sourceAdcpVersion;
     const losses = this.legacyPurchaseLosses(sourceAdcpVersion);
@@ -4266,6 +4272,33 @@ export class MediaBuyLifecycleCoordinator {
         'The distinct legacy_create_request package product IDs must exactly match selected_product_ids.'
       );
     }
+    const observedPricingOptions = new Map<string, Set<string>>();
+    for (const product of array(record(continuation.observedResponse).products)) {
+      const productRecord = record(product);
+      const productId = optionalString(productRecord.product_id);
+      if (!productId) continue;
+      observedPricingOptions.set(
+        productId,
+        new Set(
+          array(productRecord.pricing_options)
+            .map(option => optionalString(record(option).pricing_option_id))
+            .filter((pricingOptionId): pricingOptionId is string => pricingOptionId !== undefined)
+        )
+      );
+    }
+    if (
+      packages.some(pkg => {
+        const packageRecord = record(pkg);
+        const productId = optionalString(packageRecord.product_id);
+        const pricingOptionId = optionalString(packageRecord.pricing_option_id);
+        return !productId || !pricingOptionId || !observedPricingOptions.get(productId)?.has(pricingOptionId);
+      })
+    ) {
+      throw new LegacyPurchaseContinuationError(
+        'selection_mismatch',
+        'Every legacy_create_request package pricing_option_id must match an option observed for its selected product.'
+      );
+    }
     if (continuation.sourceAdcpVersion !== '2.5' && this.accountScope(legacyRequest.account) !== accountScope) {
       throw new LegacyPurchaseContinuationError(
         'binding_mismatch',
@@ -4301,79 +4334,142 @@ export class MediaBuyLifecycleCoordinator {
         sourceMutationKey: optionalString(legacyRequest.idempotency_key ?? legacyRequest.buyer_ref),
       }),
     };
-    let claimed;
-    try {
-      claimed = await this.legacyPurchaseContinuationStore.claim(token, {
-        claim,
-        expected: expectedBinding,
-      });
-    } catch (error) {
-      throw new LegacyPurchaseContinuationError(
-        'store_error',
-        'Could not atomically claim the legacy purchase continuation.',
-        true,
-        undefined,
-        error
-      );
-    }
-    if (claimed.outcome === 'missing') {
-      throw new LegacyPurchaseContinuationError('not_found', 'Legacy purchase continuation not found.');
-    }
-    if (claimed.outcome === 'conflict') {
-      throw new LegacyPurchaseContinuationError(
-        'conflict',
-        'Legacy purchase continuation was already claimed by a different coordinator operation.'
-      );
-    }
-    if (claimed.outcome === 'expired') {
-      throw new LegacyPurchaseContinuationError(
-        'expired',
-        'The legacy purchase continuation or its deterministic replay window has expired.'
-      );
-    }
-    if (claimed.outcome === 'binding_mismatch') {
-      throw new LegacyPurchaseContinuationError(
-        'binding_mismatch',
-        'Legacy purchase continuation does not belong to this principal, account, seller session, and source version.'
-      );
-    }
-    if (claimed.outcome === 'replay') return attachMatch(claimed.result);
-    if (claimed.outcome === 'in_flight' || claimed.outcome === 'ambiguous') {
-      const age =
-        Date.now() -
-        Date.parse(
-          claimed.record.operation.state === 'available' ? claim.claimedAt : claimed.record.operation.claimedAt
-        );
-      if (claimed.outcome === 'in_flight' && age < this.legacyPurchaseClaimTimeoutMs) {
+    let claimedForDispatch = false;
+    const claimBeforeDispatch = async (
+      effectiveParams: unknown,
+      context: { governanceAdjusted: boolean }
+    ): Promise<{ action: 'dispatch_committed' } | { action: 'return'; result: TaskResult<CreateMediaBuyResponse> }> => {
+      // Legacy continuation consent binds the complete pre-governance purchase.
+      // Unlike native 3.2 proposal execution, it has no mechanism for the
+      // caller to approve rewritten commercial terms, so fail closed before
+      // claiming whenever governance changed the seller payload.
+      if (context.governanceAdjusted) {
         throw new LegacyPurchaseContinuationError(
-          'in_flight',
-          'The exact legacy purchase continuation operation is still in flight.',
-          true
+          'request_invalid',
+          'Governance conditions cannot rewrite a legacy purchase continuation request.'
         );
       }
-      if (this.reconcileLegacyPurchase) {
-        let reconciled;
-        try {
-          reconciled = await this.reconcileLegacyPurchase(claimed.record, input);
-        } catch (error) {
-          throw this.legacyPurchaseAmbiguousError('Legacy create reconciliation failed without authority.', error);
-        }
-        if (reconciled.outcome === 'completed') {
-          const terminal = this.assertLegacyPurchaseTerminalResult(reconciled.result, continuation.sourceAdcpVersion);
-          return attachMatch(await this.completeLegacyPurchase(token, claim, terminal));
-        }
+      const finalRequest = record(effectiveParams);
+      const finalPackages = array(finalRequest.packages);
+      const finalProductIds = finalPackages.map(pkg => optionalString(record(pkg).product_id));
+      if (
+        finalPackages.length === 0 ||
+        finalProductIds.some(productId => productId === undefined) ||
+        new Set(finalProductIds).size !== finalProductIds.length ||
+        !exactSet(finalProductIds, selectedProductIds)
+      ) {
+        throw new LegacyPurchaseContinuationError(
+          'selection_mismatch',
+          'The final seller payload product IDs must exactly match the continuation selection.'
+        );
       }
-      throw new LegacyPurchaseContinuationError(
-        'ambiguous',
-        'The legacy create outcome is not authoritative; reconcile it before any further mutation.',
-        false,
-        'Configure reconcileLegacyPurchase to query the seller by an application-owned natural key.'
-      );
-    }
+      if (
+        finalPackages.some(pkg => {
+          const packageRecord = record(pkg);
+          const productId = optionalString(packageRecord.product_id);
+          const pricingOptionId = optionalString(packageRecord.pricing_option_id);
+          return !productId || !pricingOptionId || !observedPricingOptions.get(productId)?.has(pricingOptionId);
+        })
+      ) {
+        throw new LegacyPurchaseContinuationError(
+          'selection_mismatch',
+          'The final seller payload pricing options must match the observed product snapshot.'
+        );
+      }
+      if (continuation.sourceAdcpVersion !== '2.5' && this.accountScope(finalRequest.account) !== accountScope) {
+        throw new LegacyPurchaseContinuationError(
+          'binding_mismatch',
+          'The final seller payload account must match the continuation account.'
+        );
+      }
+      const finalMutationKey = optionalString(finalRequest.idempotency_key ?? finalRequest.buyer_ref);
+      if (claim.sourceMutationKey !== undefined && finalMutationKey !== claim.sourceMutationKey) {
+        throw new LegacyPurchaseContinuationError(
+          'binding_mismatch',
+          'The final seller payload mutation key must match the continuation request.'
+        );
+      }
+
+      let claimed;
+      try {
+        claimed = await this.legacyPurchaseContinuationStore.claim(token, {
+          claim,
+          expected: expectedBinding,
+        });
+      } catch (error) {
+        throw new LegacyPurchaseContinuationError(
+          'store_error',
+          'Could not atomically claim the legacy purchase continuation.',
+          true,
+          undefined,
+          error
+        );
+      }
+      if (claimed.outcome === 'missing') {
+        throw new LegacyPurchaseContinuationError('not_found', 'Legacy purchase continuation not found.');
+      }
+      if (claimed.outcome === 'conflict') {
+        throw new LegacyPurchaseContinuationError(
+          'conflict',
+          'Legacy purchase continuation was already claimed by a different coordinator operation.'
+        );
+      }
+      if (claimed.outcome === 'expired') {
+        throw new LegacyPurchaseContinuationError(
+          'expired',
+          'The legacy purchase continuation or its deterministic replay window has expired.'
+        );
+      }
+      if (claimed.outcome === 'binding_mismatch') {
+        throw new LegacyPurchaseContinuationError(
+          'binding_mismatch',
+          'Legacy purchase continuation does not belong to this principal, account, seller session, and source version.'
+        );
+      }
+      if (claimed.outcome === 'replay') return { action: 'return', result: attachMatch(claimed.result) };
+      if (claimed.outcome === 'in_flight' || claimed.outcome === 'ambiguous') {
+        const age =
+          Date.now() -
+          Date.parse(
+            claimed.record.operation.state === 'available' ? claim.claimedAt : claimed.record.operation.claimedAt
+          );
+        if (claimed.outcome === 'in_flight' && age < this.legacyPurchaseClaimTimeoutMs) {
+          throw new LegacyPurchaseContinuationError(
+            'in_flight',
+            'The exact legacy purchase continuation operation is still in flight.',
+            true
+          );
+        }
+        if (this.reconcileLegacyPurchase) {
+          let reconciled;
+          try {
+            reconciled = await this.reconcileLegacyPurchase(claimed.record, input);
+          } catch (error) {
+            throw this.legacyPurchaseAmbiguousError('Legacy create reconciliation failed without authority.', error);
+          }
+          if (reconciled.outcome === 'completed') {
+            const terminal = this.assertLegacyPurchaseTerminalResult(reconciled.result, continuation.sourceAdcpVersion);
+            return {
+              action: 'return',
+              result: attachMatch(await this.completeLegacyPurchase(token, claim, terminal)),
+            };
+          }
+        }
+        throw new LegacyPurchaseContinuationError(
+          'ambiguous',
+          'The legacy create outcome is not authoritative; reconcile it before any further mutation.',
+          false,
+          'Configure reconcileLegacyPurchase to query the seller by an application-owned natural key.'
+        );
+      }
+      claimedForDispatch = true;
+      return { action: 'dispatch_committed' };
+    };
 
     try {
-      const result = await this.agent.createMediaBuyLegacy(
+      const result = await this.agent.createMediaBuyLegacyWithPreDispatch(
         legacyRequest as unknown as CreateMediaBuyRequest,
+        claimBeforeDispatch,
         inputHandler,
         {
           ...options,
@@ -4381,8 +4477,10 @@ export class MediaBuyLifecycleCoordinator {
           skipIdempotencyAutoInject: true,
         }
       );
+      if (!claimedForDispatch) return result;
       return this.trackLegacyPurchaseResult(token, claim, result);
     } catch (error) {
+      if (!claimedForDispatch) throw error;
       if (error instanceof LegacyPurchaseContinuationError) {
         if (error.code === 'ambiguous') {
           await this.markLegacyPurchaseAmbiguous(token, claim, 'create_media_buy_result_invalid');
@@ -4467,10 +4565,14 @@ export class MediaBuyLifecycleCoordinator {
     const {
       match: _match,
       errorInstance: _errorInstance,
+      conversation: _conversation,
+      debug_logs: _debugLogs,
       ...serializable
     } = result as TaskResult<CreateMediaBuyResponse>;
     void _match;
     void _errorInstance;
+    void _conversation;
+    void _debugLogs;
     if (containsCredentialShapedKey(serializable) || containsPresignedUrl(serializable)) {
       throw this.legacyPurchaseAmbiguousError(
         'The legacy create terminal result contains credential-shaped material and cannot be persisted.'
@@ -4499,6 +4601,17 @@ export class MediaBuyLifecycleCoordinator {
     result: TaskResult<CreateMediaBuyResponse>
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
     if (result.status === 'completed' || result.status === 'failed' || result.status === 'governance-denied') {
+      // TaskExecutor also uses status=failed for local response-schema and
+      // unknown-envelope failures. Those do not prove that the seller
+      // authoritatively rejected the mutation: it may have succeeded and
+      // returned a malformed completion. Persist only structured AdCP
+      // failures; otherwise fence the claimed operation as ambiguous.
+      if (result.status === 'failed' && result.adcpError === undefined) {
+        await this.markLegacyPurchaseAmbiguous(token, claim, 'create_media_buy_failure_not_authoritative');
+        throw this.legacyPurchaseAmbiguousError(
+          'The legacy create failure was not an authoritative structured AdCP error.'
+        );
+      }
       const terminal = this.assertLegacyPurchaseTerminalResult(result, this.legacyPurchaseSourceVersion());
       return attachMatch(await this.completeLegacyPurchase(token, claim, terminal));
     }
@@ -4515,80 +4628,252 @@ export class MediaBuyLifecycleCoordinator {
         await this.markLegacyPurchaseAmbiguous(token, claim, 'submitted_task_persistence_failed');
         throw this.legacyPurchaseAmbiguousError('Could not durably bind the submitted seller task.', error);
       }
-      (result as { submitted?: unknown }).submitted = {
-        ...submitted,
-        track: async (transport?: import('../protocols').TransportOptions) => {
-          try {
-            const task = await submitted.track(transport);
-            if (task.status === 'completed' || task.status === 'failed' || task.status === 'governance-denied') {
-              if (task.taskType !== 'create_media_buy') {
-                throw this.legacyPurchaseAmbiguousError('The tracked seller task has the wrong task identity.');
-              }
-              if (task.status === 'completed' && task.result === undefined) {
-                throw this.legacyPurchaseAmbiguousError(
-                  'The tracked seller task reported completion without a create_media_buy result.'
-                );
-              }
-              const terminal = this.assertLegacyPurchaseTerminalResult(
-                {
-                  success: task.status === 'completed',
-                  status:
-                    task.status === 'completed'
-                      ? 'completed'
-                      : task.status === 'governance-denied'
-                        ? 'governance-denied'
-                        : 'failed',
-                  ...(task.status === 'completed'
-                    ? { data: task.result }
-                    : {
-                        error: task.error ?? task.message ?? 'Legacy create failed.',
-                        ...(task.result !== undefined && { data: task.result }),
-                      }),
-                  metadata: {
-                    ...result.metadata,
-                    status:
-                      task.status === 'completed'
-                        ? 'completed'
-                        : task.status === 'governance-denied'
-                          ? 'governance-denied'
-                          : 'failed',
-                    timestamp: new Date().toISOString(),
-                  },
-                },
-                this.legacyPurchaseSourceVersion()
-              );
-              const canonical = await this.completeLegacyPurchase(token, claim, terminal);
-              return {
-                ...task,
-                status: canonical.status,
-                taskType: 'create_media_buy',
-                ...(canonical.data !== undefined ? { result: canonical.data } : { result: undefined }),
-                ...(canonical.status === 'completed'
-                  ? { error: undefined }
-                  : { error: canonical.error ?? 'Legacy create failed.' }),
-                updatedAt: Date.now(),
-              };
+      const failureFieldsFromTask = (task: Awaited<ReturnType<typeof submitted.track>>) => {
+        const adcpError = extractAdcpErrorInfo(task.result);
+        const correlationId = extractCorrelationId(task.result);
+        return {
+          // tasks/get free text is not a durable-safe boundary. Preserve a
+          // structured AdCP message when present; otherwise replay a generic
+          // error while retaining the seller payload in data for inspection.
+          error: adcpError?.message ?? 'Legacy create failed.',
+          ...(adcpError !== undefined && { adcpError }),
+          ...(correlationId !== undefined && { correlationId }),
+        };
+      };
+      const observeTask = async (
+        transport?: import('../protocols').TransportOptions,
+        observationSignal?: AbortSignal
+      ) => {
+        try {
+          const task = observationSignal
+            ? await withAbortSignal([observationSignal], undefined, () => submitted.track(transport))
+            : await submitted.track(transport);
+          if (['completed', 'failed', 'rejected', 'canceled', 'governance-denied'].includes(task.status)) {
+            if (task.taskType !== 'create_media_buy') {
+              throw this.legacyPurchaseAmbiguousError('The tracked seller task has the wrong task identity.');
             }
-            return task;
-          } catch (error) {
-            if (error instanceof LegacyPurchaseContinuationError) {
-              if (error.code === 'ambiguous') {
-                await this.markLegacyPurchaseAmbiguous(token, claim, 'tracked_task_result_invalid');
+            if (task.status === 'completed' && task.result === undefined) {
+              throw this.legacyPurchaseAmbiguousError(
+                'The tracked seller task reported completion without a create_media_buy result.'
+              );
+            }
+            const completedSuccessfully =
+              task.status === 'completed' && isAdcpOperationSuccess(task.result, task.taskType);
+            const terminal = this.assertLegacyPurchaseTerminalResult(
+              {
+                success: completedSuccessfully,
+                status: completedSuccessfully
+                  ? 'completed'
+                  : task.status === 'governance-denied'
+                    ? 'governance-denied'
+                    : 'failed',
+                ...(completedSuccessfully
+                  ? { data: task.result }
+                  : {
+                      ...failureFieldsFromTask(task),
+                      ...(task.result !== undefined && { data: task.result }),
+                    }),
+                metadata: {
+                  ...result.metadata,
+                  status: completedSuccessfully
+                    ? 'completed'
+                    : task.status === 'governance-denied'
+                      ? 'governance-denied'
+                      : 'failed',
+                  timestamp: new Date().toISOString(),
+                },
+              },
+              this.legacyPurchaseSourceVersion()
+            );
+            const canonical = await this.completeLegacyPurchase(token, claim, terminal);
+            return {
+              ...task,
+              status: canonical.status,
+              taskType: 'create_media_buy',
+              ...(canonical.data !== undefined ? { result: canonical.data } : { result: undefined }),
+              ...(canonical.status === 'completed'
+                ? { error: undefined }
+                : { error: canonical.error ?? 'Legacy create failed.' }),
+              updatedAt: Date.now(),
+            };
+          }
+          return task;
+        } catch (error) {
+          // A shared observer may disappear while its tasks/get request is in
+          // flight. A late rejection belongs to that abandoned local observer;
+          // it is not evidence that the seller mutation itself is ambiguous.
+          if (observationSignal?.aborted) throw createAbortError(observationSignal.reason);
+          if (error instanceof LegacyPurchaseContinuationError) {
+            if (error.code === 'ambiguous') {
+              await this.markLegacyPurchaseAmbiguous(token, claim, 'tracked_task_result_invalid');
+            }
+            throw error;
+          }
+          await this.markLegacyPurchaseAmbiguous(token, claim, 'tasks_get_transport_uncertain');
+          throw this.legacyPurchaseAmbiguousError('Legacy create task tracking failed after claim.', error);
+        }
+      };
+      const resultFromTask = (
+        task: Awaited<ReturnType<typeof submitted.track>>
+      ): TaskResult<CreateMediaBuyResponse> | undefined => {
+        const metadata = {
+          ...result.metadata,
+          taskName: task.taskType,
+          timestamp: new Date().toISOString(),
+        };
+        if (
+          task.status === 'completed' &&
+          task.result !== undefined &&
+          isAdcpOperationSuccess(task.result, task.taskType)
+        ) {
+          return attachMatch({
+            success: true,
+            status: 'completed',
+            data: task.result as CreateMediaBuyResponse,
+            metadata: { ...metadata, status: 'completed' },
+          });
+        }
+        if (task.status === 'unknown') {
+          throw this.legacyPurchaseAmbiguousError(
+            'tasks/get returned an unrecognizable response for the submitted legacy purchase.'
+          );
+        }
+        if (['completed', 'failed', 'rejected', 'canceled', 'governance-denied'].includes(task.status)) {
+          const status = task.status === 'governance-denied' ? 'governance-denied' : 'failed';
+          return attachMatch({
+            success: false,
+            status,
+            ...failureFieldsFromTask(task),
+            ...(task.result !== undefined && { data: task.result as CreateMediaBuyResponse }),
+            metadata: { ...metadata, status },
+          } as TaskResult<CreateMediaBuyResponse>);
+        }
+        if (task.status === 'input-required' || task.status === 'auth-required') {
+          return attachMatch({
+            success: true,
+            status: task.status,
+            ...(task.result !== undefined && { data: task.result as CreateMediaBuyResponse }),
+            metadata: { ...metadata, status: task.status },
+          } as TaskResult<CreateMediaBuyResponse>);
+        }
+        return undefined;
+      };
+      type SharedCompletion = {
+        controller: AbortController;
+        pollInterval: number;
+        promise: Promise<TaskResult<CreateMediaBuyResponse>>;
+        settled: boolean;
+        subscriberIntervals: Map<symbol, number>;
+        wake?: () => void;
+      };
+      const waitForNextPoll = (state: SharedCompletion, signal: AbortSignal) =>
+        new Promise<void>((resolve, reject) => {
+          if (signal.aborted) {
+            reject(createAbortError(signal.reason));
+            return;
+          }
+          const timer = setTimeout(finish, state.pollInterval);
+          const abort = () => finish(createAbortError(signal.reason));
+          const wake = () => finish();
+          state.wake = wake;
+          signal.addEventListener('abort', abort, { once: true });
+          function finish(error?: Error) {
+            clearTimeout(timer);
+            signal.removeEventListener('abort', abort);
+            if (state.wake === wake) state.wake = undefined;
+            if (error) reject(error);
+            else resolve();
+          }
+        });
+      const pollTrackedCompletion = async (state: SharedCompletion, signal: AbortSignal) => {
+        while (true) {
+          if (signal.aborted) throw createAbortError(signal.reason);
+          const task = await observeTask(undefined, signal);
+          const observed = resultFromTask(task);
+          if (observed) return this.trackLegacyPurchaseResult(token, claim, observed);
+          await waitForNextPoll(state, signal);
+        }
+      };
+      let sharedCompletion: SharedCompletion | undefined;
+      const waitForSharedCompletion = (requestedPollInterval = 60_000, signal?: AbortSignal) => {
+        if (
+          !Number.isFinite(requestedPollInterval) ||
+          requestedPollInterval < 0 ||
+          requestedPollInterval > MAX_TIMER_DELAY_MS
+        ) {
+          throw new RangeError(`pollInterval must be a finite non-negative number <= ${MAX_TIMER_DELAY_MS}`);
+        }
+        const pollInterval = requestedPollInterval;
+        if (sharedCompletion === undefined) {
+          const state: SharedCompletion = {
+            controller: new AbortController(),
+            pollInterval,
+            promise: undefined as unknown as Promise<TaskResult<CreateMediaBuyResponse>>,
+            settled: false,
+            subscriberIntervals: new Map(),
+          };
+          state.promise = pollTrackedCompletion(state, state.controller.signal).then(
+            completed => {
+              state.settled = true;
+              // A pause is authoritative for current observers but is not a
+              // terminal result. A later wait must be able to start a fresh
+              // tasks/get epoch after the caller supplies the required input.
+              if (
+                (completed.status === 'input-required' || completed.status === 'auth-required') &&
+                sharedCompletion === state
+              ) {
+                sharedCompletion = undefined;
               }
+              return completed;
+            },
+            error => {
+              if (sharedCompletion === state) sharedCompletion = undefined;
               throw error;
             }
-            await this.markLegacyPurchaseAmbiguous(token, claim, 'tasks_get_transport_uncertain');
-            throw this.legacyPurchaseAmbiguousError('Legacy create task tracking failed after claim.', error);
+          );
+          sharedCompletion = state;
+        }
+        const state = sharedCompletion;
+        const subscription = Symbol('legacy-purchase-completion-subscriber');
+        state.subscriberIntervals.set(subscription, pollInterval);
+        const activeInterval = Math.min(...state.subscriberIntervals.values());
+        if (activeInterval < state.pollInterval) {
+          state.pollInterval = activeInterval;
+          state.wake?.();
+        } else {
+          state.pollInterval = activeInterval;
+        }
+        return withAbortSignal([signal], undefined, () => state.promise).finally(() => {
+          state.subscriberIntervals.delete(subscription);
+          if (state.subscriberIntervals.size > 0) {
+            state.pollInterval = Math.min(...state.subscriberIntervals.values());
+          } else if (!state.settled && sharedCompletion === state) {
+            sharedCompletion = undefined;
+            // This controller only stops the SDK-owned track/sleep loop. It is
+            // never forwarded to waitForCompletion, so an observation timeout
+            // cannot become an A2A tasks/cancel request.
+            state.controller.abort(createAbortError('No legacy purchase completion observers remain.'));
           }
-        },
+        });
+      };
+      (result as { submitted?: unknown }).submitted = {
+        ...submitted,
+        track: (transport?: import('../protocols').TransportOptions) => observeTask(transport),
         waitForCompletion: async (pollInterval?: number, signal?: AbortSignal) => {
+          // Validate caller input before entering the uncertainty boundary so
+          // only this local RangeError bypasses durable ambiguity handling.
+          if (
+            pollInterval !== undefined &&
+            (!Number.isFinite(pollInterval) || pollInterval < 0 || pollInterval > MAX_TIMER_DELAY_MS)
+          ) {
+            throw new RangeError(`pollInterval must be a finite non-negative number <= ${MAX_TIMER_DELAY_MS}`);
+          }
           try {
-            return await this.trackLegacyPurchaseResult(
-              token,
-              claim,
-              await submitted.waitForCompletion(pollInterval, signal)
-            );
+            return await waitForSharedCompletion(pollInterval, signal);
           } catch (error) {
+            // A caller stopping its own observation says nothing about the
+            // seller mutation. The background observer retains ownership.
+            if (isAbortOrTimeoutError(error)) throw error;
             if (error instanceof LegacyPurchaseContinuationError) {
               if (error.code === 'ambiguous') {
                 await this.markLegacyPurchaseAmbiguous(token, claim, 'completion_wait_result_invalid');
@@ -4601,15 +4886,15 @@ export class MediaBuyLifecycleCoordinator {
         },
       };
 
-      // Start one bounded observer immediately so webhook/poll completion is
-      // persisted even when the caller does not invoke the continuation
-      // helpers. The original continuation is used to avoid wrapper recursion.
+      // Give the returned continuation's caller the first opportunity to set
+      // its desired poll interval. If it does not, begin one bounded,
+      // SDK-owned track loop on the next timer turn. The timeout races only
+      // that observer subscription and never reaches the seller transport.
       const watchSignal = AbortSignal.timeout(Math.min(this.legacyPurchaseOperationTtlMs, 5 * 60 * 1000));
-      void submitted
-        .waitForCompletion(undefined, watchSignal)
-        .then(completed => this.trackLegacyPurchaseResult(token, claim, completed))
+      void new Promise<void>(resolve => setTimeout(resolve, 0))
+        .then(() => waitForSharedCompletion(undefined, watchSignal))
         .catch(async error => {
-          if (watchSignal.aborted) return;
+          if (watchSignal.aborted || isAbortOrTimeoutError(error)) return;
           await this.markLegacyPurchaseAmbiguous(token, claim, 'background_completion_watch_uncertain');
           // The durable ambiguous state is the observable outcome. Avoid an
           // unhandled rejection from this best-effort background observer.

@@ -1138,12 +1138,22 @@ export function enforceStrictSchema(schema: any): any {
           return false;
         }
         if (keys.length === 1 && keys[0] === 'not') return false;
-        // Array `contains` clauses are runtime-only membership validators.
-        // Keeping them in the TypeScript projection makes jsts intersect an
-        // object placeholder with the actual array (`{} & T[]`), which then
-        // causes ts-to-zod to reject every array at runtime. The Zod generator
-        // restores the beta.4 continuation membership constraints explicitly.
-        if (keys.length === 1 && keys[0] === 'contains') return false;
+        // The SDK-local continuation's membership clauses make jsts intersect
+        // an object placeholder with the actual array (`{} & T[]`), causing
+        // ts-to-zod to reject every accepted_losses array. Strip only this
+        // known lossy projection; the Zod generator restores its exact closed
+        // constraints. Preserve `contains` everywhere else so unrelated schema
+        // families do not lose validation structure during generation.
+        if (
+          keys.length === 1 &&
+          keys[0] === 'contains' &&
+          (strictSchema.description ===
+            'Exact loss set returned with the continuation. Missing, extra, or stale consent fails before mutation.' ||
+            strictSchema.description ===
+              'Guarantees that the established create_media_buy continuation cannot provide. The coordinator MUST fail before mutation unless the caller explicitly accepts every listed loss.')
+        ) {
+          return false;
+        }
         // Conditional validators are exclusively `if` / `then` / `else`.
         // Drop members composed only of those keys.
         if (

@@ -28,6 +28,7 @@ import {
   type WebhookParseResult,
 } from './SingleAgentClient';
 import type { InputHandler, TaskOptions, TaskResult, TaskInfo, Message } from './ConversationTypes';
+import type { BeforeProtocolDispatchHook } from './TaskExecutor';
 import type { AdcpCapabilities } from '../utils/capabilities';
 import type { WebhookHeaderValue } from '../webhooks';
 import type {
@@ -682,6 +683,14 @@ export class AgentClient {
       inputHandler,
       this.withSession('request_proposals', options)
     );
+    if (
+      result.data &&
+      (result.data.outcome === 'products_available' || result.data.purchase_continuation !== undefined)
+    ) {
+      throw new TypeError(
+        'request_proposals returned the projection-only products_available outcome from a native compact seller.'
+      );
+    }
     this.retainSession(result);
     return result;
   }
@@ -929,6 +938,20 @@ export class AgentClient {
     options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
     const result = await this.client.createMediaBuyLegacy(params, inputHandler, {
+      ...this.withSession('create_media_buy', options),
+    });
+    this.retainSession(result);
+    return result;
+  }
+
+  /** @internal Run deterministic legacy-create preflight before an application-owned atomic claim hook. */
+  async createMediaBuyLegacyWithPreDispatch(
+    params: MutatingRequestInput<CreateMediaBuyRequest>,
+    beforeDispatch: BeforeProtocolDispatchHook<CreateMediaBuyResponse>,
+    inputHandler?: InputHandler,
+    options?: CreativeDeliveryTaskOptions
+  ): Promise<TaskResult<CreateMediaBuyResponse>> {
+    const result = await this.client.createMediaBuyLegacyWithPreDispatch(params, beforeDispatch, inputHandler, {
       ...this.withSession('create_media_buy', options),
     });
     this.retainSession(result);

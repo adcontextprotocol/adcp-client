@@ -379,24 +379,24 @@ describe('Discriminated Union Validation', () => {
       assert.strictEqual(result.success, false, 'Ambiguous data without discriminator should fail validation');
     });
 
-    test('flat schema accepts any field combination with valid request_type', () => {
-      // With the flat schema (adcp#2175), mode-specific fields are optional at
-      // the schema level. Conditional requirements are application-level concerns.
+    test('flat schema enforces mode-specific cross-field requirements', () => {
+      // The generated object remains flat for type narrowing, while its
+      // superRefine contract enforces the beta.4 conditional requirements.
       const singleWithoutManifest = {
         request_type: 'single',
-        // No creative_manifest — schema allows it, application validates
+        // Neither creative_manifest nor creative_id.
       };
 
       const singleResult = PreviewCreativeRequestSchema.safeParse(singleWithoutManifest);
-      assert.strictEqual(singleResult.success, true, 'Flat schema accepts single without creative_manifest');
+      assert.strictEqual(singleResult.success, false, 'Single mode requires exactly one creative selector');
 
       const batchWithoutRequests = {
         request_type: 'batch',
-        // No requests array — schema allows it, application validates
+        // No requests array.
       };
 
       const batchResult = PreviewCreativeRequestSchema.safeParse(batchWithoutRequests);
-      assert.strictEqual(batchResult.success, true, 'Flat schema accepts batch without requests');
+      assert.strictEqual(batchResult.success, false, 'Batch mode requires preview requests');
     });
   });
 });

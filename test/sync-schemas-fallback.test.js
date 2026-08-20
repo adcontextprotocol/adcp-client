@@ -160,6 +160,29 @@ async function main() {
     globalThis.fetch = fetchBefore;
   }
 
+  let transientHttpShaFetches = 0;
+  try {
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === 'HEAD') return new Response(null, { status: 200 });
+      if (url.endsWith('.sha256')) {
+        transientHttpShaFetches += 1;
+        if (transientHttpShaFetches === 1) return new Response('busy', { status: 429, statusText: 'Too Many Requests' });
+        if (transientHttpShaFetches === 2) return new Response('down', { status: 500, statusText: 'Server Error' });
+        return new Response(createHash('sha256').update(bundle).digest('hex'));
+      }
+      return new Response(bundle);
+    }) as typeof fetch;
+    await syncFromTarball('3.0.25', 'https://transient-http.example', false);
+  } catch (error) {
+    results.transientHttpRetry = {
+      shaFetches: transientHttpShaFetches,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    globalThis.fetch = fetchBefore;
+  }
+
   try {
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       if (init?.method === 'HEAD') return new Response(null, { status: 200 });
@@ -186,7 +209,7 @@ async function main() {
       const url = String(input);
       if (init?.method === 'HEAD') {
         if (url.endsWith('.tgz.sig')) return new Response(null, { status: 404 });
-        if (url.endsWith('.tgz.crt')) return new Response(null, { status: 500 });
+        if (url.endsWith('.tgz.crt')) return new Response(null, { status: 200 });
         return new Response(null, { status: 200 });
       }
       if (url.endsWith('.sha256')) {
@@ -371,6 +394,8 @@ test('schema sync coordinates tagged, moving, per-file, and signed fallbacks', (
   assert.match(results.bodyReset.error, /socket reset/);
   assert.equal(results.transientNetworkRetry.shaFetches, 2);
   assert.doesNotMatch(results.transientNetworkRetry.error, /network error/);
+  assert.equal(results.transientHttpRetry.shaFetches, 3);
+  assert.doesNotMatch(results.transientHttpRetry.error, /after retries/);
   assert.match(results.invalidVersion, /expected a semantic version or "latest"/);
   assert.match(results.versionMismatch, /requested 3\.0\.25, received 3\.0\.23/);
   assert.equal(results.partialSidecars.availability, true);
