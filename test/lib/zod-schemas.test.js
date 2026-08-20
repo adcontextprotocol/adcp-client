@@ -1693,7 +1693,7 @@ describe('Zod Schema Validation', () => {
       ['space-separator', '2027-01-02 00:00:00Z'],
       ['compact-offset', '2027-01-02T00:00:00+0100'],
     ];
-    const exactValidator = getSchemaValidatorByRef('media-buy/refine-proposals-response.json', '3.2.0-beta.2');
+    const exactValidator = getSchemaValidatorByRef('media-buy/refine-proposals-response.json', '3.2.0-beta.3');
     assert.ok(exactValidator, 'exact refine_proposals response validator should be available');
     const exactAccepts = payload => exactValidator(payload);
     const zodAccepts = payload => schemas.RefineProposalsResponseSchema.safeParse(payload).success;

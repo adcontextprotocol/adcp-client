@@ -122,6 +122,7 @@ export {
   listStrictOnlyFailures,
   resolveCapabilityPath,
   evaluateCapabilityPredicate,
+  describeStoryboardCapabilityGates,
   buildDiscoveryFailedResult,
 } from './runner';
 

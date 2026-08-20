@@ -20,6 +20,8 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
+const { cpSync, mkdtempSync, readFileSync, writeFileSync, rmSync } = require('node:fs');
+const os = require('node:os');
 
 const CLI = path.resolve(__dirname, '../../bin/adcp.js');
 
@@ -94,4 +96,58 @@ test('show --specialism <slug> --json emits structured envelope', () => {
   assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}. stderr: ${result.stderr}`);
   assert.match(result.stdout, /"specialism"\s*:\s*"sales-guaranteed"/);
   assert.match(result.stdout, /"storyboards"\s*:\s*\[/);
+});
+
+test('show --specialism renders compound capability gates instead of always graded', () => {
+  const complianceDir = mkdtempSync(path.join(os.tmpdir(), 'adcp-compound-gate-cli-'));
+  try {
+    cpSync(path.resolve(__dirname, '../../compliance/cache/3.2.0-beta.3'), complianceDir, { recursive: true });
+    const indexPath = path.join(complianceDir, 'index.json');
+    const index = JSON.parse(readFileSync(indexPath, 'utf8'));
+    index.universal.push('compound-gated');
+    writeFileSync(indexPath, JSON.stringify(index));
+    writeFileSync(
+      path.join(complianceDir, 'universal', 'compound-gated.yaml'),
+      [
+        'id: compound_gated',
+        'version: "1.0.0"',
+        'title: Compound gated',
+        'category: testing',
+        'summary: Compound catalog rendering',
+        'narrative: ""',
+        'requires_all_capabilities:',
+        '  - path: media_buy.propagation_surfaces',
+        '    contains: snapshot',
+        '  - path: creative.has_creative_library',
+        '    equals: true',
+        'agent:',
+        '  interaction_model: media_buy_seller',
+        '  capabilities: []',
+        'caller:',
+        '  role: buyer_agent',
+        'phases:',
+        '  - id: phase',
+        '    title: Phase',
+        '    steps: []',
+        '',
+      ].join('\n')
+    );
+
+    const result = runCli([
+      'storyboard',
+      'show',
+      '--specialism',
+      'sales-guaranteed',
+      '--compliance-dir',
+      complianceDir,
+    ]);
+    assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}. stderr: ${result.stderr}`);
+    assert.match(
+      result.stdout,
+      /compound_gated.*gated on media_buy\.propagation_surfaces contains "snapshot" AND creative\.has_creative_library = true/
+    );
+    assert.doesNotMatch(result.stdout, /compound_gated.*always graded/);
+  } finally {
+    rmSync(complianceDir, { recursive: true, force: true });
+  }
 });

@@ -17,6 +17,7 @@
 
 import { readFileSync, readdirSync, statSync, writeFileSync, existsSync } from 'fs';
 import path from 'path';
+import { collectTopLevelFields, type RequestSchemaDocument } from './wire-spec-field-collector';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const ADCP_VERSION_FILE = path.join(REPO_ROOT, 'ADCP_VERSION');
@@ -128,11 +129,9 @@ interface SchemaEntry {
   source: string;
 }
 
-function loadSchema(file: string): SchemaEntry | null {
-  const json = JSON.parse(readFileSync(file, 'utf8')) as { properties?: Record<string, unknown> };
-  const properties = json.properties;
-  if (!properties || typeof properties !== 'object') return null;
-  const fields = Object.keys(properties).sort();
+function loadSchema(file: string, schemaDir: string): SchemaEntry | null {
+  const json = JSON.parse(readFileSync(file, 'utf8')) as RequestSchemaDocument;
+  const fields = [...collectTopLevelFields(json, schemaDir, new Set([file]))].sort();
   if (fields.length === 0) return null;
   const basename = path.basename(file, '.json');
   const typeName = toTypeName(basename);
@@ -148,7 +147,7 @@ function main(): void {
   const requestFiles = walk(schemaDir, '-request.json').sort();
   const entries: SchemaEntry[] = [];
   for (const file of requestFiles) {
-    const entry = loadSchema(file);
+    const entry = loadSchema(file, schemaDir);
     if (entry) entries.push(entry);
   }
 

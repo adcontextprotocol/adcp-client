@@ -395,7 +395,9 @@ function assertValidComplianceIndexVersion(version: string, indexPath: string): 
 }
 
 function findExternalSchemaRoot(complianceDir: string, adcpVersion: string): string | undefined {
-  const candidates = [complianceDir, ...schemaRootCandidatesForComplianceDir(complianceDir, adcpVersion)];
+  // Compliance bundles may contain JSON Schema test fixtures. They are not
+  // the canonical protocol schema root and must never satisfy this probe.
+  const candidates = schemaRootCandidatesForComplianceDir(complianceDir, adcpVersion);
   return candidates.find(hasSchemaRootShape);
 }
 

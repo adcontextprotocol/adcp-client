@@ -159,7 +159,7 @@ export async function verifyWebhookSignature(
   // Signature-Input headers themselves) — this flags the covered URI value
   // that will be fed into the signature base. Non-parseable URLs, non-https
   // schemes, embedded userinfo, and fragments are all rejected.
-  validateTargetUri(request.url);
+  const canonicalWebhookTarget = validateTargetUri(request.url);
 
   // Step 7: resolve keyid.
   const jwk = await options.jwks.resolve(parsedInput.params.keyid);
@@ -228,7 +228,7 @@ export async function verifyWebhookSignature(
   // webhook captured on one receiver path MUST NOT count against the replay
   // budget for a different path under the same keyid. Canonicalize once and
   // reuse for both pre-check and commit.
-  const replayScope = canonicalTargetUri(request.url);
+  const replayScope = canonicalWebhookTarget;
 
   // Pre-check step 12's replay before crypto so a replayed nonce short-
   // circuits an expensive Ed25519/ECDSA verify. Replay precedes the cap
@@ -266,7 +266,8 @@ export async function verifyWebhookSignature(
     parsedInput.components,
     { method: request.method, url: request.url, headers: request.headers },
     parsedInput.params,
-    parsedInput.signatureParamsValue
+    parsedInput.signatureParamsValue,
+    '3.2'
   );
   const publicKey = jwkToPublicKey(jwk);
   const valid = verifySignature(parsedInput.params.alg, publicKey, Buffer.from(base, 'utf8'), parsedSig.bytes);
@@ -381,7 +382,7 @@ function validateCoveredComponents(components: string[]): void {
  * message. Distinct from `webhook_signature_header_malformed`, which flags
  * the Signature / Signature-Input headers themselves.
  */
-function validateTargetUri(rawUrl: string): void {
+function validateTargetUri(rawUrl: string): string {
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -404,6 +405,15 @@ function validateTargetUri(rawUrl: string): void {
   }
   if (url.hash) {
     throw new WebhookSignatureError('webhook_target_uri_malformed', 6, '@target-uri must not carry a fragment.');
+  }
+  try {
+    return canonicalTargetUri(rawUrl, '3.2');
+  } catch (err) {
+    throw new WebhookSignatureError(
+      'webhook_target_uri_malformed',
+      6,
+      err instanceof Error ? err.message : String(err)
+    );
   }
 }
 

@@ -83,6 +83,47 @@ describe('WIRE_SPEC_FIELDS — codegen output', () => {
 });
 
 describe('pickWireSpecFields', () => {
+  it('preserves flattened protocol-envelope fields from MCP request projections', () => {
+    assert.ok(WIRE_SPEC_FIELDS.ReportUsageRequest.fields.includes('adcp_version'));
+    assert.ok(WIRE_SPEC_FIELDS.ReportUsageRequest.fields.includes('adcp_major_version'));
+    const safe = pickWireSpecFields(
+      {
+        adcp_version: '3.2.0-beta.3',
+        adcp_major_version: 3,
+        idempotency_key: 'usage-envelope-0001',
+        reporting_period: {
+          start: '2026-08-01T00:00:00Z',
+          end: '2026-09-01T00:00:00Z',
+        },
+        usage: [],
+        attacker_field: 'drop-me',
+      },
+      'ReportUsageRequest'
+    );
+    assert.equal(safe.adcp_version, '3.2.0-beta.3');
+    assert.equal(safe.adcp_major_version, 3);
+    assert.ok(!('attacker_field' in safe));
+  });
+
+  it('preserves assertion fields inherited through canonical allOf schemas', () => {
+    assert.ok(WIRE_SPEC_FIELDS.ProvidePerformanceFeedbackRequest.fields.includes('media_buy_id'));
+    assert.ok(WIRE_SPEC_FIELDS.ProvidePerformanceFeedbackRequest.fields.includes('metric_type'));
+    const safe = pickWireSpecFields(
+      {
+        idempotency_key: 'feedback-inheritance-0001',
+        media_buy_id: 'mb_1',
+        metric_type: 'roas',
+        performance_index: 1.2,
+        attacker_field: 'drop-me',
+      },
+      'ProvidePerformanceFeedbackRequest'
+    );
+    assert.equal(safe.media_buy_id, 'mb_1');
+    assert.equal(safe.metric_type, 'roas');
+    assert.equal(safe.performance_index, 1.2);
+    assert.ok(!('attacker_field' in safe));
+  });
+
   it('strips a clean buyer request to itself (no-op)', () => {
     const buyerReq = {
       media_buy_id: 'mb_1',

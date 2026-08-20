@@ -4,6 +4,7 @@ import {
   finalizeRequestSignature,
   formatSignatureParams,
   prepareRequestSignature,
+  requestSigningEncodingForVersion,
   REQUEST_SIGNING_TAG,
   type AdcpJsonWebKey,
   type RequestLike,
@@ -288,6 +289,13 @@ const MUTATIONS: Record<string, Mutator> = {
   // verbatim and targets `baseUrl` directly when set, matching how an
   // agent's MCP endpoint routes JSON-RPC `tasks/*` methods.
   '028-unsigned-protocol-method-required': (vector, _keys, options) => protocolMethodPassthrough(vector, options),
+
+  // 3.2 profile negatives ship their exact hostile sf-binary / authority
+  // bytes. Preserve them; the malformed-authority vector is marked
+  // transport-ungradable by the live probe because no HTTP client can route
+  // to that intentionally invalid host spelling.
+  'profile-3.2/negative/001-base64url-sf-binary': (vector, _keys, options) => passthrough(vector, options),
+  'profile-3.2/negative/002-multiple-trailing-dots': (vector, _keys, options) => passthrough(vector, options),
 };
 
 function passthrough(vector: NegativeVector, options: BuildOptions): SignedHttpRequest {
@@ -357,6 +365,7 @@ function sign(key: SignerKey, vector: PositiveVector | NegativeVector, args: Sig
       now: args.now !== undefined ? () => args.now! : undefined,
       nonce: args.nonce,
       windowSeconds: args.windowSeconds,
+      binaryEncoding: requestSigningEncodingForVersion(vector.signing_profile_version),
     }
   );
   const signature = produceSignature(key, Buffer.from(prepared.base, 'utf8'));

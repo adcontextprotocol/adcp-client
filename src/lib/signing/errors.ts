@@ -9,6 +9,7 @@ export type RequestSignatureErrorCode =
   | 'request_signature_window_invalid'
   | 'request_signature_components_incomplete'
   | 'request_signature_components_unexpected'
+  | 'request_target_uri_malformed'
   | 'request_signature_key_unknown'
   | 'request_signature_key_purpose_invalid'
   | 'request_signature_key_revoked'

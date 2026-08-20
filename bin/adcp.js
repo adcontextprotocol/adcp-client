@@ -2473,6 +2473,7 @@ async function handleStoryboardShow(args) {
     listAllComplianceStoryboards,
     loadComplianceIndex,
     resolveStoryboardsForCapabilities,
+    describeStoryboardCapabilityGates,
     PROTOCOL_TO_PATH,
   } = await import('../dist/lib/testing/storyboard/index.js');
   const jsonOutput = args.includes('--json');
@@ -2541,18 +2542,8 @@ async function handleStoryboardShow(args) {
       console.log(`\nSpecialism: ${specialismSlug}  (protocol: ${entry.protocol})`);
       console.log(`Resolves to ${resolved.storyboards.length} storyboard(s):`);
       for (const sb of resolved.storyboards) {
-        const gating = sb.requires_capability
-          ? ' (gated on ' +
-            sb.requires_capability.path +
-            ('present' in sb.requires_capability
-              ? sb.requires_capability.present
-                ? ' present'
-                : ' absent'
-              : 'contains' in sb.requires_capability
-                ? ' contains ' + JSON.stringify(sb.requires_capability.contains)
-                : ' = ' + sb.requires_capability.equals) +
-            ')'
-          : ' (always graded)';
+        const capabilityGateDescription = describeStoryboardCapabilityGates(sb);
+        const gating = capabilityGateDescription ? ` (gated on ${capabilityGateDescription})` : ' (always graded)';
         const trackTag = sb.track ? ` [track: ${sb.track}]` : '';
         console.log(`  - ${sb.id}${trackTag}${gating}`);
       }

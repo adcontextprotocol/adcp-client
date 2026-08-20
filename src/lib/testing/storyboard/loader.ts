@@ -22,6 +22,7 @@ export const BRANCH_SET_SEMANTICS = ['any_of'] as const;
 
 const IDENTIFIER_PATH_SEGMENT = String.raw`[A-Za-z_][A-Za-z0-9_-]*(?:\[\*\])*`;
 const IDENTIFIER_PATH_PATTERN = new RegExp(`^${IDENTIFIER_PATH_SEGMENT}(?:\\.${IDENTIFIER_PATH_SEGMENT})*$`);
+const CAPABILITY_PATH_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*$/;
 
 /** Parse a YAML string into a Storyboard. Throws if required fields are missing. */
 export function parseStoryboard(yamlContent: string): Storyboard {
@@ -65,6 +66,7 @@ export function loadStoryboardFile(filePath: string): Storyboard {
  */
 export function validateStoryboardShape(storyboard: Storyboard): void {
   validateRequires(storyboard);
+  validateRequiresAllCapabilities(storyboard);
   validateFixtureResolutionDeclarations(storyboard);
   validateRequiredAnyOfTools(storyboard);
   validatePhaseDependsOn(storyboard);
@@ -82,6 +84,70 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
       validatePeerSubstitutesFor(storyboard.id, phase, step);
     }
   }
+}
+
+function validateRequiresAllCapabilities(storyboard: Storyboard): void {
+  const predicates = storyboard.requires_all_capabilities;
+  if (predicates === undefined) return;
+  if (!Array.isArray(predicates) || predicates.length < 2) {
+    throw new Error(
+      `[${storyboard.id}] requires_all_capabilities: must list at least two predicates; use requires_capability for one`
+    );
+  }
+  for (let index = 0; index < predicates.length; index++) {
+    const raw = predicates[index] as unknown;
+    const prefix = `[${storyboard.id}] requires_all_capabilities[${index}]`;
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error(`${prefix}: must be a capability predicate object`);
+    }
+    const predicate = raw as Record<string, unknown>;
+    if (typeof predicate.path !== 'string' || predicate.path.trim().length === 0) {
+      throw new Error(`${prefix}.path: must be a non-empty string`);
+    }
+    if (!CAPABILITY_PATH_PATTERN.test(predicate.path)) {
+      throw new Error(`${prefix}.path: must be a canonical dotted capability path`);
+    }
+    const matcherKeys = ['equals', 'present', 'contains', 'not_contains'].filter(key =>
+      Object.prototype.hasOwnProperty.call(predicate, key)
+    );
+    if (matcherKeys.length !== 1) {
+      throw new Error(`${prefix}: must declare exactly one of equals, present, contains, or not_contains`);
+    }
+    const unknownKeys = Object.keys(predicate).filter(key => key !== 'path' && !matcherKeys.includes(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(`${prefix}: unknown field${unknownKeys.length === 1 ? '' : 's'} ${unknownKeys.join(', ')}`);
+    }
+    if (matcherKeys[0] === 'present' && typeof predicate.present !== 'boolean') {
+      throw new Error(`${prefix}.present: must be a boolean`);
+    }
+    if (
+      matcherKeys[0] === 'equals' &&
+      predicate.equals !== null &&
+      !['boolean', 'string', 'number'].includes(typeof predicate.equals)
+    ) {
+      throw new Error(`${prefix}.equals: must be a boolean, string, number, or null`);
+    }
+    if (
+      (matcherKeys[0] === 'contains' || matcherKeys[0] === 'not_contains') &&
+      !isJsonCapabilityValue(predicate[matcherKeys[0]!])
+    ) {
+      throw new Error(`${prefix}.${matcherKeys[0]}: must be a JSON-compatible capability value`);
+    }
+  }
+}
+
+function isJsonCapabilityValue(value: unknown, seen = new Set<object>()): boolean {
+  if (value === null || ['boolean', 'string'].includes(typeof value)) return true;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value !== 'object') return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  const valid = Array.isArray(value)
+    ? value.every(entry => isJsonCapabilityValue(entry, seen))
+    : Object.getPrototypeOf(value) === Object.prototype &&
+      Object.values(value as Record<string, unknown>).every(entry => isJsonCapabilityValue(entry, seen));
+  seen.delete(value);
+  return valid;
 }
 
 function validateAdvisoryDeclarations(

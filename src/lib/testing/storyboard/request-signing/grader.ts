@@ -332,6 +332,8 @@ const TRANSPORT_UNGRADABLE: Record<string, string> = {
   // tests exercise this edge.
   '026-non-ascii-host':
     'HTTP transport punycodes U-labels before the request leaves the client; verified at the library level.',
+  'profile-3.2/negative/002-multiple-trailing-dots':
+    'HTTP transport cannot route to an intentionally malformed DNS authority; verified at the library level.',
 };
 
 /**

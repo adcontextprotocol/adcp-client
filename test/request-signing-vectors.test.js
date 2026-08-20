@@ -11,6 +11,7 @@ const {
   verifyRequestSignature,
   signRequest,
   buildSignatureBase,
+  canonicalAuthority,
   canonicalTargetUri,
   parseSignatureInput,
 } = require('../dist/lib/signing/index.js');
@@ -19,6 +20,28 @@ const ROOT = path.join(__dirname, '..', 'compliance', 'cache', 'latest', 'test-v
 
 const keysData = JSON.parse(readFileSync(path.join(ROOT, 'keys.json'), 'utf8'));
 const keysByKid = new Map(keysData.keys.map(k => [k.kid, k]));
+
+describe('AdCP 3.2 request-target canonicalization', () => {
+  const vectors = JSON.parse(readFileSync(path.join(ROOT, 'canonicalization.json'), 'utf8'));
+  for (const vector of vectors.cases) {
+    test(vector.name, () => {
+      if (vector.reject) {
+        for (const canonicalize of [canonicalTargetUri, canonicalAuthority]) {
+          assert.throws(
+            () => canonicalize(vector.input_url, '3.2'),
+            error =>
+              error instanceof RequestSignatureError &&
+              error.code === vector.expected_error_code &&
+              error.failedStep === 10
+          );
+        }
+        return;
+      }
+      assert.strictEqual(canonicalTargetUri(vector.input_url, '3.2'), vector.expected_target_uri);
+      assert.strictEqual(canonicalAuthority(vector.input_url, '3.2'), vector.expected_authority);
+    });
+  }
+});
 
 function parseSigInput(headerValue) {
   const parsed = parseSignatureInput(headerValue);
@@ -36,7 +59,7 @@ function operationFromUrl(url) {
   return p.split('/').filter(Boolean).pop();
 }
 
-async function runVector(vector) {
+async function runVector(vector, { pinned = true } = {}) {
   const now = vector.reference_now;
   const replayStore = new InMemoryReplayStore();
   const revocationStore = new InMemoryRevocationStore();
@@ -65,7 +88,7 @@ async function runVector(vector) {
       revocationStore,
       now: () => now,
       operation: operationFromUrl(vector.request.url),
-      adcpVersion: vector.signing_profile_version ?? '3.1',
+      ...(pinned ? { adcpVersion: vector.signing_profile_version ?? '3.1' } : {}),
     });
     return { success: true };
   } catch (err) {
@@ -130,6 +153,27 @@ describe('AdCP 3.2 signing-profile vectors', () => {
       assert.strictEqual(actual.success, false);
       assert.strictEqual(actual.error_code, vector.expected_outcome.error_code);
     });
+  }
+
+  test('unpinned verifier derives 3.2 URI rules from RFC 8941 signature encoding', async () => {
+    const vector = JSON.parse(
+      readFileSync(path.join(profileRoot, 'negative', '002-multiple-trailing-dots.json'), 'utf8')
+    );
+    const actual = await runVector(vector, { pinned: false });
+    assert.deepStrictEqual(actual, {
+      success: false,
+      error_code: 'request_target_uri_malformed',
+      failed_step: 10,
+    });
+  });
+});
+
+test('AdCP 3.2 preserves query bytes without percent normalization', () => {
+  for (const query of ['x=%7e', 'x=%2f', 'x=%2F&y=%aB']) {
+    assert.strictEqual(
+      canonicalTargetUri(`https://seller.example.com/p?${query}#ignored`, '3.2'),
+      `https://seller.example.com/p?${query}`
+    );
   }
 });
 

@@ -300,6 +300,31 @@ describe('webhook verifier: webhook_target_uri_malformed (adcp#2467)', () => {
   });
 });
 
+describe('webhook verifier: AdCP 3.2 target canonicalization', () => {
+  test('rejects a webhook when raw percent-encoded query bytes are changed in transit', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const signerKey = signerKeyFor('test-ed25519-webhook-2026');
+    const original = {
+      method: 'POST',
+      url: 'https://buyer.example.com/adcp/webhook?route=%7e',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"idempotency_key":"whk_query_bytes"}',
+    };
+    const signed = signWebhook(original, signerKey, { now: () => now });
+    const mutated = {
+      ...original,
+      url: 'https://buyer.example.com/adcp/webhook?route=~',
+      headers: { ...original.headers, ...signed.headers },
+    };
+    const jwks = new StaticJwksResolver([toPublicJwk(keyByKid('test-ed25519-webhook-2026'))]);
+
+    await assert.rejects(
+      verify(mutated, jwks, { now }),
+      err => err instanceof WebhookSignatureError && err.code === 'webhook_signature_invalid'
+    );
+  });
+});
+
 describe('webhook verifier: step 2 params_incomplete', () => {
   function signedRequest() {
     const now = Math.floor(Date.now() / 1000);

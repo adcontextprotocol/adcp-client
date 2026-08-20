@@ -125,17 +125,21 @@ export async function verifyRequestSignature(
     options.capability?.covers_content_digest
   );
   let parsedSig: ReturnType<typeof parseSignature> | undefined;
+  let parsedEncoding: SfBinaryEncoding | undefined;
   let parseError: unknown;
   for (const candidate of binaryEncodingCandidates) {
     try {
       parsedSig = parseSignature(sigHeader, parsedInput.label, candidate);
+      parsedEncoding = candidate;
       break;
     } catch (error) {
       parseError ??= error;
     }
   }
   if (!parsedSig) throw parseError;
-  rejectNonAsciiHost(request.url);
+  const effectiveEncoding = pinnedBinaryEncoding ?? parsedEncoding!;
+  const canonicalizationProfile = effectiveEncoding === 'rfc8941-base64' ? '3.2' : 'legacy';
+  if (canonicalizationProfile === 'legacy') rejectNonAsciiHost(request.url);
   validateSingleValuedCoveredHeaders(parsedInput.components, request);
 
   // Step 2: required params present.
@@ -207,7 +211,7 @@ export async function verifyRequestSignature(
   // signature captured on one endpoint (e.g. /create_media_buy) MUST NOT
   // count against the replay budget for a different endpoint under the
   // same keyid. Canonicalize once and reuse for both pre-check and commit.
-  const replayScope = canonicalTargetUri(request.url);
+  const replayScope = canonicalTargetUri(request.url, canonicalizationProfile);
 
   // Step 12 pre-checks (replay hit + rate-abuse cap) run before crypto so a
   // compromised-key cache cap or a replayed nonce short-circuits an expensive
@@ -246,7 +250,8 @@ export async function verifyRequestSignature(
     parsedInput.components,
     request,
     parsedInput.params,
-    parsedInput.signatureParamsValue
+    parsedInput.signatureParamsValue,
+    canonicalizationProfile
   );
   const publicKey = jwkToPublicKey(jwk);
   const valid = verifySignature(parsedInput.params.alg, publicKey, Buffer.from(base, 'utf8'), parsedSig.bytes);
