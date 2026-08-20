@@ -771,6 +771,535 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
     established.dispose();
   });
 
+  test('commit-uncertain acceptance blocks decline while preserving the exact idempotent retry', async () => {
+    const proposalId = 'commit-uncertain-decline-proposal';
+    const commercialTerms = {
+      brand: { domain: 'example.com' },
+      start_time: '2027-01-01T00:00:00Z',
+      end_time: '2027-02-01T00:00:00Z',
+      total_budget: { amount: 1000, currency: 'USD' },
+    };
+    const proposal = {
+      proposal_id: proposalId,
+      proposal_kind: 'new_media_buy',
+      proposal_status: 'committed',
+      expires_at: '2099-12-31T23:59:59Z',
+      commercial_terms: commercialTerms,
+      terms_digest: proposalTermsDigest(commercialTerms),
+    };
+    const agent = clientWithCaps(
+      capabilities({ tools: COMPACT_TOOLS, discoveredTools: ['get_products', 'create_media_buy'] })
+    );
+    agent.requestProposals = async () => completed('request_proposals', { outcome: 'proposed', proposals: [proposal] });
+    let acceptanceDispatches = 0;
+    agent.createMediaBuy = async () => {
+      acceptanceDispatches += 1;
+      if (acceptanceDispatches === 1) throw new Error('transport outcome unknown');
+      return completed('create_media_buy', { media_buy_id: 'idempotent-retry-buy', revision: 1 });
+    };
+    let declineDispatches = 0;
+    agent.declineProposals = async () => {
+      declineDispatches += 1;
+      return completed('decline_proposals', { results: [{ proposal_id: proposalId, outcome: 'declined' }] });
+    };
+
+    const principalScope = 'buyer-commit-uncertain-decline';
+    const compact = await agent.negotiateMediaBuyLifecycle({ principalScope });
+    const established = await agent.negotiateMediaBuyLifecycle({
+      principalScope,
+      preferredLifecycle: 'established',
+      allowedLosses: ['proposal_terms_digest_not_enforced'],
+    });
+    await compact.requestProposals({
+      idempotency_key: 'commit-uncertain-request-0001',
+      account: { account_id: 'account-1' },
+      brand: { domain: 'example.com' },
+      brief: 'Cache proposal before ambiguous acceptance',
+    });
+    const acceptance = {
+      idempotency_key: 'commit-uncertain-accept-0001',
+      account: { account_id: 'account-1' },
+      proposal_id: proposalId,
+      proposal_terms_digest: proposal.terms_digest,
+    };
+
+    await assert.rejects(established.acceptProposal(acceptance), /transport outcome unknown/);
+    await assert.rejects(
+      compact.declineProposals({
+        idempotency_key: 'commit-uncertain-decline-0001',
+        declines: [{ proposal_id: proposalId, reason: 'other' }],
+      }),
+      error => error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'proposal_acceptance_pending'
+    );
+    assert.equal(declineDispatches, 0, 'a different mutation must not follow an unknown create outcome');
+
+    assert.equal((await established.acceptProposal(acceptance)).success, true);
+    assert.equal(acceptanceDispatches, 2, 'only the exact idempotent create retry may reconcile the ambiguity');
+    compact.dispose();
+    established.dispose();
+  });
+
+  test('expired commit uncertainty still blocks decline until external reconciliation', async () => {
+    const proposalId = 'expired-commit-uncertain-proposal';
+    const commercialTerms = {
+      brand: { domain: 'example.com' },
+      start_time: '2027-01-01T00:00:00Z',
+      end_time: '2027-02-01T00:00:00Z',
+      total_budget: { amount: 1000, currency: 'USD' },
+    };
+    const proposal = {
+      proposal_id: proposalId,
+      proposal_kind: 'new_media_buy',
+      proposal_status: 'committed',
+      expires_at: '2099-12-31T23:59:59Z',
+      commercial_terms: commercialTerms,
+      terms_digest: proposalTermsDigest(commercialTerms),
+    };
+    const agent = clientWithCaps(
+      capabilities({ tools: COMPACT_TOOLS, discoveredTools: ['get_products', 'create_media_buy'] })
+    );
+    agent.requestProposals = async () => completed('request_proposals', { outcome: 'proposed', proposals: [proposal] });
+    agent.createMediaBuy = async () => {
+      throw new Error('transport outcome remains unknown');
+    };
+    let declineDispatches = 0;
+    agent.declineProposals = async () => {
+      declineDispatches += 1;
+      return completed('decline_proposals', { results: [{ proposal_id: proposalId, outcome: 'declined' }] });
+    };
+
+    const principalScope = 'buyer-expired-commit-uncertain';
+    const compact = await agent.negotiateMediaBuyLifecycle({ principalScope });
+    const established = await agent.negotiateMediaBuyLifecycle({
+      principalScope,
+      preferredLifecycle: 'established',
+      allowedLosses: ['proposal_terms_digest_not_enforced'],
+    });
+    await compact.requestProposals({
+      idempotency_key: 'expired-uncertain-request-0001',
+      account: { account_id: 'account-1' },
+      brand: { domain: 'example.com' },
+      brief: 'Cache proposal before replay expiry',
+    });
+    const acceptance = {
+      idempotency_key: 'expired-uncertain-accept-0001',
+      account: { account_id: 'account-1' },
+      proposal_id: proposalId,
+      proposal_terms_digest: proposal.terms_digest,
+    };
+
+    await assert.rejects(established.acceptProposal(acceptance), /transport outcome remains unknown/);
+    established.proposalSnapshotStore.proposalAcceptances.get(proposalId).reservation.retryDeadlineMs = Date.now() - 1;
+    await assert.rejects(
+      established.acceptProposal(acceptance),
+      error =>
+        error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'proposal_acceptance_retry_window'
+    );
+    await assert.rejects(
+      compact.declineProposals({
+        idempotency_key: 'expired-uncertain-decline-0001',
+        declines: [{ proposal_id: proposalId, reason: 'other' }],
+      }),
+      error =>
+        error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'proposal_acceptance_commit_uncertain'
+    );
+    assert.equal(declineDispatches, 0);
+    compact.dispose();
+    established.dispose();
+  });
+
+  test('transport ambiguity without replay support permanently fences competing proposal mutations', async () => {
+    const proposalId = 'no-replay-commit-uncertain-proposal';
+    const commercialTerms = {
+      brand: { domain: 'example.com' },
+      start_time: '2027-01-01T00:00:00Z',
+      end_time: '2027-02-01T00:00:00Z',
+      total_budget: { amount: 1000, currency: 'USD' },
+    };
+    const proposal = {
+      proposal_id: proposalId,
+      proposal_kind: 'new_media_buy',
+      proposal_status: 'committed',
+      expires_at: '2099-12-31T23:59:59Z',
+      commercial_terms: commercialTerms,
+      terms_digest: proposalTermsDigest(commercialTerms),
+    };
+    const caps = capabilities({ tools: COMPACT_TOOLS, discoveredTools: ['get_products', 'create_media_buy'] });
+    delete caps.idempotency;
+    const agent = clientWithCaps(caps);
+    agent.requestProposals = async () => completed('request_proposals', { outcome: 'proposed', proposals: [proposal] });
+    agent.createMediaBuy = async () => {
+      throw new Error('unknown create outcome without replay support');
+    };
+    let competingDispatches = 0;
+    agent.declineProposals =
+      agent.refineProposals =
+      agent.acceptProposal =
+        async () => {
+          competingDispatches += 1;
+          return completed('unexpected_competing_mutation', {});
+        };
+
+    const principalScope = 'buyer-no-replay-commit-uncertain';
+    const compact = await agent.negotiateMediaBuyLifecycle({ principalScope });
+    const established = await agent.negotiateMediaBuyLifecycle({
+      principalScope,
+      preferredLifecycle: 'established',
+      allowedLosses: ['proposal_terms_digest_not_enforced'],
+    });
+    await compact.requestProposals({
+      idempotency_key: 'no-replay-uncertain-request-0001',
+      account: { account_id: 'account-1' },
+      brand: { domain: 'example.com' },
+      brief: 'Cache proposal before a non-replayable acceptance',
+    });
+    await assert.rejects(
+      established.acceptProposal({
+        idempotency_key: 'no-replay-uncertain-accept-0001',
+        account: { account_id: 'account-1' },
+        proposal_id: proposalId,
+        proposal_terms_digest: proposal.terms_digest,
+      }),
+      /unknown create outcome without replay support/
+    );
+
+    const assertCommitUncertain = promise =>
+      assert.rejects(
+        promise,
+        error =>
+          error instanceof MediaBuyLifecycleCompatibilityError &&
+          error.feature === 'proposal_acceptance_commit_uncertain'
+      );
+    await assertCommitUncertain(
+      compact.declineProposals({
+        idempotency_key: 'no-replay-uncertain-decline-0001',
+        declines: [{ proposal_id: proposalId, reason: 'other' }],
+      })
+    );
+    await assertCommitUncertain(
+      compact.refineProposals({
+        idempotency_key: 'no-replay-uncertain-refine-0001',
+        refinements: [{ proposal_id: proposalId, action: 'revise', ask: 'Do not dispatch' }],
+      })
+    );
+    await assertCommitUncertain(
+      compact.acceptProposal({
+        idempotency_key: 'no-replay-uncertain-compact-accept-0001',
+        account: { account_id: 'account-1' },
+        proposal_id: proposalId,
+        proposal_terms_digest: proposal.terms_digest,
+      })
+    );
+    assert.equal(competingDispatches, 0);
+    compact.dispose();
+    established.dispose();
+  });
+
+  test('disposing an exactly retryable transport ambiguity preserves the fence for a fresh coordinator', async () => {
+    const proposalId = 'retryable-transport-dispose-proposal';
+    const commercialTerms = {
+      brand: { domain: 'example.com' },
+      start_time: '2027-01-01T00:00:00Z',
+      end_time: '2027-02-01T00:00:00Z',
+      total_budget: { amount: 1000, currency: 'USD' },
+    };
+    const proposal = {
+      proposal_id: proposalId,
+      proposal_kind: 'new_media_buy',
+      proposal_status: 'committed',
+      expires_at: '2099-12-31T23:59:59Z',
+      commercial_terms: commercialTerms,
+      terms_digest: proposalTermsDigest(commercialTerms),
+    };
+    const agent = clientWithCaps(
+      capabilities({ tools: COMPACT_TOOLS, discoveredTools: ['get_products', 'create_media_buy'] })
+    );
+    agent.requestProposals = async () => completed('request_proposals', { outcome: 'proposed', proposals: [proposal] });
+    agent.createMediaBuy = async () => {
+      throw new Error('retryable transport outcome unknown');
+    };
+    let competingDispatches = 0;
+    agent.declineProposals =
+      agent.refineProposals =
+      agent.acceptProposal =
+        async () => {
+          competingDispatches += 1;
+          return completed('unexpected_competing_mutation', {});
+        };
+
+    const principalScope = 'buyer-retryable-transport-dispose';
+    const compact = await agent.negotiateMediaBuyLifecycle({ principalScope });
+    const established = await agent.negotiateMediaBuyLifecycle({
+      principalScope,
+      preferredLifecycle: 'established',
+      allowedLosses: ['proposal_terms_digest_not_enforced'],
+    });
+    await compact.requestProposals({
+      idempotency_key: 'retryable-dispose-request-0001',
+      account: { account_id: 'account-1' },
+      brand: { domain: 'example.com' },
+      brief: 'Cache proposal before a retryable transport ambiguity',
+    });
+    await assert.rejects(
+      established.acceptProposal({
+        idempotency_key: 'retryable-dispose-accept-0001',
+        account: { account_id: 'account-1' },
+        proposal_id: proposalId,
+        proposal_terms_digest: proposal.terms_digest,
+      }),
+      /retryable transport outcome unknown/
+    );
+    compact.dispose();
+    established.dispose();
+
+    const fresh = await agent.negotiateMediaBuyLifecycle({ principalScope });
+    const assertCommitUncertain = promise =>
+      assert.rejects(
+        promise,
+        error =>
+          error instanceof MediaBuyLifecycleCompatibilityError &&
+          error.feature === 'proposal_acceptance_commit_uncertain'
+      );
+    await assertCommitUncertain(
+      fresh.declineProposals({
+        idempotency_key: 'retryable-dispose-decline-0001',
+        declines: [{ proposal_id: proposalId, reason: 'other' }],
+      })
+    );
+    await assertCommitUncertain(
+      fresh.refineProposals({
+        idempotency_key: 'retryable-dispose-refine-0001',
+        refinements: [{ proposal_id: proposalId, action: 'revise', ask: 'Do not dispatch' }],
+      })
+    );
+    await assertCommitUncertain(
+      fresh.acceptProposal({
+        idempotency_key: 'retryable-dispose-compact-accept-0001',
+        account: { account_id: 'account-1' },
+        proposal_id: proposalId,
+        proposal_terms_digest: proposal.terms_digest,
+      })
+    );
+    assert.equal(competingDispatches, 0);
+    fresh.dispose();
+  });
+
+  for (const retirement of ['no-replay', 'replay-expiry', 'dispose']) {
+    test(`paused acceptance ${retirement} permits terminal decline but fences compact accept and refine`, async () => {
+      const proposalId = `paused-terminal-${retirement}-proposal`;
+      const commercialTerms = {
+        brand: { domain: 'example.com' },
+        start_time: '2027-01-01T00:00:00Z',
+        end_time: '2027-02-01T00:00:00Z',
+        total_budget: { amount: 1000, currency: 'USD' },
+      };
+      const proposal = {
+        proposal_id: proposalId,
+        proposal_kind: 'new_media_buy',
+        proposal_status: 'committed',
+        expires_at: '2099-12-31T23:59:59Z',
+        commercial_terms: commercialTerms,
+        terms_digest: proposalTermsDigest(commercialTerms),
+      };
+      const caps = capabilities({ tools: COMPACT_TOOLS, discoveredTools: ['get_products', 'create_media_buy'] });
+      if (retirement === 'no-replay') delete caps.idempotency;
+      const agent = clientWithCaps(caps);
+      agent.requestProposals = async () =>
+        completed('request_proposals', { outcome: 'proposed', proposals: [proposal] });
+      agent.createMediaBuy = async () => ({ ...working('create_media_buy'), status: 'input-required' });
+      let compactAcceptDispatches = 0;
+      let refineDispatches = 0;
+      let declineDispatches = 0;
+      agent.acceptProposal = async () => {
+        compactAcceptDispatches += 1;
+        return completed('accept_proposal', { proposal_id: proposalId, outcome: 'accepted' });
+      };
+      agent.refineProposals = async () => {
+        refineDispatches += 1;
+        return completed('refine_proposals', { outcome: 'refined', proposals: [] });
+      };
+      agent.declineProposals = async () => {
+        declineDispatches += 1;
+        return completed('decline_proposals', {
+          results: [{ proposal_id: proposalId, outcome: 'declined' }],
+        });
+      };
+
+      const principalScope = `buyer-paused-terminal-${retirement}`;
+      const discovery = await agent.negotiateMediaBuyLifecycle({ principalScope });
+      const established = await agent.negotiateMediaBuyLifecycle({
+        principalScope,
+        preferredLifecycle: 'established',
+        allowedLosses: ['proposal_terms_digest_not_enforced'],
+      });
+      await discovery.requestProposals({
+        idempotency_key: `paused-terminal-${retirement}-request-0001`,
+        account: { account_id: 'account-1' },
+        brand: { domain: 'example.com' },
+        brief: 'Cache proposal before a paused acceptance becomes terminal',
+      });
+      assert.equal(
+        (
+          await established.acceptProposal({
+            idempotency_key: `paused-terminal-${retirement}-accept-0001`,
+            account: { account_id: 'account-1' },
+            proposal_id: proposalId,
+            proposal_terms_digest: proposal.terms_digest,
+          })
+        ).status,
+        'input-required'
+      );
+
+      if (retirement === 'replay-expiry') {
+        const [reservation, pending] = [...established.ownedAcceptanceReservations][0];
+        reservation.retryDeadlineMs = Date.now() + 10;
+        established.scheduleAcceptanceRetryExpiry(pending.snapshotKey, pending.snapshot, reservation);
+        await new Promise(resolve => setTimeout(resolve, 30));
+      } else if (retirement === 'dispose') {
+        established.dispose();
+      }
+      discovery.dispose();
+
+      const fresh = await agent.negotiateMediaBuyLifecycle({ principalScope });
+      const assertTerminal = promise =>
+        assert.rejects(
+          promise,
+          error => error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'proposal_terminal'
+        );
+      await assertTerminal(
+        fresh.refineProposals({
+          idempotency_key: `paused-terminal-${retirement}-refine-0001`,
+          refinements: [{ proposal_id: proposalId, action: 'revise', ask: 'Do not dispatch' }],
+        })
+      );
+      await assertTerminal(
+        fresh.acceptProposal({
+          idempotency_key: `paused-terminal-${retirement}-compact-accept-0001`,
+          account: { account_id: 'account-1' },
+          proposal_id: proposalId,
+          proposal_terms_digest: proposal.terms_digest,
+        })
+      );
+      assert.equal(
+        (
+          await fresh.declineProposals({
+            idempotency_key: `paused-terminal-${retirement}-decline-0001`,
+            declines: [{ proposal_id: proposalId, reason: 'other' }],
+          })
+        ).success,
+        true
+      );
+      assert.equal(refineDispatches, 0);
+      assert.equal(compactAcceptDispatches, 0);
+      assert.equal(declineDispatches, 1);
+      fresh.dispose();
+      established.dispose();
+    });
+  }
+
+  for (const retirement of ['watcher-expiry', 'dispose']) {
+    test(`unresolved working acceptance ${retirement} preserves a cross-lifecycle commit-uncertain fence`, async () => {
+      const proposalId = `working-acceptance-${retirement}-proposal`;
+      const commercialTerms = {
+        brand: { domain: 'example.com' },
+        start_time: '2027-01-01T00:00:00Z',
+        end_time: '2027-02-01T00:00:00Z',
+        total_budget: { amount: 1000, currency: 'USD' },
+      };
+      const proposal = {
+        proposal_id: proposalId,
+        proposal_kind: 'new_media_buy',
+        proposal_status: 'committed',
+        expires_at: '2099-12-31T23:59:59Z',
+        commercial_terms: commercialTerms,
+        terms_digest: proposalTermsDigest(commercialTerms),
+      };
+      const agent = clientWithCaps(
+        capabilities({ tools: COMPACT_TOOLS, discoveredTools: ['get_products', 'create_media_buy'] })
+      );
+      agent.requestProposals = async () =>
+        completed('request_proposals', { outcome: 'proposed', proposals: [proposal] });
+      agent.createMediaBuy = async () => working('create_media_buy');
+      let competingDispatches = 0;
+      agent.declineProposals =
+        agent.refineProposals =
+        agent.acceptProposal =
+          async () => {
+            competingDispatches += 1;
+            return completed('unexpected_competing_mutation', {});
+          };
+
+      const principalScope = `buyer-working-acceptance-${retirement}`;
+      const compact = await agent.negotiateMediaBuyLifecycle({ principalScope });
+      const established = await agent.negotiateMediaBuyLifecycle({
+        principalScope,
+        preferredLifecycle: 'established',
+        allowedLosses: ['proposal_terms_digest_not_enforced'],
+      });
+      const coordinatorClass = established.constructor;
+      const originalTtl = coordinatorClass.PROPOSAL_TASK_WATCH_TTL_MS;
+      if (retirement === 'watcher-expiry') coordinatorClass.PROPOSAL_TASK_WATCH_TTL_MS = 10;
+
+      try {
+        await compact.requestProposals({
+          idempotency_key: `working-${retirement}-request-0001`,
+          account: { account_id: 'account-1' },
+          brand: { domain: 'example.com' },
+          brief: 'Cache proposal before unresolved acceptance',
+        });
+        assert.equal(
+          (
+            await established.acceptProposal({
+              idempotency_key: `working-${retirement}-accept-0001`,
+              account: { account_id: 'account-1' },
+              proposal_id: proposalId,
+              proposal_terms_digest: proposal.terms_digest,
+            })
+          ).status,
+          'working'
+        );
+        if (retirement === 'watcher-expiry') {
+          await new Promise(resolve => setTimeout(resolve, 30));
+        } else {
+          established.dispose();
+        }
+
+        const assertCommitUncertain = promise =>
+          assert.rejects(
+            promise,
+            error =>
+              error instanceof MediaBuyLifecycleCompatibilityError &&
+              error.feature === 'proposal_acceptance_commit_uncertain'
+          );
+        await assertCommitUncertain(
+          compact.declineProposals({
+            idempotency_key: `working-${retirement}-decline-0001`,
+            declines: [{ proposal_id: proposalId, reason: 'other' }],
+          })
+        );
+        await assertCommitUncertain(
+          compact.refineProposals({
+            idempotency_key: `working-${retirement}-refine-0001`,
+            refinements: [{ proposal_id: proposalId, action: 'revise', ask: 'Do not dispatch' }],
+          })
+        );
+        await assertCommitUncertain(
+          compact.acceptProposal({
+            idempotency_key: `working-${retirement}-compact-accept-0001`,
+            account: { account_id: 'account-1' },
+            proposal_id: proposalId,
+            proposal_terms_digest: proposal.terms_digest,
+          })
+        );
+        assert.equal(competingDispatches, 0);
+      } finally {
+        coordinatorClass.PROPOSAL_TASK_WATCH_TTL_MS = originalTtl;
+        compact.dispose();
+        established.dispose();
+      }
+    });
+  }
+
   test('submitted refine completions enforce request semantics before caching executable proposals', async () => {
     const sourceProposalId = 'async-refine-source';
     const childProposalId = 'async-refine-invalid-finalized-child';
@@ -1500,7 +2029,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
     first.dispose();
     assert.equal(second.proposalSnapshotStore.pendingDeclines.size, 1);
     assert.equal(second.proposalSnapshotStore.pendingDeclineProposalIdCount, 1);
-    assert.notEqual(second.proposalSnapshotStore.retiredAcceptanceBits, undefined);
+    assert.notEqual(second.proposalSnapshotStore.registry.retiredAcceptanceSegments, undefined);
     second.dispose();
     assert.equal(second.proposalSnapshotStore.pendingDeclines.size, 0);
     assert.equal(second.proposalSnapshotStore.pendingDeclineProposalIdCount, 0);
@@ -1715,7 +2244,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
     const first = await agent.negotiateMediaBuyLifecycle({ principalScope: 'buyer-tenant-1' });
     const second = await agent.negotiateMediaBuyLifecycle({ principalScope: 'buyer-tenant-2' });
     assert.notEqual(first, second);
-    assert.equal(first.proposalSnapshotStore.retiredAcceptanceBits, undefined);
+    assert.equal(first.proposalSnapshotStore.registry.retiredAcceptanceSegments, undefined);
 
     agent.getProducts = async () =>
       completed('get_products', { proposals: [{ proposal_id: 'proposal-without-scope' }] });
@@ -1777,6 +2306,53 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
     assert.equal(protectedCoordinator.proposalSnapshotStore.registry.stores.size, 256);
     reclaimed.dispose();
     protectedCoordinator.dispose();
+  });
+
+  test('retired proposals survive reclamation of more than 256 disposed principal stores', async () => {
+    const proposalId = 'registry-level-retired-proposal';
+    const proposal = {
+      proposal_id: proposalId,
+      proposal_kind: 'new_media_buy',
+      proposal_status: 'committed',
+      expires_at: '2099-12-31T23:59:59Z',
+      commercial_terms: {
+        brand: { domain: 'example.com' },
+        start_time: '2027-01-01T00:00:00Z',
+        end_time: '2027-02-01T00:00:00Z',
+      },
+    };
+    const agent = clientWithCaps(capabilities({ tools: COMPACT_TOOLS }));
+    agent.declineProposals = async () =>
+      completed('decline_proposals', { results: [{ proposal_id: proposalId, outcome: 'declined' }] });
+    agent.requestProposals = async () => completed('request_proposals', { outcome: 'proposed', proposals: [proposal] });
+
+    let registry;
+    for (let index = 0; index < 257; index += 1) {
+      const coordinator = await agent.negotiateMediaBuyLifecycle({ principalScope: `retired-principal-${index}` });
+      registry ??= coordinator.proposalSnapshotStore.registry;
+      await coordinator.declineProposals({
+        idempotency_key: `registry-retire-${index}-0001`,
+        declines: [{ proposal_id: proposalId, reason: 'other' }],
+      });
+      coordinator.dispose();
+    }
+
+    assert.equal(registry.stores.size, 256);
+    assert.ok(registry.retiredAcceptanceSegments.size > 0);
+    assert.ok(registry.retiredAcceptanceSegments.size <= 256);
+    for (const segment of registry.retiredAcceptanceSegments.values()) {
+      assert.equal(segment.byteLength, 256 * 1024);
+    }
+
+    const recreated = await agent.negotiateMediaBuyLifecycle({ principalScope: 'retired-principal-0' });
+    await recreated.requestProposals({
+      idempotency_key: 'registry-recreate-request-0001',
+      account: { account_id: 'account-1' },
+      brand: { domain: 'example.com' },
+      brief: 'A reclaimed principal must retain terminal proposal history',
+    });
+    assert.equal(recreated.proposalSnapshotStore.entries.size, 0);
+    recreated.dispose();
   });
 
   test('disposed coordinators cannot repopulate a reclaimed principal partition', async () => {

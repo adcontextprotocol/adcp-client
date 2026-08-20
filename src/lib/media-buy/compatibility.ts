@@ -1031,6 +1031,7 @@ function projectDeclineProposals(
 
 interface AcceptanceReservation {
   state: 'in-flight' | 'retryable' | 'retired';
+  retryKind?: 'paused' | 'commit-uncertain';
   requestFingerprint: string;
   idempotencyKey?: string;
   skipIdempotencyAutoInject: boolean;
@@ -1054,8 +1055,6 @@ interface ProposalSnapshotStore {
     string,
     { snapshotKey: string; snapshot: ProposalSnapshotEntry; reservation: AcceptanceReservation }
   >;
-  retiredAcceptanceBits?: Uint8Array;
-  retiredAcceptanceSalt?: Uint8Array;
   pendingDeclines: Set<PendingDeclineLease>;
   pendingDeclineProposalIdCount: number;
   pendingRefinements: Set<PendingRefinementLease>;
@@ -1067,6 +1066,8 @@ interface ProposalSnapshotStore {
 
 interface ProposalSnapshotStoreRegistry {
   stores: Map<string, ProposalSnapshotStore>;
+  retiredAcceptanceSegments?: Map<number, Uint8Array>;
+  retiredAcceptanceSalt?: Uint8Array;
 }
 
 interface SafeProposalSnapshot {
@@ -1151,6 +1152,8 @@ function safeProposalSnapshot(candidate: Record<string, unknown>): SafeProposalS
 const proposalSnapshotStores = new WeakMap<AgentClient, ProposalSnapshotStoreRegistry>();
 const acceptanceReservationOwners = new WeakMap<AcceptanceReservation, MediaBuyLifecycleCoordinator>();
 const MAX_PRINCIPAL_STORES_PER_AGENT = 256;
+const RETIRED_ACCEPTANCE_SEGMENT_COUNT = 256;
+const RETIRED_ACCEPTANCE_SEGMENT_BYTES = 256 * 1024;
 
 function proposalSnapshotStoreFor(agent: AgentClient, principalScope?: string): ProposalSnapshotStore {
   let registry = proposalSnapshotStores.get(agent);
@@ -1169,7 +1172,9 @@ function proposalSnapshotStoreFor(agent: AgentClient, principalScope?: string): 
       if (
         candidate.activeCoordinators === 0 &&
         candidate.entries.size === 0 &&
-        candidate.retiredAcceptanceBits === undefined
+        candidate.proposalAcceptances.size === 0 &&
+        candidate.pendingDeclines.size === 0 &&
+        candidate.pendingRefinements.size === 0
       ) {
         registry.stores.delete(candidateKey);
         break;
@@ -1308,14 +1313,25 @@ export class MediaBuyLifecycleCoordinator {
   private beginPendingDecline(proposalIds: readonly string[]): PendingDeclineLease {
     const retainedProposalIds = [...new Set(proposalIds)];
     if (
-      retainedProposalIds.some(
-        proposalId => this.proposalSnapshotStore.proposalAcceptances.get(proposalId)?.reservation.state === 'in-flight'
-      )
+      retainedProposalIds.some(proposalId => {
+        const reservation = this.proposalSnapshotStore.proposalAcceptances.get(proposalId)?.reservation;
+        return (
+          reservation?.state === 'in-flight' ||
+          (reservation?.state === 'retryable' && reservation.retryKind !== 'paused')
+        );
+      })
     ) {
       throw this.unsupported(
         'declineProposals',
         'proposal_acceptance_pending',
-        'A requested proposal has an in-flight acceptance in this principal scope. Wait for that acceptance to finish before declining it.'
+        'A requested proposal has an in-flight or commit-uncertain acceptance in this principal scope. Reconcile or finish that acceptance before declining it.'
+      );
+    }
+    if (retainedProposalIds.some(proposalId => this.isCommitUncertainProposal(proposalId))) {
+      throw this.unsupported(
+        'declineProposals',
+        'proposal_acceptance_commit_uncertain',
+        'A requested proposal has an acceptance whose commit outcome is unknown. Reconcile the media buy by natural key before sending a different mutation.'
       );
     }
     if (retainedProposalIds.some(proposalId => this.isProposalRefinementPending(proposalId))) {
@@ -1387,7 +1403,10 @@ export class MediaBuyLifecycleCoordinator {
     return false;
   }
 
-  private beginPendingRefinement(proposalIds: readonly string[]): PendingRefinementLease {
+  private beginPendingRefinement(
+    proposalIds: readonly string[],
+    rejectTerminalProposal = false
+  ): PendingRefinementLease {
     const retainedProposalIds = [...new Set(proposalIds)];
     if (
       retainedProposalIds.some(
@@ -1398,6 +1417,30 @@ export class MediaBuyLifecycleCoordinator {
         'refineProposals',
         'proposal_mutation_pending',
         'A requested proposal already has an unresolved refinement or decline in this principal scope. Wait for it to finish before refining again.'
+      );
+    }
+    if (retainedProposalIds.some(proposalId => this.proposalSnapshotStore.proposalAcceptances.has(proposalId))) {
+      throw this.unsupported(
+        'refineProposals',
+        'proposal_acceptance_pending',
+        'A requested proposal is already being accepted in this principal scope. No refinement was sent.'
+      );
+    }
+    if (retainedProposalIds.some(proposalId => this.isCommitUncertainProposal(proposalId))) {
+      throw this.unsupported(
+        'refineProposals',
+        'proposal_acceptance_commit_uncertain',
+        'A requested proposal has an acceptance whose commit outcome is unknown. Reconcile the media buy by natural key before refining it.'
+      );
+    }
+    if (
+      rejectTerminalProposal &&
+      retainedProposalIds.some(proposalId => this.isTerminalAcceptanceProposal(proposalId))
+    ) {
+      throw this.unsupported(
+        'refineProposals',
+        'proposal_terminal',
+        'A requested proposal is terminal in this principal scope. Only a terminal decline remains safe; no refinement was sent.'
       );
     }
     const wanted = new Set(retainedProposalIds);
@@ -1875,9 +1918,17 @@ export class MediaBuyLifecycleCoordinator {
   }
 
   private isRetiredAcceptanceKey(key: string): boolean {
-    const bits = this.proposalSnapshotStore.retiredAcceptanceBits;
-    const salt = this.proposalSnapshotStore.retiredAcceptanceSalt;
-    if (!bits || !salt) return false;
+    const registry = this.proposalSnapshotStore.registry;
+    const salt = registry.retiredAcceptanceSalt;
+    if (!salt) return false;
+    const segmentIndex =
+      createHash('sha256')
+        .update(salt)
+        .update(this.principalScope ?? '\u0000unscoped')
+        .digest()
+        .readUInt32BE(0) % RETIRED_ACCEPTANCE_SEGMENT_COUNT;
+    const bits = registry.retiredAcceptanceSegments?.get(segmentIndex);
+    if (!bits) return false;
     return retiredAcceptancePositions(key, salt, bits.length * 8).every(position => {
       const mask = 1 << (position & 7);
       return (bits[position >> 3]! & mask) !== 0;
@@ -1885,8 +1936,20 @@ export class MediaBuyLifecycleCoordinator {
   }
 
   private markRetiredAcceptanceKey(key: string): void {
-    const bits = (this.proposalSnapshotStore.retiredAcceptanceBits ??= new Uint8Array(256 * 1024));
-    const salt = (this.proposalSnapshotStore.retiredAcceptanceSalt ??= randomBytes(16));
+    const registry = this.proposalSnapshotStore.registry;
+    const salt = (registry.retiredAcceptanceSalt ??= randomBytes(16));
+    const segmentIndex =
+      createHash('sha256')
+        .update(salt)
+        .update(this.principalScope ?? '\u0000unscoped')
+        .digest()
+        .readUInt32BE(0) % RETIRED_ACCEPTANCE_SEGMENT_COUNT;
+    const segments = (registry.retiredAcceptanceSegments ??= new Map());
+    let bits = segments.get(segmentIndex);
+    if (!bits) {
+      bits = new Uint8Array(RETIRED_ACCEPTANCE_SEGMENT_BYTES);
+      segments.set(segmentIndex, bits);
+    }
     for (const position of retiredAcceptancePositions(key, salt, bits.length * 8)) {
       bits[position >> 3] = bits[position >> 3]! | (1 << (position & 7));
     }
@@ -1902,6 +1965,30 @@ export class MediaBuyLifecycleCoordinator {
 
   private markTerminalProposal(proposalId: string): void {
     this.markRetiredAcceptanceKey(this.terminalProposalKey(proposalId));
+  }
+
+  private terminalAcceptanceProposalKey(proposalId: string): string {
+    return `${this.principalScope ?? 'missing-principal-scope'}\u0000terminal-acceptance-proposal\u0000${proposalId}`;
+  }
+
+  private isTerminalAcceptanceProposal(proposalId: string): boolean {
+    return this.isRetiredAcceptanceKey(this.terminalAcceptanceProposalKey(proposalId));
+  }
+
+  private markTerminalAcceptanceProposal(proposalId: string): void {
+    this.markRetiredAcceptanceKey(this.terminalAcceptanceProposalKey(proposalId));
+  }
+
+  private commitUncertainProposalKey(proposalId: string): string {
+    return `${this.principalScope ?? 'missing-principal-scope'}\u0000commit-uncertain-proposal\u0000${proposalId}`;
+  }
+
+  private isCommitUncertainProposal(proposalId: string): boolean {
+    return this.isRetiredAcceptanceKey(this.commitUncertainProposalKey(proposalId));
+  }
+
+  private markCommitUncertainProposal(proposalId: string): void {
+    this.markRetiredAcceptanceKey(this.commitUncertainProposalKey(proposalId));
   }
 
   private enforceProposalSnapshotLimits(): void {
@@ -2376,10 +2463,18 @@ export class MediaBuyLifecycleCoordinator {
   private retireAcceptance(
     snapshotKey: string,
     snapshot: ProposalSnapshotEntry,
-    reservation: AcceptanceReservation
+    reservation: AcceptanceReservation,
+    disposition: 'terminal' | 'commit-uncertain' = reservation.retryKind === 'commit-uncertain'
+      ? 'commit-uncertain'
+      : 'terminal'
   ): void {
     if (!this.ownsAcceptance(snapshotKey, snapshot, reservation) || reservation.state === 'retired') return;
     const proposalId = String(snapshot.proposal.proposal_id);
+    if (disposition === 'commit-uncertain') {
+      this.markCommitUncertainProposal(proposalId);
+    } else {
+      this.markTerminalAcceptanceProposal(proposalId);
+    }
     reservation.state = 'retired';
     snapshot.executable = false;
     this.proposalSnapshotStore.proposalAcceptances.delete(proposalId);
@@ -2401,9 +2496,11 @@ export class MediaBuyLifecycleCoordinator {
     snapshotKey: string,
     snapshot: ProposalSnapshotEntry,
     reservation: AcceptanceReservation,
-    taskId?: string
+    taskId?: string,
+    retryKind: 'paused' | 'commit-uncertain' = 'commit-uncertain'
   ): void {
     if (!this.ownsAcceptance(snapshotKey, snapshot, reservation) || reservation.state !== 'in-flight') return;
+    reservation.retryKind = retryKind;
     if (!reservation.idempotencyKey || reservation.retryDeadlineMs === undefined) {
       this.retireAcceptance(snapshotKey, snapshot, reservation);
       return;
@@ -2427,7 +2524,7 @@ export class MediaBuyLifecycleCoordinator {
   ): void {
     if (!this.ownsAcceptance(snapshotKey, snapshot, reservation) || reservation.state !== 'in-flight') return;
     if (result.status === 'input-required' || result.status === 'auth-required') {
-      this.preserveAmbiguousAcceptance(snapshotKey, snapshot, reservation, result.metadata.taskId);
+      this.preserveAmbiguousAcceptance(snapshotKey, snapshot, reservation, result.metadata.taskId, 'paused');
       return;
     }
     if (
@@ -2465,7 +2562,7 @@ export class MediaBuyLifecycleCoordinator {
   ): void {
     if (!this.ownsAcceptance(snapshotKey, snapshot, reservation) || reservation.state !== 'in-flight') return;
     if (['input-required', 'auth-required', 'needs_input'].includes(task.status)) {
-      this.preserveAmbiguousAcceptance(snapshotKey, snapshot, reservation, watchedTaskId);
+      this.preserveAmbiguousAcceptance(snapshotKey, snapshot, reservation, watchedTaskId, 'paused');
       return;
     }
     if (['pending', 'running', 'working', 'submitted', 'deferred'].includes(task.status)) return;
@@ -2499,7 +2596,9 @@ export class MediaBuyLifecycleCoordinator {
     const priorTimer = this.pendingAcceptanceTaskTimers.get(taskId);
     if (priorTimer) clearTimeout(priorTimer);
     const timer = setTimeout(() => {
-      if (reservation.state === 'in-flight') this.retireAcceptance(snapshotKey, snapshot, reservation);
+      if (reservation.state === 'in-flight') {
+        this.retireAcceptance(snapshotKey, snapshot, reservation, 'commit-uncertain');
+      }
       this.forgetAcceptanceTask(taskId, reservation);
     }, MediaBuyLifecycleCoordinator.PROPOSAL_TASK_WATCH_TTL_MS);
     timer.unref?.();
@@ -2610,7 +2709,14 @@ export class MediaBuyLifecycleCoordinator {
     this.proposalTaskUnsubscribe?.();
     this.proposalTaskUnsubscribe = undefined;
     for (const [reservation, pending] of [...this.ownedAcceptanceReservations]) {
-      this.retireAcceptance(pending.snapshotKey, pending.snapshot, reservation);
+      this.retireAcceptance(
+        pending.snapshotKey,
+        pending.snapshot,
+        reservation,
+        reservation.state === 'in-flight' || reservation.retryKind === 'commit-uncertain'
+          ? 'commit-uncertain'
+          : 'terminal'
+      );
       this.releaseAcceptanceOwnership(reservation);
     }
     this.acceptanceTaskUnsubscribe?.();
@@ -3060,7 +3166,7 @@ export class MediaBuyLifecycleCoordinator {
       const proposalIds = params.refinements.map(refinement => refinement.proposal_id);
       const scopes = this.proposalScopes(proposalIds);
       const accountScope = scopes.length === 1 ? scopes[0] : undefined;
-      const pendingRefinement = this.beginPendingRefinement(proposalIds);
+      const pendingRefinement = this.beginPendingRefinement(proposalIds, true);
       const projectOnly = (data: CompatibleRefineProposalsWireResponse) =>
         projectRefineProposals(data, lifecycle, params.refinements);
       const projectAndSettle = (data: CompatibleRefineProposalsWireResponse) => {
@@ -3552,6 +3658,28 @@ export class MediaBuyLifecycleCoordinator {
     const lifecycle = this.selectLifecycle('accept_proposal');
     this.assertLegacyReferenceShapes('acceptProposal', input);
     if (lifecycle === 'compact') {
+      const proposalId = optionalString(input.proposal_id);
+      if (proposalId && this.proposalSnapshotStore.proposalAcceptances.has(proposalId)) {
+        throw this.unsupported(
+          'acceptProposal',
+          'proposal_acceptance_pending',
+          'The proposal already has an established acceptance reservation in this principal scope. Only its exact idempotent retry is allowed.'
+        );
+      }
+      if (proposalId && this.isCommitUncertainProposal(proposalId)) {
+        throw this.unsupported(
+          'acceptProposal',
+          'proposal_acceptance_commit_uncertain',
+          'The proposal has an established acceptance whose commit outcome is unknown. Reconcile the media buy by natural key before sending another acceptance.'
+        );
+      }
+      if (proposalId && this.isTerminalAcceptanceProposal(proposalId)) {
+        throw this.unsupported(
+          'acceptProposal',
+          'proposal_terminal',
+          'The proposal is terminal in this principal scope. No acceptance was sent.'
+        );
+      }
       const { established_fallback: _fallback, ...compactInput } = input;
       this.assertValidCompactRequest('accept_proposal', compactInput, lifecycle, true);
       const result = await this.agent.acceptProposal(

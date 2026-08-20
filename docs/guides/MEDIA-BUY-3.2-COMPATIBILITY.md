@@ -196,15 +196,21 @@ principals.
 
 Proposal snapshots are shared and bounded per `AgentClient` and
 `principalScope` partition (256 entries, 256 KiB per entry, 4 MiB total), so
-one authenticated principal cannot consume another principal's snapshot or
-tombstone quota. An `AgentClient` retains at most 256 principal partitions.
-Negotiating a 257th fails closed unless an empty, tombstone-free partition has
-no live coordinator and can be reclaimed.
-The first retired acceptance lazily allocates a separate, fixed 256 KiB salted
-probabilistic tombstone filter for that principal partition. It prevents
-rediscovery from reauthorizing a consumed proposal without retaining proposal
-IDs. At very high lifetime acceptance counts, a false positive rejects an
-unused proposal rather than risking a duplicate mutation; it never fails open.
+one authenticated principal cannot consume another principal's snapshot
+quota. An `AgentClient` retains at most 256 active principal partitions. An
+empty inactive partition can be reclaimed while its terminal history remains
+in a registry-level summary, so sequentially used principals do not exhaust
+the active-partition limit.
+The first retired proposal lazily allocates one of 256 salted probabilistic
+tombstone segments. Each segment is a fixed 256 KiB and the registry allocates
+only segments it uses (64 MiB maximum). Exact tombstone keys include the
+principal scope, and a principal can consume capacity only in its salted
+segment. Principals whose scopes hash to the same segment can share
+false-positive availability failures, but never proposal data or executable
+authority. The summary prevents rediscovery from reauthorizing a consumed
+proposal without retaining proposal IDs. At very high lifetime mutation
+counts, a false positive rejects an unused proposal rather than risking a
+duplicate mutation; it never fails open.
 Only successful completed proposal responses become executable snapshots.
 Working, failed, unsafe, oversized, or unserializable same-ID responses
 invalidate older evidence. Async results are projected and retained only after
@@ -224,9 +230,16 @@ decline fails before dispatch. An abandoned lease expires after five minutes
 by conservatively retiring its proposal IDs. While any lease covers a proposal,
 an established `acceptProposal` projection for the same principal fails before
 dispatch. An `unable` decline releases the lease without revoking the snapshot,
-so the original proposal remains executable. Input/auth pauses keep the fence;
-an ambiguous dispatch failure conservatively retires the affected proposal
-instead of permitting a potentially conflicting acceptance.
+so the original proposal remains executable. A decline input/auth pause keeps
+the fence; an ambiguous decline dispatch failure conservatively retires the
+affected proposal instead of permitting a potentially conflicting acceptance.
+An unresolved established acceptance is treated as possibly
+committed when transport fails, its working-task watcher expires, or its
+coordinator is disposed. Only the exact idempotent acceptance retry is allowed
+while the seller's advertised replay window remains valid. Compact decline,
+refinement, and native acceptance fail before dispatch until the application
+reconciles the media buy by natural key. An explicit input- or authentication-
+required pause is different: it may be retried exactly or terminally declined.
 
 Refinement uses the same fail-closed model. Outstanding refinement leases are
 bounded to 256 operations and 1,024 proposal IDs, overlap with another pending

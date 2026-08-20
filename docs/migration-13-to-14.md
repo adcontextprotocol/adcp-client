@@ -129,10 +129,17 @@ Use a stable, non-secret `principalScope` derived from authenticated,
 server-controlled identity for established proposal acceptance; never take it
 from buyer-supplied request content. Without it, the coordinator deliberately
 does not cache executable proposal snapshots and acceptance fails before
-mutation. Snapshot and tombstone quotas are isolated per principal. One
-`AgentClient` retains at most 256 principal partitions and fails closed when no
-empty, inactive partition is safe to reclaim. Treat `dispose()` as terminal:
-in-flight results and saved task continuations reject after disposal.
+mutation. Snapshot quotas are isolated per principal. One `AgentClient`
+retains at most 256 active principal partitions; empty inactive partitions are
+reclaimable because terminal history is retained separately in 256 lazily
+allocated, salted 256 KiB tombstone segments (64 MiB maximum). A principal can
+consume only its assigned segment. A segment collision can cause a fail-closed
+false positive for another principal, but never shares proposal data or
+executable authority. Treat `dispose()` as terminal: in-flight results and
+saved task continuations reject after disposal. If an established acceptance
+has an unknown outcome, compact decline, refinement, and native acceptance
+remain fenced until natural-key reconciliation; only an exact retry within an
+advertised idempotency window may be sent.
 
 Proposal hard constraints, alternatives, criteria, and amendment kinds are
 never softened into legacy discovery filters. A requested proposal digest is
