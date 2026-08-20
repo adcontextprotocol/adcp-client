@@ -1342,6 +1342,40 @@ describe('Response Unwrapper', () => {
       assert.strictEqual(isAdcpSuccess(terminalPayload, 'report_usage'), false);
     });
 
+    test('get_products structured rejection is a successful business outcome', () => {
+      const structuredRejection = {
+        status: 'rejected',
+        adcp_version: '3.2-beta.3',
+        reason: 'No inventory matches the requested brief',
+        suggestions: ['Try broadening the requested geography'],
+      };
+
+      assert.strictEqual(isTerminalAdcpError(structuredRejection, 'get_products'), false);
+      assert.strictEqual(isAdcpSuccess(structuredRejection, 'get_products'), true);
+      assert.strictEqual(
+        isTerminalAdcpError({ ...structuredRejection, suggestions: undefined }, 'get_products'),
+        false
+      );
+      assert.strictEqual(isTerminalAdcpError(structuredRejection), true);
+      assert.strictEqual(
+        isTerminalAdcpError({ ...structuredRejection, adcp_error: { code: 'INVALID_REQUEST' } }, 'get_products'),
+        true
+      );
+      assert.strictEqual(
+        isTerminalAdcpError({ ...structuredRejection, adcp_version: '3.1', suggestions: undefined }, 'get_products'),
+        true
+      );
+      const versionlessRejection = { ...structuredRejection };
+      delete versionlessRejection.adcp_version;
+      assert.strictEqual(isTerminalAdcpError(versionlessRejection, 'get_products', '3.2.0-beta.3'), false);
+      assert.strictEqual(isAdcpSuccess(versionlessRejection, 'get_products', '3.2.0-beta.3'), true);
+      assert.strictEqual(isTerminalAdcpError(versionlessRejection, 'get_products', '3.1.15'), true);
+      assert.strictEqual(isTerminalAdcpError({ ...structuredRejection, suggestions: [] }, 'get_products'), true);
+      assert.strictEqual(isTerminalAdcpError({ ...structuredRejection, reason: '' }, 'get_products'), true);
+      assert.strictEqual(isTerminalAdcpError({ ...structuredRejection, products: [] }, 'get_products'), true);
+      assert.strictEqual(isTerminalAdcpError({ status: 'rejected' }, 'get_products'), true);
+    });
+
     test('task-aware terminal detection rejects envelope-only errors[] as failures', () => {
       const envelopeOnly = {
         status: 'completed',

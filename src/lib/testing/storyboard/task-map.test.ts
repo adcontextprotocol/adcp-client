@@ -361,6 +361,52 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
     }
   });
 
+  it('treats a raw get_products structured rejection as a successful business outcome', async () => {
+    const rejection = {
+      status: 'rejected',
+      reason: 'No inventory matches the requested brief',
+      suggestions: ['Try broadening the requested geography'],
+    };
+    const client = {
+      getAdcpVersion: () => '3.2.0-beta.3',
+      getProducts: async () => rejection,
+    };
+
+    const result = await executeStoryboardTask(client, 'get_products', {});
+
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual(rejection);
+    expect(result.data).not.toHaveProperty('products');
+  });
+
+  it('preserves a completed get_products structured rejection for storyboard validations', async () => {
+    const rejection = {
+      status: 'rejected',
+      reason: 'No inventory matches the requested brief',
+      suggestions: ['Try broadening the requested geography'],
+    };
+    const client = {
+      getAdcpVersion: () => '3.2.0-beta.3',
+      getProducts: async () => ({ success: true, status: 'completed', data: rejection }),
+    };
+
+    const result = await executeStoryboardTask(client, 'get_products', {});
+
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual(rejection);
+    expect(result.data).not.toHaveProperty('products');
+  });
+
+  it('keeps a bare get_products rejected status classified as a failure', async () => {
+    const client = {
+      getProducts: async () => ({ status: 'rejected' }),
+    };
+
+    const result = await executeStoryboardTask(client, 'get_products', {});
+
+    expect(result.success).toBe(false);
+  });
+
   it('does not treat advisory errors on a success payload as failure', async () => {
     const client = {
       getProducts: async () => ({

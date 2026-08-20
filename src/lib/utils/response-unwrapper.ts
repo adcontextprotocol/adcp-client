@@ -190,8 +190,63 @@ export function hasAdvisorySuccessPayload(response: unknown, toolName?: string):
   return successFieldGroups.some(group => group.every(field => hasOwnField(obj, field)));
 }
 
-export function isTerminalAdcpError(response: unknown, toolName?: string): boolean {
+/**
+ * AdCP 3.2 models an inventory refusal from `get_products` as a successful,
+ * typed business outcome. Its `status: "rejected"` discriminator must not be
+ * confused with the task-envelope terminal state that uses the same literal.
+ */
+function isStructuredGetProductsRejection(response: unknown, toolName?: string, responseAdcpVersion?: string): boolean {
+  if (toolName !== 'get_products' || response == null || typeof response !== 'object' || Array.isArray(response)) {
+    return false;
+  }
+
+  const obj = response as Record<string, unknown>;
+  const effectiveVersion = typeof obj.adcp_version === 'string' ? obj.adcp_version : responseAdcpVersion;
+  const versionMatch =
+    typeof effectiveVersion === 'string' ? /^v?(\d+)\.(\d+)(?:\.|-|$)/.exec(effectiveVersion.trim()) : null;
+  const major = versionMatch?.[1] === undefined ? undefined : Number.parseInt(versionMatch[1], 10);
+  const minor = versionMatch?.[2] === undefined ? undefined : Number.parseInt(versionMatch[2], 10);
+  const declaresStructuredRejectionVersion =
+    major !== undefined && minor !== undefined && (major > 3 || (major === 3 && minor >= 2));
+  const suggestionsValid =
+    obj.suggestions === undefined ||
+    (Array.isArray(obj.suggestions) &&
+      obj.suggestions.length >= 1 &&
+      obj.suggestions.length <= 20 &&
+      obj.suggestions.every(
+        suggestion => typeof suggestion === 'string' && suggestion.length >= 1 && suggestion.length <= 1000
+      ));
+  const forbiddenFields = [
+    'products',
+    'proposals',
+    'errors',
+    'adcp_error',
+    'incomplete',
+    'cache_scope',
+    'filter_diagnostics',
+    'refinement_applied',
+    'unchanged',
+    'wholesale_feed_version',
+    'pricing_version',
+    'pagination',
+  ];
+  return (
+    declaresStructuredRejectionVersion &&
+    obj.status === 'rejected' &&
+    typeof obj.reason === 'string' &&
+    obj.reason.length >= 1 &&
+    obj.reason.length <= 2000 &&
+    suggestionsValid &&
+    obj.success !== false &&
+    obj.error == null &&
+    typeof obj.error_code !== 'string' &&
+    forbiddenFields.every(field => !hasOwnField(obj, field))
+  );
+}
+
+export function isTerminalAdcpError(response: unknown, toolName?: string, responseAdcpVersion?: string): boolean {
   const obj = response as Record<string, unknown> | null | undefined;
+  if (isStructuredGetProductsRejection(obj, toolName, responseAdcpVersion)) return false;
   if (obj?.status === 'failed' || obj?.status === 'rejected') return true;
   if (obj?.adcp_error && typeof (obj.adcp_error as { code?: unknown }).code === 'string') return true;
   if (typeof obj?.error_code === 'string') {
@@ -208,9 +263,14 @@ export function isTerminalAdcpError(response: unknown, toolName?: string): boole
  * A transport task may be `completed` while its operation payload is terminally
  * unsuccessful, so callers must evaluate both layers.
  */
-export function isAdcpOperationSuccess(response: unknown, toolName?: string): boolean {
+export function isAdcpOperationSuccess(response: unknown, toolName?: string, responseAdcpVersion?: string): boolean {
   const obj = response as Record<string, unknown> | null | undefined;
-  return obj?.success !== false && !obj?.error && !obj?.adcp_error && !isTerminalAdcpError(response, toolName);
+  return (
+    obj?.success !== false &&
+    !obj?.error &&
+    !obj?.adcp_error &&
+    !isTerminalAdcpError(response, toolName, responseAdcpVersion)
+  );
 }
 
 /**
@@ -269,7 +329,10 @@ export function unwrapProtocolResponse(
   // Skip schema validation for error responses — they don't include
   // tool-specific fields like `products`. Handles both AdCP-standard
   // { errors: [...] } and legacy singular { error: "..." } patterns.
-  if (isTerminalAdcpError(unwrapped, toolName) || (unwrapped?.error && typeof unwrapped.error === 'string')) {
+  if (
+    isTerminalAdcpError(unwrapped, toolName, options?.responseAdcpVersion) ||
+    (unwrapped?.error && typeof unwrapped.error === 'string')
+  ) {
     return retag(unwrapped);
   }
 
@@ -737,7 +800,7 @@ export function isAdcpError(response: any): boolean {
  */
 export function isAdcpSuccess(response: any, taskName: string, responseAdcpVersion?: string): boolean {
   // First check if it's an error response
-  if (isTerminalAdcpError(response, taskName)) {
+  if (isTerminalAdcpError(response, taskName, responseAdcpVersion)) {
     return false;
   }
 
