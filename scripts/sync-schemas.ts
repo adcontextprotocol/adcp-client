@@ -115,12 +115,19 @@ function fetchStatusError(url: string, response: Response): Error {
 }
 
 async function fetchAvailable(url: string, init?: RequestInit): Promise<Response> {
-  try {
-    return await fetch(url, init);
-  } catch (cause) {
-    const detail = cause instanceof Error ? cause.message : String(cause);
-    throw new SchemaSyncAvailabilityError(`Failed to fetch ${url}: network error (${detail})`, { cause });
+  const delaysMs = [0, 250, 750];
+  let lastCause: unknown;
+  for (let attempt = 0; attempt < delaysMs.length; attempt += 1) {
+    if (attempt > 0) await new Promise(resolve => setTimeout(resolve, delaysMs[attempt]));
+    try {
+      return await fetch(url, init);
+    } catch (cause) {
+      lastCause = cause;
+      if (init?.signal?.aborted) break;
+    }
   }
+  const detail = lastCause instanceof Error ? lastCause.message : String(lastCause);
+  throw new SchemaSyncAvailabilityError(`Failed to fetch ${url}: network error (${detail})`, { cause: lastCause });
 }
 
 async function fetchJson(url: string): Promise<any> {

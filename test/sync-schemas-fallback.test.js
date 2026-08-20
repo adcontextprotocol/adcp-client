@@ -137,6 +137,29 @@ async function main() {
     globalThis.fetch = fetchBefore;
   }
 
+  const bundle = 'not-needed-before-sidecar-check';
+  let transientShaFetches = 0;
+  try {
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === 'HEAD') return new Response(null, { status: 200 });
+      if (url.endsWith('.sha256')) {
+        transientShaFetches += 1;
+        if (transientShaFetches === 1) throw new Error('temporary socket reset');
+        return new Response(createHash('sha256').update(bundle).digest('hex'));
+      }
+      return new Response(bundle);
+    }) as typeof fetch;
+    await syncFromTarball('3.0.25', 'https://transient-network.example', false);
+  } catch (error) {
+    results.transientNetworkRetry = {
+      shaFetches: transientShaFetches,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    globalThis.fetch = fetchBefore;
+  }
+
   try {
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       if (init?.method === 'HEAD') return new Response(null, { status: 200 });
@@ -158,7 +181,6 @@ async function main() {
     globalThis.fetch = fetchBefore;
   }
 
-  const bundle = 'not-needed-before-sidecar-check';
   try {
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
@@ -347,6 +369,8 @@ test('schema sync coordinates tagged, moving, per-file, and signed fallbacks', (
   assert.match(results.head405.error, /404 Not Found/);
   assert.equal(results.bodyReset.availability, true);
   assert.match(results.bodyReset.error, /socket reset/);
+  assert.equal(results.transientNetworkRetry.shaFetches, 2);
+  assert.doesNotMatch(results.transientNetworkRetry.error, /network error/);
   assert.match(results.invalidVersion, /expected a semantic version or "latest"/);
   assert.match(results.versionMismatch, /requested 3\.0\.25, received 3\.0\.23/);
   assert.equal(results.partialSidecars.availability, true);
