@@ -141,6 +141,8 @@ import type {
   CanonicalGetProductsResponse,
   CanonicalListCreativesRequest,
   CanonicalListCreativesResponse,
+  CanonicalPreviewCreativeRequest,
+  CanonicalPreviewCreativeResponse,
   CanonicalProduct,
   CanonicalSyncCreativesRequest,
   CanonicalUpdateMediaBuyRequest,
@@ -1210,6 +1212,19 @@ export class AgentClient {
    */
   async requireV3(taskType: string = 'request'): Promise<void> {
     return this.client.requireSupportedMajor(taskType);
+  }
+
+  /** Preview a creative using canonical capability or creative-library identity. */
+  async previewCreative(
+    params: CanonicalPreviewCreativeRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CanonicalPreviewCreativeResponse>> {
+    const result = await this.client.previewCreative(params, inputHandler, {
+      ...this.withSession('preview_creative', options),
+    });
+    this.retainSession(result);
+    return result;
   }
 
   /** @deprecated Migration-only access to legacy `format_id`-based creative preview. */

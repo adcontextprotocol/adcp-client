@@ -999,16 +999,10 @@ export type FormatID = never;
 export type BuildCreativeRequest = never;
 /** @deprecated Use `LegacyBuildCreativeResponse`. */
 export type BuildCreativeResponse = never;
-/** @deprecated Use `LegacyPreviewCreativeRequest`. */
-export type PreviewCreativeRequest = never;
-/** @deprecated Use `LegacyPreviewCreativeResponse`. */
-export type PreviewCreativeResponse = never;
 /** @deprecated Use `LegacyBuildCreativePayload`. */
 export type BuildCreativePayload = never;
 /** @deprecated Use `LegacyBuildCreativeMultiPayload`. */
 export type BuildCreativeMultiPayload = never;
-/** @deprecated Use `LegacyPreviewCreativePayload`. */
-export type PreviewCreativePayload = never;
 /** @deprecated Use `LegacyListCreativeFormatsRequest`. */
 export type ListCreativeFormatsRequest = never;
 /** @deprecated Use `LegacyListCreativeFormatsResponse`. */
@@ -1317,6 +1311,8 @@ export type {
   GetMediaBuyDeliveryPayload,
   ListCreativesPayload,
   GetCreativeDeliveryPayload,
+  CanonicalPreviewCreativePayload,
+  PreviewCreativePayload,
   LegacyGetProductsPayload,
   LegacyCreateMediaBuyPayload,
   LegacyUpdateMediaBuyPayload,
@@ -1723,6 +1719,10 @@ export {
   type CanonicalPackage as Package,
   type CanonicalPlacement,
   type CanonicalPlacement as Placement,
+  type CanonicalPreviewCreativeRequest,
+  type CanonicalPreviewCreativeRequest as PreviewCreativeRequest,
+  type CanonicalPreviewCreativeResponse,
+  type CanonicalPreviewCreativeResponse as PreviewCreativeResponse,
   type CanonicalProduct,
   type CanonicalProduct as Product,
   type CanonicalProjectedCreative,

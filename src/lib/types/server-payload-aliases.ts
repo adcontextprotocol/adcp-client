@@ -79,6 +79,7 @@ import type {
   UpdateRightsSuccess,
 } from './core.generated';
 import type { RequireCacheScopeWhenProducts, ServerPayload } from './server-payload';
+import type { CanonicalCreativeResponse } from '../v2/projection/creative-delivery';
 
 type ExclusivePayload<TLeft, TRight> =
   | (TLeft & { [K in Exclude<keyof TRight, keyof TLeft>]?: never })
@@ -128,6 +129,8 @@ export type SyncAudiencesPayload = ServerPayload<SyncAudiencesSuccess>;
 
 export type BuildCreativePayload = ServerPayload<BuildCreativeSuccess>;
 export type BuildCreativeMultiPayload = ServerPayload<BuildCreativeMultiSuccess>;
+export type CanonicalPreviewCreativePayload = ServerPayload<CanonicalCreativeResponse<PreviewCreativeResponse>>;
+/** @deprecated Use `CanonicalPreviewCreativePayload` for canonical preview handlers. */
 export type PreviewCreativePayload = ServerPayload<PreviewCreativeResponse>;
 export type GetCreativeDeliveryPayload = ServerPayload<GetCreativeDeliveryResponse>;
 

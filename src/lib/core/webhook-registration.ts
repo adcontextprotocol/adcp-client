@@ -19,6 +19,8 @@ export interface WebhookRegistration {
   callbackUrl: string;
   method: 'POST';
   mode: WebhookAuthenticationMode;
+  /** Originating preview API, persisted so async routing survives races and restarts. */
+  previewMode?: 'canonical' | 'legacy';
   /** Epoch milliseconds. */
   createdAt: number;
   /** Epoch milliseconds. */
@@ -117,6 +119,9 @@ function validateRegistration(registration: WebhookRegistration): void {
   ) {
     throw new TypeError('Webhook registration identifiers cannot contain NUL characters.');
   }
+  if (registration.previewMode !== undefined && !['canonical', 'legacy'].includes(registration.previewMode)) {
+    throw new TypeError('Webhook registration previewMode must be canonical or legacy.');
+  }
   const callback = new URL(registration.callbackUrl);
   if (callback.username || callback.password || callback.hash) {
     throw new TypeError('Webhook callbackUrl cannot contain userinfo or a fragment.');
@@ -138,6 +143,7 @@ function sameRegistration(a: Readonly<WebhookRegistration>, b: WebhookRegistrati
     a.taskType === b.taskType &&
     a.callbackUrl === b.callbackUrl &&
     a.method === b.method &&
-    a.mode === b.mode
+    a.mode === b.mode &&
+    a.previewMode === b.previewMode
   );
 }

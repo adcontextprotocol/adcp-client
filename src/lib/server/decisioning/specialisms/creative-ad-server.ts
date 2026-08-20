@@ -31,8 +31,8 @@ import type { ServerPayload } from '../../../types/server-payload';
 import type {
   BuildCreativeRequest,
   CreativeManifest,
-  PreviewCreativeRequest,
-  PreviewCreativeResponse,
+  PreviewCreativeRequest as LegacyPreviewCreativeRequest,
+  PreviewCreativeResponse as LegacyPreviewCreativeResponse,
   ListCreativesRequest,
   ListCreativesResponse,
   ListCreativeFormatsRequest,
@@ -47,13 +47,16 @@ import type {
   CanonicalCreativeResponse,
   CanonicalListCreativesRequest,
   CanonicalListCreativesResponse,
+  CanonicalPreviewCreativeRequest,
+  CanonicalPreviewCreativeResponse,
 } from '../../../v2/projection/creative-delivery';
 import type { SyncCreativesRow } from './sales';
 
 type SyncCreative = CanonicalSyncCreativeAsset;
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
-export type LegacyPreviewCreativePayload = ServerPayload<PreviewCreativeResponse>;
+export type PreviewCreativePayload = ServerPayload<CanonicalPreviewCreativeResponse>;
+export type LegacyPreviewCreativePayload = ServerPayload<LegacyPreviewCreativeResponse>;
 export type LegacyListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsResponse>;
 export type ListCreativesPayload = ServerPayload<CanonicalListCreativesResponse>;
 export type GetCreativeDeliveryPayload = ServerPayload<CanonicalCreativeResponse<GetCreativeDeliveryResponse>>;
@@ -66,7 +69,7 @@ export type LegacyBuildCreativeReturn =
   | LegacyBuildCreativePayload
   | LegacyBuildCreativeMultiPayload;
 
-export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
+interface CreativeAdServerPlatformBase<TCtxMeta> {
   /**
    * Build / retrieve creative tags. Two invocation modes per the spec:
    *
@@ -88,18 +91,6 @@ export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
    * changes flow via `publishStatusChange`.
    */
   buildCreativeLegacy(req: BuildCreativeRequest, ctx: Ctx<TCtxMeta>): Promise<LegacyBuildCreativeReturn>;
-
-  /**
-   * Preview-only variant — sandbox URL or inline HTML, expires. Always sync.
-   *
-   * ⚠️  NO-ACCOUNT TOOL — `ctx: NoAccountCtx<TCtxMeta>`. The wire request
-   * does not carry an `account` field; narrow `ctx.account` before reading
-   * `ctx_metadata` / `id`. See {@link NoAccountCtx}.
-   */
-  previewCreativeLegacy(
-    req: PreviewCreativeRequest,
-    ctx: NoAccountCtx<TCtxMeta>
-  ): Promise<LegacyPreviewCreativePayload>;
 
   /**
    * Format catalog. Optional because adopters who delegate format definitions
@@ -156,3 +147,29 @@ export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
    */
   getCreativeDelivery(filter: GetCreativeDeliveryRequest, ctx: Ctx<TCtxMeta>): Promise<GetCreativeDeliveryPayload>;
 }
+
+type CreativeAdServerPreview<TCtxMeta> =
+  | {
+      /** Canonical preview through an advertised capability or stored creative. */
+      previewCreative(
+        req: CanonicalPreviewCreativeRequest,
+        ctx: NoAccountCtx<TCtxMeta>
+      ): Promise<PreviewCreativePayload>;
+      /** @deprecated Migration-only alias for requests using legacy `format_id`. */
+      previewCreativeLegacy?(
+        req: LegacyPreviewCreativeRequest,
+        ctx: NoAccountCtx<TCtxMeta>
+      ): Promise<LegacyPreviewCreativePayload>;
+    }
+  | {
+      previewCreative?: never;
+      /** @deprecated Implement canonical `previewCreative` for new integrations. */
+      previewCreativeLegacy(
+        req: LegacyPreviewCreativeRequest,
+        ctx: NoAccountCtx<TCtxMeta>
+      ): Promise<LegacyPreviewCreativePayload>;
+    };
+
+/** Stateful creative-ad-server platform with canonical preview and a legacy-compatible alias. */
+export type CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> = CreativeAdServerPlatformBase<TCtxMeta> &
+  CreativeAdServerPreview<TCtxMeta>;

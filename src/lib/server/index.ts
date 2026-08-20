@@ -86,6 +86,7 @@ export type {
   ListCreativesPayload as LegacyListCreativesPayload,
   ListPropertyListsPayload,
   LogEventPayload,
+  CanonicalPreviewCreativePayload,
   PreviewCreativePayload as LegacyPreviewCreativePayload,
   ProvidePerformanceFeedbackPayload,
   ReportPlanOutcomePayload,

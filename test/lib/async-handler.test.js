@@ -192,6 +192,51 @@ test('explicit legacy handlers receive asynchronous creative and content-standar
   assert.strictEqual(fallbackCalled, false, 'Legacy task-specific handlers should win over the fallback');
 });
 
+test('canonical preview handler takes precedence for asynchronous preview completions', async () => {
+  const received = [];
+  const handler = new AsyncHandler({
+    onPreviewCreativeStatusChange: () => received.push('canonical'),
+    onPreviewCreativeLegacyStatusChange: () => received.push('legacy'),
+  });
+
+  await handler.handleWebhook({
+    result: { response_type: 'single', previews: [] },
+    metadata: {
+      operation_id: 'op_preview',
+      task_id: 'task_preview',
+      agent_id: 'agent_preview',
+      task_type: 'preview_creative',
+      status: 'completed',
+      timestamp: '2026-08-20T12:00:00.000Z',
+    },
+  });
+
+  assert.deepStrictEqual(received, ['canonical']);
+});
+
+test('tracked legacy preview completion preserves the legacy callback identity', async () => {
+  const received = [];
+  const handler = new AsyncHandler({
+    onPreviewCreativeStatusChange: () => received.push('canonical'),
+    onPreviewCreativeLegacyStatusChange: () => received.push('legacy'),
+  });
+
+  await handler.handleWebhook({
+    result: { response_type: 'single', previews: [] },
+    metadata: {
+      operation_id: 'op_preview_legacy',
+      task_id: 'task_preview_legacy',
+      agent_id: 'agent_preview',
+      task_type: 'preview_creative',
+      status: 'completed',
+      timestamp: '2026-08-20T12:00:00.000Z',
+    },
+    previewHandler: 'legacy',
+  });
+
+  assert.deepStrictEqual(received, ['legacy']);
+});
+
 test('onTaskStatusChange fallback handler called for unmapped task type', async () => {
   let fallbackCalled = false;
   let receivedTaskType = null;

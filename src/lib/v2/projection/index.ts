@@ -182,6 +182,8 @@ export {
   type CanonicalPackageUpdate,
   type CanonicalPackage,
   type CanonicalPlacement,
+  type CanonicalPreviewCreativeRequest,
+  type CanonicalPreviewCreativeResponse,
   type CanonicalProduct,
   type CanonicalProjectedCreative,
   type CanonicalSyncCreativesRequest,

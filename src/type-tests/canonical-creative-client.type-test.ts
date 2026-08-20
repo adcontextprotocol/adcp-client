@@ -19,6 +19,7 @@ import {
   type CanonicalFormatLegacyResolver,
   type CanonicalGetProductsRequest,
   type CanonicalPackageRequest,
+  type CanonicalPreviewCreativeRequest,
   type CanonicalProduct,
   type CanonicalSyncCreativesRequest,
   type CanonicalUpdateMediaBuyRequest,
@@ -32,6 +33,8 @@ import {
   type LegacyIContentStandardsAdapter,
   type FormatAssetsInput,
   type LegacyPreviewCreativeRequest,
+  type PreviewCreativeRequest,
+  type PreviewCreativeResponse,
   type LegacySyncCreativesRequest,
   type LegacyUpdateMediaBuyRequest,
   type CreativeAgentClient,
@@ -65,6 +68,8 @@ declare const legacyUpdate: MutatingRequestInput<LegacyUpdateMediaBuyRequest>;
 declare const canonicalSync: MutatingRequestInput<CanonicalSyncCreativesRequest>;
 declare const legacySync: MutatingRequestInput<LegacySyncCreativesRequest>;
 declare const previewRequest: LegacyPreviewCreativeRequest;
+declare const canonicalPreviewRequest: CanonicalPreviewCreativeRequest;
+declare const primaryPreviewRequest: PreviewCreativeRequest;
 declare const buildRequest: MutatingRequestInput<LegacyBuildCreativeRequest>;
 declare const standardTaskName: AdcpTaskName;
 declare const standardTaskParams: TaskRequestFor<typeof standardTaskName>;
@@ -316,9 +321,29 @@ SingleAgentClient.discoverCreativeFormatsLegacy('https://creative.example/mcp');
 // @ts-expect-error Legacy creative build has no unqualified primary method.
 agent.buildCreative(buildRequest);
 agent.buildCreativeLegacy(buildRequest);
-// @ts-expect-error Legacy creative preview has no unqualified primary method.
-single.previewCreative(previewRequest);
+single.previewCreative(canonicalPreviewRequest);
+agent.previewCreative(primaryPreviewRequest);
+single.previewCreative({ request_type: 'single', creative_id: 'creative_1' });
+single.previewCreative({
+  request_type: 'single',
+  creative_id: 'creative_versioned',
+  adcp_version: previewRequest.adcp_version,
+  adcp_major_version: previewRequest.adcp_major_version,
+});
+single.previewCreative({ request_type: 'batch', requests: [{ creative_id: 'creative_1' }] });
+single.previewCreative({ request_type: 'variant', variant_id: 'variant_1' });
 single.previewCreativeLegacy(previewRequest);
+// @ts-expect-error Canonical preview requires a discriminated request mode and its required source fields.
+single.previewCreative({});
+// @ts-expect-error Canonical preview excludes legacy named-format routing.
+single.previewCreative({ request_type: 'single', format_id: legacyFormatId });
+single.previewCreative({
+  request_type: 'batch',
+  // @ts-expect-error Canonical preview excludes legacy named-format routing inside batch items.
+  requests: [{ creative_id: 'creative_1', format_id: legacyFormatId }],
+});
+declare const previewResponse: PreviewCreativeResponse;
+void previewResponse;
 // @ts-expect-error Raw legacy build is excluded from primary generic execution.
 agent.executeTask('build_creative', buildRequest);
 // @ts-expect-error Raw legacy preview is excluded from primary generic execution.
@@ -448,8 +473,8 @@ new SingleAgentClient(
   { id: 'legacy-handler-name', name: 'Legacy handler name', agent_uri: 'https://example.test/mcp', protocol: 'mcp' },
   {
     handlers: {
-      // @ts-expect-error Legacy callbacks are explicitly named on the modern handler config.
       onPreviewCreativeStatusChange() {},
+      onPreviewCreativeLegacyStatusChange() {},
     },
   }
 );

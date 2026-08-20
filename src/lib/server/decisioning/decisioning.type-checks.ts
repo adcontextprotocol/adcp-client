@@ -882,6 +882,36 @@ function _preview_creative_requires_account_narrow(): void {
   });
 }
 
+// Canonical preview is the primary platform hook and excludes legacy
+// named-format identity while retaining both protocol 3.2 lookup modes.
+function _preview_creative_accepts_canonical_routes(): void {
+  defineCreativeBuilderPlatform({
+    buildCreativeLegacy: async () => ({}) as never,
+    previewCreative: async req => {
+      const _capability: string | undefined = req.target_capability_id;
+      const _creative: string | undefined = req.creative_id;
+      void _capability;
+      void _creative;
+      return {} as PreviewCreativeResponse;
+    },
+  });
+}
+
+function _ad_server_accepts_canonical_preview(): void {
+  defineCreativeAdServerPlatform<{ workspace_id: string }>({
+    buildCreativeLegacy: async () => ({}) as never,
+    previewCreative: async (_req, ctx) => {
+      if (ctx.account != null) {
+        const _workspace: string = ctx.account.ctx_metadata.workspace_id;
+        void _workspace;
+      }
+      return {} as PreviewCreativeResponse;
+    },
+    listCreatives: async () => ({}) as CanonicalListCreativesResponse,
+    getCreativeDelivery: async () => ({}) as GetCreativeDeliveryResponse,
+  });
+}
+
 // Reading `ctx.account.ctx_metadata` without a narrow MUST fail typecheck
 // — this is the regression alarm guarding the no-account contract.
 function _preview_creative_rejects_unnarrowed_access(): void {

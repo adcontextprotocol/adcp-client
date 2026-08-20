@@ -122,7 +122,7 @@ describe('AdCPClient', () => {
       assert.ok(typeof agent.getProducts === 'function');
       assert.ok(typeof agent.listCreativeFormatsLegacy === 'function');
       assert.strictEqual(agent.listCreativeFormats, undefined);
-      assert.strictEqual(agent.previewCreative, undefined);
+      assert.ok(typeof agent.previewCreative === 'function');
       assert.strictEqual(agent.buildCreative, undefined);
       assert.strictEqual(agent.listTransformers, undefined);
       assert.ok(typeof agent.previewCreativeLegacy === 'function');

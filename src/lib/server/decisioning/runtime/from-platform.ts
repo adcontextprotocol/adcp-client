@@ -85,6 +85,7 @@ import { suggestBilling } from '../buyer-agent';
 import { AdcpError, type AdcpStructuredError } from '../async-outcome';
 import type { CreativeBuilderPlatform } from '../specialisms/creative';
 import type { CreativeAdServerPlatform } from '../specialisms/creative-ad-server';
+import type { CanonicalPreviewCreativeRequest } from '../../../v2/projection/creative-delivery';
 import type { Audience } from '../specialisms/audiences';
 import type { RequestContext } from '../context';
 import {
@@ -6211,19 +6212,37 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
     },
 
     previewCreative: async (params, ctx) => {
-      if (
-        !('previewCreativeLegacy' in creative) ||
-        (creative as CreativeBuilderPlatform).previewCreativeLegacy == null
-      ) {
+      const canonicalHandler =
+        'previewCreative' in creative ? (creative as CreativeBuilderPlatform).previewCreative : undefined;
+      const legacyHandler =
+        'previewCreativeLegacy' in creative ? (creative as CreativeBuilderPlatform).previewCreativeLegacy : undefined;
+      const usesLegacyFormatId =
+        params.format_id != null ||
+        (Array.isArray(params.requests) && params.requests.some(request => request.format_id != null));
+
+      if (usesLegacyFormatId && legacyHandler == null) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message:
-            'preview_creative: this creative platform did not implement previewCreativeLegacy. ' +
-            'Add `previewCreativeLegacy(req, ctx)` to your CreativeBuilderPlatform / CreativeAdServerPlatform literal.',
+            'preview_creative: this creative platform does not support legacy format_id preview requests. ' +
+            'Use target_capability_id, creative_id, or creative_manifest with the canonical previewCreative handler.',
+        });
+      }
+      if (canonicalHandler == null && legacyHandler == null) {
+        return adcpError('UNSUPPORTED_FEATURE', {
+          message:
+            'preview_creative: this creative platform did not implement previewCreative. ' +
+            'Add `previewCreative(req, ctx)` to your CreativeBuilderPlatform / CreativeAdServerPlatform literal.',
         });
       }
       const reqCtx = ctxFor(ctx, params);
+      if (usesLegacyFormatId || canonicalHandler == null) {
+        return projectSync(
+          () => legacyHandler!(params, reqCtx),
+          preview => preview
+        );
+      }
       return projectSync(
-        () => (creative as CreativeBuilderPlatform).previewCreativeLegacy!(params, reqCtx),
+        () => canonicalHandler(params as CanonicalPreviewCreativeRequest, reqCtx),
         preview => preview
       );
     },

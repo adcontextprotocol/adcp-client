@@ -84,7 +84,7 @@ OAuth flow handlers must preserve `state`, verify callback binding, and pass an 
 - Add `zip`, `published_post`, `card`, `pixel_tracker`, `vast_tracker`, and `daast_tracker` to exhaustive `AssetInstance` handling.
 - Read canonical compliance scenarios from `ComplianceResult.tracks`; `tested_tracks` contains compact reference entries.
 - `createAdcpServerFromPlatform()` does not emit a completion webhook for an inline terminal result by default. `autoEmitCompletionWebhooks: true` is a temporary non-conformant bridge.
-- Rename raw platform hooks to explicit forms such as `buildCreativeLegacy`, `previewCreativeLegacy`, `listCreativeFormatsLegacy`, and the corresponding content-standard and brand-rights names.
+- Rename raw platform hooks to explicit forms such as `buildCreativeLegacy`, `previewCreativeLegacy`, `listCreativeFormatsLegacy`, and the corresponding content-standard and brand-rights names. Canonical AdCP 3.2 previews now use `previewCreative` with `target_capability_id`, `creative_id`, or `creative_manifest`; retain `previewCreativeLegacy` only for `format_id` callers. Custom `WebhookRegistrationStore` implementations must round-trip the optional `previewMode` field so callback routing survives restarts.
 - Put incrementally migrated raw handler groups under `legacyHandlers`.
 - Replace removed registry hierarchy calls with `lookupBrand()`/`lookupBrands()` and inspect relationship evidence; use `{ fresh: true }` when a live origin check is required.
 - Use `PayloadDigestOptions` for `computePayloadDigestSha256()` rather than the removed bare `RegExp` or `false` overloads.

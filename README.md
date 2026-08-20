@@ -584,6 +584,7 @@ extension tools intentionally use that explicit raw-task route.
 - `syncCreatives()` - Upload/sync creative assets
 - `listCreatives()` - List creative assets
 - `buildCreativeLegacy()` - Build through the legacy named-format protocol (migration tooling only)
+- `previewCreative()` - Preview by advertised capability, inline manifest, or creative-library ID
 - `previewCreativeLegacy()` - Preview through the legacy named-format protocol (migration tooling only)
 - `getMediaBuyDelivery()` - Get delivery performance
 
