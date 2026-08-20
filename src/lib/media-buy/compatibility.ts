@@ -4659,6 +4659,15 @@ export class MediaBuyLifecycleCoordinator {
             }
             const completedSuccessfully =
               task.status === 'completed' && isAdcpOperationSuccess(task.result, task.taskType);
+            if (
+              !completedSuccessfully &&
+              task.status !== 'governance-denied' &&
+              extractAdcpErrorInfo(task.result) === undefined
+            ) {
+              throw this.legacyPurchaseAmbiguousError(
+                'The tracked legacy create failure was not an authoritative structured AdCP error.'
+              );
+            }
             const terminal = this.assertLegacyPurchaseTerminalResult(
               {
                 success: completedSuccessfully,

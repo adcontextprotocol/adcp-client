@@ -4871,6 +4871,62 @@ describe('legacy products-only purchase continuations', () => {
     await assert.rejects(coordinator.continueLegacyPurchase(input), error => error.code === 'ambiguous');
   });
 
+  test('fences submitted unstructured terminal failures as ambiguous instead of replaying them', async () => {
+    for (const [index, taskStatus] of ['failed', 'rejected', 'canceled'].entries()) {
+      const store = createInMemoryLegacyPurchaseContinuationStore();
+      const productId = `p-unstructured-${taskStatus}`;
+      const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+      agent.getProducts = async () =>
+        completed('get_products', { products: [legacyListedProduct(productId, `Unstructured ${taskStatus}`)] });
+      agent.createMediaBuyLegacy = async () => {
+        const result = submitted('create_media_buy', { status: taskStatus });
+        result.submitted.track = async () => ({
+          taskId: 'create_media_buy-task',
+          status: taskStatus,
+          taskType: 'create_media_buy',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          result: { error: `Seller reported ${taskStatus} without an AdCP error envelope` },
+        });
+        return result;
+      };
+      const coordinator = await agent.negotiateMediaBuyLifecycle({
+        principalScope: `buyer-unstructured-${taskStatus}`,
+        legacyPurchaseContinuationStore: store,
+      });
+      const discovery = await coordinator.requestProposals({
+        idempotency_key: `request-proposals-unstructured-${taskStatus}-0001`,
+        account: { account_id: `account-unstructured-${taskStatus}` },
+        brand: { domain: 'example.com' },
+        brief: `Unstructured submitted ${taskStatus}`,
+      });
+      const token = discovery.data.purchase_continuation.continuation_token;
+      const input = {
+        idempotency_key: `6919bb43-64f3-4a70-b264-8df0f023fce${index + 2}`,
+        continuation_token: token,
+        account: { account_id: `account-unstructured-${taskStatus}` },
+        selected_product_ids: [productId],
+        accepted_losses: discovery.data.purchase_continuation.losses,
+        legacy_create_request: {
+          idempotency_key: `legacy-unstructured-${taskStatus}-create-0001`,
+          account: { account_id: `account-unstructured-${taskStatus}` },
+          brand: { domain: 'example.com' },
+          packages: [{ product_id: productId, budget: 10, pricing_option_id: 'fixed-cpm' }],
+          start_time: '2099-01-01T00:00:00Z',
+          end_time: '2099-02-01T00:00:00Z',
+        },
+      };
+
+      const pending = await coordinator.continueLegacyPurchase(input);
+      await assert.rejects(
+        pending.submitted.waitForCompletion(0),
+        error => error.code === 'ambiguous' && /not an authoritative structured AdCP error/.test(error.message)
+      );
+      assert.equal((await store.get(token)).operation.state, 'ambiguous');
+      await assert.rejects(coordinator.continueLegacyPurchase(input), error => error.code === 'ambiguous');
+    }
+  });
+
   test('keeps an unrecognizable tracked task fail-closed as ambiguous', async () => {
     const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
     agent.getProducts = async () =>
