@@ -13,6 +13,7 @@ export interface LoadVectorsOptions {
 export interface LoadedVectors {
   positive: PositiveVector[];
   negative: NegativeVector[];
+  profiles: Record<string, { positive: PositiveVector[]; negative: NegativeVector[] }>;
   keys: TestKeyset;
   sourceDir: string;
 }
@@ -26,6 +27,7 @@ const ERROR_CODES: ReadonlySet<string> = new Set([
   'request_signature_window_invalid',
   'request_signature_components_incomplete',
   'request_signature_components_unexpected',
+  'request_target_uri_malformed',
   'request_signature_key_unknown',
   'request_signature_key_purpose_invalid',
   'request_signature_key_revoked',
@@ -57,9 +59,18 @@ export function loadRequestSigningVectors(options: LoadVectorsOptions = {}): Loa
     );
   }
 
+  const profile32Dir = join(sourceDir, 'profile-3.2');
   const loaded: LoadedVectors = {
     positive: loadDir(join(sourceDir, 'positive'), parsePositive),
     negative: loadDir(join(sourceDir, 'negative'), parseNegative),
+    profiles: existsSync(profile32Dir)
+      ? {
+          '3.2': {
+            positive: loadDir(join(profile32Dir, 'positive'), parsePositive, 'profile-3.2/positive/'),
+            negative: loadDir(join(profile32Dir, 'negative'), parseNegative, 'profile-3.2/negative/'),
+          },
+        }
+      : {},
     keys: loadKeys(join(sourceDir, 'keys.json')),
     sourceDir,
   };
@@ -72,7 +83,7 @@ export function __resetVectorCache(): void {
   VECTOR_CACHE.clear();
 }
 
-function loadDir<T extends Vector>(dir: string, parse: (id: string, raw: unknown) => T): T[] {
+function loadDir<T extends Vector>(dir: string, parse: (id: string, raw: unknown) => T, idPrefix = ''): T[] {
   if (!existsSync(dir)) {
     throw new Error(`Vector directory missing: ${dir}`);
   }
@@ -81,7 +92,7 @@ function loadDir<T extends Vector>(dir: string, parse: (id: string, raw: unknown
     .sort();
   return files.map(f => {
     const raw = JSON.parse(readFileSync(join(dir, f), 'utf-8'));
-    return parse(vectorIdFromFilename(f), raw);
+    return parse(`${idPrefix}${vectorIdFromFilename(f)}`, raw);
   });
 }
 

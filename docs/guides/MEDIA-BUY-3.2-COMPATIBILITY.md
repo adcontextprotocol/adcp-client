@@ -5,9 +5,9 @@ routes it can still **call**. A 3.2 seller should make the compact lifecycle the
 obvious path for new buyers without breaking a 3.0 or 3.1 buyer that already
 calls the established names.
 
-The SDK is pinned to the signed `3.2.0-beta.2` bundle. That exact prerelease
-supersedes beta.1 and includes canonical compact proposal and direct-buy
-storyboards through operational control and MediaBuy readback.
+The SDK is pinned to the signed `3.2.0-beta.3` bundle. That exact prerelease
+supersedes beta.2, preserves the compact proposal and direct-buy wire contract,
+and clarifies brand-source and mutation-field invariants.
 
 ## MCP surface comparison
 
@@ -72,7 +72,7 @@ const platform = {
 createAdcpServerFromPlatform(platform, {
   name: 'seller',
   version: '1.0.0',
-  adcpVersion: '3.2.0-beta.2',
+  adcpVersion: '3.2.0-beta.3',
 });
 ```
 
@@ -152,8 +152,8 @@ response validation is disabled. It also rechecks the full refinement request
 semantics on immediate, polled, tracked, and deferred completions before caching
 a successor. Compact decline
 result arms are runtime-validated and correlated in request order; the coordinator
-accepts both beta.2 rows that echo `proposal_id` and generated ordered rows that
-omit it, while rejecting a conflicting echoed ID.
+accepts both rows that echo `proposal_id` and ordered rows that omit it, while
+rejecting a conflicting echoed ID.
 Because compact proposals are immutable, refinement places every source under
 a shared principal-scoped execution fence before dispatch. Only a verified
 `unable` result restores that exact source snapshot; a validated successor adds

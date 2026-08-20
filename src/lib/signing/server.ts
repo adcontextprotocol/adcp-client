@@ -17,6 +17,7 @@ export {
   formatSignatureParams,
   getHeaderValue,
   type RequestLike,
+  type RequestCanonicalizationProfile,
   type ResponseLike,
   type SignatureParams,
 } from './canonicalize';

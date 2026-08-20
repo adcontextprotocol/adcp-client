@@ -204,6 +204,23 @@ export interface Storyboard {
    * `experimental_features contains trusted_match.core`).
    */
   requires_capability?: RequiresCapabilityPredicate;
+  /**
+   * Two or more capability predicates evaluated as one AND-composed
+   * applicability gate. When this field and `requires_capability` are both
+   * present, every predicate across both declarations must pass. A failed
+   * predicate skips the entire storyboard before runtime or tool gates.
+   *
+   * The loader rejects empty and single-entry arrays; use
+   * `requires_capability` for a singular gate.
+   *
+   * Compound gates fail closed when the raw capabilities payload is
+   * unavailable: advertised or auto-registered tools are not capability
+   * declarations. This is intentionally stricter than the compatibility
+   * fallback retained for legacy singular gates.
+   *
+   * Supported by @adcp/sdk starting in 14.0.0-beta.4.
+   */
+  requires_all_capabilities?: RequiresCapabilityPredicate[];
   /** Scenario IDs that must pass alongside this storyboard (loaded from storyboards/scenarios/) */
   requires_scenarios?: string[];
   agent: {
@@ -2104,7 +2121,7 @@ export type RunnerDetailedSkipReason =
   /** A valid fixture strategy ladder exhausted without finding a binding. */
   | 'fixture_unsatisfied'
   /**
-   * A `requires_capability` predicate on the storyboard evaluated to false —
+   * A root capability predicate on the storyboard evaluated to false —
    * the agent explicitly declared it does not support the capability this
    * storyboard tests (e.g. `adcp.idempotency.supported: false`). The whole
    * storyboard is skipped before any phase runs. Maps to canonical

@@ -8097,7 +8097,7 @@ export type ProductResponseFields = [
 ];
 
 /**
- * Read seller offers with structured discovery criteria. Each invocation completes synchronously, while durable wholesale product-feed webhooks registered through sync_accounts keep buyer mirrors current without polling. list_products is the authoritative bootstrap and repair read for those subscriptions; proposal creation is handled by request_proposals.
+ * Read seller offers with structured discovery criteria. When criteria includes catalog, provide exactly one brand source: top-level brand or a natural-key account containing brand and operator. Each invocation completes synchronously, while durable wholesale product-feed webhooks registered through sync_accounts keep buyer mirrors current without polling. list_products is the authoritative bootstrap and repair read for those subscriptions; proposal creation is handled by request_proposals.
  */
 export interface ListProductsRequest {
   /**
@@ -8977,7 +8977,7 @@ export type OpportunityContext = {
 };
 
 /**
- * Ask a seller to create one or more indicative media-plan proposals from a brief. Each returned proposal_id identifies one immutable draft snapshot; revise or finalize it through refine_proposals, or decline it through decline_proposals.
+ * Ask a seller to create one or more indicative media-plan proposals from a brief. Provide exactly one brand source: either top-level brand or a natural-key account containing brand and operator. Each returned proposal_id identifies one immutable draft snapshot; revise or finalize it through refine_proposals, or decline it through decline_proposals.
  */
 export interface RequestProposalsRequest {
   /**
@@ -9008,7 +9008,7 @@ export interface RequestProposalsRequest {
    */
   idempotency_key: string;
   /**
-   * Account scope for proposal terms. A natural-key account is the single brand source and MUST NOT be combined with top-level brand.
+   * Alternative brand source for proposal terms. Provide either this natural-key account containing brand and operator or top-level brand, not both.
    */
   account?: CanonicalAccountReference;
   brand?: BrandKey;
@@ -9025,8 +9025,6 @@ export interface RequestProposalsRequest {
     status?: 'open';
   };
 }
-
-// request_proposals response
 /**
  * One or more immutable draft media-plan proposals and compact canonical products referenced by their purchases. Products always carry product_id and name and never carry legacy named-format identifiers. Returning only products does not satisfy request_proposals.
  */
@@ -9931,7 +9929,7 @@ export type DeclineProposalsResponse =
 
 // buy_products parameters
 /**
- * Create a MediaBuy directly from published product offers. This buyer-composed path accepts published commercial terms, supports targeting and delivery controls, and never accepts inline creatives or creative assignments. The seller records an immutable accepted proposal snapshot so later commercial amendments can use refine_proposals.
+ * Create a MediaBuy directly from published product offers. Provide exactly one brand source: top-level brand when account is ID-only, or brand and operator inside a natural-key account. This buyer-composed path accepts published commercial terms, supports targeting and delivery controls, and never accepts inline creatives or creative assignments. The seller records an immutable accepted proposal snapshot so later commercial amendments can use refine_proposals.
  */
 export interface BuyProductsRequest {
   /**
@@ -10362,7 +10360,7 @@ export type PackageControl = {
   optimization_goals?: [CanonicalOptimizationGoal, ...CanonicalOptimizationGoal[]];
 };
 /**
- * Apply operational delivery controls inside the MediaBuy's accepted proposal envelope. Sellers return REQUOTE_REQUIRED when budget, targeting, or another control would change the commercial envelope; the buyer then forks the accepted proposal through refine_proposals. Creative mutation, new products/packages, flight changes, pricing changes, and billing-term changes are not accepted here.
+ * Apply operational delivery controls inside the MediaBuy's accepted proposal envelope. Provide at least one control field. cancellation_reason requires canceled: true; cancellation is mutually exclusive with every other control. Sellers return REQUOTE_REQUIRED when budget, targeting, or another control would change the commercial envelope; the buyer then forks the accepted proposal through refine_proposals. Creative mutation, new products/packages, flight changes, pricing changes, and billing-term changes are not accepted here.
  */
 export interface ControlMediaBuyRequest {
   /**
@@ -11092,7 +11090,7 @@ export type CreateMediaBuyRequest = (
   plan_id?: string;
   account: AccountReference;
   /**
-   * ID of the exact committed proposal snapshot to execute. With total_budget, the publisher creates packages using the proposal's fixed percentages or seller-optimized constraints. Alternative to providing packages. AdCP 3.2 request_proposals and ordinary refine_proposals revisions issue drafts; refine_proposals action finalize creates the executable committed hold. Sellers reject draft, declined, or previously executed snapshots, while exact retries with the original idempotency key replay historical success. Changed commercial terms are issued under a new proposal_id, so no separate proposal version is required.
+   * ID of the exact committed proposal snapshot to execute. With total_budget, the publisher creates packages using the proposal's fixed percentages or seller-optimized constraints. Mutually exclusive: provide packages or proposal_id, not both. AdCP 3.2 request_proposals and ordinary refine_proposals revisions issue drafts; refine_proposals action finalize creates the executable committed hold. Sellers reject draft, declined, or previously executed snapshots, while exact retries with the original idempotency key replay historical success. Changed commercial terms are issued under a new proposal_id, so no separate proposal version is required.
    */
   proposal_id?: string;
   /**
@@ -11131,7 +11129,7 @@ export type CreateMediaBuyRequest = (
    */
   budget_allocation?: BudgetAllocation;
   /**
-   * Array of package configurations. Required when not using proposal_id. Fixed allocation requires budget on every package. Seller-optimized allocation permits package budget to be omitted or to act as a hard cap. When executing a proposal, omit packages; the seller derives them from the committed proposal.
+   * Array of package configurations. Required when not using proposal_id. Mutually exclusive: provide packages or proposal_id, not both. Fixed allocation requires budget on every package. Seller-optimized allocation permits package budget to be omitted or to act as a hard cap. When executing a proposal, omit packages; the seller derives them from the committed proposal.
    */
   packages?: PackageRequest[];
   brand: BrandReference;
@@ -20513,7 +20511,7 @@ export interface ListedCreativeCanonicalFormatKind {
 
 // sync_creatives parameters
 /**
- * Request parameters for syncing creative assets with upsert semantics - supports bulk operations, scoped updates, and assignment management
+ * Request parameters for syncing creative assets with upsert semantics. Provide at least one of creatives, assignments, or assignment_operations. assignments and assignment_operations are mutually exclusive; delete_missing: true requires creatives; assignment_operations requires validation_mode: strict.
  */
 export interface SyncCreativesRequest {
   /**

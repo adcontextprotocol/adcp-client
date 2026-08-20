@@ -116,8 +116,8 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'compact-and-legacy',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.2',
-      capabilities: { supported_versions: ['3.0.24', '3.1.15', '3.2.0-beta.2'] },
+      adcpVersion: '3.2.0-beta.3',
+      capabilities: { supported_versions: ['3.0.24', '3.1.15', '3.2.0-beta.3'] },
       validation: { requests: 'off', responses: 'off' },
     });
 
@@ -143,7 +143,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       method: 'tools/call',
       params: {
         name: 'list_products',
-        arguments: { adcp_version: '3.2.0-beta.2', account: { account_id: 'acc-modern' } },
+        arguments: { adcp_version: '3.2.0-beta.3', account: { account_id: 'acc-modern' } },
       },
     });
     assert.notStrictEqual(compact.isError, true, JSON.stringify(compact.structuredContent));
@@ -160,7 +160,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       assert.notStrictEqual(legacy.isError, true, JSON.stringify(legacy.structuredContent));
     }
     assert.deepStrictEqual(calls, [
-      ['list_products', '3.2.0-beta.2', 'acc-modern'],
+      ['list_products', '3.2.0-beta.3', 'acc-modern'],
       ['get_products', '3.1.15', 'acc-3.1.15'],
       ['get_products', '3.0.24', 'acc-3.0.24'],
     ]);
@@ -181,7 +181,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'compact-only',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.2',
+      adcpVersion: '3.2.0-beta.3',
       validation: { requests: 'off', responses: 'off' },
     });
 
@@ -214,7 +214,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'scoped-compact',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.2',
+      adcpVersion: '3.2.0-beta.3',
       validation: { requests: 'off', responses: 'off' },
     });
     const response = await server.dispatchTestRequest(
@@ -251,7 +251,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'anonymous-session',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.2',
+      adcpVersion: '3.2.0-beta.3',
       resolveSessionKey: () => 'anonymous-session',
       validation: { requests: 'off', responses: 'off' },
     });
@@ -279,7 +279,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'compact-replay-auth',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.2',
+      adcpVersion: '3.2.0-beta.3',
       idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
       resolveIdempotencyPrincipal: () => 'deliberately-shared-principal',
       resolveSessionKey: () => 'deliberately-shared-session',
@@ -328,7 +328,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'refinement-scope',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.2',
+      adcpVersion: '3.2.0-beta.3',
       validation: { requests: 'off', responses: 'off' },
     });
     const response = await server.dispatchTestRequest(
@@ -6377,7 +6377,7 @@ describe('tasks_get wire tool (B9)', () => {
       assert.strictEqual(status.structuredContent.status, 'submitted');
       assert.strictEqual(status.structuredContent.has_webhook, true);
       assert.strictEqual(status.structuredContent.result, undefined);
-      assert.strictEqual(status.structuredContent.adcp_version, '3.2-beta.2');
+      assert.strictEqual(status.structuredContent.adcp_version, '3.2-beta.3');
 
       const listed = await server.dispatchTestRequest({
         method: 'tools/call',
@@ -7134,7 +7134,7 @@ describe('createAdcpServerFromPlatform — default resolveIdempotencyPrincipal',
       {
         name: 'principal-compat',
         version: '0.0.1',
-        adcpVersion: '3.2.0-beta.2',
+        adcpVersion: '3.2.0-beta.3',
         idempotency,
         validation: { requests: 'off', responses: 'off' },
       }

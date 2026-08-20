@@ -169,6 +169,18 @@ function storyboardWith(steps) {
   };
 }
 
+function compoundCapabilityStoryboard() {
+  return {
+    ...storyboardWith([{ id: 'discover', title: 'discover', task: 'get_products', auth: 'none', sample_request: {} }]),
+    id: 'compound_capability_discovery',
+    requires_all_capabilities: [
+      { path: 'media_buy.propagation_surfaces', contains: 'snapshot' },
+      { path: 'creative.has_creative_library', equals: true },
+    ],
+    required_tools: ['get_products', 'sync_creatives'],
+  };
+}
+
 // Every step uses `auth: 'none'` so dispatch goes via rawMcpProbe. We set
 // `agentTools` to pretend every tool is advertised (so the runner doesn't
 // skip them for missing_tool) and inject a `_profile` to skip discovery.
@@ -355,6 +367,52 @@ describe('runStoryboard: multi-instance multi-pass', () => {
     if (agentB) await stopAgent(agentB);
     agentA = undefined;
     agentB = undefined;
+  });
+
+  test('post-discovery normal run skips a failed compound gate before scenario dispatch', async () => {
+    agentA = await startFakeAgent({
+      state: new Map(),
+      label: 'A',
+      tools: ['get_adcp_capabilities', 'get_products', 'sync_creatives'],
+      capabilities: {
+        media_buy: { propagation_surfaces: ['snapshot'] },
+        creative: { has_creative_library: false },
+      },
+    });
+    const result = await runStoryboard(agentA.url, compoundCapabilityStoryboard(), {
+      protocol: 'mcp',
+      allow_http: true,
+    });
+    assert.strictEqual(result.phases[0].steps[0].skip_reason, 'capability_unsupported');
+    assert.deepStrictEqual(
+      agentA.requests.map(request => request.tool),
+      ['get_adcp_capabilities']
+    );
+  });
+
+  test('real multi-pass discovery skips once before any pass or scenario dispatch', async () => {
+    const options = {
+      state: new Map(),
+      tools: ['get_adcp_capabilities', 'get_products', 'sync_creatives'],
+      capabilities: {
+        media_buy: { propagation_surfaces: ['snapshot'] },
+        creative: { has_creative_library: false },
+      },
+    };
+    agentA = await startFakeAgent({ ...options, label: 'A' });
+    agentB = await startFakeAgent({ ...options, label: 'B' });
+    const result = await runStoryboard([agentA.url, agentB.url], compoundCapabilityStoryboard(), {
+      protocol: 'mcp',
+      allow_http: true,
+      multi_instance_strategy: 'multi-pass',
+    });
+    assert.strictEqual(result.phases[0].steps[0].skip_reason, 'capability_unsupported');
+    assert.strictEqual(result.passes, undefined);
+    assert.ok([...agentA.requests, ...agentB.requests].some(request => request.tool === 'get_adcp_capabilities'));
+    assert.deepStrictEqual(
+      [...agentA.requests, ...agentB.requests].filter(request => request.tool !== 'get_adcp_capabilities'),
+      []
+    );
   });
 
   test('runs N passes with swapped starting replica and reports per-pass detail', async () => {

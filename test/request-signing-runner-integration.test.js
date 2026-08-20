@@ -126,7 +126,7 @@ function startReferenceVerifier({ replayCap = 1000 } = {}) {
 describe('request-signing: synthesize step expansion', () => {
   test('compliance loader synthesizes vectors from the selected frozen bundle', () => {
     const previousComplianceDir = process.env.ADCP_COMPLIANCE_DIR;
-    process.env.ADCP_COMPLIANCE_DIR = path.join('compliance', 'cache', '3.2.0-beta.2');
+    process.env.ADCP_COMPLIANCE_DIR = path.join('compliance', 'cache', '3.2.0-beta.3');
     let storyboards;
     try {
       storyboards = loadBundleStoryboards({
@@ -171,8 +171,8 @@ describe('request-signing: synthesize step expansion', () => {
     const positivePhase = sb.phases.find(p => p.id === 'positive_vectors');
     const negativePhase = sb.phases.find(p => p.id === 'negative_vectors');
     assert.ok(positivePhase && negativePhase, 'vector phases present');
-    assert.strictEqual(positivePhase.steps.length, 12, 'all 12 positive steps synthesized');
-    assert.strictEqual(negativePhase.steps.length, 28, 'all 28 negative steps synthesized');
+    assert.strictEqual(positivePhase.steps.length, 12, 'all 3.1-compatible positive steps synthesized');
+    assert.strictEqual(negativePhase.steps.length, 28, 'all 3.1-compatible negative steps synthesized');
 
     for (const step of positivePhase.steps) {
       assert.ok(step.id.startsWith('positive-'), `positive step id: ${step.id}`);

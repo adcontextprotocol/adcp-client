@@ -48,24 +48,30 @@ const STRING_PARAMS = new Set<keyof SignatureParams>(['nonce', 'keyid', 'alg', '
 
 const SUPPORTED_DERIVED = new Set(['@method', '@target-uri', '@authority', '@status']);
 
-export function canonicalTargetUri(rawUrl: string): string {
-  rejectNonAsciiHost(rawUrl);
-  const u = new URL(rawUrl);
-  if (u.username || u.password) {
+export type RequestCanonicalizationProfile = 'legacy' | '3.2';
+
+export function canonicalTargetUri(rawUrl: string, profile: RequestCanonicalizationProfile = 'legacy'): string {
+  const u = parseCanonicalUrl(rawUrl, profile);
+  if (profile === 'legacy' && (u.username || u.password)) {
     throw new RequestSignatureError(
       'request_signature_header_malformed',
       1,
       '@target-uri must not include userinfo; strip credentials before signing'
     );
   }
-  const assembled = `${u.protocol}//${u.host}${u.pathname}${u.search}`;
-  return uppercasePercentEncoding(decodeUnreservedPercentEncoding(assembled));
+  const assembled = `${u.protocol}//${u.host}${u.pathname}`;
+  const normalizedTarget = uppercasePercentEncoding(decodeUnreservedPercentEncoding(assembled));
+  if (profile === '3.2') {
+    const fragmentless = rawUrl.split('#', 1)[0] ?? rawUrl;
+    const queryIndex = fragmentless.indexOf('?');
+    return normalizedTarget + (queryIndex < 0 ? '' : fragmentless.slice(queryIndex));
+  }
+  return uppercasePercentEncoding(decodeUnreservedPercentEncoding(`${assembled}${u.search}`));
 }
 
-export function canonicalAuthority(rawUrl: string): string {
-  rejectNonAsciiHost(rawUrl);
-  const u = new URL(rawUrl);
-  if (u.username || u.password) {
+export function canonicalAuthority(rawUrl: string, profile: RequestCanonicalizationProfile = 'legacy'): string {
+  const u = parseCanonicalUrl(rawUrl, profile);
+  if (profile === 'legacy' && (u.username || u.password)) {
     throw new RequestSignatureError(
       'request_signature_header_malformed',
       1,
@@ -109,11 +115,12 @@ export function buildSignatureBase(
   components: ReadonlyArray<string>,
   request: RequestLike,
   params: SignatureParams,
-  signatureParamsValue?: string
+  signatureParamsValue?: string,
+  canonicalizationProfile: RequestCanonicalizationProfile = 'legacy'
 ): string {
   const lines: string[] = [];
   for (const component of components) {
-    const value = resolveComponentValue(component, request);
+    const value = resolveComponentValue(component, request, canonicalizationProfile);
     if (value === undefined) {
       throw new RequestSignatureError(
         'request_signature_components_incomplete',
@@ -229,7 +236,11 @@ function resolveResponseComponentValue(
   return getHeaderValue(requestBound ? requestView.headers : response.headers, bare);
 }
 
-function resolveComponentValue(component: string, request: RequestLike): string | undefined {
+function resolveComponentValue(
+  component: string,
+  request: RequestLike,
+  canonicalizationProfile: RequestCanonicalizationProfile = 'legacy'
+): string | undefined {
   if (component.startsWith('@')) {
     if (!SUPPORTED_DERIVED.has(component)) {
       throw new RequestSignatureError(
@@ -242,9 +253,9 @@ function resolveComponentValue(component: string, request: RequestLike): string 
       case '@method':
         return canonicalMethod(request.method);
       case '@target-uri':
-        return canonicalTargetUri(request.url);
+        return canonicalTargetUri(request.url, canonicalizationProfile);
       case '@authority':
-        return canonicalAuthority(request.url);
+        return canonicalAuthority(request.url, canonicalizationProfile);
       case '@status':
         throw new RequestSignatureError(
           'request_signature_components_unexpected',
@@ -254,6 +265,61 @@ function resolveComponentValue(component: string, request: RequestLike): string 
     }
   }
   return getHeaderValue(request.headers, component);
+}
+
+function parseCanonicalUrl(rawUrl: string, profile: RequestCanonicalizationProfile): URL {
+  if (profile === 'legacy') {
+    rejectNonAsciiHost(rawUrl);
+    return new URL(rawUrl);
+  }
+
+  const authorityMatch = rawUrl.match(/^[a-z][a-z0-9+.\-]*:\/\/([^/?#]*)/i);
+  const authority = authorityMatch?.[1];
+  if (!authority) {
+    throw malformedTargetUri('Signed request URL must contain a non-empty authority');
+  }
+
+  const hostPort = authority.slice(authority.lastIndexOf('@') + 1);
+  if (!hostPort || hostPort.startsWith(':')) {
+    throw malformedTargetUri('Signed request URL authority is missing its host');
+  }
+  if (hostPort.startsWith('[')) {
+    const closingBracket = hostPort.indexOf(']');
+    if (closingBracket < 0) {
+      throw malformedTargetUri('Bracketed IPv6 host is missing its closing bracket');
+    }
+    if (hostPort.slice(0, closingBracket).includes('%')) {
+      throw malformedTargetUri('IPv6 zone identifiers are not allowed in signed request URLs');
+    }
+  } else if ((hostPort.match(/:/g) ?? []).length > 1) {
+    throw malformedTargetUri('IPv6 literals in signed request URLs must be bracketed');
+  }
+
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw malformedTargetUri('Signed request URL is malformed');
+  }
+
+  if (!url.hostname) {
+    throw malformedTargetUri('Signed request URL authority is missing its host');
+  }
+
+  if (!url.hostname.startsWith('[')) {
+    let hostname = url.hostname.toLowerCase();
+    if (hostname.endsWith('.')) hostname = hostname.slice(0, -1);
+    if (!hostname || hostname.endsWith('.') || hostname.split('.').some(label => label.length === 0)) {
+      throw malformedTargetUri('Signed request URL hostname contains an empty DNS label');
+    }
+    url.hostname = hostname;
+  }
+
+  return url;
+}
+
+function malformedTargetUri(message: string): RequestSignatureError {
+  return new RequestSignatureError('request_target_uri_malformed', 10, message);
 }
 
 function uppercasePercentEncoding(input: string): string {

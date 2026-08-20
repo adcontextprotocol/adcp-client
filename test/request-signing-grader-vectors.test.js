@@ -21,9 +21,11 @@ const {
 const loaded = loadRequestSigningVectors();
 
 describe('request-signing vector loader', () => {
-  test('loads 12 positive and 28 negative vectors from the compliance cache', () => {
+  test('loads root vectors and exposes version profiles without changing the 3.1-compatible grader set', () => {
     assert.strictEqual(loaded.positive.length, 12, 'positive count');
     assert.strictEqual(loaded.negative.length, 28, 'negative count');
+    assert.strictEqual(loaded.profiles['3.2'].positive.length, 1, '3.2 positive profile count');
+    assert.strictEqual(loaded.profiles['3.2'].negative.length, 2, '3.2 negative profile count');
   });
 
   test('every vector carries request, verifier_capability, and a jwks selector', () => {
@@ -57,6 +59,7 @@ describe('request-signing vector loader', () => {
       'request_signature_window_invalid',
       'request_signature_components_incomplete',
       'request_signature_components_unexpected',
+      'request_target_uri_malformed',
       'request_signature_key_unknown',
       'request_signature_key_purpose_invalid',
       'request_signature_key_revoked',
@@ -80,7 +83,8 @@ describe('positive builder — byte-level correctness against test keys', () => 
 
       const parsedInput = parseSignatureInput(signed.headers['Signature-Input']);
       const { label, components, params, signatureParamsValue } = parsedInput;
-      const parsedSig = parseSignature(signed.headers['Signature'], label);
+      const encoding = vector.signing_profile_version === '3.2' ? 'rfc8941-base64' : 'legacy-base64url';
+      const parsedSig = parseSignature(signed.headers['Signature'], label, encoding);
 
       assert.strictEqual(params.tag, REQUEST_SIGNING_TAG, `${vector.id}: tag drift`);
       assert.ok(params.created, `${vector.id}: missing created`);
@@ -96,7 +100,8 @@ describe('positive builder — byte-level correctness against test keys', () => 
           body: signed.body,
         },
         params,
-        signatureParamsValue
+        signatureParamsValue,
+        vector.signing_profile_version === '3.2' ? '3.2' : 'legacy'
       );
       const kid = params.keyid;
       const keypair = loaded.keys.keys.find(k => k.kid === kid);

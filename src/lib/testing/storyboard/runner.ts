@@ -537,6 +537,66 @@ function evaluateRequiresCapabilityGate(
   return null;
 }
 
+function storyboardCapabilityPredicates(storyboard: Storyboard): RequiresCapabilityPredicate[] {
+  return [
+    ...(storyboard.requires_capability ? [storyboard.requires_capability] : []),
+    ...(storyboard.requires_all_capabilities ?? []),
+  ];
+}
+
+export function describeStoryboardCapabilityGates(storyboard: Storyboard): string | null {
+  const predicates = storyboardCapabilityPredicates(storyboard);
+  if (predicates.length === 0) return null;
+  return predicates.map(describeCapabilityPredicate).join(' AND ');
+}
+
+function describeCapabilityPredicate(predicate: RequiresCapabilityPredicate): string {
+  if ('present' in predicate) return `${predicate.path} ${predicate.present ? 'present' : 'absent'}`;
+  if ('contains' in predicate) return `${predicate.path} contains ${JSON.stringify(predicate.contains)}`;
+  if ('not_contains' in predicate) {
+    return `${predicate.path} does not contain ${JSON.stringify(predicate.not_contains)}`;
+  }
+  return `${predicate.path} = ${JSON.stringify(predicate.equals)}`;
+}
+
+function evaluateStoryboardCapabilityGates(
+  storyboard: Storyboard,
+  profile: AgentProfile | undefined,
+  agentTools?: readonly string[],
+  adcpVersion?: string
+): string | null {
+  const predicates = [
+    ...(storyboard.requires_capability ? [{ predicate: storyboard.requires_capability, failClosed: false }] : []),
+    ...(storyboard.requires_all_capabilities ?? []).map(predicate => ({ predicate, failClosed: true })),
+  ];
+  const failures = predicates
+    .map(({ predicate, failClosed }) => {
+      if (!failClosed) return evaluateRequiresCapabilityGate(predicate, profile, agentTools, adcpVersion);
+      const rawCapabilities = profile?.raw_capabilities;
+      if (rawCapabilities === undefined) {
+        return (
+          `Capability predicate \`${describeCapabilityPredicate(predicate)}\` could not be evaluated: ` +
+          'no declared or resolved value (raw capabilities unavailable).'
+        );
+      }
+      const declared = resolveCapabilityPath(rawCapabilities, predicate.path);
+      const resolved = resolveCapabilityPathForGate(rawCapabilities, predicate, adcpVersion);
+      const detail = evaluateCapabilityPredicate(predicate, resolved);
+      if (detail === null) return null;
+      const provenance =
+        declared !== undefined
+          ? `declared value ${JSON.stringify(declared)}`
+          : resolved !== undefined
+            ? `resolved schema default ${JSON.stringify(resolved)}`
+            : 'no declared or resolved value';
+      return `${detail} [${provenance}]`;
+    })
+    .filter((detail): detail is string => detail !== null);
+  if (failures.length === 0) return null;
+  if (failures.length === 1) return failures[0]!;
+  return `Capability predicates not satisfied:\n${failures.map(detail => `- ${detail}`).join('\n')}`;
+}
+
 function collectPhaseCapabilitySkipDetails(
   storyboard: Storyboard,
   profile: AgentProfile | undefined,
@@ -1262,10 +1322,11 @@ async function runStoryboardBody(
   // executeStoryboardPass has completed discovery; reporting a missing runner
   // adapter before learning that the agent never claimed the capability would
   // incorrectly turn not_applicable into requirement_unmet.
-  const deferCapabilityAndRequires = storyboard.requires_capability !== undefined && options._profile === undefined;
-  if (storyboard.requires_capability && !deferCapabilityAndRequires) {
-    const unmetDetail = evaluateRequiresCapabilityGate(
-      storyboard.requires_capability,
+  const hasCapabilityGate = storyboardCapabilityPredicates(storyboard).length > 0;
+  const deferCapabilityAndRequires = hasCapabilityGate && options._profile === undefined;
+  if (hasCapabilityGate && !deferCapabilityAndRequires) {
+    const unmetDetail = evaluateStoryboardCapabilityGates(
+      storyboard,
       options._profile,
       options.agentTools,
       options.adcpVersion
@@ -1437,7 +1498,7 @@ function validateAgentsMap(
 
 /**
  * Build a minimal StoryboardResult for a storyboard skipped by a
- * `requires_capability` predicate. The single synthetic step carries
+ * root capability predicate. The single synthetic step carries
  * `skip_reason: 'capability_unsupported'` so CLI reports and JUnit
  * consumers render it as a skip rather than a pass or failure.
  */
@@ -2495,13 +2556,8 @@ async function executeStoryboardPass(
   // Capability applicability is intentionally first. Optional capability
   // storyboards must grade not_applicable for agents that did not opt in,
   // without inspecting or reporting any missing operator runtime adapter.
-  if (storyboard.requires_capability) {
-    const unmetDetail = evaluateRequiresCapabilityGate(
-      storyboard.requires_capability,
-      profile,
-      options.agentTools,
-      options.adcpVersion
-    );
+  if (storyboardCapabilityPredicates(storyboard).length > 0) {
+    const unmetDetail = evaluateStoryboardCapabilityGates(storyboard, profile, options.agentTools, options.adcpVersion);
     if (unmetDetail !== null) {
       if (!callerOwnsClients) await closeScopedConnections(options.protocol);
       return {
@@ -3953,9 +4009,9 @@ async function runMultiPass(
   // this multi-pass preflight has discovered the profile. Resolve both gates
   // once here so an optional capability remains not_applicable and a missing
   // run-scoped harness remains one storyboard skip rather than N pass skips.
-  if (storyboard.requires_capability) {
-    const unmetDetail = evaluateRequiresCapabilityGate(
-      storyboard.requires_capability,
+  if (storyboardCapabilityPredicates(storyboard).length > 0) {
+    const unmetDetail = evaluateStoryboardCapabilityGates(
+      storyboard,
       preSeedProfile,
       options.agentTools,
       options.adcpVersion
@@ -4305,6 +4361,46 @@ async function runStoryboardStepBody(
   if (storyboard.context) forwardAliasCache(storyboard.context, context);
   if (options.context) forwardAliasCache(options.context, context);
 
+  // Find the step
+  const allSteps = flattenSteps(storyboard);
+  const found = allSteps.find(s => s.step.id === stepId);
+  if (!found) {
+    throw new Error(
+      `Step "${stepId}" not found in storyboard "${storyboard.id}". ` +
+        `Available steps: ${allSteps.map(s => s.step.id).join(', ')}`
+    );
+  }
+
+  // Standalone execution must preserve the whole-storyboard ordering:
+  // capability applicability comes before the operator runtime requirement.
+  // In particular, a non-TMP agent must not be told that it is missing a
+  // publisher-auth adapter for a capability it never declared.
+  if (storyboardCapabilityPredicates(storyboard).length > 0) {
+    const unmetDetail = evaluateStoryboardCapabilityGates(storyboard, profile, options.agentTools, options.adcpVersion);
+    if (unmetDetail !== null) {
+      const result: StoryboardStepResult = {
+        storyboard_id: storyboard.id,
+        step_id: found.step.id,
+        phase_id: found.phaseId,
+        title: found.step.title,
+        task: found.step.task,
+        passed: true,
+        skipped: true,
+        skip_reason: 'not_applicable',
+        skip: { reason: 'not_applicable', detail: unmetDetail },
+        duration_ms: 0,
+        validations: [],
+        context,
+        error: unmetDetail,
+        extraction: { path: 'none' },
+        contributions: Array.from(options.contributions ?? []),
+      };
+      if (!clientResolution.reusedShared) await closeScopedConnections(options.protocol);
+      return result;
+    }
+  }
+
+  // Construct runtime adapters only after root applicability has passed.
   // `_webhookReceiver` is a test-only injection point; production callers
   // pass `webhook_receiver` and the runner constructs the listener.
   const injectedReceiver = options._webhookReceiver;
@@ -4325,52 +4421,6 @@ async function runStoryboardStepBody(
     ...(webhookReceiver && { webhookBase: webhookReceiver.base_url }),
   });
   if (webhookReceiver) armWebhookAssertions(storyboard, runnerVars, webhookReceiver);
-
-  // Find the step
-  const allSteps = flattenSteps(storyboard);
-  const found = allSteps.find(s => s.step.id === stepId);
-  if (!found) {
-    if (ownsWebhookReceiver && webhookReceiver) await webhookReceiver.close();
-    throw new Error(
-      `Step "${stepId}" not found in storyboard "${storyboard.id}". ` +
-        `Available steps: ${allSteps.map(s => s.step.id).join(', ')}`
-    );
-  }
-
-  // Standalone execution must preserve the whole-storyboard ordering:
-  // capability applicability comes before the operator runtime requirement.
-  // In particular, a non-TMP agent must not be told that it is missing a
-  // publisher-auth adapter for a capability it never declared.
-  if (storyboard.requires_capability) {
-    const unmetDetail = evaluateRequiresCapabilityGate(
-      storyboard.requires_capability,
-      profile,
-      options.agentTools,
-      options.adcpVersion
-    );
-    if (unmetDetail !== null) {
-      const result: StoryboardStepResult = {
-        storyboard_id: storyboard.id,
-        step_id: found.step.id,
-        phase_id: found.phaseId,
-        title: found.step.title,
-        task: found.step.task,
-        passed: true,
-        skipped: true,
-        skip_reason: 'not_applicable',
-        skip: { reason: 'not_applicable', detail: unmetDetail },
-        duration_ms: 0,
-        validations: [],
-        context,
-        error: unmetDetail,
-        extraction: { path: 'none' },
-        contributions: Array.from(options.contributions ?? []),
-      };
-      if (!clientResolution.reusedShared) await closeScopedConnections(options.protocol);
-      if (ownsWebhookReceiver && webhookReceiver) await webhookReceiver.close();
-      return result;
-    }
-  }
 
   // Seed provenance from the caller-supplied map (threaded through from a
   // previous step's result). Storyboard-level runs build this internally;

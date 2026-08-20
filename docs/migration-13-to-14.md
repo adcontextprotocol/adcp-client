@@ -1,20 +1,47 @@
 # Migrating from 13.x to 14 beta
 
-SDK 14 adopts AdCP `3.2.0-beta.2` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the beta and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
+SDK 14 adopts AdCP `3.2.0-beta.3` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the beta and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
 
-AdCP 3.2 prereleases are exact protocol pins: beta.2 replaces beta.1 in the
+AdCP 3.2 prereleases are exact protocol pins: beta.3 replaces beta.2 in the
 SDK's compatible-version list rather than extending a rolling 3.2-beta range.
 Beta.1 restored `adcp_major_version` on `buy_products`,
 `accept_proposal`, and `control_media_buy`; the SDK now sends that field again
 for beta.1 and later while retaining its omission only for an explicitly
-configured beta.0 peer. Beta.2 adds canonical compact proposal and direct-buy
-storyboards through operational control and MediaBuy readback.
+configured beta.0 peer. Beta.2 added canonical compact proposal and direct-buy
+storyboards through operational control and MediaBuy readback; beta.3 preserves
+that wire contract and clarifies request invariants.
 
 ```bash
 npm install @adcp/sdk@beta
 ```
 
 The untagged npm install remains SDK 13. Keep that line for production AdCP 3.1 deployments until the 3.2 application and its counterparties have completed beta validation.
+
+## Compound compliance capability gates
+
+Starting with `@adcp/sdk@14.0.0-beta.4`, storyboard authors can declare
+`requires_all_capabilities` with two or more capability predicates. Every
+predicate is AND-composed, including a separate `requires_capability` when both
+forms are present. The runner evaluates this applicability gate before runtime
+requirements and advertised-tool gates, so tool availability cannot override a
+capability the agent declined.
+
+Compound gates also fail closed when the raw capability payload is unavailable;
+advertising or auto-registering a related tool is not evidence of a capability
+declaration. The legacy permissive fallback for an existing singular
+`requires_capability` remains unchanged.
+
+```yaml
+requires_all_capabilities:
+  - path: media_buy.propagation_surfaces
+    contains: snapshot
+  - path: creative.has_creative_library
+    equals: true
+```
+
+An unmet predicate produces one whole-storyboard `not_applicable` result and no
+steps are dispatched. Empty and single-entry lists fail during storyboard
+loading; keep using `requires_capability` for a singular predicate.
 
 ## Upgrade checklist
 

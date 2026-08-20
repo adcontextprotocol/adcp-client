@@ -251,7 +251,13 @@ export function prepareRequestSignature(
   };
 
   const normalizedRequest: RequestLike = { ...request, headers };
-  const base = buildSignatureBase(components, normalizedRequest, params);
+  const base = buildSignatureBase(
+    components,
+    normalizedRequest,
+    params,
+    undefined,
+    binaryEncoding === 'rfc8941-base64' ? '3.2' : 'legacy'
+  );
 
   return { components, params, headers, base, label, binaryEncoding };
 }
@@ -337,7 +343,9 @@ export function prepareWebhookSignature(
   };
 
   const normalizedRequest: RequestLike = { ...request, headers };
-  const base = buildSignatureBase(components, normalizedRequest, params);
+  // AdCP 3.2 keeps the webhook profile's legacy Base64URL binary encoding,
+  // but aligns its derived-component canonicalization with request signing.
+  const base = buildSignatureBase(components, normalizedRequest, params, undefined, '3.2');
 
   return { components, params, headers, base, label, binaryEncoding: 'legacy-base64url' };
 }

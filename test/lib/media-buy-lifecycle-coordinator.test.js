@@ -10,7 +10,7 @@ const AGENT = {
   protocol: 'mcp',
 };
 
-function capabilities({ version = '3.2.0-beta.2', tools, discoveredTools, replayTtlSeconds = 3600 } = {}) {
+function capabilities({ version = '3.2.0-beta.3', tools, discoveredTools, replayTtlSeconds = 3600 } = {}) {
   if (version === '2.5') {
     return {
       version: 'v2',
@@ -3512,7 +3512,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
   test('a 3.1-pinned buyer does not select compact from a dual-surface 3.2 seller', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.supportedVersions = ['3.0', '3.1', '3.2.0-beta.2'];
+    caps.supportedVersions = ['3.0', '3.1', '3.2.0-beta.3'];
     const agent = clientWithCaps(caps, '3.1.15');
     const calls = [];
     agent.listProducts = async () => {
@@ -3534,7 +3534,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
   test('authoritative served release wins over the seller support window', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.supportedVersions = ['3.0', '3.1', '3.2.0-beta.2'];
+    caps.supportedVersions = ['3.0', '3.1', '3.2.0-beta.3'];
     caps.servedVersion = '3.1';
     const agent = clientWithCaps(caps);
     const calls = [];
@@ -3570,8 +3570,8 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
   test('does not select a newer prerelease than the compact buyer pin', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.supportedVersions = ['3.1', '3.2.0-beta.3'];
-    const agent = clientWithCaps(caps, '3.2.0-beta.2');
+    caps.supportedVersions = ['3.1', '3.2.0-beta.4'];
+    const agent = clientWithCaps(caps, '3.2.0-beta.3');
     const calls = [];
     agent.getProducts = async () => {
       calls.push('get_products');
@@ -3587,12 +3587,12 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
   test('fails closed when every valid advertised version is newer than the buyer pin', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.supportedVersions = ['3.2.0-beta.3'];
-    const agent = clientWithCaps(caps, '3.2.0-beta.2');
+    caps.supportedVersions = ['3.2.0-beta.4'];
+    const agent = clientWithCaps(caps, '3.2.0-beta.3');
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /advertises only AdCP versions newer than the client pin 3\.2\.0-beta\.2/
+      /advertises only AdCP versions newer than the client pin 3\.2\.0-beta\.3/
     );
   });
 
@@ -3600,7 +3600,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
     delete caps.supportedVersions;
     caps._synthetic = true;
-    const agent = clientWithCaps(caps, '3.2.0-beta.2');
+    const agent = clientWithCaps(caps, '3.2.0-beta.3');
     const calls = [];
     agent.listProducts = async () => {
       calls.push('list_products');
@@ -3611,7 +3611,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
     const coordinator = await agent.negotiateMediaBuyLifecycle();
     await coordinator.listProducts({});
 
-    assert.equal(coordinator.negotiated_version, '3.2.0-beta.2');
+    assert.equal(coordinator.negotiated_version, '3.2.0-beta.3');
     assert.deepEqual(calls, ['list_products']);
   });
 
@@ -3622,19 +3622,19 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /served AdCP 3\.3, which is newer than the client pin 3\.2\.0-beta\.2/
+      /served AdCP 3\.3, which is newer than the client pin 3\.2\.0-beta\.3/
     );
   });
 
   test('fails closed when an exact newer prerelease is served despite an older advertised fallback', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.servedVersion = '3.2.0-beta.3';
-    caps.supportedVersions = ['3.2.0-beta.2', '3.2.0-beta.3'];
-    const agent = clientWithCaps(caps, '3.2.0-beta.2');
+    caps.servedVersion = '3.2.0-beta.4';
+    caps.supportedVersions = ['3.2.0-beta.3', '3.2.0-beta.4'];
+    const agent = clientWithCaps(caps, '3.2.0-beta.3');
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /served AdCP 3\.2\.0-beta\.3, which is newer than the client pin 3\.2\.0-beta\.2/
+      /served AdCP 3\.2\.0-beta\.4, which is newer than the client pin 3\.2\.0-beta\.3/
     );
   });
 
@@ -3654,7 +3654,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
     caps.servedVersion = '3.2.0-beta.2';
     caps.supportedVersions = ['3.2.0-beta.3'];
-    const agent = clientWithCaps(caps, '3.2.0-beta.2');
+    const agent = clientWithCaps(caps, '3.2.0-beta.3');
     agent.listProducts = async () => completed('list_products', { products: [], feed_version: 'feed-1' });
 
     const coordinator = await agent.negotiateMediaBuyLifecycle();
@@ -3667,8 +3667,8 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
   test('advisory build metadata cannot select a compact wire lifecycle', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
     delete caps.supportedVersions;
-    caps.buildVersion = '3.2.0-beta.2+sha.abc123';
-    const agent = clientWithCaps(caps, '3.2.0-beta.2');
+    caps.buildVersion = '3.2.0-beta.3+sha.abc123';
+    const agent = clientWithCaps(caps, '3.2.0-beta.3');
     agent.getProducts = async () => completed('get_products', { products: [] });
     agent.listProducts = async () => assert.fail('build metadata must not enable compact wire tools');
 
@@ -4906,7 +4906,7 @@ describe('MediaBuyLifecycleCoordinator mutation boundaries', () => {
   });
 
   test('readback fields are gated by the exact established schema version', async () => {
-    for (const version of ['3.0', '3.1', '3.2.0-beta.2']) {
+    for (const version of ['3.0', '3.1', '3.2.0-beta.3']) {
       const tools = version.startsWith('3.2')
         ? [...COMPACT_TOOLS, 'get_media_buys', 'get_media_buy_delivery']
         : undefined;
