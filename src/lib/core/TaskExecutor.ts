@@ -92,18 +92,18 @@ export class InputRequiredError extends Error {
   }
 }
 
-/** @internal */
+/** Supporting contract for the internal pre-dispatch boundary. */
 export type BeforeProtocolDispatchHookResult<T> =
   | { action: 'dispatch_committed' }
   | { action: 'return'; result: TaskResult<T> };
 
-/** @internal */
+/** Context supplied to the internal pre-dispatch boundary. */
 export interface BeforeProtocolDispatchContext {
   /** True when governance changed the payload rather than approving it unchanged. */
   governanceAdjusted: boolean;
 }
 
-/** @internal */
+/** Hook used by higher-level SDK coordinators at the final dispatch boundary. */
 export type BeforeProtocolDispatchHook<T> = (
   effectiveParams: any,
   context: BeforeProtocolDispatchContext
