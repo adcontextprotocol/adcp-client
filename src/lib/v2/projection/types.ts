@@ -10,7 +10,11 @@
  * remain for legacy projection APIs and diagnostics.
  */
 
-import type { ProductFormatDeclaration } from '../../types/tools.generated';
+import type {
+  CanonicalFormatOption,
+  FormatReferenceStructuredObject,
+  ProductFormatDeclaration,
+} from '../../types/tools.generated';
 
 /** v1 format_id (`{ agent_url, id }`). Same shape in 3.0 and 3.1. */
 export interface V1FormatId {
@@ -83,10 +87,16 @@ export interface V2ProductFormatDeclaration {
  * Public-surface Product (V2-shaped per the 8.0 design at
  * `docs/development/v3.1-sdk-design.md`). All other fields are passthrough.
  */
-export interface V2Product {
+/** Public/generated product shape accepted by the downgrade projector. */
+export interface V2ProductInput {
   product_id: string;
   name: string;
-  description: string;
+  description?: string;
+  format_options?: readonly (V2ProductFormatDeclaration | ProductFormatDeclaration | CanonicalFormatOption)[];
+}
+
+export interface V2Product extends V2ProductInput {
+  description?: string;
   format_options: V2ProductFormatDeclaration[];
   [k: string]: unknown;
 }
@@ -95,12 +105,32 @@ export interface V2Product {
  * Wire-level v1 Product. Carries `format_ids` (the v1 path). Other fields
  * are passthrough; we don't model them at the projection layer.
  */
-export interface V1Product {
+/** Public/generated product shape accepted by the upgrade projector. */
+export interface V1ProductInput {
   product_id: string;
   name: string;
-  description: string;
+  description?: string;
+  format_ids?: readonly (V1FormatId | FormatReferenceStructuredObject)[];
+}
+
+export interface V1Product extends V1ProductInput {
+  description?: string;
   format_ids: V1FormatId[];
   [k: string]: unknown;
+}
+
+export type ProjectionProductInput = V1ProductInput & V2ProductInput;
+
+/** Narrow an untrusted decoded record before passing it to a product projector. */
+export function isProjectionProductInput(value: unknown): value is ProjectionProductInput {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const product = value as Record<string, unknown>;
+  return (
+    typeof product.product_id === 'string' &&
+    typeof product.name === 'string' &&
+    (product.description === undefined || typeof product.description === 'string') &&
+    (Array.isArray(product.format_ids) || Array.isArray(product.format_options))
+  );
 }
 
 /**

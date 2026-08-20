@@ -929,6 +929,7 @@ export function registerDefaultInvariants(): void {
       // `${resource_type}:${resource_id}` → last-observed state. Tuple key
       // disambiguates the unlikely `media_buy_id` / `creative_id` collision.
       ctx.state.history = new Map<string, MonotonicState>();
+      ctx.state.statusMonotonicEligibleStepCount = 0;
     },
     onStep: (ctx, stepResult) => {
       // Skip error / skipped / negative-path steps. An errored read doesn't
@@ -940,6 +941,8 @@ export function registerDefaultInvariants(): void {
       const body = (stepResult as unknown as { response?: unknown }).response;
       if (!body || typeof body !== 'object') return [];
       if (extractAdcpError(stepResult)) return [];
+      ctx.state.statusMonotonicEligibleStepCount =
+        ((ctx.state.statusMonotonicEligibleStepCount as number | undefined) ?? 0) + 1;
 
       const history = ctx.state.history as Map<string, MonotonicState>;
       const observations = extractStatusObservations(stepResult.task, body as Record<string, unknown>);
@@ -1019,6 +1022,7 @@ export function registerDefaultInvariants(): void {
     // and every per-step assertion record passed. Companion to
     // adcontextprotocol/adcp#2834.
     onEnd: ctx => {
+      if (((ctx.state.statusMonotonicEligibleStepCount as number | undefined) ?? 0) === 0) return [];
       const history = ctx.state.history as Map<string, MonotonicState> | undefined;
       const observation_count = history?.size ?? 0;
       return [
@@ -1148,6 +1152,8 @@ export function registerDefaultInvariants(): void {
      * grade — surfaced so reviewers see the gap at run-time.
      */
     offlineObservationsByFamily: Map<string, number>;
+    /** Successful non-error steps on which lifecycle state could be observed. */
+    eligibleStepCount: number;
   }
 
   const IMPAIRMENT_STATE_KEY = 'impairmentCoherence';
@@ -1170,6 +1176,7 @@ export function registerDefaultInvariants(): void {
         observedTransition: false,
         observedBuySnapshot: false,
         offlineObservationsByFamily: new Map(),
+        eligibleStepCount: 0,
       };
       ctx.state[IMPAIRMENT_STATE_KEY] = state;
     },
@@ -1182,6 +1189,7 @@ export function registerDefaultInvariants(): void {
       if (extractAdcpError(stepResult)) return [];
 
       const state = getImpairmentState(ctx);
+      state.eligibleStepCount += 1;
 
       type CoherenceResult = {
         passed: boolean;
@@ -1397,6 +1405,7 @@ export function registerDefaultInvariants(): void {
     // silent pass with false confidence.
     onEnd: ctx => {
       const state = ctx.state[IMPAIRMENT_STATE_KEY] as ImpairmentCoherenceState | undefined;
+      if (!state || state.eligibleStepCount === 0) return [];
       const exercised = Boolean(state?.observedTransition && state?.observedBuySnapshot);
       const results: Omit<import('./types').AssertionResult, 'assertion_id' | 'scope'>[] = [
         {

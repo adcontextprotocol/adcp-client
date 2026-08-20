@@ -311,6 +311,7 @@ export {
 export {
   MediaBuyLifecycleCoordinator,
   MediaBuyLifecycleCompatibilityError,
+  LegacyPurchaseContinuationError,
   negotiateMediaBuyLifecycle,
   type CompatibleDeclineProposalsResponse,
   type CompatibleDeclineProposalsWireResponse,
@@ -337,7 +338,27 @@ export {
   type MediaBuyCompatibilityReport,
   type MediaBuyLifecycle,
   type MediaBuyLifecycleCoordinatorOptions,
+  type LegacyPurchaseContinuationErrorCode,
 } from './media-buy/compatibility';
+export {
+  InMemoryLegacyPurchaseContinuationStore,
+  createInMemoryLegacyPurchaseContinuationStore,
+  type InMemoryLegacyPurchaseContinuationStoreOptions,
+  type LegacyPurchaseBinding,
+  type LegacyPurchaseClaim,
+  type LegacyPurchaseClaimRequest,
+  type LegacyPurchaseClaimResult,
+  type LegacyPurchaseCompleteResult,
+  type LegacyPurchaseContinuationRecord,
+  type LegacyPurchaseContinuationStore,
+  type LegacyPurchaseCreateResult,
+  type LegacyPurchaseLoss,
+  type LegacyPurchaseOperation,
+  type LegacyPurchaseReconciliationResult,
+  type LegacyPurchaseSourceVersion,
+  type LegacyPurchaseTerminalResult,
+  type ReconcileLegacyPurchase,
+} from './media-buy/legacy-purchase-continuation';
 export {
   ADCPMultiAgentClient,
   createADCPMultiAgentClient,
@@ -1090,6 +1111,7 @@ export type {
   // in core.generated, no longer transitively pulled into tools.generated now
   // that BriefAsset merges its allOf[$ref] base inline.
   CreativeBrief,
+  CompatibilityPurchaseCoordinatorInput,
 } from './types/core.generated';
 
 // ====== WELL-KNOWN FILE TYPES ======

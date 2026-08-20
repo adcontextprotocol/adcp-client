@@ -583,6 +583,7 @@ _Request:_
   media_buy_id: string  // required
   revision: integer  // required
   adcp_version: Adcp_version
+  name: string
   paused: boolean
   canceled: 'true'
   cancellation_reason: string

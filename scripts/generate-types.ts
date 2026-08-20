@@ -1138,6 +1138,12 @@ export function enforceStrictSchema(schema: any): any {
           return false;
         }
         if (keys.length === 1 && keys[0] === 'not') return false;
+        // Array `contains` clauses are runtime-only membership validators.
+        // Keeping them in the TypeScript projection makes jsts intersect an
+        // object placeholder with the actual array (`{} & T[]`), which then
+        // causes ts-to-zod to reject every array at runtime. The Zod generator
+        // restores the beta.4 continuation membership constraints explicitly.
+        if (keys.length === 1 && keys[0] === 'contains') return false;
         // Conditional validators are exclusively `if` / `then` / `else`.
         // Drop members composed only of those keys.
         if (

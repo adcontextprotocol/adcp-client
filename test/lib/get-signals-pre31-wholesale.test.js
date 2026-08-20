@@ -63,7 +63,7 @@ function makeModernClientTargeting30(protocol = 'mcp', config = {}, capabilityOv
       protocol,
     },
     {
-      adcpVersion: '3.2.0-beta.3',
+      adcpVersion: '3.2.0-beta.4',
       validateFeatures: false,
       validation: { requests: 'off', responses: 'off' },
       ...config,
@@ -284,7 +284,7 @@ describe('modern client cold-call downgrade to a 3.0 seller', () => {
         {
           buildVersion: '3.2.0',
           supportedVersions: ['3.0'],
-          _raw: { adcp_version: '3.2-beta.3' },
+          _raw: { adcp_version: '3.2-beta.4' },
         }
       );
       await assert.rejects(
@@ -297,7 +297,7 @@ describe('modern client cold-call downgrade to a 3.0 seller', () => {
       const client = makeModernClientTargeting30(
         protocol,
         {},
-        { supportedVersions: undefined, _raw: { adcp_version: '3.2-beta.3' } }
+        { supportedVersions: undefined, _raw: { adcp_version: '3.2-beta.4' } }
       );
       const originalCallTool = ProtocolClient.callTool;
       const calls = [];

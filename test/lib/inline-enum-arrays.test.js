@@ -103,10 +103,15 @@ describe('Inline-union value arrays (inline-enums.generated)', () => {
       // pattern (verified: every emitted core is `union` or
       // `array(union)`, never `union([string, array(union)])`); the
       // negative-case test below pins that invariant.
+      // Some array properties additionally require a complete combination
+      // (for example, beta.4 continuation loss consent requires two named
+      // losses). In that case each enum member is valid as part of the full
+      // generated set even though a singleton array is intentionally invalid.
+      const completeArray = propSchema.safeParse(values);
       for (const v of values) {
         const single = propSchema.safeParse(v);
         const wrapped = propSchema.safeParse([v]);
-        if (!single.success && !wrapped.success) {
+        if (!single.success && !wrapped.success && !completeArray.success) {
           mismatches.push(`${exportName}: ${schemaName}.${propKey} rejected ${JSON.stringify(v)}`);
         }
       }

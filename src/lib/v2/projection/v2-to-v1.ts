@@ -44,7 +44,7 @@
  * emitted them.
  */
 
-import type { V2Product, V2ProductFormatDeclaration, V1Product, V1FormatId, ProjectionDiagnostic } from './types';
+import type { V2ProductInput, V2ProductFormatDeclaration, V1Product, V1FormatId, ProjectionDiagnostic } from './types';
 import { reverseLookup } from './registry';
 import { isCanonicalV1Translatable } from './canonical-properties';
 import { findCatalogEntryByCanonicalAndSize, parseSizedIdTemplate } from './catalog';
@@ -472,12 +472,13 @@ function projectDeclaration(
  * sending to a v1-only seller (the spec requires `format_ids` to have
  * minItems: 1).
  */
-export function projectV2ProductToV1(v2: V2Product, options?: V2ToV1ProjectionOptions): V2ToV1Result {
+export function projectV2ProductToV1(v2: V2ProductInput, options?: V2ToV1ProjectionOptions): V2ToV1Result {
   const format_ids: V1FormatId[] = [];
   const diagnostics: ProjectionDiagnostic[] = [];
 
-  for (let i = 0; i < v2.format_options.length; i++) {
-    const decl = v2.format_options[i]!;
+  const inputFormatOptions = v2.format_options ?? [];
+  for (let i = 0; i < inputFormatOptions.length; i++) {
+    const decl = inputFormatOptions[i]! as V2ProductFormatDeclaration;
     const field = `products[${v2.product_id}].format_options[${i}]`;
     const { v1, diagnostic } = projectDeclaration(decl, v2.product_id, field, options);
     if (v1) {
@@ -493,7 +494,7 @@ export function projectV2ProductToV1(v2: V2Product, options?: V2ToV1ProjectionOp
   const { format_options: _drop, ...rest } = v2;
   void _drop;
   const v1Product: V1Product = {
-    ...(rest as Omit<V2Product, 'format_options'>),
+    ...(rest as Omit<V2ProductInput, 'format_options'>),
     format_ids,
   } as V1Product;
 

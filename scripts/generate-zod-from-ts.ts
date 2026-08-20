@@ -619,6 +619,137 @@ function postProcessPostalAreaValues(content: string): string {
   return content.slice(0, schemaStart) + correctedBlock + content.slice(schemaEnd);
 }
 
+/** Restore the closed beta.4 SDK-local continuation schema exactly. */
+function postProcessCompatibilityPurchaseCoordinatorInput(content: string): string {
+  const startMarker = 'export const CompatibilityPurchaseCoordinatorInputSchema = ';
+  const endMarker = '\n\nexport const OutcomeTargetSchema = ';
+  const start = content.indexOf(startMarker);
+  if (start < 0) throw new Error('CompatibilityPurchaseCoordinatorInputSchema was not generated.');
+  const end = content.indexOf(endMarker, start);
+  if (end < 0) throw new Error('Could not locate the end of CompatibilityPurchaseCoordinatorInputSchema.');
+  const replacement = `export const CompatibilityPurchaseCoordinatorInputSchema = z.object({
+    idempotency_key: z.uuid(),
+    continuation_token: z.string().min(16),
+    account: AccountReferenceSchema,
+    selected_product_ids: z.array(z.string().min(1)).min(1).superRefine((ids, ctx) => {
+        if (new Set(ids).size !== ids.length) ctx.addIssue({ code: "custom", message: "selected_product_ids must be unique" });
+    }),
+    accepted_losses: z.array(z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")])).min(2).superRefine((losses, ctx) => {
+        if (new Set(losses).size !== losses.length) ctx.addIssue({ code: "custom", message: "accepted_losses must be unique" });
+        for (const required of ["feed_version_not_atomic", "pricing_version_not_atomic"] as const) {
+            if (!losses.includes(required)) ctx.addIssue({ code: "custom", message: \`accepted_losses must contain \${required}\` });
+        }
+    }),
+    legacy_create_request: z.object({}).passthrough().refine(value => Object.keys(value).length > 0, "legacy_create_request must not be empty")
+}).strict();`;
+  return `${content.slice(0, start)}${replacement}${content.slice(end)}`;
+}
+
+/** Restore beta.4 runtime-only membership constraints on projected legacy continuations. */
+function postProcessLegacyPurchaseContinuationResponse(content: string): string {
+  const schemaStart = content.indexOf('export const RequestProposalsResponseSchema = ');
+  const schemaEnd = content.indexOf('\n\nexport const RefineProposalsResponseSchema = ', schemaStart);
+  if (schemaStart < 0 || schemaEnd < 0) {
+    throw new Error('Could not locate RequestProposalsResponseSchema.');
+  }
+  const block = content.slice(schemaStart, schemaEnd);
+  const armPattern =
+    /z\.object\(\{\n\s+kind: z\.literal\("legacy_create"\),[\s\S]*?requires_explicit_acceptance: z\.literal\(true\)\n\s+\}\)\.passthrough\(\)/;
+  const match = block.match(armPattern);
+  if (!match) {
+    throw new Error('Could not locate the legacy_create purchase continuation response arm.');
+  }
+  const refinedArm = `${match[0]}.superRefine((value, ctx) => {
+            if (value.product_ids.length === 0) {
+                ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must contain at least one entry" });
+            }
+            if (value.product_ids.some(productId => productId.length === 0)) {
+                ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must not contain empty IDs" });
+            }
+            if (new Set(value.product_ids).size !== value.product_ids.length) {
+                ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must be unique" });
+            }
+            if (value.losses.length < 2) {
+                ctx.addIssue({ code: "custom", path: ["losses"], message: "losses must contain at least two entries" });
+            }
+            if (new Set(value.losses).size !== value.losses.length) {
+                ctx.addIssue({ code: "custom", path: ["losses"], message: "losses must be unique" });
+            }
+            for (const required of ["feed_version_not_atomic", "pricing_version_not_atomic"] as const) {
+                if (!value.losses.includes(required)) {
+                    ctx.addIssue({ code: "custom", path: ["losses"], message: \`losses must contain \${required}\` });
+                }
+            }
+            if (value.source_adcp_version === "2.5" && !value.losses.includes("mutation_idempotency_not_guaranteed")) {
+                ctx.addIssue({ code: "custom", path: ["losses"], message: "AdCP 2.5 losses must contain mutation_idempotency_not_guaranteed" });
+            }
+        })`;
+  const corrected = block.replace(armPattern, refinedArm);
+  const suffix = '}).passthrough());';
+  if (!corrected.endsWith(suffix)) {
+    throw new Error('RequestProposalsResponseSchema has an unexpected generated suffix.');
+  }
+  const rootRefinement = `}).passthrough()).superRefine((value, ctx) => {
+    const present = (field: string): boolean => Object.prototype.hasOwnProperty.call(value, field);
+    const requireNonEmptyArray = (field: "products" | "proposals"): void => {
+        if (!Array.isArray(value[field]) || value[field].length === 0) {
+            ctx.addIssue({ code: "custom", path: [field], message: \`\${field} must contain at least one entry\` });
+        }
+    };
+    const forbid = (fields: readonly string[]): void => {
+        for (const field of fields) {
+            if (present(field)) ctx.addIssue({ code: "custom", path: [field], message: \`\${field} is forbidden for this outcome\` });
+        }
+    };
+    forbid(["refinement_applied", "pagination", "unchanged", "wholesale_feed_version"]);
+    if (value.suggestions !== undefined && (value.suggestions.length === 0 || value.suggestions.some(suggestion => suggestion.length === 0))) {
+        ctx.addIssue({ code: "custom", path: ["suggestions"], message: "suggestions must contain non-empty strings" });
+    }
+    if (value.incomplete !== undefined && value.incomplete.length === 0) {
+        ctx.addIssue({ code: "custom", path: ["incomplete"], message: "incomplete must contain at least one entry" });
+    }
+    if (value.outcome === "proposed") {
+        requireNonEmptyArray("proposals");
+        requireNonEmptyArray("products");
+        forbid(["reason", "suggestions", "purchase_continuation", "task_id"]);
+    } else if (value.outcome === "products_available") {
+        requireNonEmptyArray("products");
+        if (!present("purchase_continuation")) {
+            ctx.addIssue({ code: "custom", path: ["purchase_continuation"], message: "purchase_continuation is required" });
+        }
+        forbid(["proposals", "reason", "suggestions", "task_id"]);
+        if (value.purchase_continuation?.kind === "listed_purchase") {
+            const ids = value.purchase_continuation.product_ids;
+            if (ids.length === 0 || ids.some(productId => productId.length === 0)) {
+                ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "product_ids must contain non-empty IDs" });
+            }
+            if (new Set(ids).size !== ids.length) {
+                ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "product_ids must be unique" });
+            }
+            const returnedIds = (value.products ?? []).map(product => product.product_id);
+            if (returnedIds.length !== ids.length || !returnedIds.every(productId => ids.includes(productId))) {
+                ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "listed product_ids must exactly match returned products" });
+            }
+            for (const [index, product] of (value.products ?? []).entries()) {
+                if (!Array.isArray(product.pricing_options) || product.pricing_options.length === 0) {
+                    ctx.addIssue({ code: "custom", path: ["products", index, "pricing_options"], message: "listed products require pricing_options" });
+                }
+            }
+            for (const [index, incomplete] of (value.incomplete ?? []).entries()) {
+                if (["products", "pricing", "wholesale_feed"].includes(incomplete.scope)) {
+                    ctx.addIssue({ code: "custom", path: ["incomplete", index, "scope"], message: "listed purchase cannot report incomplete product or pricing data" });
+                }
+            }
+        }
+    } else if (value.outcome === "rejected") {
+        if (!present("reason")) ctx.addIssue({ code: "custom", path: ["reason"], message: "reason is required" });
+        forbid(["proposals", "products", "incomplete", "purchase_continuation", "task_id"]);
+    }
+});`;
+  const constrained = corrected.slice(0, -suffix.length) + rootRefinement;
+  return content.slice(0, schemaStart) + constrained + content.slice(schemaEnd);
+}
+
 /** Replace the lossy TS round-trip with Zod generated from the dereferenced canonical wire schema. */
 function postProcessCanonicalProposalRuntimeConstraints(content: string, exactSchemaExpression: string): string {
   const schemaStart = content.indexOf('export const CanonicalProposalSchema = ');
@@ -2661,6 +2792,8 @@ async function generateZodSchemas() {
     zodSchemas = postProcessCanonicalFormatSlots(zodSchemas);
     zodSchemas = postProcessCreativeBriefRequiredDisclosures(zodSchemas);
     zodSchemas = postProcessPostalAreaValues(zodSchemas);
+    zodSchemas = postProcessCompatibilityPurchaseCoordinatorInput(zodSchemas);
+    zodSchemas = postProcessLegacyPurchaseContinuationResponse(zodSchemas);
     const refineResponseSource = JSON.parse(
       readFileSync(
         path.join(__dirname, '../schemas/cache/latest/bundled/media-buy/refine-proposals-response.json'),

@@ -564,7 +564,7 @@ describe('status.monotonic onEnd emits run-level observation_count', () => {
   require('../../dist/lib/testing/storyboard/default-invariants.js');
   const { getAssertion } = require('../../dist/lib/testing/storyboard/assertions.js');
 
-  it('emits observation_count: 0 when the run observed no lifecycle resources', async () => {
+  it('emits no record when the run had no eligible non-error steps', async () => {
     const spec = getAssertion('status.monotonic');
     assert.ok(spec.onEnd, 'status.monotonic must define onEnd to surface the silent signal');
 
@@ -574,15 +574,14 @@ describe('status.monotonic onEnd emits run-level observation_count', () => {
     spec.onStart?.(ctx);
 
     const records = await spec.onEnd(ctx);
-    assert.strictEqual(records.length, 1);
-    assert.strictEqual(records[0].passed, true);
-    assert.strictEqual(records[0].observation_count, 0);
+    assert.strictEqual(records.length, 0);
   });
 
   it('emits observation_count > 0 when history accumulated entries during the run', async () => {
     const spec = getAssertion('status.monotonic');
     const ctx = { state: {}, storyboardContext: undefined };
     spec.onStart?.(ctx);
+    ctx.state.statusMonotonicEligibleStepCount = 1;
     // Reach into history directly — equivalent end-of-run state to having
     // observed two distinct resources.
     ctx.state.history.set('media_buy:abc', { stepId: 's1', status: 'active' });

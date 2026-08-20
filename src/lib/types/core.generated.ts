@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.2.0-beta.3
-// Generated at: 2026-08-20T08:36:34.306Z
+// Generated AdCP core types from official schemas v3.2.0-beta.4
+// Generated at: 2026-08-20T19:56:16.188Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -268,6 +268,12 @@ export type AudioDistributionType =
  * Legacy authentication schemes for the webhook auth block. Bearer: token sent in Authorization header. HMAC-SHA256: legacy shared-secret signing. Both are deprecated; new integrations SHOULD omit the authentication block and use the RFC 9421 webhook signing profile (applicable on schemas where authentication is optional). Removed in AdCP 4.0.
  */
 export type AuthenticationScheme = 'Bearer' | 'HMAC-SHA256';
+
+// AVAILABILITYSTATUS CANONICAL ENUM
+/**
+ * Bookability of the inventory a forecast row describes, as of the forecast's generated_at. A snapshot, never a hold: valid_until bounds freshness, and proposal finalization or purchase remains the commitment boundary.
+ */
+export type AvailabilityStatus = 'available' | 'unavailable';
 
 // AVAILABLEMETRIC CANONICAL ENUM
 /**
@@ -1263,7 +1269,7 @@ export type MarkdownFlavor = 'commonmark' | 'gfm';
 
 // MATCHIDTYPE CANONICAL ENUM
 /**
- * Identifier types for audience match reporting. Combines hashed PII types (from audience-member.json field names) with universal ID types (from uid-type.json).
+ * Identifier types for audience match reporting. Combines hashed PII types (from audience-member.json field names) with token types from uid-type.json, including publisher-scoped PAIR identifiers.
  */
 export type MatchIDType =
   | 'hashed_email'
@@ -1315,6 +1321,7 @@ export type MediaBuyValidAction =
   | 'pause'
   | 'resume'
   | 'cancel'
+  | 'update_name'
   | 'extend_flight'
   | 'shorten_flight'
   | 'update_flight_dates'
@@ -1869,7 +1876,7 @@ export type TravelTimeUnit = 'min' | 'hr';
 
 // UIDTYPE CANONICAL ENUM
 /**
- * Type of user identifier. Used in audience sync, event logging, and TMP identity match requests to tell the receiver which identity graph to resolve against.
+ * Type of user identifier. Used in audience sync, event logging, and TMP identity match requests to tell the receiver how to interpret and resolve the identifier; some types, including PAIR, are publisher-scoped rather than universal identity-graph tokens.
  */
 export type UIDType =
   | 'rampid'
@@ -3256,7 +3263,7 @@ export type PropertyTag = string;
 
 // FORECASTPOINT PRIORITY CANONICAL SCHEMA
 /**
- * Dimension constraints represented by this forecast point, such as country, region, placement, device type, platform, audience, signal value, or intersections such as placement x country or product x signal. Each item declares one dimension family; when multiple items are present, the point represents their intersection. Sellers MUST NOT emit more than one item for each `kind` on a point; consumers MUST NOT treat repeated kinds as OR semantics. Use multiple points with dimensions to expose country/placement/signal availability within one product, proposal, or signal coverage forecast without creating separate products solely for each dimension. Dimensions describe the forecast row and are independent of pricing_options.
+ * Dimension constraints represented by this forecast point, such as country, region, placement, device type, platform, audience, signal value, time window, or intersections such as placement x country or product x signal. Each item declares one dimension family; when multiple items are present, the point represents their intersection. Sellers MUST NOT emit more than one item for each `kind` on a point; consumers MUST NOT treat repeated kinds as OR semantics. Use multiple points with dimensions to expose country/placement/signal availability within one product, proposal, or signal coverage forecast without creating separate products solely for each dimension. Dimensions describe the forecast row and are independent of pricing_options.
  *
  * @minItems 1
  */
@@ -3268,6 +3275,7 @@ export type ForecastPointDimensions = [
     | DevicePlatformForecastDimension
     | AudienceForecastDimension
     | SignalForecastDimension
+    | TimeForecastDimension
   ),
   ...(
     | GeoForecastDimension
@@ -3276,6 +3284,7 @@ export type ForecastPointDimensions = [
     | DevicePlatformForecastDimension
     | AudienceForecastDimension
     | SignalForecastDimension
+    | TimeForecastDimension
   )[]
 ];
 /**
@@ -3414,6 +3423,7 @@ export interface ForecastPoint {
    */
   product_id?: string;
   dimensions?: ForecastPointDimensions;
+  availability_status?: AvailabilityStatus;
   /**
    * Forecasted metric values. Keys are forecastable-metric enum values for delivery/engagement or event-type enum values for outcomes. Values are ForecastRange objects (low/mid/high). Use { "mid": value } for point estimates. When budget is present, these are the expected metrics at that spend level. When budget is omitted, these represent total available inventory — use spend to express the estimated cost. Additional keys beyond the documented properties are allowed for event-type values (purchase, lead, app_install, etc.).
    */
@@ -3551,6 +3561,23 @@ export interface AudienceForecastDimension {
   audience_name?: string;
 }
 /**
+ * A calendar-window dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules. Windows are half-open intervals [start_time, end_time): the row covers instants at or after start_time and strictly before end_time, so adjacent windows share a boundary without overlapping. end_time MUST be after start_time; JSON Schema draft-07 cannot compare sibling values, so conformance tooling enforces the ordering. Within one forecast, sellers MUST emit non-overlapping windows and SHOULD coalesce adjacent windows whose availability_status and metrics do not materially differ. When the request scoped the forecast with offer_filters.availability_horizon, a complete forecast partitions the requested horizon; a seller that cannot cover the full horizon signals the gap through the response's incomplete[] mechanism rather than silently omitting windows.
+ */
+export interface TimeForecastDimension {
+  /**
+   * Dimension family discriminator.
+   */
+  kind: 'time';
+  /**
+   * Inclusive window start (RFC 3339 date-time with timezone offset).
+   */
+  start_time: string;
+  /**
+   * Exclusive window end (RFC 3339 date-time with timezone offset). MUST be after start_time.
+   */
+  end_time: string;
+}
+/**
  * A forecasted value for a vendor-defined metric, emitted on ForecastPoint.vendor_metric_values parallel to delivery-metrics vendor_metric_values. The envelope mirrors VendorMetricValue but uses ForecastRange for value and measurable_impressions because forecasts may carry low/mid/high bounds instead of actual delivered values.
  */
 export interface ForecastVendorMetricValue {
@@ -3569,6 +3596,16 @@ export interface ForecastVendorMetricValue {
   };
 }
 // TARGETINGOVERLAYSUPPORT PRIORITY CANONICAL SCHEMA
+export type CountrySupport =
+  | Supported
+  | {
+      /**
+       * Maximum number of country values accepted in this targeting field on one package.
+       * @minimum 1
+       */
+      max_values_per_package: number;
+      ext?: ExtensionObject;
+    };
 export type Supported = true;
 export type MetroSupport =
   | Supported
@@ -3640,8 +3677,8 @@ export type KeywordSupport =
  * Product-scoped package targeting dimensions that may be supplied or changed after discovery. This is the seller response shape and may disclose seller limits such as max_values_per_package and max_packages. Product.overlay_support is the binding selectable-targeting contract: presence means the seller can apply protocol-valid values within the declared systems, countries, values, types, versions, and limits. Inherent product coverage alone does not satisfy a future-support requirement. Support does not guarantee inventory or a value-specific forecast before values are supplied; fixed prices and floors remain binding for supported selections. geo_regions and geo_regions_exclude are independent: structured support either exhaustively declares every value active in the seller's support snapshot for a country or lists the exact finite selectable subset. Buyer minimums use targeting-overlay-requirements.json. A requirement value of true matches true or any valid support object; an object requirement matches true or a containing support object. Every valid structured support object represents a positive capability; empty, extension-only, and false-only objects are invalid. Unrequested object fields and numeric seller limits do not participate in matching.
  */
 export interface TargetingOverlaySupport {
-  geo_countries?: Supported;
-  geo_countries_exclude?: Supported;
+  geo_countries?: CountrySupport;
+  geo_countries_exclude?: CountrySupport;
   geo_regions?: Supported | GeographicRegionSupport;
   geo_regions_exclude?: Supported | GeographicRegionSupport;
   geo_metros?: MetroSupport;
@@ -3657,6 +3694,11 @@ export interface TargetingOverlaySupport {
         travel_time?: Supported;
         geometry?: Supported;
         transport_modes?: TransportMode[];
+        /**
+         * Maximum number of proximity entries accepted on one package.
+         * @minimum 1
+         */
+        max_values_per_package?: number;
         ext?: ExtensionObject;
       };
   daypart_targets?: Supported;
@@ -6091,7 +6133,7 @@ export interface PackageUpdate {
    */
   paused?: boolean;
   /**
-   * Cancel this specific package. Cancellation is irreversible — canceled packages stop delivery and cannot be reactivated. Sellers MAY reject with NOT_CANCELLABLE.
+   * Cancel this specific package. Cancellation is irreversible — canceled packages stop delivery and cannot be reactivated. When true, package cancellation takes precedence over sibling fields on this package: the seller applies only canceled and cancellation_reason for this package and SHOULD return a structured warning naming ignored sibling fields. Root fields and other package updates still participate in the same atomic update when root canceled is absent. Sellers MAY reject with NOT_CANCELLABLE.
    */
   canceled?: true;
   /**
@@ -16476,6 +16518,8 @@ export type RequestProposalsResponse = (
       status?: 'completed';
     }
   | {
+    }
+  | {
       outcome: 'rejected';
       status?: 'completed';
     }
@@ -16485,7 +16529,7 @@ export type RequestProposalsResponse = (
    * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
    */
   adcp_version?: string;
-  outcome?: 'proposed' | 'rejected';
+  outcome?: 'proposed' | 'products_available' | 'rejected';
   reason?: string;
   /**
    * @minItems 1
@@ -16508,6 +16552,48 @@ export type RequestProposalsResponse = (
    * @minItems 1
    */
   products?: [CanonicalProduct, ...CanonicalProduct[]];
+  /**
+   * Usable partial discovery result retained from the established get_products response. Absence means the source response did not declare an incomplete scope; it does not authorize an adapter to infer missing proposal terms.
+   *
+   * @minItems 1
+   */
+  incomplete?: [
+    {
+      scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
+      description: string;
+      estimated_wait?: Duration;
+    },
+    ...{
+      scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
+      description: string;
+      estimated_wait?: Duration;
+    }[]
+  ];
+  /**
+   * @deprecated
+   * Deprecated AdCP 3.x projection instruction for purchasing products returned without a proposal. This is coordinator state, not a claim that the established seller implements a compact task. A native 3.2 seller MUST NOT emit it.
+   */
+  purchase_continuation?:
+    | {
+        kind: 'listed_purchase';
+        /**
+         * Exact products the coordinator promoted and re-read through account-scoped list_products before returning this result. The set MUST match products[].product_id.
+         *
+         * @minItems 1
+         */
+        product_ids: [string, ...string[]];
+        cache_scope: 'account';
+        /**
+         * Real seller-issued account-scoped feed fence obtained by re-reading the promoted products through list_products.
+         */
+        feed_version: string;
+        /**
+         * Real seller-issued pricing fence from the same account-scoped list_products response, when the seller versions pricing independently.
+         */
+        pricing_version?: string;
+      }
+    | {
+      };
   targeting_resolution?: ProductDiscoveryTargetingResolution;
   status?: 'completed' | 'submitted';
   task_id?: string;
@@ -17218,6 +17304,7 @@ export type CanonicalMediaBuyAction =
         | 'pause'
         | 'resume'
         | 'cancel'
+        | 'update_name'
         | 'increase_budget'
         | 'decrease_budget'
         | 'reallocate_budget'
@@ -18703,6 +18790,7 @@ export interface CanonicalForecastPoint {
   budget?: number;
   product_id?: string;
   dimensions?: ForecastPointDimensions;
+  availability_status?: AvailabilityStatus;
   metrics: {
     [k: string]: ForecastRange | undefined;
   };
@@ -28395,13 +28483,30 @@ export interface ProductOfferFilters {
    */
   min_exposures?: number;
   /**
+   * Fixed-flight availability filter: with end_date, declares the exact flight the buyer intends to run. Returned products MUST be able to serve that flight, and pricing and forecasts are scoped to it. Mutually exclusive with availability_horizon.
    * @format date
    */
   start_date?: string;
   /**
+   * Fixed-flight availability filter end. See start_date. Mutually exclusive with availability_horizon.
    * @format date
    */
   end_date?: string;
+  /**
+   * Flexible-window availability discovery: the buyer is open to any bookable window inside [start_time, end_time) and asks the seller to describe when the returned inventory can run, instead of filtering to one exact flight. Sellers that support this field partition the horizon into time-dimensioned forecast rows (forecast-dimension-time) carrying availability_status; sellers that cannot cover the full horizon signal the gap via the response's incomplete[] mechanism. Unlike start_date/end_date this is not an eligibility filter — products remain returnable when only part of the horizon is open. The resulting availability is a snapshot bounded by the forecast's valid_until, never a hold. Mutually exclusive with start_date and end_date, which declare a fixed flight; buyers that already know their dates use those instead.
+   */
+  availability_horizon?: {
+    /**
+     * Inclusive horizon start (RFC 3339 date-time with timezone offset).
+     * @format date-time
+     */
+    start_time: string;
+    /**
+     * Exclusive horizon end (RFC 3339 date-time with timezone offset). MUST be after start_time.
+     * @format date-time
+     */
+    end_time: string;
+  };
   budget_range?: BudgetRange;
   /**
    * Filter by country coverage using ISO 3166-1 alpha-2 codes (e.g., ['US', 'CA', 'GB']). Returns products whose geographic coverage includes at least one of the specified countries. This is a product attribute filter, not a delivery-targeting instruction.
@@ -32695,6 +32800,65 @@ export interface AdCPManifest {
 }
 
 
+// media-buy/legacy-purchase-continuation-input.json
+/**
+ * SDK-local input for redeeming a deprecated products_available legacy_create continuation. This object is consumed by the compatibility coordinator and MUST NOT be sent as an AdCP tool payload. The coordinator validates it, then constructs and validates create_media_buy for the negotiated source version.
+ */
+export interface CompatibilityPurchaseCoordinatorInput {
+  /**
+   * Replay identity for this logical coordinator operation. Exact retries resume the durable operation record instead of redeeming the continuation again.
+   * @format uuid
+   */
+  idempotency_key: string;
+  /**
+   * Opaque token returned by products_available.purchase_continuation.
+   * @minLength 16
+   */
+  continuation_token: string;
+  account: AccountReference;
+  /**
+   * Non-empty subset of the product IDs bound into the continuation.
+   */
+  selected_product_ids: string[];
+  /**
+   * Exact loss set returned with the continuation. Missing, extra, or stale consent fails before mutation.
+   */
+  accepted_losses: ('feed_version_not_atomic' | 'pricing_version_not_atomic' | 'mutation_idempotency_not_guaranteed')[];
+  /**
+   * Proposed create_media_buy payload. Before mutation the coordinator validates this object against create-media-buy-request.json from source_adcp_version, requires explicit-package mode, and requires its package product IDs to equal selected_product_ids.
+   */
+  legacy_create_request: {};
+}
+
+// media-buy/outcome-target.json
+/**
+ * Reverse-forecast planning input: the buyer states the outcome needed and the seller solves for budget. The goal is a compact planning-time object — delivery metrics use the same forecastable-metric vocabulary as forecast points, and outcome events use the same event-type vocabulary — so every permitted goal has a defined answer: the seller responds with total_budget_guidance on proposals and forecasts whose points carry the goal's metric or event key in metrics, using forecast_range_unit 'clicks' or 'conversions' to structure the curve where those units apply. Execution machinery (targets, priorities, event sources, vendor bindings) belongs to the package-level optimization-goal, which shares this vocabulary; buyers carry the same metric or event name from plan to buy. A planning input, not a delivery guarantee — obligations arise only at proposal finalization. Sellers not declaring media_buy.outcome_target MUST reject the field with UNSUPPORTED_FEATURE rather than silently ignore it; declaring sellers MAY reject a goal they cannot plan against (for example 'spend', which restates budget) with INVALID_REQUEST naming criteria.outcome_target.goal.
+ */
+export interface OutcomeTarget {
+  /**
+   * The outcome to plan against: a seller-tracked delivery metric or an advertiser conversion event.
+   */
+  goal:
+    | {
+        kind: 'metric';
+        metric: ForecastableMetric;
+      }
+    | {
+        kind: 'event';
+        event_type: EventType;
+        /**
+         * Required when event_type is 'custom'. Platform-specific name for the custom event.
+         * @minLength 1
+         */
+        custom_event_name?: string;
+      };
+  /**
+   * Desired total volume of the goal's metric or event across the planned flight.
+   */
+  volume: number;
+}
+
+
 // media-buy/package-control.json
 /**
  * Operational controls for an existing package that remain inside its accepted commercial envelope. targeting_overlay is a complete replacement; keyword add/remove arrays are incremental, and the same keyword MUST NOT appear in both directions. Creative mutation, flight changes, new products, pricing changes, and billing-term changes require their dedicated lifecycle or a refined proposal.
@@ -32757,6 +32921,7 @@ export interface ProductDiscoveryCriteria {
   offer_filters?: ProductOfferFilters;
   targeting_overlay?: TargetingOverlay;
   required_overlay_support?: TargetingOverlayRequirements;
+  outcome_target?: OutcomeTarget;
   catalog?: CatalogSelection;
   policy_ids?: string[];
   ext?: {};

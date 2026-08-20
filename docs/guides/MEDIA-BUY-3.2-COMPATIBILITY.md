@@ -5,9 +5,9 @@ routes it can still **call**. A 3.2 seller should make the compact lifecycle the
 obvious path for new buyers without breaking a 3.0 or 3.1 buyer that already
 calls the established names.
 
-The SDK is pinned to the signed `3.2.0-beta.3` bundle. That exact prerelease
-supersedes beta.2, preserves the compact proposal and direct-buy wire contract,
-and clarifies brand-source and mutation-field invariants.
+The SDK is pinned to the signed `3.2.0-beta.4` bundle. That exact prerelease
+supersedes beta.3 and adds flexible-window availability plus the normative
+products-only legacy purchase-continuation contract.
 
 ## MCP surface comparison
 
@@ -72,7 +72,7 @@ const platform = {
 createAdcpServerFromPlatform(platform, {
   name: 'seller',
   version: '1.0.0',
-  adcpVersion: '3.2.0-beta.3',
+  adcpVersion: '3.2.0-beta.4',
 });
 ```
 
@@ -125,7 +125,7 @@ union, and `CompatibleProposal` is the canonical-or-established proposal union.
 Proposal calls return operation-specific discriminants:
 
 - `requestProposals`: `operation: 'request'` with `outcome: 'proposed' |
-  'rejected' | 'legacy_unavailable'`.
+  'products_available' | 'rejected' | 'legacy_unavailable'`.
 - `refineProposals`: `operation: 'refine'` with native per-refinement
   `results[].outcome` arms, or an explicit `legacy_projected` /
   `legacy_unavailable` top-level outcome.
@@ -154,6 +154,75 @@ a successor. Compact decline
 result arms are runtime-validated and correlated in request order; the coordinator
 accepts both rows that echo `proposal_id` and ordered rows that omit it, while
 rejecting a conflicting echoed ID.
+
+### Products-only legacy continuations
+
+An established 2.5, 3.0, or 3.1 seller may answer a brief with products but no
+proposal. Beta.4 projects that honest result as `products_available`; it never
+invents a proposal, terms digest, or feed fence. The returned
+`purchase_continuation` names the exact products and losses that must be
+accepted before the legacy `create_media_buy` mutation:
+
+```ts
+const continuations = createInMemoryLegacyPurchaseContinuationStore();
+const lifecycle = await agent.negotiateMediaBuyLifecycle({
+  principalScope: authenticatedPrincipalId,
+  // Required for 2.5 sellers that provide no server context ID. Persist this
+  // non-secret authenticated seller/account session ID across rehydration.
+  legacyPurchaseSellerSessionScope: authenticatedSellerSessionId,
+  legacyPurchaseContinuationStore: continuations,
+});
+
+const discovery = await lifecycle.requestProposals({ account, brand, brief });
+if (discovery.status === 'completed' && discovery.data.outcome === 'products_available') {
+  const continuation = discovery.data.purchase_continuation!;
+  await lifecycle.continueLegacyPurchase({
+    idempotency_key: crypto.randomUUID(),
+    continuation_token: continuation.continuation_token,
+    account,
+    selected_product_ids: [continuation.product_ids[0]],
+    accepted_losses: continuation.losses,
+    legacy_create_request: exactLegacyCreateRequest,
+  });
+}
+```
+
+The in-memory store is a single-process reference implementation. Production
+clusters should implement `LegacyPurchaseContinuationStore` with durable,
+atomic issuance, binding verification, operation-wide idempotency indexing,
+and claim operations. The reference store is bounded to 256 records / 4 MiB
+and prunes expired unused or completed records; it deliberately does not evict
+ambiguous mutations. Tokens are principal-, account-, seller-session-,
+source-version-, expiry-, product-, discovery-request-, and full
+observed-response-bound. Re-observing the same discovery returns the same
+token. A claim is consumed at the first mutation; exact retries replay the
+recorded terminal `TaskResult` during the separate 24-hour operation replay
+window (configurable with `legacyPurchaseOperationTtlMs`).
+
+For an AdCP 2.5 seller without a server context ID,
+`legacyPurchaseSellerSessionScope` is required before a continuation can be
+issued. It must be a stable, non-secret ID derived by the application from the
+authenticated seller/account session—not a bearer token. Persist and reuse it
+with the continuation store so a restarted coordinator can redeem or replay
+the same operation without making the token portable to another credentialed
+session.
+
+A transport crash becomes `LegacyPurchaseContinuationError` with
+`code: 'ambiguous'`. `reconcileLegacyPurchase(record, exactInput)` receives the
+durable, secret-safe mutation descriptor (`sourceMutationKey`, selected product
+IDs, and a submitted seller task ID when available) plus the exact retry input.
+It must return a schema-valid terminal `create_media_buy` result found by an
+application-owned natural key. The SDK never blindly repeats an ambiguous
+legacy create or persists webhook credentials from the request.
+
+Native 3.2 sellers cannot return `products_available`. A dual-surface 3.2
+server can serve older buyers through explicit legacy `sales` handlers: the
+SDK keeps those routes callable while omitting their names from the compact
+`tools/list` profile. The application still owns the real legacy
+discovery/create context. The SDK does not derive a synthetic legacy proposal
+or create payload from compact terms; the signed reverse-compatibility vector
+tests that `get_products` followed by `create_media_buy` stays entirely on the
+explicit legacy facade.
 Because compact proposals are immutable, refinement places every source under
 a shared principal-scoped execution fence before dispatch. Only a verified
 `unable` result restores that exact source snapshot; a validated successor adds
@@ -328,7 +397,7 @@ never label the weaker mutation as equivalent.
 
 The coordinator test matrix covers SDK 14 compact-first callers against v2.5,
 3.0, 3.1, 3.2 legacy-only, 3.2 dual-surface (compact preferred and established
-forced), and 3.2 compact-only discovery. Honest raw-MCP 3.0.24, 3.1.15, and
+forced), and 3.2 compact-only discovery. Honest raw-MCP 3.0.25, 3.1.18, and
 3.2 legacy-only fixtures execute direct purchase; pause, resume, cancellation,
 and readback; plus request, finalize, decline, accept, post-accept control, and
 readback for ordinary legacy proposals while

@@ -265,6 +265,11 @@ export const CheckGovernanceResponse_CheckTypeValues = ["intent", "execution"] a
 /** single | CollectionPayload.status */
 export const CollectionPayload_StatusValues = ["active", "stale", "removed"] as const;
 
+// ====== CompatibilityPurchaseCoordinatorInput ======
+
+/** array of | CompatibilityPurchaseCoordinatorInput.accepted_losses */
+export const CompatibilityPurchaseCoordinatorInput_AcceptedLossesValues = ["feed_version_not_atomic", "pricing_version_not_atomic", "mutation_idempotency_not_guaranteed"] as const;
+
 // ====== ControllerError ======
 
 /** single | ControllerError.error */

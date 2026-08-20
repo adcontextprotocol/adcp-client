@@ -64,9 +64,9 @@ describe('conformance: schemaToArbitrary', { concurrency: false }, () => {
       assert.ok(!UPDATE_TIER_TOOLS.includes(tool), `${tool} is not forced into legacy defaults`);
     }
     for (const tool of compactTools) {
-      assert.equal(hasSchemas(tool, { version: '3.2.0-beta.3' }), true, `${tool} 3.2 schemas are loadable`);
-      assert.equal(hasSchemas(tool, { version: '3.1.15' }), false, `${tool} is gated out of 3.1`);
-      assert.equal(hasSchemas(tool, { version: '3.0.24' }), false, `${tool} is gated out of 3.0`);
+      assert.equal(hasSchemas(tool, { version: '3.2.0-beta.4' }), true, `${tool} 3.2 schemas are loadable`);
+      assert.equal(hasSchemas(tool, { version: '3.1.18' }), false, `${tool} is gated out of 3.1`);
+      assert.equal(hasSchemas(tool, { version: '3.0.25' }), false, `${tool} is gated out of 3.0`);
     }
   });
 
@@ -74,15 +74,15 @@ describe('conformance: schemaToArbitrary', { concurrency: false }, () => {
     const versionOnly = prepareConformanceProbeRequest(
       'list_products',
       { adcp_version: '99.99' },
-      { adcpVersion: '3.2.0-beta.3' }
+      { adcpVersion: '3.2.0-beta.4' }
     );
-    assert.equal(versionOnly.adcp_version, '3.2-beta.3');
+    assert.equal(versionOnly.adcp_version, '3.2-beta.4');
     assert.equal(Object.hasOwn(versionOnly, 'adcp_major_version'), false);
 
     const majorOnly = prepareConformanceProbeRequest(
       'get_products',
       { adcp_major_version: 99 },
-      { adcpVersion: '3.1.15' }
+      { adcpVersion: '3.1.18' }
     );
     assert.equal(majorOnly.adcp_major_version, 3);
     assert.equal(Object.hasOwn(majorOnly, 'adcp_version'), false);
@@ -140,8 +140,8 @@ describe('conformance: schemaToArbitrary', { concurrency: false }, () => {
     };
 
     for (const [tool, sample] of Object.entries(samples)) {
-      const probe = prepareConformanceProbeRequest(tool, sample, { fixtures, adcpVersion: '3.2.0-beta.3' });
-      const validate = makeAjv().compile(loadRequestSchema(tool, { version: '3.2.0-beta.3' }));
+      const probe = prepareConformanceProbeRequest(tool, sample, { fixtures, adcpVersion: '3.2.0-beta.4' });
+      const validate = makeAjv().compile(loadRequestSchema(tool, { version: '3.2.0-beta.4' }));
       assert.equal(validate(probe), true, `${tool}: ${JSON.stringify(validate.errors)}`);
     }
 

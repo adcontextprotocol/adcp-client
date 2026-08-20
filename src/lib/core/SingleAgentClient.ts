@@ -225,7 +225,7 @@ import {
 import type { CanonicalFormatLegacyResolutionContext, CanonicalFormatLegacyResolver } from '../v2/projection/v2-to-v1';
 import { toCanonicalOnlyResponse } from '../v2/projection/augment-response';
 import { legacyFormatRefsForDeclaration } from '../v2/projection/legacy-metadata';
-import type { V1FormatId, V1Product } from '../v2/projection/types';
+import { isProjectionProductInput, type V1FormatId, type V1Product } from '../v2/projection/types';
 import { canonicalize as canonicalizeJson } from '../utils/jcs';
 
 type ReadRequestOptions = Pick<TaskOptions, 'signal' | 'transport'>;
@@ -563,15 +563,8 @@ function projectPreparedCanonicalCreativeResponseValue(
   if (!value || typeof value !== 'object') return value;
 
   let projected = value as Record<string, unknown>;
-  const isProduct =
-    typeof projected.product_id === 'string' &&
-    ('name' in projected || 'description' in projected) &&
-    (Array.isArray(projected.format_ids) || Array.isArray(projected.format_options));
-  if (isProduct) {
-    const canonical = toCanonicalOnlyResponse(
-      { products: [projected as unknown as V1Product] },
-      { legacyFormatConverter }
-    );
+  if (isProjectionProductInput(projected)) {
+    const canonical = toCanonicalOnlyResponse({ products: [projected] }, { legacyFormatConverter });
     if (canonical.diagnostics.length > 0 || canonical.response.products.length !== 1) {
       throw new CreativeFormatProjectionError(
         taskType,

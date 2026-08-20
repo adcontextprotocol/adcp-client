@@ -122,7 +122,7 @@ test('builder pins the 3.2 wire envelope and returns an immutable deep snapshot 
   input.context.planning.attempt = 2;
   input.refinements[0].ask = 'Changed after construction';
 
-  assert.equal(built.adcp_version, '3.2-beta.3');
+  assert.equal(built.adcp_version, '3.2-beta.4');
   assert.equal(built.adcp_major_version, 3);
   assert.equal(built.context.planning.attempt, 1);
   assert.equal(built.refinements[0].ask, 'Improve the terms');
@@ -142,7 +142,7 @@ test('builder pins the 3.2 wire envelope and returns an immutable deep snapshot 
 test('canonical request validation requires both 3.2 envelope fields and accepts prerelease pins', () => {
   const canonical = request();
   assert.doesNotThrow(() => validateRefineProposalsRequest(canonical));
-  assert.doesNotThrow(() => validateRefineProposalsRequest({ ...canonical, adcp_version: '3.2-beta.3' }));
+  assert.doesNotThrow(() => validateRefineProposalsRequest({ ...canonical, adcp_version: '3.2-beta.4' }));
   assert.throws(
     () => validateRefineProposalsRequest({ ...canonical, adcp_version: undefined }),
     /adcp_version on the 3\.2 release line/

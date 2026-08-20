@@ -9,6 +9,8 @@ process.env.NODE_ENV = 'test';
 
 const { describe, it, beforeEach } = require('node:test');
 const assert = require('node:assert');
+const { readFileSync } = require('node:fs');
+const path = require('node:path');
 const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning/runtime/from-platform');
 const { PlatformConfigError, validatePlatform } = require('../dist/lib/server/decisioning/runtime/validate-platform');
 const { AccountNotFoundError } = require('../dist/lib/server/decisioning/account');
@@ -18,6 +20,16 @@ const { StaticJwksResolver, InMemoryReplayStore, InMemoryRevocationStore } = req
 const { getSchemaValidatorByRef } = require('../dist/lib/validation/schema-loader');
 const { toCanonicalOnlyResponse } = require('../dist/lib/v2/projection');
 const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/idempotency');
+
+const PRODUCTS_ONLY_BRIEF_VECTORS = JSON.parse(
+  readFileSync(
+    path.resolve(
+      __dirname,
+      '../compliance/cache/3.2.0-beta.4/test-vectors/products-only-brief-compatibility/vectors.json'
+    ),
+    'utf8'
+  )
+);
 
 const validateMcpWebhookPayload = getSchemaValidatorByRef('core/mcp-webhook-payload.json');
 assert.ok(validateMcpWebhookPayload, 'MCP webhook payload schema must compile');
@@ -116,8 +128,8 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'compact-and-legacy',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.3',
-      capabilities: { supported_versions: ['3.0.24', '3.1.15', '3.2.0-beta.3'] },
+      adcpVersion: '3.2.0-beta.4',
+      capabilities: { supported_versions: ['3.0.25', '3.1.18', '3.2.0-beta.4'] },
       validation: { requests: 'off', responses: 'off' },
     });
 
@@ -143,13 +155,13 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       method: 'tools/call',
       params: {
         name: 'list_products',
-        arguments: { adcp_version: '3.2.0-beta.3', account: { account_id: 'acc-modern' } },
+        arguments: { adcp_version: '3.2.0-beta.4', account: { account_id: 'acc-modern' } },
       },
     });
     assert.notStrictEqual(compact.isError, true, JSON.stringify(compact.structuredContent));
     assert.strictEqual(compact.structuredContent.feed_version, 'feed-3.2');
 
-    for (const adcp_version of ['3.1.15', '3.0.24']) {
+    for (const adcp_version of ['3.1.18', '3.0.25']) {
       const legacy = await server.dispatchTestRequest({
         method: 'tools/call',
         params: {
@@ -160,10 +172,91 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       assert.notStrictEqual(legacy.isError, true, JSON.stringify(legacy.structuredContent));
     }
     assert.deepStrictEqual(calls, [
-      ['list_products', '3.2.0-beta.3', 'acc-modern'],
-      ['get_products', '3.1.15', 'acc-3.1.15'],
-      ['get_products', '3.0.24', 'acc-3.0.24'],
+      ['list_products', '3.2.0-beta.4', 'acc-modern'],
+      ['get_products', '3.1.18', 'acc-3.1.18'],
+      ['get_products', '3.0.25', 'acc-3.0.25'],
     ]);
+  });
+
+  it('executes the signed reverse 3.2-seller to 3.1-buyer products-only facade without crossing lifecycles', async () => {
+    const reverse = PRODUCTS_ONLY_BRIEF_VECTORS.reverse_compatibility_cases[0];
+    const vector = PRODUCTS_ONLY_BRIEF_VECTORS.cases[reverse.source_case_index];
+    const calls = [];
+    let retainedSelection;
+    const base = buildPlatform();
+    const platform = buildPlatform({
+      sales: {
+        ...base.sales,
+        getProducts: async request => {
+          calls.push('get_products');
+          assert.strictEqual(request.buying_mode, vector.legacy_request.buying_mode);
+          assert.strictEqual(request.brief, vector.legacy_request.brief);
+          retainedSelection = {
+            productId: vector.legacy_response.products[0].product_id,
+            pricingOptionId: vector.legacy_response.products[0].pricing_options[0].pricing_option_id,
+          };
+          return vector.legacy_response;
+        },
+        createMediaBuy: async request => {
+          calls.push('create_media_buy');
+          assert.ok(retainedSelection, 'legacy discovery context must precede create');
+          assert.strictEqual(request.packages[0].product_id, retainedSelection.productId);
+          assert.strictEqual(request.packages[0].pricing_option_id, retainedSelection.pricingOptionId);
+          return { media_buy_id: 'reverse-vector-buy', packages: [] };
+        },
+      },
+      mediaBuyLifecycle: {
+        proposalRefinement: { supported_dimensions: [] },
+        listProducts: async () => assert.fail('compact list_products must not run'),
+        requestProposals: async () => assert.fail('compact request_proposals must not run'),
+        refineProposals: async () => assert.fail('compact refine_proposals must not run'),
+        declineProposals: async () => assert.fail('compact decline_proposals must not run'),
+        buyProducts: async () => assert.fail('compact buy_products must not run'),
+        acceptProposal: async () => assert.fail('compact accept_proposal must not run'),
+        controlMediaBuy: async () => assert.fail('compact control_media_buy must not run'),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'signed-reverse-compatibility',
+      version: '1.0.0',
+      adcpVersion: '3.2.0-beta.4',
+      capabilities: { supported_versions: ['3.1.18', '3.2.0-beta.4'] },
+      validation: { requests: 'off', responses: 'off' },
+      legacyCreativeFormatConverter: ({ formatId }) =>
+        formatId.id === 'display-300x250'
+          ? {
+              format_option_id: 'display-300x250',
+              format_kind: 'image',
+              params: { width: 300, height: 250 },
+            }
+          : undefined,
+    });
+
+    const listed = await server.dispatchTestRequest({ method: 'tools/list' });
+    assert.ok(!listed.tools.some(tool => ['get_products', 'create_media_buy'].includes(tool.name)));
+    const discovered = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: { ...vector.legacy_request, adcp_version: '3.1' },
+      },
+    });
+    assert.notStrictEqual(discovered.isError, true, JSON.stringify(discovered.structuredContent));
+    assert.strictEqual(discovered.structuredContent.products[0].product_id, retainedSelection.productId);
+    assert.strictEqual(discovered.structuredContent.proposals, undefined);
+    assert.strictEqual(discovered.structuredContent.outcome, undefined);
+    assert.strictEqual(discovered.structuredContent.purchase_continuation, undefined);
+
+    const created = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: { ...vector.continuation_input.legacy_create_request, adcp_version: '3.1' },
+      },
+    });
+    assert.notStrictEqual(created.isError, true, JSON.stringify(created.structuredContent));
+    assert.strictEqual(created.structuredContent.media_buy_id, 'reverse-vector-buy');
+    assert.deepStrictEqual(calls, ['get_products', 'create_media_buy']);
   });
 
   it('supports a compact-only sales platform and derives proposal capabilities', async () => {
@@ -181,7 +274,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'compact-only',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.3',
+      adcpVersion: '3.2.0-beta.4',
       validation: { requests: 'off', responses: 'off' },
     });
 
@@ -214,7 +307,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'scoped-compact',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.3',
+      adcpVersion: '3.2.0-beta.4',
       validation: { requests: 'off', responses: 'off' },
     });
     const response = await server.dispatchTestRequest(
@@ -251,7 +344,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'anonymous-session',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.3',
+      adcpVersion: '3.2.0-beta.4',
       resolveSessionKey: () => 'anonymous-session',
       validation: { requests: 'off', responses: 'off' },
     });
@@ -279,7 +372,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'compact-replay-auth',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.3',
+      adcpVersion: '3.2.0-beta.4',
       idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
       resolveIdempotencyPrincipal: () => 'deliberately-shared-principal',
       resolveSessionKey: () => 'deliberately-shared-session',
@@ -328,7 +421,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'refinement-scope',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.3',
+      adcpVersion: '3.2.0-beta.4',
       validation: { requests: 'off', responses: 'off' },
     });
     const response = await server.dispatchTestRequest(
@@ -6513,7 +6606,7 @@ describe('tasks_get wire tool (B9)', () => {
       assert.strictEqual(status.structuredContent.status, 'submitted');
       assert.strictEqual(status.structuredContent.has_webhook, true);
       assert.strictEqual(status.structuredContent.result, undefined);
-      assert.strictEqual(status.structuredContent.adcp_version, '3.2-beta.3');
+      assert.strictEqual(status.structuredContent.adcp_version, '3.2-beta.4');
 
       const listed = await server.dispatchTestRequest({
         method: 'tools/call',
@@ -7270,7 +7363,7 @@ describe('createAdcpServerFromPlatform — default resolveIdempotencyPrincipal',
       {
         name: 'principal-compat',
         version: '0.0.1',
-        adcpVersion: '3.2.0-beta.3',
+        adcpVersion: '3.2.0-beta.4',
         idempotency,
         validation: { requests: 'off', responses: 'off' },
       }

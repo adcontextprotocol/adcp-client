@@ -31,6 +31,11 @@ export const UPDATE_FIELDS_BY_ACTION: Readonly<
     rollup: null,
     deprecated: false,
   },
+  "update_name": {
+    update_fields: ["name"] as const,
+    rollup: null,
+    deprecated: false,
+  },
   "extend_flight": {
     update_fields: ["end_time", "packages[].end_time"] as const,
     rollup: null,
@@ -141,6 +146,7 @@ export const ACTIONS_BY_FIELD: Readonly<
   "canceled": ["cancel"] as const,
   "cancellation_reason": ["cancel"] as const,
   "end_time": ["extend_flight", "shorten_flight", "update_flight_dates"] as const,
+  "name": ["update_name"] as const,
   "new_packages": ["add_packages"] as const,
   "pacing": ["update_pacing"] as const,
   "packages[].bidding": ["update_bidding"] as const,

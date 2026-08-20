@@ -333,7 +333,7 @@ test('3.1 covers_content_digest: forbidden → signer omits content-digest cover
       agentFor(stub.url),
       'create_media_buy',
       { plan_id: 'plan_001' },
-      { adcpVersion: '3.1.15' }
+      { adcpVersion: '3.1.18' }
     );
     const cmb = stub.state.toolCallHeaders.filter(r => r.toolName === 'create_media_buy')[0];
     assert.ok(cmb.headers['signature-input'], 'request is still signed');

@@ -144,10 +144,10 @@ describe('storyboard runner AdCP version negotiation', () => {
 
     const options = applyStoryboardVersionOptions(
       { adcp_version: CURRENT_PRERELEASE_VERSION, compliance_dir: '/cache/3.2' },
-      { adcpVersion: '3.1.15' }
+      { adcpVersion: '3.1.18' }
     );
 
-    assert.strictEqual(options.adcpVersion, '3.1.15');
+    assert.strictEqual(options.adcpVersion, '3.1.18');
     assert.strictEqual(options.complianceDir, undefined);
   });
 

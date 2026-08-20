@@ -98,7 +98,7 @@ describe('buildComplianceSummary', () => {
     const result = passingResult();
     result.overall_status = 'partial';
     result.completeness = 'timed_out';
-    const s = buildComplianceSummary(result, { sdkVersion: '14.0.0', adcpVersion: '3.2.0-beta.3' });
+    const s = buildComplianceSummary(result, { sdkVersion: '14.0.0', adcpVersion: '3.2.0-beta.4' });
     assert.strictEqual(s.completeness, 'timed_out');
 
     const text = formatComplianceSummaryText(s);

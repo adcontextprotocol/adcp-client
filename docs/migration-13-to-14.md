@@ -1,15 +1,16 @@
 # Migrating from 13.x to 14 beta
 
-SDK 14 adopts AdCP `3.2.0-beta.3` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the beta and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
+SDK 14 adopts AdCP `3.2.0-beta.4` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the beta and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
 
-AdCP 3.2 prereleases are exact protocol pins: beta.3 replaces beta.2 in the
+AdCP 3.2 prereleases are exact protocol pins: beta.4 replaces beta.3 in the
 SDK's compatible-version list rather than extending a rolling 3.2-beta range.
 Beta.1 restored `adcp_major_version` on `buy_products`,
 `accept_proposal`, and `control_media_buy`; the SDK now sends that field again
 for beta.1 and later while retaining its omission only for an explicitly
 configured beta.0 peer. Beta.2 added canonical compact proposal and direct-buy
-storyboards through operational control and MediaBuy readback; beta.3 preserves
-that wire contract and clarifies request invariants.
+storyboards through operational control and MediaBuy readback; beta.4 adds
+flexible-window availability and durable products-only legacy purchase
+continuations.
 
 ```bash
 npm install @adcp/sdk@beta
@@ -52,6 +53,7 @@ loading; keep using `requires_capability` for a singular predicate.
 5. Add handlers only for the 3.2 tools your server actually implements and advertise the same set in capability discovery.
 6. Re-run TypeScript against generated schema imports. Prefer per-tool type slices if the complete schema barrel exhausts the default Node heap.
 7. Exercise mixed-version tests before rollout: 14→3.0, 14→3.1, 14→3.2 beta, and older buyer→14 server where applicable.
+8. If a legacy brief may return products without a proposal, configure a durable `LegacyPurchaseContinuationStore`, stable `principalScope`, and application-owned `reconcileLegacyPurchase(record, exactInput)` callback before offering `continueLegacyPurchase()`. Keep reverse compact-seller → older-buyer handlers application-owned.
 
 ## Existing 3.x calls remain valid
 

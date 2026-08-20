@@ -131,7 +131,17 @@ export {
   type PackageFormatSelectorDimensionDiagnostic,
 } from './write-side';
 
-export type { V1FormatId, V2ProductFormatDeclaration, V2Product, V1Product, ProjectionDiagnostic } from './types';
+export type {
+  V1FormatId,
+  V2ProductFormatDeclaration,
+  V2ProductInput,
+  V2Product,
+  V1ProductInput,
+  V1Product,
+  ProjectionProductInput,
+  ProjectionDiagnostic,
+} from './types';
+export { isProjectionProductInput } from './types';
 export {
   legacyFormatConverterFromCatalogSnapshots,
   canonicalFormatLegacyResolverFromCatalogSnapshots,

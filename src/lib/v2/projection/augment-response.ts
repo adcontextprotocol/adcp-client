@@ -20,7 +20,7 @@
  * `toCanonicalOnlyProduct` / `toCanonicalOnlyResponse`.
  */
 
-import type { V1Product, V1FormatId, V2ProductFormatDeclaration, ProjectionDiagnostic } from './types';
+import type { V1Product, V1ProductInput, V1FormatId, V2ProductFormatDeclaration, ProjectionDiagnostic } from './types';
 import { projectV1ProductToV2 } from './v1-to-v2';
 import type { V1ToV2ProjectionOptions } from './v1-to-v2';
 import { LIBRARY_VERSION } from '../../version';
@@ -88,7 +88,7 @@ export function projectionDiagnosticToError(diagnostic: ProjectionDiagnostic): C
 }
 
 function canonicalFormatsUnavailableForProduct(
-  product: V1Product,
+  product: V1ProductInput,
   reason: Extract<ProjectionDiagnostic, { code: 'CANONICAL_PRODUCT_FORMATS_UNAVAILABLE' }>['error']['details']['reason']
 ): ProjectionDiagnostic {
   return {
@@ -137,7 +137,7 @@ function mergeProjectionErrors(existing: unknown, diagnostics: readonly Projecti
 function remapExistingProductErrors(
   existing: unknown,
   originalToOutputIndex: ReadonlyMap<number, number | undefined>,
-  products: readonly V1Product[]
+  products: readonly V1ProductInput[]
 ): unknown {
   if (!Array.isArray(existing)) return existing;
   return existing.map(value => {
@@ -182,7 +182,7 @@ function remapExistingProductErrors(
   });
 }
 
-function hasEmptyPlacementFormatOptions(product: CanonicalOnlyProduct<V1Product>): boolean {
+function hasEmptyPlacementFormatOptions(product: CanonicalOnlyProduct<V1ProductInput>): boolean {
   const placements = (product as Record<string, unknown>).placements;
   if (!Array.isArray(placements)) return false;
   return placements.some(value => {
@@ -461,9 +461,9 @@ function canonicalPlacements(
       product_id: `${productId}:placement:${placementId}`,
       name: typeof placement.name === 'string' ? placement.name : placementId,
       description: `Nested placement ${placementId}`,
-      ...(hasLegacyFormats ? { format_ids: placement.format_ids } : {}),
+      ...(hasLegacyFormats ? { format_ids: placement.format_ids as V1ProductInput['format_ids'] } : {}),
       ...(hasCanonicalFormats ? { format_options: placement.format_options } : {}),
-    } as unknown as V1Product;
+    } satisfies V1ProductInput;
     const projected = toCanonicalOnlyProduct(pseudoProduct, options);
     for (const diagnostic of projected.diagnostics) {
       diagnostics.push({
@@ -518,7 +518,7 @@ function formatRefCoverageKey(ref: V1FormatId): string {
  * non-invertibility tracked at adcontextprotocol/adcp#4842 — this is the
  * read-side transparency half.
  */
-export function toCanonicalOnlyProduct<P extends V1Product>(
+export function toCanonicalOnlyProduct<P extends V1ProductInput>(
   product: P,
   options?: V1ToV2ProjectionOptions
 ): { product: CanonicalOnlyProduct<P>; diagnostics: ProjectionDiagnostic[] } {
@@ -617,23 +617,23 @@ export function toCanonicalOnlyProduct<P extends V1Product>(
  * partially mappable product remains with its mapped options and advisories
  * for the refs that could not be projected.
  */
-export function toCanonicalOnlyResponse<R extends { products?: V1Product[] }>(
+export function toCanonicalOnlyResponse<P extends V1ProductInput, R extends { products?: P[] }>(
   response: R,
   options?: V1ToV2ProjectionOptions
 ): {
-  response: Omit<R, 'products'> & { products: CanonicalOnlyProduct<V1Product>[]; errors?: unknown[] };
+  response: Omit<R, 'products'> & { products: CanonicalOnlyProduct<P>[]; errors?: unknown[] };
   diagnostics: ProjectionDiagnostic[];
 } {
   if (!Array.isArray(response?.products)) {
     return {
       response: { ...response, products: [] } as Omit<R, 'products'> & {
-        products: CanonicalOnlyProduct<V1Product>[];
+        products: CanonicalOnlyProduct<P>[];
         errors?: unknown[];
       },
       diagnostics: [],
     };
   }
-  const out: CanonicalOnlyProduct<V1Product>[] = [];
+  const out: CanonicalOnlyProduct<P>[] = [];
   const diagnostics: ProjectionDiagnostic[] = [];
   const originalToOutputIndex = new Map<number, number | undefined>();
   for (let productIndex = 0; productIndex < response.products.length; productIndex++) {
@@ -682,7 +682,7 @@ export function toCanonicalOnlyResponse<R extends { products?: V1Product[] }>(
       ...response,
       products: out,
       ...(errors.length > 0 ? { errors } : {}),
-    } as Omit<R, 'products'> & { products: CanonicalOnlyProduct<V1Product>[]; errors?: unknown[] },
+    } as Omit<R, 'products'> & { products: CanonicalOnlyProduct<P>[]; errors?: unknown[] },
     diagnostics,
   };
 }
