@@ -1155,7 +1155,7 @@ interface AcceptanceReservation {
   requestFingerprint: string;
   idempotencyKey?: string;
   skipIdempotencyAutoInject: boolean;
-  retryDeadlineMs?: number;
+  readonly retryDeadlineMs?: number;
   taskId?: string;
 }
 
@@ -1622,16 +1622,24 @@ export class MediaBuyLifecycleCoordinator {
     if (
       retainedProposalIds.some(proposalId => {
         const reservation = this.proposalSnapshotStore.proposalAcceptances.get(proposalId)?.reservation;
-        return (
-          reservation?.state === 'in-flight' ||
-          (reservation?.state === 'retryable' && reservation.retryKind !== 'paused')
-        );
+        return reservation?.state === 'retryable' && reservation.retryKind === 'commit-uncertain';
       })
     ) {
       throw this.unsupported(
         'declineProposals',
+        'proposal_acceptance_commit_uncertain',
+        'A requested proposal has an acceptance whose commit outcome is unknown. Reconcile or exactly retry that acceptance before declining it.'
+      );
+    }
+    if (
+      retainedProposalIds.some(
+        proposalId => this.proposalSnapshotStore.proposalAcceptances.get(proposalId)?.reservation.state === 'in-flight'
+      )
+    ) {
+      throw this.unsupported(
+        'declineProposals',
         'proposal_acceptance_pending',
-        'A requested proposal has an in-flight or commit-uncertain acceptance in this principal scope. Reconcile or finish that acceptance before declining it.'
+        'A requested proposal has an in-flight acceptance in this principal scope. Wait for it to finish before declining it.'
       );
     }
     if (retainedProposalIds.some(proposalId => this.isCommitUncertainProposal(proposalId))) {
@@ -1770,6 +1778,18 @@ export class MediaBuyLifecycleCoordinator {
         'A prior mutation of a requested proposal has an unreconciled outcome. No refinement was sent.'
       );
     }
+    if (
+      retainedProposalIds.some(proposalId => {
+        const reservation = this.proposalSnapshotStore.proposalAcceptances.get(proposalId)?.reservation;
+        return reservation?.state === 'retryable' && reservation.retryKind === 'commit-uncertain';
+      })
+    ) {
+      throw this.unsupported(
+        'refineProposals',
+        'proposal_acceptance_commit_uncertain',
+        'A requested proposal has an acceptance whose commit outcome is unknown. Reconcile or exactly retry that acceptance before refining it.'
+      );
+    }
     if (retainedProposalIds.some(proposalId => this.proposalSnapshotStore.proposalAcceptances.has(proposalId))) {
       throw this.unsupported(
         'refineProposals',
@@ -1784,10 +1804,7 @@ export class MediaBuyLifecycleCoordinator {
         'A requested proposal has an acceptance whose commit outcome is unknown. Reconcile the media buy by natural key before refining it.'
       );
     }
-    if (
-      rejectTerminalProposal &&
-      retainedProposalIds.some(proposalId => this.isTerminalAcceptanceProposal(proposalId))
-    ) {
+    if (rejectTerminalProposal && retainedProposalIds.some(proposalId => this.isTerminalProposal(proposalId))) {
       throw this.unsupported(
         'refineProposals',
         'proposal_terminal',
@@ -2429,7 +2446,6 @@ export class MediaBuyLifecycleCoordinator {
     preserveScope = false,
     retireAcceptances = false
   ): void {
-    if (!this.principalScope) return;
     if (retireAcceptances) proposalIds.forEach(proposalId => this.markTerminalProposal(proposalId));
     const wanted = new Set(proposalIds);
     for (const [key, entry] of [...this.proposalSnapshotStore.entries]) {
@@ -2767,7 +2783,7 @@ export class MediaBuyLifecycleCoordinator {
     preserveAuthoritativeProposals = false,
     authoritativeTaskNames: ReadonlySet<string> = new Set()
   ): void {
-    if (!taskId || !this.principalScope) return;
+    if (!taskId) return;
     this.pendingProposalTasks.delete(taskId);
     this.pendingProposalTasks.set(taskId, {
       accountScope,
@@ -3058,7 +3074,7 @@ export class MediaBuyLifecycleCoordinator {
     if (priorTimer) clearTimeout(priorTimer);
     const timer = setTimeout(() => {
       if (reservation.state === 'in-flight') {
-        this.retireAcceptance(snapshotKey, snapshot, reservation, 'commit-uncertain');
+        this.preserveAmbiguousAcceptance(snapshotKey, snapshot, reservation, taskId, 'commit-uncertain');
       }
       this.forgetAcceptanceTask(taskId, reservation);
     }, MediaBuyLifecycleCoordinator.PROPOSAL_TASK_WATCH_TTL_MS);
@@ -3149,6 +3165,14 @@ export class MediaBuyLifecycleCoordinator {
                 'This deferred acceptance continuation no longer owns the shared reservation. No continuation was sent.'
               );
             }
+            const proposalId = String(snapshot.proposal.proposal_id);
+            if (this.isProposalDeclinePending(proposalId)) {
+              throw this.unsupported(
+                'acceptProposal',
+                'proposal_decline_pending',
+                'The proposal has an unresolved decline in this principal scope. Wait for or reconcile that decline before resuming acceptance.'
+              );
+            }
             this.assertAcceptanceRetryWindow(snapshotKey, snapshot, reservation);
             if (reservation.taskId) this.forgetAcceptanceTask(reservation.taskId, reservation);
             const retryTimer = this.acceptanceRetryExpiryTimers.get(reservation);
@@ -3187,14 +3211,20 @@ export class MediaBuyLifecycleCoordinator {
     this.proposalTaskUnsubscribe?.();
     this.proposalTaskUnsubscribe = undefined;
     for (const [reservation, pending] of [...this.ownedAcceptanceReservations]) {
-      this.retireAcceptance(
-        pending.snapshotKey,
-        pending.snapshot,
-        reservation,
-        reservation.state === 'in-flight' || reservation.retryKind === 'commit-uncertain'
-          ? 'commit-uncertain'
-          : 'terminal'
-      );
+      if (reservation.state === 'in-flight') {
+        this.preserveAmbiguousAcceptance(
+          pending.snapshotKey,
+          pending.snapshot,
+          reservation,
+          reservation.taskId,
+          'commit-uncertain'
+        );
+      }
+      if (reservation.state === 'retryable' && reservation.retryKind === 'commit-uncertain') {
+        if (reservation.taskId) this.forgetAcceptanceTask(reservation.taskId, reservation);
+        continue;
+      }
+      this.retireAcceptance(pending.snapshotKey, pending.snapshot, reservation, 'terminal');
       this.releaseAcceptanceOwnership(reservation);
     }
     this.acceptanceTaskUnsubscribe?.();
@@ -4408,6 +4438,17 @@ export class MediaBuyLifecycleCoordinator {
         throw this.unsupported('acceptProposal', 'proposal_id', 'Native proposal acceptance requires a proposal_id.');
       }
       const prior = this.proposalSnapshotStore.proposalAcceptances.get(proposalId);
+      if (
+        prior?.reservation.kind === 'established' &&
+        prior.reservation.state === 'retryable' &&
+        prior.reservation.retryKind === 'commit-uncertain'
+      ) {
+        throw this.unsupported(
+          'acceptProposal',
+          'proposal_acceptance_commit_uncertain',
+          'The proposal has an established acceptance whose commit outcome is unknown. Reconcile or exactly retry that established acceptance before sending a compact acceptance.'
+        );
+      }
       if (prior?.reservation.state === 'in-flight' || prior?.reservation.kind === 'established') {
         throw this.unsupported(
           'acceptProposal',
@@ -4474,8 +4515,15 @@ export class MediaBuyLifecycleCoordinator {
         requestFingerprint: fingerprint,
         skipIdempotencyAutoInject,
         ...(idempotencyKey && { idempotencyKey }),
-        ...(retryDeadlineMs !== undefined && { retryDeadlineMs }),
       };
+      if (retryDeadlineMs !== undefined) {
+        Object.defineProperty(reservation, 'retryDeadlineMs', {
+          value: retryDeadlineMs,
+          enumerable: true,
+          writable: false,
+          configurable: false,
+        });
+      }
       snapshot.executable = false;
       snapshot.acceptance = reservation;
       this.proposalSnapshotStore.proposalAcceptances.set(proposalId, { snapshotKey, snapshot, reservation });
@@ -4749,8 +4797,15 @@ export class MediaBuyLifecycleCoordinator {
       skipIdempotencyAutoInject:
         retryableAcceptance?.skipIdempotencyAutoInject ?? Boolean(options?.skipIdempotencyAutoInject),
       ...(acceptanceIdempotencyKey && { idempotencyKey: acceptanceIdempotencyKey }),
-      ...(retryDeadlineMs !== undefined && { retryDeadlineMs }),
     };
+    if (retryDeadlineMs !== undefined) {
+      Object.defineProperty(reservation, 'retryDeadlineMs', {
+        value: retryDeadlineMs,
+        enumerable: true,
+        writable: false,
+        configurable: false,
+      });
+    }
     snapshot.executable = false;
     snapshot.acceptance = reservation;
     this.proposalSnapshotStore.proposalAcceptances.set(proposalId, {

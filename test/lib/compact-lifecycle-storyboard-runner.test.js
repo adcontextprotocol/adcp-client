@@ -90,6 +90,7 @@ async function createLifecycleServer() {
     acceptedProposal: undefined,
     dailyBudgetCap: undefined,
     mediaBuyStatus: 'pending_creatives',
+    proposalSequence: 0,
   };
 
   function record(method, request) {
@@ -145,10 +146,12 @@ async function createLifecycleServer() {
       record('requestProposals', request);
       assertBeta2Envelope(request);
       const terms = commercialTerms(request.criteria.product_ids[0], 'compact_video_cpm');
+      state.proposalSequence += 1;
+      const proposalId = state.proposalSequence === 1 ? 'proposal-draft' : `proposal-draft-${state.proposalSequence}`;
       return {
         outcome: 'proposed',
         status: 'completed',
-        proposals: [proposal({ id: 'proposal-draft', status: 'draft', terms })],
+        proposals: [proposal({ id: proposalId, status: 'draft', terms })],
         products: [
           {
             product_id: 'compact_lifecycle_video',
