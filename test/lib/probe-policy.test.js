@@ -152,6 +152,14 @@ describe('classifyProbeUrl: ADCP_ALLOW_INTERNAL_PROBES=1 opt-in', () => {
     assert.strictEqual(r.code, 'always_blocked');
   });
 
+  test('ADCP_ALLOW_INTERNAL_PROBES=1 STILL refuses opaque IPv6 translation and tunnel prefixes', () => {
+    for (const url of ['http://[64:ff9b:1::1]/', 'http://[2001::1]/']) {
+      const r = spawnAssertAllowed(url);
+      assert.strictEqual(r.allowed, false, `${url} must remain refused under the env opt-in`);
+      assert.strictEqual(r.code, 'always_blocked');
+    }
+  });
+
   test('ADCP_ALLOW_INTERNAL_PROBES=0 (or unset) keeps default-strict', () => {
     // The other tests in this file run with the default env, so this test
     // is implicit — the previous describe() block confirms strict default.

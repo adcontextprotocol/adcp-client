@@ -211,7 +211,7 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
     if (isAlwaysBlocked(hostname)) {
       throw new SsrfRefusedError(
         'always_blocked_address',
-        'Refusing to fetch an always-blocked address (link-local or cloud metadata)',
+        'Refusing to fetch an always-blocked address (local, metadata, or unsafe translation)',
         { url, hostname, address: hostname }
       );
     }
@@ -267,7 +267,7 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
         if (isAlwaysBlocked(a.address)) {
           throw new SsrfRefusedError(
             'always_blocked_address',
-            `Refusing to fetch: ${hostname} resolves to an always-blocked address (link-local or cloud metadata)`,
+            `Refusing to fetch: ${hostname} resolves to an always-blocked address (local, metadata, or unsafe translation)`,
             { url, hostname, address: a.address }
           );
         }

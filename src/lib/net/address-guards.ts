@@ -2,7 +2,8 @@
  * IP address classification for SSRF defense.
  *
  * Two tiers of blocking:
- *   - {@link isAlwaysBlocked}: link-local + cloud metadata endpoints (IMDS).
+ *   - {@link isAlwaysBlocked}: link-local, cloud metadata endpoints (IMDS),
+ *     and opaque translation/tunnel prefixes that cannot safely exclude IMDS.
  *     Refused even when the caller opts into private networks (dev loops).
  *   - {@link isPrivateIp}: RFC 1918, loopback, CGNAT, IPv6 ULA/link-local,
  *     multicast, broadcast, unspecified, non-routable special-purpose ranges,
@@ -22,7 +23,9 @@
  */
 import { BlockList, isIP } from 'net';
 
-function normalize(address: string): { addr: string; family: 'ipv4' | 'ipv6' } | null {
+type NormalizedAddress = { addr: string; family: 'ipv4' | 'ipv6' };
+
+function normalize(address: string): NormalizedAddress | null {
   // Strip surrounding brackets (URL-hostname form) and zone ID.
   let bare = address;
   if (bare.startsWith('[') && bare.endsWith(']')) bare = bare.slice(1, -1);
@@ -45,6 +48,37 @@ alwaysBlocked.addSubnet('fe80::', 10, 'ipv6');
 // IETF-protocol assignments) rather than the 169.254.0.0/16 everyone else
 // uses, so it needs its own entry to be refused even under the private opt-in.
 alwaysBlocked.addAddress('192.0.0.192', 'ipv4');
+// Deterministic IPv4-in-IPv6 wrappers: block only encodings of the IPv4
+// always-blocked ranges so `allowPrivateIp` can still reach explicitly trusted
+// public translation targets. `a9fe` is 169.254 and `c000:c0` is 192.0.0.192.
+alwaysBlocked.addSubnet('::a9fe:0', 112, 'ipv6'); // IPv4-compatible IMDS/link-local
+alwaysBlocked.addAddress('::c000:c0', 'ipv6'); // IPv4-compatible Oracle IMDS
+alwaysBlocked.addSubnet('::ffff:0:a9fe:0', 112, 'ipv6'); // IPv4-translated IMDS/link-local
+alwaysBlocked.addAddress('::ffff:0:c000:c0', 'ipv6'); // IPv4-translated Oracle IMDS
+alwaysBlocked.addSubnet('64:ff9b::a9fe:0', 112, 'ipv6'); // NAT64 WKP IMDS/link-local
+alwaysBlocked.addAddress('64:ff9b::c000:c0', 'ipv6'); // NAT64 WKP Oracle IMDS
+alwaysBlocked.addSubnet('2002:a9fe::', 32, 'ipv6'); // 6to4 IMDS/link-local
+alwaysBlocked.addSubnet('2002:c000:c0::', 48, 'ipv6'); // 6to4 Oracle IMDS
+// RFC 8215 deliberately defines no fixed embedded-IPv4 layout, so the local
+// translation prefix cannot be inspected safely for an IMDS destination.
+alwaysBlocked.addSubnet('64:ff9b:1::', 48, 'ipv6');
+// Teredo also carries obfuscated endpoint information whose ultimate reach is
+// relay-dependent. Refuse it even under the private-network opt-in.
+alwaysBlocked.addSubnet('2001::', 32, 'ipv6');
+
+// IANA marks 2001::/23 non-global unless a more-specific allocation says
+// otherwise. Keep the parent fail-closed and enumerate every currently
+// globally reachable child so new gaps do not silently become SSRF targets.
+const ietfProtocolAssignments = new BlockList();
+ietfProtocolAssignments.addSubnet('2001::', 23, 'ipv6');
+const globallyReachableIetfAssignments = new BlockList();
+globallyReachableIetfAssignments.addAddress('2001:1::1', 'ipv6'); // PCP anycast
+globallyReachableIetfAssignments.addAddress('2001:1::2', 'ipv6'); // TURN anycast
+globallyReachableIetfAssignments.addAddress('2001:1::3', 'ipv6'); // DNS-SD anycast
+globallyReachableIetfAssignments.addSubnet('2001:3::', 32, 'ipv6'); // AMT
+globallyReachableIetfAssignments.addSubnet('2001:4:112::', 48, 'ipv6'); // AS112-v6
+globallyReachableIetfAssignments.addSubnet('2001:20::', 28, 'ipv6'); // ORCHIDv2
+globallyReachableIetfAssignments.addSubnet('2001:30::', 28, 'ipv6'); // DETs
 
 // Private, loopback, multicast, and reserved ranges. Defense-in-depth adds the
 // NAT64 well-known prefix (`64:ff9b::/96`) and 6to4 (`2002::/16`) so a
@@ -79,11 +113,12 @@ privateIp.addSubnet('fc00::', 7, 'ipv6'); // ULA
 privateIp.addSubnet('ff00::', 8, 'ipv6'); // multicast
 privateIp.addSubnet('100::', 64, 'ipv6'); // discard-only (RFC 6666)
 privateIp.addSubnet('100:0:0:1::', 64, 'ipv6'); // dummy prefix (RFC 9780)
-privateIp.addSubnet('2001:2::', 48, 'ipv6'); // benchmarking (RFC 5180)
-privateIp.addSubnet('2001:10::', 28, 'ipv6'); // deprecated ORCHID (RFC 4843)
 privateIp.addSubnet('2001:db8::', 32, 'ipv6'); // documentation
+privateIp.addSubnet('3ffe::', 16, 'ipv6'); // returned 6bone space (RFC 5156)
 privateIp.addSubnet('3fff::', 20, 'ipv6'); // documentation (RFC 9637)
-privateIp.addSubnet('5f00::', 16, 'ipv6'); // segment-routing SIDs, not globally reachable (RFC 9602)
+// The former 6bone /8 remains unallocated except for 5f00::/16, which was
+// reassigned to non-global SRv6 SIDs. Neither portion is publicly reachable.
+privateIp.addSubnet('5f00::', 8, 'ipv6'); // RFC 5156 and RFC 9602
 // Wrapper prefixes — refuse the entire prefix by default. Tunnels at the
 // caller's edge can translate these into private targets we can't see; safer
 // to refuse than to hope the gateway is configured the way we expect.
@@ -97,14 +132,28 @@ privateIp.addSubnet('2002::', 16, 'ipv6'); // 6to4
  * (AWS/GCP/Azure IMDS) live at 169.254.169.254 and would exfiltrate
  * credentials if a CI runner or long-lived server followed an attacker URL to
  * them. IPv6 link-local (`fe80::/10`) is the v6 equivalent reach into the
- * host's local segment.
+ * host's local segment. Deterministic IPv4 wrappers block their encoded IMDS
+ * ranges; opaque local-translation and Teredo prefixes fail closed because
+ * their ultimate destination cannot be classified safely here.
  *
  * Returns `false` for non-IP inputs (hostnames).
  */
 export function isAlwaysBlocked(address: string): boolean {
   const n = normalize(address);
   if (!n) return false;
+  return isAlwaysBlockedNormalized(n);
+}
+
+function isAlwaysBlockedNormalized(n: NormalizedAddress): boolean {
   return alwaysBlocked.check(n.addr, n.family);
+}
+
+function isNonGlobalIetfAssignment(n: NormalizedAddress): boolean {
+  return (
+    n.family === 'ipv6' &&
+    ietfProtocolAssignments.check(n.addr, 'ipv6') &&
+    !globallyReachableIetfAssignments.check(n.addr, 'ipv6')
+  );
 }
 
 /**
@@ -119,7 +168,7 @@ export function isAlwaysBlocked(address: string): boolean {
 export function isPrivateIp(address: string): boolean {
   const n = normalize(address);
   if (!n) return false;
-  return privateIp.check(n.addr, n.family);
+  return isAlwaysBlockedNormalized(n) || isNonGlobalIetfAssignment(n) || privateIp.check(n.addr, n.family);
 }
 
 /**
