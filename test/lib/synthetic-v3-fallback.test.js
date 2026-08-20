@@ -44,6 +44,16 @@ describe('buildSyntheticV3Capabilities', () => {
     assert.equal(caps.features.audienceTargeting, true);
   });
 
+  it('retains compact lifecycle discovery when capability execution fails', () => {
+    const caps = buildSyntheticV3Capabilities([
+      { name: 'get_adcp_capabilities' },
+      { name: 'list_products' },
+      { name: 'buy_products' },
+    ]);
+
+    assert.deepEqual(caps.mediaBuyLifecycleTools, ['list_products', 'buy_products']);
+  });
+
   it('keeps v3-only feature flags conservative when undeclared', () => {
     const caps = buildSyntheticV3Capabilities([]);
     // We can't read details from get_adcp_capabilities, so v3-only features

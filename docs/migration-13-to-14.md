@@ -19,7 +19,7 @@ The untagged npm install remains SDK 13. Keep that line for production AdCP 3.1 
 ## Upgrade checklist
 
 1. Pin SDK 14 with the `beta` tag or an exact `14.0.0-beta.*` version. Do not rely on npm `latest` for beta rollout.
-2. Preserve capability-gated fallbacks to `get_products`, `create_media_buy`, and `update_media_buy` for AdCP 3.0/3.1 agents.
+2. Move compact-first applications to `agent.negotiateMediaBuyLifecycle()` so the SDK owns capability-gated established fallbacks and their declared loss boundaries.
 3. If you use request signing, propagate the negotiated or configured agent version into signing and verification. Expect standard padded Base64 plus mandatory `Content-Digest` only for AdCP 3.2.
 4. Return `media_buy_status`, not top-level `status`, from new media-buy server handlers.
 5. Add handlers only for the 3.2 tools your server actually implements and advertise the same set in capability discovery.
@@ -76,31 +76,124 @@ old cached body; reconcile by natural key rather than minting a replacement
 key until the original replay TTL expires. New entries cannot replay a body
 across tenants or tools.
 
-## Adopt the compact lifecycle by capability
+## Adopt one compact-first lifecycle
 
-The compact flow is not a rename of the established tools. It has different commercial semantics, so branch on the seller's advertised lifecycle tools:
+The compact flow is not a rename of the established tools. SDK 14 provides a
+compatibility coordinator so application code can express one compact-first
+intent while the SDK selects the remote lifecycle before dispatch:
 
 ```ts
-const capabilities = await agent.getCapabilities();
-const tools = new Set(capabilities.mediaBuyLifecycleTools ?? []);
+const lifecycle = await agent.negotiateMediaBuyLifecycle();
 
-if (tools.has('request_proposals') && tools.has('accept_proposal')) {
-  const proposed = await agent.requestProposals({
-    // 3.2 request fields from the generated type
-  });
+const products = await lifecycle.listProducts({
+  brand: { domain: 'example.com' },
+  max_results: 25,
+});
 
-  // Select a committed, unexpired proposal from the completed result.
-  await agent.acceptProposal({
-    account: { account_id: selectedAccountId },
-    proposal_id: selectedProposalId,
-    proposal_terms_digest: selectedProposalTermsDigest,
-  });
-} else {
-  // Retain the existing get_products/create_media_buy path.
-}
+const proposed = await lifecycle.requestProposals({
+  brand: { domain: 'example.com' },
+  brief: 'Reach outdoor enthusiasts in Italy',
+});
 ```
 
-Use the generated request types or the narrow imports under `@adcp/sdk/types/<tool>` for the exact beta fields. Mutating convenience methods accept SDK-managed idempotency input. Preserve the same request and key for a transport retry; a changed commercial intent needs a new key.
+Every result has a `compatibility` report with the negotiated version,
+selected lifecycle, exact tools used, `native` / `lossless_projection` /
+`lossy_projection`, warnings, and named losses. Compact tools are preferred
+when advertised. `preferredLifecycle: 'established'` exists for a forced
+dual-surface test lane, but only when capability discovery also proves that
+the corresponding established tool is callable. A compact-only seller fails
+that diagnostic lane with a typed error before dispatch.
+
+Existing code that continues to call `getProducts`, `createMediaBuy`, and
+`updateMediaBuy` remains on that established lifecycle; it is not routed
+through the coordinator. A compact-first `listProducts` call becomes
+`get_products` against a 3.0/3.1 seller and remains `list_products` against a
+3.2 seller that advertises it. Purchase completion is intentionally stricter:
+the older mutation cannot enforce 3.2 feed/pricing fencing or proposal digest
+binding, so the coordinator rejects by default rather than claiming identical
+semantics.
+
+Lossy mutations fail before transport by default. For example, an established
+seller cannot atomically enforce a compact feed/pricing snapshot. If the
+application's own reconciliation policy accepts that exact limitation, opt in
+by name:
+
+```ts
+const lifecycle = await agent.negotiateMediaBuyLifecycle({
+  allowedLosses: ['feed_version_not_atomic', 'pricing_version_not_atomic'],
+  principalScope: authenticatedPrincipalId,
+});
+```
+
+Use a stable, non-secret `principalScope` derived from authenticated,
+server-controlled identity for established proposal acceptance; never take it
+from buyer-supplied request content. Without it, the coordinator deliberately
+does not cache executable proposal snapshots and acceptance fails before
+mutation. Snapshot quotas are isolated per principal. One `AgentClient`
+retains at most 256 active principal partitions; empty inactive partitions are
+reclaimable because terminal history is retained separately in 256 lazily
+allocated, salted 256 KiB tombstone segments (64 MiB maximum). A principal can
+consume only its assigned segment. A segment collision can cause a fail-closed
+false positive for another principal, but never shares proposal data or
+executable authority. Treat `dispose()` as terminal: in-flight results and
+saved task continuations reject after disposal. If an established acceptance
+has an unknown outcome, compact decline, refinement, and native acceptance
+remain fenced until natural-key reconciliation; only an exact retry within an
+advertised idempotency window may be sent.
+
+Proposal hard constraints, alternatives, criteria, and amendment kinds are
+never softened into legacy discovery filters. A requested proposal digest is
+never invented or silently dropped. Unsupported guarantees throw
+`MediaBuyLifecycleCompatibilityError` with `code: 'UNSUPPORTED_FEATURE'`, the
+operation, negotiated version, named losses, and recovery guidance before any
+mutation is sent.
+
+An ordinary 3.0/3.1 proposal may not contain any digest or compact commercial
+terms. The facade returns that proposal unchanged and can still execute the
+same legacy `create_media_buy(proposal_id=...)` path, but only after the caller
+opts into `proposal_terms_digest_not_enforced`,
+`proposal_terms_digest_unavailable`, and
+`proposal_snapshot_not_immutable`. If the legacy proposal has no expiry,
+`proposal_hold_not_verifiable` is a fourth required opt-in. Supply the original
+brand and flight through `established_fallback`; this is buyer provenance, not
+a seller snapshot. Native 3.2 acceptance ignores that fallback and still
+requires the seller digest.
+
+The compatibility facade also rejects fields that the negotiated established
+schema cannot represent. In particular, 3.2-only targeting, allocation,
+budget-cap, bidding, pacing, governance, and opportunity controls are never
+sent to a 3.0/3.1 tool. A direct compact `total_budget` is also rejected below
+3.2: legacy direct-buy schemas do not carry the same top-level commitment
+(proposal-mode budget support is separate). Shared per-purchase fields are
+projected according to the negotiated schema, including 3.1+
+`format_option_refs`; no field is silently stripped. During proposal
+acceptance, caller-supplied budget,
+budget-cap, timezone, or purchase-order values must match any digest-bound
+seller terms; a conflict fails before `create_media_buy`.
+
+For v2.5 specifically, proposal operations, `get_media_buys`, pagination,
+cancellation, and v3-only package controls return typed unsupported errors.
+Supported pause/resume updates require explicit `revision_not_atomic` opt-in
+because v2.5 has no optimistic revision token.
+
+Run the same compact CLI storyboards against established sellers with
+`--media-buy-lifecycle-compat`. Use `--media-buy-compat-losses` only for the
+exact guarantees your application has approved, and add
+`--force-established-media-buy-lifecycle` to exercise a dual-surface 3.2
+seller's fallback lane. For proposal flows, pass a stable non-secret
+`--media-buy-principal-scope`; if omitted, the CLI creates a run-local scope,
+which intentionally cannot authorize acceptance from another run.
+
+Compatibility projection follows asynchronous continuations too. A submitted
+or deferred proposal response is not treated as executable evidence until its
+completion succeeds; `waitForCompletion()` and `resume()` project and retain
+the completed proposal under the same compatibility and principal scope.
+
+Use the generated request types or the narrow imports under
+`@adcp/sdk/types/<tool>` for exact compact fields. Preserve the same request
+and key for a transport retry; a changed commercial intent needs a new key.
+The coordinator selects one mutation tool before transport and never retries
+through the other lifecycle after an ambiguous failure.
 
 For proposal refinement, validate the advertised limits and supported dimensions, keep hard constraints distinct from legacy discovery filters, and re-check `expires_at` immediately before acceptance. See [AdCP 3.2 proposal negotiation](migration-adcp-3.1-to-3.2-proposals.md).
 
@@ -289,6 +382,29 @@ The outer `status` remains the asynchronous task state (`completed`, `working`, 
 ## Type and schema changes
 
 Regenerated 3.2 types include new tools, error codes, canonical formats, measurement surfaces, and more exact intersections/tuples. If application code imported broad generated types or runtime schemas, expect TypeScript to reveal newly exhaustive unions.
+
+The media-buy compatibility coordinator does not expose `unknown[]` rows or a
+`Record<string, unknown>` escape hatch. Product and proposal collections use
+`CompatibleProduct` / `CompatibleProposal`, proposal methods return separate
+request/refine/decline response types with stable `operation` and `outcome`
+discriminants, and each `raw` member is the SDK-returned compact or
+canonical-established source response union. Established `raw` is a
+`CanonicalGetProductsResponse` with `projection.diagnostics`, not untouched
+seller emission; use `getProductsLegacy()` outside the coordinator only when
+raw legacy wire inspection is actually required. `CompatibleRefinementResult` restores the canonical proposal
+base on revised, partial, and finalized result arms at this boundary; the
+underlying beta.3 generator correction is tracked separately in #2619. The
+coordinator validates that full canonical child shape at runtime, correlates
+ordered compact decline results whether or not they echo `proposal_id`, and
+blocks projected legacy acceptance while a decline for that proposal remains
+unresolved. Refinement likewise fences every source before dispatch and restores
+it only for a verified compact `unable`; ambiguous or malformed refinement paths
+retire the source rather than permitting stale acceptance. These checks also run
+on submitted, tracked, deferred, and task-update completions before proposal
+state is cached or a mutation fence is released.
+The result union is status-aware: narrow `result.status === 'completed'` before
+reading those completed-only discriminants. Intermediate and failure branches
+retain the SDK-returned source response instead of fabricating a proposal outcome.
 
 Use focused imports where possible:
 

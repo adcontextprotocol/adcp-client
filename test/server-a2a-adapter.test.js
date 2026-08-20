@@ -197,7 +197,7 @@ describe('createA2AAdapter', () => {
       const skillIds = res.body.skills.map(s => s.id);
       assert.ok(skillIds.includes('get_products'), 'get_products skill derived');
       assert.ok(skillIds.includes('get_signals'), 'get_signals skill derived');
-      assert.ok(!skillIds.includes('get_adcp_capabilities'), 'capabilities tool excluded from skills');
+      assert.ok(skillIds.includes('get_adcp_capabilities'), 'capabilities tool derived');
       assert.ok(res.body.capabilities, 'capabilities block present');
       assert.strictEqual(res.body.capabilities.streaming, false);
       assert.strictEqual(res.body.capabilities.pushNotifications, false);
@@ -213,7 +213,7 @@ describe('createA2AAdapter', () => {
       assert.ok(skillIds.includes('tasks/get'), 'A2A card advertises the spec slash task polling skill');
       assert.ok(!skillIds.includes('tasks_get'), 'MCP-safe task polling alias is not advertised as an A2A skill');
       assert.ok(!skillIds.includes('comply_test_controller'), 'compliance controller is not public-card discoverable');
-      assert.ok(!skillIds.includes('get_adcp_capabilities'), 'capabilities tool excluded from public card');
+      assert.ok(skillIds.includes('get_adcp_capabilities'), 'capabilities tool remains discoverable');
     });
 
     it('filters comply_test_controller from seller-supplied A2A skill overrides', async () => {
@@ -234,7 +234,7 @@ describe('createA2AAdapter', () => {
       });
       const card = await a2a.getAgentCard();
       const skillIds = card.skills.map(s => s.id);
-      assert.deepStrictEqual(skillIds, ['get_products']);
+      assert.deepStrictEqual(skillIds, ['get_products', 'get_adcp_capabilities']);
     });
 
     it('allows seller to override skills entirely', async () => {
@@ -248,8 +248,9 @@ describe('createA2AAdapter', () => {
         }),
       });
       const card = await a2a.getAgentCard();
-      assert.strictEqual(card.skills.length, 1);
+      assert.strictEqual(card.skills.length, 2);
       assert.strictEqual(card.skills[0].id, 'custom');
+      assert.strictEqual(card.skills[1].id, 'get_adcp_capabilities');
     });
 
     it('fails loud at boot when agent card is missing required fields', () => {
@@ -273,7 +274,7 @@ describe('createA2AAdapter', () => {
       const skillIds = card.skills.map(s => s.id);
       assert.ok(skillIds.includes('get_task_status'));
       assert.ok(skillIds.includes('list_tasks'));
-      assert.ok(!skillIds.includes('get_adcp_capabilities'), 'capabilities tool excluded from public card');
+      assert.ok(skillIds.includes('get_adcp_capabilities'), 'capabilities tool remains discoverable');
     });
   });
 

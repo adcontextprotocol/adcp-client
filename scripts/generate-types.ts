@@ -308,6 +308,77 @@ interface ToolDefinition {
 }
 
 /**
+ * Intersect a parent property declaration with a `oneOf` branch's narrower
+ * declaration for the TypeScript emit copy of a schema.
+ *
+ * JSON Schema applies sibling `properties` constraints cumulatively. A
+ * branch-local declaration therefore refines the parent property; it does not
+ * replace it. A shallow `branchProperty ?? parentProperty` merge loses the
+ * parent shape for nested refinements such as:
+ *
+ *   parent:  proposals.items -> CanonicalProposal
+ *   branch:  proposals.items -> { proposal_status: const draft }
+ *
+ * Keep `$ref` intersections explicit as `allOf` so jsts/ts-to-zod retain the
+ * canonical base. Merge ordinary object/array structure recursively so simple
+ * discriminators remain compact instead of becoming noisy intersections.
+ */
+function intersectCodegenPropertySchemas(parent: any, branch: any): any {
+  if (!parent || typeof parent !== 'object' || Array.isArray(parent)) return branch;
+  if (!branch || typeof branch !== 'object' || Array.isArray(branch)) return branch;
+
+  if (typeof parent.$ref === 'string' || typeof branch.$ref === 'string') {
+    let materializedBranch = branch;
+    // jsts does not strengthen an inherited optional property when an allOf
+    // overlay lists the name in `required` without repeating its schema. Copy
+    // only those required inherited declarations into the overlay so lineage
+    // fields such as parent_proposal_id remain typed and required.
+    if (typeof parent.$ref === 'string' && Array.isArray(branch.required)) {
+      const resolvedParent = loadCachedSchema(parent.$ref);
+      const inheritedProperties = resolvedParent?.properties;
+      if (inheritedProperties && typeof inheritedProperties === 'object') {
+        const branchProperties = branch.properties ?? {};
+        const missingRequiredProperties = Object.fromEntries(
+          branch.required
+            .filter((name: string) => !Object.hasOwn(branchProperties, name) && inheritedProperties[name] !== undefined)
+            .map((name: string) => [name, inheritedProperties[name]])
+        );
+        if (Object.keys(missingRequiredProperties).length > 0) {
+          materializedBranch = {
+            ...branch,
+            properties: { ...missingRequiredProperties, ...branchProperties },
+          };
+        }
+      }
+    }
+    return { allOf: [parent, materializedBranch] };
+  }
+
+  const merged: Record<string, any> = { ...parent, ...branch };
+
+  if (parent.properties || branch.properties) {
+    const parentProperties = parent.properties ?? {};
+    const branchProperties = branch.properties ?? {};
+    merged.properties = { ...parentProperties };
+    for (const [name, branchProperty] of Object.entries(branchProperties)) {
+      merged.properties[name] = Object.hasOwn(parentProperties, name)
+        ? intersectCodegenPropertySchemas(parentProperties[name], branchProperty)
+        : branchProperty;
+    }
+  }
+
+  if (parent.items !== undefined && branch.items !== undefined) {
+    merged.items = intersectCodegenPropertySchemas(parent.items, branch.items);
+  }
+
+  if (Array.isArray(parent.required) || Array.isArray(branch.required)) {
+    merged.required = [...new Set([...(parent.required ?? []), ...(branch.required ?? [])])];
+  }
+
+  return merged;
+}
+
+/**
  * Rewrite a discriminated `oneOf` whose branches are mutual-exclusion clauses
  * into explicit closed shapes. Without this, json-schema-to-typescript sees a
  * branch with no own `properties`/`type` and falls back to
@@ -410,8 +481,11 @@ function tightenMutualExclusionOneOf(schema: any): any {
     const newProperties: Record<string, any> = {};
     for (const [key, prop] of Object.entries(parentProps)) {
       if (forbidden.includes(key)) continue;
-      // Branch's own property override (e.g. `{const: true}`) wins over parent's.
-      newProperties[key] = branchOwnProps[key] ?? prop;
+      // Branch declarations refine the parent declaration. Preserve the
+      // canonical base for nested overlays instead of replacing it.
+      newProperties[key] = Object.hasOwn(branchOwnProps, key)
+        ? intersectCodegenPropertySchemas(prop, branchOwnProps[key])
+        : prop;
     }
     // Branch-only fields that the parent didn't declare.
     for (const [key, prop] of Object.entries(branchOwnProps)) {
@@ -1255,7 +1329,9 @@ function flattenMutualExclusiveOneOf(schema: any): any {
     const branchProps: Record<string, any> = {};
     for (const [name, prop] of Object.entries(outerProps)) {
       if (excluded.has(name)) continue;
-      branchProps[name] = branchOwnProps[name] ?? prop;
+      branchProps[name] = Object.hasOwn(branchOwnProps, name)
+        ? intersectCodegenPropertySchemas(prop, branchOwnProps[name])
+        : prop;
     }
     // Drop any outer `required` field this branch excluded — keeping it
     // would leave a required key with no matching `properties` entry, which
@@ -1632,8 +1708,8 @@ export function applyCodegenSchemaWorkarounds(schema: any, schemaName: string): 
 
   schema = coalesceDefinitionKeywords(schema);
 
-  if (schemaName === 'DeclineProposalsResponse') {
-    schema = materializeDeclineProposalsResponseBranches(schema);
+  if (schemaName === 'DeclineProposalsResponse' || schemaName === 'RefineProposalsResponse') {
+    schema = materializeProposalResponseBranches(schema, schemaName);
   }
 
   if (schemaName === 'GetMediaBuyDeliveryResponse') {
@@ -1707,7 +1783,7 @@ export function applyCodegenSchemaWorkarounds(schema: any, schemaName: string): 
   return schema;
 }
 
-function materializeDeclineProposalsResponseBranches(schema: any): any {
+function materializeProposalResponseBranches(schema: any, schemaName: string): any {
   if (!schema?.properties || !Array.isArray(schema.anyOf) || schema.anyOf.length !== 2) return schema;
 
   const branches: any[] = [];
@@ -1717,13 +1793,38 @@ function materializeDeclineProposalsResponseBranches(schema: any): any {
       overlay = loadCachedSchema(member.$ref);
       if (!overlay?.properties) return schema;
     }
-    const branch = {
+    const branch: any = {
       type: 'object',
       properties: { ...schema.properties, ...(overlay.properties ?? {}) },
       required: [...new Set([...(schema.required ?? []), ...(overlay.required ?? [])])],
       additionalProperties: schema.additionalProperties ?? false,
     };
-    branches.push(branch);
+    const isCompleted = overlay.properties?.status?.const === 'completed';
+    if (isCompleted) delete branch.properties.task_id;
+
+    if (schemaName === 'RefineProposalsResponse' && branch.properties.results?.items) {
+      const item = branch.properties.results?.items;
+      const outcomeBranches = Array.isArray(item?.oneOf) ? item.oneOf : [];
+      const finalized = outcomeBranches.filter((arm: any) => arm?.properties?.outcome?.const === 'finalized');
+      const nonFinalized = outcomeBranches.filter((arm: any) => arm?.properties?.outcome?.const !== 'finalized');
+      if (finalized.length !== 1 || nonFinalized.length !== 3) {
+        throw new Error('RefineProposalsResponse result outcomes changed; update the completed batch type split.');
+      }
+      for (const arms of [nonFinalized, finalized]) {
+        branches.push({
+          ...branch,
+          properties: {
+            ...branch.properties,
+            results: {
+              ...branch.properties.results,
+              items: { ...item, oneOf: arms },
+            },
+          },
+        });
+      }
+    } else {
+      branches.push(branch);
+    }
   }
 
   const result = { ...schema, oneOf: branches };

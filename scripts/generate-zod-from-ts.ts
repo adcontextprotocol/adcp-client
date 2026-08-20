@@ -1,6 +1,8 @@
 #!/usr/bin/env tsx
 
 import { generate } from 'ts-to-zod';
+import $RefParser from '@apidevtools/json-schema-ref-parser';
+import { jsonSchemaToZod } from 'json-schema-to-zod';
 import { writeFileSync, readFileSync, existsSync } from 'fs';
 import path from 'path';
 
@@ -111,6 +113,7 @@ const TS7056_SCHEMAS: Array<{ name: string; tsType?: string; objectShape?: boole
   { name: 'ListedCreativeNamedFormatReferenceSchema' },
   { name: 'ListedCreativeCanonicalFormatKindSchema' },
   { name: 'CreateMediaBuyRequestSchema', tsType: 'CreateMediaBuyRequest', objectShape: true },
+  { name: 'CanonicalProposalSchema', tsType: 'CanonicalProposal', objectShape: true },
   { name: 'GetMediaBuysResponseMediaBuySchema' },
   { name: 'GetMediaBuysResponseSchema' },
   { name: 'WholesaleFeedWebhookSchema' },
@@ -583,6 +586,153 @@ function postProcessCreativeBriefRequiredDisclosures(content: string): string {
 
   const correctedBlock = block.slice(0, fieldStart) + correctedField + block.slice(nextFieldStart);
   return content.slice(0, schemaStart) + correctedBlock + content.slice(schemaEnd);
+}
+
+/** Replace the lossy TS round-trip with Zod generated from the dereferenced canonical wire schema. */
+function postProcessCanonicalProposalRuntimeConstraints(content: string, exactSchemaExpression: string): string {
+  const schemaStart = content.indexOf('export const CanonicalProposalSchema = ');
+  const schemaEnd = content.indexOf('\n\nexport const ', schemaStart + 1);
+  if (schemaStart === -1 || schemaEnd === -1) {
+    throw new Error('postProcessCanonicalProposalRuntimeConstraints: unable to locate canonical proposal schema.');
+  }
+
+  // The SDK deliberately preserves unknown extension fields on public Zod
+  // objects. Keep that documented policy while retaining every other scalar,
+  // cardinality, conditional, and nested commercial-term constraint.
+  const exactWithPassthrough = exactSchemaExpression.replaceAll('.strict()', '.passthrough()');
+  const replacement = `export const CanonicalProposalSchema = ${exactWithPassthrough};`;
+  const replaced = content.slice(0, schemaStart) + replacement + content.slice(schemaEnd);
+  return replaced.replace(
+    'import { z } from "zod";\n',
+    `import { z } from "zod";\nimport { fullFormats as adcpJsonSchemaFormats } from "ajv-formats/dist/formats.js";\n\nconst adcpDateTimeFormat = adcpJsonSchemaFormats["date-time"] as { validate: (value: string) => boolean };\nconst adcpJsonSchemaDateTime = (value: string): boolean => adcpDateTimeFormat.validate(value);\n`
+  );
+}
+
+/**
+ * Restore refine_proposals runtime constraints that TypeScript cannot retain.
+ *
+ * The general Zod pipeline intentionally relaxes minItems for legacy arrays,
+ * but empty compact refinement results/successors cannot be correlated to the
+ * ordered mutation request. The source schema also carries `not` exclusions
+ * and an all-finalized batch invariant that disappear during TS projection.
+ * Keep TypeScript ergonomic while restoring those wire-boundary checks in the
+ * public admission schema.
+ */
+function postProcessRefineProposalsRuntimeConstraints(content: string): string {
+  const schemaStart = content.indexOf('export const RefineProposalsResponseSchema = ');
+  const schemaEnd = content.indexOf('\n\nexport const ', schemaStart + 1);
+  if (schemaStart === -1 || schemaEnd === -1) {
+    throw new Error('postProcessRefineProposalsRuntimeConstraints: unable to locate response schema.');
+  }
+
+  const addMinItems = (source: string, fieldName: string, required: boolean): string => {
+    const marker = `${fieldName}: z.array(`;
+    let corrected = '';
+    let cursor = 0;
+    let matches = 0;
+    while (true) {
+      const fieldStart = source.indexOf(marker, cursor);
+      if (fieldStart === -1) break;
+      const openParen = fieldStart + marker.length - 1;
+      const arrayCall = scanBalanced(source, openParen);
+      if (!arrayCall) {
+        throw new Error(`postProcessRefineProposalsRuntimeConstraints: unbalanced ${fieldName} array schema.`);
+      }
+      corrected += source.slice(cursor, arrayCall.end);
+      if (!source.startsWith('.min(1)', arrayCall.end)) corrected += '.min(1)';
+      cursor = arrayCall.end;
+      matches++;
+    }
+    if (required && matches === 0) {
+      throw new Error(`postProcessRefineProposalsRuntimeConstraints: ${fieldName} field was not generated.`);
+    }
+    return corrected + source.slice(cursor);
+  };
+
+  let block = content
+    .slice(schemaStart, schemaEnd)
+    .replaceAll('z.iso.datetime({ offset: true })', 'z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")')
+    .replaceAll('z.iso.datetime()', 'z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")');
+  for (const [fieldName, required] of [
+    ['results', true],
+    ['proposals', true],
+    ['unsatisfied_constraints', false],
+    ['suggestions', false],
+  ] as const) {
+    block = addMinItems(block, fieldName, required);
+  }
+
+  const refinement = `.superRefine((value, ctx) => {
+    const payload = value as Record<string, unknown>;
+    const forbid = (target: Record<string, unknown>, field: string, path: Array<string | number>) => {
+        if (target[field] !== undefined) {
+            ctx.addIssue({ code: "custom", path: [...path, field], message: \`\${field} is not allowed for this refine_proposals arm\` });
+        }
+    };
+    if (payload.status !== "submitted") forbid(payload, "task_id", []);
+    const results = Array.isArray(payload.results) ? payload.results : [];
+    const rows = results.filter((row): row is Record<string, unknown> => !!row && typeof row === "object");
+    if (rows.some(row => row.outcome === "finalized") && rows.some(row => row.outcome !== "finalized")) {
+        ctx.addIssue({ code: "custom", path: ["results"], message: "a batch containing finalized must contain only finalized results" });
+    }
+    rows.forEach((row, index) => {
+        const path: Array<string | number> = ["results", index];
+        if (typeof row.source_proposal_id === "string" && row.source_proposal_id.length === 0) {
+            ctx.addIssue({ code: "custom", path: [...path, "source_proposal_id"], message: "source_proposal_id must not be empty" });
+        }
+        if (typeof row.reason === "string" && row.reason.length === 0) {
+            ctx.addIssue({ code: "custom", path: [...path, "reason"], message: "reason must not be empty" });
+        }
+        for (const field of ["unsatisfied_constraints", "suggestions"] as const) {
+            const values = row[field];
+            if (!Array.isArray(values)) continue;
+            if (values.some(item => typeof item !== "string" || item.length === 0)) {
+                ctx.addIssue({ code: "custom", path: [...path, field], message: \`\${field} entries must be non-empty strings\` });
+            }
+            if (field === "unsatisfied_constraints" && new Set(values).size !== values.length) {
+                ctx.addIssue({ code: "custom", path: [...path, field], message: "unsatisfied_constraints entries must be unique" });
+            }
+        }
+        const productChanges = row.unsatisfied_product_changes;
+        if (productChanges && typeof productChanges === "object" && !Array.isArray(productChanges)) {
+            const entries = Object.entries(productChanges as Record<string, unknown>);
+            if (entries.length === 0 || entries.some(([key, action]) => key.length === 0 || (action !== "include" && action !== "omit"))) {
+                ctx.addIssue({ code: "custom", path: [...path, "unsatisfied_product_changes"], message: "unsatisfied_product_changes must be a non-empty product action map" });
+            }
+        }
+        if (row.reason_code === "constraint_unsatisfiable" &&
+            row.unsatisfied_constraints === undefined && row.unsatisfied_product_changes === undefined) {
+            ctx.addIssue({ code: "custom", path, message: "constraint_unsatisfiable requires unsatisfied details" });
+        }
+        const forbiddenByOutcome: Record<string, string[]> = {
+            revised: ["proposal", "reason_code", "reason", "unsatisfied_constraints", "unsatisfied_product_changes"],
+            partial: ["proposal"],
+            finalized: ["proposals", "reason_code", "reason", "unsatisfied_constraints", "unsatisfied_product_changes"],
+            unable: ["proposal", "proposals"]
+        };
+        for (const field of forbiddenByOutcome[String(row.outcome)] ?? []) {
+            forbid(row, field, path);
+        }
+        const proposals = [
+            ...(row.proposal && typeof row.proposal === "object" ? [row.proposal] : []),
+            ...(Array.isArray(row.proposals) ? row.proposals : [])
+        ];
+        proposals.forEach((proposal, proposalIndex) => {
+            const parsed = CanonicalProposalSchema.safeParse(proposal);
+            if (!parsed.success) {
+                for (const issue of parsed.error.issues) {
+                    const prefix = row.proposal === proposal ? ["proposal"] : ["proposals", proposalIndex];
+                    ctx.addIssue({ code: "custom", path: [...path, ...prefix, ...issue.path], message: issue.message });
+                }
+            }
+        });
+    });
+})`;
+  const refinedBlock = block.replace(/;\s*$/, `${refinement};`);
+  if (refinedBlock === block) {
+    throw new Error('postProcessRefineProposalsRuntimeConstraints: unable to append response refinement.');
+  }
+  return content.slice(0, schemaStart) + refinedBlock + content.slice(schemaEnd);
 }
 
 /**
@@ -2479,6 +2629,116 @@ async function generateZodSchemas() {
     zodSchemas = postProcessCanonicalFormatMarkerIntersections(zodSchemas);
     zodSchemas = postProcessCanonicalFormatSlots(zodSchemas);
     zodSchemas = postProcessCreativeBriefRequiredDisclosures(zodSchemas);
+    const refineResponseSource = JSON.parse(
+      readFileSync(
+        path.join(__dirname, '../schemas/cache/latest/bundled/media-buy/refine-proposals-response.json'),
+        'utf8'
+      )
+    );
+    const dereferencedRefineResponse = (await $RefParser.dereference(refineResponseSource)) as any;
+    const canonicalProposalSource = dereferencedRefineResponse?.properties?.results?.items?.properties?.proposal;
+    if (!canonicalProposalSource) {
+      throw new Error('Unable to locate the bundled canonical proposal used by refine_proposals.');
+    }
+    // `discriminator` is an optimization hint, not a validation constraint.
+    // json-schema-to-zod otherwise emits z.discriminatedUnion for arms that
+    // also contain allOf intersections, which Zod 4 correctly refuses to type
+    // as discriminable. Plain unions retain identical acceptance semantics.
+    const seenCanonicalNodes = new WeakSet<object>();
+    const removeDiscriminatorHints = (value: unknown): void => {
+      if (!value || typeof value !== 'object' || seenCanonicalNodes.has(value)) return;
+      seenCanonicalNodes.add(value);
+      Object.values(value).forEach(removeDiscriminatorHints);
+      if (Array.isArray(value)) return;
+      const node = value as Record<string, any>;
+      delete node.discriminator;
+      if (node.properties && node.type === undefined) node.type = 'object';
+      // json-schema-to-zod does not project draft-07 if/then/else. Rewrite
+      // the logically equivalent boolean schema using the supported
+      // anyOf/allOf/not vocabulary before conversion:
+      //   (if AND then) OR (NOT if AND else)
+      if (node.if !== undefined && node.then !== undefined) {
+        const conditional =
+          node.else === undefined
+            ? { anyOf: [{ not: node.if }, { allOf: [node.if, node.then] }] }
+            : {
+                anyOf: [{ allOf: [node.if, node.then] }, { allOf: [{ not: node.if }, node.else] }],
+              };
+        node.allOf = [...(Array.isArray(node.allOf) ? node.allOf : []), conditional];
+        delete node.if;
+        delete node.then;
+        delete node.else;
+      }
+      if (node.dependencies && typeof node.dependencies === 'object') {
+        const dependencyGuards = Object.entries(node.dependencies).map(([property, dependency]) => ({
+          anyOf: [
+            { not: { required: [property] } },
+            Array.isArray(dependency)
+              ? { required: [property, ...dependency] }
+              : { allOf: [{ required: [property] }, dependency] },
+          ],
+        }));
+        node.allOf = [...(Array.isArray(node.allOf) ? node.allOf : []), ...dependencyGuards];
+        delete node.dependencies;
+      }
+      if (node.contains !== undefined) {
+        if (node.minContains !== undefined || node.maxContains !== undefined) {
+          throw new Error('Canonical proposal contains minContains/maxContains; extend the Zod normalization.');
+        }
+        // Draft-07 `contains` means at least one item matches. Its boolean
+        // equivalent uses only vocabulary supported by json-schema-to-zod:
+        // NOT(array whose every item does NOT match contains).
+        node.allOf = [
+          ...(Array.isArray(node.allOf) ? node.allOf : []),
+          { not: { type: 'array', items: { not: node.contains } } },
+        ];
+        delete node.contains;
+      }
+    };
+    removeDiscriminatorHints(canonicalProposalSource);
+    const canonicalRootConstraints = canonicalProposalSource.allOf;
+    delete canonicalProposalSource.allOf;
+    const converterOptions: { parserOverride: (schema: any) => string | void } = {
+      parserOverride: (schema: any): string | void => {
+        if (schema.type === 'string' && schema.format === 'date-time') {
+          return 'z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")';
+        }
+        if (Number.isInteger(schema.minProperties) && schema.minProperties >= 0) {
+          const minimum = schema.minProperties;
+          const schemaWithoutMinimum = { ...schema };
+          delete schemaWithoutMinimum.minProperties;
+          const underlying = jsonSchemaToZod(schemaWithoutMinimum, converterOptions);
+          return `${underlying}.refine((value) => Object.keys(value).length >= ${minimum}, "Object must contain at least ${minimum} propert${minimum === 1 ? 'y' : 'ies'}")`;
+        }
+        if (!schema.properties && Array.isArray(schema.required) && schema.required.length > 0) {
+          const fields = schema.required.map(field => `${JSON.stringify(field)}: z.any().nonoptional()`).join(', ');
+          return `z.object({ ${fields} }).passthrough()`;
+        }
+      },
+    };
+    const canonicalProposalObject = jsonSchemaToZod(canonicalProposalSource, converterOptions);
+    const canonicalProposalConstraints = jsonSchemaToZod(
+      { allOf: Array.isArray(canonicalRootConstraints) ? canonicalRootConstraints : [] },
+      converterOptions
+    );
+    const exactCanonicalProposal = `(() => {
+      const objectSchema = ${canonicalProposalObject};
+      const exactSchema = objectSchema.superRefine((value, ctx) => {
+      const checked = ${canonicalProposalConstraints}.safeParse(value);
+      if (!checked.success) {
+        for (const issue of checked.error.issues) {
+          ctx.addIssue({ code: "custom", path: issue.path, message: issue.message });
+        }
+      }
+      });
+      return Object.assign(exactSchema, {
+        pick: objectSchema.pick.bind(objectSchema),
+        omit: objectSchema.omit.bind(objectSchema),
+        extend: objectSchema.extend.bind(objectSchema),
+      });
+    })()`;
+    zodSchemas = postProcessCanonicalProposalRuntimeConstraints(zodSchemas, exactCanonicalProposal);
+    zodSchemas = postProcessRefineProposalsRuntimeConstraints(zodSchemas);
 
     // Post-process: Distribute object-envelope intersections over union object arms.
     // A schema like `Envelope.and(z.union([VariantA, VariantB]))` is equivalent to

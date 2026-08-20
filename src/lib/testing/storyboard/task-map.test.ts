@@ -82,6 +82,71 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
     );
   });
 
+  it('can route compact storyboard steps through one negotiated compatibility coordinator', async () => {
+    const calls: unknown[] = [];
+    const coordinator = {
+      listProducts: async (params: unknown) => {
+        calls.push(params);
+        return { success: true, data: { products: [] } };
+      },
+    };
+    const client = {
+      negotiateMediaBuyLifecycle: async (options: unknown) => {
+        calls.push(options);
+        return coordinator;
+      },
+      listProducts: async () => {
+        throw new Error('compatibility mode must not dispatch the native wrapper directly');
+      },
+    };
+    const compatibility = {
+      allowedLosses: ['feed_version_not_atomic'] as const,
+    };
+
+    const first = await executeStoryboardTask(
+      client,
+      'list_products',
+      { max_results: 5 },
+      {
+        mediaBuyLifecycleCompatibility: compatibility,
+      }
+    );
+    const second = await executeStoryboardTask(
+      client,
+      'list_products',
+      {},
+      {
+        mediaBuyLifecycleCompatibility: compatibility,
+      }
+    );
+
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+    expect(calls).toEqual([compatibility, { max_results: 5 }, {}]);
+  });
+
+  it('evicts a failed compatibility negotiation so a later attempt can recover', async () => {
+    let negotiations = 0;
+    const client = {
+      negotiateMediaBuyLifecycle: async () => {
+        negotiations += 1;
+        if (negotiations === 1) throw new Error('temporary discovery failure');
+        return {
+          listProducts: async () => ({ success: true, data: { products: [] } }),
+        };
+      },
+    };
+    const options = { mediaBuyLifecycleCompatibility: {} };
+
+    await expect(executeStoryboardTask(client, 'list_products', {}, options)).rejects.toThrow(
+      'temporary discovery failure'
+    );
+    const recovered = await executeStoryboardTask(client, 'list_products', {}, options);
+
+    expect(recovered.success).toBe(true);
+    expect(negotiations).toBe(2);
+  });
+
   it('uses raw legacy creative methods when grading a pre-3.2 wire', async () => {
     const calls: string[] = [];
     let receivedParams: unknown;

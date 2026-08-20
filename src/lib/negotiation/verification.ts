@@ -65,7 +65,7 @@ export function isStrictDateTime(value: unknown): value is string {
 }
 
 export function verifyRefineProposalsResponse(
-  request: RefineProposalsRequest,
+  request: Pick<RefineProposalsRequest, 'refinements'>,
   response: unknown,
   options: { now?: Date } = {}
 ): ProposalVerificationResult {
@@ -117,7 +117,7 @@ export function verifyRefineProposalsResponse(
 }
 
 export function assertRefineProposalsResponse(
-  request: RefineProposalsRequest,
+  request: Pick<RefineProposalsRequest, 'refinements'>,
   response: unknown,
   options: { now?: Date } = {}
 ): asserts response is RefineProposalsCompletedResponse {

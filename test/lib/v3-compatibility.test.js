@@ -187,6 +187,16 @@ describe('Synthetic Capabilities Builder', () => {
 });
 
 describe('parseCapabilitiesResponse', () => {
+  test('preserves the release selected for capability discovery', () => {
+    const capabilities = parseCapabilitiesResponse({
+      adcp_version: '3.1',
+      adcp: { major_versions: [3], supported_versions: ['3.0', '3.1', '3.2-beta.2'] },
+      supported_protocols: ['media_buy'],
+    });
+
+    assert.equal(capabilities.servedVersion, '3.1');
+  });
+
   test('should parse v3 capabilities response', () => {
     // Response format matches the actual AdCP get_adcp_capabilities spec
     const response = {

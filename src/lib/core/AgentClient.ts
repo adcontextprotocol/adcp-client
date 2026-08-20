@@ -123,6 +123,7 @@ import type {
   SyncAgentNotificationConfigsResponse,
 } from '../types/tools.generated';
 import type { MutatingRequestInput } from '../utils/idempotency';
+import { MediaBuyLifecycleCoordinator, type MediaBuyLifecycleCoordinatorOptions } from '../media-buy/compatibility';
 import { buildRefineProposalsRequest } from '../negotiation/buyer';
 import { assertRefineProposalsResponse } from '../negotiation/verification';
 import type {
@@ -406,6 +407,19 @@ export class AgentClient {
    */
   getAdcpVersion(): string {
     return this.client.getAdcpVersion();
+  }
+
+  /**
+   * Negotiate one compact-first media-buy facade for this seller.
+   *
+   * Compact tools are preferred when advertised. Established projections
+   * are selected before dispatch and expose exact provenance/loss metadata;
+   * the coordinator never switches mutation tools after a transport failure.
+   */
+  async negotiateMediaBuyLifecycle(
+    options: MediaBuyLifecycleCoordinatorOptions = {}
+  ): Promise<MediaBuyLifecycleCoordinator> {
+    return MediaBuyLifecycleCoordinator.negotiate(this, options);
   }
 
   /**

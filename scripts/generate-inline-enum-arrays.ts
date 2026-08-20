@@ -48,6 +48,20 @@ interface ExtractedInlineEnum {
   values: string[];
 }
 
+// Compound schemas whose public object is wrapped in intersections/refinements
+// are intentionally opaque to the shallow runtime walker. Preserve their
+// existing public enum exports explicitly so tightening a validator never
+// becomes an unrelated generated-API break.
+const COMPOUND_SCHEMA_INLINE_ENUMS: ExtractedInlineEnum[] = [
+  {
+    name: 'CanonicalProposal_ProposalKindValues',
+    parentSchema: 'CanonicalProposal',
+    property: 'proposal_kind',
+    isArray: false,
+    values: ['new_media_buy', 'media_buy_update', 'media_buy_cancellation'],
+  },
+];
+
 // Zod 4 internals — every schema instance carries `_def` with a
 // `type` field that names the Zod kind. `unwrap` removes the
 // `optional` / `nullable` / `nullish` / `default` / `readonly` /
@@ -360,7 +374,7 @@ function writeFileIfChanged(filePath: string, newContent: string): boolean {
 function main(): void {
   console.log('🔄 Generating inline-union value arrays...');
 
-  const items = extractFromAllSchemas();
+  const items = [...extractFromAllSchemas(), ...COMPOUND_SCHEMA_INLINE_ENUMS];
 
   // Guardrail: AdCP 3.0.1 hoisted 20 inline string-literal unions into
   // named `enums/*.json` files (adcp#3148 + #3174), dropping the count

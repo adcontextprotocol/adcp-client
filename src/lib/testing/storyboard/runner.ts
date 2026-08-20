@@ -5058,6 +5058,15 @@ async function executeStep(
         spec: step.parallel_dispatch,
         keyMinter: generateIdempotencyKey,
         correlationPrefix: step.id,
+        taskOptions: {
+          skipIdempotencyAutoInject: testsIdempotencyKeyOmission,
+          skipAccountValidation: testsMissingAccount,
+          responseProjection:
+            effectiveStep.response_projection ??
+            defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
+          mediaBuyLifecycleCompatibility: options.mediaBuyLifecycleCompatibility,
+          signal: options.signal,
+        },
       });
       const durationMs = Date.now() - started;
       // Representative TaskResult is ALWAYS `dispatches[0]` — pinning the
@@ -5101,6 +5110,7 @@ async function executeStep(
           responseProjection:
             effectiveStep.response_projection ??
             defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
+          mediaBuyLifecycleCompatibility: options.mediaBuyLifecycleCompatibility,
           signal: options.signal,
         });
       const run = await runStep(step.title, effectiveStep.task, async () => {

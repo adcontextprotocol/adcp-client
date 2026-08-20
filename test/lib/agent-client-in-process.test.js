@@ -33,7 +33,7 @@ describe('AgentClient.fromMCPClient — in-process transport', () => {
         success: true,
         adcp: {
           major_versions: [3],
-          idempotency: { replay_ttl_seconds: 86400 },
+          idempotency: { supported: true, replay_ttl_seconds: 86400 },
         },
         supported_protocols: ['media_buy'],
         specialisms: [],

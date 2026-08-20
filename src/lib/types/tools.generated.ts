@@ -9546,64 +9546,120 @@ export interface ProductChangeMap {
 /**
  * One ordered result per requested source proposal. Revision results may carry multiple immutable draft proposals when alternatives were requested; finalization remains one committed proposal per source. Products contains the compact canonical products needed to evaluate the resulting terms.
  */
-export type RefineProposalsResponse = (
+export type RefineProposalsResponse =
   | {
+      /**
+       * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+       */
+      adcp_version?: string;
+      /**
+       * Ordered results. If any result is finalized, every result MUST be finalized; a finalize batch either creates every requested hold or none. Every returned proposal carries parent_proposal_id equal to the result's source_proposal_id, making negotiation lineage reconstructible from the proposals alone.
+       */
+      results: (
+        | {
+            /**
+             * @minLength 1
+             */
+            source_proposal_id: string;
+            outcome: 'revised';
+            /**
+             * Draft successors produced for a revision. Without alternatives this contains one proposal. With alternatives.count, revised contains exactly that many proposals with unique terms_digest values; fewer or commercially duplicate proposals require partial.
+             */
+            proposals: (CanonicalProposal & {
+              /**
+               * Immediate predecessor this snapshot was forked from. Every proposal produced by refine_proposals carries it, equal to the request's source proposal_id, so negotiation lineage is reconstructible from proposals alone.
+               */
+              parent_proposal_id: string;
+              proposal_status: 'draft';
+            })[];
+            suggestions?: string[];
+            targeting_resolution?: ProductDiscoveryTargetingResolution;
+          }
+        | {
+            /**
+             * @minLength 1
+             */
+            source_proposal_id: string;
+            outcome: 'partial';
+            /**
+             * Draft successors produced for a revision. Without alternatives this contains one proposal. With alternatives.count, revised contains exactly that many proposals with unique terms_digest values; fewer or commercially duplicate proposals require partial.
+             */
+            proposals: (CanonicalProposal & {
+              /**
+               * Immediate predecessor this snapshot was forked from. Every proposal produced by refine_proposals carries it, equal to the request's source proposal_id, so negotiation lineage is reconstructible from proposals alone.
+               */
+              parent_proposal_id: string;
+              proposal_status: 'draft';
+            })[];
+            reason_code: ProposalRefinementReason;
+            /**
+             * @minLength 1
+             */
+            reason: string;
+            /**
+             * Stable keys from the request constraints object that were not satisfied by every returned draft. A result carrying any key here MUST use outcome partial or unable, never revised.
+             */
+            unsatisfied_constraints?: string[];
+            /**
+             * Requested product actions not satisfied by every returned draft. This is a subset of the request product_changes map and is valid only on partial or unable results.
+             */
+            unsatisfied_product_changes?: ProductChangeMap;
+            suggestions?: string[];
+            targeting_resolution?: ProductDiscoveryTargetingResolution;
+          }
+        | {
+            /**
+             * @minLength 1
+             */
+            source_proposal_id: string;
+            outcome: 'unable';
+            reason_code: ProposalRefinementReason;
+            /**
+             * @minLength 1
+             */
+            reason: string;
+            /**
+             * Stable keys from the request constraints object that were not satisfied by every returned draft. A result carrying any key here MUST use outcome partial or unable, never revised.
+             */
+            unsatisfied_constraints?: string[];
+            /**
+             * Requested product actions not satisfied by every returned draft. This is a subset of the request product_changes map and is valid only on partial or unable results.
+             */
+            unsatisfied_product_changes?: ProductChangeMap;
+            suggestions?: string[];
+            targeting_resolution?: ProductDiscoveryTargetingResolution;
+          }
+      )[];
+      products: CanonicalProduct[];
       status?: 'completed';
+      /**
+       * @maxLength 2000
+       */
+      message?: string;
+      errors?: Error[];
+      context?: ContextObject;
+      ext?: ExtensionObject;
+      replayed?: true;
     }
-  | CompactTaskSubmitted
-) & {
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * Ordered results. If any result is finalized, every result MUST be finalized; a finalize batch either creates every requested hold or none. Every returned proposal carries parent_proposal_id equal to the result's source_proposal_id, making negotiation lineage reconstructible from the proposals alone.
-   */
-  results?: (
-    | {
-        /**
-         * @minLength 1
-         */
-        source_proposal_id: string;
-        outcome: 'revised';
-        proposals: {
-          proposal_status: 'draft';
-        }[];
-        suggestions?: string[];
-        targeting_resolution?: ProductDiscoveryTargetingResolution;
-      }
-    | {
-        /**
-         * @minLength 1
-         */
-        source_proposal_id: string;
-        outcome: 'partial';
-        proposals: {
-          proposal_status: 'draft';
-        }[];
-        reason_code: ProposalRefinementReason;
-        /**
-         * @minLength 1
-         */
-        reason: string;
-        /**
-         * Stable keys from the request constraints object that were not satisfied by every returned draft. A result carrying any key here MUST use outcome partial or unable, never revised.
-         */
-        unsatisfied_constraints?: string[];
-        /**
-         * Requested product actions not satisfied by every returned draft. This is a subset of the request product_changes map and is valid only on partial or unable results.
-         */
-        unsatisfied_product_changes?: ProductChangeMap;
-        suggestions?: string[];
-        targeting_resolution?: ProductDiscoveryTargetingResolution;
-      }
-    | {
+  | {
+      /**
+       * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+       */
+      adcp_version?: string;
+      /**
+       * Ordered results. If any result is finalized, every result MUST be finalized; a finalize batch either creates every requested hold or none. Every returned proposal carries parent_proposal_id equal to the result's source_proposal_id, making negotiation lineage reconstructible from the proposals alone.
+       */
+      results: {
         /**
          * @minLength 1
          */
         source_proposal_id: string;
         outcome: 'finalized';
-        proposal: {
+        proposal: CanonicalProposal & {
+          /**
+           * Immediate predecessor this snapshot was forked from. Every proposal produced by refine_proposals carries it, equal to the request's source proposal_id, so negotiation lineage is reconstructible from proposals alone.
+           */
+          parent_proposal_id: string;
           proposal_status: 'committed';
           /**
            * @format date-time
@@ -9612,45 +9668,161 @@ export type RefineProposalsResponse = (
         };
         suggestions?: string[];
         targeting_resolution?: ProductDiscoveryTargetingResolution;
-      }
-    | {
+      }[];
+      products: CanonicalProduct[];
+      status?: 'completed';
+      /**
+       * @maxLength 2000
+       */
+      message?: string;
+      errors?: Error[];
+      context?: ContextObject;
+      ext?: ExtensionObject;
+      replayed?: true;
+    }
+  | {
+      /**
+       * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+       */
+      adcp_version?: string;
+      /**
+       * Ordered results. If any result is finalized, every result MUST be finalized; a finalize batch either creates every requested hold or none. Every returned proposal carries parent_proposal_id equal to the result's source_proposal_id, making negotiation lineage reconstructible from the proposals alone.
+       */
+      results?: (
+        | {
+            /**
+             * @minLength 1
+             */
+            source_proposal_id: string;
+            outcome: 'revised';
+            /**
+             * Draft successors produced for a revision. Without alternatives this contains one proposal. With alternatives.count, revised contains exactly that many proposals with unique terms_digest values; fewer or commercially duplicate proposals require partial.
+             */
+            proposals: (CanonicalProposal & {
+              /**
+               * Immediate predecessor this snapshot was forked from. Every proposal produced by refine_proposals carries it, equal to the request's source proposal_id, so negotiation lineage is reconstructible from proposals alone.
+               */
+              parent_proposal_id: string;
+              proposal_status: 'draft';
+            })[];
+            suggestions?: string[];
+            targeting_resolution?: ProductDiscoveryTargetingResolution;
+          }
+        | {
+            /**
+             * @minLength 1
+             */
+            source_proposal_id: string;
+            outcome: 'partial';
+            /**
+             * Draft successors produced for a revision. Without alternatives this contains one proposal. With alternatives.count, revised contains exactly that many proposals with unique terms_digest values; fewer or commercially duplicate proposals require partial.
+             */
+            proposals: (CanonicalProposal & {
+              /**
+               * Immediate predecessor this snapshot was forked from. Every proposal produced by refine_proposals carries it, equal to the request's source proposal_id, so negotiation lineage is reconstructible from proposals alone.
+               */
+              parent_proposal_id: string;
+              proposal_status: 'draft';
+            })[];
+            reason_code: ProposalRefinementReason;
+            /**
+             * @minLength 1
+             */
+            reason: string;
+            /**
+             * Stable keys from the request constraints object that were not satisfied by every returned draft. A result carrying any key here MUST use outcome partial or unable, never revised.
+             */
+            unsatisfied_constraints?: string[];
+            /**
+             * Requested product actions not satisfied by every returned draft. This is a subset of the request product_changes map and is valid only on partial or unable results.
+             */
+            unsatisfied_product_changes?: ProductChangeMap;
+            suggestions?: string[];
+            targeting_resolution?: ProductDiscoveryTargetingResolution;
+          }
+        | {
+            /**
+             * @minLength 1
+             */
+            source_proposal_id: string;
+            outcome: 'unable';
+            reason_code: ProposalRefinementReason;
+            /**
+             * @minLength 1
+             */
+            reason: string;
+            /**
+             * Stable keys from the request constraints object that were not satisfied by every returned draft. A result carrying any key here MUST use outcome partial or unable, never revised.
+             */
+            unsatisfied_constraints?: string[];
+            /**
+             * Requested product actions not satisfied by every returned draft. This is a subset of the request product_changes map and is valid only on partial or unable results.
+             */
+            unsatisfied_product_changes?: ProductChangeMap;
+            suggestions?: string[];
+            targeting_resolution?: ProductDiscoveryTargetingResolution;
+          }
+      )[];
+      products?: CanonicalProduct[];
+      status: 'submitted';
+      /**
+       * @minLength 1
+       */
+      task_id: string;
+      /**
+       * @maxLength 2000
+       */
+      message?: string;
+      errors?: Error[];
+      context?: ContextObject;
+      ext?: ExtensionObject;
+      replayed?: true;
+    }
+  | {
+      /**
+       * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+       */
+      adcp_version?: string;
+      /**
+       * Ordered results. If any result is finalized, every result MUST be finalized; a finalize batch either creates every requested hold or none. Every returned proposal carries parent_proposal_id equal to the result's source_proposal_id, making negotiation lineage reconstructible from the proposals alone.
+       */
+      results?: {
         /**
          * @minLength 1
          */
         source_proposal_id: string;
-        outcome: 'unable';
-        reason_code: ProposalRefinementReason;
-        /**
-         * @minLength 1
-         */
-        reason: string;
-        /**
-         * Stable keys from the request constraints object that were not satisfied by every returned draft. A result carrying any key here MUST use outcome partial or unable, never revised.
-         */
-        unsatisfied_constraints?: string[];
-        /**
-         * Requested product actions not satisfied by every returned draft. This is a subset of the request product_changes map and is valid only on partial or unable results.
-         */
-        unsatisfied_product_changes?: ProductChangeMap;
+        outcome: 'finalized';
+        proposal: CanonicalProposal & {
+          /**
+           * Immediate predecessor this snapshot was forked from. Every proposal produced by refine_proposals carries it, equal to the request's source proposal_id, so negotiation lineage is reconstructible from proposals alone.
+           */
+          parent_proposal_id: string;
+          proposal_status: 'committed';
+          /**
+           * @format date-time
+           */
+          expires_at: string;
+        };
         suggestions?: string[];
         targeting_resolution?: ProductDiscoveryTargetingResolution;
-      }
-  )[];
-  products?: CanonicalProduct[];
-  status?: 'completed' | 'submitted';
-  /**
-   * @minLength 1
-   */
-  task_id?: string;
-  /**
-   * @maxLength 2000
-   */
-  message?: string;
-  errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-  replayed?: true;
-};
+      }[];
+      products?: CanonicalProduct[];
+      status: 'submitted';
+      /**
+       * @minLength 1
+       */
+      task_id: string;
+      /**
+       * @maxLength 2000
+       */
+      message?: string;
+      errors?: Error[];
+      context?: ContextObject;
+      ext?: ExtensionObject;
+      replayed?: true;
+    };
+
+// decline_proposals parameters
 /**
  * Terminal buyer feedback for one immutable proposal snapshot.
  */
@@ -24667,6 +24839,9 @@ export interface SyncPlansRequest {
            * Maximum percentage of budget that can go to a single seller.
            */
           per_seller_max_pct?: number;
+          /**
+           * Set to true to allow the orchestrator to reallocate without any limit up to `total`. Mutually exclusive with `reallocation_threshold`. Use this for deliberate full-autonomy declarations rather than setting `reallocation_threshold: total` (which silently tightens when `total` changes).
+           */
           reallocation_unlimited: true;
           /**
            * Optional budget partition across purchase types. Keys are purchase-type enum values (media_buy, rights_license, signal_activation, creative_services). When present, the governance agent validates spend against both the total and the per-type allocation. When absent, all spend counts against the single total regardless of purchase type.
@@ -32110,6 +32285,9 @@ export interface RawAttestation {
    * Media type of the outbound request body, mirroring the agent's outbound `Content-Type` header (e.g., `application/json`, `application/x-www-form-urlencoded`, `multipart/form-data`, `text/plain`). In raw mode this describes the returned `payload`; in digest mode it describes the body the digest was computed over. Storyboard `payload_must_contain` JSONPath-lite assertions are valid only when content_type is `application/json` or has a `+json` suffix AND attestation_mode is `raw` — digest mode and non-JSON content types grade `payload_must_contain` as not_applicable. Required so the runner can choose the right matcher deterministically.
    */
   content_type: string;
+  /**
+   * Per-call attestation mode echoing the request's `params.attestation_mode`. Required on every recorded_call so the `oneOf` discriminator always has an explicit value to dispatch on — no implicit defaults inside oneOf branches. Adopters MAY unilaterally downgrade a `raw` request to `digest` for a specific call when their policy requires it (e.g., the call carried regulated PII the adopter can't return raw). The runner reads this field to know which assertions to apply.
+   */
   attestation_mode: 'raw';
   /**
    * Optional adopter-supplied semantic tag for the call's role. Values: `platform_primary` for the primary upstream platform the adapter is integrating with (e.g., a TikTok audience-upload call from a sales-social adapter); `measurement` for ancillary calls to measurement vendors (DV, IAS, Nielsen, MOAT); `attribution` for server-side conversion APIs (TTD Trans-API, Meta CAPI, AppsFlyer/Branch postbacks) that flow alongside primary platform calls in a buy-step; `creative_serving` for ad-server / CDN / tag-build calls (GAM tag generation, VAST/CDN fetches, creative trafficking); `identity` for ID-graph / hashing-service calls (LiveRamp, ID5, UID2); `other` for everything else (config fetches, internal telemetry, consent signal exchange). Lets storyboards scope `upstream_traffic` assertions via `purpose_filter` so a buyer-agent adapter that legitimately calls measurement vendors during a single buy step doesn't muddy the platform-primary assertion. Calls without a `purpose` field are treated as `purpose: other` for `purpose_filter` matching — adopters who haven't classified are matched only by storyboards filtering on `other` (or by storyboards with no `purpose_filter`). Self-reported, not adversarially trustworthy — same trust model as the rest of recorded_calls; misclassification by a façade is bounded by the runner's reporting of unclassified-call counts in `actual` when filters match zero.
@@ -32165,6 +32343,9 @@ export interface DigestAttestation {
    * Media type of the outbound request body, mirroring the agent's outbound `Content-Type` header (e.g., `application/json`, `application/x-www-form-urlencoded`, `multipart/form-data`, `text/plain`). In raw mode this describes the returned `payload`; in digest mode it describes the body the digest was computed over. Storyboard `payload_must_contain` JSONPath-lite assertions are valid only when content_type is `application/json` or has a `+json` suffix AND attestation_mode is `raw` — digest mode and non-JSON content types grade `payload_must_contain` as not_applicable. Required so the runner can choose the right matcher deterministically.
    */
   content_type: string;
+  /**
+   * Per-call attestation mode echoing the request's `params.attestation_mode`. Required on every recorded_call so the `oneOf` discriminator always has an explicit value to dispatch on — no implicit defaults inside oneOf branches. Adopters MAY unilaterally downgrade a `raw` request to `digest` for a specific call when their policy requires it (e.g., the call carried regulated PII the adopter can't return raw). The runner reads this field to know which assertions to apply.
+   */
   attestation_mode: 'digest';
   /**
    * Optional adopter-supplied semantic tag for the call's role. Values: `platform_primary` for the primary upstream platform the adapter is integrating with (e.g., a TikTok audience-upload call from a sales-social adapter); `measurement` for ancillary calls to measurement vendors (DV, IAS, Nielsen, MOAT); `attribution` for server-side conversion APIs (TTD Trans-API, Meta CAPI, AppsFlyer/Branch postbacks) that flow alongside primary platform calls in a buy-step; `creative_serving` for ad-server / CDN / tag-build calls (GAM tag generation, VAST/CDN fetches, creative trafficking); `identity` for ID-graph / hashing-service calls (LiveRamp, ID5, UID2); `other` for everything else (config fetches, internal telemetry, consent signal exchange). Lets storyboards scope `upstream_traffic` assertions via `purpose_filter` so a buyer-agent adapter that legitimately calls measurement vendors during a single buy step doesn't muddy the platform-primary assertion. Calls without a `purpose` field are treated as `purpose: other` for `purpose_filter` matching — adopters who haven't classified are matched only by storyboards filtering on `other` (or by storyboards with no `purpose_filter`). Self-reported, not adversarially trustworthy — same trust model as the rest of recorded_calls; misclassification by a façade is bounded by the runner's reporting of unclassified-call counts in `actual` when filters match zero.

@@ -79,6 +79,15 @@ describe('Response Unwrapper', () => {
       assert.strictEqual(result.status, undefined);
     });
 
+    test('accepts the generated ordered decline result form without an echoed proposal_id', () => {
+      const payload = {
+        results: [{ outcome: 'declined' }],
+      };
+      const result = unwrapProtocolResponse({ structuredContent: payload }, 'decline_proposals', 'mcp');
+
+      assert.deepStrictEqual(result, payload);
+    });
+
     test('should unwrap A2A result.artifacts response with validation', () => {
       const a2aResponse = {
         result: {
@@ -1300,6 +1309,25 @@ describe('Response Unwrapper', () => {
       assert.strictEqual(hasAdvisorySuccessPayload(partialSuccess, 'report_usage'), true);
       assert.strictEqual(isTerminalAdcpError(partialSuccess, 'report_usage'), false);
       assert.strictEqual(isAdcpSuccess(partialSuccess, 'report_usage'), true);
+    });
+
+    test('compact media-buy success discriminators preserve advisory errors[]', () => {
+      const advisory = [{ code: 'PARTIAL_AVAILABILITY', message: 'One alternative was unavailable' }];
+      const cases = [
+        ['request_proposals', { outcome: 'proposed', status: 'completed', proposals: [], errors: advisory }],
+        ['refine_proposals', { results: [], products: [], errors: advisory }],
+        ['decline_proposals', { results: [], errors: advisory }],
+      ];
+
+      for (const [toolName, response] of cases) {
+        assert.strictEqual(hasAdvisorySuccessPayload(response, toolName), true, toolName);
+        assert.strictEqual(isTerminalAdcpError(response, toolName), false, toolName);
+      }
+      assert.strictEqual(
+        hasAdvisorySuccessPayload({ results: [], errors: advisory }, 'refine_proposals'),
+        false,
+        'refine_proposals requires the schema-mandated products collection'
+      );
     });
 
     test('explicit terminal status wins over advisory success fields', () => {

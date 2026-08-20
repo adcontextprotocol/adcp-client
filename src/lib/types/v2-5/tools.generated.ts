@@ -1912,6 +1912,9 @@ export interface Format {
          * Semantic role of this rendered piece (e.g., 'primary', 'companion', 'mobile_variant')
          */
         role: string;
+        /**
+         * When true, parameters for this render (dimensions and/or duration) are specified in the format_id. Used for template formats that accept parameters. Mutually exclusive with specifying dimensions object explicitly.
+         */
         parameters_from_format_id: true;
       }
   )[];
