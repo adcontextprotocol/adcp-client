@@ -1,5 +1,19 @@
 # Changelog
 
+## 14.0.0-beta.4
+
+### Minor Changes
+
+- e749c9d: Make compliance timeout truncation structurally visible and scale the CLI's default budget, forward exact wire pins through `ADCPMultiAgentClient.simple()`, bridge auto-wired RFC 9421 signer identity into handler auth and buyer-agent resolution, and complete seller-aware AdCP 3.1-to-3.0 discovery request adaptation across MCP and A2A.
+- 4cce3c2: Adopt the canonical universal-macro translation fixture. `translateUniversalMacros` now reports literal consent mappings in `frozen_consent_macros` and throws the exported `UnsafeNativeMappingError` when any native mapping contains an ASCII C0 control character or DEL, including unused mapping entries.
+- e03a901: Add a compact-first media-buy lifecycle coordinator that negotiates compact or established seller tools, returns runtime-validated typed lifecycle-neutral product and proposal outcomes, preserves mutation retry keys, isolates bounded proposal and pending-mutation state by authenticated principal, and rejects unadvertised tools or unrepresentable guarantees before dispatch unless the caller opts into an exact named loss. Preserve the full canonical proposal shape and completed-response requirements in generated refine-proposal TypeScript and Zod schemas.
+
+### Patch Changes
+
+- 6663833: Preserve inline `sync_creatives` result fields in the public core generated types and drain large CLI `--json` payloads before exit.
+- 8033eb4: Restore beta conformance and compatibility behavior for structured business rejections, storyboard applicability, safe auth-probe selection, natural-key account operators, AdCP 3.0 capability projection, and portfolio-shaped brand JWKS discovery.
+- 5a7c443: Adopt the signed AdCP 3.2.0-beta.3 bundle, preserve inherited request fields in wire-safe fan-out helpers, validate the complete compact proposal and direct-buy lifecycle storyboards against the new protocol pin, and enforce AND-composed `requires_all_capabilities` storyboard gates.
+
 ## 14.0.0-beta.3
 
 ### Major Changes
