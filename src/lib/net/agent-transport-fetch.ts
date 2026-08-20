@@ -39,12 +39,13 @@ export function createAgentTransportFetch(agentUrl: string, options: AgentTransp
     process.env.ADCP_ALLOW_PRIVATE_AGENT_URL === '1';
   const allowPrivateInitialOrigin = isLikelyPrivateUrl(initialUrl.toString());
   const dispatchers = new Map<string, Promise<Agent>>();
+  const privateIpAllowedFor = (url: URL): boolean =>
+    allowPrivateEverywhere || (allowPrivateInitialOrigin && url.origin === initialUrl.origin);
 
   const dispatcherFor = (url: URL): Promise<Agent> => {
     const cached = dispatchers.get(url.origin);
     if (cached) return cached;
-    const allowPrivateIp = allowPrivateEverywhere || (allowPrivateInitialOrigin && url.origin === initialUrl.origin);
-    const pending = resolveAndCreateDispatcher(url, lookup, allowPrivateIp);
+    const pending = resolveAndCreateDispatcher(url, lookup, privateIpAllowedFor(url));
     dispatchers.set(url.origin, pending);
     pending.catch(() => dispatchers.delete(url.origin));
     return pending;
@@ -65,6 +66,8 @@ export function createAgentTransportFetch(agentUrl: string, options: AgentTransp
 
     for (let redirects = 0; ; redirects++) {
       assertTransportScheme(url);
+      const hostname = url.hostname.replace(/^\[|\]$/g, '');
+      if (isIP(hostname) !== 0) assertAgentAddressAllowed(hostname, hostname, privateIpAllowedFor(url), false);
       const headerRecord: Record<string, string> = {};
       headers.forEach((value, key) => {
         headerRecord[key] = value;
@@ -124,15 +127,7 @@ async function resolveAndCreateDispatcher(
   const addresses = await lookup(hostname);
   if (addresses.length === 0) throw new Error(`DNS returned no addresses for agent host ${hostname}`);
   for (const entry of addresses) {
-    if (isAlwaysBlocked(entry.address)) {
-      throw new Error(`Agent host ${hostname} resolves to an always-blocked address`);
-    }
-    if (!allowPrivateIp && isPrivateIp(entry.address)) {
-      throw new Error(
-        `Agent host ${hostname} resolves to a private or loopback address; ` +
-          'set transport.allowPrivateIp=true for an explicitly trusted private agent, or provide a trustedFetchFn that enforces its own address policy'
-      );
-    }
+    assertAgentAddressAllowed(entry.address, hostname, allowPrivateIp, true);
   }
 
   const pinned = addresses[0]!;
@@ -147,6 +142,24 @@ async function resolveAndCreateDispatcher(
       },
     },
   });
+}
+
+function assertAgentAddressAllowed(
+  address: string,
+  hostname: string,
+  allowPrivateIp: boolean,
+  resolved: boolean
+): void {
+  const relationship = resolved ? 'resolves to' : 'is';
+  if (isAlwaysBlocked(address)) {
+    throw new Error(`Agent host ${hostname} ${relationship} an always-blocked address`);
+  }
+  if (!allowPrivateIp && isPrivateIp(address)) {
+    const guidance = resolved
+      ? 'set transport.allowPrivateIp=true for an explicitly trusted private agent, or provide a trustedFetchFn that enforces its own hostname address policy'
+      : 'set transport.allowPrivateIp=true for an explicitly trusted private agent';
+    throw new Error(`Agent host ${hostname} ${relationship} a private or loopback address; ` + guidance);
+  }
 }
 
 function assertTransportScheme(url: URL): void {

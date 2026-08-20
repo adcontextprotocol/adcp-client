@@ -48,6 +48,9 @@ alwaysBlocked.addSubnet('fe80::', 10, 'ipv6');
 // IETF-protocol assignments) rather than the 169.254.0.0/16 everyone else
 // uses, so it needs its own entry to be refused even under the private opt-in.
 alwaysBlocked.addAddress('192.0.0.192', 'ipv4');
+// AWS exposes IMDS over this ULA address on Nitro instances. It is a direct
+// credential endpoint, so private-network opt-in must never make it reachable.
+alwaysBlocked.addAddress('fd00:ec2::254', 'ipv6');
 // Deterministic IPv4-in-IPv6 wrappers: block only encodings of the IPv4
 // always-blocked ranges so `allowPrivateIp` can still reach explicitly trusted
 // public translation targets. `a9fe` is 169.254 and `c000:c0` is 192.0.0.192.
@@ -85,6 +88,10 @@ globallyReachableIetfAssignments.addSubnet('2001:30::', 28, 'ipv6'); // DETs
 // wrapped-v4 address can't bypass the classifier by choosing a representation
 // BlockList doesn't natively canonicalize.
 const privateIp = new BlockList();
+const nativeIpv4Loopback = new BlockList();
+nativeIpv4Loopback.addSubnet('127.0.0.0', 8, 'ipv4');
+const nativeIpv6Loopback = new BlockList();
+nativeIpv6Loopback.addAddress('::1', 'ipv6');
 // v4 — BlockList handles IPv4-mapped IPv6 (`::ffff:a.b.c.d`) against these
 // subnets automatically per Node's check semantics.
 privateIp.addSubnet('0.0.0.0', 8, 'ipv4');
@@ -169,6 +176,16 @@ export function isPrivateIp(address: string): boolean {
   const n = normalize(address);
   if (!n) return false;
   return isAlwaysBlockedNormalized(n) || isNonGlobalIetfAssignment(n) || privateIp.check(n.addr, n.family);
+}
+
+/** Return true only for native IPv4/IPv6 loopback, not wrapped forms. */
+export function isLoopbackIp(address: string): boolean {
+  const n = normalize(address);
+  if (!n) return false;
+  // Keep the families in separate lists. A mixed BlockList canonicalizes an
+  // IPv4-mapped IPv6 value against its IPv4 entries, but the loopback policy
+  // intentionally permits only native representations.
+  return n.family === 'ipv4' ? nativeIpv4Loopback.check(n.addr, 'ipv4') : nativeIpv6Loopback.check(n.addr, 'ipv6');
 }
 
 /**

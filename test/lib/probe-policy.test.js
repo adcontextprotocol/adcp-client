@@ -152,8 +152,8 @@ describe('classifyProbeUrl: ADCP_ALLOW_INTERNAL_PROBES=1 opt-in', () => {
     assert.strictEqual(r.code, 'always_blocked');
   });
 
-  test('ADCP_ALLOW_INTERNAL_PROBES=1 STILL refuses opaque IPv6 translation and tunnel prefixes', () => {
-    for (const url of ['http://[64:ff9b:1::1]/', 'http://[2001::1]/']) {
+  test('ADCP_ALLOW_INTERNAL_PROBES=1 STILL refuses IPv6 metadata, translation, and tunnel targets', () => {
+    for (const url of ['http://[fd00:ec2::254]/', 'http://[64:ff9b:1::1]/', 'http://[2001::1]/']) {
       const r = spawnAssertAllowed(url);
       assert.strictEqual(r.allowed, false, `${url} must remain refused under the env opt-in`);
       assert.strictEqual(r.code, 'always_blocked');

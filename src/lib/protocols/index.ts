@@ -278,10 +278,11 @@ export interface TransportOptions {
    * the SDK uses the global `fetch` implementation.
    *
    * Supplying this function makes it the trusted network boundary: the SDK
-   * still validates URL schemes, redirect behavior, timeouts, and body limits,
-   * but delegates DNS resolution and address policy to the implementation.
-   * It must prevent DNS rebinding and unsafe private-address access itself (for
-   * example with an egress proxy or its own DNS pinning).
+   * still validates URL schemes, redirect behavior, timeouts, body limits, and
+   * literal IP addresses, but delegates hostname DNS resolution and resolved
+   * address policy to the implementation. It must prevent DNS rebinding and
+   * unsafe private-address access itself (for example with an egress proxy or
+   * its own DNS pinning).
    */
   trustedFetchFn?: typeof fetch;
   /**

@@ -12,6 +12,27 @@ const {
 } = require('../../dist/lib/net');
 
 describe('ssrfSafeFetch — scheme guard', () => {
+  it('fetches the exact normalized URL that was checked', async () => {
+    let coercions = 0;
+    const input = {
+      toString() {
+        coercions += 1;
+        return coercions === 1 ? 'https://public.example/' : 'http://127.0.0.1/';
+      },
+    };
+    let fetchedUrl;
+    const result = await ssrfSafeFetch(input, {
+      trustedFetchFn: async url => {
+        fetchedUrl = url;
+        return new Response(null, { status: 204 });
+      },
+    });
+
+    assert.equal(result.status, 204);
+    assert.equal(coercions, 1);
+    assert.equal(fetchedUrl, 'https://public.example/');
+  });
+
   it('refuses file: / data: / ftp: even under allowPrivateIp', async () => {
     for (const url of ['file:///etc/passwd', 'data:text/plain,hi', 'ftp://example.com/']) {
       await assert.rejects(
@@ -324,6 +345,26 @@ describe('address-guards — bypass resistance', () => {
       );
     }
     assert.strictEqual(fetchCalls, 0, 'always-blocked literals must be rejected before fetch');
+  });
+
+  it('always blocks AWS IPv6 IMDS even when private-network access is enabled', async () => {
+    let fetchCalls = 0;
+    const address = 'fd00:ec2::254';
+
+    assert.strictEqual(isAlwaysBlocked(address), true);
+    assert.strictEqual(isPrivateIp(address), true);
+    await assert.rejects(
+      () =>
+        ssrfSafeFetch(`http://[${address}]/latest/meta-data/`, {
+          allowPrivateIp: true,
+          trustedFetchFn: async () => {
+            fetchCalls += 1;
+            return new Response(null, { status: 204 });
+          },
+        }),
+      err => err instanceof SsrfRefusedError && err.code === 'always_blocked_address'
+    );
+    assert.strictEqual(fetchCalls, 0, 'IPv6 IMDS must be rejected before fetch');
   });
 
   it('keeps deterministic public wrappers overrideable through allowPrivateIp', async () => {
