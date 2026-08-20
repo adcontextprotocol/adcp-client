@@ -26,7 +26,7 @@ The framework picks up the registry, runs `resolve()` once per request, threads 
 | `BuyerAgentRegistry` Protocol + 3 factories | Map credentials to durable buyer-agent records | Opt in via `platform.agentRegistry` |
 | `BuyerAgent.status` enforcement | Reject `suspended`/`blocked` agents at 403 | Active when registry returns a record |
 | `ResolvedAuthInfo.credential` (kind-discriminated) | Stable identity surface across api-key / OAuth / signed-request auth | Opt in by reading `ctx.authInfo.credential.kind` |
-| Verifier-attested `http_sig.agent_url` | Cryptographic proof of buyer-agent identity (per adcp#3831) | Active when `verifySignatureAsAuthenticator` is wired |
+| Verifier-attested `http_sig.agent_url` | Cryptographic proof of buyer-agent identity (per adcp#3831) | Active with `verifySignatureAsAuthenticator` or auto-wired `signedRequests.agentUrlForKeyid` |
 | `BuyerAgentRegistry.cached` decorator | TTL + LRU + concurrent-resolve coalescing + `invalidate()` / `clear()` API | Decorator pattern — wrap your registry |
 | `BuyerAgent.sandbox_only` (Phase 1.5) | Defense-in-depth for test agents | Set on the agent record; framework gates after `accounts.resolve` |
 | `sync_accounts` billing gate | Reject billing values outside the resolved agent's commercial relationship | Active when `platform.agentRegistry` returns a record |
@@ -322,6 +322,35 @@ const auth = verifySignatureAsAuthenticator({
 ```
 
 Per adcp#3831, the `agent_url` derivation rule is "the `agents[]` entry whose `jwks_uri` resolved the keyid." Your `agentUrlForKeyid` MUST follow this — don't return arbitrary URLs.
+
+### Auto-wired `signedRequests`
+
+Servers using `createAdcpServer({ signedRequests })` can expose the same
+verified identity without separately wiring `verifySignatureAsAuthenticator`:
+
+```ts
+createAdcpServer({
+  // ...platform configuration...
+  signedRequests: {
+    jwks,
+    replayStore,
+    revocationStore,
+    agentUrlForKeyid: (keyid) => keyidToAgentUrlMap.get(keyid),
+    // Optional: map the signer to your stable internal principal.
+    makePrincipal: (signer) => {
+      const principal = keyidToPrincipal.get(signer.keyid);
+      if (!principal) throw new Error('Unknown signer key');
+      return { principal };
+    },
+  },
+});
+```
+
+`makePrincipal` must return a non-empty principal; an unmapped key is rejected.
+If `serve({ authenticate })` is also configured, the signer and authenticate
+hook must resolve to the same principal or the request is rejected with 401.
+This prevents bearer scopes/task ownership from being combined with a
+different signed buyer-agent identity.
 
 ## Common pitfalls
 

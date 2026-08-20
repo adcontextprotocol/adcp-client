@@ -44,7 +44,7 @@ export function getVersionAdapter(adapterKey: string, toolName: string): Version
  */
 export function resolveAdapterKey(
   clientVersion: string | undefined,
-  caps: { supportedVersions?: string[]; buildVersion?: string } | undefined
+  caps: { supportedVersions?: string[]; buildVersion?: string; _raw?: Record<string, unknown> } | undefined
 ): string | undefined {
   if (shouldOmit31Fields(clientVersion, caps)) return '3.0';
   return undefined;

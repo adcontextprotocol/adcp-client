@@ -230,6 +230,25 @@ describe('verifySignatureAsAuthenticator', () => {
     assert.strictEqual(req.verifiedSigner, undefined);
   });
 
+  it('fails closed when makePrincipal does not map the verified signer', async () => {
+    const now = 1_776_520_800;
+    const body = '{}';
+    const url = 'https://seller.example.com/mcp';
+    const req = signedReq({ now, url, body, nonce: 'makeprincipal-unmapped-01' });
+    const auth = verifySignatureAsAuthenticator(
+      baseOptions({
+        now: () => now,
+        agentUrlForKeyid: () => 'https://buyer.example.com',
+        makePrincipal: () => null,
+      })
+    );
+    await assert.rejects(
+      () => auth(req),
+      err => err instanceof AuthError && /not mapped/.test(err.message)
+    );
+    assert.strictEqual(req.verifiedSigner, undefined);
+  });
+
   it('uses makePrincipal override when provided', async () => {
     const now = 1_776_520_800;
     const body = '{}';
@@ -238,6 +257,7 @@ describe('verifySignatureAsAuthenticator', () => {
     const auth = verifySignatureAsAuthenticator(
       baseOptions({
         now: () => now,
+        agentUrlForKeyid: () => 'https://buyer.example.com',
         makePrincipal: signer => ({
           principal: `custom:${signer.keyid}`,
           scopes: ['signing'],
@@ -247,6 +267,8 @@ describe('verifySignatureAsAuthenticator', () => {
     const result = await auth(req);
     assert.strictEqual(result.principal, 'custom:test-ed25519-2026');
     assert.deepStrictEqual(result.scopes, ['signing']);
+    assert.strictEqual(result.credential.kind, 'http_sig');
+    assert.strictEqual(result.credential.agent_url, 'https://buyer.example.com');
   });
 });
 

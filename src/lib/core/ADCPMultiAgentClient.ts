@@ -17,7 +17,7 @@ import type {
   WebhookHandlerRequest,
   WebhookParseResult,
 } from './SingleAgentClient';
-import { ADCP_VERSION } from '../version';
+import { ADCP_VERSION, type AdcpVersion } from '../version';
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
 import { ConfigurationManager } from './ConfigurationManager';
 import { CreativeAgentClient, STANDARD_CREATIVE_AGENTS } from './CreativeAgentClient';
@@ -561,6 +561,10 @@ export class ADCPMultiAgentClient {
       authToken?: string;
       debug?: boolean;
       timeout?: number;
+      /** Public schema/version pin used by the client validators and adapters. */
+      adcpVersion?: AdcpVersion | (string & {});
+      /** Exact release-line pin emitted on the wire (including prereleases). */
+      wireAdcpVersion?: AdcpVersion | (string & {});
     } = {}
   ): ADCPMultiAgentClient {
     const {
@@ -570,6 +574,8 @@ export class ADCPMultiAgentClient {
       authToken,
       debug = false,
       timeout,
+      adcpVersion,
+      wireAdcpVersion,
     } = options;
 
     const agent: AgentConfig = {
@@ -585,6 +591,8 @@ export class ADCPMultiAgentClient {
     return new ADCPMultiAgentClient([agent], {
       debug,
       workingTimeout: timeout,
+      ...(adcpVersion !== undefined && { adcpVersion }),
+      ...(wireAdcpVersion !== undefined && { wireAdcpVersion }),
     });
   }
 

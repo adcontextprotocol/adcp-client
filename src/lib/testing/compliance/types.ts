@@ -133,6 +133,13 @@ export interface ComplianceResult {
   agent_url: string;
   /** AdCP compliance cache version used for this assessment. */
   adcp_version?: string;
+  /**
+   * Whether the run was truncated by its global timeout budget. Additive so
+   * older serialized results remain readable; newly produced results always
+   * populate it. `complete` means the runner reached a terminal outcome
+   * without that timeout, including `unreachable` and `auth_required` outcomes.
+   */
+  completeness?: 'complete' | 'timed_out';
   agent_profile: AgentProfile;
   /** Machine-readable overall status */
   overall_status: OverallStatus;

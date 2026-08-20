@@ -28,10 +28,14 @@ function makeClient(adcpVersion) {
     validation: { requests: 'off', responses: 'off' },
   });
   client.ensureEndpointDiscovered = async () => agent;
-  client.detectServerVersion = async () => 'v3';
   // Inject caps so getCapabilities() short-circuits (no live fetch) and the
   // get_products early-feature check treats the seller as v3.
-  client.cachedCapabilities = { version: 'v3', majorVersions: [3], supportedVersions: ['3.0'], _synthetic: false };
+  client.cachedCapabilities = {
+    version: 'v3',
+    majorVersions: [3],
+    supportedVersions: [adcpVersion],
+    _synthetic: false,
+  };
   return client;
 }
 

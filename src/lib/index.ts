@@ -2093,6 +2093,7 @@ export {
   isUnreservedOnly,
   divergenceOffset,
   translateUniversalMacros,
+  UnsafeNativeMappingError,
 } from './substitution';
 export type {
   ObserverFetchOptions,

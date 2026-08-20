@@ -52,6 +52,7 @@ import { getToolsWithErrorArm, type ErrorArmDescriptor } from './error-arm-tools
 import type { ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodRawShapeCompat, AnySchema } from '@modelcontextprotocol/sdk/server/zod-compat.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
+import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import {
   ADCP_CAPABILITIES,
   ADCP_STATE_STORE,
@@ -88,7 +89,8 @@ import {
 import { ADCP_ERROR_FIELD_ALLOWLIST } from './envelope-allowlist';
 import { InMemoryStateStore } from './state-store';
 import type { AdcpStateStore } from './state-store';
-import { getServeRequestContext } from './auth';
+import { AuthError, getServeRequestContext, type AuthPrincipal } from './auth';
+import { principalForVerifiedSigner } from './auth-signature';
 import {
   capabilitiesResponse,
   productsResponse,
@@ -1279,6 +1281,14 @@ export interface SignedRequestsConfig {
    * signing key is scoped to a brand identifier rather than the root.
    */
   agentUrlForKeyid?: (keyid: string) => string | undefined;
+  /**
+   * Shape the signer identity exposed to handlers. The framework attaches a
+   * branded `http_sig` credential when `agentUrlForKeyid` resolves, unless
+   * this callback explicitly supplies another credential. When `serve()` also
+   * authenticates the request, this callback must resolve the signer to that
+   * same authenticated principal or the request is rejected.
+   */
+  makePrincipal?: (signer: import('../signing/types').VerifiedSigner) => AuthPrincipal;
 }
 
 /**
@@ -3983,12 +3993,65 @@ function buildSignedRequestsPreTransport(
           }
           handled = true;
         }
+        const verifiedSigner = reqShim.verifiedSigner as import('../signing/types').VerifiedSigner | undefined;
+        if (!err && verifiedSigner) {
+          try {
+            const principal = principalForVerifiedSigner(verifiedSigner, signedRequests.makePrincipal);
+            attachVerifiedSignerAuth(req, principal, verifiedSigner);
+          } catch (identityError) {
+            const errName = (identityError as Error).name || 'Error';
+            console.error(`[adcp/signed-requests] signer identity rejected: ${errName}`);
+            if (!res.writableEnded) {
+              res.statusCode = 401;
+              res.setHeader('WWW-Authenticate', 'Signature error="request_signature_invalid"');
+              res.setHeader('Content-Type', 'application/json');
+              res.end(
+                JSON.stringify({
+                  error: 'request_signature_invalid',
+                  message: 'Request signature verification failed',
+                })
+              );
+            }
+            handled = true;
+          }
+        }
         if (res.writableEnded) handled = true;
         done();
       });
     });
     return handled;
   };
+}
+
+function attachVerifiedSignerAuth(
+  req: import('http').IncomingMessage,
+  principal: AuthPrincipal,
+  signer: import('../signing/types').VerifiedSigner
+): void {
+  const request = req as import('http').IncomingMessage & { auth?: AuthInfo; verifiedSigner?: typeof signer };
+  const existing = request.auth;
+  if (existing && existing.clientId !== principal.principal) {
+    throw new AuthError('Request signature identity does not match the authenticated principal.');
+  }
+  const claims = principal.claims !== undefined ? { ...principal.claims } : {};
+  const adopterExtra =
+    principal.extra && typeof principal.extra === 'object' ? (principal.extra as Record<string, unknown>) : {};
+  const extra = {
+    ...(existing?.extra ?? {}),
+    ...claims,
+    ...adopterExtra,
+    ...(principal.credential !== undefined ? { credential: principal.credential } : {}),
+  };
+  request.auth = existing
+    ? { ...existing, extra }
+    : {
+        token: principal.token ?? '',
+        clientId: principal.principal,
+        scopes: principal.scopes ?? [],
+        ...(principal.expiresAt !== undefined ? { expiresAt: principal.expiresAt } : {}),
+        extra,
+      };
+  request.verifiedSigner = signer;
 }
 
 // ---------------------------------------------------------------------------

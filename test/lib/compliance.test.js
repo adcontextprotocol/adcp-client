@@ -200,6 +200,33 @@ describe('formatComplianceResults', () => {
     const output = formatComplianceResults(mockResult);
     assert.ok(output.includes('1 passing, 1 failing'), 'Should show headline');
   });
+
+  test('puts a visible incomplete-run warning immediately before step totals', () => {
+    const timedOut = {
+      ...mockResult,
+      completeness: 'timed_out',
+      summary: {
+        ...mockResult.summary,
+        steps_passed: 12,
+        steps_failed: 0,
+        steps_skipped: 2,
+        steps_not_selected: 0,
+      },
+      observations: [
+        {
+          category: 'performance',
+          severity: 'warning',
+          message: 'Stopped starting new storyboards after 3/5 selected storyboard(s).',
+          source: { kind: 'profile', code: 'timeout-budget-exceeded' },
+        },
+      ],
+    };
+    const output = formatComplianceResults(timedOut);
+    assert.match(
+      output,
+      /INCOMPLETE RUN: Stopped starting new storyboards after 3\/5 selected storyboard\(s\)\.\n\nSteps: 12 passed, 0 failed/
+    );
+  });
 });
 
 // ============================================================
