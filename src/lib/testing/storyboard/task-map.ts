@@ -212,21 +212,26 @@ export function defaultStoryboardResponseProjection(
 }
 
 function gradesLegacyCreativeWire(client: unknown): boolean {
-  if (client === null || typeof client !== 'object') return false;
-  const getAdcpVersion = (client as { getAdcpVersion?: unknown }).getAdcpVersion;
-  if (typeof getAdcpVersion !== 'function') return false;
-  let version: unknown;
-  try {
-    version = getAdcpVersion.call(client);
-  } catch {
-    return false;
-  }
-  if (typeof version !== 'string') return false;
+  const version = readClientAdcpVersion(client);
+  if (version === undefined) return false;
   const match = /^v?(\d+)(?:\.(\d+))?/.exec(version.trim());
   if (!match) return false;
   const major = Number(match[1]);
   const minor = Number(match[2] ?? 0);
   return major < 3 || (major === 3 && minor < 2);
+}
+
+function readClientAdcpVersion(client: unknown): string | undefined {
+  if (client === null || typeof client !== 'object') return undefined;
+  const getAdcpVersion = (client as { getAdcpVersion?: unknown }).getAdcpVersion;
+  if (typeof getAdcpVersion !== 'function') return undefined;
+  let version: unknown;
+  try {
+    version = getAdcpVersion.call(client);
+  } catch {
+    return undefined;
+  }
+  return typeof version === 'string' ? version : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -284,13 +289,15 @@ function normalizeStoryboardTaskSuccess(
   result: unknown,
   taskName: string,
   terminalDataError?: boolean,
-  adcpError?: AdcpErrorInfo
+  adcpError?: AdcpErrorInfo,
+  responseAdcpVersion?: string
 ): boolean {
   if (!isRecord(result)) return true;
   if (typeof result.success === 'boolean') return result.success;
-  if (result.status === 'failed' || result.status === 'rejected') return false;
+  if (result.status === 'failed') return false;
+  if (result.status === 'rejected' && isTerminalAdcpError(result, taskName, responseAdcpVersion)) return false;
   if (adcpError || result.adcpError || result.adcp_error) return false;
-  if (terminalDataError ?? isTerminalAdcpError(result.data, taskName)) return false;
+  if (terminalDataError ?? isTerminalAdcpError(result.data, taskName, responseAdcpVersion)) return false;
   return true;
 }
 
@@ -458,14 +465,19 @@ export async function executeStoryboardTask(
       }
     }
 
-    const terminalDataError = isTerminalAdcpError(result.data, taskName);
+    const responseAdcpVersion = readClientAdcpVersion(client);
+    const terminalDataError = isTerminalAdcpError(result.data, taskName, responseAdcpVersion);
     const adcpError =
       result.adcpError ??
       result.adcp_error ??
       readAdcpError(result.data) ??
       (terminalDataError ? readFirstError(result.data) : undefined);
-    const data = result.data ?? (adcpError ? { adcp_error: adcpError } : undefined);
-    const success = normalizeStoryboardTaskSuccess(result, taskName, terminalDataError, adcpError);
+    const isRawStructuredRejection =
+      result.data == null &&
+      result.status === 'rejected' &&
+      !isTerminalAdcpError(result, taskName, responseAdcpVersion);
+    const data = result.data ?? (isRawStructuredRejection ? result : adcpError ? { adcp_error: adcpError } : undefined);
+    const success = normalizeStoryboardTaskSuccess(result, taskName, terminalDataError, adcpError, responseAdcpVersion);
     const error = result.error ?? (!success ? errorMessageFrom(adcpError, undefined) : undefined);
     const extractionPath = readExtractionPath(data);
     const debugLogs = Array.isArray(result.debug_logs) ? result.debug_logs : [];

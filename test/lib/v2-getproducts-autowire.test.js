@@ -26,8 +26,23 @@ const { AgentClient, packageRefsForFormatOptions } = require('../../dist/lib/ind
  */
 const PRICING_OPTIONS = [{ pricing_option_id: 'po_cpm', pricing_model: 'cpm', currency: 'USD', fixed_price: 5 }];
 
-async function buildMockSeller(getProductsResponse, clientConfig = {}) {
+async function buildMockSeller(getProductsResponse, clientConfig = {}, { advertiseV3 = false } = {}) {
   const server = new McpServer({ name: 'autowire-test', version: '1.0.0' });
+  if (advertiseV3) {
+    server.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => {
+      const capabilities = {
+        status: 'completed',
+        adcp_version: '3.2.0-beta.3',
+        adcp: { major_versions: [3], supported_versions: ['3.2.0-beta.3'] },
+        supported_protocols: ['media_buy'],
+        specialisms: [],
+      };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(capabilities) }],
+        structuredContent: capabilities,
+      };
+    });
+  }
   server.registerTool(
     'get_products',
     { inputSchema: { brief: z.string().optional(), adcp_major_version: z.number().optional() } },
@@ -54,6 +69,28 @@ async function buildMockSeller(getProductsResponse, clientConfig = {}) {
 }
 
 describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
+  test('preserves a structured rejection without injecting product projection fields', async () => {
+    const rejection = {
+      status: 'rejected',
+      reason: 'No inventory matches the requested brief',
+      suggestions: ['Try broadening the requested geography'],
+    };
+    const { agent, close } = await buildMockSeller(rejection, {}, { advertiseV3: true });
+    try {
+      const result = await agent.getProducts({ brief: 'test' });
+
+      assert.strictEqual(result.success, true);
+      assert.strictEqual(result.status, 'completed');
+      assert.strictEqual(result.data.status, 'rejected');
+      assert.strictEqual(result.data.reason, rejection.reason);
+      assert.deepStrictEqual(result.data.suggestions, rejection.suggestions);
+      assert.strictEqual(result.data.products, undefined);
+      assert.strictEqual(result.data.projection, undefined);
+    } finally {
+      await close();
+    }
+  });
+
   test('v1 seller response becomes canonical-only by default', async () => {
     const v1Response = {
       success: true,

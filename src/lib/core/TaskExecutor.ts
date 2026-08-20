@@ -1385,9 +1385,7 @@ export class TaskExecutor {
       // Now unwrap the response
       const unwrapped = unwrapProtocolResponse(response, toolName, undefined, {
         filterInvalidProducts: this.config.filterInvalidProducts,
-        ...(this.responseAdcpVersionForValidation() && {
-          responseAdcpVersion: this.responseAdcpVersionForValidation(),
-        }),
+        responseAdcpVersion: this.effectiveResponseAdcpVersion(),
       });
 
       // Log successful extraction with result details
@@ -1428,7 +1426,7 @@ export class TaskExecutor {
    * Handles singular `error`, plural `errors` (AdCP schema), and `success: false`.
    */
   private isOperationSuccess(data: any, taskName?: string): boolean {
-    return isAdcpOperationSuccess(data, taskName);
+    return isAdcpOperationSuccess(data, taskName, this.effectiveResponseAdcpVersion());
   }
 
   /**
@@ -2612,6 +2610,11 @@ export class TaskExecutor {
   private responseAdcpVersionForValidation(): string | undefined {
     if (this.config.versionEnvelope === 'major-only') return '3.0';
     return undefined;
+  }
+
+  private effectiveResponseAdcpVersion(): string {
+    if (this.lastKnownServerVersion === 'v2') return 'v2.5';
+    return this.responseAdcpVersionForValidation() ?? this.config.adcpVersion ?? ADCP_VERSION;
   }
 
   /**
