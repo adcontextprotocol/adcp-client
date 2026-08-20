@@ -87,6 +87,16 @@ describe('extractVersionUnsupportedDetails', () => {
     assert.deepStrictEqual(out, { supported_versions: ['3.1'] });
   });
 
+  test('normalizes canonical adcp_version to requested_version', () => {
+    const out = extractVersionUnsupportedDetails({
+      details: { adcp_version: '3.2-beta.3', supported_versions: ['3.2-beta.2'] },
+    });
+    assert.deepStrictEqual(out, {
+      supported_versions: ['3.2-beta.2'],
+      requested_version: '3.2-beta.3',
+    });
+  });
+
   test('parses adcp_error.data nesting', () => {
     const out = extractVersionUnsupportedDetails({
       adcp_error: {

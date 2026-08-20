@@ -24,6 +24,7 @@ import { SsrfRefusedError } from '../net/ssrf-fetch';
 import { ADCP_VERSION } from '../version';
 import type { VersionEnvelopeMode } from '../protocols';
 import { validateIncomingResponse } from '../validation/client-hooks';
+import { extractVersionUnsupportedDetails } from '../utils/error-extraction';
 
 const TEST_CLIENT_VERSION_OPTIONS = Symbol('adcp.testClientVersionOptions');
 
@@ -435,6 +436,30 @@ export async function runStep<T>(
   }
 }
 
+function describeVersionUnsupported(result: unknown, requestedVersion: string | undefined): string | undefined {
+  if (!result || typeof result !== 'object') return undefined;
+  const record = result as Record<string, unknown>;
+  const dataRecord =
+    record.data && typeof record.data === 'object' && !Array.isArray(record.data)
+      ? (record.data as Record<string, unknown>)
+      : undefined;
+  const dataError =
+    dataRecord?.adcp_error && typeof dataRecord.adcp_error === 'object' ? dataRecord.adcp_error : undefined;
+  const adcpError = record.adcpError ?? record.adcp_error ?? dataError;
+  if (!adcpError || typeof adcpError !== 'object') return undefined;
+  const adcpErrorRecord = adcpError as Record<string, unknown>;
+  if (adcpErrorRecord.code !== 'VERSION_UNSUPPORTED') return undefined;
+
+  const details = extractVersionUnsupportedDetails(adcpErrorRecord) ?? extractVersionUnsupportedDetails(record.data);
+  const requested = details?.requested_version ?? requestedVersion;
+  const supported = details?.supported_versions;
+  const requestedText = requested ? `requested ${JSON.stringify(requested)}` : 'requested version is unsupported';
+  const supportedText = supported?.length
+    ? `; seller supports ${supported.map(version => JSON.stringify(version)).join(', ')}`
+    : '; seller did not report supported_versions';
+  return `VERSION_UNSUPPORTED: ${requestedText}${supportedText}`;
+}
+
 /**
  * Discover agent profile - what capabilities does this agent have?
  *
@@ -476,7 +501,16 @@ export async function discoverAgentProfile(
   if (profile.tools.includes('get_adcp_capabilities')) {
     try {
       const caps = (await raceWithSignal(client.getAdcpCapabilities({}, undefined, { signal }), signal)) as TaskResult;
-      if (caps?.data) {
+      const versionUnsupported = describeVersionUnsupported(caps, schemaAdcpVersion ?? client.getAdcpVersion?.());
+      if (versionUnsupported) {
+        // Some transports return AdCP error envelopes as successful tool data.
+        // Detect the protocol error before validating/parsing it as a
+        // capabilities success response, or best-effort parsing will produce
+        // a synthetic v2 profile from the error object.
+        profile.capabilities_probe_error = versionUnsupported;
+        step.passed = false;
+        step.error = versionUnsupported;
+      } else if (caps?.data) {
         profile.raw_capabilities = caps.data;
         const validation = validateIncomingResponse(
           'get_adcp_capabilities',
@@ -511,7 +545,7 @@ export async function discoverAgentProfile(
         const libVersion = (caps.data as Record<string, unknown>).library_version;
         if (typeof libVersion === 'string') profile.library_version = libVersion;
       }
-      if ((!caps?.success || !caps?.data) && !profile.capabilities_schema_issues?.length) {
+      if (!versionUnsupported && (!caps?.success || !caps?.data) && !profile.capabilities_schema_issues?.length) {
         profile.capabilities_probe_error = caps?.error || 'get_adcp_capabilities returned no data';
       }
     } catch (err) {

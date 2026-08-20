@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-19T23:09:10.265Z
+// Generated at: 2026-08-20T08:38:07.822Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -838,6 +838,10 @@ export const PostalCountrySystemSchema = z.union([z.object({
     }).passthrough()]).and(z.object({
     country: z.string(),
     system: PostalCodeSystemSchema
+}).passthrough());
+
+export const PostalCountryAreaSchema = PostalCountrySystemSchema.and(z.object({
+    values: z.array(z.string())
 }).passthrough());
 
 export const GeographicPlaceIdentifierSystemSchema = z.union([z.union([z.literal("geonames"), z.literal("google_ads"), z.literal("microsoft_ads")]), z.string()]);
@@ -7429,7 +7433,7 @@ export const PolicyProfileSchema = z.object({}).passthrough().merge(z.object({
     supported_combinations: z.tuple([z.union([MaxBidWithCostPerSchema, MaxBidWithRoasSchema])]).rest(z.union([MaxBidWithCostPerSchema, MaxBidWithRoasSchema])).optional()
 }).passthrough());
 
-export const PostalArea1Schema = PostalCountrySystemSchema;
+export const PostalArea1Schema = PostalCountryAreaSchema;
 
 export const AttestationBrandIssuerSchema = z.object({
     type: z.literal("brand"),
@@ -7437,7 +7441,16 @@ export const AttestationBrandIssuerSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const PostalAreaSchema = z.union([PostalArea1Schema, PostalAreaWithFusedSystemSchema]);
+export const PostalAreaSchema = z.union([PostalArea1Schema, PostalAreaWithFusedSystemSchema]).superRefine((value, ctx) => {
+  const postal = value as { country?: unknown; values?: unknown };
+  if (typeof postal.country === "string" && (!Array.isArray(postal.values) || postal.values.length === 0)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["values"],
+      message: "native postal values must contain at least one entry",
+    });
+  }
+});
 
 export const GeographicPlaceAreaSchema = z.object({}).passthrough().merge(z.object({
     country: z.string(),
@@ -7984,6 +7997,12 @@ export const AccountSchema = z.object({
     notification_configs: z.union([z.tuple([]), z.tuple([NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema])]).optional(),
     webhook_activity: z.array(WebhookActivityRecordSchema).optional(),
     ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const ScopedCreativeApprovalSchema = z.object({
+    scope: IndicatorScopeSchema,
+    approval_status: CreativeApprovalStatusSchema.and(z.union([z.literal("pending_review"), z.literal("approved"), z.literal("rejected")])),
+    rejection_reason: z.string().optional()
 }).passthrough();
 
 export const GetMediaBuyDeliveryRequestSchema = z.object({
@@ -11498,12 +11517,6 @@ export const TargetingOverlaySchema = z.object({}).passthrough().merge(z.object(
         match_type: MatchTypeSchema
     }).passthrough()).optional()
 }).passthrough());
-
-export const ScopedCreativeApprovalSchema = z.object({
-    scope: IndicatorScopeSchema,
-    approval_status: CreativeApprovalStatusSchema.and(z.union([z.literal("pending_review"), z.literal("approved"), z.literal("rejected")])),
-    rejection_reason: z.string().optional()
-}).passthrough();
 
 export const DeliveryRecordSchema = z.object({
     identifier: IdentifierSchema,
@@ -15359,10 +15372,16 @@ export const PackageStatusSchema = z.object({
     creative_deadline: z.iso.datetime().optional(),
     context: ContextObjectSchema.optional(),
     creative_approvals: z.array(z.object({
-        indicator_types_evaluated: z.array(z.union([z.literal("creative_fatigue"), z.literal("creative_quality_opportunity")])).optional(),
-        indicators: z.array(z.object({
+        creative_id: z.string(),
+        approval_status: CreativeApprovalStatusSchema.optional(),
+        rejection_reason: z.string().optional(),
+        approval_scopes: z.array(ScopedCreativeApprovalSchema).optional(),
+        indicators: z.array(IndicatorSchema.and(z.object({
             type: z.union([z.literal("creative_fatigue"), z.literal("creative_quality_opportunity")]).optional()
-        }).passthrough()).optional()
+        }).passthrough())).optional(),
+        indicator_types_evaluated: z.array(IndicatorTypeSchema.and(z.union([z.literal("creative_fatigue"), z.literal("creative_quality_opportunity")]))).optional(),
+        indicators_as_of: z.iso.datetime().optional(),
+        indicators_evaluated_scope: z.array(IndicatorScopeSchema).optional()
     }).passthrough()).optional(),
     formats_to_provide: z.array(ProductFormatDeclarationSchema).optional(),
     formats_pending: z.array(ProductFormatDeclarationSchema).optional(),

@@ -350,6 +350,10 @@ export function extractVersionUnsupportedDetails(input: unknown): VersionUnsuppo
   }
   if (typeof candidate.requested_version === 'string') {
     out.requested_version = candidate.requested_version;
+  } else if (typeof candidate.adcp_version === 'string') {
+    // The canonical VERSION_UNSUPPORTED schema names the echoed wire field
+    // `adcp_version`; normalize it to the helper's established public shape.
+    out.requested_version = candidate.adcp_version;
   }
   if (typeof candidate.build_version === 'string') {
     out.build_version = candidate.build_version;

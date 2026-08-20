@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.2.0-beta.3
-// Generated at: 2026-08-20T05:25:37.341Z
+// Generated at: 2026-08-20T08:36:34.306Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -4792,7 +4792,15 @@ export type TargetingOverlay = {
  * Postal area values. Prefer the native country + postal system form. Deprecated legacy country-fused postal-system tokens remain accepted for compatibility.
  */
 export type PostalArea = PostalArea1 | PostalAreaWithFusedSystem;
-export type PostalArea1 = PostalCountrySystem;
+export type PostalCountryArea = PostalCountrySystem & {
+  values: [string, ...string[]];
+};
+/**
+ * Re-export of `PostalCountryArea` under the legacy codegen artifact name.
+ *
+ * @deprecated Use `PostalCountryArea` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type PostalArea1 = PostalCountryArea;
 /**
  * Valid country-local postal system pairing. Registered countries only accept their registered local systems; countries without a registered local system use postal_code or custom.
  */

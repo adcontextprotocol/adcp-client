@@ -155,6 +155,8 @@ import type {
   None1,
   None2,
   PlatformExtensionReference1,
+  PostalArea,
+  PostalArea1,
   Product1,
   Property1,
 } from '@adcp/sdk/types/core.generated';
@@ -280,6 +282,28 @@ const _payloadResults: [
   ok([]),
 ];
 void _payloadResults;
+
+const _nativePostalArea: PostalArea = { country: 'US', system: 'zip', values: ['10001'] };
+const _legacyNamedNativePostalArea: PostalArea1 = _nativePostalArea;
+// @ts-expect-error Native postal targeting requires at least one value.
+const _emptyNativePostalArea: PostalArea = { country: 'US', system: 'zip', values: [] };
+void _legacyNamedNativePostalArea;
+void _emptyNativePostalArea;
+
+type PackedCreativeApproval = NonNullable<
+  GetMediaBuysPayload['media_buys'][number]['packages'][number]['creative_approvals']
+>[number];
+const _packedCreativeApproval: PackedCreativeApproval = {
+  creative_id: 'creative-1',
+  approval_status: 'approved',
+  rejection_reason: 'not used for approved creatives',
+  approval_scopes: [],
+  indicator_types_evaluated: ['creative_fatigue'],
+  indicators: [],
+  indicators_as_of: '2026-08-20T00:00:00Z',
+  indicators_evaluated_scope: [],
+};
+void _packedCreativeApproval;
 
 const _accountHandlerResults: [
   ListAccountsHandlerResult,

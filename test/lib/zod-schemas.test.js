@@ -821,6 +821,44 @@ describe('Zod Schema Validation', () => {
     );
   });
 
+  test('GetMediaBuysResponseSchema rejects creative approvals missing creative_id', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const responseWithApproval = approval => ({
+      status: 'completed',
+      media_buys: [
+        {
+          media_buy_id: 'mb_123',
+          status: 'active',
+          currency: 'USD',
+          total_budget: 50000,
+          confirmed_at: '2026-01-15T10:00:00Z',
+          revision: 1,
+          packages: [{ package_id: 'pkg_1', creative_approvals: [approval] }],
+        },
+      ],
+    });
+
+    assert.equal(
+      schemas.GetMediaBuysResponseSchema.safeParse(responseWithApproval({ approval_status: 'approved' })).success,
+      false
+    );
+    assert.equal(
+      schemas.GetMediaBuysResponseSchema.safeParse(
+        responseWithApproval({ indicator_types_evaluated: ['creative_fatigue'] })
+      ).success,
+      false
+    );
+    assert.equal(
+      schemas.GetMediaBuysResponseSchema.safeParse(
+        responseWithApproval({ creative_id: 'creative-1', approval_status: 'approved' })
+      ).success,
+      true
+    );
+  });
+
   test('GetMediaBuysResponseSchema validates response with snapshot', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');
@@ -1607,6 +1645,16 @@ describe('Zod Schema Validation', () => {
       !schemas.PostalAreaSupportSchema.safeParse({ NL: ['outward'] }).success,
       'postal support should keep future country keys restricted to postal_code/custom'
     );
+  });
+
+  test('PostalAreaSchema requires a non-empty native values list', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    assert.equal(schemas.PostalAreaSchema.safeParse({ country: 'US', system: 'zip' }).success, false);
+    assert.equal(schemas.PostalAreaSchema.safeParse({ country: 'US', system: 'zip', values: [] }).success, false);
+    assert.equal(schemas.PostalAreaSchema.safeParse({ country: 'US', system: 'zip', values: ['10001'] }).success, true);
   });
 
   test('per-asset-type requirements schemas are typed (not z.any)', async () => {

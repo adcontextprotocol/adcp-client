@@ -74,6 +74,7 @@ import {
 } from './index';
 import type { ComplyControllerConfig } from '../../testing/comply-controller';
 import type { CanonicalListCreativesResponse } from '../../v2/projection/creative-delivery';
+import type { PostalArea } from '../../types/core.generated';
 import { getAccountMode } from '../account-mode';
 
 // ── AdcpError construction ────────────────────────────────────────────
@@ -314,6 +315,32 @@ function _postal_area_support_accepts_native_and_deprecated_forms(): TargetingPo
     GB: ['outward'] as const,
     NL: ['postal_code'] as const,
     us_zip: true,
+  };
+}
+
+const _native_postal_area_with_values: PostalArea = {
+  country: 'US',
+  system: 'zip',
+  values: ['10001'],
+};
+
+// @ts-expect-error — native postal values are minItems: 1 on the wire.
+const _native_postal_area_rejects_empty_values: PostalArea = { country: 'US', system: 'zip', values: [] };
+
+type CreativeApprovalReadback = NonNullable<
+  GetMediaBuysPayload['media_buys'][number]['packages'][number]['creative_approvals']
+>[number];
+type CreativeApprovalRequiresCreativeId = {} extends Pick<CreativeApprovalReadback, 'creative_id'> ? false : true;
+const _creative_approval_requires_creative_id: CreativeApprovalRequiresCreativeId = true;
+
+function _creative_approval_readback_exposes_base_and_indicator_fields(): CreativeApprovalReadback {
+  return {
+    creative_id: 'creative-1',
+    approval_status: 'approved',
+    rejection_reason: 'not used for approved creatives',
+    indicator_types_evaluated: ['creative_fatigue'],
+    indicators: [],
+    indicators_as_of: '2026-08-20T00:00:00Z',
   };
 }
 
