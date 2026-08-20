@@ -3570,8 +3570,8 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
   test('does not select a newer prerelease than the compact buyer pin', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.supportedVersions = ['3.1', '3.2.0-beta.3'];
-    const agent = clientWithCaps(caps, '3.2.0-beta.2');
+    caps.supportedVersions = ['3.1', '3.2.0-beta.4'];
+    const agent = clientWithCaps(caps, '3.2.0-beta.3');
     const calls = [];
     agent.getProducts = async () => {
       calls.push('get_products');
@@ -3587,12 +3587,12 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
   test('fails closed when every valid advertised version is newer than the buyer pin', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.supportedVersions = ['3.2.0-beta.3'];
-    const agent = clientWithCaps(caps, '3.2.0-beta.2');
+    caps.supportedVersions = ['3.2.0-beta.4'];
+    const agent = clientWithCaps(caps, '3.2.0-beta.3');
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /advertises only AdCP versions newer than the client pin 3\.2\.0-beta\.2/
+      /advertises only AdCP versions newer than the client pin 3\.2\.0-beta\.3/
     );
   });
 
