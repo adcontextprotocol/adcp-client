@@ -1,5 +1,18 @@
 # Changelog
 
+## 14.0.0-beta.5
+
+### Minor Changes
+
+- 3f7921c: Adopt the signed AdCP 3.2.0-beta.4 schemas, add durable products-only legacy purchase continuations, and refresh the maintained 3.0/3.1 compatibility bundles. Legacy continuation mutations now claim immediately before dispatch, share bounded submitted-task polling, and fence unstructured terminal failures as ambiguous instead of replaying them. Public product projection helpers now accept the SDK's generated product types, and observation-free error-handling storyboards no longer grade as silent.
+- b3a4a5c: Add canonical `previewCreative` client and decisioning-platform APIs for capability, manifest, and creative-library preview routes while retaining `previewCreativeLegacy` for `format_id` compatibility.
+
+### Patch Changes
+
+- f6cda54: Harden SSRF address classification by refusing additional non-routable and special-purpose IPv6 ranges. Globally reachable IETF protocol assignments remain allowed, while IPv6 metadata endpoints and unsafe translation or tunnel prefixes that cannot exclude metadata targets remain blocked even with private-network opt-in.
+- 3bbf434: Treat AdCP 3.2 `get_products` structured rejection responses as successful business outcomes in client and storyboard result classification.
+- 968d9df: Preserve base fields and required values in generated creative-approval and postal-area types and schemas, and surface exact-version capability failures instead of silently downgrading storyboard discovery.
+
 ## 14.0.0-beta.4
 
 ### Minor Changes
