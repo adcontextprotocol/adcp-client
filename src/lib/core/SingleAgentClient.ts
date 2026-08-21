@@ -338,6 +338,7 @@ const RECORDLESS_HMAC_READ_ONLY_TASKS = new Set([
   'get_adcp_capabilities',
   'list_products',
   'list_creative_formats',
+  'preview_creative',
   'list_transformers',
   'list_creatives',
   'get_media_buys',
