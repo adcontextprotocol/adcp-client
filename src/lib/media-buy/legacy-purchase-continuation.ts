@@ -186,6 +186,12 @@ export class InMemoryLegacyPurchaseContinuationStore implements LegacyPurchaseCo
       } else if (record.operation.state === 'completed' && !validFuture(record.operation.replayExpiresAt, now)) {
         this.remove(token);
       }
+      // Never reclaim claimed or ambiguous mutations automatically. The
+      // seller may have committed spend even after its advertised replay
+      // window closes, so retaining the operation index is the permanent
+      // duplicate-dispatch fence. Capacity exhaustion is intentionally
+      // fail-closed; production deployments should reconcile uncertainty or
+      // supply a durable store sized for their retention policy.
     }
   }
 

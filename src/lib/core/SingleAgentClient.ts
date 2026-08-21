@@ -95,12 +95,7 @@ import { A2AClient as A2AClientImpl } from '@a2a-js/sdk/client';
 // the prior CommonJS `require('@a2a-js/sdk/client')` behaviour.
 const A2AClient: any = A2AClientImpl;
 
-import {
-  TaskExecutor,
-  DeferredTaskError,
-  BeforeProtocolDispatchHookError,
-  type BeforeProtocolDispatchHook,
-} from './TaskExecutor';
+import { TaskExecutor, BeforeProtocolDispatchHookError, type BeforeProtocolDispatchHook } from './TaskExecutor';
 import { attachMatch } from './match';
 import { withTaskDeadline } from './task-deadline';
 import { createMCPRequestHeaders } from '../auth';

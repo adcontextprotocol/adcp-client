@@ -5068,6 +5068,47 @@ describe('legacy products-only purchase continuations', () => {
       return completed('create_media_buy', { media_buy_id: 'buy-store', packages: [] });
     }
   });
+
+  test('retains an ambiguous operation fence after the seller replay window expires', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore({ maxRecords: 2 });
+    const binding = {
+      principalScope: 'principal',
+      accountScope: 'account',
+      sellerScope: 'seller',
+      clientSessionScope: 'session',
+      sourceAdcpVersion: '3.0',
+    };
+    const claim = {
+      idempotencyKey: 'expired-replay-key',
+      inputFingerprint: 'expired-replay-input',
+      operationKey: 'expired-replay-operation',
+      claimedAt: '2027-01-01T00:00:00Z',
+      replayExpiresAt: '2000-01-01T00:00:00Z',
+      selectedProductIds: ['p-expired-replay'],
+      sourceMutationKey: 'expired-replay-source',
+    };
+    const continuation = (token, issuanceFingerprint) => ({
+      ...binding,
+      token,
+      expiresAt: '2099-01-01T00:00:00Z',
+      issuanceFingerprint,
+      discoveryRequestFingerprint: `${issuanceFingerprint}-discovery`,
+      observedResponse: { products: [{ product_id: 'p-expired-replay' }] },
+      productIds: ['p-expired-replay'],
+      losses: ['feed_version_not_atomic', 'pricing_version_not_atomic'],
+      operation: { state: 'available' },
+    });
+
+    assert.equal((await store.create(continuation('ambiguous-token', 'ambiguous-issuance'))).outcome, 'created');
+    assert.equal((await store.claim('ambiguous-token', { claim, expected: binding })).outcome, 'claimed');
+    assert.equal(await store.markAmbiguous('ambiguous-token', claim, 'transport_uncertain'), true);
+
+    // create() runs pruning. The expired replay window must not remove the
+    // ambiguous record or its operation-wide duplicate-dispatch fence.
+    assert.equal((await store.create(continuation('retry-token', 'retry-issuance'))).outcome, 'created');
+    assert.equal((await store.claim('retry-token', { claim, expected: binding })).outcome, 'conflict');
+    assert.equal((await store.get('ambiguous-token')).operation.state, 'ambiguous');
+  });
 });
 
 describe('MediaBuyLifecycleCoordinator mutation boundaries', () => {
