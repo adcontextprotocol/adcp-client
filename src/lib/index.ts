@@ -2116,6 +2116,7 @@ export {
   divergenceOffset,
   translateUniversalMacros,
   UnsafeNativeMappingError,
+  compileUniversalMacroTemplate,
 } from './substitution';
 export type {
   ObserverFetchOptions,
@@ -2131,6 +2132,14 @@ export type {
   TrackerUrlRecord,
   MacroMapping,
   TranslateResult,
+  CompileUniversalMacroTemplateInput,
+  CompileUniversalMacroTemplateResult,
+  MacroDocumentationReference,
+  SourceMacroMapping,
+  SourceMacroRequirement,
+  SourceMacroSyntax,
+  UniversalMacroCompileDiagnostic,
+  UniversalMacroOccurrence,
 } from './substitution';
 
 // ====== TEST HELPERS ======
