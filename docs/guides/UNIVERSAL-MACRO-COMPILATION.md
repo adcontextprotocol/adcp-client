@@ -56,13 +56,18 @@ unknown token shapes are scanned. The built-in values are `double_brace`
 (`{{NAME}}`), `percent` (`%%NAME%%`), `dollar_brace` (`${NAME}`), `bracket`
 (`[NAME]`), and `adcp` (`{NAME}`). Bracket and single-brace discovery is limited
 to upper-snake names, avoiding collisions with IPv6 literals, URL array keys,
-lowercase URI templates, and JavaScript/CSS blocks. An exact configured mapping
-always wins. Dialects with other delimiters declare a named custom scanner, so
-unknown custom tokens still fail closed:
+lowercase URI templates, and JavaScript/CSS blocks. Exact configured mappings
+still have to match their declared syntax. A dialect that uses lowercase or
+otherwise non-upper-snake bracket/single-brace tokens must declare those braces
+as a custom scanner; this ensures an unknown or misspelled token cannot pass
+through as ordinary text. Dialects with other delimiters work the same way:
 
 ```typescript
 source_syntaxes: [{ name: 'hash', open: '##', close: '##' }];
 // Occurrences report syntax: 'custom:hash'.
+
+source_syntaxes: [{ name: 'lower-bracket', open: '[', close: ']' }];
+// Discovers both mapped [status] and unknown [stauts] tokens.
 ```
 
 Supported `{ADCP_MACRO}` tokens are not automatically trusted in a vendor

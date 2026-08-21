@@ -77,7 +77,7 @@ describe('compileUniversalMacroTemplate', () => {
       {
         code: 'unknown_macro',
         severity: 'error',
-        message: 'No unknown-vendor mapping exists for {{USER_ID}}',
+        message: 'No "unknown-vendor" mapping exists for "{{USER_ID}}"',
         source_token: '{{USER_ID}}',
         start,
         end: start + '{{USER_ID}}'.length,
@@ -214,6 +214,54 @@ describe('compileUniversalMacroTemplate', () => {
       result.occurrences.map(occurrence => occurrence.source_token),
       ['[CACHEBUSTER]']
     );
+  });
+
+  it('requires fail-closed custom scanners for lowercase bracket and single-brace dialects', () => {
+    for (const [built_in, custom_syntax, source_token, unknown_token] of [
+      ['bracket', { name: 'lower-bracket', open: '[', close: ']' }, '[status]', '[stauts]'],
+      ['adcp', { name: 'lower-brace', open: '{', close: '}' }, '{id}', '{di}'],
+    ]) {
+      const builtInResult = compileUniversalMacroTemplate({
+        template: source_token,
+        source_dialect: 'lowercase-vendor',
+        source_syntaxes: [built_in],
+        mappings: [
+          {
+            source_token,
+            universal_macro: '{DEVICE_ID}',
+            source_dialect: 'lowercase-vendor',
+            documentation: DOCUMENTATION,
+          },
+        ],
+      });
+      assert.equal(builtInResult.publishable, false);
+      assert.equal(builtInResult.diagnostics[0].code, 'mapping_syntax_not_declared');
+      assert.equal(builtInResult.occurrences.length, 0);
+
+      const customResult = compileUniversalMacroTemplate({
+        template: `${source_token}|${unknown_token}`,
+        source_dialect: 'lowercase-vendor',
+        source_syntaxes: [custom_syntax],
+        mappings: [
+          {
+            source_token,
+            universal_macro: '{DEVICE_ID}',
+            source_dialect: 'lowercase-vendor',
+            documentation: DOCUMENTATION,
+          },
+        ],
+      });
+
+      assert.equal(customResult.publishable, false);
+      assert.equal(customResult.canonical_template, `{DEVICE_ID}|${unknown_token}`);
+      assert.deepEqual(
+        customResult.occurrences.map(occurrence => [occurrence.source_token, occurrence.status]),
+        [
+          [source_token, 'mapped'],
+          [unknown_token, 'unresolved'],
+        ]
+      );
+    }
   });
 
   it('supports exact evidence-backed tokens with custom delimiters', () => {
@@ -430,10 +478,14 @@ describe('compileUniversalMacroTemplate', () => {
     assert.equal(result.canonical_template, 'script=${DEVICE_ID}&template={{DEVICE_ID}}&device={DEVICE_ID}');
   });
 
-  it('rejects malformed bracket and single-brace macros before URL punctuation', () => {
+  it('rejects unclosed delimiters for every declared syntax', () => {
     for (const [source_syntaxes, token] of [
+      [['double_brace'], '{{CACHEBUSTER'],
+      [['percent'], '%%CACHEBUSTER'],
+      [['dollar_brace'], '${CACHEBUSTER'],
       [['bracket'], '[CACHEBUSTER&next=1'],
       [['adcp'], '{DEVICE_ID#fragment'],
+      [[{ name: 'hash', open: '##', close: '##' }], '##CACHEBUSTER'],
     ]) {
       const result = compileUniversalMacroTemplate({
         template: `https://pixel.example/i?value=${token}`,
@@ -464,6 +516,50 @@ describe('compileUniversalMacroTemplate', () => {
     });
     assert.equal(invalidBoolean.publishable, false);
     assert.equal(invalidBoolean.diagnostics[0].code, 'invalid_input');
+
+    const invalidCanonicalBoolean = compileUniversalMacroTemplate({
+      template: 'literal',
+      source_dialect: 'x',
+      source_syntaxes: ['double_brace'],
+      mappings: [],
+      allow_canonical_macros: 1,
+    });
+    assert.equal(invalidCanonicalBoolean.publishable, false);
+    assert.equal(invalidCanonicalBoolean.diagnostics[0].code, 'invalid_input');
+
+    const invalidCollections = compileUniversalMacroTemplate({
+      template: 'literal',
+      source_dialect: 'x',
+      source_syntaxes: ['double_brace'],
+      mappings: 'not-an-array',
+      satisfied_requirements: 'not-an-array',
+    });
+    assert.deepEqual(
+      invalidCollections.diagnostics.map(diagnostic => diagnostic.code),
+      ['invalid_requirement_satisfaction', 'invalid_mapping_registry']
+    );
+  });
+
+  it('rejects malformed and opener-ambiguous custom syntax declarations', () => {
+    for (const source_syntaxes of [
+      [{ name: 'Uppercase', open: '##', close: '##' }],
+      [
+        { name: 'hash', open: '##', close: '##' },
+        { name: 'duplicate', open: '##', close: '!!' },
+      ],
+    ]) {
+      const result = compileUniversalMacroTemplate({
+        template: 'literal',
+        source_dialect: 'custom-vendor',
+        source_syntaxes,
+        mappings: [],
+      });
+      assert.equal(result.publishable, false);
+      assert.equal(
+        result.diagnostics.some(diagnostic => diagnostic.code === 'unsupported_source_syntax'),
+        true
+      );
+    }
   });
 
   it('gates publication on declared runtime requirements', () => {
@@ -581,6 +677,89 @@ describe('compileUniversalMacroTemplate', () => {
 
     assert.equal(result.publishable, false);
     assert.equal(result.diagnostics[0].code, 'mapping_syntax_not_declared');
+  });
+
+  it('rejects empty exact tokens consistently across built-in delimited syntaxes', () => {
+    for (const [source_syntaxes, source_token] of [
+      [['double_brace'], '{{}}'],
+      [['percent'], '%%%%'],
+      [['dollar_brace'], '${}'],
+      [['bracket'], '[]'],
+      [['adcp'], '{}'],
+    ]) {
+      const result = compileUniversalMacroTemplate({
+        template: source_token,
+        source_dialect: 'empty-vendor',
+        source_syntaxes,
+        mappings: [
+          {
+            source_token,
+            universal_macro: '{DEVICE_ID}',
+            source_dialect: 'empty-vendor',
+            documentation: DOCUMENTATION,
+          },
+        ],
+      });
+      assert.equal(result.publishable, false);
+      assert.equal(result.diagnostics[0].code, 'mapping_syntax_not_declared');
+      assert.equal(result.canonical_template, source_token);
+    }
+  });
+
+  it('escapes untrusted diagnostic values while retaining exact structured tokens', () => {
+    const unsafeMessageCharacter = /[\u0000-\u001F\u007F-\u009F\u061C\u200E\u200F\u2028-\u202E\u2066-\u2069]/;
+    const unknownToken = '{{X\nFORGED\u202E}}';
+    const unknown = compileUniversalMacroTemplate({
+      template: unknownToken,
+      source_dialect: 'vendor\r\u2066name',
+      source_syntaxes: ['double_brace'],
+      mappings: [],
+    });
+    assert.equal(unknown.diagnostics.at(-1).source_token, unknownToken);
+
+    const invalidMapping = compileUniversalMacroTemplate({
+      template: '{{X\u007F}}',
+      source_dialect: 'vendor',
+      source_syntaxes: ['double_brace'],
+      mappings: [
+        {
+          source_token: '{{X\u007F}}',
+          universal_macro: '{NOT_SUPPORTED}',
+          source_dialect: 'vendor',
+          documentation: DOCUMENTATION,
+        },
+      ],
+    });
+
+    const unmetRequirement = compileUniversalMacroTemplate({
+      template: '{{CONSENT}}',
+      source_dialect: 'vendor',
+      source_syntaxes: ['double_brace'],
+      mappings: [
+        {
+          source_token: '{{CONSENT}}',
+          universal_macro: '{GDPR_CONSENT}',
+          source_dialect: 'vendor',
+          documentation: DOCUMENTATION,
+          requirements: [{ kind: 'consent\u0085gate', description: 'Resolve consent.' }],
+        },
+      ],
+    });
+
+    for (const result of [unknown, invalidMapping, unmetRequirement]) {
+      for (const diagnostic of result.diagnostics) {
+        assert.equal(unsafeMessageCharacter.test(diagnostic.message), false, diagnostic.message);
+      }
+    }
+  });
+
+  it('exports compiler and translator through the package substitution entry point', async () => {
+    const cjs = require('@adcp/sdk/substitution');
+    const esm = await import('@adcp/sdk/substitution');
+    assert.equal(typeof cjs.compileUniversalMacroTemplate, 'function');
+    assert.equal(typeof cjs.translateUniversalMacros, 'function');
+    assert.equal(typeof esm.compileUniversalMacroTemplate, 'function');
+    assert.equal(typeof esm.translateUniversalMacros, 'function');
   });
 
   it('uses collision-safe requirement identities and preserves absent versus empty values', () => {

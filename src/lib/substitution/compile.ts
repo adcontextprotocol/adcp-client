@@ -36,6 +36,19 @@ const BUILT_IN_SOURCE_SYNTAXES = new Set<BuiltInSourceMacroSyntax>([
 
 const UNIVERSAL_MACRO_NAMES = new Set<string>(UniversalMacroValues);
 
+/**
+ * Quote untrusted values before including them in human-readable diagnostics.
+ * Structured fields retain the original bytes for programmatic handling.
+ */
+function quoteDiagnosticValue(value: unknown): string {
+  return JSON.stringify(String(value)).replace(
+    /[\u007F-\u009F\u061C\u200E\u200F\u2028-\u202E\u2066-\u2069]/g,
+    character => {
+      return `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`;
+    }
+  );
+}
+
 export interface MacroDocumentationReference {
   title: string;
   url: string;
@@ -147,7 +160,13 @@ interface MappingState {
   mapping: SourceMacroMapping;
   documentation: MacroDocumentationReference[];
   requirements: SourceMacroRequirement[];
+  syntax: SourceMacroSyntax | null;
   valid: boolean;
+}
+
+interface ExactMacroToken {
+  source_token: string;
+  syntax: SourceMacroSyntax;
 }
 
 interface NormalizedCustomSyntax {
@@ -201,13 +220,28 @@ function syntaxForExactToken(
       return syntax.id;
     }
   }
-  if (builtIns.has('double_brace') && token.startsWith('{{') && token.indexOf('}}', 2) === token.length - 2) {
+  if (
+    builtIns.has('double_brace') &&
+    token.length > 4 &&
+    token.startsWith('{{') &&
+    token.indexOf('}}', 2) === token.length - 2
+  ) {
     return 'double_brace';
   }
-  if (builtIns.has('percent') && token.startsWith('%%') && token.indexOf('%%', 2) === token.length - 2) {
+  if (
+    builtIns.has('percent') &&
+    token.length > 4 &&
+    token.startsWith('%%') &&
+    token.indexOf('%%', 2) === token.length - 2
+  ) {
     return 'percent';
   }
-  if (builtIns.has('dollar_brace') && token.startsWith('${') && balancedDollarBraceEnd(token, 0) === token.length) {
+  if (
+    builtIns.has('dollar_brace') &&
+    token.length > 3 &&
+    token.startsWith('${') &&
+    balancedDollarBraceEnd(token, 0) === token.length
+  ) {
     return 'dollar_brace';
   }
   if (builtIns.has('bracket') && /^\[[A-Z][A-Z0-9_]*\]$/.test(token)) return 'bracket';
@@ -247,17 +281,20 @@ function isValidRequirement(value: unknown): value is SourceMacroRequirement {
   );
 }
 
-function exactTokenIndex(tokens: readonly string[]): Map<string, string[]> {
-  const byFirstCharacter = new Map<string, string[]>();
+function exactTokenIndex(tokens: readonly ExactMacroToken[]): Map<string, ExactMacroToken[]> {
+  const byFirstCharacter = new Map<string, ExactMacroToken[]>();
   for (const token of tokens) {
-    const first = token[0];
+    const first = token.source_token[0];
     if (!first) continue;
     const entries = byFirstCharacter.get(first) ?? [];
     entries.push(token);
     byFirstCharacter.set(first, entries);
   }
   for (const entries of byFirstCharacter.values()) {
-    entries.sort((left, right) => right.length - left.length || left.localeCompare(right));
+    entries.sort(
+      (left, right) =>
+        right.source_token.length - left.source_token.length || left.source_token.localeCompare(right.source_token)
+    );
   }
   return byFirstCharacter;
 }
@@ -266,7 +303,7 @@ function tokenize(
   template: string,
   builtIns: ReadonlySet<BuiltInSourceMacroSyntax>,
   customSyntaxes: readonly NormalizedCustomSyntax[],
-  exactTokens: readonly string[]
+  exactTokens: readonly ExactMacroToken[]
 ): {
   tokens: MacroToken[];
   diagnostics: UniversalMacroCompileDiagnostic[];
@@ -289,7 +326,7 @@ function tokenize(
       diagnostics.push({
         code: 'malformed_macro',
         severity: 'error',
-        message: `Unclosed ${open}…${close} macro delimiter`,
+        message: `Unclosed ${quoteDiagnosticValue(open)}…${quoteDiagnosticValue(close)} macro delimiter`,
         start: index,
         end: template.length,
       });
@@ -305,13 +342,12 @@ function tokenize(
   while (index < template.length) {
     const exactMatch = exactTokensByFirstCharacter
       .get(template[index] ?? '')
-      ?.find(token => template.startsWith(token, index));
+      ?.find(token => template.startsWith(token.source_token, index));
     if (exactMatch) {
-      const end = index + exactMatch.length;
-      const syntax = syntaxForExactToken(exactMatch, builtIns, customSyntaxes);
+      const end = index + exactMatch.source_token.length;
       tokens.push({
-        source_token: exactMatch,
-        syntax: syntax ?? 'adcp',
+        source_token: exactMatch.source_token,
+        syntax: exactMatch.syntax,
         start: index,
         end,
       });
@@ -381,8 +417,9 @@ function tokenize(
 
     if (builtIns.has('bracket') && template[index] === '[') {
       // Bracket macros use upper-snake names. This deliberately excludes URL
-      // array keys and IPv6 literals such as [status] and [fe80::1]. Exact
-      // configured mappings can still opt into any bracket token spelling.
+      // array keys and IPv6 literals such as [status] and [fe80::1]. Dialects
+      // with other bracket spellings must declare a custom scanner so unknown
+      // tokens in that spelling remain discoverable and fail closed.
       let end = index + 1;
       if (/^[A-Z]$/.test(template[end] ?? '')) {
         while (/^[A-Z0-9_]$/.test(template[end] ?? '')) end += 1;
@@ -493,7 +530,9 @@ export function compileUniversalMacroTemplate(
     diagnostics.push({
       code: 'source_syntax_required',
       severity: 'error',
-      message: `At least one source syntax is required for ${sourceDialect || 'the selected dialect'}`,
+      message: `At least one source syntax is required for ${quoteDiagnosticValue(
+        sourceDialect || 'the selected dialect'
+      )}`,
     });
   } else {
     for (const syntax of sourceSyntaxes) {
@@ -505,7 +544,7 @@ export function compileUniversalMacroTemplate(
         diagnostics.push({
           code: 'unsupported_source_syntax',
           severity: 'error',
-          message: `Unsupported source macro syntax: ${String(syntax)}`,
+          message: `Unsupported source macro syntax: ${quoteDiagnosticValue(syntax)}`,
         });
         continue;
       }
@@ -575,7 +614,7 @@ export function compileUniversalMacroTemplate(
     diagnostics.push({
       code: 'invalid_mapping_registry',
       severity: 'error',
-      message: `Mappings for ${sourceDialect || 'the selected dialect'} must be an array`,
+      message: `Mappings for ${quoteDiagnosticValue(sourceDialect || 'the selected dialect')} must be an array`,
     });
   }
   for (const value of selectedMappings) {
@@ -583,7 +622,7 @@ export function compileUniversalMacroTemplate(
       diagnostics.push({
         code: 'invalid_mapping',
         severity: 'error',
-        message: `A ${sourceDialect || 'selected-dialect'} mapping is not an object`,
+        message: `A ${quoteDiagnosticValue(sourceDialect || 'selected-dialect')} mapping is not an object`,
       });
       continue;
     }
@@ -601,7 +640,7 @@ export function compileUniversalMacroTemplate(
       diagnostics.push({
         code: 'invalid_source_token',
         severity: 'error',
-        message: `A ${sourceDialect} mapping has an empty source token`,
+        message: `A ${quoteDiagnosticValue(sourceDialect)} mapping has an empty source token`,
       });
       continue;
     }
@@ -609,7 +648,9 @@ export function compileUniversalMacroTemplate(
       diagnostics.push({
         code: 'duplicate_mapping',
         severity: 'error',
-        message: `More than one ${sourceDialect} mapping exists for ${mapping.source_token}`,
+        message: `More than one ${quoteDiagnosticValue(sourceDialect)} mapping exists for ${quoteDiagnosticValue(
+          mapping.source_token
+        )}`,
         source_token: mapping.source_token,
       });
       duplicateTokens.add(mapping.source_token);
@@ -617,11 +658,12 @@ export function compileUniversalMacroTemplate(
     }
 
     let valid = true;
-    if (syntaxForExactToken(mapping.source_token, enabledBuiltIns, customSyntaxes) === null) {
+    const mappingSyntax = syntaxForExactToken(mapping.source_token, enabledBuiltIns, customSyntaxes);
+    if (mappingSyntax === null) {
       diagnostics.push({
         code: 'mapping_syntax_not_declared',
         severity: 'error',
-        message: `Mapping for ${mapping.source_token} does not match a declared source syntax`,
+        message: `Mapping for ${quoteDiagnosticValue(mapping.source_token)} does not match a declared source syntax`,
         source_token: mapping.source_token,
       });
       valid = false;
@@ -630,7 +672,7 @@ export function compileUniversalMacroTemplate(
       diagnostics.push({
         code: 'invalid_mapping',
         severity: 'error',
-        message: `Mapping for ${mapping.source_token} has an invalid semantic`,
+        message: `Mapping for ${quoteDiagnosticValue(mapping.source_token)} has an invalid semantic`,
         source_token: mapping.source_token,
       });
       valid = false;
@@ -639,7 +681,7 @@ export function compileUniversalMacroTemplate(
       diagnostics.push({
         code: 'invalid_universal_macro',
         severity: 'error',
-        message: `Mapping for ${mapping.source_token} targets an unsupported universal macro`,
+        message: `Mapping for ${quoteDiagnosticValue(mapping.source_token)} targets an unsupported universal macro`,
         source_token: mapping.source_token,
       });
       valid = false;
@@ -652,7 +694,7 @@ export function compileUniversalMacroTemplate(
       diagnostics.push({
         code: 'invalid_mapping_provenance',
         severity: 'error',
-        message: `Mapping for ${mapping.source_token} has invalid documentation provenance`,
+        message: `Mapping for ${quoteDiagnosticValue(mapping.source_token)} has invalid documentation provenance`,
         source_token: mapping.source_token,
       });
       valid = false;
@@ -660,7 +702,7 @@ export function compileUniversalMacroTemplate(
       diagnostics.push({
         code: 'mapping_provenance_required',
         severity: 'error',
-        message: `Mapping for ${mapping.source_token} has no documentation provenance`,
+        message: `Mapping for ${quoteDiagnosticValue(mapping.source_token)} has no documentation provenance`,
         source_token: mapping.source_token,
       });
       valid = false;
@@ -668,7 +710,7 @@ export function compileUniversalMacroTemplate(
       diagnostics.push({
         code: 'invalid_mapping_provenance',
         severity: 'error',
-        message: `Mapping for ${mapping.source_token} has invalid documentation provenance`,
+        message: `Mapping for ${quoteDiagnosticValue(mapping.source_token)} has invalid documentation provenance`,
         source_token: mapping.source_token,
       });
       valid = false;
@@ -682,12 +724,18 @@ export function compileUniversalMacroTemplate(
       diagnostics.push({
         code: 'invalid_mapping_requirement',
         severity: 'error',
-        message: `Mapping for ${mapping.source_token} has an invalid runtime requirement`,
+        message: `Mapping for ${quoteDiagnosticValue(mapping.source_token)} has an invalid runtime requirement`,
         source_token: mapping.source_token,
       });
       valid = false;
     }
-    mappingByToken.set(mapping.source_token, { mapping, documentation, requirements, valid });
+    mappingByToken.set(mapping.source_token, {
+      mapping,
+      documentation,
+      requirements,
+      syntax: mappingSyntax,
+      valid,
+    });
   }
 
   for (const token of duplicateTokens) {
@@ -695,7 +743,11 @@ export function compileUniversalMacroTemplate(
     if (state) state.valid = false;
   }
 
-  const tokenized = tokenize(template, enabledBuiltIns, customSyntaxes, [...mappingByToken.keys()]);
+  const exactTokens: ExactMacroToken[] = [];
+  for (const state of mappingByToken.values()) {
+    if (state.syntax !== null) exactTokens.push({ source_token: state.mapping.source_token, syntax: state.syntax });
+  }
+  const tokenized = tokenize(template, enabledBuiltIns, customSyntaxes, exactTokens);
   diagnostics.push(...tokenized.diagnostics);
 
   const occurrences: UniversalMacroOccurrence[] = [];
@@ -733,7 +785,9 @@ export function compileUniversalMacroTemplate(
           diagnostics.push({
             code: 'unsatisfied_requirement',
             severity: 'error',
-            message: `Requirement ${requirement.kind} is not satisfied for ${token.source_token}`,
+            message: `Requirement ${quoteDiagnosticValue(requirement.kind)} is not satisfied for ${quoteDiagnosticValue(
+              token.source_token
+            )}`,
             source_token: token.source_token,
             start: token.start,
             end: token.end,
@@ -787,7 +841,9 @@ export function compileUniversalMacroTemplate(
     diagnostics.push({
       code: 'unknown_macro',
       severity: 'error',
-      message: `No ${sourceDialect || 'selected-dialect'} mapping exists for ${token.source_token}`,
+      message: `No ${quoteDiagnosticValue(sourceDialect || 'selected-dialect')} mapping exists for ${quoteDiagnosticValue(
+        token.source_token
+      )}`,
       source_token: token.source_token,
       start: token.start,
       end: token.end,
