@@ -62,3 +62,19 @@ export type {
 
 export { translateUniversalMacros, UnsafeNativeMappingError } from './translate';
 export type { MacroMapping, TranslateResult } from './translate';
+
+export { compileUniversalMacroTemplate } from './compile';
+export type {
+  BuiltInSourceMacroSyntax,
+  CompileUniversalMacroTemplateInput,
+  CompileUniversalMacroTemplateResult,
+  CustomSourceMacroSyntax,
+  MacroDocumentationReference,
+  SourceMacroMapping,
+  SourceMacroRequirement,
+  SourceMacroRequirementSatisfaction,
+  SourceMacroSyntax,
+  SourceMacroSyntaxDeclaration,
+  UniversalMacroCompileDiagnostic,
+  UniversalMacroOccurrence,
+} from './compile';
