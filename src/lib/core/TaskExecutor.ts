@@ -2462,7 +2462,7 @@ export class TaskExecutor {
         await this.config.deferredStorage.set(token, {
           taskId,
           ...(serverContextId !== undefined && { contextId: serverContextId }),
-          ...(a2aTaskId !== undefined && { a2aTaskId }),
+          a2aTaskId,
           agent,
           taskName,
           params,
