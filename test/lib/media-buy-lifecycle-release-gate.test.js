@@ -11,6 +11,7 @@ const express = require('express');
 const { AgentClient, proposalTermsDigest } = require('../../dist/lib/index.js');
 const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server.js');
 const { createA2AAdapter } = require('../../dist/lib/server/a2a-adapter.js');
+const { createIdempotencyStore, memoryBackend } = require('../../dist/lib/server/idempotency/index.js');
 const { AdcpError } = require('../../dist/lib/server/decisioning/index.js');
 const { validateRequest, validateResponse, formatIssues } = require('../../dist/lib/validation/index.js');
 const { createTestProduct } = require('./test-fixtures.js');
@@ -715,6 +716,8 @@ test('the same compact-first buyer facade projects established direct and propos
     name: 'a2a-established-release-gate',
     version: '1.0.0',
     adcpVersion: '3.1.18',
+    idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
+    resolveSessionKey: () => 'a2a-release-gate',
     capabilities: { supported_versions: ['3.0', '3.1'] },
     validation: { requests: 'strict', responses: 'strict' },
     mediaBuy: {

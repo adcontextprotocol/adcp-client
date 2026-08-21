@@ -22,7 +22,7 @@ interface AgentConfig {
 interface TaskResult<T = any> {
   success: boolean;
   status: 'completed' | 'deferred' | 'submitted' | 'input-required'
-        | 'working' | 'governance-denied';
+        | 'auth-required' | 'working' | 'failed' | 'governance-denied';
   data?: T;
   error?: string;
   deferred?: DeferredContinuation<T>;
@@ -30,6 +30,9 @@ interface TaskResult<T = any> {
   governance?: GovernanceCheckResult;
   metadata: {
     taskId: string;
+    contextId?: string;         // Seller conversation identity
+    serverTaskId?: string;      // AdCP tasks/get work handle
+    a2aTaskId?: string;         // Live A2A transport Task.id for threading
     taskName: string;
     agent: { id: string; name: string; protocol: string };
     responseTimeMs: number;

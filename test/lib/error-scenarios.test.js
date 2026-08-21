@@ -4,6 +4,26 @@
 const { test, describe, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert');
 
+function a2aPause(question, field, taskId, contextId, extra = {}) {
+  return {
+    result: {
+      kind: 'task',
+      id: taskId,
+      contextId,
+      status: {
+        state: 'input-required',
+        message: {
+          kind: 'message',
+          messageId: `${taskId}-question`,
+          role: 'agent',
+          parts: [{ kind: 'data', data: { ...extra, question, field } }],
+        },
+      },
+      artifacts: [],
+    },
+  };
+}
+
 /**
  * Error Scenario Test Strategy:
  * 1. Timeout scenarios - working, polling, webhook timeouts
@@ -109,15 +129,24 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
       };
 
       let pollCount = 0;
-      ProtocolClient.callTool = mock.fn(async (agent, taskName) => {
+      ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
         if (taskName === 'tasks/get' || taskName === 'tasks_get') {
           pollCount++;
           // After a few polls, complete to avoid infinite polling
           if (pollCount > 3) {
-            return { task: { status: ADCP_STATUS.COMPLETED, result: { webhook_test: 'done' } } };
+            return {
+              task: {
+                taskId: params.task_id,
+                taskType: 'webhookTimeoutTask',
+                status: ADCP_STATUS.COMPLETED,
+                result: { webhook_test: 'done' },
+              },
+            };
           }
           // Task remains in working/submitted state for first few polls
-          return { task: { status: ADCP_STATUS.WORKING } };
+          return {
+            task: { taskId: params.task_id, taskType: 'webhookTimeoutTask', status: ADCP_STATUS.WORKING },
+          };
         } else {
           return { status: ADCP_STATUS.SUBMITTED };
         }
@@ -141,33 +170,49 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
       assert.strictEqual(finalResult.success, true);
     });
 
-    test('should handle handler execution timeout', async () => {
+    test('should resume a live A2A pause after a slow handler completes', async () => {
       const slowHandler = mock.fn(async context => {
         // Simulate slow handler
         await new Promise(resolve => setTimeout(resolve, 10));
         return 'slow-response';
       });
 
-      // First call returns input-required, second call (continue_task) returns completed
-      ProtocolClient.callTool = mock.fn(async (agent, taskName) => {
-        if (taskName === 'continue_task') {
+      // A live A2A task can safely run the handler and resume the same task.
+      ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
+        if (Object.hasOwn(params, 'input')) {
           return { status: ADCP_STATUS.COMPLETED, result: { message: 'task completed after slow handler' } };
         }
         return {
-          status: ADCP_STATUS.INPUT_REQUIRED,
-          question: 'This handler will be slow',
+          result: {
+            kind: 'task',
+            id: 'slow-handler-a2a-task',
+            contextId: 'slow-handler-a2a-context',
+            status: {
+              state: 'input-required',
+              message: {
+                kind: 'message',
+                messageId: 'slow-handler-question',
+                role: 'agent',
+                parts: [
+                  {
+                    kind: 'data',
+                    data: { question: 'This handler will be slow', field: 'slow-handler' },
+                  },
+                ],
+              },
+            },
+            artifacts: [],
+          },
         };
       });
 
-      const executor = new TaskExecutor({
-        handlerTimeout: 100, // Very short handler timeout (if implemented)
-        strictSchemaValidation: false,
-      });
+      const executor = new TaskExecutor({ strictSchemaValidation: false });
 
       // Handler runs, provides input, and task completes
-      const result = await executor.executeTask(mockAgent, 'slowHandlerTask', {}, slowHandler);
+      const result = await executor.executeTask({ ...mockAgent, protocol: 'a2a' }, 'slowHandlerTask', {}, slowHandler);
 
       assert.strictEqual(slowHandler.mock.callCount(), 1, 'Handler should have been called once');
+      assert.strictEqual(result.status, 'completed');
     });
   });
 
@@ -189,6 +234,7 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
       assert.strictEqual(result.success, true); // Paused, not failed
       assert.strictEqual(result.metadata.inputRequest.question, 'What is your preferred targeting method?');
       assert.strictEqual(result.metadata.inputRequest.field, 'targeting_method');
+      assert.strictEqual(result.deferred, undefined);
     });
 
     test('should handle multiple input requests without handler', async () => {
@@ -465,17 +511,21 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
 
       const deferHandler = mock.fn(async () => ({ defer: true, token: 'TEST_STORAGE_FAIL_TOKEN_PLACEHOLDER' }));
 
-      ProtocolClient.callTool = mock.fn(async () => ({
-        status: ADCP_STATUS.INPUT_REQUIRED,
-        question: 'This will fail storage',
-      }));
+      ProtocolClient.callTool = mock.fn(async () =>
+        a2aPause('This will fail storage', 'storage', 'seller-storage-failure-task', 'ctx-storage-failure')
+      );
 
       const executor = new TaskExecutor({
         deferredStorage: failingStorage,
       });
 
       // TaskExecutor catches all errors and returns error results instead of throwing
-      const result = await executor.executeTask(mockAgent, 'storageFailureTask', {}, deferHandler);
+      const result = await executor.executeTask(
+        { ...mockAgent, protocol: 'a2a' },
+        'storageFailureTask',
+        {},
+        deferHandler
+      );
 
       // Verify the storage error was caught and returned as an error result
       assert.strictEqual(result.success, false);
@@ -495,19 +545,21 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
       // Create large response data
       const largeData = Array(1000).fill('large-data-chunk').join('-');
 
-      ProtocolClient.callTool = mock.fn(async (agent, taskName) => {
-        if (taskName === 'continue_task') {
+      ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
+        if (Object.hasOwn(params, 'input')) {
+          assert.equal(taskName, 'largeConversationTask');
           return {
             status: ADCP_STATUS.COMPLETED,
             result: { handled: 'large-conversation' },
           };
-        } else {
-          return {
-            status: ADCP_STATUS.INPUT_REQUIRED,
-            question: 'Handle large data?',
-            context: largeData,
-          };
         }
+        return a2aPause(
+          'Handle large data?',
+          'large-data',
+          'seller-large-conversation-task',
+          'ctx-large-conversation',
+          { context: largeData }
+        );
       });
 
       // Disable schema validation for edge case testing
@@ -516,7 +568,12 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
         strictSchemaValidation: false,
       });
 
-      const result = await executor.executeTask(mockAgent, 'largeConversationTask', {}, largeHandler);
+      const result = await executor.executeTask(
+        { ...mockAgent, protocol: 'a2a' },
+        'largeConversationTask',
+        {},
+        largeHandler
+      );
 
       assert.strictEqual(result.success, true);
       // Data may be wrapped differently

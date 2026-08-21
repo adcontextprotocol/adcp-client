@@ -52,6 +52,7 @@ describe('redisBackend — default-prefix-on-db-0 warning', () => {
     get: async () => null,
     set: async () => null,
     del: async () => 0,
+    eval: async () => null,
     ping: async () => 'PONG',
   });
 
@@ -82,9 +83,9 @@ describe('redisBackend — default-prefix-on-db-0 warning', () => {
     assert.equal(warnings.length, 0);
   });
 
-  test('does NOT warn when keyPrefix is set explicitly (even to the default value)', () => {
+  test('warns when keyPrefix is explicitly set to the shared default', () => {
     redisBackend(stubClient({ database: 0 }), { keyPrefix: 'adcp:idem:' });
-    assert.equal(warnings.length, 0);
+    assert.equal(warnings.length, 1);
   });
 
   test('does NOT warn when suppressDefaultPrefixWarning is set', () => {
@@ -94,7 +95,13 @@ describe('redisBackend — default-prefix-on-db-0 warning', () => {
 
   test('does NOT warn for escape-hatch clients without an introspectable options.database / options.url', () => {
     // RedisLikeClient adapter path — no `options` object at all.
-    redisBackend({ get: async () => null, set: async () => null, del: async () => 0, ping: async () => 'PONG' });
+    redisBackend({
+      get: async () => null,
+      set: async () => null,
+      del: async () => 0,
+      eval: async () => null,
+      ping: async () => 'PONG',
+    });
     assert.equal(warnings.length, 0);
   });
 
@@ -115,6 +122,112 @@ describe('redisBackend — default-prefix-on-db-0 warning', () => {
     redisBackend(stubClient({ url: 'redis://localhost:6379/notanumber' }));
     assert.equal(warnings.length, 0);
   });
+
+  test('non-development environments require an explicit deployment prefix or isolation acknowledgement', () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    try {
+      for (const env of [undefined, 'staging', 'production']) {
+        if (env === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = env;
+        assert.throws(() => redisBackend(stubClient({ database: 0 })), /deployment-unique keyPrefix/);
+        assert.doesNotThrow(() => redisBackend(stubClient({ database: 0 }), { keyPrefix: 'buyer-prod:' }));
+        assert.doesNotThrow(() => redisBackend(stubClient({ database: 0 }), { acknowledgeIsolatedDatabase: true }));
+        assert.throws(
+          () => redisBackend(stubClient({ database: 0 }), { suppressDefaultPrefixWarning: true }),
+          /deployment-unique keyPrefix/
+        );
+        assert.throws(
+          () => redisBackend(stubClient({ database: 0 }), { keyPrefix: '' }),
+          /deployment-unique keyPrefix/
+        );
+        assert.throws(
+          () => redisBackend(stubClient({ database: 0 }), { keyPrefix: 'adcp:idem:' }),
+          /deployment-unique keyPrefix/
+        );
+      }
+    } finally {
+      if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalNodeEnv;
+    }
+  });
+
+  test('rejects a client that lacks Lua eval support at construction', () => {
+    assert.throws(
+      () =>
+        redisBackend({ get: async () => null, set: async () => null, del: async () => 0, ping: async () => 'PONG' }),
+      /client must implement eval\(\)/
+    );
+  });
+});
+
+test('redisBackend redacts client errors from every runtime operation', async () => {
+  const { redisBackend } = require('../../dist/lib/server/index.js');
+  const driverError = new Error('WRONGPASS redis://secret-host scoped-tenant-key');
+  const client = {
+    get: async () => {
+      throw driverError;
+    },
+    set: async () => {
+      throw driverError;
+    },
+    del: async () => {
+      throw driverError;
+    },
+    eval: async () => {
+      throw driverError;
+    },
+    ping: async () => 'PONG',
+  };
+  const backend = redisBackend(client, { keyPrefix: 'test-runtime-errors:' });
+  const entry = {
+    payloadHash: 'owner-token',
+    response: {},
+    expiresAt: Math.floor(Date.now() / 1000) + 3600,
+  };
+  const operations = [
+    ['get', () => backend.get('scoped-key')],
+    ['put', () => backend.put('scoped-key', entry)],
+    ['putIfAbsent', () => backend.putIfAbsent('scoped-key', entry)],
+    ['replaceIfPayloadHash', () => backend.replaceIfPayloadHash('scoped-key', 'owner-token', entry)],
+    ['deleteIfPayloadHash', () => backend.deleteIfPayloadHash('scoped-key', 'owner-token')],
+    ['delete', () => backend.delete('scoped-key')],
+  ];
+
+  for (const [name, operation] of operations) {
+    await assert.rejects(operation, error => {
+      assert.equal(error.message, `redisBackend.${name}: database operation failed`);
+      assert.doesNotMatch(error.message, /WRONGPASS|secret-host|scoped-tenant-key/);
+      assert.strictEqual(error.cause, driverError);
+      return true;
+    });
+  }
+});
+
+test('redisBackend putIfAbsent uses Redis server time inside the atomic expiry takeover', async () => {
+  const { redisBackend } = require('../../dist/lib/server/index.js');
+  let observedScript;
+  let observedArguments;
+  const client = {
+    get: async () => null,
+    set: async () => null,
+    del: async () => 0,
+    eval: async (script, options) => {
+      observedScript = script;
+      observedArguments = options.arguments;
+      return 1;
+    },
+    ping: async () => 'PONG',
+  };
+  const backend = redisBackend(client, { keyPrefix: 'clock-skew-test:' });
+  const claimed = await backend.putIfAbsent('scope', {
+    payloadHash: 'owner',
+    response: null,
+    expiresAt: Math.floor(Date.now() / 1000) + 3600,
+  });
+
+  assert.equal(claimed, true);
+  assert.match(observedScript, /redis\.call\('TIME'\)/);
+  assert.equal(observedArguments.length, 2, 'application wall-clock time must not be passed into the Lua decision');
 });
 
 describe('redisBackend', { skip: !REDIS_URL && 'REDIS_URL not set' }, () => {
@@ -218,17 +331,17 @@ describe('redisBackend', { skip: !REDIS_URL && 'REDIS_URL not set' }, () => {
     assert.deepEqual(got.response, { v: 1 });
   });
 
-  test('putIfAbsent reclaims an expired entry (Redis auto-evicts; SET NX naturally succeeds)', async () => {
+  test('putIfAbsent reclaims a logically expired entry retained by the Redis grace TTL', async () => {
     const backend = redisBackend(client);
-    // Write a value with a 100ms PX (millisecond TTL) so Redis auto-evicts it
-    // shortly. After eviction, putIfAbsent must succeed — proving the
-    // "Redis auto-deletes expired keys, reclaim is automatic" claim in
-    // the backend JSDoc.
-    await client.set('adcp:idem:preclaim', JSON.stringify({ payloadHash: 'stale', response: null, expiresAt: 0 }), {
-      PX: 100,
-    });
-    // Wait past the PX TTL with a generous margin.
-    await new Promise(resolve => setTimeout(resolve, 250));
+    await client.set(
+      'adcp:idem:preclaim',
+      JSON.stringify({
+        payloadHash: 'stale',
+        response: null,
+        expiresAt: Math.floor(Date.now() / 1000) - 1,
+      }),
+      { EX: 60 }
+    );
 
     const claimed = await backend.putIfAbsent('preclaim', {
       payloadHash: 'fresh',
@@ -321,6 +434,7 @@ describe('redisBackend', { skip: !REDIS_URL && 'REDIS_URL not set' }, () => {
       principal: 'p',
       key: 'e2e_key_abcdefghij',
       payloadHash: miss.payloadHash,
+      claimToken: miss.claimToken,
       response: { media_buy_id: 'mb_77' },
     });
 
@@ -331,7 +445,7 @@ describe('redisBackend', { skip: !REDIS_URL && 'REDIS_URL not set' }, () => {
 
   test('store returns conflict on same-key different-payload', async () => {
     const store = createIdempotencyStore({ backend: redisBackend(client), ttlSeconds: 3600 });
-    const { payloadHash } = await store.check({
+    const { payloadHash, claimToken } = await store.check({
       principal: 'p',
       key: 'conflict_key_abcdefg',
       payload: { a: 1 },
@@ -340,6 +454,7 @@ describe('redisBackend', { skip: !REDIS_URL && 'REDIS_URL not set' }, () => {
       principal: 'p',
       key: 'conflict_key_abcdefg',
       payloadHash,
+      claimToken,
       response: { ok: true },
     });
 
@@ -349,6 +464,41 @@ describe('redisBackend', { skip: !REDIS_URL && 'REDIS_URL not set' }, () => {
       payload: { a: 2 },
     });
     assert.equal(conflict.kind, 'conflict');
+  });
+
+  test('store refuses stale-owner save and release after a Redis claim is reclaimed', async () => {
+    const backend = redisBackend(client);
+    const store = createIdempotencyStore({ backend, ttlSeconds: 3600 });
+    const key = 'stale_redis_owner_abcd';
+    const payload = { a: 1 };
+    const stale = await store.check({ principal: 'p', key, payload });
+    assert.equal(stale.kind, 'miss');
+    await backend.delete(`p\u001f${key}`);
+    const current = await store.check({ principal: 'p', key, payload });
+    assert.equal(current.kind, 'miss');
+
+    await assert.rejects(
+      store.save({
+        principal: 'p',
+        key,
+        payloadHash: stale.payloadHash,
+        claimToken: stale.claimToken,
+        response: 'stale',
+      }),
+      /claim is no longer owned/
+    );
+    await assert.rejects(
+      store.release({ principal: 'p', key, claimToken: stale.claimToken }),
+      /claim is no longer owned/
+    );
+    await store.save({
+      principal: 'p',
+      key,
+      payloadHash: current.payloadHash,
+      claimToken: current.claimToken,
+      response: 'current',
+    });
+    assert.equal((await store.check({ principal: 'p', key, payload })).response, 'current');
   });
 
   test('store returns expired when expires_at is past TTL + skew (grace window keeps key visible)', async () => {

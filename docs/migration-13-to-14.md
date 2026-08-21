@@ -56,6 +56,39 @@ loading; keep using `requires_capability` for a singular predicate.
 8. If a legacy brief may return products without a proposal, configure a durable `LegacyPurchaseContinuationStore`, stable `principalScope`, and application-owned `reconcileLegacyPurchase(record, exactInput)` callback before offering `continueLegacyPurchase()`. Keep reverse compact-seller → older-buyer handlers application-owned.
 9. If established 3.0/3.1 proposal discovery and mutation can land on different processes, configure the same durable `EstablishedProposalStore`, stable `principalScope`, and stable non-secret `legacyPurchaseSellerSessionScope` on every coordinator. Recover submitted work with `reconcileEstablishedProposalTask({ account, sellerTaskId })`; see [Media-buy compatibility: durable established proposal state](./guides/MEDIA-BUY-3.2-COMPATIBILITY.md#durable-established-proposal-state). The bundled in-memory store is a non-durable reference implementation.
 
+### Legacy continuation store upgrade
+
+SDK 14 tightens the durable continuation contract. Custom stores must make
+`recordSubmittedTask()` an atomic first-writer-wins bind: the first seller task
+ID and exact same-ID retries return `true`; a different ID returns `false` and
+never overwrites it. The seller task ID and any pending callback task ID must
+also match regardless of which is written first. `complete()` now distinguishes
+the installing `completed` writer from an exact `duplicate` and a divergent
+`conflict`; when a pending callback already exists, it atomically promotes and
+returns that earlier terminal winner as `pending_completed` with required
+settlement metadata instead of the caller's stale candidate.
+
+Replica-safe callback recovery requires implementing
+`getByCallbackOperationId()`, `recordPendingSettlement()`, and
+`acknowledgePendingSettlement()` together; partial implementations are rejected.
+The acknowledgement is an atomic outbox clear after application handler dispatch,
+so a transient handler failure remains retryable. Stores that implement none of
+these methods remain polling-only, and the
+SDK suppresses task webhooks for those operations. Share the durable webhook
+registration store between replicas (and the replay store for RFC 9421).
+Default completed-operation replay retention is seven days; an explicit
+`legacyPurchaseOperationTtlMs` configures both monitoring and replay retention.
+
+Seller pauses are now protocol-specific. A2A can invoke an input handler or
+return a resume closure only for a live `input-required`/`auth-required` A2A
+Task, using its transport `Task.id`; the separate AdCP task handle remains for
+`tasks/get` polling. Completed A2A Tasks with artifact-level pauses and MCP
+responses expose `input-required` or `auth-required`
+without invoking the handler and without `deferred`; use an
+application/protocol-specific recovery path.
+Pre-upgrade persisted A2A deferred records that lack an A2A transport task ID are
+rejected and removed on resume rather than replayed as a fresh mutation.
+
 ## Existing 3.x calls remain valid
 
 No mechanical rewrite is required for code that stays on the established lifecycle:

@@ -35,6 +35,21 @@ describe('createIdempotencyStore', () => {
         assert.match(err.message, /pgBackend/);
       }
     });
+
+    it('rejects a custom backend without atomic owner fencing', () => {
+      const backend = {
+        get: async () => null,
+        putIfAbsent: async () => true,
+        replaceIfPayloadHash: true,
+        deleteIfPayloadHash: true,
+        put: async () => {},
+        delete: async () => {},
+      };
+      assert.throws(
+        () => createIdempotencyStore({ backend }),
+        /atomic replaceIfPayloadHash and deleteIfPayloadHash fencing/
+      );
+    });
   });
 
   describe('ttl bounds validation', () => {
@@ -55,6 +70,12 @@ describe('createIdempotencyStore', () => {
       assert.equal(s.ttlSeconds, 86400);
       assert.equal(s.capability().replay_ttl_seconds, 86400);
     });
+
+    it('rejects invalid clock skew values', () => {
+      for (const clockSkewSeconds of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        assert.throws(() => makeStore({ clockSkewSeconds }), /clockSkewSeconds must be a non-negative safe integer/);
+      }
+    });
   });
 
   describe('check + save lifecycle', () => {
@@ -72,11 +93,12 @@ describe('createIdempotencyStore', () => {
     it('returns replay on matching payload retry', async () => {
       const store = makeStore();
       const payload = { budget: 5000, start: '2026-01-01' };
-      const { payloadHash } = await store.check({ principal: 'p1', key: 'k1', payload });
+      const { payloadHash, claimToken } = await store.check({ principal: 'p1', key: 'k1', payload });
       await store.save({
         principal: 'p1',
         key: 'k1',
         payloadHash,
+        claimToken,
         response: { media_buy_id: 'mb_42' },
       });
       const result = await store.check({ principal: 'p1', key: 'k1', payload });
@@ -88,11 +110,12 @@ describe('createIdempotencyStore', () => {
       const store = makeStore();
       const p1 = { budget: 5000 };
       const p2 = { budget: 9999 };
-      const { payloadHash } = await store.check({ principal: 'p1', key: 'k1', payload: p1 });
+      const { payloadHash, claimToken } = await store.check({ principal: 'p1', key: 'k1', payload: p1 });
       await store.save({
         principal: 'p1',
         key: 'k1',
         payloadHash,
+        claimToken,
         response: { media_buy_id: 'mb_42' },
       });
       const result = await store.check({ principal: 'p1', key: 'k1', payload: p2 });
@@ -103,8 +126,8 @@ describe('createIdempotencyStore', () => {
       const store = makeStore();
       const p1 = { budget: 5000, coupon: null };
       const p2 = { budget: 5000 };
-      const { payloadHash } = await store.check({ principal: 'p1', key: 'k1', payload: p1 });
-      await store.save({ principal: 'p1', key: 'k1', payloadHash, response: {} });
+      const { payloadHash, claimToken } = await store.check({ principal: 'p1', key: 'k1', payload: p1 });
+      await store.save({ principal: 'p1', key: 'k1', payloadHash, claimToken, response: {} });
       const result = await store.check({ principal: 'p1', key: 'k1', payload: p2 });
       assert.equal(result.kind, 'conflict');
     });
@@ -113,8 +136,8 @@ describe('createIdempotencyStore', () => {
       const store = makeStore();
       const p1 = { a: 1, b: 2, c: 3 };
       const p2 = { c: 3, a: 1, b: 2 };
-      const { payloadHash } = await store.check({ principal: 'p1', key: 'k1', payload: p1 });
-      await store.save({ principal: 'p1', key: 'k1', payloadHash, response: 'cached' });
+      const { payloadHash, claimToken } = await store.check({ principal: 'p1', key: 'k1', payload: p1 });
+      await store.save({ principal: 'p1', key: 'k1', payloadHash, claimToken, response: 'cached' });
       const result = await store.check({ principal: 'p1', key: 'k1', payload: p2 });
       assert.equal(result.kind, 'replay');
     });
@@ -124,11 +147,33 @@ describe('createIdempotencyStore', () => {
     it('same key under different principals are independent', async () => {
       const store = makeStore();
       const payload = { x: 1 };
-      const { payloadHash } = await store.check({ principal: 'p1', key: 'k1', payload });
-      await store.save({ principal: 'p1', key: 'k1', payloadHash, response: 'from-p1' });
+      const { payloadHash, claimToken } = await store.check({ principal: 'p1', key: 'k1', payload });
+      await store.save({ principal: 'p1', key: 'k1', payloadHash, claimToken, response: 'from-p1' });
       const otherResult = await store.check({ principal: 'p2', key: 'k1', payload });
       assert.equal(otherResult.kind, 'miss', 'principal p2 should not see p1 cache');
     });
+  });
+
+  it('rejects ambiguous or unbounded scope segments before backend access', async () => {
+    const backend = memoryBackend({ sweepIntervalMs: 0 });
+    let backendReads = 0;
+    const get = backend.get.bind(backend);
+    backend.get = async key => {
+      backendReads += 1;
+      return get(key);
+    };
+    const store = createIdempotencyStore({ backend, ttlSeconds: 3600 });
+
+    for (const principal of ['', `tenant\u001fother`, 'x'.repeat(4097)]) {
+      await assert.rejects(store.check({ principal, key: 'scope_key_abcdefgh', payload: {} }), /Invalid idempotency/);
+    }
+    for (const extraScope of ['', `session\u001fother`, 'x'.repeat(4097)]) {
+      await assert.rejects(
+        store.check({ principal: 'tenant', key: 'scope_key_abcdefgh', payload: {}, extraScope }),
+        /Invalid idempotency/
+      );
+    }
+    assert.equal(backendReads, 0);
   });
 
   describe('exclusion list (hash only)', () => {
@@ -145,8 +190,8 @@ describe('createIdempotencyStore', () => {
       const store = makeStore();
       const p1 = { context: { correlation_id: 'first' }, budget: 5000 };
       const p2 = { context: { correlation_id: 'retry' }, budget: 5000 };
-      const { payloadHash } = await store.check({ principal: 'p', key: 'k', payload: p1 });
-      await store.save({ principal: 'p', key: 'k', payloadHash, response: 'cached' });
+      const { payloadHash, claimToken } = await store.check({ principal: 'p', key: 'k', payload: p1 });
+      await store.save({ principal: 'p', key: 'k', payloadHash, claimToken, response: 'cached' });
       const result = await store.check({ principal: 'p', key: 'k', payload: p2 });
       assert.equal(result.kind, 'replay');
     });
@@ -155,8 +200,8 @@ describe('createIdempotencyStore', () => {
       const store = makeStore();
       const p1 = { governance_context: 'token_v1', budget: 5000 };
       const p2 = { governance_context: 'token_v2', budget: 5000 };
-      const { payloadHash } = await store.check({ principal: 'p', key: 'k', payload: p1 });
-      await store.save({ principal: 'p', key: 'k', payloadHash, response: 'cached' });
+      const { payloadHash, claimToken } = await store.check({ principal: 'p', key: 'k', payload: p1 });
+      await store.save({ principal: 'p', key: 'k', payloadHash, claimToken, response: 'cached' });
       const result = await store.check({ principal: 'p', key: 'k', payload: p2 });
       assert.equal(result.kind, 'replay');
     });
@@ -177,8 +222,8 @@ describe('createIdempotencyStore', () => {
           authentication: { scheme: 'Bearer', credentials: 'token_v2' },
         },
       };
-      const { payloadHash } = await store.check({ principal: 'p', key: 'k', payload: p1 });
-      await store.save({ principal: 'p', key: 'k', payloadHash, response: 'cached' });
+      const { payloadHash, claimToken } = await store.check({ principal: 'p', key: 'k', payload: p1 });
+      await store.save({ principal: 'p', key: 'k', payloadHash, claimToken, response: 'cached' });
       assert.equal((await store.check({ principal: 'p', key: 'k', payload: p2 })).kind, 'replay');
 
       // URL change IS a conflict (not in exclusion list)
@@ -412,10 +457,139 @@ describe('release (in-flight claim rollback)', () => {
     assert.equal(first.kind, 'miss');
 
     // Without release, a retry would see 'in-flight'
-    await store.release({ principal: 'p', key: 'release_test_abcdefg' });
+    await store.release({ principal: 'p', key: 'release_test_abcdefg', claimToken: first.claimToken });
 
     const second = await store.check({ principal: 'p', key: 'release_test_abcdefg', payload });
     assert.equal(second.kind, 'miss', 'after release, key should be reclaimable');
+  });
+});
+
+describe('request claim ownership fencing', () => {
+  it('renew extends the owner lease beyond its original expiry', async () => {
+    const originalNow = Date.now;
+    let now = 2_000_000_000_000;
+    Date.now = () => now;
+    try {
+      const store = makeStore({ clockSkewSeconds: 0 });
+      const key = 'renew_owner_abcdefghij';
+      const payload = { x: 1 };
+      const owner = await store.check({ principal: 'p', key, payload });
+      assert.equal(owner.kind, 'miss');
+
+      now += 100_000;
+      await store.renew({ principal: 'p', key, claimToken: owner.claimToken });
+      now += 30_000;
+
+      const retry = await store.check({ principal: 'p', key, payload });
+      assert.equal(retry.kind, 'in-flight', 'renewed owner must still fence retries after the original 120s lease');
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  it('a stale expiry read cannot reclaim a claim renewed before atomic putIfAbsent', async () => {
+    const delegate = memoryBackend({ sweepIntervalMs: 0 });
+    const key = 'renewal_aba_abcdefghij';
+    const scopedKey = `p\u001f${key}`;
+    const owner = '__adcp_in_flight__:owner';
+    await delegate.put(scopedKey, {
+      payloadHash: owner,
+      response: null,
+      expiresAt: Math.floor(Date.now() / 1000) - 1,
+    });
+
+    let releasePut;
+    let markPutReached;
+    const putReached = new Promise(resolve => {
+      markPutReached = resolve;
+    });
+    const putGate = new Promise(resolve => {
+      releasePut = resolve;
+    });
+    const backend = {
+      ...delegate,
+      putIfAbsent: async (...args) => {
+        markPutReached();
+        await putGate;
+        return delegate.putIfAbsent(...args);
+      },
+    };
+    const store = createIdempotencyStore({ backend, ttlSeconds: 3600, clockSkewSeconds: 0 });
+    const attempt = store.check({ principal: 'p', key, payload: { x: 1 } });
+    await putReached;
+    await delegate.replaceIfPayloadHash(scopedKey, owner, {
+      payloadHash: owner,
+      response: null,
+      expiresAt: Math.floor(Date.now() / 1000) + 120,
+    });
+    releasePut();
+
+    assert.equal((await attempt).kind, 'in-flight');
+  });
+
+  it('treats a claim expiring exactly now as live until the next second', async () => {
+    const originalNow = Date.now;
+    const fixedNow = 2_000_000_000_000;
+    Date.now = () => fixedNow;
+    try {
+      const backend = memoryBackend({ sweepIntervalMs: 0 });
+      const store = createIdempotencyStore({ backend, ttlSeconds: 3600, clockSkewSeconds: 0 });
+      await backend.put('p\u001fequality_edge_abcdef', {
+        payloadHash: '__adcp_in_flight__:owner',
+        response: null,
+        expiresAt: Math.floor(fixedNow / 1000),
+      });
+      const result = await store.check({ principal: 'p', key: 'equality_edge_abcdef', payload: {} });
+      assert.equal(result.kind, 'in-flight');
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  it('a stale owner cannot save over or release a reclaimed request', async () => {
+    const backend = memoryBackend({ sweepIntervalMs: 0 });
+    const store = createIdempotencyStore({ backend, ttlSeconds: 3600, clockSkewSeconds: 0 });
+    const key = 'stale_owner_abcdefghij';
+    const scopedKey = `p\u001f${key}`;
+    const payload = { x: 1 };
+
+    const stale = await store.check({ principal: 'p', key, payload });
+    assert.equal(stale.kind, 'miss');
+    // Model a crashed request whose short execution lease has expired.
+    const staleEntry = await backend.get(scopedKey);
+    await backend.put(scopedKey, { ...staleEntry, expiresAt: Math.floor(Date.now() / 1000) - 1 });
+
+    const current = await store.check({ principal: 'p', key, payload });
+    assert.equal(current.kind, 'miss');
+    await assert.rejects(
+      store.save({
+        principal: 'p',
+        key,
+        payloadHash: stale.payloadHash,
+        claimToken: stale.claimToken,
+        response: 'stale',
+      }),
+      /claim is no longer owned/
+    );
+    await assert.rejects(
+      store.release({ principal: 'p', key, claimToken: stale.claimToken }),
+      /claim is no longer owned/
+    );
+    await assert.rejects(
+      store.renew({ principal: 'p', key, claimToken: stale.claimToken }),
+      /claim is no longer owned/
+    );
+
+    await store.save({
+      principal: 'p',
+      key,
+      payloadHash: current.payloadHash,
+      claimToken: current.claimToken,
+      response: 'current',
+    });
+    const replay = await store.check({ principal: 'p', key, payload });
+    assert.equal(replay.kind, 'replay');
+    assert.equal(replay.response, 'current');
   });
 });
 
@@ -423,8 +597,12 @@ describe('memory backend clone-on-read', () => {
   it('mutations to returned response do not leak into cache', async () => {
     const store = makeStore();
     const response = { media_buy_id: 'mb_42', packages: [] };
-    const { payloadHash } = await store.check({ principal: 'p', key: 'clone_test_abcdefg', payload: { x: 1 } });
-    await store.save({ principal: 'p', key: 'clone_test_abcdefg', payloadHash, response });
+    const { payloadHash, claimToken } = await store.check({
+      principal: 'p',
+      key: 'clone_test_abcdefg',
+      payload: { x: 1 },
+    });
+    await store.save({ principal: 'p', key: 'clone_test_abcdefg', payloadHash, claimToken, response });
 
     const r1 = await store.check({ principal: 'p', key: 'clone_test_abcdefg', payload: { x: 1 } });
     assert.equal(r1.kind, 'replay');
@@ -455,6 +633,7 @@ describe('extra scope (si_send_message)', () => {
       principal: 'p1',
       key: 'si_key_abcdefghij1234',
       payloadHash: miss1.payloadHash,
+      claimToken: miss1.claimToken,
       response: { reply: 'from session A' },
       extraScope: 'session_A',
     });

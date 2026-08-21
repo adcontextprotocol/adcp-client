@@ -152,10 +152,14 @@ describe('transport diagnostics public-client E2E', () => {
         events
       );
 
-      const result = await client.agent('mcp-agent').createMediaBuy(createMediaBuyParams);
+      const result = await client
+        .agent('mcp-agent')
+        .createMediaBuy(createMediaBuyParams, undefined, { disableWebhook: true });
       assert.equal(result.success, true, result.error);
       assert.equal(result.status, 'completed');
-      const secondResult = await client.agent('mcp-agent').createMediaBuy(createMediaBuyParams);
+      const secondResult = await client
+        .agent('mcp-agent')
+        .createMediaBuy(createMediaBuyParams, undefined, { disableWebhook: true });
       assert.equal(secondResult.success, true, secondResult.error);
       assert.equal(result.data.media_buy_id, 'mb_transport_mcp_1');
       assert.equal(secondResult.data.media_buy_id, 'mb_transport_mcp_2');
@@ -222,10 +226,14 @@ describe('transport diagnostics public-client E2E', () => {
         events
       );
 
-      const result = await client.agent('a2a-agent').createMediaBuy(createMediaBuyParams);
+      const result = await client
+        .agent('a2a-agent')
+        .createMediaBuy(createMediaBuyParams, undefined, { disableWebhook: true });
       assert.equal(result.success, true, result.error);
       assert.equal(result.status, 'completed');
-      const secondResult = await client.agent('a2a-agent').createMediaBuy(createMediaBuyParams);
+      const secondResult = await client
+        .agent('a2a-agent')
+        .createMediaBuy(createMediaBuyParams, undefined, { disableWebhook: true });
       assert.equal(secondResult.success, true, secondResult.error);
       assert.equal(result.data.media_buy_id, 'mb_transport_a2a_1');
       assert.equal(secondResult.data.media_buy_id, 'mb_transport_a2a_2');

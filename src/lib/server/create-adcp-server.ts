@@ -150,11 +150,18 @@ function hasIdempotencyClearAll(store: IdempotencyStore): boolean {
   // configured backend opts in (memory backend does; pg backend does not).
   return typeof store.clearAll === 'function';
 }
+
+// Built-in request claims use the full replay window as their base fence.
+// Renew periodically while a handler is active so genuinely long-running
+// work retains that full window from its latest liveness point; the base
+// fence itself still prevents a transient renewal outage from reopening the
+// mutation.
+const IDEMPOTENCY_CLAIM_RENEW_INTERVAL_MS = 60_000;
 import { isMutatingTask, requestUsesIdempotency, IDEMPOTENCY_KEY_PATTERN, MUTATING_TASKS } from '../utils/idempotency';
 import { STATUS_FREE_SYNC_RESPONSE_TOOLS } from '../utils/envelope-status-compat';
 import { validateRequest, validateResponse, formatIssues, type ValidationIssue } from '../validation/schema-validator';
 import { buildAdcpValidationErrorPayload } from '../validation/schema-errors';
-import { hashPayload, type IdempotencyStore } from './idempotency';
+import { hashPayload, IdempotencyClaimOwnershipError, type IdempotencyStore } from './idempotency';
 import {
   createWebhookEmitter,
   type WebhookEmitParams,
@@ -1149,13 +1156,9 @@ export interface AdcpCapabilitiesConfig {
    */
   specialisms?: NonNullable<GetAdCPCapabilitiesResponse['specialisms']>;
   /**
-   * Seller-declared idempotency replay window, required on `get_adcp_capabilities`
-   * responses per AdCP spec. Defaults to 86400 (24h). Spec bounds are 3600
-   * (1h) to 604800 (7d); `clampReplayTtl` enforces the range on output.
-   *
-   * When using `createIdempotencyStore` from `@adcp/sdk/server`, omit
-   * this — the framework reads `idempotency.ttlSeconds` from the wired
-   * store so the declared capability always matches actual behavior.
+   * @deprecated Idempotency capability data is derived exclusively from
+   * the active `idempotency` store. This legacy override is ignored so an
+   * unwired or mismatched store can never be advertised to buyers.
    */
   idempotency?: {
     replay_ttl_seconds?: number;
@@ -2123,24 +2126,34 @@ interface ToolMeta {
 }
 
 /**
- * Clamp idempotency replay TTL to spec bounds (1h–7d).
- */
-function clampReplayTtl(seconds: number): number {
-  const MIN = 3600;
-  const MAX = 604800;
-  if (!Number.isFinite(seconds) || seconds < MIN) return MIN;
-  if (seconds > MAX) return MAX;
-  return Math.floor(seconds);
-}
-
-/**
  * Deep-merge the per-domain blocks from `overrides` onto `target`. Nested
  * objects merge recursively; arrays and primitives replace. `null` at the
  * top-level field explicitly drops the block; `undefined` is a no-op.
  */
 function applyCapabilityOverrides(target: GetAdCPCapabilitiesResponse, overrides: AdcpCapabilitiesOverrides): void {
   const targetAny = target as unknown as Record<string, unknown>;
+  const allowedKeys = new Set([
+    'media_buy',
+    'creative',
+    'signals',
+    'governance',
+    'brand',
+    'sponsored_intelligence',
+    'measurement',
+    'experimental_features',
+    'account',
+    'compliance_testing',
+    'webhook_signing',
+    'identity',
+    'request_signing',
+  ]);
   for (const [key, value] of Object.entries(overrides)) {
+    if (!allowedKeys.has(key)) {
+      throw new Error(
+        `createAdcpServer: capabilities.overrides.${key} is not allowed. ` +
+          'Framework-owned capability fields must be configured through their dedicated options.'
+      );
+    }
     if (value === undefined) continue;
     if (value === null) {
       delete targetAny[key];
@@ -4568,6 +4581,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // production check below.
   const idempotencyDisabled = idempotencyConfig === 'disabled';
   const idempotency: IdempotencyStore | undefined = idempotencyDisabled ? undefined : idempotencyConfig;
+  if (
+    idempotency &&
+    (!Number.isSafeInteger(idempotency.ttlSeconds) || idempotency.ttlSeconds < 3600 || idempotency.ttlSeconds > 604800)
+  ) {
+    throw new TypeError('createAdcpServer: idempotency.ttlSeconds must be a safe integer between 3600 and 604800.');
+  }
+  if (idempotency && typeof idempotency.renew !== 'function') {
+    throw new TypeError(
+      'createAdcpServer: idempotency.renew is required so long-running mutation handlers cannot outlive their owner claim.'
+    );
+  }
   if (idempotencyDisabled) {
     // Allowlist gate. The earlier draft refused the flag only when
     // NODE_ENV === 'production', which is a footgun: NODE_ENV defaults to
@@ -5382,7 +5406,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // envelope outside `adcpError()` — `adcpError()` already filters its
         // own output, but a hand-rolled `{ isError, structuredContent:
         // { adcp_error: ... } }` would otherwise ship unfiltered.
-        const finalize = (response: McpToolResponse): McpToolResponse => {
+        const finalizeProtocolEnvelope = (response: McpToolResponse): McpToolResponse => {
           sanitizeAdcpErrorEnvelope(response);
           // Two-layer error emission: when the tool's response schema
           // declares an Error arm (`errors: [...]` required), mirror
@@ -5395,8 +5419,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           injectEnvelopeStatusIntoResponse(response, toolName);
           injectContextIntoResponse(response, params.context);
           injectVersionIntoResponse(response, requestRelease.wireVersion);
-          return applyResponseEnhancer(response);
+          return response;
         };
+        const finalize = (response: McpToolResponse): McpToolResponse =>
+          applyResponseEnhancer(finalizeProtocolEnvelope(response));
 
         if (releaseError) return finalize(releaseError);
         if (!releaseDefinesTool(toolName, requestRelease)) {
@@ -5510,11 +5536,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         const requestIsStateChanging = requestUsesIdempotency(toolName, params);
         const hasIdempotencyKeyField = Object.prototype.hasOwnProperty.call(params, 'idempotency_key');
         const requestUsesOptionalIdempotency = toolName === 'get_products' && hasIdempotencyKeyField;
-        const suppliedIdempotencyKey = typeof params.idempotency_key === 'string' ? params.idempotency_key : undefined;
+        let suppliedIdempotencyKey = typeof params.idempotency_key === 'string' ? params.idempotency_key : undefined;
         // The 3.2 compatibility schema deliberately leaves the finalize key
         // optional. Replay a supplied key, but do not reject older callers
         // that omit it. SDK 14 buyers auto-inject one on this path.
-        const requestUsesReplay = toolIsMutating || requestUsesOptionalIdempotency;
+        const requestUsesReplay = toolIsMutating || requestIsStateChanging || requestUsesOptionalIdempotency;
         if (hasInvalidGetProductsFinalizeIntent(toolName, params)) {
           return finalize(
             adcpError('INVALID_REQUEST', {
@@ -5524,21 +5550,42 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             })
           );
         }
+        if (requestIsStateChanging && !toolIsMutating && !idempotency && !idempotencyDisabled) {
+          if (!warnedAboutOptionalReplayWithoutIdempotency) {
+            warnedAboutOptionalReplayWithoutIdempotency = true;
+            logger.error(
+              'createAdcpServer: get_products proposal finalization was refused because no idempotency store is configured.'
+            );
+          }
+          return finalize(
+            adcpError('SERVICE_UNAVAILABLE', {
+              message: 'Proposal finalization requires an idempotency store',
+            })
+          );
+        }
+        if (requestIsStateChanging && !toolIsMutating && idempotency && suppliedIdempotencyKey === undefined) {
+          // The 3.2 compatibility schema leaves this key optional for older
+          // callers. Derive a stable server-side key from the canonical
+          // finalize request so the compatibility path remains replay-safe
+          // instead of either double-executing or becoming a breaking
+          // missing-field rejection.
+          // Hash the request directly: hashPayload's exclusion rules are
+          // intentionally shallow and apply to these top-level retry-only
+          // fields. Wrapping `params` would accidentally make refreshed
+          // context/governance/webhook credentials mint a different key.
+          suppliedIdempotencyKey = `compat_finalize_${hashPayload(params)}`;
+        }
         if (
-          (requestIsStateChanging || requestUsesOptionalIdempotency) &&
+          requestUsesOptionalIdempotency &&
           !toolIsMutating &&
           !idempotency &&
           !idempotencyDisabled &&
-          !capConfig?.idempotency?.replay_ttl_seconds &&
           !warnedAboutOptionalReplayWithoutIdempotency
         ) {
           warnedAboutOptionalReplayWithoutIdempotency = true;
           logger.error(
-            requestIsStateChanging
-              ? 'createAdcpServer: get_products proposal finalization was called without an idempotency store. ' +
-                  'Exact retries can create duplicate holds; configure idempotency or explicitly disable it.'
-              : 'createAdcpServer: get_products was called with idempotency_key but no idempotency store is configured. ' +
-                  'Replay protection is unavailable; configure idempotency or explicitly disable it.'
+            'createAdcpServer: get_products was called with idempotency_key but no idempotency store is configured. ' +
+              'Replay protection is unavailable; configure idempotency or explicitly disable it.'
           );
         }
 
@@ -6064,7 +6111,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         }
 
         // --- Idempotency (mutating tools + get_products proposal finalize) ---
-        let idempotencyCheck: { key: string; principal: string; payloadHash: string; extraScope?: string } | undefined;
+        let idempotencyCheck:
+          | { key: string; principal: string; payloadHash: string; claimToken: string; extraScope?: string }
+          | undefined;
         if (idempotency && requestUsesReplay) {
           const key = suppliedIdempotencyKey;
           if (!key) {
@@ -6134,7 +6183,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               if (!isErrorResponse(cachedFormatted)) {
                 stampReplayed(cachedFormatted);
               }
-              return finalize(cachedFormatted);
+              // The cached envelope has already passed through the adopter's
+              // response enhancer. Reapply only protocol-owned per-request
+              // stamps here: enhancers may be non-idempotent (for example,
+              // appending audit metadata), so invoking one again would make
+              // a replay differ from the original response.
+              return finalizeProtocolEnvelope(cachedFormatted);
             }
             if (checkResult.kind === 'conflict') {
               return finalize(
@@ -6166,7 +6220,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 })
               );
             }
-            idempotencyCheck = { key, principal, payloadHash: checkResult.payloadHash, extraScope };
+            idempotencyCheck = {
+              key,
+              principal,
+              payloadHash: checkResult.payloadHash,
+              claimToken: checkResult.claimToken,
+              extraScope,
+            };
           } catch (err) {
             const reason = err instanceof Error ? err.message : String(err);
             logger.error('Idempotency check failed', { tool: toolName, error: reason });
@@ -6179,9 +6239,44 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
         }
 
+        // Keep the request owner fence alive for the entire handler and
+        // response-publication path. Without renewal, a mutation running
+        // longer than the 120-second claim lease could be reclaimed and
+        // executed concurrently by a retry. Renewal is serialized so a
+        // slow backend cannot accumulate overlapping timer callbacks; the
+        // final save/release CAS remains the authoritative ownership check.
+        let claimRenewalTimer: ReturnType<typeof setInterval> | undefined;
+        let claimRenewalPending: Promise<void> | undefined;
+        if (idempotencyCheck && idempotency) {
+          const renewClaim = () => {
+            if (claimRenewalPending) return;
+            claimRenewalPending = idempotency
+              .renew({
+                principal: idempotencyCheck.principal,
+                key: idempotencyCheck.key,
+                claimToken: idempotencyCheck.claimToken,
+                extraScope: idempotencyCheck.extraScope,
+              })
+              .catch(err => {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('Idempotency claim renewal failed; final publication will re-check ownership', {
+                  tool: toolName,
+                  error: reason,
+                });
+              })
+              .finally(() => {
+                claimRenewalPending = undefined;
+              });
+          };
+          claimRenewalTimer = setInterval(renewClaim, IDEMPOTENCY_CLAIM_RENEW_INTERVAL_MS);
+          if (typeof claimRenewalTimer === 'object' && 'unref' in claimRenewalTimer) claimRenewalTimer.unref();
+        }
+
         // --- Handler ---
+        let mutationHandlerCompleted = false;
         try {
           const result = await handler(params, ctx);
+          mutationHandlerCompleted = true;
           // Narrow Error / Submitted arms of the *Response union before
           // reaching the success-arm builder: wrap() on an Error payload
           // would still serialize it but apply success-shaped defaults
@@ -6833,23 +6928,31 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                   exposeSchemaPath: exposeErrorDetails,
                   rootSchemaId: outcome.schemaId,
                 });
-                const errEnvelope = adcpError('VALIDATION_ERROR', errPayload);
+                const errEnvelope = finalize(adcpError('VALIDATION_ERROR', errPayload));
                 if (idempotencyCheck && idempotency) {
-                  // Cache the VALIDATION_ERROR briefly so a buyer SDK
-                  // retrying on the same key doesn't trigger unbounded
-                  // re-execution — strict-mode drift is deterministic,
-                  // the next handler call would return the same error.
-                  // Short TTL (10s) absorbs a typical retry burst.
-                  //
-                  // Stores that pre-date #758 may not implement
-                  // `saveTransientError`; fall back to `release` so the
-                  // claim is at least freed for a fresh retry.
+                  // A mutating handler has already returned, so its side
+                  // effect may be committed even though strict response
+                  // validation rejected the representation. Fence that
+                  // ambiguity for the full replay window: a short-lived
+                  // retry-storm entry could disappear and permit the same
+                  // mutation to execute again. Read-only keyed operations
+                  // retain the short transient-error behavior.
                   try {
-                    if (idempotency.saveTransientError) {
+                    if (toolIsMutating || requestIsStateChanging) {
+                      await idempotency.save({
+                        principal: idempotencyCheck.principal,
+                        key: idempotencyCheck.key,
+                        payloadHash: idempotencyCheck.payloadHash,
+                        claimToken: idempotencyCheck.claimToken,
+                        response: stripEnvelopeEcho(errEnvelope),
+                        extraScope: idempotencyCheck.extraScope,
+                      });
+                    } else if (idempotency.saveTransientError) {
                       await idempotency.saveTransientError({
                         principal: idempotencyCheck.principal,
                         key: idempotencyCheck.key,
                         payloadHash: idempotencyCheck.payloadHash,
+                        claimToken: idempotencyCheck.claimToken,
                         response: errEnvelope,
                         extraScope: idempotencyCheck.extraScope,
                       });
@@ -6857,21 +6960,39 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                       await idempotency.release({
                         principal: idempotencyCheck.principal,
                         key: idempotencyCheck.key,
+                        claimToken: idempotencyCheck.claimToken,
                         extraScope: idempotencyCheck.extraScope,
                       });
                     }
                   } catch (err) {
                     const reason = err instanceof Error ? err.message : String(err);
-                    logger.warn('Idempotency transient-error cache failed — retry storm may re-execute handler', {
+                    logger.warn('Idempotency validation-error publication failed', {
                       tool: toolName,
                       error: reason,
                     });
+                    return finalize(
+                      adcpError('SERVICE_UNAVAILABLE', {
+                        message:
+                          err instanceof IdempotencyClaimOwnershipError
+                            ? 'The request lost its idempotency claim before its response could be published. Retry safely.'
+                            : 'The response could not be published to the idempotency store. Reconcile by natural key before retrying.',
+                      })
+                    );
                   }
                 }
-                return finalize(errEnvelope);
+                return errEnvelope;
               }
             }
           }
+          // Complete every potentially-throwing framework transformation
+          // before publishing the successful idempotency record. If an
+          // enhancer or envelope normalizer fails, the catch below still
+          // owns the request claim and can replace it with an ambiguity
+          // fence; publishing success first would make that replacement
+          // impossible and an exact retry would re-trigger the same broken
+          // post-processing path.
+          formatted = finalize(formatted);
+
           // Cache successful mutations for replay. Errors and commercial
           // rejection rows re-execute on retry, not replayed — capability /
           // status changes in the seller's ledger must take effect without
@@ -6899,6 +7020,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                   principal: idempotencyCheck.principal,
                   key: idempotencyCheck.key,
                   payloadHash: idempotencyCheck.payloadHash,
+                  claimToken: idempotencyCheck.claimToken,
                   response: cacheable,
                   extraScope: idempotencyCheck.extraScope,
                 });
@@ -6908,6 +7030,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                   tool: toolName,
                   error: reason,
                 });
+                return finalize(
+                  adcpError('SERVICE_UNAVAILABLE', {
+                    message:
+                      err instanceof IdempotencyClaimOwnershipError
+                        ? 'The request lost its idempotency claim before its response could be published. Retry safely.'
+                        : 'The response could not be published to the idempotency store. Reconcile by natural key before retrying.',
+                  })
+                );
               }
               // Fresh-path responses omit `replayed` — per envelope spec,
               // absence signals fresh execution. The replay path stamps
@@ -6917,6 +7047,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 await idempotency.release({
                   principal: idempotencyCheck.principal,
                   key: idempotencyCheck.key,
+                  claimToken: idempotencyCheck.claimToken,
                   extraScope: idempotencyCheck.extraScope,
                 });
               } catch (err) {
@@ -6927,11 +7058,63 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                   tool: toolName,
                   error: reason,
                 });
+                return finalize(
+                  adcpError('SERVICE_UNAVAILABLE', {
+                    message:
+                      err instanceof IdempotencyClaimOwnershipError
+                        ? 'The request lost its idempotency claim before its response could be published. Retry safely.'
+                        : 'The response could not be released from the idempotency store. Reconcile by natural key before retrying.',
+                  })
+                );
               }
             }
           }
-          return finalize(formatted);
+          return formatted;
         } catch (err) {
+          if (mutationHandlerCompleted && idempotencyCheck && idempotency) {
+            // The application handler returned, so its mutation may already
+            // be committed. A later framework failure (wrapping,
+            // normalization, policy, or validation) must never release the
+            // owner claim and let an exact retry execute the side effect
+            // again. Publish a full-window ambiguous replay marker when the
+            // backend is reachable; every exact retry then receives the same
+            // fail-closed response and must reconcile by natural key.
+            const ambiguousEnvelope = adcpError('SERVICE_UNAVAILABLE', {
+              message:
+                'The handler completed but its response could not be safely published. Reconcile the operation by natural key before retrying.',
+            });
+            try {
+              await idempotency.save({
+                principal: idempotencyCheck.principal,
+                key: idempotencyCheck.key,
+                payloadHash: idempotencyCheck.payloadHash,
+                claimToken: idempotencyCheck.claimToken,
+                response: stripEnvelopeEcho(ambiguousEnvelope),
+                extraScope: idempotencyCheck.extraScope,
+              });
+            } catch (saveErr) {
+              const saveReason = saveErr instanceof Error ? saveErr.message : String(saveErr);
+              logger.error('Idempotency ambiguity marker publication failed; retaining the live owner claim', {
+                tool: toolName,
+                error: saveReason,
+              });
+            }
+            try {
+              return finalize(ambiguousEnvelope);
+            } catch (finalizeErr) {
+              // A throwing responseEnhancer may be the original
+              // post-handler failure. `finalize` performs protocol
+              // sanitization/context/version stamping before invoking it,
+              // so return the now-normalized envelope without calling the
+              // broken adopter hook a second time.
+              const finalizeReason = finalizeErr instanceof Error ? finalizeErr.message : String(finalizeErr);
+              logger.error('Response enhancer failed while formatting idempotency ambiguity response', {
+                tool: toolName,
+                error: finalizeReason,
+              });
+              return ambiguousEnvelope;
+            }
+          }
           // Release the idempotency claim on any thrown path — whether
           // we unwrap a typed envelope or fall through to SERVICE_UNAVAILABLE,
           // the handler did not produce a cached response and the next retry
@@ -6941,6 +7124,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               await idempotency.release({
                 principal: idempotencyCheck.principal,
                 key: idempotencyCheck.key,
+                claimToken: idempotencyCheck.claimToken,
                 extraScope: idempotencyCheck.extraScope,
               });
             } catch (releaseErr) {
@@ -7014,6 +7198,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               }),
             })
           );
+        } finally {
+          if (claimRenewalTimer !== undefined) clearInterval(claimRenewalTimer);
+          if (claimRenewalPending) await claimRenewalPending;
         }
       };
 
@@ -7318,28 +7505,27 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // A seller that registers mutating handlers but doesn't supply an
   // `idempotency` store cannot honor the v3 retry contract: buyer
   // retries will double-book because there's no replay cache. The
-  // framework logs a loud error at server-creation time so operators
-  // notice before shipping to production, but doesn't throw — that
-  // would make the framework unusable in testing contexts where
-  // idempotency isn't the unit-under-test. Operators who've thought
-  // about it can suppress the error by setting
-  // `capabilities.idempotency.replay_ttl_seconds` directly.
+  // framework permits this implicit omission only in development/test,
+  // where idempotency may not be the unit under test. All other
+  // environments fail startup. Operators who deliberately cannot provide
+  // replay safety must use the explicit `idempotency: 'disabled'` mode and
+  // its acknowledgement gate. The advertised capability remains
+  // `supported: false`; only a wired store can declare replay safety.
   const registeredMutatingTools = [...registeredToolNames].filter(t => MUTATING_TASKS.has(t));
-  if (
-    registeredMutatingTools.length > 0 &&
-    !idempotency &&
-    !idempotencyDisabled &&
-    !capConfig?.idempotency?.replay_ttl_seconds
-  ) {
-    logger.error(
+  if (registeredMutatingTools.length > 0 && !idempotency && !idempotencyDisabled) {
+    const message =
       `createAdcpServer: ${registeredMutatingTools.length} mutating tools registered ` +
-        `(${registeredMutatingTools.slice(0, 3).join(', ')}${
-          registeredMutatingTools.length > 3 ? ', ...' : ''
-        }) without an idempotency store. AdCP v3 requires sellers to support idempotent replay ` +
-        `on mutating requests — buyer retries will double-book without it. ` +
-        `Pass \`idempotency: createIdempotencyStore({ backend, ttlSeconds })\`, ` +
-        `or set \`capabilities.idempotency.replay_ttl_seconds\` to acknowledge the non-compliance.`
-    );
+      `(${registeredMutatingTools.slice(0, 3).join(', ')}${
+        registeredMutatingTools.length > 3 ? ', ...' : ''
+      }) without an idempotency store. AdCP v3 requires sellers to support idempotent replay ` +
+      `on mutating requests — buyer retries will double-book without it. ` +
+      `Pass \`idempotency: createIdempotencyStore({ backend, ttlSeconds })\` or explicitly set ` +
+      `\`idempotency: 'disabled'\` when the seller intentionally cannot provide replay safety.`;
+    const env = process.env.NODE_ENV;
+    if (env !== 'test' && env !== 'development') {
+      throw new Error(message);
+    }
+    logger.error(message);
   }
 
   // MUTATING_TASKS is derived at module load by introspecting Zod
@@ -7368,14 +7554,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // natural-key dedup before retrying spend-committing operations. Lying
   // here (declaring `supported: true` while skipping replay) is a
   // money-flow footgun: a 504-retry under the same key double-books.
-  const idempotencyCapability: GetAdCPCapabilitiesResponse['adcp']['idempotency'] = idempotencyDisabled
-    ? { supported: false }
-    : {
-        supported: true,
-        replay_ttl_seconds: clampReplayTtl(
-          capConfig?.idempotency?.replay_ttl_seconds ?? idempotency?.ttlSeconds ?? 86400
-        ),
-      };
+  const idempotencyCapability: GetAdCPCapabilitiesResponse['adcp']['idempotency'] =
+    idempotencyDisabled || !idempotency
+      ? { supported: false }
+      : {
+          supported: true,
+          replay_ttl_seconds: idempotency.ttlSeconds,
+        };
 
   const capabilitiesData: GetAdCPCapabilitiesResponse = {
     status: 'completed',

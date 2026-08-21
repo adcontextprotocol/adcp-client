@@ -54,7 +54,14 @@ describe('pollTaskCompletion A2A cancel-on-abort (#1617)', () => {
 
     const executor = new TaskExecutor({ transport: { trustedFetchFn } });
     const signal = AbortSignal.abort('test cancelled');
-    const result = await executor.pollTaskCompletion(mockAgent, 'task-xyz', 10, undefined, signal);
+    const result = await executor.pollTaskCompletion(
+      mockAgent,
+      'adcp-work-xyz',
+      10,
+      undefined,
+      signal,
+      'a2a-transport-task-xyz'
+    );
 
     // The caller's result is the clean failed outcome — cancel is transparent
     assert.strictEqual(result.success, false);
@@ -74,7 +81,11 @@ describe('pollTaskCompletion A2A cancel-on-abort (#1617)', () => {
     assert.notStrictEqual(call.body.id, null);
     assert.notStrictEqual(call.body.id, undefined);
     assert.strictEqual(call.body.method, 'tasks/cancel');
-    assert.strictEqual(call.body.params.id, 'task-xyz', 'should address cancel by server task id');
+    assert.strictEqual(
+      call.body.params.id,
+      'a2a-transport-task-xyz',
+      'should address cancellation by A2A transport Task.id'
+    );
   });
 
   // code-reviewer follow-up on #1620: confirm the auth-header shape matches
@@ -96,7 +107,7 @@ describe('pollTaskCompletion A2A cancel-on-abort (#1617)', () => {
     const authedAgent = { ...mockAgent, auth_token: 'tok-secret-abc' };
     const executor = new TaskExecutor({ transport: { trustedFetchFn } });
     const signal = AbortSignal.abort('test cancelled');
-    await executor.pollTaskCompletion(authedAgent, 'task-auth', 10, undefined, signal);
+    await executor.pollTaskCompletion(authedAgent, 'adcp-work-auth', 10, undefined, signal, 'a2a-transport-task-auth');
 
     // Two microtask ticks — the fire-and-forget chain settles via
     // Promise.then chained inside .catch(), so a single tick is racy.
@@ -132,7 +143,14 @@ describe('pollTaskCompletion A2A cancel-on-abort (#1617)', () => {
 
     const executor = new TaskExecutor({ transport: { trustedFetchFn } });
     const signal = AbortSignal.abort('test cancelled');
-    const result = await executor.pollTaskCompletion(mockAgent, 'task-cancel-fail', 10, undefined, signal);
+    const result = await executor.pollTaskCompletion(
+      mockAgent,
+      'adcp-work-cancel-fail',
+      10,
+      undefined,
+      signal,
+      'a2a-transport-task-cancel-fail'
+    );
 
     await new Promise(resolve => setImmediate(resolve));
 
@@ -142,7 +160,7 @@ describe('pollTaskCompletion A2A cancel-on-abort (#1617)', () => {
     assert.ok(result.error.includes('cancelled'), `Expected cancelled error, got: ${result.error}`);
   });
 
-  test('skips cancel when taskId is empty', async () => {
+  test('skips cancel when no A2A transport task identity is available', async () => {
     let fetchCalled = false;
     const trustedFetchFn = mock.fn(async () => {
       fetchCalled = true;
@@ -151,10 +169,10 @@ describe('pollTaskCompletion A2A cancel-on-abort (#1617)', () => {
 
     const executor = new TaskExecutor({ transport: { trustedFetchFn } });
     const signal = AbortSignal.abort('test cancelled');
-    await executor.pollTaskCompletion(mockAgent, '', 10, undefined, signal);
+    await executor.pollTaskCompletion(mockAgent, 'adcp-work-only', 10, undefined, signal);
 
     await new Promise(resolve => setImmediate(resolve));
 
-    assert.strictEqual(fetchCalled, false, 'should not fire cancel when taskId is empty string');
+    assert.strictEqual(fetchCalled, false, 'should not cancel using the AdCP tasks/get work handle');
   });
 });

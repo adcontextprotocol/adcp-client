@@ -10,6 +10,7 @@ process.env.NODE_ENV = 'test';
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning/runtime/from-platform');
+const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/idempotency');
 
 function basePlatform() {
   return {
@@ -148,6 +149,8 @@ describe('F11: allowPrivateWebhookUrls opt — relaxes loopback/private-IP guard
       createAdcpServerFromPlatform(basePlatform(), {
         ...BASE_OPTS,
         allowPrivateWebhookUrls: true,
+        idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
+        resolveSessionKey: () => 'private-webhook-warning',
       });
     } finally {
       console.warn = originalWarn;

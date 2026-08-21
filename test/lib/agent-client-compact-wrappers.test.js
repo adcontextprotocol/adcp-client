@@ -52,7 +52,7 @@ const CASES = [
 
 describe('AgentClient compact lifecycle wrappers', () => {
   for (const [method, taskName, params] of CASES) {
-    test(`${method} dispatches ${taskName} and retains its session`, async () => {
+    test(`${method} dispatches ${taskName} and retains MCP context without treating work handles as sessions`, async () => {
       const wrapper = new AgentClient(TEST_AGENT, { validateFeatures: false });
       const calls = [];
       const inputHandler = async () => undefined;
@@ -87,10 +87,10 @@ describe('AgentClient compact lifecycle wrappers', () => {
         { contextId: 'ctx-explicit', taskId: 'task-explicit', maxClarifications: 7 },
       ]);
       assert.strictEqual(wrapper.getContextId(), 'ctx-server');
-      assert.strictEqual(wrapper.getPendingTaskId(), 'task-server');
+      assert.strictEqual(wrapper.getPendingTaskId(), undefined);
 
       await wrapper[method](params);
-      assert.deepStrictEqual(calls[1][3], { contextId: 'ctx-server', taskId: 'task-server' });
+      assert.deepStrictEqual(calls[1][3], { contextId: 'ctx-server', taskId: undefined });
     });
   }
 });

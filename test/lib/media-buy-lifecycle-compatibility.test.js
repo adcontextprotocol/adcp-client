@@ -7,6 +7,7 @@ const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
 const { AgentClient } = require('../../dist/lib/core/AgentClient');
 const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server');
 const { adcpError } = require('../../dist/lib/server/errors');
+const { createIdempotencyStore, memoryBackend } = require('../../dist/lib/server/idempotency');
 
 async function withDualSurfaceSeller(serverAdcpVersion, buyerAdcpVersion, run, options = {}) {
   const calls = [];
@@ -30,6 +31,8 @@ async function withDualSurfaceSeller(serverAdcpVersion, buyerAdcpVersion, run, o
     name: 'dual-surface-seller',
     version: '1.0.0',
     adcpVersion: serverAdcpVersion,
+    idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
+    resolveSessionKey: () => 'dual-surface-seller',
     ...(options.mcpToolProfile && { mcpToolProfile: options.mcpToolProfile }),
     capabilities: { supported_versions: supportedVersions },
     validation: { requests: 'strict', responses: 'off' },

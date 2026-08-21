@@ -307,10 +307,17 @@ describe('#666 AdcpServer.compliance.reset()', () => {
   it('clears the idempotency cache on reset', async () => {
     const stateStore = new InMemoryStateStore();
     const idempotency = createIdempotencyStore({ backend: memoryBackend(), ttlSeconds: 3600 });
+    const claim = await idempotency.check({
+      principal: 'p',
+      key: 'aaaaaaaaaaaaaaaa',
+      payload: {},
+    });
+    assert.strictEqual(claim.kind, 'miss');
     await idempotency.save({
       principal: 'p',
       key: 'aaaaaaaaaaaaaaaa',
-      payloadHash: 'h',
+      payloadHash: claim.payloadHash,
+      claimToken: claim.claimToken,
       response: { ok: true },
     });
     const check1 = await idempotency.check({

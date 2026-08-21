@@ -62,6 +62,21 @@ export function memoryBackend(options: MemoryBackendOptions = {}): IdempotencyBa
       store.set(scopedKey, cloneEntry(entry));
       return true;
     },
+    async replaceIfPayloadHash(
+      scopedKey: string,
+      expectedPayloadHash: string,
+      entry: IdempotencyCacheEntry
+    ): Promise<boolean> {
+      const existing = store.get(scopedKey);
+      if (!existing || existing.payloadHash !== expectedPayloadHash) return false;
+      store.set(scopedKey, cloneEntry(entry));
+      return true;
+    },
+    async deleteIfPayloadHash(scopedKey: string, expectedPayloadHash: string): Promise<boolean> {
+      const existing = store.get(scopedKey);
+      if (!existing || existing.payloadHash !== expectedPayloadHash) return false;
+      return store.delete(scopedKey);
+    },
     async delete(scopedKey: string): Promise<void> {
       store.delete(scopedKey);
     },

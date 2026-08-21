@@ -176,12 +176,15 @@ export class ProtocolResponseParser {
    */
   isInputRequest(response: any): boolean {
     // ADCP spec: check A2A JSON-RPC wrapped status first
-    if (response?.result?.status?.state === ADCP_STATUS.INPUT_REQUIRED) {
+    if (
+      response?.result?.status?.state === ADCP_STATUS.INPUT_REQUIRED ||
+      response?.result?.status?.state === ADCP_STATUS.AUTH_REQUIRED
+    ) {
       return true;
     }
 
     // ADCP spec: check top-level status field
-    if (response?.status === ADCP_STATUS.INPUT_REQUIRED) {
+    if (response?.status === ADCP_STATUS.INPUT_REQUIRED || response?.status === ADCP_STATUS.AUTH_REQUIRED) {
       return true;
     }
 
@@ -198,18 +201,21 @@ export class ProtocolResponseParser {
    * Parse input request from response
    */
   parseInputRequest(response: any): InputRequest {
-    const question = response.message || response.question || response.prompt || 'Please provide input';
-    const field = response.field || response.parameter;
-    const suggestions = response.options || response.choices || response.suggestions;
+    const statusMessageData = getLatestDataPartFromParts(response?.result?.status?.message?.parts);
+    const artifactData = getLatestA2ADataPartFromTask(response?.result)?.data;
+    const source = statusMessageData ?? artifactData ?? response;
+    const question = source.message || source.question || source.prompt || 'Please provide input';
+    const field = source.field || source.parameter;
+    const suggestions = source.options || source.choices || source.suggestions;
 
     return {
       question,
       field,
-      expectedType: this.parseExpectedType(response.expected_type || response.type),
+      expectedType: this.parseExpectedType(source.expected_type || source.type),
       suggestions,
-      required: response.required !== false,
-      validation: response.validation,
-      context: response.context || response.description,
+      required: source.required !== false,
+      validation: source.validation,
+      context: source.context || source.description,
     };
   }
 
@@ -217,6 +223,14 @@ export class ProtocolResponseParser {
    * Get ADCP status from response
    */
   getStatus(response: any): ADCPStatus | null {
+    // A live A2A pause is the continuation authority. Artifacts may contain
+    // earlier partial AdCP statuses (for example `submitted`) and must not
+    // mask the Task's current input/auth-required state.
+    const a2aTaskState = response?.result?.kind === 'task' ? response.result.status?.state : undefined;
+    if (a2aTaskState === ADCP_STATUS.INPUT_REQUIRED || a2aTaskState === ADCP_STATUS.AUTH_REQUIRED) {
+      return a2aTaskState;
+    }
+
     // For A2A wrapped Task responses (`result.kind === 'task'`), the
     // transport-layer `result.status.state` reflects the HTTP-call
     // lifecycle (always `'completed'` for AdCP submitted arms per
@@ -386,11 +400,8 @@ export class ProtocolResponseParser {
   }
 
   /**
-   * Extract the A2A `taskId` for the task the server is tracking (or just
-   * created) for this send. Retained across calls only while the last
-   * response was non-terminal (working / input-required / submitted /
-   * auth-required) so buyers can resume the same server-side task; cleared
-   * by the caller on terminal responses.
+   * Extract the AdCP work handle used by tasks/get. For official A2A results,
+   * this never falls back to the transport Task.id / Message.taskId.
    *
    * Same sanitization rules as {@link getContextId}: malformed ids return
    * `undefined`.
@@ -404,16 +415,22 @@ export class ProtocolResponseParser {
       // `tasks/get`). The transport-layer `result.id` is the A2A
       // Task.id (always pinned to one HTTP call per adcp-client#899's
       // two-lifecycle contract); using it as a polling key would
-      // address the wrong thing. Prefer the AdCP handle when present;
-      // fall back to `result.id` for non-AdCP A2A responses where no
-      // artifact metadata was emitted. See adcp-client#973.
+      // address the wrong thing. See adcp-client#973.
       if (response.result.kind === 'task') {
-        const adcpHandle = extractAdcpTaskIdFromA2aTaskResult(response.result);
-        if (adcpHandle) return adcpHandle;
-        const taskKindId = firstSafeSessionId(response.result.id);
-        if (taskKindId) return taskKindId;
+        return extractAdcpTaskIdFromA2aTaskResult(response.result);
       }
-      const fromResult = firstSafeSessionId(response.result.taskId, response.result.id, response.result.task_id);
+      if (response.result.kind === 'message') {
+        const messageData = getLatestDataPartFromParts(response.result.parts);
+        const fromMessageData = firstSafeSessionId(messageData?.task_id);
+        if (fromMessageData) return fromMessageData;
+        const metadata = response.result.metadata;
+        if (metadata != null && typeof metadata === 'object' && !Array.isArray(metadata)) {
+          const record = metadata as Record<string, unknown>;
+          return firstSafeSessionId(record.adcp_task_id, record.serverTaskId);
+        }
+        return undefined;
+      }
+      const fromResult = firstSafeSessionId(response.result.taskId, response.result.task_id);
       if (fromResult) return fromResult;
     }
     const fromEnvelope = firstSafeSessionId(response.taskId);
@@ -435,6 +452,41 @@ export class ProtocolResponseParser {
       if (fromData) return fromData;
     }
     return undefined;
+  }
+
+  /**
+   * Return the A2A transport Task.id that may receive a continuation message.
+   * This is deliberately separate from {@link getTaskId}, which returns the
+   * AdCP work handle used by tasks/get. Only a live A2A task paused for input
+   * can be resumed; artifact-level AdCP pauses on a completed transport task
+   * are display-only.
+   */
+  getA2AContinuationTaskId(response: any): string | undefined {
+    const result = response?.result;
+    if (result == null || typeof result !== 'object' || Array.isArray(result) || result.kind !== 'task') {
+      return undefined;
+    }
+    const state = result.status?.state;
+    if (state !== ADCP_STATUS.INPUT_REQUIRED && state !== ADCP_STATUS.AUTH_REQUIRED) return undefined;
+    return firstSafeSessionId(result.id);
+  }
+
+  /** Return a live, non-terminal A2A transport Task.id for session threading. */
+  getA2APendingTaskId(response: any): string | undefined {
+    const result = response?.result;
+    if (result == null || typeof result !== 'object' || Array.isArray(result) || result.kind !== 'task') {
+      return undefined;
+    }
+    const state = result.status?.state;
+    if (
+      state !== ADCP_STATUS.SUBMITTED &&
+      state !== ADCP_STATUS.WORKING &&
+      state !== ADCP_STATUS.INPUT_REQUIRED &&
+      state !== ADCP_STATUS.AUTH_REQUIRED
+    ) {
+      return undefined;
+    }
+    return firstSafeSessionId(result.id);
   }
 
   private parseExpectedType(rawType: unknown): 'string' | 'number' | 'boolean' | 'object' | 'array' | undefined {

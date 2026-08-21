@@ -751,7 +751,7 @@ function generateLlmsTxt(
   ln('```');
   ln();
   ln(
-    `For exhaustive handling across all seven statuses, prefer the \`match()\` dispatcher (fluent method on every result returned from the SDK, or free function import):`
+    `For exhaustive handling across all eight statuses, prefer the \`match()\` dispatcher (fluent method on every result returned from the SDK, or free function import):`
   );
   ln();
   ln('```typescript');
@@ -762,6 +762,7 @@ function generateLlmsTxt(
   ln("  'governance-denied': r => `Denied: ${r.adcpError?.code ?? r.error}`,");
   ln('  working: r => `Running: ${r.metadata.taskId}`,');
   ln("  'input-required': r => `Needs input: ${r.metadata.inputRequest?.question}`,");
+  ln("  'auth-required': r => `Needs authorization: ${r.metadata.taskId}`,");
   ln('  deferred: r => `Deferred: ${r.deferred?.token}`,');
   ln('});');
   ln('// Optional `_` catchall makes every arm optional:');
@@ -1112,7 +1113,12 @@ function generateLlmsTxt(
   ln(`Every tool call returns a \`TaskResult\` with one of these statuses:`);
   ln();
   ln(`- \`completed\` — Success. Data in \`result.data\`.`);
-  ln(`- \`input-required\` — Agent needs clarification. Use \`InputHandler\` or \`result.deferred.resume(answer)\`.`);
+  ln(
+    `- \`input-required\` — Agent needs clarification. On A2A, when the seller returns a task ID, an \`InputHandler\` can continue the exchange and a handler-less call exposes \`result.deferred.resume(answer)\` for that exact task. A2A without a task ID and all MCP pauses return without invoking an input handler or attaching a resume closure; use an application/protocol-specific recovery path.`
+  );
+  ln(
+    `- \`auth-required\` — Agent requires refreshed authorization. Resume only when the returned A2A pause carries an exact-task continuation; otherwise use an application/protocol-specific recovery path.`
+  );
   ln(`- \`submitted\` — Long-running. Poll via \`result.submitted.waitForCompletion()\` or use webhooks.`);
   ln(`- \`working\` — In progress (intermediate, usually not seen by callers).`);
   ln(`- \`deferred\` — Requires human decision. Token in \`result.deferred.token\`.`);
@@ -1232,7 +1238,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`interface TaskResult<T = any> {`);
   ln(`  success: boolean;`);
   ln(`  status: 'completed' | 'deferred' | 'submitted' | 'input-required'`);
-  ln(`        | 'working' | 'governance-denied';`);
+  ln(`        | 'auth-required' | 'working' | 'failed' | 'governance-denied';`);
   ln(`  data?: T;`);
   ln(`  error?: string;`);
   ln(`  deferred?: DeferredContinuation<T>;`);
@@ -1240,6 +1246,9 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  governance?: GovernanceCheckResult;`);
   ln(`  metadata: {`);
   ln(`    taskId: string;`);
+  ln(`    contextId?: string;         // Seller conversation identity`);
+  ln(`    serverTaskId?: string;      // AdCP tasks/get work handle`);
+  ln(`    a2aTaskId?: string;         // Live A2A transport Task.id for threading`);
   ln(`    taskName: string;`);
   ln(`    agent: { id: string; name: string; protocol: string };`);
   ln(`    responseTimeMs: number;`);

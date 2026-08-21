@@ -7,6 +7,7 @@ const {
   InMemoryWebhookRegistrationStore,
   SingleAgentClient,
   TaskExecutor,
+  memoryBackend,
 } = require('../dist/lib/index.js');
 const { ProtocolClient, prepareProtocolToolCall } = require('../dist/lib/protocols/index.js');
 const {
@@ -72,6 +73,65 @@ async function registeredRfcClient() {
     webhookVerification: { jwks: new StaticJwksResolver([publicJwk]) },
   });
   return { client, callbackUrl, signer };
+}
+
+async function registeredA2ARfcClient({ durable = false, handlers } = {}) {
+  const a2aAgent = {
+    id: 'seller-a2a',
+    name: 'A2A Seller',
+    agent_uri: 'https://seller.example/a2a',
+    protocol: 'a2a',
+  };
+  const store = new InMemoryWebhookRegistrationStore();
+  const callbackUrl = 'https://buyer.example/webhooks/create_media_buy/op-a2a-1';
+  await store.putIfAbsent({
+    agentId: a2aAgent.id,
+    agentUrl: a2aAgent.agent_uri,
+    protocol: a2aAgent.protocol,
+    operationId: 'op-a2a-1',
+    taskType: 'create_media_buy',
+    callbackUrl,
+    method: 'POST',
+    mode: 'rfc9421',
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 60_000,
+  });
+  if (durable) await store.markRequiresDurableSettlement(a2aAgent.id, 'op-a2a-1');
+  const { signer, publicJwk } = keypair('seller-a2a-webhook-2026');
+  const client = new SingleAgentClient(a2aAgent, {
+    webhookRegistrationStore: store,
+    webhookVerification: { jwks: new StaticJwksResolver([publicJwk]) },
+    strictSchemaValidation: false,
+    validateFeatures: false,
+    ...(handlers && { handlers }),
+  });
+  return { client, callbackUrl, signer };
+}
+
+function a2aTaskWebhook(status, result) {
+  return {
+    kind: 'task',
+    id: 'a2a-transport-task',
+    contextId: 'a2a-context',
+    status: { state: 'completed', timestamp: new Date().toISOString() },
+    artifacts: [
+      {
+        artifactId: 'a2a-webhook-artifact',
+        metadata: { adcp_task_id: 'adcp-work-task' },
+        parts: [
+          {
+            kind: 'data',
+            data: {
+              status,
+              task_id: 'adcp-work-task',
+              task_type: 'create_media_buy',
+              ...(result !== undefined && { result }),
+            },
+          },
+        ],
+      },
+    ],
+  };
 }
 
 function hmacHeaders(rawBody, secret) {
@@ -327,15 +387,461 @@ describe('SingleAgentClient RFC 9421 webhook receiver', () => {
 
     const registrationBase = {
       agent,
-      taskType: 'get_products',
+      taskType: 'list_products',
       operationId: 'op-persistence-outage',
       callbackUrl: 'https://buyer.example/webhook/op-persistence-outage',
     };
     await client.persistWebhookRegistration({ ...registrationBase, mode: 'hmac-sha256' });
     await assert.rejects(
       client.persistWebhookRegistration({ ...registrationBase, mode: 'rfc9421' }),
-      /store unavailable/
+      error =>
+        /Could not persist trusted webhook registration/.test(error.message) &&
+        /store unavailable/.test(error.cause?.message)
     );
+  });
+
+  test('authenticates native A2A task and status-update callbacks from structured AdCP observations', async () => {
+    for (const payload of [
+      a2aTaskWebhook('completed', { media_buy_id: 'buy-a2a-task', packages: [] }),
+      {
+        kind: 'status-update',
+        taskId: 'a2a-transport-status-task',
+        contextId: 'a2a-status-context',
+        status: {
+          state: 'completed',
+          timestamp: new Date().toISOString(),
+          message: {
+            kind: 'message',
+            role: 'agent',
+            messageId: 'a2a-status-message',
+            parts: [
+              {
+                kind: 'data',
+                data: {
+                  status: 'completed',
+                  task_id: 'adcp-work-task',
+                  task_type: 'create_media_buy',
+                  result: { media_buy_id: 'buy-a2a-status', packages: [] },
+                },
+              },
+            ],
+          },
+        },
+        final: true,
+      },
+    ]) {
+      const { client, callbackUrl, signer } = await registeredA2ARfcClient();
+      const rawBody = JSON.stringify(payload);
+      const signed = signWebhook(
+        { method: 'POST', url: callbackUrl, headers: { 'content-type': 'application/json' }, body: rawBody },
+        signer
+      );
+      const parsed = await client.verifyAndParseWebhook({
+        rawBody,
+        headers: signed.headers,
+        taskType: 'create_media_buy',
+        operationId: 'op-a2a-1',
+        requestMethod: 'POST',
+        requestUrl: callbackUrl,
+      });
+      assert.strictEqual(parsed.ok, true);
+      assert.strictEqual(parsed.protocol, 'a2a');
+      assert.strictEqual(parsed.metadata.taskId, 'adcp-work-task');
+      assert.strictEqual(parsed.metadata.status, 'completed');
+      assert.notStrictEqual(parsed.metadata.taskId, payload.id ?? payload.taskId);
+    }
+  });
+
+  test('prefers a terminal Task artifact over stale status-message data and preserves A2A idempotency', async () => {
+    const { client, callbackUrl, signer } = await registeredA2ARfcClient();
+    const payload = a2aTaskWebhook('completed', {
+      media_buy_id: 'buy-final-artifact',
+      packages: [],
+    });
+    payload.artifacts[0].parts[0].data.operation_id = 'op-a2a-1';
+    payload.artifacts[0].parts[0].data.idempotency_key = 'a2a_webhook_event_0001';
+    payload.status.message = {
+      kind: 'message',
+      role: 'agent',
+      messageId: 'stale-progress-message',
+      parts: [
+        {
+          kind: 'data',
+          data: {
+            operation_id: 'op-a2a-1',
+            task_type: 'create_media_buy',
+            task_id: 'adcp-work-task',
+            status: 'working',
+            result: { media_buy_id: 'buy-stale-message', packages: [] },
+          },
+        },
+      ],
+    };
+    const rawBody = JSON.stringify(payload);
+    const signed = signWebhook(
+      { method: 'POST', url: callbackUrl, headers: { 'content-type': 'application/json' }, body: rawBody },
+      signer
+    );
+    const parsed = await client.verifyAndParseWebhook({
+      rawBody,
+      headers: signed.headers,
+      taskType: 'create_media_buy',
+      operationId: 'op-a2a-1',
+      requestMethod: 'POST',
+      requestUrl: callbackUrl,
+    });
+    assert.strictEqual(parsed.ok, true);
+    assert.strictEqual(parsed.metadata.status, 'completed');
+    assert.strictEqual(parsed.metadata.idempotencyKey, 'a2a_webhook_event_0001');
+    assert.strictEqual(parsed.result.media_buy_id, 'buy-final-artifact');
+  });
+
+  test('accepts native typed A2A terminal artifacts without conflating transport identity or state', async () => {
+    for (const { adcpStatus, data } of [
+      {
+        adcpStatus: 'completed',
+        data: { media_buy_id: 'buy-native-typed', packages: [] },
+      },
+      {
+        adcpStatus: 'failed',
+        data: { adcp_error: { code: 'SELLER_FAILURE', message: 'Seller rejected the operation' } },
+      },
+    ]) {
+      const { client, callbackUrl, signer } = await registeredA2ARfcClient();
+      const payload = {
+        kind: 'task',
+        id: 'a2a-transport-only-identity',
+        contextId: 'a2a-native-context',
+        status: { state: 'completed', timestamp: new Date().toISOString() },
+        artifacts: [
+          {
+            artifactId: 'native-typed-result',
+            metadata: { adcp_status: adcpStatus, adcp_task_id: 'adcp-work-task' },
+            parts: [{ kind: 'data', data }],
+          },
+        ],
+      };
+      const rawBody = JSON.stringify(payload);
+      const signed = signWebhook(
+        { method: 'POST', url: callbackUrl, headers: { 'content-type': 'application/json' }, body: rawBody },
+        signer
+      );
+      const parsed = await client.verifyAndParseWebhook({
+        rawBody,
+        headers: signed.headers,
+        taskType: 'create_media_buy',
+        operationId: 'op-a2a-1',
+        requestMethod: 'POST',
+        requestUrl: callbackUrl,
+      });
+      assert.strictEqual(parsed.ok, true);
+      assert.strictEqual(parsed.metadata.status, adcpStatus);
+      assert.strictEqual(parsed.metadata.taskId, 'adcp-work-task');
+      assert.notStrictEqual(parsed.metadata.taskId, payload.id);
+    }
+  });
+
+  test('accepts prior-SDK terminal artifact names only on an RFC 9421-bound route', async () => {
+    const { client, callbackUrl, signer } = await registeredA2ARfcClient();
+    const payload = {
+      kind: 'task',
+      id: 'legacy-a2a-transport-task',
+      contextId: 'legacy-a2a-context',
+      status: { state: 'completed', timestamp: new Date().toISOString() },
+      artifacts: [
+        {
+          artifactId: 'legacy-result',
+          name: 'result',
+          parts: [{ kind: 'data', data: { media_buy_id: 'buy-legacy-a2a', packages: [] } }],
+        },
+      ],
+    };
+    const rawBody = JSON.stringify(payload);
+    const signed = signWebhook(
+      { method: 'POST', url: callbackUrl, headers: { 'content-type': 'application/json' }, body: rawBody },
+      signer
+    );
+    const parsed = await client.verifyAndParseWebhook({
+      rawBody,
+      headers: signed.headers,
+      taskType: 'create_media_buy',
+      operationId: 'op-a2a-1',
+      requestMethod: 'POST',
+      requestUrl: callbackUrl,
+    });
+    assert.strictEqual(parsed.ok, true);
+    assert.strictEqual(parsed.metadata.status, 'completed');
+    assert.strictEqual(parsed.metadata.taskId, 'op-a2a-1');
+  });
+
+  test('rejects replaying one HMAC-signed A2A callback body onto another registered route', async () => {
+    const secret = 'legacy-a2a-route-secret';
+    const a2aAgent = {
+      id: 'seller-a2a-hmac',
+      name: 'A2A HMAC Seller',
+      agent_uri: 'https://seller.example/a2a',
+      protocol: 'a2a',
+    };
+    const store = new InMemoryWebhookRegistrationStore();
+    for (const operationId of ['op-a2a-hmac-a', 'op-a2a-hmac-b']) {
+      await store.putIfAbsent({
+        agentId: a2aAgent.id,
+        agentUrl: a2aAgent.agent_uri,
+        protocol: 'a2a',
+        operationId,
+        taskType: 'create_media_buy',
+        callbackUrl: `https://buyer.example/webhooks/create_media_buy/${operationId}`,
+        method: 'POST',
+        mode: 'hmac-sha256',
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      });
+    }
+    const client = new SingleAgentClient(a2aAgent, {
+      webhookSecret: secret,
+      webhookRegistrationStore: store,
+      strictSchemaValidation: false,
+      validateFeatures: false,
+    });
+    const payload = a2aTaskWebhook('completed', { media_buy_id: 'buy-hmac-route-a', packages: [] });
+    payload.artifacts[0].parts[0].data.operation_id = 'op-a2a-hmac-a';
+    const rawBody = JSON.stringify(payload);
+    const headers = hmacHeaders(rawBody, secret);
+    const accepted = await client.verifyAndParseWebhook({
+      rawBody,
+      headers,
+      taskType: 'create_media_buy',
+      operationId: 'op-a2a-hmac-a',
+    });
+    assert.strictEqual(accepted.ok, true);
+
+    const statusPayload = {
+      kind: 'status-update',
+      taskId: 'a2a-hmac-transport-task',
+      contextId: 'a2a-hmac-context',
+      status: {
+        state: 'completed',
+        timestamp: new Date().toISOString(),
+        message: {
+          kind: 'message',
+          role: 'agent',
+          messageId: 'a2a-hmac-status-message',
+          parts: [
+            {
+              kind: 'data',
+              data: {
+                operation_id: 'op-a2a-hmac-a',
+                task_type: 'create_media_buy',
+                task_id: 'adcp-hmac-status-work-task',
+                status: 'completed',
+                result: { media_buy_id: 'buy-hmac-status-route-a', packages: [] },
+              },
+            },
+          ],
+        },
+      },
+      final: true,
+    };
+    const statusBody = JSON.stringify(statusPayload);
+    const statusHeaders = hmacHeaders(statusBody, secret);
+    const acceptedStatus = await client.verifyAndParseWebhook({
+      rawBody: statusBody,
+      headers: statusHeaders,
+      taskType: 'create_media_buy',
+      operationId: 'op-a2a-hmac-a',
+    });
+    assert.strictEqual(acceptedStatus.ok, true);
+    assert.strictEqual(acceptedStatus.metadata.taskId, 'adcp-hmac-status-work-task');
+
+    const rejected = await client.verifyAndParseWebhook({
+      rawBody,
+      headers,
+      taskType: 'create_media_buy',
+      operationId: 'op-a2a-hmac-b',
+    });
+    assert.strictEqual(rejected.ok, false);
+    assert.strictEqual(rejected.code, 'webhook_registration_mismatch');
+
+    const rejectedStatus = await client.verifyAndParseWebhook({
+      rawBody: statusBody,
+      headers: statusHeaders,
+      taskType: 'create_media_buy',
+      operationId: 'op-a2a-hmac-b',
+    });
+    assert.strictEqual(rejectedStatus.ok, false);
+    assert.strictEqual(rejectedStatus.code, 'webhook_registration_mismatch');
+  });
+
+  test('accepts a Task DataPart work ID when artifact metadata omits the duplicate identity', async () => {
+    const { client, callbackUrl, signer } = await registeredA2ARfcClient();
+    const payload = a2aTaskWebhook('completed', { media_buy_id: 'buy-data-id', packages: [] });
+    delete payload.artifacts[0].metadata;
+    const rawBody = JSON.stringify(payload);
+    const signed = signWebhook(
+      { method: 'POST', url: callbackUrl, headers: { 'content-type': 'application/json' }, body: rawBody },
+      signer
+    );
+    const parsed = await client.verifyAndParseWebhook({
+      rawBody,
+      headers: signed.headers,
+      taskType: 'create_media_buy',
+      operationId: 'op-a2a-1',
+      requestMethod: 'POST',
+      requestUrl: callbackUrl,
+    });
+    assert.strictEqual(parsed.ok, true);
+    assert.strictEqual(parsed.metadata.taskId, 'adcp-work-task');
+  });
+
+  test('metadata work status wins over a colliding typed domain status', async () => {
+    const { client, callbackUrl, signer } = await registeredA2ARfcClient();
+    const payload = {
+      kind: 'task',
+      id: 'a2a-domain-status-transport-task',
+      contextId: 'a2a-domain-status-context',
+      status: { state: 'completed', timestamp: new Date().toISOString() },
+      artifacts: [
+        {
+          artifactId: 'native-domain-status-result',
+          metadata: { adcp_status: 'completed', adcp_task_id: 'adcp-work-task' },
+          parts: [
+            {
+              kind: 'data',
+              data: { media_buy_id: 'buy-canceled', status: 'canceled', revision: 2, affected_packages: [] },
+            },
+          ],
+        },
+      ],
+    };
+    const rawBody = JSON.stringify(payload);
+    const signed = signWebhook(
+      { method: 'POST', url: callbackUrl, headers: { 'content-type': 'application/json' }, body: rawBody },
+      signer
+    );
+    const parsed = await client.verifyAndParseWebhook({
+      rawBody,
+      headers: signed.headers,
+      taskType: 'create_media_buy',
+      operationId: 'op-a2a-1',
+      requestMethod: 'POST',
+      requestUrl: callbackUrl,
+    });
+    assert.strictEqual(parsed.ok, true);
+    assert.strictEqual(parsed.metadata.status, 'completed');
+    assert.strictEqual(parsed.result.status, 'canceled');
+  });
+
+  test('rejects conflicting metadata and explicit DataPart task-envelope statuses', async () => {
+    const { client, callbackUrl, signer } = await registeredA2ARfcClient();
+    const payload = a2aTaskWebhook('failed');
+    payload.artifacts[0].metadata.adcp_status = 'completed';
+    payload.artifacts[0].parts[0].data.error = { code: 'SELLER_FAILURE', message: 'failed' };
+    const rawBody = JSON.stringify(payload);
+    const signed = signWebhook(
+      { method: 'POST', url: callbackUrl, headers: { 'content-type': 'application/json' }, body: rawBody },
+      signer
+    );
+    const parsed = await client.verifyAndParseWebhook({
+      rawBody,
+      headers: signed.headers,
+      taskType: 'create_media_buy',
+      operationId: 'op-a2a-1',
+      requestMethod: 'POST',
+      requestUrl: callbackUrl,
+    });
+    assert.strictEqual(parsed.ok, false);
+    assert.strictEqual(parsed.code, 'webhook_envelope_invalid');
+  });
+
+  test('keeps A2A submitted work non-terminal and rejects transport-only status', async () => {
+    const { client, callbackUrl, signer } = await registeredA2ARfcClient();
+    const submittedPayload = a2aTaskWebhook('submitted');
+    const submittedBody = JSON.stringify(submittedPayload);
+    const submittedSigned = signWebhook(
+      { method: 'POST', url: callbackUrl, headers: { 'content-type': 'application/json' }, body: submittedBody },
+      signer
+    );
+    const submitted = await client.verifyAndParseWebhook({
+      rawBody: submittedBody,
+      headers: submittedSigned.headers,
+      taskType: 'create_media_buy',
+      operationId: 'op-a2a-1',
+      requestMethod: 'POST',
+      requestUrl: callbackUrl,
+    });
+    assert.strictEqual(submitted.ok, true);
+    assert.strictEqual(submitted.metadata.status, 'submitted');
+    assert.strictEqual(submitted.metadata.taskId, 'adcp-work-task');
+
+    const second = await registeredA2ARfcClient();
+    const transportOnly = {
+      kind: 'status-update',
+      taskId: 'a2a-transport-only',
+      contextId: 'a2a-context',
+      status: { state: 'completed', timestamp: new Date().toISOString() },
+      final: true,
+    };
+    const transportBody = JSON.stringify(transportOnly);
+    const transportSigned = signWebhook(
+      {
+        method: 'POST',
+        url: second.callbackUrl,
+        headers: { 'content-type': 'application/json' },
+        body: transportBody,
+      },
+      second.signer
+    );
+    const rejected = await second.client.verifyAndParseWebhook({
+      rawBody: transportBody,
+      headers: transportSigned.headers,
+      taskType: 'create_media_buy',
+      operationId: 'op-a2a-1',
+      requestMethod: 'POST',
+      requestUrl: second.callbackUrl,
+    });
+    assert.strictEqual(rejected.ok, false);
+    assert.strictEqual(rejected.code, 'webhook_envelope_invalid');
+  });
+
+  test('durably settles an authenticated A2A terminal callback by AdCP work identity', async () => {
+    const handlerCalls = [];
+    const { client, callbackUrl, signer } = await registeredA2ARfcClient({
+      durable: true,
+      handlers: {
+        onCreateMediaBuyStatusChange: (result, metadata) => handlerCalls.push({ result, metadata }),
+      },
+    });
+    const recoveries = [];
+    client.registerDurableSettlementRecovery(async (operationId, observation) => {
+      recoveries.push({ operationId, observation });
+      return { settled: true, status: 'completed', result: observation.result };
+    });
+    const payload = a2aTaskWebhook('completed', { media_buy_id: 'buy-a2a-durable', packages: [] });
+    const rawBody = JSON.stringify(payload);
+    const signed = signWebhook(
+      { method: 'POST', url: callbackUrl, headers: { 'content-type': 'application/json' }, body: rawBody },
+      signer
+    );
+    const parsed = await client.verifyAndParseWebhook({
+      rawBody,
+      headers: signed.headers,
+      taskType: 'create_media_buy',
+      operationId: 'op-a2a-1',
+      requestMethod: 'POST',
+      requestUrl: callbackUrl,
+    });
+    assert.strictEqual(parsed.ok, true);
+    assert.strictEqual(await client.dispatchParsedWebhook(parsed), true);
+    assert.deepStrictEqual(recoveries[0], {
+      operationId: 'op-a2a-1',
+      observation: {
+        status: 'completed',
+        result: { media_buy_id: 'buy-a2a-durable', packages: [] },
+        serverTaskId: 'adcp-work-task',
+        taskType: 'create_media_buy',
+      },
+    });
+    assert.strictEqual(handlerCalls.length, 1);
   });
 });
 
@@ -553,6 +1059,68 @@ describe('webhook registration provenance', () => {
     assert.strictEqual(response.statusCode, 500);
     assert.strictEqual(response.body.error, 'Webhook could not be processed.');
     assert.strictEqual(JSON.stringify(response.body).includes('password'), false);
+  });
+
+  test('webhook HTTP helper returns 503 while the matching handler publication is in progress', async () => {
+    let releaseHandler;
+    let markHandlerEntered;
+    const handlerEntered = new Promise(resolve => {
+      markHandlerEntered = resolve;
+    });
+    const client = new SingleAgentClient(agent, {
+      allowUnauthenticatedWebhooks: true,
+      handlers: {
+        webhookDedup: { backend: memoryBackend({ sweepIntervalMs: 0 }) },
+        onGetProductsStatusChange: async () => {
+          markHandlerEntered();
+          await new Promise(resolve => {
+            releaseHandler = resolve;
+          });
+        },
+      },
+    });
+    const handler = client.createWebhookHandler();
+    const request = {
+      body: envelope({ operation_id: 'op-http-in-progress' }),
+      params: { task_type: 'get_products', operation_id: 'op-http-in-progress' },
+    };
+    const firstResponse = makeResponse();
+    const first = handler(request, firstResponse);
+    await handlerEntered;
+
+    const retryResponse = makeResponse();
+    await handler(request, retryResponse);
+    assert.strictEqual(retryResponse.statusCode, 503);
+    assert.strictEqual(retryResponse.body.error, 'A matching callback publication is still in progress.');
+
+    releaseHandler();
+    await first;
+    assert.strictEqual(firstResponse.statusCode, 202);
+  });
+
+  test('webhook HTTP helper maps malformed dedup keys to 400 before handler dispatch', async () => {
+    let calls = 0;
+    const client = new SingleAgentClient(agent, {
+      allowUnauthenticatedWebhooks: true,
+      handlers: {
+        webhookDedup: { backend: memoryBackend({ sweepIntervalMs: 0 }) },
+        onGetProductsStatusChange: () => {
+          calls += 1;
+        },
+      },
+    });
+    const handler = client.createWebhookHandler();
+    const response = makeResponse();
+    await handler(
+      {
+        body: envelope({ idempotency_key: 'short', operation_id: 'op-http-invalid-key' }),
+        params: { task_type: 'get_products', operation_id: 'op-http-invalid-key' },
+      },
+      response
+    );
+    assert.strictEqual(response.statusCode, 400);
+    assert.match(response.body.error, /idempotency_key is invalid/);
+    assert.strictEqual(calls, 0);
   });
 
   test('prepares MCP and A2A placement exactly and never treats reporting_webhook as task registration', async () => {

@@ -4022,6 +4022,13 @@ describe('HITL dual-method dispatch — *Task variants', () => {
 });
 
 describe('NODE_ENV gate on default in-memory task registry', () => {
+  function replayOptions(scope) {
+    return {
+      idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
+      resolveSessionKey: () => scope,
+    };
+  }
+
   function emptyPlatform() {
     return {
       capabilities: {
@@ -4070,6 +4077,7 @@ describe('NODE_ENV gate on default in-memory task registry', () => {
         createAdcpServerFromPlatform(emptyPlatform(), {
           name: 't',
           version: '0',
+          ...replayOptions('task-registry-test'),
           validation: { requests: 'off', responses: 'off' },
         })
       );
@@ -4082,6 +4090,7 @@ describe('NODE_ENV gate on default in-memory task registry', () => {
         createAdcpServerFromPlatform(emptyPlatform(), {
           name: 't',
           version: '0',
+          ...replayOptions('task-registry-development'),
           validation: { requests: 'off', responses: 'off' },
         })
       );
@@ -4095,6 +4104,7 @@ describe('NODE_ENV gate on default in-memory task registry', () => {
           createAdcpServerFromPlatform(emptyPlatform(), {
             name: 't',
             version: '0',
+            ...replayOptions('task-registry-production-refusal'),
             validation: { requests: 'off', responses: 'off' },
           }),
         /in-memory task registry refused/
@@ -4108,6 +4118,7 @@ describe('NODE_ENV gate on default in-memory task registry', () => {
         createAdcpServerFromPlatform(emptyPlatform(), {
           name: 't',
           version: '0',
+          ...replayOptions('task-registry-unset-refusal'),
           validation: { requests: 'off', responses: 'off' },
         })
       );
@@ -4131,6 +4142,7 @@ describe('NODE_ENV gate on default in-memory task registry', () => {
           createAdcpServerFromPlatform(emptyPlatform(), {
             name: 't',
             version: '0',
+            ...replayOptions('task-registry-production-ack'),
             validation: { requests: 'off', responses: 'off' },
           })
         );
@@ -4146,6 +4158,7 @@ describe('NODE_ENV gate on default in-memory task registry', () => {
         createAdcpServerFromPlatform(emptyPlatform(), {
           name: 't',
           version: '0',
+          ...replayOptions('task-registry-explicit'),
           taskRegistry: createInMemoryTaskRegistry(),
           // Explicit stateStore opt-in mirrors the explicit-taskRegistry
           // pattern this test exercises — both opt-outs have to be

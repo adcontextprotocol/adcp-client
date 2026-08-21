@@ -289,14 +289,59 @@ if (discovery.status === 'completed' && discovery.data.outcome === 'products_ava
 The in-memory store is a single-process reference implementation. Production
 clusters should implement `LegacyPurchaseContinuationStore` with durable,
 atomic issuance, binding verification, operation-wide idempotency indexing,
-and claim operations. The reference store is bounded to 256 records / 4 MiB
+and claim operations. To accept mutation callbacks after a restart or on a
+different replica, a custom store must also implement
+`getByCallbackOperationId`, `recordPendingSettlement`, and
+`acknowledgePendingSettlement`; implementing only part of that durable inbox/outbox
+contract is rejected during coordinator negotiation. The pending-settlement write
+must atomically compare exact callback identity and terminal content, and must
+be retained through `operation.replayExpiresAt`. A pending callback task ID and
+the write-once seller task binding must match in either write order. Existing stores may omit all three
+methods and continue polling-only operation; the coordinator suppresses push
+notifications for those stores so no callback can be acknowledged only in
+process memory. The reference store is bounded to 256 records / 4 MiB
 and prunes expired unused or completed records; it deliberately does not evict
 ambiguous mutations. Tokens are principal-, account-, seller-session-,
 source-version-, expiry-, product-, discovery-request-, and full
 observed-response-bound. Re-observing the same discovery returns the same
 token. A claim is consumed at the first mutation; exact retries replay the
-recorded terminal `TaskResult` during the separate 24-hour operation replay
-window (configurable with `legacyPurchaseOperationTtlMs`).
+recorded terminal `TaskResult` during a seven-day replay window by default;
+explicit `legacyPurchaseOperationTtlMs` values configure both monitoring and
+replay retention.
+
+Custom stores must also implement the terminal CAS outcome precisely:
+`complete()` returns `completed` only when it installs the caller's candidate,
+`pending_completed` with required settlement metadata when it atomically
+promotes an earlier queued callback, `duplicate` for an exact already-installed
+retry, and `conflict` for a different terminal value. This distinction prevents two
+replicas racing inbox drain and callback recovery from publishing completion
+twice. If a pending callback won before `complete()`, the transaction must
+promote and return that pending terminal value (including its settlement
+identity), never discard it in favor of the caller's stale candidate. The SDK
+validates the returned callback operation, seller task, task type, and terminal
+content before accepting `pending_completed`.
+
+`recordSubmittedTask()` is also an atomic, write-once binding: the first seller
+task ID wins, an exact same-ID retry succeeds, and a different ID returns
+`false` without overwriting the stored identity. Callback settlement trusts
+this binding, so a last-writer-wins implementation is unsafe. Binding must also
+return `false` when an already queued callback names a different seller task;
+the inverse pending-settlement write must return `conflict`.
+
+Applications that receive webhooks must negotiate and retain the lifecycle
+coordinator before marking the callback route ready. On process restart, build
+a fresh `AgentClient`, negotiate a coordinator with the same durable store,
+`principalScope`, and `legacyPurchaseSellerSessionScope`, and only then serve
+callbacks. This installs the callback-operation recovery lookup synchronously
+when negotiation completes. The seller-session scope must be stable across
+replicas; do not rely on a newly negotiated in-memory context ID for cold-start
+recovery.
+
+The webhook authenticity state is a separate durability boundary. Replicas
+must also share a durable `webhookRegistrationStore`; RFC 9421 deployments
+must share the configured replay store as well. A fresh client with the
+default in-memory registration or replay store intentionally rejects a
+callback before continuation recovery runs.
 
 For any established seller without a server context ID,
 `legacyPurchaseSellerSessionScope` is required before a continuation can be

@@ -644,7 +644,12 @@ type ADCPStatus = typeof ADCP_STATUS[keyof typeof ADCP_STATUS];
 
 ### InputRequiredError
 
-Thrown when server requires input but no handler is provided.
+Legacy compatibility export. Current execution does not throw this as normal
+handler-less pause control flow. Inspect the returned `input-required` or
+`auth-required` status instead. A2A can expose a continuation only when the
+seller supplied an exact task ID. A2A without that ID and MCP return the pause
+without invoking an input handler or attaching a resume closure, so recovery
+is application/protocol-specific.
 
 ```typescript
 class InputRequiredError extends Error {
@@ -652,13 +657,15 @@ class InputRequiredError extends Error {
 }
 ```
 
-**Usage:**
+**Pause handling:**
 ```typescript
-try {
-  const result = await agent.getProducts(params); // No handler provided
-} catch (error) {
-  if (error instanceof InputRequiredError) {
-    console.log('Missing handler for:', error.message);
+const result = await agent.getProducts(params);
+if (result.status === 'input-required' || result.status === 'auth-required') {
+  if (result.deferred) {
+    // A2A: resume the exact seller task.
+    await result.deferred.resume(userInput);
+  } else {
+    // MCP: use an application/protocol-specific recovery path.
   }
 }
 ```
@@ -856,7 +863,6 @@ import {
   TaskExecutor,
   createFieldHandler,
   createConditionalHandler,
-  InputRequiredError,
   TaskTimeoutError
 } from '@adcp/sdk';
 
@@ -910,9 +916,7 @@ async function executeTaskWithHandling() {
     }
 
   } catch (error) {
-    if (error instanceof InputRequiredError) {
-      console.error('Handler required:', error.message);
-    } else if (error instanceof TaskTimeoutError) {
+    if (error instanceof TaskTimeoutError) {
       console.error('Task timeout:', error.message);
     } else {
       console.error('Unexpected error:', error.message);

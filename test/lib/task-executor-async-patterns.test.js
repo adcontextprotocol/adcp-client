@@ -4,6 +4,26 @@
 const { test, describe, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert');
 
+function a2aPausedTask({ state = 'input-required', question, field, contextId, taskId }) {
+  return {
+    result: {
+      kind: 'task',
+      id: taskId,
+      contextId,
+      status: {
+        state,
+        message: {
+          kind: 'message',
+          messageId: `${taskId}-clarification`,
+          role: 'agent',
+          parts: [{ kind: 'data', data: { status: state, question, ...(field !== undefined && { field }) } }],
+        },
+      },
+      artifacts: [],
+    },
+  };
+}
+
 /**
  * Test Strategy Overview:
  * 1. Mock ProtocolClient at the module level to control responses
@@ -57,7 +77,7 @@ describe(
         id: 'test-agent',
         name: 'Test Agent',
         agent_uri: 'https://test.example',
-        protocol: 'mcp',
+        protocol: 'a2a',
       };
     });
 
@@ -229,16 +249,16 @@ describe(
           callCount++;
           if (callCount === 1) {
             // Initial call - needs input
-            return {
-              status: ADCP_STATUS.INPUT_REQUIRED,
+            return a2aPausedTask({
               question: 'What is your budget?',
               field: 'budget',
               contextId: 'ctx-123',
-            };
-          } else if (taskName === 'continue_task') {
+              taskId: 'seller-task-budget',
+            });
+          } else {
             // Continuation call - task completed
-            assert.strictEqual(params.contextId, 'ctx-123');
-            assert.strictEqual(params.input, 50000);
+            assert.strictEqual(taskName, 'setBudget');
+            assert.deepStrictEqual(params, { input: 50000 });
             return {
               status: ADCP_STATUS.COMPLETED,
               data: { budget: 50000, status: 'approved' },
@@ -258,13 +278,21 @@ describe(
       test('should return input-required status when no handler provided', async () => {
         // When no input handler is provided, the executor returns input-required as a
         // valid intermediate state, allowing callers to handle it (e.g., HITL workflows).
-        const mockResponse = {
-          status: ADCP_STATUS.INPUT_REQUIRED,
+        const mockResponse = a2aPausedTask({
           question: 'What is your budget?',
           field: 'budget',
-        };
+          contextId: 'handlerless-context',
+          taskId: 'seller-task-handlerless-budget',
+        });
+        mockResponse.result.status.message.parts.unshift({
+          kind: 'data',
+          data: { status: 'input-required', question: 'Stale question', field: 'stale_field' },
+        });
 
-        ProtocolClient.callTool = mock.fn(async () => mockResponse);
+        let calls = 0;
+        ProtocolClient.callTool = mock.fn(async () =>
+          ++calls === 1 ? mockResponse : { status: ADCP_STATUS.COMPLETED, data: { accepted_budget: 100 } }
+        );
 
         const executor = new TaskExecutor();
 
@@ -273,6 +301,164 @@ describe(
         assert.strictEqual(result.status, 'input-required');
         assert.ok(result.metadata.inputRequest, 'Should include inputRequest details for caller');
         assert.strictEqual(result.metadata.inputRequest.question, 'What is your budget?');
+        assert.deepStrictEqual(result.data, {
+          status: 'input-required',
+          question: 'What is your budget?',
+          field: 'budget',
+        });
+        assert.ok(result.deferred, 'Handler-less input-required results expose a safe continuation');
+        const resumed = await result.deferred.resume(100);
+        assert.strictEqual(resumed.status, 'completed');
+        assert.deepStrictEqual(resumed.data.data, { accepted_budget: 100 });
+      });
+
+      test('should preserve an auth-required task for handler-less credential refresh', async () => {
+        const mockResponse = a2aPausedTask({
+          state: 'auth-required',
+          question: 'Refresh seller credentials',
+          field: 'authorization',
+          contextId: 'auth-refresh-context',
+          taskId: 'seller-task-auth-refresh',
+        });
+        let calls = 0;
+        ProtocolClient.callTool = mock.fn(async () =>
+          ++calls === 1 ? mockResponse : { status: ADCP_STATUS.COMPLETED, data: { authenticated: true } }
+        );
+
+        const executor = new TaskExecutor();
+        const result = await executor.executeTask(mockAgent, 'needsAuth', {});
+        assert.strictEqual(result.status, 'auth-required');
+        assert.strictEqual(result.metadata.status, 'auth-required');
+        assert.ok(result.deferred);
+        const resumed = await result.deferred.resume({ refreshed: true });
+        assert.strictEqual(resumed.status, 'completed');
+        assert.deepStrictEqual(resumed.data.data, { authenticated: true });
+      });
+
+      test('resumes handler-less A2A pauses on the seller context and task', async () => {
+        const a2aAgent = { ...mockAgent, protocol: 'a2a' };
+        let callCount = 0;
+        ProtocolClient.callTool = mock.fn(async (_agent, taskName, params, options) => {
+          callCount += 1;
+          assert.strictEqual(taskName, 'needsInput');
+          if (callCount === 1) {
+            return a2aPausedTask({
+              question: 'Approve?',
+              contextId: 'seller-context-1',
+              taskId: 'seller-task-1',
+            });
+          }
+          assert.deepStrictEqual(params, { input: 'approved' });
+          assert.deepStrictEqual(options.session, {
+            contextId: 'seller-context-1',
+            taskId: 'seller-task-1',
+          });
+          return { status: ADCP_STATUS.COMPLETED, data: { approved: true } };
+        });
+
+        const executor = new TaskExecutor({ strictSchemaValidation: false });
+        const paused = await executor.executeTask(a2aAgent, 'needsInput', {});
+        const resumed = await paused.deferred.resume('approved');
+        assert.strictEqual(resumed.status, 'completed');
+      });
+
+      test('does not resume an A2A pause that omits seller task identity', async () => {
+        const a2aAgent = { ...mockAgent, protocol: 'a2a' };
+        const handler = mock.fn(async () => 'approved');
+        ProtocolClient.callTool = mock.fn(async () => ({
+          status: ADCP_STATUS.INPUT_REQUIRED,
+          question: 'Approve?',
+          contextId: 'seller-context-without-task',
+        }));
+
+        const executor = new TaskExecutor({ strictSchemaValidation: false });
+        const paused = await executor.executeTask(a2aAgent, 'needsInput', {}, handler);
+        assert.strictEqual(paused.status, 'input-required');
+        assert.strictEqual(paused.deferred, undefined);
+        assert.strictEqual(handler.mock.callCount(), 0);
+        assert.strictEqual(ProtocolClient.callTool.mock.callCount(), 1);
+      });
+
+      test('unwraps a live A2A task clarification and continues its transport task ID', async () => {
+        let calls = 0;
+        const handler = mock.fn(async context => {
+          assert.strictEqual(context.inputRequest.question, 'Approve the live task budget?');
+          assert.strictEqual(context.inputRequest.field, 'budget');
+          assert.deepStrictEqual(context.inputRequest.suggestions, [50_000]);
+          return 50_000;
+        });
+        ProtocolClient.callTool = mock.fn(async (_agent, taskName, params, options) => {
+          calls += 1;
+          assert.strictEqual(taskName, 'create_media_buy');
+          if (calls === 1) {
+            return {
+              result: {
+                kind: 'task',
+                id: 'a2a-transport-task',
+                contextId: 'artifact-context',
+                status: {
+                  state: 'input-required',
+                  message: {
+                    kind: 'message',
+                    messageId: 'clarification-message',
+                    role: 'agent',
+                    parts: [
+                      {
+                        kind: 'data',
+                        data: {
+                          question: 'Approve the live task budget?',
+                          field: 'budget',
+                          suggestions: [50_000],
+                        },
+                      },
+                    ],
+                  },
+                },
+                artifacts: [
+                  {
+                    artifactId: 'artifact-input-required',
+                    parts: [
+                      {
+                        kind: 'data',
+                        data: {
+                          task_id: 'artifact-seller-task',
+                          question: 'Stale artifact question',
+                        },
+                      },
+                    ],
+                  },
+                ],
+              },
+            };
+          }
+          assert.deepStrictEqual(params, { input: 50_000 });
+          assert.deepStrictEqual(options.session, {
+            contextId: 'artifact-context',
+            taskId: 'a2a-transport-task',
+          });
+          return { status: ADCP_STATUS.COMPLETED, data: { approved: true } };
+        });
+
+        const executor = new TaskExecutor({ strictSchemaValidation: false });
+        const result = await executor.executeTask(mockAgent, 'create_media_buy', {}, handler);
+        assert.strictEqual(result.status, 'completed');
+        assert.strictEqual(handler.mock.callCount(), 1);
+        assert.strictEqual(ProtocolClient.callTool.mock.callCount(), 2);
+      });
+
+      test('does not invent an MCP continuation tool for a returned pause', async () => {
+        const mcpAgent = { ...mockAgent, protocol: 'mcp' };
+        ProtocolClient.callTool = mock.fn(async () => ({
+          status: ADCP_STATUS.INPUT_REQUIRED,
+          question: 'Approve?',
+          context_id: 'mcp-context',
+        }));
+
+        const executor = new TaskExecutor({ strictSchemaValidation: false });
+        const paused = await executor.executeTask(mcpAgent, 'needsInput', {}, async () => 'approved');
+        assert.strictEqual(paused.status, 'input-required');
+        assert.strictEqual(paused.deferred, undefined);
+        assert.strictEqual(ProtocolClient.callTool.mock.callCount(), 1);
       });
 
       test('should provide complete conversation context to handler', async () => {
@@ -280,7 +466,7 @@ describe(
           // Verify context structure
           assert.strictEqual(typeof context.taskId, 'string');
           assert.strictEqual(context.agent.id, 'test-agent');
-          assert.strictEqual(context.agent.protocol, 'mcp');
+          assert.strictEqual(context.agent.protocol, 'a2a');
           assert(Array.isArray(context.messages));
           assert.strictEqual(context.messages.length, 2); // request + response
           assert.strictEqual(typeof context.getSummary, 'function');
@@ -292,16 +478,16 @@ describe(
           return 'handler-response';
         });
 
-        ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'continue_task') {
-            return { status: ADCP_STATUS.COMPLETED, data: { done: true } };
-          } else {
-            return {
-              status: ADCP_STATUS.INPUT_REQUIRED,
+        let calls = 0;
+        ProtocolClient.callTool = mock.fn(async () => {
+          if (++calls === 1) {
+            return a2aPausedTask({
               question: 'Test question?',
               contextId: 'ctx-456',
-            };
+              taskId: 'seller-task-context',
+            });
           }
+          return { status: ADCP_STATUS.COMPLETED, data: { done: true } };
         });
 
         const executor = new TaskExecutor({ strictSchemaValidation: false });
@@ -342,7 +528,7 @@ describe(
           task: {
             taskId: 'task-789',
             status: 'working',
-            taskType: 'processData',
+            taskType: 'submitTask',
             createdAt: Date.now(),
             updatedAt: Date.now(),
           },
@@ -350,7 +536,7 @@ describe(
 
         ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
           if (taskName === 'tasks/get' || taskName === 'tasks_get') {
-            return mockTaskStatus;
+            return { task: { ...mockTaskStatus.task, taskId: params.task_id } };
           } else {
             return mockSubmitResponse;
           }
@@ -364,7 +550,24 @@ describe(
         // Test tracking
         const status = await result.submitted.track();
         assert.strictEqual(status.status, 'working');
-        assert.strictEqual(status.taskType, 'processData');
+        assert.strictEqual(status.taskType, 'submitTask');
+      });
+
+      test('rejects invalid core polling intervals before polling the seller', async () => {
+        ProtocolClient.callTool = mock.fn(async () => ({
+          status: ADCP_STATUS.SUBMITTED,
+          task_id: 'seller-submitted-task',
+        }));
+
+        const executor = new TaskExecutor({ strictSchemaValidation: false });
+        const result = await executor.executeTask(mockAgent, 'submitTask', {});
+        assert.strictEqual(result.status, 'submitted');
+
+        const dispatchCalls = ProtocolClient.callTool.mock.callCount();
+        await assert.rejects(result.submitted.waitForCompletion(Number.NaN), RangeError);
+        await assert.rejects(result.submitted.waitForCompletion(-1), RangeError);
+        await assert.rejects(result.submitted.waitForCompletion(2_147_483_648), RangeError);
+        assert.strictEqual(ProtocolClient.callTool.mock.callCount(), dispatchCalls);
       });
 
       test('should handle webhook manager integration', async () => {
@@ -395,6 +598,31 @@ describe(
     });
 
     describe('DEFERRED Status Pattern (Client Deferral)', () => {
+      test('rejects a persisted A2A deferral that lacks seller task identity', async () => {
+        const storage = {
+          set: mock.fn(async () => {}),
+          get: mock.fn(async () => ({
+            taskId: 'local-legacy-deferred-task',
+            contextId: 'legacy-context',
+            agent: { ...mockAgent, protocol: 'a2a' },
+            taskName: 'create_media_buy',
+            params: { idempotency_key: 'legacy-deferred-key' },
+            messages: [],
+            createdAt: Date.now(),
+          })),
+          delete: mock.fn(async () => {}),
+        };
+        ProtocolClient.callTool = mock.fn(async () => ({ status: ADCP_STATUS.COMPLETED }));
+        const executor = new TaskExecutor({ deferredStorage: storage });
+
+        await assert.rejects(
+          executor.resumeDeferredTask('legacy-identity-less-token', { approved: true }),
+          /requires a seller task ID/
+        );
+        assert.strictEqual(ProtocolClient.callTool.mock.callCount(), 0);
+        assert.strictEqual(storage.delete.mock.callCount(), 1);
+      });
+
       test('should handle handler deferral with resume capability', async () => {
         const mockHandler = mock.fn(async context => {
           if (context.inputRequest.field === 'approval') {
@@ -405,17 +633,17 @@ describe(
 
         const mockDeferredStorage = new Map();
 
-        ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'continue_task') {
-            return { status: ADCP_STATUS.COMPLETED, data: { approved: true } };
-          } else {
-            return {
-              status: ADCP_STATUS.INPUT_REQUIRED,
+        let calls = 0;
+        ProtocolClient.callTool = mock.fn(async () => {
+          if (++calls === 1) {
+            return a2aPausedTask({
               question: 'Do you approve this action?',
               field: 'approval',
               contextId: 'ctx-defer-123',
-            };
+              taskId: 'seller-task-defer',
+            });
           }
+          return { status: ADCP_STATUS.COMPLETED, data: { approved: true } };
         });
 
         const executor = new TaskExecutor({
@@ -450,11 +678,13 @@ describe(
           delete: mock.fn(async () => {}),
         };
 
-        ProtocolClient.callTool = mock.fn(async () => ({
-          status: ADCP_STATUS.INPUT_REQUIRED,
-          question: 'Save this?',
-          contextId: 'ctx-save',
-        }));
+        ProtocolClient.callTool = mock.fn(async () =>
+          a2aPausedTask({
+            question: 'Save this?',
+            contextId: 'ctx-save',
+            taskId: 'seller-task-save',
+          })
+        );
 
         const executor = new TaskExecutor({
           deferredStorage: mockStorage,
@@ -468,6 +698,81 @@ describe(
         assert.strictEqual(state.taskName, 'saveTask');
         assert.deepStrictEqual(state.params, { data: 'important' });
         assert.strictEqual(state.agent.id, 'test-agent');
+      });
+
+      test('persists and resumes an A2A deferral without inventing a seller context ID', async () => {
+        const states = new Map();
+        const storage = {
+          set: mock.fn(async (token, state) => states.set(token, state)),
+          get: mock.fn(async token => states.get(token)),
+          delete: mock.fn(async token => states.delete(token)),
+        };
+        let calls = 0;
+        ProtocolClient.callTool = mock.fn(async (_agent, taskName, params, options) => {
+          calls += 1;
+          assert.strictEqual(taskName, 'approvalTask');
+          if (calls === 1) {
+            return a2aPausedTask({
+              question: 'Approve without context?',
+              field: 'approval',
+              taskId: 'seller-task-without-context',
+            });
+          }
+          assert.deepStrictEqual(params, { input: 'APPROVED' });
+          assert.deepStrictEqual(options.session, {
+            contextId: undefined,
+            taskId: 'seller-task-without-context',
+          });
+          return { status: ADCP_STATUS.COMPLETED, data: { approved: true } };
+        });
+
+        const executor = new TaskExecutor({ deferredStorage: storage, strictSchemaValidation: false });
+        const result = await executor.executeTask(mockAgent, 'approvalTask', {}, async () => ({
+          defer: true,
+          token: 'context-free-token',
+        }));
+
+        const state = states.get('context-free-token');
+        assert.strictEqual(Object.hasOwn(state, 'contextId'), false);
+        assert.strictEqual(state.a2aTaskId, 'seller-task-without-context');
+        const resumed = await result.deferred.resume('APPROVED');
+        assert.strictEqual(resumed.status, 'completed');
+      });
+
+      test('deletes a stored continuation when resumption returns a nonresumable pause', async () => {
+        const states = new Map([
+          [
+            'stale-resume-token',
+            {
+              taskId: 'local-deferred-task',
+              contextId: 'original-context',
+              a2aTaskId: 'original-seller-task',
+              agent: { ...mockAgent, protocol: 'a2a' },
+              taskName: 'approvalTask',
+              params: {},
+              messages: [],
+              createdAt: Date.now(),
+            },
+          ],
+        ]);
+        const storage = {
+          set: mock.fn(async (token, state) => states.set(token, state)),
+          get: mock.fn(async token => states.get(token)),
+          delete: mock.fn(async token => states.delete(token)),
+        };
+        ProtocolClient.callTool = mock.fn(async () =>
+          a2aPausedTask({ question: 'New pause omitted its task identity', taskId: undefined })
+        );
+        const executor = new TaskExecutor({ deferredStorage: storage, strictSchemaValidation: false });
+
+        const resumed = await executor.resumeDeferredTask('stale-resume-token', { approved: true });
+        assert.strictEqual(resumed.status, 'input-required');
+        assert.strictEqual(resumed.deferred, undefined);
+        assert.strictEqual(storage.delete.mock.callCount(), 1);
+        await assert.rejects(
+          executor.resumeDeferredTask('stale-resume-token', { approved: true }),
+          /Deferred task not found/
+        );
       });
     });
 
@@ -665,15 +970,16 @@ describe(
           return 'response';
         });
 
-        ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'continue_task') {
-            return { status: ADCP_STATUS.COMPLETED, data: { done: true } };
-          } else {
-            return {
-              status: ADCP_STATUS.INPUT_REQUIRED,
+        let calls = 0;
+        ProtocolClient.callTool = mock.fn(async () => {
+          if (++calls === 1) {
+            return a2aPausedTask({
               question: 'Test max clarifications?',
-            };
+              contextId: 'max-clarifications-context',
+              taskId: 'seller-task-max-clarifications',
+            });
           }
+          return { status: ADCP_STATUS.COMPLETED, data: { done: true } };
         });
 
         const executor = new TaskExecutor({ strictSchemaValidation: false });
@@ -717,16 +1023,16 @@ describe(
       test('should include input messages in conversation', async () => {
         const mockHandler = mock.fn(async () => 'user-input');
 
-        ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'continue_task') {
-            return { status: ADCP_STATUS.COMPLETED, data: { final: true } };
-          } else {
-            return {
-              status: ADCP_STATUS.INPUT_REQUIRED,
+        let calls = 0;
+        ProtocolClient.callTool = mock.fn(async () => {
+          if (++calls === 1) {
+            return a2aPausedTask({
               question: 'Need input',
               contextId: 'ctx-conv',
-            };
+              taskId: 'seller-task-conversation',
+            });
           }
+          return { status: ADCP_STATUS.COMPLETED, data: { final: true } };
         });
 
         const executor = new TaskExecutor({ strictSchemaValidation: false });

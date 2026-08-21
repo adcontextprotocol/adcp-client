@@ -100,6 +100,8 @@ import {
   AfterProtocolDispatchHookError,
   BeforeProtocolDispatchHookError,
   type BeforeProtocolDispatchHook,
+  type ExternalTaskSettlementObservation,
+  type ExternalTaskStatusResult,
 } from './TaskExecutor';
 import { attachMatch } from './match';
 import {
@@ -139,7 +141,7 @@ import type {
 } from './ConversationTypes';
 import type { AdcpTaskName, TaskRequestFor, TaskResponseTypeMap } from './AgentClient';
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
-import { AsyncHandler } from './AsyncHandler';
+import { AsyncHandler, WebhookDedupInputError } from './AsyncHandler';
 import { verifyWebhookRequest, type WebhookHeaderValue, type WebhookHeadersLike } from '../webhooks';
 import {
   InMemoryWebhookRegistrationStore,
@@ -160,6 +162,9 @@ import {
   canonicalTargetUri,
 } from '../signing/server';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
+import { getLatestA2ADataPartFromTask } from '../utils/a2a-artifacts';
+import { extractAdcpTaskStatusFromPayload, isAdcpStatus } from './task-status';
+import { responseParser } from './ProtocolResponseParser';
 import {
   isWellKnownAgentCardUrl as isWellKnownCardUrl,
   buildCardUrls,
@@ -953,6 +958,7 @@ export type WebhookParseErrorCode =
   | 'webhook_verification_context_missing'
   | 'webhook_registration_store_unavailable'
   | 'webhook_durable_settlement_unavailable'
+  | 'webhook_publication_in_progress'
   | 'webhook_verification_unavailable';
 
 export interface WebhookVerificationConfig {
@@ -1064,6 +1070,14 @@ const WEBHOOK_TASK_STATUSES = new Set<string>([
   'rejected',
   'auth-required',
   'unknown',
+]);
+const DURABLE_SETTLEMENT_TERMINAL_STATUSES = new Set<import('./ConversationTypes').TaskStatus>([
+  'completed',
+  'failed',
+  'rejected',
+  'canceled',
+  'governance-denied',
+  'aborted',
 ]);
 
 // Top-level fields that every MCP webhook envelope must carry, regardless of
@@ -1483,6 +1497,12 @@ export class SingleAgentClient {
   private readonly webhookReplayStore: ReplayStore;
   private readonly webhookRevocationStore: RevocationStore;
   private readonly webhookJwksResolvers = new Map<string, JwksResolver>();
+  private readonly durableSettlementRecoverers = new Set<
+    (
+      operationId: string,
+      observation: ExternalTaskSettlementObservation
+    ) => Promise<ExternalTaskStatusResult | undefined>
+  >();
 
   constructor(
     private agent: AgentConfig,
@@ -1598,9 +1618,14 @@ export class SingleAgentClient {
       });
     } catch (cause) {
       // RFC 9421 has no safe fallback without seller-pinned provenance. Legacy
-      // HMAC remains verifiable from the configured global secret, preserving
-      // pre-registration behavior across restarts and replicas.
-      if (args.mode === 'rfc9421') throw cause;
+      // HMAC remains verifiable from the configured global secret only for the
+      // explicit recordless read-only allowlist. Mutation and unknown-task
+      // receivers require registration provenance, so dispatch must fail too.
+      if (args.mode === 'rfc9421' || !RECORDLESS_HMAC_READ_ONLY_TASKS.has(args.taskType)) {
+        const error = new ConfigurationError('Could not persist trusted webhook registration for this operation.');
+        Object.defineProperty(error, 'cause', { value: cause, configurable: true });
+        throw error;
+      }
     }
   }
 
@@ -1982,6 +2007,85 @@ export class SingleAgentClient {
    */
   getAdcpVersion(): string {
     return this.resolvedAdcpVersion;
+  }
+
+  /** Poll through the same discovered/canonical protocol endpoint used for dispatch. @internal */
+  async getTaskStatus(
+    taskId: string,
+    transport?: import('../protocols').TransportOptions,
+    signal?: AbortSignal
+  ): Promise<TaskInfo> {
+    const options = { transport, signal };
+    const agent =
+      this.normalizedAgent.protocol === 'a2a'
+        ? await this.ensureCanonicalUrlResolved(options)
+        : await this.ensureEndpointDiscovered(options);
+    return this.executor.getTaskStatus(agent, taskId, transport, signal);
+  }
+
+  /** Register durable restart/replica settlement recovery for an SDK coordinator. @internal */
+  registerDurableSettlementRecovery(
+    recoverer: (
+      operationId: string,
+      observation: ExternalTaskSettlementObservation
+    ) => Promise<ExternalTaskStatusResult | undefined>
+  ): () => void {
+    this.durableSettlementRecoverers.add(recoverer);
+    return () => this.durableSettlementRecoverers.delete(recoverer);
+  }
+
+  /** Publish a callback only after an external durable inbox has bound and settled it. @internal */
+  async publishDurablySettledWebhook(args: {
+    operationId: string;
+    serverTaskId: string;
+    taskType: string;
+    status: import('./ConversationTypes').TaskStatus;
+    result?: unknown;
+    error?: string;
+    idempotencyKey?: string;
+  }): Promise<void> {
+    const metadata: WebhookMetadata = {
+      operation_id: args.operationId,
+      task_id: args.serverTaskId,
+      agent_id: this.agent.id,
+      task_type: args.taskType,
+      status: args.status,
+      ...(args.error !== undefined && { message: args.error }),
+      ...(args.idempotencyKey !== undefined && { idempotency_key: args.idempotencyKey }),
+      timestamp: new Date().toISOString(),
+      protocol: this.normalizedAgent.protocol,
+    };
+    await this.config.onActivity?.({
+      type: 'webhook_received',
+      operation_id: metadata.operation_id,
+      agent_id: metadata.agent_id,
+      task_id: metadata.task_id,
+      task_type: metadata.task_type,
+      status: metadata.status,
+      payload: args.result,
+      timestamp: metadata.timestamp,
+    });
+    const outcome = await this.asyncHandler?.handleWebhook({
+      result: args.result as AdCPAsyncResponseData | undefined,
+      metadata,
+    });
+    if (outcome === 'in_progress') {
+      throw new WebhookDispatchError(
+        'webhook_publication_in_progress',
+        'A matching callback publication is still in progress.'
+      );
+    }
+  }
+
+  private async recoverDurableSettlement(
+    operationId: string,
+    observation: ExternalTaskSettlementObservation
+  ): Promise<ExternalTaskStatusResult | undefined> {
+    for (const recoverer of this.durableSettlementRecoverers) {
+      const recovered = await recoverer(operationId, observation);
+      if (recovered) return recovered;
+    }
+    return undefined;
   }
 
   /** Effective release pin emitted in protocol envelopes. @internal */
@@ -2796,16 +2900,46 @@ export class SingleAgentClient {
       return parsedPayload;
     }
 
-    const parsedTaskType =
+    const topLevelTaskType =
       isObjectRecord(parsedPayload.payload) && typeof parsedPayload.payload.task_type === 'string'
         ? parsedPayload.payload.task_type
         : undefined;
     const payloadRecord = isObjectRecord(parsedPayload.payload) ? parsedPayload.payload : undefined;
+    const signedRoute = extractSignedWebhookRoute(parsedPayload.payload);
+    if (!signedRoute.ok) {
+      return {
+        ok: false,
+        code: 'webhook_envelope_invalid',
+        message: signedRoute.message,
+      };
+    }
+    const parsedTaskType = signedRoute.taskType ?? topLevelTaskType;
+    if (!registration && this.config.webhookSecret && trustedOperationId === undefined) {
+      return {
+        ok: false,
+        code: 'webhook_verification_context_missing',
+        message: 'Legacy HMAC verification requires a trusted route operation id.',
+      };
+    }
+    const hmacAuthenticated = registration?.mode === 'hmac-sha256' || (!registration && this.config.webhookSecret);
+    if (
+      hmacAuthenticated &&
+      (signedRoute.operationId === undefined ||
+        signedRoute.operationId !== trustedOperationId ||
+        signedRoute.taskType === undefined ||
+        signedRoute.taskType !== trustedRouteTaskType)
+    ) {
+      return {
+        ok: false,
+        code: 'webhook_registration_mismatch',
+        message: 'Legacy HMAC webhook body is not bound to the trusted callback route.',
+      };
+    }
     if (
       registration &&
-      ((typeof payloadRecord?.operation_id === 'string' && payloadRecord.operation_id !== registration.operationId) ||
-        (parsedTaskType !== undefined && parsedTaskType !== registration.taskType) ||
-        (typeof payloadRecord?.agent_id === 'string' && payloadRecord.agent_id !== registration.agentId))
+      ((signedRoute.operationId !== undefined && signedRoute.operationId !== registration.operationId) ||
+        (signedRoute.taskType !== undefined && signedRoute.taskType !== registration.taskType) ||
+        (signedRoute.agentId !== undefined && signedRoute.agentId !== registration.agentId))
     ) {
       return {
         ok: false,
@@ -2859,7 +2993,8 @@ export class SingleAgentClient {
       const normalizedPayload = this.normalizeWebhookPayload(
         parsedPayload.payload,
         normalizedTaskType ?? 'unknown',
-        options.operationId ?? 'unknown'
+        options.operationId ?? 'unknown',
+        registration?.mode === 'rfc9421'
       );
       normalizedTaskType = normalizedPayload.task_type;
       if (registration && (normalizedPayload.protocol ?? 'mcp') !== registration.protocol) {
@@ -3004,6 +3139,14 @@ export class SingleAgentClient {
       protocol: parsed.protocol,
       rawHTTPPayload: canonicalCreativeTask ? stripLegacyCreativeIdentity(parsed.envelope) : parsed.envelope,
     };
+    try {
+      this.asyncHandler?.assertWebhookDedupInput(metadata);
+    } catch (error) {
+      if (error instanceof WebhookDedupInputError) {
+        throw new WebhookDispatchError('webhook_envelope_invalid', error.message, error);
+      }
+      throw error;
+    }
     this.rememberCanonicalCreativeWebhookContext(metadata);
     try {
       const canonicalResult = this.canonicalizeWebhookCreativeResult(metadata, parsed.result, canonicalCreativeTask);
@@ -3018,22 +3161,59 @@ export class SingleAgentClient {
         assertNativeRequestProposalsResult(webhookResult);
       }
 
-      if (
-        parsed.metadata.requiresDurableSettlement === true &&
-        !this.executor.hasExternalTaskSettlementRoute(metadata.operation_id)
-      ) {
-        throw new WebhookDispatchError(
-          'webhook_durable_settlement_unavailable',
-          'The callback requires durable mutation settlement, but no recoverable settlement route is available.'
+      const observation = {
+        status: metadata.status as import('./ConversationTypes').TaskStatus,
+        result: webhookResult,
+        serverTaskId: metadata.task_id,
+        taskType: metadata.task_type,
+        ...(metadata.idempotency_key !== undefined && { idempotencyKey: metadata.idempotency_key }),
+      };
+      let externalStatus: ExternalTaskStatusResult;
+      if (parsed.metadata.requiresDurableSettlement === true) {
+        const recovered = await this.recoverDurableSettlement(metadata.operation_id, observation);
+        if (recovered) {
+          const hasTerminalStatus =
+            recovered.status !== undefined && DURABLE_SETTLEMENT_TERMINAL_STATUSES.has(recovered.status);
+          const validQueued =
+            recovered.queued === true &&
+            recovered.settled === false &&
+            recovered.duplicate !== true &&
+            recovered.status === undefined &&
+            recovered.result === undefined &&
+            recovered.error === undefined;
+          const validDuplicate =
+            recovered.duplicate === true &&
+            recovered.settled === true &&
+            recovered.queued !== true &&
+            hasTerminalStatus;
+          const validSettled =
+            recovered.settled === true &&
+            recovered.duplicate !== true &&
+            recovered.queued !== true &&
+            hasTerminalStatus &&
+            (recovered.status !== 'completed' || recovered.result !== undefined);
+          if (!validQueued && !validDuplicate && !validSettled) {
+            throw new WebhookDispatchError(
+              'webhook_durable_settlement_unavailable',
+              'The durable settlement recoverer returned an invalid or contradictory callback outcome.'
+            );
+          }
+          externalStatus = recovered;
+        } else {
+          throw new WebhookDispatchError(
+            'webhook_durable_settlement_unavailable',
+            'The callback requires durable mutation settlement, but no recoverable settlement route is available.'
+          );
+        }
+      } else {
+        externalStatus = await this.executor.observeExternalTaskStatus(
+          metadata.operation_id,
+          observation.status,
+          observation.result,
+          { serverTaskId: observation.serverTaskId, taskType: observation.taskType }
         );
       }
-
-      const externalStatus = await this.executor.observeExternalTaskStatus(
-        metadata.operation_id,
-        metadata.status as import('./ConversationTypes').TaskStatus,
-        webhookResult,
-        { serverTaskId: metadata.task_id, taskType: metadata.task_type }
-      );
+      if (externalStatus.queued) return true;
       if (externalStatus.duplicate) {
         metadata = {
           ...metadata,
@@ -3079,18 +3259,37 @@ export class SingleAgentClient {
         })
       );
 
-      if (policyDispatch.suppressHandler) return true;
-
-      // Handle through async handler if configured
-      if (this.asyncHandler) {
-        await this.asyncHandler.handleWebhook({
-          result: webhookResult,
-          metadata,
-          previewHandler: parsed.metadata.previewHandler ?? this.previewCreativeHandlerForWebhook(metadata),
-        });
+      if (policyDispatch.suppressHandler) {
+        await externalStatus.afterDispatch?.();
         return true;
       }
 
+      // Handle through async handler if configured
+      if (this.asyncHandler) {
+        let outcome: Awaited<ReturnType<AsyncHandler['handleWebhook']>>;
+        try {
+          outcome = await this.asyncHandler.handleWebhook({
+            result: webhookResult,
+            metadata,
+            previewHandler: parsed.metadata.previewHandler ?? this.previewCreativeHandlerForWebhook(metadata),
+          });
+        } catch (error) {
+          if (error instanceof WebhookDedupInputError) {
+            throw new WebhookDispatchError('webhook_envelope_invalid', error.message, error);
+          }
+          throw error;
+        }
+        if (outcome === 'in_progress') {
+          throw new WebhookDispatchError(
+            'webhook_publication_in_progress',
+            'A matching callback publication is still in progress.'
+          );
+        }
+        await externalStatus.afterDispatch?.();
+        return true;
+      }
+
+      await externalStatus.afterDispatch?.();
       return false;
     } finally {
       this.forgetProductPolicyRequestParams(metadata);
@@ -3170,7 +3369,12 @@ export class SingleAgentClient {
    * @param operationId - Operation id
    * @returns Normalized webhook payload with extracted AdCP response
    */
-  private normalizeWebhookPayload(payload: unknown, taskType: string, operationId: string): NormalizedWebhookPayload {
+  private normalizeWebhookPayload(
+    payload: unknown,
+    taskType: string,
+    operationId: string,
+    allowLegacyA2AArtifactFallback = false
+  ): NormalizedWebhookPayload {
     if (!isObjectRecord(payload)) {
       throw new WebhookDispatchError(
         'webhook_unsupported_payload',
@@ -3185,7 +3389,118 @@ export class SingleAgentClient {
       );
     }
 
-    // 1. Check for MCP Webhook Payload (has task_id, status, task_type fields)
+    // 1. Check for A2A Task or TaskStatusUpdateEvent before considering MCP.
+    // Native A2A events also carry a top-level `status`, so MCP's broad
+    // candidate detector must never get first refusal.
+    if ('kind' in payload && (payload.kind === 'task' || payload.kind === 'status-update')) {
+      const a2aPayload = payload as unknown as A2ATask | TaskStatusUpdateEvent;
+      const statusMessageData = latestA2AWebhookMessageData(a2aPayload.status?.message?.parts);
+      const artifactExtraction = a2aPayload.kind === 'task' ? getLatestA2ADataPartFromTask(a2aPayload) : undefined;
+      const artifactData = artifactExtraction?.data;
+      // A terminal Task's artifacts are canonical. Its status.message can be
+      // an earlier progress observation and must not shadow the final result.
+      const adcpData = a2aPayload.kind === 'task' ? (artifactData ?? statusMessageData) : statusMessageData;
+      const artifactMetadata = isObjectRecord(artifactExtraction?.artifact.metadata)
+        ? artifactExtraction.artifact.metadata
+        : undefined;
+      const hasExplicitTaskEnvelope =
+        adcpData !== undefined &&
+        (Object.hasOwn(adcpData, 'result') || Object.hasOwn(adcpData, 'error') || Object.hasOwn(adcpData, 'errors'));
+      const dataAdcpStatus =
+        adcpData && hasExplicitTaskEnvelope && isAdcpStatus(adcpData.status)
+          ? adcpData.status
+          : extractAdcpTaskStatusFromPayload(adcpData);
+      const metadataAdcpStatus = isAdcpStatus(artifactMetadata?.adcp_status) ? artifactMetadata.adcp_status : undefined;
+      if (metadataAdcpStatus !== undefined && dataAdcpStatus !== undefined && metadataAdcpStatus !== dataAdcpStatus) {
+        throw new WebhookDispatchError(
+          'webhook_envelope_invalid',
+          'Invalid A2A webhook envelope: artifact and structured AdCP work statuses do not match.'
+        );
+      }
+      // Native A2A artifact metadata is the transport-safe work observation.
+      // It must win over typed result payloads whose domain `status` can use
+      // the same literals (for example a completed cancellation result).
+      const legacyArtifactStatus = legacyA2AArtifactStatus(a2aPayload, artifactExtraction?.artifact);
+      const usesLegacyArtifactFallback =
+        allowLegacyA2AArtifactFallback &&
+        metadataAdcpStatus === undefined &&
+        dataAdcpStatus === undefined &&
+        legacyArtifactStatus !== undefined;
+      const adcpStatus =
+        metadataAdcpStatus ?? dataAdcpStatus ?? (usesLegacyArtifactFallback ? legacyArtifactStatus : undefined);
+      const isTerminalAdcpStatus =
+        adcpStatus !== undefined &&
+        DURABLE_SETTLEMENT_TERMINAL_STATUSES.has(adcpStatus as import('./ConversationTypes').TaskStatus);
+      const hasTerminalEnvelope =
+        adcpData !== undefined &&
+        (!isTerminalAdcpStatus ||
+          metadataAdcpStatus !== undefined ||
+          usesLegacyArtifactFallback ||
+          Object.hasOwn(adcpData, 'result') ||
+          Object.hasOwn(adcpData, 'error') ||
+          Object.hasOwn(adcpData, 'errors'));
+      if (!adcpData || !adcpStatus || !WEBHOOK_TASK_STATUSES.has(adcpStatus) || !hasTerminalEnvelope) {
+        throw new WebhookDispatchError(
+          'webhook_envelope_invalid',
+          'Invalid A2A webhook envelope: structured AdCP status data is required; transport Task state is not an AdCP work observation.'
+        );
+      }
+
+      const wrapped = { result: a2aPayload };
+      const artifactTaskId = responseParser.getTaskId({
+        task_id: artifactMetadata?.adcp_task_id ?? artifactMetadata?.serverTaskId,
+      });
+      const dataTaskId = responseParser.getTaskId({ task_id: adcpData.task_id });
+      if (artifactTaskId && dataTaskId && artifactTaskId !== dataTaskId) {
+        throw new WebhookDispatchError(
+          'webhook_envelope_invalid',
+          'Invalid A2A webhook envelope: artifact and structured AdCP work task IDs do not match.'
+        );
+      }
+      // Prefer seller-issued AdCP work identity. For synchronous native A2A
+      // callbacks there may be no separate work handle; the authenticated,
+      // buyer-issued callback route operation is then the trusted identity.
+      // A2A transport Task.id is deliberately never used.
+      const taskId = artifactTaskId ?? dataTaskId ?? (usesLegacyArtifactFallback ? operationId : undefined);
+      if (!taskId) {
+        throw new WebhookDispatchError(
+          'webhook_envelope_invalid',
+          'Invalid A2A webhook envelope: a structured AdCP work task_id is required; transport Task.id is not accepted.'
+        );
+      }
+
+      const declaredTaskType = typeof adcpData.task_type === 'string' ? adcpData.task_type : undefined;
+      if (declaredTaskType && taskType !== 'unknown' && declaredTaskType !== taskType) {
+        throw new WebhookDispatchError(
+          'webhook_envelope_invalid',
+          'Invalid A2A webhook envelope: structured task_type does not match the trusted route.'
+        );
+      }
+
+      const result = Object.hasOwn(adcpData, 'result')
+        ? (adcpData.result as AdCPAsyncResponseData | undefined)
+        : (adcpData as AdCPAsyncResponseData);
+      const textParts = Array.isArray(a2aPayload.status?.message?.parts)
+        ? a2aPayload.status.message.parts
+            .filter(part => part.kind === 'text' && 'text' in part)
+            .map(part => ('text' in part ? part.text : ''))
+        : [];
+
+      return {
+        operation_id: operationId,
+        context_id: responseParser.getContextId(wrapped),
+        task_id: taskId,
+        task_type: taskType !== 'unknown' ? taskType : (declaredTaskType ?? 'unknown'),
+        status: adcpStatus,
+        result,
+        message: textParts.length > 0 ? textParts.join(' ') : undefined,
+        timestamp: a2aPayload.status?.timestamp || new Date().toISOString(),
+        ...(typeof adcpData.idempotency_key === 'string' && { idempotency_key: adcpData.idempotency_key }),
+        protocol: 'a2a',
+      };
+    }
+
+    // 2. Check for MCP Webhook Payload (has task_id, status, task_type fields)
     if (isMcpWebhookCandidate(payload)) {
       const missing = missingMcpWebhookFields(payload);
       if (missing.length > 0) {
@@ -3208,7 +3523,7 @@ export class SingleAgentClient {
       }
       const mcpPayload = payload as unknown as MCPWebhookPayload;
       return {
-        operation_id: mcpPayload.operation_id || operationId || 'unknown',
+        operation_id: operationId && operationId !== 'unknown' ? operationId : mcpPayload.operation_id || 'unknown',
         context_id: mcpPayload.context_id ?? undefined,
         task_id: mcpPayload.task_id,
         task_type: taskType && taskType !== 'unknown' ? taskType : mcpPayload.task_type,
@@ -3218,67 +3533,6 @@ export class SingleAgentClient {
         timestamp: mcpPayload.timestamp,
         idempotency_key: mcpPayload.idempotency_key,
         protocol: 'mcp',
-      };
-    }
-
-    // 2. Check for A2A Task or TaskStatusUpdateEvent
-    if ('kind' in payload && (payload.kind === 'task' || payload.kind === 'status-update')) {
-      const a2aPayload = payload as unknown as A2ATask | TaskStatusUpdateEvent;
-      const a2aStatus = a2aPayload.status?.state || 'unknown';
-      let result: AdCPAsyncResponseData | undefined = undefined;
-
-      // Try to extract data from status.message.parts first (for status updates)
-      const parts = a2aPayload.status?.message?.parts;
-      if (parts && Array.isArray(parts)) {
-        const dataPart = parts.find(p => 'data' in p && p.kind === 'data');
-        if (dataPart && 'data' in dataPart) {
-          result = dataPart.data as AdCPAsyncResponseData;
-        }
-      }
-
-      // If not found in parts, check artifacts (standard A2A task output location)
-      if (!result && 'artifacts' in a2aPayload && a2aPayload.artifacts && a2aPayload.artifacts.length > 0) {
-        try {
-          // Try to unwrap artifacts for all statuses
-          result = unwrapProtocolResponse({ result: a2aPayload }, taskType, 'a2a') as AdCPAsyncResponseData;
-        } catch (error) {
-          throw new WebhookDispatchError(
-            'webhook_result_invalid',
-            'Failed to unwrap A2A webhook payload artifacts.',
-            error
-          );
-        }
-      }
-
-      // Extract message part from status.message.parts (A2A Message structure)
-      let message: string | undefined = undefined;
-      if (a2aPayload.status?.message?.parts) {
-        const textParts = a2aPayload.status.message.parts
-          .filter(p => p.kind === 'text' && 'text' in p)
-          .map(p => ('text' in p ? p.text : ''));
-        if (textParts.length > 0) {
-          message = textParts.join(' ');
-        }
-      }
-
-      // Get task_id ensuring it's a string
-      let taskId = 'unknown';
-      if ('id' in a2aPayload && a2aPayload.id) {
-        taskId = String(a2aPayload.id);
-      } else if ('taskId' in a2aPayload && a2aPayload.taskId) {
-        taskId = String(a2aPayload.taskId);
-      }
-
-      return {
-        operation_id: operationId,
-        context_id: 'contextId' in a2aPayload ? a2aPayload.contextId : undefined,
-        task_id: taskId,
-        task_type: taskType,
-        status: a2aStatus,
-        result,
-        message: message,
-        timestamp: a2aPayload.status?.timestamp || new Date().toISOString(),
-        protocol: 'a2a',
       };
     }
 
@@ -7364,6 +7618,7 @@ export class SingleAgentClient {
    */
   async getIdempotencyReplayTtlSeconds(): Promise<number | undefined> {
     const capabilities = await this.getCapabilities();
+    if (capabilities.idempotency?.supported === false) return undefined;
     if (capabilities.idempotency) {
       assertValidIdempotencyReplayTtlSeconds(capabilities.idempotency.replayTtlSeconds);
       return capabilities.idempotency.replayTtlSeconds;
@@ -7964,6 +8219,78 @@ function isBareDeliveryReport(payload: Record<string, unknown>): boolean {
   );
 }
 
+function latestA2AWebhookMessageData(parts: unknown): Record<string, unknown> | undefined {
+  if (!Array.isArray(parts)) return undefined;
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index];
+    if (!isObjectRecord(part) || part.kind !== 'data' || !isObjectRecord(part.data)) continue;
+    return part.data;
+  }
+  return undefined;
+}
+
+type SignedWebhookRoute = {
+  operationId?: string;
+  taskType?: string;
+  agentId?: string;
+};
+
+function extractSignedWebhookRoute(
+  payload: unknown
+): ({ ok: true } & SignedWebhookRoute) | { ok: false; message: string } {
+  if (!isObjectRecord(payload)) return { ok: true };
+  const records: Record<string, unknown>[] = [payload];
+  if (payload.kind === 'task' || payload.kind === 'status-update') {
+    records.length = 0;
+    const status = isObjectRecord(payload.status) ? payload.status : undefined;
+    const message = isObjectRecord(status?.message) ? status.message : undefined;
+    const messageData = latestA2AWebhookMessageData(message?.parts);
+    if (messageData) records.push(messageData);
+    if (payload.kind === 'task') {
+      const artifactData = getLatestA2ADataPartFromTask(payload as unknown as A2ATask)?.data;
+      if (artifactData) records.push(artifactData);
+    }
+  }
+
+  const oneValue = (field: 'operation_id' | 'task_type' | 'agent_id'): string | undefined | null => {
+    const values = new Set(
+      records
+        .map(record => record[field])
+        .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    );
+    return values.size > 1 ? null : values.values().next().value;
+  };
+  const operationId = oneValue('operation_id');
+  const taskType = oneValue('task_type');
+  const agentId = oneValue('agent_id');
+  if (operationId === null || taskType === null || agentId === null) {
+    return {
+      ok: false,
+      message: 'Authenticated webhook contains contradictory signed routing fields.',
+    };
+  }
+  return {
+    ok: true,
+    ...(operationId !== undefined && { operationId }),
+    ...(taskType !== undefined && { taskType }),
+    ...(agentId !== undefined && { agentId }),
+  };
+}
+
+function legacyA2AArtifactStatus(
+  payload: A2ATask | TaskStatusUpdateEvent,
+  artifact: unknown
+): NormalizedWebhookPayload['status'] | undefined {
+  if (payload.kind !== 'task' || !isObjectRecord(artifact) || typeof artifact.name !== 'string') return undefined;
+  const transportState = payload.status?.state;
+  if (artifact.name === 'result' && transportState === 'completed') return 'completed';
+  if (artifact.name !== 'error') return undefined;
+  if (transportState === 'failed' || transportState === 'rejected' || transportState === 'canceled') {
+    return transportState;
+  }
+  return undefined;
+}
+
 function isMcpWebhookCandidate(payload: Record<string, unknown>): boolean {
   return (
     MCP_WEBHOOK_REQUIRED_FIELDS.some(field => field in payload) ||
@@ -7987,6 +8314,7 @@ function webhookErrorHttpStatus(error: unknown): number {
     if (
       error.code === 'webhook_registration_store_unavailable' ||
       error.code === 'webhook_verification_unavailable' ||
+      error.code === 'webhook_publication_in_progress' ||
       error.code === 'webhook_signature_revocation_stale'
     ) {
       return 503;

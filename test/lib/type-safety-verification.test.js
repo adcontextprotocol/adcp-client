@@ -4,6 +4,26 @@
 const { test, describe, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert');
 
+function a2aPause(question, field, taskId) {
+  return {
+    result: {
+      kind: 'task',
+      id: taskId,
+      contextId: `${taskId}-context`,
+      status: {
+        state: 'input-required',
+        message: {
+          kind: 'message',
+          messageId: `${taskId}-question`,
+          role: 'agent',
+          parts: [{ kind: 'data', data: { question, field } }],
+        },
+      },
+      artifacts: [],
+    },
+  };
+}
+
 /**
  * Type Safety Test Strategy:
  * 1. Verify TaskResult<T> generic type contracts
@@ -261,7 +281,7 @@ describe(
         };
 
         ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'continue_task') {
+          if (Object.hasOwn(params, 'input')) {
             // Resume with typed result using `data` field to avoid A2A detection
             const approvalResult = {
               approved: params.input === 'APPROVED',
@@ -275,12 +295,7 @@ describe(
               data: approvalResult,
             };
           } else {
-            return {
-              status: 'input-required',
-              question: 'Do you approve this request?',
-              field: 'approval',
-              contextId: 'ctx-approval',
-            };
+            return a2aPause('Do you approve this request?', 'approval', 'approval-a2a-task');
           }
         });
 
@@ -289,7 +304,7 @@ describe(
           strictSchemaValidation: false,
         });
 
-        const result = await executor.executeTask(mockAgent, 'approvalTask', {}, mockHandler);
+        const result = await executor.executeTask({ ...mockAgent, protocol: 'a2a' }, 'approvalTask', {}, mockHandler);
 
         // Deferred is a valid intermediate state - success: true
         assert.strictEqual(result.success, true);
@@ -343,7 +358,7 @@ describe(
         };
 
         ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'continue_task') {
+          if (Object.hasOwn(params, 'input')) {
             // Verify complex input structure
             const input = params.input;
             assert.strictEqual(typeof input.name, 'string');
@@ -357,11 +372,7 @@ describe(
               data: { campaignId: 'camp-complex-123', created: true },
             };
           } else {
-            return {
-              status: 'input-required',
-              question: 'Provide campaign details',
-              field: 'campaign_config',
-            };
+            return a2aPause('Provide campaign details', 'campaign_config', 'campaign-a2a-task');
           }
         });
 
@@ -370,7 +381,12 @@ describe(
           strictSchemaValidation: false,
         });
 
-        const result = await executor.executeTask(mockAgent, 'complexCampaignTask', {}, mockHandler);
+        const result = await executor.executeTask(
+          { ...mockAgent, protocol: 'a2a' },
+          'complexCampaignTask',
+          {},
+          mockHandler
+        );
 
         // Deferred is a valid intermediate state - success: true
         assert.strictEqual(result.success, true);
@@ -435,9 +451,9 @@ describe(
 
             return {
               task: {
-                taskId: 'proc-task-456',
+                taskId: params.task_id,
                 status: 'completed',
-                taskType: 'dataProcessing',
+                taskType: 'dataProcessingTask',
                 createdAt: Date.now() - 60000,
                 updatedAt: Date.now(),
                 result: processingResult,
@@ -524,24 +540,24 @@ describe(
           },
         };
 
-        ProtocolClient.callTool = mock.fn(async (agent, taskName) => {
+        ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
           if (taskName === 'tasks/get' || taskName === 'tasks_get') {
             pollCount++;
             return {
               task:
                 pollCount >= 3
                   ? {
-                      taskId: 'analytics-task',
+                      taskId: params.task_id,
                       status: 'completed',
-                      taskType: 'analytics',
+                      taskType: 'analyticsTask',
                       createdAt: Date.now() - 180000,
                       updatedAt: Date.now(),
                       result: finalResult,
                     }
                   : {
-                      taskId: 'analytics-task',
+                      taskId: params.task_id,
                       status: 'working',
-                      taskType: 'analytics',
+                      taskType: 'analyticsTask',
                       createdAt: Date.now() - 180000,
                       updatedAt: Date.now(),
                     },
@@ -609,7 +625,7 @@ describe(
         });
 
         ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'continue_task') {
+          if (Object.hasOwn(params, 'input')) {
             const allocation = params.input;
             assert.strictEqual(typeof allocation.totalBudget, 'number');
             assert.strictEqual(typeof allocation.channels.search, 'number');
@@ -620,16 +636,17 @@ describe(
               data: { allocated: true, budget: allocation.totalBudget },
             };
           } else {
-            return {
-              status: 'input-required',
-              question: 'How should we allocate the budget?',
-              field: 'budget_allocation',
-            };
+            return a2aPause('How should we allocate the budget?', 'budget_allocation', 'budget-allocation-a2a-task');
           }
         });
 
         const executor = new TaskExecutor({ strictSchemaValidation: false });
-        const result = await executor.executeTask(mockAgent, 'budgetAllocationTask', {}, typedHandler);
+        const result = await executor.executeTask(
+          { ...mockAgent, protocol: 'a2a' },
+          'budgetAllocationTask',
+          {},
+          typedHandler
+        );
 
         assert.strictEqual(result.success, true);
         // allocated and budget are accessible either directly or nested under data.data
@@ -654,7 +671,7 @@ describe(
           const variantHandler = mock.fn(async () => variant.value);
 
           ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-            if (taskName === 'continue_task') {
+            if (Object.hasOwn(params, 'input')) {
               const receivedType =
                 params.input === null
                   ? 'null'
@@ -673,16 +690,17 @@ describe(
                 },
               };
             } else {
-              return {
-                status: 'input-required',
-                question: `Provide ${variant.type} response`,
-                field: 'variant_test',
-              };
+              return a2aPause(`Provide ${variant.type} response`, 'variant_test', `variant-${variant.type}-a2a-task`);
             }
           });
 
           const executor = new TaskExecutor({ strictSchemaValidation: false });
-          const result = await executor.executeTask(mockAgent, `variantTask_${variant.type}`, {}, variantHandler);
+          const result = await executor.executeTask(
+            { ...mockAgent, protocol: 'a2a' },
+            `variantTask_${variant.type}`,
+            {},
+            variantHandler
+          );
 
           assert.strictEqual(result.success, true);
           // Fields are accessible either directly or nested under data.data

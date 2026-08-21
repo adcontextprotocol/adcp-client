@@ -17,6 +17,7 @@ test('public barrels expose canonical format and payload helper types', () => {
 import {
   CanonicalFormat,
   FormatAsset,
+  IdempotencyClaimOwnershipError,
   createLazyBackend,
   ensureGetProductsCacheScope,
   getFormatAssets,
@@ -38,6 +39,7 @@ import type {
   LegacyListCreativeFormatsPayload,
   SyncCreativesPayload as ServerSyncCreativesPayload,
 } from '@adcp/sdk/server';
+import { IdempotencyClaimOwnershipError as ServerIdempotencyClaimOwnershipError } from '@adcp/sdk/server';
 import {
   createCanonicalReferenceResolver,
   type CanonicalRef,
@@ -88,10 +90,16 @@ const acceptsListPayload = (_payload: LegacyListCreativeFormatsPayload) => {};
 acceptsListPayload({ formats: [] });
 
 const authErrors = [new AuthMissingError(), new AuthInvalidError(), new AuthRequiredError()];
+const idempotencyErrors = [
+  new IdempotencyClaimOwnershipError('save'),
+  new ServerIdempotencyClaimOwnershipError('release'),
+];
 
 const lazyBackendFactory: LazyBackendFactory = async () => ({
   async get() { return null; },
   async putIfAbsent() { return true; },
+  async replaceIfPayloadHash() { return true; },
+  async deleteIfPayloadHash() { return true; },
   async put() {},
   async delete() {},
 });

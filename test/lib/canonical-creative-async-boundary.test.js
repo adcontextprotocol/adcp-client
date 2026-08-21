@@ -726,17 +726,42 @@ describe('canonical creative asynchronous boundaries', () => {
       has: async key => stored.has(key),
     };
     let continuing = false;
+    const pauseAgent = {
+      ...agentConfig,
+      agent_uri: 'https://seller.example/a2a',
+      protocol: 'a2a',
+    };
     try {
-      ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
-        if (taskName === 'continue_task') {
+      ProtocolClient.callTool = mock.fn(async (_agent, _taskName, params, options) => {
+        if (Object.hasOwn(params, 'input')) {
           continuing = true;
+          assert.deepEqual(options.session, {
+            contextId: 'deferred-context',
+            taskId: 'a2a-deferred-task',
+          });
           return { status: 'completed', data: { media_buy_id: 'mb-deferred', packages: [] } };
         }
         return {
-          status: 'input-required',
-          question: 'Approve this media buy?',
-          field: 'approval',
-          contextId: 'deferred-context',
+          result: {
+            kind: 'task',
+            id: 'a2a-deferred-task',
+            contextId: 'deferred-context',
+            status: {
+              state: 'input-required',
+              message: {
+                kind: 'message',
+                messageId: 'deferred-clarification',
+                role: 'agent',
+                parts: [
+                  {
+                    kind: 'data',
+                    data: { question: 'Approve this media buy?', field: 'approval' },
+                  },
+                ],
+              },
+            },
+            artifacts: [],
+          },
         };
       });
       const executor = new TaskExecutor({
@@ -747,7 +772,7 @@ describe('canonical creative asynchronous boundaries', () => {
         creatives: [{ assets: { hero: { data: `deferred-inline-${'x'.repeat(128 * 1024)}` } } }],
         reporting_webhook: { authentication: { credentials: 'deferred-webhook-secret' } },
       };
-      const deferred = await executor.executeTask(agentConfig, 'create_media_buy', request, async () => ({
+      const deferred = await executor.executeTask(pauseAgent, 'create_media_buy', request, async () => ({
         defer: true,
         token: 'deferred-token',
       }));
@@ -779,7 +804,7 @@ describe('canonical creative asynchronous boundaries', () => {
         validation: { requests: 'off', responses: 'off' },
       });
       const rejectingDeferred = await rejectingExecutor.executeTask(
-        agentConfig,
+        pauseAgent,
         'create_media_buy',
         request,
         async () => ({ defer: true, token: 'rejecting-deferred-token' })

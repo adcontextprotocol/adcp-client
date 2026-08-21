@@ -426,6 +426,7 @@ export {
   redisBackend,
   createLazyBackend,
   hashPayload,
+  IdempotencyClaimOwnershipError,
 } from './idempotency';
 export type {
   IdempotencyStore,

@@ -160,7 +160,7 @@ if (!result.success) {
 }
 ```
 
-For exhaustive handling across all seven statuses, prefer the `match()` dispatcher (fluent method on every result returned from the SDK, or free function import):
+For exhaustive handling across all eight statuses, prefer the `match()` dispatcher (fluent method on every result returned from the SDK, or free function import):
 
 ```typescript
 const label = result.match!({
@@ -170,6 +170,7 @@ const label = result.match!({
   'governance-denied': r => `Denied: ${r.adcpError?.code ?? r.error}`,
   working: r => `Running: ${r.metadata.taskId}`,
   'input-required': r => `Needs input: ${r.metadata.inputRequest?.question}`,
+  'auth-required': r => `Needs authorization: ${r.metadata.taskId}`,
   deferred: r => `Deferred: ${r.deferred?.token}`,
 });
 // Optional `_` catchall makes every arm optional:
@@ -1820,7 +1821,8 @@ See docs/TYPE-SUMMARY.md for field-level detail. Key types at a glance:
 Every tool call returns a `TaskResult` with one of these statuses:
 
 - `completed` — Success. Data in `result.data`.
-- `input-required` — Agent needs clarification. Use `InputHandler` or `result.deferred.resume(answer)`.
+- `input-required` — Agent needs clarification. On A2A, when the seller returns a task ID, an `InputHandler` can continue the exchange and a handler-less call exposes `result.deferred.resume(answer)` for that exact task. A2A without a task ID and all MCP pauses return without invoking an input handler or attaching a resume closure; use an application/protocol-specific recovery path.
+- `auth-required` — Agent requires refreshed authorization. Resume only when the returned A2A pause carries an exact-task continuation; otherwise use an application/protocol-specific recovery path.
 - `submitted` — Long-running. Poll via `result.submitted.waitForCompletion()` or use webhooks.
 - `working` — In progress (intermediate, usually not seen by callers).
 - `deferred` — Requires human decision. Token in `result.deferred.token`.

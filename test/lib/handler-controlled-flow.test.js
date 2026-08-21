@@ -4,6 +4,32 @@
 const { test, describe, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert');
 
+function a2aPause(
+  question,
+  field,
+  contextId = 'handler-test-context',
+  taskId = 'handler-test-task',
+  state = 'input-required'
+) {
+  return {
+    result: {
+      kind: 'task',
+      id: taskId,
+      contextId,
+      status: {
+        state,
+        message: {
+          kind: 'message',
+          messageId: `${taskId}-${field}`,
+          role: 'agent',
+          parts: [{ kind: 'data', data: { question, field } }],
+        },
+      },
+      artifacts: [],
+    },
+  };
+}
+
 /**
  * Handler Integration Test Strategy:
  * 1. Test built-in handlers (autoApprove, deferAll, createFieldHandler)
@@ -50,7 +76,7 @@ describe(
         id: 'handler-test-agent',
         name: 'Handler Test Agent',
         agent_uri: 'https://handler.test.com',
-        protocol: 'mcp',
+        protocol: 'a2a',
       };
     });
 
@@ -63,16 +89,12 @@ describe(
     describe('Built-in Handler Integration', () => {
       test('should use autoApproveHandler for automatic approval', async () => {
         ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'continue_task') {
+          if (Object.hasOwn(params, 'input')) {
             // autoApproveHandler returns `true` for all input requests
             assert.strictEqual(params.input, true);
             return { status: 'completed', result: { approved: true } };
           } else {
-            return {
-              status: 'input-required',
-              question: 'Do you approve this action?',
-              field: 'approval',
-            };
+            return a2aPause('Do you approve this action?', 'approval');
           }
         });
 
@@ -92,11 +114,7 @@ describe(
           delete: mock.fn(async key => mockStorage.delete(key)),
         };
 
-        ProtocolClient.callTool = mock.fn(async () => ({
-          status: 'input-required',
-          question: 'This should be deferred',
-          field: 'defer_me',
-        }));
+        ProtocolClient.callTool = mock.fn(async () => a2aPause('This should be deferred', 'defer_me'));
 
         // Disable schema validation for handler testing
         const executor = new TaskExecutor({
@@ -128,7 +146,7 @@ describe(
         const expectedInputs = ['budget', 'targeting', 'approval'];
 
         ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'continue_task') {
+          if (Object.hasOwn(params, 'input')) {
             // stepIndex was incremented after initial call, so stepIndex-1 gives us the field
             // that the handler just responded to
             const expectedField = expectedInputs[stepIndex - 1];
@@ -138,11 +156,7 @@ describe(
 
             if (stepIndex <= expectedInputs.length) {
               // Still need more input
-              return {
-                status: 'input-required',
-                question: `What about ${expectedInputs[stepIndex - 1]}?`,
-                field: expectedInputs[stepIndex - 1],
-              };
+              return a2aPause(`What about ${expectedInputs[stepIndex - 1]}?`, expectedInputs[stepIndex - 1]);
             } else {
               // All inputs provided
               return {
@@ -157,11 +171,7 @@ describe(
           } else {
             // Initial call - needs first input
             stepIndex = 1;
-            return {
-              status: 'input-required',
-              question: `What is the ${expectedInputs[0]}?`,
-              field: expectedInputs[0],
-            };
+            return a2aPause(`What is the ${expectedInputs[0]}?`, expectedInputs[0]);
           }
         });
 
@@ -182,24 +192,16 @@ describe(
         const fieldHandler = createFieldHandler(partialFieldValues);
 
         ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'continue_task') {
+          if (Object.hasOwn(params, 'input')) {
             if (params.input === 50000) {
               // Budget was provided, now ask for approval (not in field values)
-              return {
-                status: 'input-required',
-                question: 'Do you approve?',
-                field: 'approval',
-              };
+              return a2aPause('Do you approve?', 'approval');
             } else {
               // This should not happen with field handler - missing field should cause error
               throw new Error('Field handler should not provide value for missing field');
             }
           } else {
-            return {
-              status: 'input-required',
-              question: 'What is your budget?',
-              field: 'budget',
-            };
+            return a2aPause('What is your budget?', 'budget');
           }
         });
 
@@ -244,16 +246,12 @@ describe(
 
         let stepCount = 0;
         ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'continue_task') {
+          if (Object.hasOwn(params, 'input')) {
             stepCount++;
             if (stepCount === 1) {
               // After budget, ask for approval
               assert.strictEqual(params.input, 100000);
-              return {
-                status: 'input-required',
-                question: 'Do you approve?',
-                field: 'approval',
-              };
+              return a2aPause('Do you approve?', 'approval');
             } else {
               // After approval, complete
               assert.strictEqual(params.input, 'APPROVED');
@@ -263,11 +261,7 @@ describe(
               };
             }
           } else {
-            return {
-              status: 'input-required',
-              question: 'What is your budget?',
-              field: 'budget',
-            };
+            return a2aPause('What is your budget?', 'budget');
           }
         });
 
@@ -295,15 +289,11 @@ describe(
         );
 
         ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'continue_task') {
+          if (Object.hasOwn(params, 'input')) {
             assert.strictEqual(params.input, 'default-response');
             return { status: 'completed', result: { handled: 'default' } };
           } else {
-            return {
-              status: 'input-required',
-              question: 'Unknown field?',
-              field: 'unknown_field',
-            };
+            return a2aPause('Unknown field?', 'unknown_field');
           }
         });
 
@@ -323,7 +313,7 @@ describe(
           // Test all context properties
           assert.strictEqual(typeof context.taskId, 'string');
           assert.strictEqual(context.agent.id, 'handler-test-agent');
-          assert.strictEqual(context.agent.protocol, 'mcp');
+          assert.strictEqual(context.agent.protocol, 'a2a');
           assert.strictEqual(context.attempt, 1);
           assert.strictEqual(context.maxAttempts, 3);
 
@@ -351,16 +341,11 @@ describe(
         });
 
         ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'continue_task') {
+          if (Object.hasOwn(params, 'input')) {
             assert.strictEqual(params.input, 'context-verified');
             return { status: 'completed', result: { context: 'verified' } };
           } else {
-            return {
-              status: 'input-required',
-              question: 'Test question with context?',
-              field: 'context_test',
-              contextId: 'ctx-context-test',
-            };
+            return a2aPause('Test question with context?', 'context_test', 'ctx-context-test');
           }
         });
 
@@ -403,15 +388,11 @@ describe(
 
         let stepCount = 0;
         ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'continue_task') {
+          if (Object.hasOwn(params, 'input')) {
             stepCount++;
             if (stepCount === 1) {
               // After budget, ask for approval
-              return {
-                status: 'input-required',
-                question: 'Do you approve?',
-                field: 'approval',
-              };
+              return a2aPause('Do you approve?', 'approval');
             } else {
               // Complete after approval
               return {
@@ -420,11 +401,7 @@ describe(
               };
             }
           } else {
-            return {
-              status: 'input-required',
-              question: 'What is your budget?',
-              field: 'budget',
-            };
+            return a2aPause('What is your budget?', 'budget');
           }
         });
 
@@ -435,6 +412,26 @@ describe(
         assert.strictEqual(result.success, true);
         assert.strictEqual(historyTestHandler.mock.callCount(), 2);
       });
+
+      test('tracks canonical auth-required fields in conversation helpers', async () => {
+        const handler = mock.fn(async context => {
+          assert.strictEqual(context.inputRequest.field, 'authorization');
+          assert.strictEqual(context.wasFieldDiscussed('authorization'), true);
+          return { refreshed: true };
+        });
+        let calls = 0;
+        ProtocolClient.callTool = mock.fn(async () => {
+          calls += 1;
+          return calls === 1
+            ? a2aPause('Refresh seller credentials', 'authorization', 'auth-context', 'auth-task', 'auth-required')
+            : { status: 'completed', result: { authenticated: true } };
+        });
+
+        const executor = new TaskExecutor({ strictSchemaValidation: false });
+        const result = await executor.executeTask(mockAgent, 'authTask', {}, handler);
+        assert.strictEqual(result.status, 'completed');
+        assert.strictEqual(handler.mock.callCount(), 1);
+      });
     });
 
     describe('Handler Error Scenarios', () => {
@@ -443,11 +440,7 @@ describe(
           throw new Error('Handler processing failed');
         });
 
-        ProtocolClient.callTool = mock.fn(async () => ({
-          status: 'input-required',
-          question: 'This will cause handler error',
-          field: 'error_field',
-        }));
+        ProtocolClient.callTool = mock.fn(async () => a2aPause('This will cause handler error', 'error_field'));
 
         // Disable schema validation for handler testing
         const executor = new TaskExecutor({ strictSchemaValidation: false });
@@ -464,16 +457,12 @@ describe(
         });
 
         ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'continue_task') {
+          if (Object.hasOwn(params, 'input')) {
             // Should receive undefined as input
             assert.strictEqual(params.input, undefined);
             return { status: 'completed', result: { handled: 'undefined' } };
           } else {
-            return {
-              status: 'input-required',
-              question: 'Handler will return undefined',
-              field: 'invalid_field',
-            };
+            return a2aPause('Handler will return undefined', 'invalid_field');
           }
         });
 
@@ -496,15 +485,11 @@ describe(
         });
 
         ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'continue_task') {
+          if (Object.hasOwn(params, 'input')) {
             assert.strictEqual(params.input, 'async-result-for-async_field');
             return { status: 'completed', result: { async: true } };
           } else {
-            return {
-              status: 'input-required',
-              question: 'Async handler test?',
-              field: 'async_field',
-            };
+            return a2aPause('Async handler test?', 'async_field');
           }
         });
 
@@ -546,16 +531,12 @@ describe(
         let currentStep = 0;
 
         ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'continue_task') {
+          if (Object.hasOwn(params, 'input')) {
             currentStep++;
             if (currentStep < workflowSteps.length) {
               // Continue to next step
               const nextStep = workflowSteps[currentStep];
-              return {
-                status: 'input-required',
-                question: nextStep.question,
-                field: nextStep.field,
-              };
+              return a2aPause(nextStep.question, nextStep.field);
             } else {
               // Complete workflow
               return {
@@ -570,11 +551,7 @@ describe(
           } else {
             // Start workflow
             const firstStep = workflowSteps[0];
-            return {
-              status: 'input-required',
-              question: firstStep.question,
-              field: firstStep.field,
-            };
+            return a2aPause(firstStep.question, firstStep.field);
           }
         });
 
@@ -607,21 +584,13 @@ describe(
         });
 
         ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'continue_task') {
+          if (Object.hasOwn(params, 'input')) {
             if (params.input === 250000) {
               // High budget, needs manager approval
-              return {
-                status: 'input-required',
-                question: 'Budget over $200k requires manager approval',
-                field: 'manager_approval',
-              };
+              return a2aPause('Budget over $200k requires manager approval', 'manager_approval');
             } else if (params.input === 'ESCALATE_TO_DIRECTOR') {
               // Escalated, needs director approval
-              return {
-                status: 'input-required',
-                question: 'Manager escalated to director approval',
-                field: 'manager_approval',
-              };
+              return a2aPause('Manager escalated to director approval', 'manager_approval');
             } else if (params.input === 'APPROVED_BY_DIRECTOR') {
               // Final approval received
               return {
@@ -634,11 +603,7 @@ describe(
               };
             }
           } else {
-            return {
-              status: 'input-required',
-              question: 'What is your campaign budget?',
-              field: 'budget',
-            };
+            return a2aPause('What is your campaign budget?', 'budget');
           }
         });
 

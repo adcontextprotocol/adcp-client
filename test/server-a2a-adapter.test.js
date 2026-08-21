@@ -394,7 +394,7 @@ describe('createA2AAdapter', () => {
       assert.strictEqual(res.status, 200);
       assert.ok(res.body.result, 'JSON-RPC success result');
       assert.strictEqual(res.body.result.kind, 'task');
-      assert.strictEqual(res.body.result.status.state, 'completed');
+      assert.strictEqual(res.body.result.status.state, 'completed', JSON.stringify(res.body));
       const artifacts = res.body.result.artifacts ?? [];
       assert.strictEqual(artifacts.length, 1);
       const dataPart = artifacts[0].parts.find(p => p.kind === 'data');
@@ -442,6 +442,52 @@ describe('createA2AAdapter', () => {
       // is the AdCP tool's typed response and needs to validate cleanly.
       assert.strictEqual(dataPart.data.adcp_task_id, undefined, 'transport metadata stays out of AdCP payload');
     });
+
+    for (const pauseStatus of ['input-required', 'auth-required']) {
+      it(`${pauseStatus} AdCP arm is terminal and explicitly nonresumable in the v0 server adapter`, async () => {
+        let calls = 0;
+        const adcp = createAdcpServer({
+          mediaBuy: {
+            createMediaBuy: async () => {
+              calls += 1;
+              return {
+                status: pauseStatus,
+                message: `Seller returned ${pauseStatus}`,
+                field: 'approval',
+              };
+            },
+          },
+        });
+        const app = mountAdapter(createA2AAdapter({ server: adcp, agentCard: baseCard() }));
+        const res = await postJsonRpc(
+          app,
+          messageSend(
+            dataPartMessage('create_media_buy', {
+              account: { account_id: 'a1' },
+              brand: { brand_id: 'b1' },
+              start_time: '2026-01-01T00:00:00Z',
+              end_time: '2026-02-01T00:00:00Z',
+            })
+          )
+        );
+        assert.strictEqual(res.body.result.status.state, 'completed', JSON.stringify(res.body));
+        assert.match(res.body.result.id, /^[A-Za-z0-9-]+$/);
+        assert.strictEqual(res.body.result.artifacts[0].parts[0].data.status, pauseStatus);
+        assert.strictEqual(res.body.result.artifacts[0].parts[0].data.field, 'approval');
+
+        const taskId = res.body.result.id;
+        const persisted = await postJsonRpc(app, taskGet(taskId));
+        assert.strictEqual(persisted.body.result.status.state, 'completed');
+
+        const continuation = dataPartMessage('create_media_buy', { input: 'approved' });
+        continuation.taskId = taskId;
+        continuation.contextId = res.body.result.contextId;
+        const resumed = await postJsonRpc(app, messageSend(continuation));
+        assert.ok(resumed.body.error, 'the official A2A handler rejects continuation of a terminal task');
+        assert.match(resumed.body.error.message, /terminal state|cannot be modified/i);
+        assert.strictEqual(calls, 1, 'continuation must not re-enter the mutation handler');
+      });
+    }
 
     it('Error arm → Task.state=failed with errors[] preserved on artifact', async () => {
       const adcp = createAdcpServer({

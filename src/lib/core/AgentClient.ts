@@ -28,7 +28,11 @@ import {
   type WebhookParseResult,
 } from './SingleAgentClient';
 import type { InputHandler, TaskOptions, TaskResult, TaskInfo, Message } from './ConversationTypes';
-import type { BeforeProtocolDispatchHook } from './TaskExecutor';
+import type {
+  BeforeProtocolDispatchHook,
+  ExternalTaskSettlementObservation,
+  ExternalTaskStatusResult,
+} from './TaskExecutor';
 import { assertNativeRequestProposalsTask, guardNativeRequestProposalsCompletion } from './request-proposals-guard';
 import type { AdcpCapabilities } from '../utils/capabilities';
 import type { WebhookHeaderValue } from '../webhooks';
@@ -374,6 +378,7 @@ export class AgentClient {
   private client: SingleAgentClient;
   private currentContextId?: string;
   private pendingTask?: PendingTaskHandle;
+  private readonly sessionTrackedDeferredContinuations = new WeakSet<object>();
   private readonly _isInProcess: boolean;
 
   constructor(
@@ -411,7 +416,30 @@ export class AgentClient {
     transport?: import('../protocols').TransportOptions,
     signal?: AbortSignal
   ): Promise<TaskInfo> {
-    return this.executor.getTaskStatus(this.agent, taskId, transport, signal) as Promise<TaskInfo>;
+    return this.client.getTaskStatus(taskId, transport, signal);
+  }
+
+  /** Register restart/replica callback recovery for a compatibility coordinator. @internal */
+  registerDurableSettlementRecovery(
+    recoverer: (
+      operationId: string,
+      observation: ExternalTaskSettlementObservation
+    ) => Promise<ExternalTaskStatusResult | undefined>
+  ): () => void {
+    return this.client.registerDurableSettlementRecovery(recoverer);
+  }
+
+  /** Publish a callback only after a compatibility store has durably bound and settled it. @internal */
+  publishDurablySettledWebhook(args: {
+    operationId: string;
+    serverTaskId: string;
+    taskType: string;
+    status: import('./ConversationTypes').TaskStatus;
+    result?: unknown;
+    error?: string;
+    idempotencyKey?: string;
+  }): Promise<void> {
+    return this.client.publishDurablySettledWebhook(args);
   }
 
   /**
@@ -516,7 +544,7 @@ export class AgentClient {
    * the next call starts a fresh server-side task.
    *
    * The `deferred` case is deliberately asymmetric: deferred results don't
-   * surface a new `serverTaskId` on metadata (the caller holds a resume
+   * surface a new `a2aTaskId` on metadata (the caller holds a resume
    * token, not a task-id), so the partial-metadata guard preserves the
    * pre-defer handle — which is exactly what a later resume needs.
    */
@@ -526,22 +554,40 @@ export class AgentClient {
       this.currentContextId = meta.contextId;
     }
     if (NON_TERMINAL_STATES.has(meta?.status as string)) {
-      if (meta?.serverTaskId && meta?.contextId && meta?.taskName) {
+      if (meta?.a2aTaskId && meta?.contextId && meta?.taskName) {
         this.pendingTask = {
-          taskId: meta.serverTaskId,
+          taskId: meta.a2aTaskId,
           contextId: meta.contextId,
           taskName: meta.taskName,
         };
+      } else if (meta?.status !== 'deferred') {
+        // A completed A2A transport Task may carry an AdCP artifact whose
+        // application status is still submitted/working. No live a2aTaskId
+        // means the previously retained transport task is no longer safe to
+        // address. Only a local deferred token intentionally preserves it.
+        this.pendingTask = undefined;
       }
       // Partial metadata preserves the pre-existing handle. Two distinct
-      // cases land here: (1) the deferred resume-token path, where the
-      // server intentionally omits a new `serverTaskId`; (2) a non-spec
-      // A2A Task that lacks `contextId` or surfaces no `taskName` — by
-      // design those are NOT retained as a fresh handle, since auto-
-      // threading a partially-keyed taskId into a future call is exactly
-      // the leak class #1590 narrows.
+      // The deferred resume-token path intentionally preserves its existing
+      // handle. Other partial/non-spec A2A metadata clears the old handle,
+      // since auto-threading a partially-keyed taskId into a future call is
+      // exactly the leak class #1590 narrows.
     } else {
       this.pendingTask = undefined;
+    }
+
+    const deferred = result.deferred;
+    if (deferred && !this.sessionTrackedDeferredContinuations.has(deferred)) {
+      const tracked = {
+        ...deferred,
+        resume: async (input: unknown) => {
+          const resumed = await deferred.resume(input);
+          this.retainSession(resumed);
+          return resumed;
+        },
+      };
+      this.sessionTrackedDeferredContinuations.add(tracked);
+      result.deferred = tracked;
     }
   }
 
@@ -1619,13 +1665,15 @@ export class AgentClient {
   }
 
   /**
-   * Get the pending server-side `taskId` from the last non-terminal
-   * response, if any. Populated when the server returned
-   * `input-required` / `working` / `submitted` / `auth-required`;
-   * cleared when the task reaches a terminal state.
+   * Get the live A2A transport `Task.id` from the last resumable
+   * non-terminal response, if any. This is the identifier eligible for
+   * `Message.taskId` threading; it is not the AdCP work handle used by
+   * `tasks/get` (see `TaskResult.metadata.serverTaskId`). Cleared when the
+   * A2A task reaches a terminal state.
    *
-   * Persist this alongside `getContextId()` if you need to resume a
-   * specific task (not just a conversation) across a process restart.
+   * Process-restart rehydration intentionally accepts only a context ID via
+   * `resetContext(id)`: a previously live transport task may be stale after
+   * restart and is not restored automatically.
    */
   getPendingTaskId(): string | undefined {
     return this.pendingTask?.taskId;

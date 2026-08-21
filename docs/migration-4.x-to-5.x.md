@@ -797,7 +797,7 @@ silently fell back to new-session-every-call.
 
 ```typescript
 client.getContextId();          // read retained contextId
-client.getPendingTaskId();      // read pending server taskId (HITL resume)
+client.getPendingTaskId();      // read live A2A transport Task.id (HITL resume only)
 client.resetContext();          // wipe session state
 client.resetContext(id);        // rehydrate persisted contextId across process restart
 ```

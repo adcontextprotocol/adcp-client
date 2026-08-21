@@ -45,6 +45,14 @@ export function createLazyBackend(factory: LazyBackendFactory, options: LazyBack
           if (!resolved || typeof resolved !== 'object') {
             throw new Error('createLazyBackend: factory must resolve to an IdempotencyBackend.');
           }
+          if (
+            typeof resolved.replaceIfPayloadHash !== 'function' ||
+            typeof resolved.deleteIfPayloadHash !== 'function'
+          ) {
+            throw new Error(
+              'createLazyBackend: resolved backend must support atomic replaceIfPayloadHash and deleteIfPayloadHash fencing.'
+            );
+          }
           backend = resolved;
           return resolved;
         })
@@ -63,6 +71,26 @@ export function createLazyBackend(factory: LazyBackendFactory, options: LazyBack
 
     async putIfAbsent(scopedKey: string, entry: IdempotencyCacheEntry): Promise<boolean> {
       return (await resolveBackend()).putIfAbsent(scopedKey, entry);
+    },
+
+    async replaceIfPayloadHash(
+      scopedKey: string,
+      expectedPayloadHash: string,
+      entry: IdempotencyCacheEntry
+    ): Promise<boolean> {
+      const resolved = await resolveBackend();
+      if (!resolved.replaceIfPayloadHash) {
+        throw new Error('createLazyBackend: resolved backend does not support atomic payload-hash replacement.');
+      }
+      return resolved.replaceIfPayloadHash(scopedKey, expectedPayloadHash, entry);
+    },
+
+    async deleteIfPayloadHash(scopedKey: string, expectedPayloadHash: string): Promise<boolean> {
+      const resolved = await resolveBackend();
+      if (!resolved.deleteIfPayloadHash) {
+        throw new Error('createLazyBackend: resolved backend does not support atomic payload-hash deletion.');
+      }
+      return resolved.deleteIfPayloadHash(scopedKey, expectedPayloadHash);
     },
 
     async put(scopedKey: string, entry: IdempotencyCacheEntry): Promise<void> {

@@ -478,4 +478,83 @@ describe('canonical previewCreative clients', () => {
 
     assert.deepStrictEqual(received, ['legacy', 'legacy']);
   });
+
+  test('recordless HMAC binds operation_id to the trusted route', async () => {
+    const unavailableStore = {
+      async get() {
+        throw new Error('store unavailable');
+      },
+      async putIfAbsent() {
+        throw new Error('store unavailable');
+      },
+    };
+    const client = runtimeClient(async () => completed(), {
+      webhookSecret: WEBHOOK_SECRET,
+      webhookRegistrationStore: unavailableStore,
+    });
+    const payload = {
+      idempotency_key: 'recordless-route-binding-event',
+      operation_id: 'different-known-operation',
+      task_id: 'recordless-preview-task',
+      task_type: 'preview_creative',
+      status: 'completed',
+      timestamp: new Date().toISOString(),
+      result: { response_type: 'single', previews: [] },
+    };
+    const auth = signedWebhook(payload);
+    const parsed = await client.verifyAndParseWebhook({
+      taskType: 'preview_creative',
+      operationId: 'trusted-route-operation',
+      signature: auth.signature,
+      timestamp: auth.timestamp,
+      rawBody: auth.rawBody,
+    });
+
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.code, 'webhook_registration_mismatch');
+    assert.match(parsed.message, /trusted callback route/);
+
+    for (const operationId of [undefined, 'unknown']) {
+      const missingRoute = await client.verifyAndParseWebhook({
+        taskType: 'preview_creative',
+        ...(operationId !== undefined && { operationId }),
+        signature: auth.signature,
+        timestamp: auth.timestamp,
+        rawBody: auth.rawBody,
+      });
+      assert.equal(missingRoute.ok, false);
+      assert.equal(missingRoute.code, 'webhook_verification_context_missing');
+    }
+  });
+
+  test('HMAC registration failures block mutations but preserve allowlisted reads', async () => {
+    const unavailableStore = {
+      async get() {
+        throw new Error('store unavailable');
+      },
+      async putIfAbsent() {
+        throw new Error('store unavailable');
+      },
+    };
+    const client = runtimeClient(async () => completed(), {
+      webhookSecret: WEBHOOK_SECRET,
+      webhookRegistrationStore: unavailableStore,
+    });
+    const registration = taskType =>
+      client.persistWebhookRegistration({
+        agent: TEST_AGENT,
+        taskType,
+        operationId: `registration-${taskType}`,
+        callbackUrl: 'https://buyer.example/webhook',
+        mode: 'hmac-sha256',
+      });
+
+    await registration('preview_creative');
+    await assert.rejects(registration('create_media_buy'), error => {
+      assert.match(error.message, /Could not persist trusted webhook registration/);
+      assert.doesNotMatch(error.message, /store unavailable/);
+      assert.match(error.cause.message, /store unavailable/);
+      return true;
+    });
+  });
 });

@@ -142,14 +142,22 @@ export interface CreativeCapabilities {
  * on a v3 server rather than silently defaulting to 24h. A seller without the
  * declaration is non-compliant and unsafe for retry-sensitive operations.
  */
-export interface IdempotencyCapabilities {
-  /**
-   * Seconds the seller retains cached `(principal, idempotency_key, payload)`
-   * tuples. BYOK callers compare their persisted key's age against this to
-   * decide whether a fresh key + natural-key lookup is safer than reusing.
-   */
-  replayTtlSeconds: number;
-}
+export type IdempotencyCapabilities =
+  | {
+      /** Explicit wire discriminator. Optional only for legacy normalized fixtures. */
+      supported?: true;
+      /**
+       * Seconds the seller retains cached `(principal, idempotency_key, payload)`
+       * tuples. BYOK callers compare their persisted key's age against this to
+       * decide whether a fresh key + natural-key lookup is safer than reusing.
+       */
+      replayTtlSeconds: number;
+    }
+  | {
+      /** Seller explicitly declares that replay protection is unavailable. */
+      supported: false;
+      replayTtlSeconds?: never;
+    };
 
 /**
  * Normalized capabilities response that works for both v2 and v3 servers
@@ -685,12 +693,14 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
     const rawTtl = rawIdempotency.replay_ttl_seconds;
     if (rawIdempotency.supported) {
       assertValidIdempotencyReplayTtlSeconds(rawTtl);
-      idempotency = { replayTtlSeconds: rawTtl };
+      idempotency = { supported: true, replayTtlSeconds: rawTtl };
     } else if (rawTtl !== undefined) {
       throw new ConfigurationError(
         'adcp.idempotency.replay_ttl_seconds must be absent when replay protection is unsupported.',
         'adcp.idempotency.replay_ttl_seconds'
       );
+    } else {
+      idempotency = { supported: false };
     }
   }
 

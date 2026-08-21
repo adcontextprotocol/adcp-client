@@ -35,6 +35,7 @@
  * ```
  */
 
+import { randomUUID } from 'node:crypto';
 import { canonicalJsonSha256 } from '../../utils/jcs';
 
 /**
@@ -69,6 +70,14 @@ export interface IdempotencyCacheEntry {
   expiresAt: number;
 }
 
+/** A request attempted to publish or release after its owner lease was replaced. */
+export class IdempotencyClaimOwnershipError extends Error {
+  constructor(action: string) {
+    super(`Idempotency ${action} refused because the request claim is no longer owned.`);
+    this.name = 'IdempotencyClaimOwnershipError';
+  }
+}
+
 /**
  * Storage backend interface. Swap implementations for memory, Postgres, Redis, etc.
  *
@@ -91,27 +100,28 @@ export interface IdempotencyCacheEntry {
 export interface IdempotencyBackend {
   get(scopedKey: string): Promise<IdempotencyCacheEntry | null>;
   /**
-   * Atomically insert an entry only if no entry exists for `scopedKey`.
+   * Atomically install an entry only if no entry exists for `scopedKey` or
+   * the current entry is logically expired according to backend time.
+   * Expiry comparison and replacement MUST be one atomic operation; an
+   * entry expiring exactly now remains live.
    * Used as a claim step by the middleware to close the concurrent-miss
    * race (two parallel requests with the same fresh key both seeing
    * `miss` and both executing side effects). Returns `true` if the
    * caller "won" the claim and should proceed to run the handler;
    * `false` if another request claimed first (the caller should treat
-   * the result as a replay or conflict on re-check).
+   * the result as a replay or conflict on re-check). Callers that need to
+   * reclaim a logically expired entry MUST use this primitive rather than a
+   * read-derived CAS, which is vulnerable to renewal and completed-marker
+   * ABA races.
    */
   putIfAbsent(scopedKey: string, entry: IdempotencyCacheEntry): Promise<boolean>;
-  /**
-   * Store an entry, overwriting any existing entry with the same
-   * `scopedKey`. Used by the middleware to replace the in-flight
-   * placeholder (written via `putIfAbsent` at claim time) with the final
-   * response after the handler completes.
-   */
+  /** Atomically replace an entry only when its current payload hash matches. */
+  replaceIfPayloadHash(scopedKey: string, expectedPayloadHash: string, entry: IdempotencyCacheEntry): Promise<boolean>;
+  /** Atomically delete an entry only when its current payload hash matches. */
+  deleteIfPayloadHash(scopedKey: string, expectedPayloadHash: string): Promise<boolean>;
+  /** Store an entry unconditionally. Middleware publication uses fenced replacement instead. */
   put(scopedKey: string, entry: IdempotencyCacheEntry): Promise<void>;
-  /**
-   * Delete an entry. Used by the middleware to release the claim when
-   * the handler fails — errors MUST NOT be cached, so the placeholder
-   * is rolled back on error so a retry can re-execute.
-   */
+  /** Delete an entry unconditionally. Middleware claim release uses fenced deletion instead. */
   delete(scopedKey: string): Promise<void>;
   /**
    * Optional startup probe. Implementations that wrap an external store
@@ -175,6 +185,8 @@ export type IdempotencyCheckResult =
       /** No prior execution for this key — caller should run the handler and save. */
       kind: 'miss';
       payloadHash: string;
+      /** Opaque owner fence that MUST be returned to save/release. */
+      claimToken: string;
     };
 
 /**
@@ -266,6 +278,14 @@ export interface IdempotencyStore {
     extraScope?: string;
   }): Promise<IdempotencyCheckResult>;
   /**
+   * Extend an in-flight request claim while its handler is still running.
+   * The implementation MUST compare against `claimToken` atomically and
+   * throw `IdempotencyClaimOwnershipError` if that owner no longer holds
+   * the claim. Servers call this periodically until the response is saved
+   * or the claim is released.
+   */
+  renew(params: { principal: string; key: string; claimToken: string; extraScope?: string }): Promise<void>;
+  /**
    * Save a successful execution's response to the cache, replacing the
    * in-flight placeholder written at check time.
    */
@@ -273,6 +293,8 @@ export interface IdempotencyStore {
     principal: string;
     key: string;
     payloadHash: string;
+    /** Owner fence returned by the matching `check()` miss. */
+    claimToken: string;
     response: unknown;
     extraScope?: string;
   }): Promise<void>;
@@ -281,7 +303,7 @@ export interface IdempotencyStore {
    * middleware when the handler fails, so a retry can re-execute rather
    * than replay a cached error.
    */
-  release(params: { principal: string; key: string; extraScope?: string }): Promise<void>;
+  release(params: { principal: string; key: string; claimToken: string; extraScope?: string }): Promise<void>;
   /**
    * Short-TTL cache for an error envelope that the handler is guaranteed
    * to reproduce on re-execution (currently: strict-mode response
@@ -314,6 +336,8 @@ export interface IdempotencyStore {
     principal: string;
     key: string;
     payloadHash: string;
+    /** Owner fence returned by the matching `check()` miss. */
+    claimToken: string;
     response: unknown;
     extraScope?: string;
   }): Promise<void>;
@@ -325,9 +349,9 @@ export interface IdempotencyStore {
    */
   probe?(): Promise<void>;
   /**
-   * Capability fragment for `get_adcp_capabilities` — tells buyers the
-   * replay window so they can reason about retry safety. Pass to
-   * `createAdcpServer` via `capabilities.idempotency`.
+   * Capability fragment describing this store's replay window. Servers
+   * created by `createAdcpServer` derive the wire capability directly from
+   * the wired store; adopters do not need to pass this value separately.
    */
   capability(): { replay_ttl_seconds: number };
   /** The replay window in seconds (already bounds-checked at construction). */
@@ -351,14 +375,6 @@ const MAX_TTL = 604800; // 7 days
 const DEFAULT_TTL = 86400; // 24 hours
 const DEFAULT_CLOCK_SKEW = 60;
 /**
- * How long an in-flight claim lives before it can be reclaimed. Matches
- * the AdCP working-response timeout (120s): a handler that's still
- * running after 120s should have returned `submitted` with a task_id
- * already, so this bounds the "crashed handler" recovery window without
- * holding parallel requests hostage for the full replay TTL.
- */
-const IN_FLIGHT_TTL_SECONDS = 120;
-/**
  * How long a transient-error cache entry lives. Long enough to absorb a
  * buyer SDK's retry storm (typical exponential backoff takes ~2–3
  * attempts past 10s), short enough that genuine fixes by the handler
@@ -371,12 +387,17 @@ const TRANSIENT_ERROR_TTL_SECONDS = 10;
  * `in-flight`, not `replay` (an empty claim shouldn't pretend to be a
  * valid cached response).
  */
-const IN_FLIGHT_HASH = '__adcp_in_flight__';
+const IN_FLIGHT_HASH_PREFIX = '__adcp_in_flight__:';
+
+function isInFlightHash(payloadHash: string): boolean {
+  return payloadHash.startsWith(IN_FLIGHT_HASH_PREFIX);
+}
 /**
  * Soft cap on the retry hint surfaced to buyers on the in-flight branch.
- * Without a cap, a freshly-claimed key (120s remaining) would tell the buyer
- * to wait 120s — worse than the spec's "retry shortly" intent and worse than
- * the buyer's own retry barrier. 30s amortizes a slow handler's tail latency
+ * Without a cap, a freshly-claimed key (up to the full replay window
+ * remaining) would tell the buyer to wait hours or days — worse than the
+ * spec's "retry shortly" intent and the buyer's own retry barrier. 30s
+ * amortizes a slow handler's tail latency
  * without stalling buyers behind a fresh long-tail claim.
  */
 const IN_FLIGHT_RETRY_HINT_CAP_SECONDS = 30;
@@ -416,7 +437,15 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
   }
   const ttlSeconds = validateTtl(config.ttlSeconds ?? DEFAULT_TTL);
   const clockSkewSeconds = config.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW;
+  if (!Number.isSafeInteger(clockSkewSeconds) || clockSkewSeconds < 0) {
+    throw new TypeError('clockSkewSeconds must be a non-negative safe integer.');
+  }
   const backend = config.backend;
+  if (typeof backend.replaceIfPayloadHash !== 'function' || typeof backend.deleteIfPayloadHash !== 'function') {
+    throw new TypeError(
+      'createIdempotencyStore requires a backend with atomic replaceIfPayloadHash and deleteIfPayloadHash fencing.'
+    );
+  }
 
   return {
     ttlSeconds,
@@ -428,25 +457,36 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
       const cached = await backend.get(scopedKey);
       if (cached) {
         const nowSeconds = Math.floor(Date.now() / 1000);
-        if (cached.expiresAt + clockSkewSeconds < nowSeconds) {
-          return { kind: 'expired' };
+        if (isInFlightHash(cached.payloadHash)) {
+          if (cached.expiresAt >= nowSeconds) {
+            return { kind: 'in-flight', retryAfterSeconds: inFlightRetryAfter(cached.expiresAt, nowSeconds) };
+          }
+          // Fall through to putIfAbsent, whose atomic logical-expiry
+          // replacement protects a concurrent renewal from stale-read
+          // takeover.
+        } else {
+          if (cached.expiresAt + clockSkewSeconds < nowSeconds) {
+            return { kind: 'expired' };
+          }
+          if (cached.payloadHash !== payloadHash) {
+            return { kind: 'conflict' };
+          }
+          return { kind: 'replay', response: cached.response };
         }
-        if (cached.payloadHash === IN_FLIGHT_HASH) {
-          return { kind: 'in-flight', retryAfterSeconds: inFlightRetryAfter(cached.expiresAt, nowSeconds) };
-        }
-        if (cached.payloadHash !== payloadHash) {
-          return { kind: 'conflict' };
-        }
-        return { kind: 'replay', response: cached.response };
       }
 
       // Claim the key so parallel requests with the same key see 'in-flight'
-      // rather than racing us to execute the handler. Claim TTL is short
-      // (120s) so a crashed handler's claim is reclaimable, without
-      // holding parallel requests hostage for the full replay window.
-      const expiresAt = Math.floor(Date.now() / 1000) + IN_FLIGHT_TTL_SECONDS;
+      // rather than racing us to execute the handler. Use the full replay
+      // window as the base claim fence: if renewal infrastructure is down
+      // while a money-moving handler is still active, a retry must remain
+      // blocked rather than automatically re-entering after 120 seconds.
+      // The tradeoff is deliberate: a crashed handler can hold its key for
+      // the advertised replay window, after which natural-key reconciliation
+      // is required anyway.
+      const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
+      const claimToken = `${IN_FLIGHT_HASH_PREFIX}${randomUUID()}`;
       const claimed = await backend.putIfAbsent(scopedKey, {
-        payloadHash: IN_FLIGHT_HASH,
+        payloadHash: claimToken,
         response: null,
         expiresAt,
       });
@@ -456,31 +496,71 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
         const recheck = await backend.get(scopedKey);
         const nowSeconds = Math.floor(Date.now() / 1000);
         if (!recheck) return { kind: 'in-flight', retryAfterSeconds: 1 };
-        if (recheck.payloadHash === IN_FLIGHT_HASH) {
+        if (isInFlightHash(recheck.payloadHash)) {
           return { kind: 'in-flight', retryAfterSeconds: inFlightRetryAfter(recheck.expiresAt, nowSeconds) };
         }
         if (recheck.payloadHash !== payloadHash) return { kind: 'conflict' };
         return { kind: 'replay', response: recheck.response };
       }
 
-      return { kind: 'miss', payloadHash };
+      // Besides asserting ownership, this resolves lazy backends and
+      // verifies their atomic fencing support before handler side effects.
+      // The replacement is value-identical and keeps the original lease.
+      const fenced = await backend.replaceIfPayloadHash(scopedKey, claimToken, {
+        payloadHash: claimToken,
+        response: null,
+        expiresAt,
+      });
+      if (!fenced) {
+        return { kind: 'in-flight', retryAfterSeconds: inFlightRetryAfter(expiresAt, Math.floor(Date.now() / 1000)) };
+      }
+
+      return { kind: 'miss', payloadHash, claimToken };
     },
 
-    async save({ principal, key, payloadHash, response, extraScope }): Promise<void> {
+    async renew({ principal, key, claimToken, extraScope }): Promise<void> {
+      const scopedKey = scope(principal, key, extraScope);
+      if (!claimToken || !isInFlightHash(claimToken)) {
+        throw new Error('Idempotency renew requires the claimToken returned by check().');
+      }
+      const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
+      const renewed = await backend.replaceIfPayloadHash(scopedKey, claimToken, {
+        payloadHash: claimToken,
+        response: null,
+        expiresAt,
+      });
+      if (!renewed) throw new IdempotencyClaimOwnershipError('renew');
+    },
+
+    async save({ principal, key, payloadHash, claimToken, response, extraScope }): Promise<void> {
       const scopedKey = scope(principal, key, extraScope);
       const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
-      await backend.put(scopedKey, { payloadHash, response, expiresAt });
+      if (!claimToken || !isInFlightHash(claimToken)) {
+        throw new Error('Idempotency save requires the claimToken returned by check().');
+      }
+      const replaced = await backend.replaceIfPayloadHash(scopedKey, claimToken, { payloadHash, response, expiresAt });
+      if (!replaced) throw new IdempotencyClaimOwnershipError('save');
     },
 
-    async release({ principal, key, extraScope }): Promise<void> {
+    async release({ principal, key, claimToken, extraScope }): Promise<void> {
       const scopedKey = scope(principal, key, extraScope);
-      await backend.delete(scopedKey);
+      if (!claimToken || !isInFlightHash(claimToken)) {
+        throw new Error('Idempotency release requires the claimToken returned by check().');
+      }
+      const deleted = await backend.deleteIfPayloadHash(scopedKey, claimToken);
+      if (!deleted) throw new IdempotencyClaimOwnershipError('release');
     },
 
-    async saveTransientError({ principal, key, payloadHash, response, extraScope }): Promise<void> {
+    async saveTransientError({ principal, key, payloadHash, claimToken, response, extraScope }): Promise<void> {
       const scopedKey = scope(principal, key, extraScope);
       const expiresAt = Math.floor(Date.now() / 1000) + TRANSIENT_ERROR_TTL_SECONDS;
-      await backend.put(scopedKey, { payloadHash, response, expiresAt });
+      if (!claimToken || !isInFlightHash(claimToken)) {
+        throw new Error('Idempotency transient-error save requires the claimToken returned by check().');
+      }
+      const replaced = await backend.replaceIfPayloadHash(scopedKey, claimToken, { payloadHash, response, expiresAt });
+      if (!replaced) {
+        throw new IdempotencyClaimOwnershipError('transient-error save');
+      }
     },
 
     async probe() {
@@ -552,16 +632,30 @@ function stripPushNotificationCredentials(pnc: Record<string, unknown>): Record<
 
 // ASCII unit separator (U+001F). Used to join scope segments without
 // risking ambiguity — the middleware's key-pattern validation bans
-// control characters in the key, and principals are server-controlled,
-// so this byte can't appear in either segment by legitimate input.
+// control characters in the key, while `scope()` rejects this byte in
+// principal and extra-scope segments before any backend access.
 // NUL bytes (U+0000) would be simpler but Postgres TEXT columns reject
 // them, so we pick the next-safest non-printable separator.
 const SCOPE_SEPARATOR = '\u001f';
+const MAX_SCOPE_SEGMENT_LENGTH = 4096;
 
 function scope(principal: string, key: string, extraScope?: string): string {
+  validateScopeSegment(principal, 'principal');
+  if (extraScope !== undefined) validateScopeSegment(extraScope, 'extraScope');
   return extraScope
     ? `${principal}${SCOPE_SEPARATOR}${extraScope}${SCOPE_SEPARATOR}${key}`
     : `${principal}${SCOPE_SEPARATOR}${key}`;
+}
+
+function validateScopeSegment(value: string, label: 'principal' | 'extraScope'): void {
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_SCOPE_SEGMENT_LENGTH) {
+    throw new TypeError(
+      `Invalid idempotency ${label}: must be a non-empty string no longer than ${MAX_SCOPE_SEGMENT_LENGTH} characters.`
+    );
+  }
+  if (value.includes(SCOPE_SEPARATOR)) {
+    throw new TypeError(`Invalid idempotency ${label}: U+001F is reserved as the internal scope separator.`);
+  }
 }
 
 /**

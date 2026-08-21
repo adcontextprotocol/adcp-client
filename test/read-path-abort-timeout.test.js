@@ -875,10 +875,21 @@ describe('read-path cancellation and timeout', () => {
     const originalCallTool = ProtocolClient.callTool;
     const stored = new Map();
     ProtocolClient.callTool = async () => ({
-      status: 'input-required',
-      question: 'Defer this?',
-      field: 'approval',
-      contextId: 'late-deferral-context',
+      result: {
+        kind: 'task',
+        id: 'late-deferral-seller-task',
+        contextId: 'late-deferral-context',
+        status: {
+          state: 'input-required',
+          message: {
+            kind: 'message',
+            messageId: 'late-deferral-question',
+            role: 'agent',
+            parts: [{ kind: 'data', data: { question: 'Defer this?', field: 'approval' } }],
+          },
+        },
+        artifacts: [],
+      },
     });
 
     try {
@@ -898,7 +909,7 @@ describe('read-path cancellation and timeout', () => {
       await assert.rejects(
         () =>
           executor.executeTask(
-            { id: 'late-deferral', name: 'test', protocol: 'mcp', agent_uri: 'http://example.test/mcp' },
+            { id: 'late-deferral', name: 'test', protocol: 'a2a', agent_uri: 'http://example.test/a2a' },
             'custom_input_task',
             { secret_payload: 'must-not-be-retained' },
             slowHandler,

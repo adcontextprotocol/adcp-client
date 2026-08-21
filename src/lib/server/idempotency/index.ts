@@ -1,4 +1,4 @@
-export { createIdempotencyStore, hashPayload, probeIdempotencyStore } from './store';
+export { createIdempotencyStore, hashPayload, probeIdempotencyStore, IdempotencyClaimOwnershipError } from './store';
 export type {
   IdempotencyStore,
   IdempotencyStoreConfig,

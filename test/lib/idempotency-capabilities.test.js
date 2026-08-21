@@ -64,7 +64,7 @@ describe('parseCapabilitiesResponse reads adcp.idempotency.replay_ttl_seconds', 
     const unsupported = parseCapabilitiesResponse({
       adcp: { major_versions: [3], idempotency: { supported: false } },
     });
-    assert.equal(unsupported.idempotency, undefined);
+    assert.deepEqual(unsupported.idempotency, { supported: false });
   });
 
   it('does not downgrade a contradictory v3 recovery payload to synthetic capabilities', async () => {
@@ -135,6 +135,20 @@ describe('SingleAgentClient.getIdempotencyReplayTtlSeconds()', () => {
       features: {},
       extensions: [],
       _synthetic: true,
+    };
+    assert.equal(await client.getIdempotencyReplayTtlSeconds(), undefined);
+  });
+
+  it('returns undefined for an explicit v3 supported:false declaration', async () => {
+    const client = new SingleAgentClient(stubAgent);
+    client.cachedCapabilities = {
+      version: 'v3',
+      majorVersions: [3],
+      protocols: ['media_buy'],
+      features: {},
+      idempotency: { supported: false },
+      extensions: [],
+      _synthetic: false,
     };
     assert.equal(await client.getIdempotencyReplayTtlSeconds(), undefined);
   });

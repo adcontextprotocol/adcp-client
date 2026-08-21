@@ -214,4 +214,21 @@ If you previously tracked processed webhooks by `(task_id, status, timestamp)`, 
 
 ### A2A and missing keys
 
-A2A webhooks do not carry `idempotency_key` — the field is an MCP envelope addition. With `webhookDedup` configured, A2A deliveries dispatch without dedup and no warning is logged (the absence is expected). MCP senders that omit the field, or emit a value that fails the spec regex `^[A-Za-z0-9_.:-]{16,255}$`, fall back to dispatch-without-dedup and log a `console.warn` so you notice non-conforming publishers.
+Structured A2A webhook data can carry `idempotency_key`, and the client preserves it for deduplication. When `webhookDedup` is configured, every MCP and A2A delivery must provide the field and it must match the spec regex `^[A-Za-z0-9_.:-]{16,255}$`; missing or malformed keys fail closed before handlers run so non-conforming input cannot bypass configured deduplication. Older A2A senders that cannot emit the field must leave receiver dedup disabled.
+
+Handler and activity failures are not acknowledged: the HTTP helper returns an
+error so the publisher retries. A concurrent retry while the same event is
+still being handled receives `503`; the owner-fenced processing claim renews
+until the active handler finishes. By default, processing claims use the full
+`ttlSeconds` retention window (24 hours by default), preventing automatic
+reclaim while an unconstrained application handler might still be applying
+side effects. Setting a shorter `inFlightTtlSeconds` explicitly trades that
+fence for faster crash recovery. Because the SDK cannot cancel or
+transactionally fence a generic handler, handlers using the shorter lease must
+durably deduplicate `(agent_id, idempotency_key, event fingerprint)` or make
+their side effects idempotent. Webhook delivery remains at-least-once.
+
+Custom idempotency backends used for webhook dedup must implement the atomic
+`replaceIfPayloadHash()` and `deleteIfPayloadHash()` methods. The built-in
+memory, PostgreSQL, Redis, and lazy backends provide them. These operations
+prevent a stale replica from renewing or releasing a newer replica's claim.

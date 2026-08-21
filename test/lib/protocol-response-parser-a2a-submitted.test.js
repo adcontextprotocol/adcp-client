@@ -143,6 +143,54 @@ describe('ProtocolResponseParser.getStatus — A2A submitted arm (#973)', () => 
     };
     assert.strictEqual(parser.getStatus(response), ADCP_STATUS.SUBMITTED);
   });
+
+  test('reads clarification details from the live A2A task status message', () => {
+    const response = a2aWrappedSubmittedResponse({ adcpStatus: 'submitted', adcpTaskId: 'task-clarify' });
+    Object.assign(response.result.artifacts[0].parts[0].data, {
+      question: 'Stale artifact question',
+    });
+    response.result.id = 'a2a-live-task';
+    response.result.status = {
+      state: 'input-required',
+      message: {
+        kind: 'message',
+        messageId: 'clarification-message',
+        role: 'agent',
+        parts: [
+          {
+            kind: 'data',
+            data: {
+              question: 'What budget should be approved?',
+              field: 'budget',
+              suggestions: [50_000, 75_000],
+              required: true,
+            },
+          },
+        ],
+      },
+    };
+
+    assert.strictEqual(parser.getStatus(response), ADCP_STATUS.INPUT_REQUIRED);
+    assert.strictEqual(parser.getA2AContinuationTaskId(response), 'a2a-live-task');
+    assert.deepStrictEqual(parser.parseInputRequest(response), {
+      question: 'What budget should be approved?',
+      field: 'budget',
+      expectedType: undefined,
+      suggestions: [50_000, 75_000],
+      required: true,
+      validation: undefined,
+      context: undefined,
+    });
+  });
+
+  test('does not resume an artifact-level pause on a completed A2A task', () => {
+    const response = a2aWrappedSubmittedResponse({ adcpStatus: 'input-required', adcpTaskId: 'adcp-work-handle' });
+    response.result.id = 'completed-a2a-task';
+    response.result.status = { state: 'completed' };
+
+    assert.strictEqual(parser.getTaskId(response), 'adcp-work-handle');
+    assert.strictEqual(parser.getA2AContinuationTaskId(response), undefined);
+  });
 });
 
 describe('ProtocolResponseParser.getStatus — A2A artifact domain status collision (#2009)', () => {
@@ -238,10 +286,10 @@ describe('ProtocolResponseParser.getTaskId — A2A submitted arm (#973)', () => 
     assert.strictEqual(parser.getTaskId(response), 'tk_X');
   });
 
-  test('falls back when artifacts array is empty', () => {
+  test('never treats the A2A transport Task.id as an AdCP work handle', () => {
     const response = a2aWrappedSubmittedResponse();
     response.result.artifacts = [];
-    assert.strictEqual(parser.getTaskId(response), 'a2a-uuid');
+    assert.strictEqual(parser.getTaskId(response), undefined);
   });
 
   test('reads adcp_task_id from the latest artifact metadata', () => {

@@ -277,14 +277,16 @@ export interface TaskInfo {
 }
 
 /**
- * Continuation for deferred client tasks (client needs time)
+ * Continuation for a paused task. The closure resumes the same seller task
+ * in the current process; application-issued deferrals may additionally be
+ * persisted through TaskExecutor deferred storage.
  */
 export interface DeferredContinuation<T> {
-  /** Token for resuming the task */
+  /** SDK continuation token; this is not the seller's task ID. */
   token: string;
   /** Question that triggered the deferral */
   question?: string;
-  /** Resume the task with user input */
+  /** Resume the same seller task with user input or after refreshing auth. */
   resume: (input: any) => Promise<TaskResult<T>>;
 }
 
@@ -407,12 +409,16 @@ export interface TaskResultMetadata {
    */
   contextId?: string;
   /**
-   * A2A `taskId` of the server-tracked task for this response. Populated
-   * from A2A Task / Message responses; `undefined` for MCP and for A2A
-   * responses that carry no task binding. Distinct from {@link taskId},
-   * which is the client-minted correlation id.
+   * AdCP work handle used by `tasks/get`. For A2A responses this may come
+   * from artifact `task_id` / `adcp_task_id` and is distinct from the A2A
+   * transport Task.id. Distinct from {@link taskId}, which is client-minted.
    */
   serverTaskId?: string;
+  /**
+   * Live A2A transport Task.id eligible for Message.taskId threading.
+   * Never populated from an AdCP artifact work handle.
+   */
+  a2aTaskId?: string;
   taskName: string;
   agent: { id: string; name: string; protocol: 'mcp' | 'a2a' };
   /** Total execution time in milliseconds */
@@ -529,10 +535,13 @@ export interface TaskResultIntermediate<T> extends TaskResultBase<T> {
   success: true;
   /**
    * Task is progressing but not yet final. `'auth-required'` and
-   * `'input-required'` are paused states surfaced by the polling
-   * cycle (`pollTaskCompletion`) — the buyer must satisfy the
-   * paused condition (refresh auth / supply input) and retry the
-   * original tool call. Polling alone won't advance them.
+   * `'input-required'` are paused states — the buyer must satisfy the paused
+   * condition (refresh auth / supply input). A live A2A pause handled during
+   * the initial exchange can expose a `deferred.resume()` closure bound to
+   * the seller's task/context. Pauses observed later through `tasks/get`,
+   * completed A2A artifacts, and MCP responses omit that closure: none has a
+   * standard safe post-return continuation. Polling alone won't advance a
+   * paused task.
    */
   status: 'working' | 'submitted' | 'input-required' | 'auth-required' | 'deferred';
   data?: T;
@@ -540,7 +549,7 @@ export interface TaskResultIntermediate<T> extends TaskResultBase<T> {
   adcpError?: undefined;
   errorInstance?: undefined;
   correlationId?: undefined;
-  /** Deferred continuation (client needs time for input) */
+  /** Present only for a safely resumable live A2A pause or explicit client deferral. */
   deferred?: DeferredContinuation<T>;
   /** Submitted continuation (server needs time for processing) */
   submitted?: SubmittedContinuation<T>;

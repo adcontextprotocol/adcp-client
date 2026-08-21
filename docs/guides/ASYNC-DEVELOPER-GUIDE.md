@@ -157,14 +157,17 @@ top-level webhook body.
 ### 4. Input Required Pattern (`status: "input-required"`)
 
 **When it happens**: Server needs clarification or approval  
-**Client action**: Handler MUST provide input  
+**Client action**: For A2A with a seller task ID, use a handler during the
+active exchange or resume that exact task through the returned closure. A2A
+without a task ID and MCP return the nonterminal pause without invoking a
+handler or attaching a closure; use an application/protocol-specific recovery
+path.
 **Use cases**: Budget approval, targeting refinement, creative approval
 
 ```typescript
 import { 
   createFieldHandler, 
-  createConditionalHandler,
-  InputRequiredError 
+  createConditionalHandler
 } from '@adcp/sdk';
 
 // Simple field-based handler
@@ -212,13 +215,13 @@ try {
     console.log('Final result:', final.data);
   }
   
-} catch (error) {
-  if (error instanceof InputRequiredError) {
-    console.error('Handler missing for required input:', error.message);
-    // This means you need to provide a handler for the call
-  }
 }
 ```
+
+Do not use an `InputRequiredError` catch as the handler-less control flow.
+Inspect the returned status instead. Only A2A can attach
+`result.deferred.resume(...)` to a server pause; MCP deliberately leaves
+`deferred` absent because the protocol defines no standard continuation call.
 
 **Handler patterns**:
 ```typescript
@@ -254,7 +257,10 @@ const handler = createValidatedHandler(75000, deferAllHandler);
 ```
 
 **Key characteristics**:
-- ⚠️ Handler is MANDATORY (throws InputRequiredError if missing)
+- ⚠️ MCP pauses do not invoke an SDK input handler and return with `deferred`
+  absent; recovery is application/protocol-specific
+- 🔁 Handler-less A2A pauses expose an exact-task `deferred.resume(...)` only
+  when the seller returned a task ID
 - 🎯 Handler has full conversation context
 - 🔄 Supports multiple clarification rounds
 - 👤 Can defer to human via `{ defer: true, token }`
@@ -412,8 +418,7 @@ async function manageTaskLifecycle() {
 
 ### 2. Error Handling
 ```typescript
-import { 
-  InputRequiredError,
+import {
   TaskTimeoutError,
   MaxClarificationError 
 } from '@adcp/sdk';
@@ -424,12 +429,7 @@ async function robustTaskExecution(params, handler) {
     return handleSuccess(result);
     
   } catch (error) {
-    if (error instanceof InputRequiredError) {
-      // Handler was required but not provided
-      console.error('Missing handler:', error.message);
-      return { error: 'HANDLER_REQUIRED', message: error.message };
-      
-    } else if (error instanceof TaskTimeoutError) {
+    if (error instanceof TaskTimeoutError) {
       // Working task exceeded 120 seconds
       console.error('Task timeout:', error.message);
       return { error: 'TIMEOUT', suggestion: 'Consider using submitted tasks for long operations' };

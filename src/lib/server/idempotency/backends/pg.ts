@@ -196,9 +196,34 @@ export function pgBackend(db: PgQueryable, options: PgBackendOptions = {}): Idem
            payload_hash = EXCLUDED.payload_hash,
            response = EXCLUDED.response,
            expires_at = EXCLUDED.expires_at
-         WHERE ${table}.expires_at < NOW()
+         WHERE ${table}.expires_at < DATE_TRUNC('second', NOW())
          RETURNING scoped_key`,
         [scopedKey, entry.payloadHash, JSON.stringify(entry.response), entry.expiresAt]
+      );
+      return (result.rowCount ?? 0) > 0;
+    },
+
+    async replaceIfPayloadHash(
+      scopedKey: string,
+      expectedPayloadHash: string,
+      entry: IdempotencyCacheEntry
+    ): Promise<boolean> {
+      const result = await query(
+        'replaceIfPayloadHash',
+        `UPDATE ${table}
+         SET payload_hash = $3, response = $4::jsonb, expires_at = TO_TIMESTAMP($5)
+         WHERE scoped_key = $1 AND payload_hash = $2
+         RETURNING scoped_key`,
+        [scopedKey, expectedPayloadHash, entry.payloadHash, JSON.stringify(entry.response), entry.expiresAt]
+      );
+      return (result.rowCount ?? 0) > 0;
+    },
+
+    async deleteIfPayloadHash(scopedKey: string, expectedPayloadHash: string): Promise<boolean> {
+      const result = await query(
+        'deleteIfPayloadHash',
+        `DELETE FROM ${table} WHERE scoped_key = $1 AND payload_hash = $2 RETURNING scoped_key`,
+        [scopedKey, expectedPayloadHash]
       );
       return (result.rowCount ?? 0) > 0;
     },
@@ -217,7 +242,7 @@ export async function cleanupExpiredIdempotency(db: PgQueryable, options: PgBack
   const table = quoteIdent(options.tableName ?? DEFAULT_TABLE);
   let result: Awaited<ReturnType<PgQueryable['query']>>;
   try {
-    result = await db.query(`DELETE FROM ${table} WHERE expires_at < NOW()`);
+    result = await db.query(`DELETE FROM ${table} WHERE expires_at < DATE_TRUNC('second', NOW())`);
   } catch (err) {
     throw pgDatabaseError('cleanupExpiredIdempotency', err);
   }

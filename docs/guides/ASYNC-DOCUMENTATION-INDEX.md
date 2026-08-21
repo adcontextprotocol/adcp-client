@@ -115,8 +115,11 @@ Complete documentation for the ADCP TypeScript client library's new async execut
 ## 🎯 Key Concepts Summary
 
 ### Handler-Controlled Flow
-The new model puts input handlers at the center of async execution control:
-- **Mandatory for input-required status**: No default behavior, explicit handling required
+The A2A model can use input handlers during async execution control:
+- **A2A input required**: When the seller supplies a task ID, use a handler
+  during the exchange or resume that exact task from the returned continuation
+- **MCP input required**: The returned pause invokes no handler and has no SDK
+  continuation; use application/protocol-specific recovery
 - **Rich context**: Full conversation history and helper methods
 - **Flexible responses**: Direct answers, deferrals, or aborts
 
@@ -125,7 +128,8 @@ Clear semantics for different execution scenarios:
 - **Completed (0-2s)**: Immediate results for fast operations
 - **Working (2s-120s)**: Server processing with connection kept open
 - **Submitted (hours-days)**: Long-running tasks with webhook notifications
-- **Input Required**: Handler provides clarification responses
+- **Input Required**: A2A supports handler/exact-task continuation when task
+  identity is present; otherwise A2A and MCP return a nonresumable SDK pause
 
 ### Type-Safe Continuations
 Structured objects for managing async operations:
@@ -137,9 +141,9 @@ Structured objects for managing async operations:
 
 ### Basic Implementation
 - [ ] Choose appropriate async pattern for your use case
-- [ ] Implement input handler for agent interactions
+- [ ] Implement A2A input handlers where automatic clarification is required
 - [ ] Handle TaskResult status types (completed/deferred/submitted)
-- [ ] Add basic error handling for InputRequiredError
+- [ ] Handle returned `input-required` / `auth-required` statuses for the selected protocol
 
 ### Production Implementation
 - [ ] Implement comprehensive error handling for all error types

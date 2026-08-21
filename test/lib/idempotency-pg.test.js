@@ -14,6 +14,24 @@ const DATABASE_URL = process.env.DATABASE_URL;
 
 const TABLE = 'adcp_idempotency';
 
+test('pgBackend keeps an entry live through its exact expiry second', async () => {
+  const queries = [];
+  const pool = {
+    query: async (sql, params) => {
+      queries.push({ sql, params });
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const { pgBackend } = require('../../dist/lib/server/index.js');
+  const claimed = await pgBackend(pool).putIfAbsent('boundary-key', {
+    payloadHash: 'new-owner',
+    response: null,
+    expiresAt: Math.floor(Date.now() / 1000) + 120,
+  });
+  assert.equal(claimed, false);
+  assert.match(queries[0].sql, /expires_at < DATE_TRUNC\('second', NOW\(\)\)/);
+});
+
 describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
   let Pool, pool;
   let pgBackend, getIdempotencyMigration, IDEMPOTENCY_MIGRATION, cleanupExpiredIdempotency;
@@ -213,6 +231,7 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
       principal: 'p',
       key: 'e2e_key_abcdefghij',
       payloadHash: miss.payloadHash,
+      claimToken: miss.claimToken,
       response: { media_buy_id: 'mb_77' },
     });
 
@@ -223,7 +242,7 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
 
   test('store returns conflict on same-key different-payload', async () => {
     const store = createIdempotencyStore({ backend: pgBackend(pool), ttlSeconds: 3600 });
-    const { payloadHash } = await store.check({
+    const { payloadHash, claimToken } = await store.check({
       principal: 'p',
       key: 'conflict_key_abcdefg',
       payload: { a: 1 },
@@ -232,6 +251,7 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
       principal: 'p',
       key: 'conflict_key_abcdefg',
       payloadHash,
+      claimToken,
       response: { ok: true },
     });
 
@@ -241,6 +261,41 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
       payload: { a: 2 },
     });
     assert.equal(conflict.kind, 'conflict');
+  });
+
+  test('store refuses stale-owner save and release after a pg claim is reclaimed', async () => {
+    const backend = pgBackend(pool);
+    const store = createIdempotencyStore({ backend, ttlSeconds: 3600 });
+    const key = 'stale_pg_owner_abcdef';
+    const payload = { a: 1 };
+    const stale = await store.check({ principal: 'p', key, payload });
+    assert.equal(stale.kind, 'miss');
+    await backend.delete(`p\u001f${key}`);
+    const current = await store.check({ principal: 'p', key, payload });
+    assert.equal(current.kind, 'miss');
+
+    await assert.rejects(
+      store.save({
+        principal: 'p',
+        key,
+        payloadHash: stale.payloadHash,
+        claimToken: stale.claimToken,
+        response: 'stale',
+      }),
+      /claim is no longer owned/
+    );
+    await assert.rejects(
+      store.release({ principal: 'p', key, claimToken: stale.claimToken }),
+      /claim is no longer owned/
+    );
+    await store.save({
+      principal: 'p',
+      key,
+      payloadHash: current.payloadHash,
+      claimToken: current.claimToken,
+      response: 'current',
+    });
+    assert.equal((await store.check({ principal: 'p', key, payload })).response, 'current');
   });
 
   test('store returns expired when expires_at is past TTL + skew', async () => {

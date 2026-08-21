@@ -79,6 +79,29 @@ describe('pollTaskCompletion terminal state handling', () => {
     assert.ok(result.error.includes('Budget cap exceeded'), `Expected error from message field, got: ${result.error}`);
   });
 
+  for (const returnedTaskId of ['', 'different-task']) {
+    test(`fails closed when tasks/get returns ${returnedTaskId ? 'a different' : 'no'} task identity`, async () => {
+      ProtocolClient.callTool = mock.fn(async () => ({
+        task: {
+          taskId: returnedTaskId,
+          status: 'completed',
+          taskType: 'create_media_buy',
+          result: { media_buy_id: 'must-not-complete', packages: [] },
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      }));
+
+      const executor = new TaskExecutor();
+      const result = await executor.pollTaskCompletion(mockAgent, 'expected-task', 10);
+
+      assert.strictEqual(result.success, false);
+      assert.strictEqual(result.status, 'failed');
+      assert.match(result.error, /task identity.*does not match/);
+      assert.strictEqual(result.data, undefined);
+    });
+  }
+
   test('preserves legacy media-buy lifecycle status in completed task result', async () => {
     ProtocolClient.callTool = mock.fn(async () => ({
       task: {
@@ -354,10 +377,9 @@ describe('pollTaskCompletion terminal state handling', () => {
   // ────────────────────────────────────────────────────────────
   // Paused states (#977 part 2): input-required / auth-required.
   //
-  // Polling alone can't advance these — the buyer must satisfy the
-  // paused condition (supply input / refresh auth) and retry the
-  // original tool call. The polling loop returns a
-  // TaskResultIntermediate so callers can branch on `result.status`,
+  // Polling alone can't advance these. The polling loop returns a
+  // TaskResultIntermediate so callers can branch on `result.status` and
+  // choose an explicit application/protocol-specific recovery path,
   // matching the synchronous handleInputRequired no-handler path
   // (`success: true` because the task is progressing, not failed).
   //

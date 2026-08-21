@@ -36,7 +36,8 @@ try {
   console.error('Agent unreachable:', error.message);
 }
 
-// 3. Verify handler is provided for input-required scenarios
+// 3. For A2A, verify the handler covers expected input-required scenarios.
+// MCP pauses need application/protocol-specific recovery instead.
 const handler = createFieldHandler({ budget: 50000 });
 const result = await agent.getProducts(params, handler);
 ```
@@ -44,7 +45,6 @@ const result = await agent.getProducts(params, handler);
 ### ✅ Error Type Identification
 ```typescript
 import { 
-  InputRequiredError,
   TaskTimeoutError,
   MaxClarificationError,
   DeferredTaskError
@@ -56,9 +56,7 @@ try {
   console.log('Error type:', error.constructor.name);
   console.log('Error message:', error.message);
   
-  if (error instanceof InputRequiredError) {
-    console.log('❌ Missing handler for input-required status');
-  } else if (error instanceof TaskTimeoutError) {
+  if (error instanceof TaskTimeoutError) {
     console.log('⏰ Task exceeded working timeout (120s)');
   } else if (error instanceof MaxClarificationError) {
     console.log('🔄 Too many clarification rounds');
@@ -84,26 +82,28 @@ if (!result.success) {
 
 ## Common Error Patterns
 
-### 1. Input Required Without Handler
+### 1. Input Required Without an SDK Continuation
 
-**Symptom**: `InputRequiredError: Server requires input but no handler provided`
+**Symptom**: The call returns `input-required` or `auth-required`.
 
 ```typescript
-// ❌ Problem: No handler provided
-const result = await agent.getProducts(params); // Missing handler
-
-// ✅ Solution: Always provide handler for agent interactions
-const handler = createFieldHandler({
-  budget: 50000,
-  approval: true
-});
-const result = await agent.getProducts(params, handler);
+const result = await agent.getProducts(params);
+if (result.status === 'input-required' || result.status === 'auth-required') {
+  if (result.deferred) {
+    // A2A: resume the exact seller task.
+    await result.deferred.resume(userInput);
+  } else {
+    // MCP: no handler or SDK continuation is available after return.
+    // Use an application/protocol-specific recovery path.
+  }
+}
 ```
 
 **Debug Steps**:
 1. Check if the agent commonly asks for clarifications
 2. Enable debug logging to see what input is being requested
-3. Create a comprehensive handler that covers expected fields
+3. Confirm whether the selected protocol is A2A or MCP
+4. For A2A, create a comprehensive handler that covers expected fields
 
 ```typescript
 // Debug the input request
@@ -1222,7 +1222,6 @@ class ErrorRecoveryManager {
     // Configure retry strategies for different error types
     this.retryStrategies.set('NetworkError', new ExponentialBackoffRetry(3, 1000));
     this.retryStrategies.set('TaskTimeoutError', new ReducedTimeoutRetry(2));
-    this.retryStrategies.set('InputRequiredError', new HandlerAdjustmentRetry(1));
   }
   
   async executeWithRecovery<T>(

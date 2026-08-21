@@ -70,7 +70,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     });
 
     const executor = new TaskExecutor({ pollingInterval: 5 });
-    const result = await executor.executeTask(mockAgent, 'pollSnakeCaseTest', {});
+    const result = await executor.executeTask(mockAgent, 'create_media_buy', {});
     await result.submitted.waitForCompletion(5);
 
     assert.strictEqual(observedTaskName, 'tasks_get', 'MCP polling must use the MCP-safe tasks_get tool name');
@@ -99,7 +99,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     });
 
     const executor = new TaskExecutor({ pollingInterval: 5 });
-    const result = await executor.executeTask({ ...mockAgent, protocol: 'a2a' }, 'pollA2aNameTest', {});
+    const result = await executor.executeTask({ ...mockAgent, protocol: 'a2a' }, 'create_media_buy', {});
     await result.submitted.waitForCompletion(5);
 
     assert.strictEqual(observedTaskName, 'tasks/get', 'A2A polling must keep the spec slash task name');
@@ -125,7 +125,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     });
 
     const executor = new TaskExecutor({ pollingInterval: 5 });
-    const result = await executor.executeTask(mockAgent, 'flatShapeTest', {});
+    const result = await executor.executeTask(mockAgent, 'create_media_buy', {});
     const status = await result.submitted.track();
     assert.strictEqual(status.taskId, SERVER_TASK_ID);
     assert.strictEqual(status.status, 'completed');
@@ -159,7 +159,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     });
 
     const executor = new TaskExecutor({ pollingInterval: 5 });
-    const result = await executor.executeTask(mockAgent, 'resultPassthroughTest', {});
+    const result = await executor.executeTask(mockAgent, 'create_media_buy', {});
     const completion = await result.submitted.waitForCompletion(5);
     assert.strictEqual(completion.success, true);
     assert.deepStrictEqual(completion.data, COMPLETION_DATA);
@@ -184,7 +184,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     });
 
     const executor = new TaskExecutor({ pollingInterval: 5 });
-    const result = await executor.executeTask(mockAgent, 'errorMappingTest', {});
+    const result = await executor.executeTask(mockAgent, 'create_media_buy', {});
     const completion = await result.submitted.waitForCompletion(5);
     assert.strictEqual(completion.success, false);
     assert.strictEqual(completion.status, 'failed');
@@ -212,7 +212,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     });
 
     const executor = new TaskExecutor({ pollingInterval: 5 });
-    const result = await executor.executeTask(mockAgent, 'canceledStatusTest', {});
+    const result = await executor.executeTask(mockAgent, 'create_media_buy', {});
     const completion = await result.submitted.waitForCompletion(5);
     assert.strictEqual(completion.success, false, 'canceled task surfaces as completion.success === false');
     assert.strictEqual(
@@ -246,7 +246,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     });
 
     const executor = new TaskExecutor({ pollingInterval: 5 });
-    const result = await executor.executeTask(mockAgent, 'mcpWrappedTest', {});
+    const result = await executor.executeTask(mockAgent, 'create_media_buy', {});
     const status = await result.submitted.track();
     assert.strictEqual(status.taskId, SERVER_TASK_ID, 'mapper walks past structuredContent wrapper');
     assert.strictEqual(status.status, 'completed');
@@ -296,7 +296,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     });
 
     const executor = new TaskExecutor({ pollingInterval: 5 });
-    const result = await executor.executeTask(mockAgent, 'a2aWrappedTest', {});
+    const result = await executor.executeTask(mockAgent, 'create_media_buy', {});
     const status = await result.submitted.track();
     assert.strictEqual(
       status.taskId,
@@ -332,7 +332,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     });
 
     const executor = new TaskExecutor({ pollingInterval: 5 });
-    const result = await executor.executeTask(mockAgent, 'includeResultTest', {});
+    const result = await executor.executeTask(mockAgent, 'create_media_buy', {});
     await result.submitted.waitForCompletion(5);
 
     assert.strictEqual(
@@ -367,7 +367,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     });
 
     const executor = new TaskExecutor({ pollingInterval: 5 });
-    const result = await executor.executeTask(mockAgent, 'legacyShapeTest', {});
+    const result = await executor.executeTask(mockAgent, 'create_media_buy', {});
     const completion = await result.submitted.waitForCompletion(5);
     assert.strictEqual(completion.success, true);
     assert.deepStrictEqual(completion.data, { ok: true });
@@ -407,7 +407,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
       });
 
       const executor = new TaskExecutor({ pollingInterval: 5 });
-      const result = await executor.executeTask(mockAgent, 'noExperimentalTest', {});
+      const result = await executor.executeTask(mockAgent, 'create_media_buy', {});
       await result.submitted.waitForCompletion(5);
       assert.strictEqual(
         experimentalCalls,

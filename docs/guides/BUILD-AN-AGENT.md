@@ -234,7 +234,7 @@ Both transports share the same `AdcpServer` — handlers, idempotency store, sta
 
 **Skill addressing.** A2A clients send a `Message` with a single `DataPart`: `{ kind: 'data', data: { skill: 'get_products', input: { brief: '...' } } }`. `skill` matches an AdCP tool name; `input` is the tool arguments. The legacy key `parameters` (shipped by `src/lib/protocols/a2a.ts` before the adapter landed) is accepted as an alias for `input` so same-SDK clients and servers talk cleanly.
 
-**Two lifecycles, one response.** A2A's `Task.state` tracks the *transport call* (did the HTTP request complete?). AdCP's `status` inside the artifact tracks the *work* (submitted / completed / failed). Don't conflate them — a `completed` A2A task can carry a `submitted` AdCP response, meaning the call returned but the ad-tech operation is still queued.
+**Two lifecycles, one response.** A2A's `Task.state` tracks the *transport call* (did the HTTP request complete?). AdCP's `status` inside the artifact tracks the *work* (submitted / completed / failed). Don't conflate them — a `completed` A2A task can carry a `submitted`, `input-required`, or `auth-required` AdCP response. The v0 adapter has no durable, principal-bound continuation dispatcher, so handler-produced pause arms are completed, nonresumable artifact results. Leaving the A2A task live would let continuation-only input re-enter the ordinary mutation pipeline as a fresh request.
 
 **Handler return → A2A `Task.state` + artifact:**
 
@@ -242,6 +242,7 @@ Both transports share the same `AdcpServer` — handlers, idempotency store, sta
 |---|---|---|
 | Success arm | `completed` | DataPart with the typed AdCP response |
 | Submitted arm (`status:'submitted'`) | `completed` | DataPart with the AdCP response; `adcp_task_id` on `artifact.metadata` |
+| Pause arm (`status:'input-required'` / `'auth-required'`) | `completed` | DataPart with the nonresumable AdCP pause response |
 | Error arm (`errors: [...]`) | `failed` | DataPart with the Error arm payload |
 | `adcpError('CODE', ...)` | `failed` | DataPart with `adcp_error` |
 
@@ -438,7 +439,7 @@ import {
 // Development — in-process store, resets on restart:
 const idempotency = createIdempotencyStore({
   backend: memoryBackend(),
-  ttlSeconds: 86400, // 1h–7d, clamped to spec bounds
+  ttlSeconds: 86400, // 1h–7d; values outside the spec bounds are rejected
 });
 
 serve(() =>

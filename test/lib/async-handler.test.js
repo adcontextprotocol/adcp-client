@@ -463,9 +463,8 @@ test('multiple handlers can be configured', async () => {
 });
 
 // Error handling tests
-test('handler error does not crash webhook processing', async () => {
+test('handler error propagates so webhook delivery remains retryable', async () => {
   let errorThrown = false;
-  let webhookProcessed = false;
 
   const handler = new AsyncHandler({
     onGetProductsStatusChange: () => {
@@ -474,27 +473,28 @@ test('handler error does not crash webhook processing', async () => {
     },
   });
 
-  // Should not throw - error should be caught internally
+  const originalError = console.error;
+  console.error = () => {};
   try {
-    await handler.handleWebhook({
-      result: { products: [] },
-      metadata: {
-        operation_id: 'op_123',
-        task_id: 'task_1',
-        agent_id: 'agent_1',
-        task_type: 'get_products',
-        status: 'completed',
-        timestamp: new Date().toISOString(),
-      },
-    });
-    webhookProcessed = true;
-  } catch (error) {
-    // If this catches, the error wasn't handled properly
-    assert.fail('Webhook processing should not throw when handler errors');
+    await assert.rejects(
+      handler.handleWebhook({
+        result: { products: [] },
+        metadata: {
+          operation_id: 'op_123',
+          task_id: 'task_1',
+          agent_id: 'agent_1',
+          task_type: 'get_products',
+          status: 'completed',
+          timestamp: new Date().toISOString(),
+        },
+      }),
+      /Handler error/
+    );
+  } finally {
+    console.error = originalError;
   }
 
   assert.strictEqual(errorThrown, true, 'Handler should have thrown error');
-  assert.strictEqual(webhookProcessed, true, 'Webhook should be processed despite handler error');
 });
 
 test('missing handler configuration handled gracefully', async () => {
