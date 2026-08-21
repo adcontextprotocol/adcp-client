@@ -175,6 +175,24 @@ test('from_test_kit with no kit anywhere fails the step, never sends an unauthen
   }
 });
 
+test('basic-auth from_test_kit with no kit anywhere fails the step, never sends an unauthenticated probe', async () => {
+  const calls = [];
+  const server = captureAgent(calls);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const storyboard = storyboardWithKit(undefined);
+    storyboard.phases[0].steps[0].auth = { type: 'basic', from_test_kit: true };
+    const result = await runStoryboard(`http://127.0.0.1:${server.address().port}/mcp`, storyboard, RUN_OPTIONS);
+    const step = result.phases[0].steps[0];
+    assert.equal(step.passed, false);
+    assert.match(step.error ?? '', /auth configuration error/i);
+    assert.match(step.error ?? '', /basic/i);
+    assert.equal(calls.length, 0, 'no tools/call must reach the agent without a credential');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
 test('declared kit paths cannot escape the compliance cache root', () => {
   const cacheDir = makeCacheDirWithKit();
   try {
