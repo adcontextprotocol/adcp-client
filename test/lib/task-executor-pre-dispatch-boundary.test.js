@@ -427,7 +427,7 @@ describe('TaskExecutor pre-dispatch boundary', () => {
             result.submitted = {
               ...submitted,
               track: async transport => {
-                const task = await submitted.track(transport);
+                await submitted.track(transport);
                 assert.equal(observedStatuses.includes('completed'), false);
                 throw durableError;
               },

@@ -1330,7 +1330,6 @@ export class TaskExecutor {
       }
       if (error instanceof AfterProtocolDispatchHookError) throw error;
       if (dispatchCommitted && dispatchSettlement?.onError && !dispatchSettlementStarted) {
-        dispatchSettlementStarted = true;
         try {
           await dispatchSettlement.onError(error);
         } catch (settlementError) {
