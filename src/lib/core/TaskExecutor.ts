@@ -1,7 +1,7 @@
 // Core task execution engine for ADCP conversation flow
 // Implements PR #78 async patterns: working/submitted/input-required/completed
 
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import type { AgentConfig } from '../types';
 import {
   ProtocolClient,
@@ -94,13 +94,55 @@ export class InputRequiredError extends Error {
 
 /** Supporting contract for the internal pre-dispatch boundary. */
 export type BeforeProtocolDispatchHookResult<T> =
-  | { action: 'dispatch_committed' }
+  | {
+      action: 'dispatch_committed';
+      /** Persist or otherwise settle the seller result inside the executor-owned dispatch lifetime. */
+      onResult?: (result: TaskResult<T>) => Promise<TaskResult<T>>;
+      /** Fence transport/parser uncertainty inside the executor-owned dispatch lifetime. */
+      onError?: (error: unknown) => Promise<never>;
+    }
   | { action: 'return'; result: TaskResult<T> };
 
 /** Context supplied to the internal pre-dispatch boundary. */
 export interface BeforeProtocolDispatchContext {
   /** True when governance changed the payload rather than approving it unchanged. */
   governanceAdjusted: boolean;
+  /** Publish a terminal continuation result after its durable settlement succeeds. */
+  publishSettledTaskStatus: (status: TaskStatus, data?: unknown, error?: string) => void;
+  /** Register durable settlement for an authoritative terminal push notification. */
+  registerExternalTaskSettlement: (handler: ExternalTaskSettlementHandler) => void;
+}
+
+export interface ExternalTaskSettlementObservation {
+  status: TaskStatus;
+  result?: unknown;
+  serverTaskId?: string;
+  taskType?: string;
+}
+
+export type ExternalTaskSettlementHandler = (
+  observation: ExternalTaskSettlementObservation
+) => Promise<TaskResult<unknown>>;
+
+export interface ExternalTaskStatusResult {
+  settled: boolean;
+  /** Exact retry of a terminal observation that already completed durable settlement. */
+  duplicate?: boolean;
+  result?: unknown;
+  status?: TaskStatus;
+  error?: string;
+}
+
+interface SettledExternalTaskObservation {
+  key: string;
+  status: TaskStatus;
+  error?: string;
+}
+
+interface ExternalTaskSettlementInFlight {
+  observationKey: string;
+  settlement: Promise<ExternalTaskStatusResult>;
+  waiterCount: number;
 }
 
 /** Hook used by higher-level SDK coordinators at the final dispatch boundary. */
@@ -115,6 +157,15 @@ export class BeforeProtocolDispatchHookError extends Error {
   constructor(readonly original: unknown) {
     super('An SDK pre-dispatch hook failed.', { cause: original });
     this.name = 'BeforeProtocolDispatchHookError';
+  }
+}
+
+/** Keeps internal post-dispatch settlement failures out of normal TaskResult error projection. */
+/** @internal */
+export class AfterProtocolDispatchHookError extends Error {
+  constructor(readonly original: unknown) {
+    super('An SDK post-dispatch settlement hook failed.', { cause: original });
+    this.name = 'AfterProtocolDispatchHookError';
   }
 }
 
@@ -467,6 +518,8 @@ interface TaskStatusPollResult {
 }
 
 const COMPACTED_TASK_STATE_LIMIT = 10_000;
+const DEFAULT_EXTERNAL_TASK_SETTLEMENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const TERMINAL_TASK_STATUSES = new Set<TaskStatus>([
   'completed',
   'failed',
@@ -475,11 +528,28 @@ const TERMINAL_TASK_STATUSES = new Set<TaskStatus>([
   'governance-denied',
   'aborted',
 ]);
+const MAX_PENDING_EXTERNAL_TASK_OBSERVATIONS = 8;
+const MAX_RETAINED_EXTERNAL_TASK_ERROR_CHARS = 1_024;
 
 /**
  * Core task execution engine that handles the conversation loop with agents
  */
 export class TaskExecutor {
+  private readonly deferredTerminalPublicationTaskIds = new Set<string>();
+  private readonly settlementCapacityReservations = new Set<string>();
+  private readonly closedExternalTaskSettlementTaskIds = new Set<string>();
+  private readonly externalTaskSettlementHandlers = new Map<string, ExternalTaskSettlementHandler>();
+  private readonly externalTaskSettlementInFlight = new Map<string, ExternalTaskSettlementInFlight>();
+  private readonly settledExternalTaskObservationKeys = new Map<string, SettledExternalTaskObservation>();
+  private readonly externalTaskSettlementExpiry = new Map<string, number>();
+  private readonly pendingExternalTaskObservations = new Map<
+    string,
+    Array<{
+      observation: ExternalTaskSettlementObservation;
+      resolve: (result: ExternalTaskStatusResult) => void;
+      reject: (error: unknown) => void;
+    }>
+  >();
   private responseParser: ProtocolResponseParser;
   private activeTasks = new Map<string, TaskState>();
   private compactedTaskIds = new Map<string, true>();
@@ -517,6 +587,10 @@ export class TaskExecutor {
         callbackUrl: string;
         mode: 'rfc9421' | 'hmac-sha256';
       }) => void | Promise<void>;
+      /** Persist fail-closed routing provenance before a durable mutation claim can run. */
+      onDurableSettlementRequired?: (operationId: string) => void | Promise<void>;
+      /** Retain durable push-settlement fences for at least the callback registration lifetime. */
+      externalTaskSettlementRetentionMs?: number;
       /** Fail tasks when response schema validation fails (default: true) */
       strictSchemaValidation?: boolean;
       /** Emit schema validation violations to debug logs and the console (default: true) */
@@ -556,6 +630,12 @@ export class TaskExecutor {
       transport?: import('../protocols').TransportOptions;
     } = {}
   ) {
+    if (
+      config.externalTaskSettlementRetentionMs !== undefined &&
+      (!Number.isSafeInteger(config.externalTaskSettlementRetentionMs) || config.externalTaskSettlementRetentionMs < 1)
+    ) {
+      throw new ConfigurationError('externalTaskSettlementRetentionMs must be a positive safe integer.');
+    }
     this.responseParser = new ProtocolResponseParser();
     if (config.enableConversationStorage) {
       this.conversationStorage = new Map();
@@ -604,9 +684,53 @@ export class TaskExecutor {
    *
    * @internal
    */
-  observeExternalTaskStatus(taskId: string, status: TaskStatus, result?: unknown): void {
-    if (!['completed', 'failed', 'rejected', 'canceled'].includes(status)) return;
+  async observeExternalTaskStatus(
+    taskId: string,
+    status: TaskStatus,
+    result?: unknown,
+    identity: { serverTaskId?: string; taskType?: string } = {}
+  ): Promise<ExternalTaskStatusResult> {
+    if (!['completed', 'failed', 'rejected', 'canceled', 'governance-denied', 'aborted'].includes(status)) {
+      return { settled: false, result };
+    }
+    const observation: ExternalTaskSettlementObservation = { status, result, ...identity };
+    const observationKey = this.externalTaskObservationKey(observation);
+    if (this.closedExternalTaskSettlementTaskIds.has(taskId)) {
+      const accepted = this.settledExternalTaskObservationKeys.get(taskId);
+      if (accepted?.key === observationKey) {
+        return {
+          settled: true,
+          duplicate: true,
+          status: accepted.status,
+          ...(accepted.error !== undefined && { error: accepted.error }),
+        };
+      }
+      throw new Error('This task already completed durable settlement; the pushed result was not accepted.');
+    }
+    if (this.deferredTerminalPublicationTaskIds.has(taskId)) {
+      const handler = this.externalTaskSettlementHandlers.get(taskId);
+      if (handler) return this.settleExternalTaskStatus(taskId, handler, observation);
+      return new Promise((resolve, reject) => {
+        const pending = this.pendingExternalTaskObservations.get(taskId) ?? [];
+        if (pending.length >= MAX_PENDING_EXTERNAL_TASK_OBSERVATIONS) {
+          reject(new Error('Too many terminal push notifications are awaiting durable task settlement.'));
+          return;
+        }
+        pending.push({ observation, resolve, reject });
+        this.pendingExternalTaskObservations.set(taskId, pending);
+      });
+    }
     this.updateTaskStatus(taskId, status, result);
+    return { settled: false, result };
+  }
+
+  /** Whether this process can safely settle or reject a durable callback for the operation. */
+  hasExternalTaskSettlementRoute(taskId: string): boolean {
+    return (
+      this.deferredTerminalPublicationTaskIds.has(taskId) ||
+      this.closedExternalTaskSettlementTaskIds.has(taskId) ||
+      this.externalTaskSettlementHandlers.has(taskId)
+    );
   }
 
   /**
@@ -740,6 +864,10 @@ export class TaskExecutor {
     beforeProtocolDispatch?: BeforeProtocolDispatchHook<T>
   ): Promise<TaskResult<T>> {
     if (serverVersion) this.lastKnownServerVersion = serverVersion;
+    // Own the request graph before the first awaited activity/governance
+    // boundary. This executor is internal, but direct callers and higher
+    // layers may still retain the original nested objects.
+    params = structuredClone(params);
     // The client-minted `taskId` is a local correlation id for tracking this
     // call's lifecycle (activeTasks map, metadata, webhook URL macros). It is
     // NOT the same thing as the A2A `taskId` that the server assigns — that
@@ -779,6 +907,12 @@ export class TaskExecutor {
     };
     this.activeTasks.set(taskId, taskState);
 
+    // Once the final compatibility boundary starts, an abort may race a
+    // durable claim that has committed but whose hook has not returned yet.
+    // In that window the boundary, not the caller signal, owns publication of
+    // terminal state. The abort listener still compacts retained request data.
+    let dispatchBoundaryOwnsTerminalState = false;
+
     // Compact task state as soon as cancellation fires, even if a protocol
     // adapter or caller callback never settles after receiving the signal.
     // The outer deadline race guarantees prompt rejection; this listener is
@@ -787,6 +921,10 @@ export class TaskExecutor {
       ? () => {
           const currentStatus = this.activeTasks.get(taskId)?.status;
           if (currentStatus && !TERMINAL_TASK_STATUSES.has(currentStatus)) {
+            if (dispatchBoundaryOwnsTerminalState) {
+              this.compactAbandonedObserverTaskState(taskId);
+              return;
+            }
             const reason = options.signal?.reason;
             this.updateTaskStatus(
               taskId,
@@ -822,6 +960,11 @@ export class TaskExecutor {
     let governanceResult: GovernanceCheckResult | undefined;
     let effectiveParams = params;
     let governanceAdjusted = false;
+    let dispatchCommitted = false;
+    let dispatchSettlement:
+      | Pick<Extract<BeforeProtocolDispatchHookResult<T>, { action: 'dispatch_committed' }>, 'onResult' | 'onError'>
+      | undefined;
+    let dispatchSettlementStarted = false;
 
     try {
       // Emit protocol_request activity. The activity payload is the boundary
@@ -909,11 +1052,17 @@ export class TaskExecutor {
         }
       }
 
-      // Create initial message (uses effectiveParams which may have governance-applied conditions)
+      // Detach the final request graph before the durable claim boundary. The
+      // caller may still hold and mutate nested account/brand/targeting values;
+      // validation, claim verification, the prepared wire call, and dispatch
+      // must all observe one immutable-by-ownership snapshot.
+      const dispatchParams = structuredClone(effectiveParams);
+
+      // Create initial message (uses dispatchParams which may have governance-applied conditions)
       const initialMessage: Message = {
         id: randomUUID(),
         role: 'user',
-        content: { tool: taskName, params: effectiveParams },
+        content: { tool: taskName, params: dispatchParams },
         timestamp: new Date().toISOString(),
         metadata: { toolName: taskName, type: 'request' },
       };
@@ -922,7 +1071,7 @@ export class TaskExecutor {
       // prepared object. A seller can post immediately after receiving the
       // request, so the registration write must complete before the network
       // boundary is crossed.
-      const preparedCall = prepareProtocolToolCall(agent, effectiveParams, {
+      const preparedCall = prepareProtocolToolCall(agent, dispatchParams, {
         toolName: taskName,
         webhookUrl,
         webhookSecret: this.config.webhookSecret,
@@ -931,6 +1080,7 @@ export class TaskExecutor {
         wireAdcpVersion: this.config.wireAdcpVersion,
         versionEnvelope: this.config.versionEnvelope,
       });
+      let webhookRegistrationPersisted = false;
       if (webhookUrl && this.config.onWebhookRegistration) {
         const registration = webhookRegistrationFromPreparedCall(agent, preparedCall);
         if (registration) {
@@ -940,6 +1090,7 @@ export class TaskExecutor {
             operationId: taskId,
             ...registration,
           });
+          webhookRegistrationPersisted = true;
         }
       }
 
@@ -948,13 +1099,35 @@ export class TaskExecutor {
       // call; callers can therefore distinguish deterministic preflight failure
       // from transport uncertainty after the commit point.
       throwIfAborted(options.signal);
-      let dispatchCommitted = false;
       if (beforeProtocolDispatch) {
         let decision: BeforeProtocolDispatchHookResult<T>;
+        dispatchBoundaryOwnsTerminalState = true;
         try {
-          decision = await beforeProtocolDispatch(effectiveParams, { governanceAdjusted });
+          if (
+            this.deferredTerminalPublicationTaskIds.size + this.settlementCapacityReservations.size >=
+            COMPACTED_TASK_STATE_LIMIT
+          ) {
+            throw new Error('The durable task-settlement capacity is exhausted; no mutation claim was attempted.');
+          }
+          this.settlementCapacityReservations.add(taskId);
+          if (webhookRegistrationPersisted) {
+            await this.config.onDurableSettlementRequired?.(taskId);
+            throwIfAborted(options.signal);
+          }
+          decision = await beforeProtocolDispatch(dispatchParams, {
+            governanceAdjusted,
+            publishSettledTaskStatus: (status, data, error) =>
+              this.publishSettledTaskStatus(taskId, status, data, error),
+            registerExternalTaskSettlement: handler => this.registerExternalTaskSettlement(taskId, handler),
+          });
+          if (decision.action === 'dispatch_committed') {
+            this.deferredTerminalPublicationTaskIds.add(taskId);
+            this.retainExternalTaskSettlementState(taskId);
+          }
         } catch (error) {
           throw new BeforeProtocolDispatchHookError(error);
+        } finally {
+          this.settlementCapacityReservations.delete(taskId);
         }
         if (decision.action === 'return') {
           const earlyResult = decision.result;
@@ -966,7 +1139,19 @@ export class TaskExecutor {
           return attachMatch(earlyResult);
         }
         dispatchCommitted = true;
+        dispatchSettlement = decision;
       }
+
+      // A claim that completes after the caller deadline must be fenced, not
+      // turned into a hidden seller mutation after the caller has already
+      // received a timeout and may have replanned. The catch path invokes the
+      // committed hook's onError settlement before any protocol call begins.
+      throwIfAborted(options.signal);
+
+      // Once a durable claim commits, the caller-facing signal may already be
+      // aborted after seller dispatch begins. Never let that abandoned
+      // observer prevent response parsing or durable settlement.
+      const postDispatchOptions = dispatchCommitted ? { ...options, signal: undefined } : options;
 
       // Send initial request and get streaming response with webhook URL.
       // Pass the caller's A2A session ids (contextId for conversation binding,
@@ -982,12 +1167,9 @@ export class TaskExecutor {
         ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
         ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: options.transport ?? this.config.transport,
-        // Once a durable continuation claim commits, the seller call itself
-        // must cross the network boundary even if the caller's deadline fired
-        // while the atomic store operation was pending. The outer deadline
-        // still rejects promptly and post-call handling marks the outcome
-        // ambiguous for reconciliation.
-        signal: dispatchCommitted ? undefined : options.signal,
+        // Once dispatch begins for a live committed claim, post-call handling
+        // owns durable settlement even if the caller's deadline fires later.
+        signal: postDispatchOptions.signal,
         onTransportActivity: this.config.onTransportActivity,
         transportActivityContext: {
           operationId: taskId,
@@ -997,10 +1179,10 @@ export class TaskExecutor {
         },
       };
       const response = await withPreparedProtocolToolCall(
-        { agent, toolName: taskName, args: effectiveParams, preparedCall },
-        () => ProtocolClient.callTool(agent, taskName, effectiveParams, callOptions)
+        { agent, toolName: taskName, args: dispatchParams, preparedCall },
+        () => ProtocolClient.callTool(agent, taskName, dispatchParams, callOptions)
       );
-      throwIfAborted(options.signal);
+      throwIfAborted(postDispatchOptions.signal);
 
       // Emit protocol_response activity
       const respStatus = this.responseParser.getStatus(response) as string | undefined;
@@ -1015,7 +1197,7 @@ export class TaskExecutor {
         payload: response,
         timestamp: new Date().toISOString(),
       });
-      throwIfAborted(options.signal);
+      throwIfAborted(postDispatchOptions.signal);
 
       // Add initial response message
       const responseMessage: Message = {
@@ -1029,26 +1211,44 @@ export class TaskExecutor {
       const messages = [initialMessage, responseMessage];
 
       // Handle response based on status
-      const result = await this.handleAsyncResponse<T>(
+      let result = await this.handleAsyncResponse<T>(
         agent,
         taskId,
         taskName,
-        effectiveParams,
+        dispatchParams,
         response,
         messages,
         inputHandler,
-        options,
+        postDispatchOptions,
         debugLogs,
-        startTime
+        startTime,
+        dispatchCommitted
       );
-      throwIfAborted(options.signal);
+      throwIfAborted(postDispatchOptions.signal);
 
       // Attach governance check result to the task result
       if (governanceResult) {
         result.governance = governanceResult;
       }
 
-      // Report governance outcome if we had a governance check.
+      if (dispatchSettlement?.onResult) {
+        dispatchSettlementStarted = true;
+        try {
+          result = await dispatchSettlement.onResult(attachMatch(result));
+        } catch (error) {
+          // A committed mutation is not terminal from the SDK's perspective
+          // until its durable settlement succeeds. Publish only the failed
+          // local coordinator state here; never leak the seller's earlier
+          // completed response through task events or retained task state.
+          this.closeExternalTaskSettlement(taskId, error);
+          this.updateTaskStatus(taskId, 'failed', undefined, error instanceof Error ? error.message : String(error));
+          throw new AfterProtocolDispatchHookError(error);
+        }
+      }
+
+      // Report governance only after a committed compatibility mutation has
+      // durably settled. A seller terminal response is not authoritative if
+      // the coordinator subsequently fails to persist it.
       // For async tasks (submitted/working), outcome reporting is deferred —
       // the caller reports via client.reportGovernanceOutcome() when the
       // task resolves through polling or webhooks.
@@ -1071,10 +1271,10 @@ export class TaskExecutor {
             undefined,
             debugLogs,
             govCtx,
-            options.signal,
+            postDispatchOptions.signal,
             outcomeIdempotencyKey
           );
-          throwIfAborted(options.signal);
+          throwIfAborted(postDispatchOptions.signal);
           if (!result.governanceOutcome) {
             result.governanceOutcomeError = 'Outcome reporting to governance agent failed';
           }
@@ -1092,16 +1292,23 @@ export class TaskExecutor {
             { message: result.error },
             debugLogs,
             govCtx,
-            options.signal,
+            postDispatchOptions.signal,
             outcomeIdempotencyKey
           );
-          throwIfAborted(options.signal);
+          throwIfAborted(postDispatchOptions.signal);
           if (!result.governanceOutcome) {
             result.governanceOutcomeError = 'Outcome reporting to governance agent failed';
           }
         } else if (result.status === 'submitted' || result.status === 'working') {
           // Attach the check ID so callers can report outcome after async resolution
           result.governance = { ...(result.governance ?? {}), checkId: governanceCheckId } as GovernanceCheckResult;
+        }
+      }
+
+      if (dispatchCommitted) {
+        result = this.attachSettledContinuationTaskStatus(taskId, result);
+        if (TERMINAL_TASK_STATUSES.has(result.status as TaskStatus)) {
+          this.publishSettledTaskStatus(taskId, result.status as TaskStatus, result.data, result.error);
         }
       }
 
@@ -1120,6 +1327,22 @@ export class TaskExecutor {
         // full request payloads and options in activeTasks.
         this.updateTaskStatus(taskId, 'failed', undefined, error.message);
         throw error;
+      }
+      if (error instanceof AfterProtocolDispatchHookError) throw error;
+      if (dispatchCommitted && dispatchSettlement?.onError && !dispatchSettlementStarted) {
+        try {
+          await dispatchSettlement.onError(error);
+        } catch (settlementError) {
+          this.closeExternalTaskSettlement(taskId, settlementError);
+          this.updateTaskStatus(
+            taskId,
+            'failed',
+            undefined,
+            settlementError instanceof Error ? settlementError.message : String(settlementError)
+          );
+          throw new AfterProtocolDispatchHookError(settlementError);
+        }
+        this.closeExternalTaskSettlement(taskId, error);
       }
       if (isAbortOrTimeoutError(error)) {
         if (idempotencyKey && error && typeof error === 'object') {
@@ -1192,7 +1415,8 @@ export class TaskExecutor {
     inputHandler?: InputHandler,
     options: TaskOptions = {},
     debugLogs: any[] = [],
-    startTime: number = Date.now()
+    startTime: number = Date.now(),
+    deferTerminalTaskStatus = false
   ): Promise<TaskResult<T>> {
     const status = this.responseParser.getStatus(response) as ADCPStatus;
 
@@ -1200,7 +1424,10 @@ export class TaskExecutor {
       case ADCP_STATUS.COMPLETED:
         // Task completed immediately
         const completedData = this.extractResponseData(response, debugLogs, taskName);
-        this.updateTaskStatus(taskId, 'completed', completedData);
+        // Ordinary calls retain the historical behavior of publishing seller
+        // completion before optional governance postflight work. A committed
+        // compatibility mutation defers this until durable settlement.
+        if (!deferTerminalTaskStatus) this.updateTaskStatus(taskId, 'completed', completedData);
 
         const operationSuccess = this.isOperationSuccess(completedData, taskName);
 
@@ -1270,7 +1497,17 @@ export class TaskExecutor {
 
       case ADCP_STATUS.SUBMITTED:
         // Long-running task - set up webhook
-        return this.setupSubmittedTask<T>(agent, taskId, taskName, response, messages, options, debugLogs, startTime);
+        return this.setupSubmittedTask<T>(
+          agent,
+          taskId,
+          taskName,
+          response,
+          messages,
+          options,
+          debugLogs,
+          startTime,
+          deferTerminalTaskStatus
+        );
 
       case ADCP_STATUS.INPUT_REQUIRED:
         // Server needs input - handler is mandatory
@@ -1284,7 +1521,8 @@ export class TaskExecutor {
           inputHandler,
           options,
           debugLogs,
-          startTime
+          startTime,
+          deferTerminalTaskStatus
         );
 
       case ADCP_STATUS.FAILED:
@@ -1589,7 +1827,8 @@ export class TaskExecutor {
     messages: Message[],
     options: TaskOptions = {},
     debugLogs: any[] = [],
-    startTime: number = Date.now()
+    startTime: number = Date.now(),
+    deferTerminalTaskStatus = false
   ): Promise<TaskResult<T>> {
     // Extract any data that came with the submitted response
     const partialData = this.extractResponseData(response, debugLogs, taskName);
@@ -1647,7 +1886,7 @@ export class TaskExecutor {
       webhookUrl,
       track: async (transport?: import('../protocols').TransportOptions) => {
         const task = await this.getTaskStatus(agent, serverTaskId, transport ?? pollingTransport);
-        if (['completed', 'failed', 'rejected', 'canceled'].includes(task.status)) {
+        if (!deferTerminalTaskStatus && ['completed', 'failed', 'rejected', 'canceled'].includes(task.status)) {
           this.updateTaskStatus(taskId, task.status as TaskStatus, task.result, task.error);
         }
         return task;
@@ -1657,7 +1896,9 @@ export class TaskExecutor {
         // `pollTaskCompletion` also returns paused input-required/auth-required
         // states. Preserve that status so callers can resume the seller task;
         // only genuinely terminal statuses trigger delayed state eviction.
-        this.updateTaskStatus(taskId, completed.status as TaskStatus, completed.data, completed.error);
+        if (!deferTerminalTaskStatus || !TERMINAL_TASK_STATUSES.has(completed.status as TaskStatus)) {
+          this.updateTaskStatus(taskId, completed.status as TaskStatus, completed.data, completed.error);
+        }
         return completed;
       },
     };
@@ -1684,6 +1925,223 @@ export class TaskExecutor {
   }
 
   /**
+   * A committed compatibility hook may replace resumable continuations with
+   * wrappers that validate and durably persist their terminal result. Attach
+   * local task publication only after those final wrappers return.
+   */
+  private attachSettledContinuationTaskStatus<T>(taskId: string, result: TaskResult<T>): TaskResult<T> {
+    const publish = (status: TaskStatus, data?: unknown, error?: string) => {
+      this.publishSettledTaskStatus(taskId, status, data, error);
+    };
+
+    if (result.submitted) {
+      const submitted = result.submitted;
+      result.submitted = {
+        ...submitted,
+        track: async transport => {
+          const task = await submitted.track(transport);
+          publish(task.status as TaskStatus, task.result, task.error);
+          return task;
+        },
+        waitForCompletion: async (pollInterval, signal) => {
+          const completion = this.attachSettledContinuationTaskStatus(
+            taskId,
+            await submitted.waitForCompletion(pollInterval, signal)
+          );
+          publish(completion.status as TaskStatus, completion.data, completion.error);
+          return completion;
+        },
+      };
+    }
+
+    if (result.deferred) {
+      const deferred = result.deferred;
+      result.deferred = {
+        ...deferred,
+        resume: async input => {
+          const completion = this.attachSettledContinuationTaskStatus(taskId, await deferred.resume(input));
+          publish(completion.status as TaskStatus, completion.data, completion.error);
+          return completion;
+        },
+      };
+    }
+
+    return result;
+  }
+
+  private publishSettledTaskStatus(
+    taskId: string,
+    status: TaskStatus,
+    data?: unknown,
+    error?: string,
+    fromExternalObservation = false
+  ): void {
+    if (!TERMINAL_TASK_STATUSES.has(status)) return;
+    const task = this.activeTasks.get(taskId);
+    if (!task) return;
+    if (!fromExternalObservation) {
+      this.closeExternalTaskSettlement(
+        taskId,
+        new Error('The task settled through its direct response; a racing pushed result was not accepted.')
+      );
+    }
+    if (task.status !== status) this.updateTaskStatus(taskId, status, data, error);
+  }
+
+  private rejectPendingExternalTaskObservations(taskId: string, error: unknown): void {
+    const pending = this.pendingExternalTaskObservations.get(taskId);
+    this.pendingExternalTaskObservations.delete(taskId);
+    for (const waiter of pending ?? []) waiter.reject(error);
+  }
+
+  private closeExternalTaskSettlement(taskId: string, error: unknown): void {
+    this.externalTaskSettlementHandlers.delete(taskId);
+    this.externalTaskSettlementInFlight.delete(taskId);
+    this.closedExternalTaskSettlementTaskIds.add(taskId);
+    this.rejectPendingExternalTaskObservations(taskId, error);
+  }
+
+  private clearExternalTaskSettlementState(taskId: string): void {
+    this.deferredTerminalPublicationTaskIds.delete(taskId);
+    this.closedExternalTaskSettlementTaskIds.delete(taskId);
+    this.externalTaskSettlementHandlers.delete(taskId);
+    this.externalTaskSettlementInFlight.delete(taskId);
+    this.settledExternalTaskObservationKeys.delete(taskId);
+    this.externalTaskSettlementExpiry.delete(taskId);
+    this.rejectPendingExternalTaskObservations(
+      taskId,
+      new Error('The durable push-settlement retention window expired before the observation was accepted.')
+    );
+  }
+
+  private retainExternalTaskSettlementState(taskId: string): void {
+    const retentionMs = this.config.externalTaskSettlementRetentionMs ?? DEFAULT_EXTERNAL_TASK_SETTLEMENT_RETENTION_MS;
+    const expiry = Date.now() + retentionMs;
+    if ((this.externalTaskSettlementExpiry.get(taskId) ?? 0) >= expiry) return;
+    this.externalTaskSettlementExpiry.set(taskId, expiry);
+    const expire = () => {
+      if (this.externalTaskSettlementExpiry.get(taskId) !== expiry) return;
+      const remaining = expiry - Date.now();
+      if (remaining > 0) {
+        const timer = setTimeout(expire, Math.min(remaining, MAX_TIMER_DELAY_MS));
+        timer.unref?.();
+        return;
+      }
+      this.clearExternalTaskSettlementState(taskId);
+    };
+    const timer = setTimeout(expire, Math.min(retentionMs, MAX_TIMER_DELAY_MS));
+    timer.unref?.();
+  }
+
+  /** Release short-lived task inspection state without dropping a live durable push fence. */
+  private cleanupTerminalTaskInspectionState(taskId: string): void {
+    this.activeTasks.delete(taskId);
+    this.compactedTaskIds.delete(taskId);
+    if (
+      this.deferredTerminalPublicationTaskIds.has(taskId) ||
+      this.closedExternalTaskSettlementTaskIds.has(taskId) ||
+      this.externalTaskSettlementHandlers.has(taskId)
+    ) {
+      if (this.externalTaskSettlementExpiry.has(taskId)) return;
+    }
+    this.clearExternalTaskSettlementState(taskId);
+  }
+
+  private registerExternalTaskSettlement(taskId: string, handler: ExternalTaskSettlementHandler): void {
+    this.externalTaskSettlementHandlers.set(taskId, handler);
+    const pending = this.pendingExternalTaskObservations.get(taskId);
+    if (!pending) return;
+    this.pendingExternalTaskObservations.delete(taskId);
+    for (const waiter of pending) {
+      void this.settleExternalTaskStatus(taskId, handler, waiter.observation).then(waiter.resolve, waiter.reject);
+    }
+  }
+
+  private externalTaskObservationKey(observation: ExternalTaskSettlementObservation): string {
+    return createHash('sha256')
+      .update(
+        canonicalize({
+          status: observation.status,
+          serverTaskId: observation.serverTaskId ?? null,
+          taskType: observation.taskType ?? null,
+          result: observation.result ?? null,
+        })
+      )
+      .digest('base64url');
+  }
+
+  private async settleExternalTaskStatus(
+    taskId: string,
+    handler: ExternalTaskSettlementHandler,
+    observation: ExternalTaskSettlementObservation
+  ): Promise<ExternalTaskStatusResult> {
+    const observationKey = this.externalTaskObservationKey(observation);
+    const existing = this.externalTaskSettlementInFlight.get(taskId);
+    if (existing) {
+      if (existing.waiterCount >= MAX_PENDING_EXTERNAL_TASK_OBSERVATIONS) {
+        throw new Error('Too many terminal push notifications are undergoing durable task settlement.');
+      }
+      existing.waiterCount += 1;
+      try {
+        const accepted = await existing.settlement;
+        if (existing.observationKey !== observationKey) {
+          throw new Error('This task already completed durable settlement; the pushed result was not accepted.');
+        }
+        return { ...accepted, duplicate: true };
+      } finally {
+        existing.waiterCount -= 1;
+      }
+    }
+    const settlement = (async () => {
+      const settled = await handler(observation);
+      const settledStatus = settled.status as TaskStatus;
+      if (this.closedExternalTaskSettlementTaskIds.has(taskId)) {
+        throw new Error('The task settled through its direct response; the racing pushed result was not accepted.');
+      }
+      if (this.settledExternalTaskObservationKeys.has(taskId)) {
+        throw new Error('This task already completed durable settlement; the pushed result was not accepted.');
+      }
+      this.publishSettledTaskStatus(taskId, settledStatus, settled.data, settled.error, true);
+      this.settledExternalTaskObservationKeys.set(taskId, {
+        key: observationKey,
+        status: settledStatus,
+        ...(settled.error !== undefined && {
+          error: settled.error.slice(0, MAX_RETAINED_EXTERNAL_TASK_ERROR_CHARS),
+        }),
+      });
+      this.closeExternalTaskSettlement(
+        taskId,
+        new Error('The task already completed durable external settlement; a later pushed result was not accepted.')
+      );
+      return {
+        settled: true,
+        result: settled.data,
+        status: settled.status as TaskStatus,
+        ...(settled.error !== undefined && { error: settled.error }),
+      };
+    })();
+    const inFlight = { observationKey, settlement, waiterCount: 1 };
+    this.externalTaskSettlementInFlight.set(taskId, inFlight);
+    try {
+      return await settlement;
+    } finally {
+      if (this.externalTaskSettlementInFlight.get(taskId) === inFlight) {
+        this.externalTaskSettlementInFlight.delete(taskId);
+      }
+    }
+  }
+
+  /** Release abandoned caller data without publishing a premature terminal state. */
+  private compactAbandonedObserverTaskState(taskId: string): void {
+    const task = this.activeTasks.get(taskId);
+    if (!task) return;
+    task.params = undefined;
+    task.messages = [];
+    task.options = {};
+    delete task.pendingInput;
+  }
+
+  /**
    * A working/submitted response carries everything needed to poll externally.
    * Keeping the original request in activeTasks after dispatch would pin
    * inline assets, webhook credentials, conversation payloads, and per-call
@@ -1704,10 +2162,17 @@ export class TaskExecutor {
     this.compactedTaskIds.delete(taskId);
     this.compactedTaskIds.set(taskId, true);
     while (this.compactedTaskIds.size > COMPACTED_TASK_STATE_LIMIT) {
-      const oldest = this.compactedTaskIds.keys().next().value;
+      const oldest = [...this.compactedTaskIds.keys()].find(
+        candidate =>
+          !this.deferredTerminalPublicationTaskIds.has(candidate) &&
+          !this.externalTaskSettlementHandlers.has(candidate) &&
+          !this.externalTaskSettlementInFlight.has(candidate)
+      );
       if (oldest === undefined) break;
       this.compactedTaskIds.delete(oldest);
       this.activeTasks.delete(oldest);
+      this.closeExternalTaskSettlement(oldest, new Error('The compacted task was evicted before push settlement.'));
+      this.closedExternalTaskSettlementTaskIds.delete(oldest);
     }
   }
 
@@ -1729,7 +2194,8 @@ export class TaskExecutor {
     inputHandler?: InputHandler,
     options: TaskOptions = {},
     debugLogs: any[] = [],
-    startTime: number = Date.now()
+    startTime: number = Date.now(),
+    deferTerminalTaskStatus = false
   ): Promise<TaskResult<T>> {
     const inputRequest = this.responseParser.parseInputRequest(response);
 
@@ -1838,7 +2304,7 @@ export class TaskExecutor {
       const deferred: DeferredContinuation<T> = {
         token,
         question: inputRequest.question,
-        resume: input => this.resumeDeferredTask<T>(token, input),
+        resume: input => this.resumeDeferredTask<T>(token, input, !deferTerminalTaskStatus),
       };
 
       return {
@@ -1872,7 +2338,8 @@ export class TaskExecutor {
       inputHandler, // Pass handler for multi-round clarification
       options,
       debugLogs,
-      startTime
+      startTime,
+      deferTerminalTaskStatus
     );
   }
 
@@ -2224,7 +2691,7 @@ export class TaskExecutor {
   /**
    * Resume a deferred task (client deferral)
    */
-  async resumeDeferredTask<T>(token: string, input: any): Promise<TaskResult<T>> {
+  async resumeDeferredTask<T>(token: string, input: any, publishTerminalTaskStatus = true): Promise<TaskResult<T>> {
     if (!this.config.deferredStorage) {
       throw new Error('Deferred storage not configured');
     }
@@ -2244,10 +2711,15 @@ export class TaskExecutor {
         state.contextId,
         input,
         state.messages,
-        undefined // No handler for deferred tasks - input was provided by human
+        undefined, // No handler for deferred tasks - input was provided by human
+        {},
+        [],
+        Date.now(),
+        !publishTerminalTaskStatus
       );
       const remainsPaused = ['input-required', 'auth-required', 'deferred'].includes(resumed.status);
       if (
+        publishTerminalTaskStatus &&
         ['completed', 'failed', 'rejected', 'canceled', 'governance-denied', 'aborted'].includes(resumed.status) &&
         this.activeTasks.get(state.taskId)?.status !== resumed.status
       ) {
@@ -2261,7 +2733,14 @@ export class TaskExecutor {
       // A thrown continuation failure is terminal for this deferred token.
       // Release both persistence and the in-memory request payload before the
       // error escapes to the caller.
-      this.updateTaskStatus(state.taskId, 'failed', undefined, error instanceof Error ? error.message : String(error));
+      if (publishTerminalTaskStatus) {
+        this.updateTaskStatus(
+          state.taskId,
+          'failed',
+          undefined,
+          error instanceof Error ? error.message : String(error)
+        );
+      }
       try {
         await this.config.deferredStorage.delete(token);
       } catch {
@@ -2286,7 +2765,8 @@ export class TaskExecutor {
     inputHandler: InputHandler | undefined,
     options: TaskOptions = {},
     debugLogs: any[] = [],
-    startTime: number = Date.now()
+    startTime: number = Date.now(),
+    deferTerminalTaskStatus = false
   ): Promise<TaskResult<T>> {
     // Add user input message
     const inputMessage: Message = {
@@ -2344,7 +2824,8 @@ export class TaskExecutor {
       inputHandler,
       options,
       debugLogs,
-      startTime
+      startTime,
+      deferTerminalTaskStatus
     );
   }
 
@@ -2738,8 +3219,7 @@ export class TaskExecutor {
         task.options = {};
         delete task.pendingInput;
         setTimeout(() => {
-          this.activeTasks.delete(taskId);
-          this.compactedTaskIds.delete(taskId);
+          this.cleanupTerminalTaskInspectionState(taskId);
         }, 30000).unref(); // Keep for 30 seconds for final status checks
       }
     }

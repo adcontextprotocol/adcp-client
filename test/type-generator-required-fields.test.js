@@ -204,6 +204,49 @@ writeFileSync(__OUTPUT__, JSON.stringify({
   assert.equal(result.finalized.hasExpiry, true);
 });
 
+test('request_proposals outcome branches retain products and legacy continuation fields', () => {
+  const result = runGeneratorHarness(`
+import { readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { applyCodegenSchemaWorkarounds, enforceStrictSchema } from __GENERATOR__;
+
+const source = JSON.parse(
+  readFileSync(path.join(__REPO_ROOT__, 'schemas/cache/latest/media-buy/request-proposals-response.json'), 'utf8')
+);
+const transformed = enforceStrictSchema(applyCodegenSchemaWorkarounds(source, 'RequestProposalsResponse'));
+const proposed = transformed.oneOf.find(
+  (branch: any) => branch.properties?.outcome?.const === 'proposed'
+);
+const productsAvailable = transformed.oneOf.find(
+  (branch: any) => branch.properties?.outcome?.const === 'products_available'
+);
+const legacyCreate = productsAvailable.properties.purchase_continuation.oneOf.find(
+  (branch: any) => branch.properties?.kind?.const === 'legacy_create'
+);
+writeFileSync(__OUTPUT__, JSON.stringify({
+  branchCount: transformed.oneOf.length,
+  productsAvailableRequired: productsAvailable.required,
+  productsAvailableProperties: Object.keys(productsAvailable.properties),
+  productsMinItems: productsAvailable.properties.products.minItems,
+  proposedForbidsContinuation: proposed.properties.purchase_continuation === false,
+  productsAvailableForbidsProposals: productsAvailable.properties.proposals === false,
+  continuationRequired: legacyCreate.required,
+  continuationProperties: Object.keys(legacyCreate.properties),
+}));
+`);
+
+  assert.equal(result.branchCount, 4);
+  assert.ok(result.productsAvailableRequired.includes('products'));
+  assert.ok(result.productsAvailableRequired.includes('purchase_continuation'));
+  assert.ok(result.productsAvailableProperties.includes('purchase_continuation'));
+  assert.equal(result.productsMinItems, 1);
+  assert.equal(result.proposedForbidsContinuation, true);
+  assert.equal(result.productsAvailableForbidsProposals, true);
+  assert.ok(result.continuationRequired.includes('continuation_token'));
+  assert.ok(result.continuationRequired.includes('losses'));
+  assert.ok(result.continuationProperties.includes('product_ids'));
+});
+
 test('GetMediaBuyDeliveryResponse isolates optional breakdown identifiers under unique compat titles', () => {
   const result = runGeneratorHarness(`
 import { readFileSync, writeFileSync } from 'node:fs';

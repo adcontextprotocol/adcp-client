@@ -106,9 +106,17 @@ const PRIORITY_CANONICAL_SCHEMAS = [
 // churn in core.generated.ts.
 const PRIORITY_EXTRACTED_TYPES = [
   {
+    ref: 'media-buy/request-proposals-response.json',
+    typeName: 'RequestProposalsResponse',
+    reason:
+      'the async-response-data webhook union can collapse products_available and legacy_create branches to empty objects',
+    numberedReferenceAliases: ['ProductDiscoveryTargetingResolution'],
+  },
+  {
     ref: 'creative/sync-creatives-response.json',
     typeName: 'SyncCreativesSuccess',
     reason: 'the async-response-data webhook union can collapse the conditional creatives[] item to an empty object',
+    numberedReferenceAliases: [],
   },
 ] as const;
 
@@ -171,6 +179,7 @@ const CORE_AUTHORED_TOOL_SHARED_TYPES = new Set([
   'Provenance',
   'ProtocolEnvelope',
   'PurchaseType',
+  'RequestProposalsResponse',
   'RightsConstraint',
   'SignalDefinitionEnrichment',
   'SignalTargetingExpression',
@@ -1778,7 +1787,11 @@ export function applyCodegenSchemaWorkarounds(schema: any, schemaName: string): 
 
   schema = coalesceDefinitionKeywords(schema);
 
-  if (schemaName === 'DeclineProposalsResponse' || schemaName === 'RefineProposalsResponse') {
+  if (
+    schemaName === 'RequestProposalsResponse' ||
+    schemaName === 'DeclineProposalsResponse' ||
+    schemaName === 'RefineProposalsResponse'
+  ) {
     schema = materializeProposalResponseBranches(schema, schemaName);
   }
 
@@ -1890,7 +1903,7 @@ export function applyCodegenSchemaWorkarounds(schema: any, schemaName: string): 
 }
 
 function materializeProposalResponseBranches(schema: any, schemaName: string): any {
-  if (!schema?.properties || !Array.isArray(schema.anyOf) || schema.anyOf.length !== 2) return schema;
+  if (!schema?.properties || !Array.isArray(schema.anyOf) || schema.anyOf.length < 2) return schema;
 
   const branches: any[] = [];
   for (const member of schema.anyOf) {
@@ -1905,8 +1918,23 @@ function materializeProposalResponseBranches(schema: any, schemaName: string): a
       required: [...new Set([...(schema.required ?? []), ...(overlay.required ?? [])])],
       additionalProperties: schema.additionalProperties ?? false,
     };
+    for (const forbiddenArm of overlay.not?.anyOf ?? []) {
+      for (const forbiddenField of forbiddenArm?.required ?? []) {
+        if (schemaName === 'RequestProposalsResponse') {
+          // Keep forbidden fields as optional `never` properties. This
+          // preserves source-compatible union indexing/property reads while
+          // still making each discriminated arm reject the field.
+          branch.properties[forbiddenField] = false;
+        } else {
+          delete branch.properties[forbiddenField];
+        }
+      }
+    }
     const isCompleted = overlay.properties?.status?.const === 'completed';
-    if (isCompleted) delete branch.properties.task_id;
+    if (isCompleted) {
+      if (schemaName === 'RequestProposalsResponse') branch.properties.task_id = false;
+      else delete branch.properties.task_id;
+    }
 
     if (schemaName === 'RefineProposalsResponse' && branch.properties.results?.items) {
       const item = branch.properties.results?.items;
@@ -3646,7 +3674,10 @@ async function compileGapSchemas(generatedTypes: Set<string>, refResolver: any):
       }
       schema = applyCodegenSchemaWorkarounds(schema, pascalName);
 
-      const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema)));
+      const annotatedSchema = injectJsdocConstraints(schema);
+      const strictSchema = enforceStrictSchema(
+        typeName === 'RequestProposalsResponse' ? annotatedSchema : removeArrayLengthConstraints(annotatedSchema)
+      );
       const types = await compile(strictSchema, typeName, {
         bannerComment: '',
         style: { semi: true, singleQuote: true },
@@ -3778,13 +3809,16 @@ async function generateTypes() {
   }
   console.log(`✅ Generated ${PRIORITY_CANONICAL_SCHEMAS.length} priority canonical schemas`);
 
-  for (const { ref, typeName, reason } of PRIORITY_EXTRACTED_TYPES) {
+  for (const { ref, typeName, reason, numberedReferenceAliases } of PRIORITY_EXTRACTED_TYPES) {
     try {
       const schema = loadCachedSchema(ref);
       if (!schema) throw new Error(`Schema ${ref} not found in cache`);
       const rootTypeName =
         typeof schema.title === 'string' ? schema.title.replace(/[^A-Za-z0-9]/g, '') : schemaPathToTypeName(ref);
-      const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema)));
+      const annotatedSchema = injectJsdocConstraints(schema);
+      const strictSchema = enforceStrictSchema(
+        typeName === 'RequestProposalsResponse' ? annotatedSchema : removeArrayLengthConstraints(annotatedSchema)
+      );
       const types = await compile(strictSchema, rootTypeName, {
         bannerComment: '',
         style: { semi: true, singleQuote: true },
@@ -3800,7 +3834,10 @@ async function generateTypes() {
       // Suppress every auxiliary declaration from this compile. Those types
       // retain their normal first-definition ownership later in generation.
       const suppressedNames = new Set([...generatedCoreTypes, ...emittedNames].filter(name => name !== typeName));
-      const extractedType = filterDuplicateTypeDefinitions(types, suppressedNames);
+      let extractedType = filterDuplicateTypeDefinitions(types, suppressedNames);
+      for (const baseName of numberedReferenceAliases) {
+        extractedType = extractedType.replace(new RegExp(`\\b${baseName}\\d+\\b`, 'g'), baseName);
+      }
       if (!new RegExp(`^export (?:type|interface) ${typeName}\\b`, 'm').test(extractedType)) {
         throw new Error(`Unable to isolate ${typeName} from ${ref}`);
       }

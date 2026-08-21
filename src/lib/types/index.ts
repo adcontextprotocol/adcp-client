@@ -133,6 +133,12 @@ export type {
   GetPlanAuditLogsResponse,
 } from './tools.generated';
 
+// Compact proposal authoring. The response is owned by core.generated so
+// every public surface retains its discriminated branches and non-empty
+// tuple guarantees instead of the weaker aggregate-tool projection.
+export type { RequestProposalsRequest } from './tools.generated';
+export type { RequestProposalsResponse } from './core.generated';
+
 // Pricing models (discriminated union across pricing types)
 export type { PricingOption, CPMPricingOption, CPCPricingOption, CPVPricingOption } from './tools.generated';
 

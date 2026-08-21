@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.2.0-beta.4
-// Generated at: 2026-08-20T19:56:16.188Z
+// Generated at: 2026-08-21T05:16:23.707Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -10233,6 +10233,349 @@ export interface AuthorizationResult {
     message: string;
   };
 }
+// REQUESTPROPOSALSRESPONSE PRIORITY EXTRACTED TYPE
+/**
+ * One or more immutable draft media-plan proposals and compact canonical products referenced by their purchases. Products always carry product_id and name and never carry legacy named-format identifiers. During the AdCP 3.x compatibility window, an SDK projecting a valid products-only get_products brief result may instead return the deprecated products_available outcome with an explicit purchase continuation. Native 3.2 sellers MUST NOT use that compatibility outcome, and adapters MUST NOT fabricate a proposal, terms digest, or feed version.
+ */
+export type RequestProposalsResponse =
+  | {
+      /**
+       * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+       */
+      adcp_version?: string;
+      outcome: 'proposed';
+      reason?: never;
+      suggestions?: never;
+      /**
+       * @minItems 1
+       */
+      proposals: [
+        CanonicalProposal & {
+          proposal_status: 'draft';
+          /**
+           * @format date-time
+           */
+          expires_at: string;
+        },
+        ...(CanonicalProposal & {
+          proposal_status: 'draft';
+          /**
+           * @format date-time
+           */
+          expires_at: string;
+        })[]
+      ];
+      /**
+       * @minItems 1
+       */
+      products: [CanonicalProduct, ...CanonicalProduct[]];
+      /**
+       * Usable partial discovery result retained from the established get_products response. Absence means the source response did not declare an incomplete scope; it does not authorize an adapter to infer missing proposal terms.
+       *
+       * @minItems 1
+       */
+      incomplete?: [
+        {
+          scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
+          /**
+           * @minLength 1
+           */
+          description: string;
+          estimated_wait?: Duration;
+        },
+        ...{
+          scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
+          /**
+           * @minLength 1
+           */
+          description: string;
+          estimated_wait?: Duration;
+        }[]
+      ];
+      purchase_continuation?: never;
+      targeting_resolution?: ProductDiscoveryTargetingResolution;
+      status?: 'completed';
+      task_id?: never;
+      /**
+       * @maxLength 2000
+       */
+      message?: string;
+      errors?: Error[];
+      context?: ContextObject;
+      ext?: ExtensionObject;
+      replayed?: true;
+    }
+  | {
+      /**
+       * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+       */
+      adcp_version?: string;
+      outcome: 'products_available';
+      reason?: never;
+      suggestions?: never;
+      proposals?: never;
+      /**
+       * @minItems 1
+       */
+      products: [CanonicalProduct, ...CanonicalProduct[]];
+      /**
+       * Usable partial discovery result retained from the established get_products response. Absence means the source response did not declare an incomplete scope; it does not authorize an adapter to infer missing proposal terms.
+       *
+       * @minItems 1
+       */
+      incomplete?: [
+        {
+          scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
+          /**
+           * @minLength 1
+           */
+          description: string;
+          estimated_wait?: Duration;
+        },
+        ...{
+          scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
+          /**
+           * @minLength 1
+           */
+          description: string;
+          estimated_wait?: Duration;
+        }[]
+      ];
+      /**
+       * @deprecated
+       * Deprecated AdCP 3.x projection instruction for purchasing products returned without a proposal. This is coordinator state, not a claim that the established seller implements a compact task. A native 3.2 seller MUST NOT emit it.
+       */
+      purchase_continuation:
+        | {
+            kind: 'listed_purchase';
+            /**
+             * Exact products the coordinator promoted and re-read through account-scoped list_products before returning this result. The set MUST match products[].product_id.
+             *
+             * @minItems 1
+             */
+            product_ids: [string, ...string[]];
+            cache_scope: 'account';
+            /**
+             * Real seller-issued account-scoped feed fence obtained by re-reading the promoted products through list_products.
+             * @minLength 1
+             */
+            feed_version: string;
+            /**
+             * Real seller-issued pricing fence from the same account-scoped list_products response, when the seller versions pricing independently.
+             * @minLength 1
+             */
+            pricing_version?: string;
+          }
+        | {
+            kind: 'legacy_create';
+            /**
+             * Opaque, short-lived coordinator token bound to the caller principal, account, and complete observed product/pricing payload. It is not a seller-issued feed fence.
+             * @minLength 16
+             */
+            continuation_token: string;
+            /**
+             * Absolute expiry of the single-use compatibility continuation.
+             * @format date-time
+             */
+            continuation_expires_at: string;
+            /**
+             * Established AdCP version actually negotiated with the peer. This provenance is required; the coordinator MUST NOT infer stronger guarantees from the label.
+             */
+            source_adcp_version: '2.5' | '3.0' | '3.1';
+            /**
+             * Exact products bound to this continuation. A follow-up MUST select a non-empty subset and MUST NOT substitute an ID from another discovery result.
+             *
+             * @minItems 1
+             */
+            product_ids: [string, ...string[]];
+            /**
+             * Guarantees that the established create_media_buy continuation cannot provide. The coordinator MUST fail before mutation unless the caller explicitly accepts every listed loss.
+             *
+             * @minItems 2
+             */
+            losses: [
+              'feed_version_not_atomic' | 'pricing_version_not_atomic' | 'mutation_idempotency_not_guaranteed',
+              'feed_version_not_atomic' | 'pricing_version_not_atomic' | 'mutation_idempotency_not_guaranteed',
+              ...('feed_version_not_atomic' | 'pricing_version_not_atomic' | 'mutation_idempotency_not_guaranteed')[]
+            ];
+            requires_explicit_acceptance: true;
+          };
+      targeting_resolution?: ProductDiscoveryTargetingResolution;
+      status?: 'completed';
+      task_id?: never;
+      /**
+       * @maxLength 2000
+       */
+      message?: string;
+      errors?: Error[];
+      context?: ContextObject;
+      ext?: ExtensionObject;
+      replayed?: true;
+    }
+  | {
+      /**
+       * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+       */
+      adcp_version?: string;
+      outcome: 'rejected';
+      /**
+       * @minLength 1
+       */
+      reason: string;
+      /**
+       * @minItems 1
+       */
+      suggestions?: [string, ...string[]];
+      proposals?: never;
+      products?: never;
+      incomplete?: never;
+      purchase_continuation?: never;
+      targeting_resolution?: ProductDiscoveryTargetingResolution;
+      status?: 'completed';
+      task_id?: never;
+      /**
+       * @maxLength 2000
+       */
+      message?: string;
+      errors?: Error[];
+      context?: ContextObject;
+      ext?: ExtensionObject;
+      replayed?: true;
+    }
+  | {
+      /**
+       * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+       */
+      adcp_version?: string;
+      outcome?: 'proposed' | 'products_available' | 'rejected';
+      /**
+       * @minLength 1
+       */
+      reason?: string;
+      /**
+       * @minItems 1
+       */
+      suggestions?: [string, ...string[]];
+      /**
+       * @minItems 1
+       */
+      proposals?: [
+        CanonicalProposal & {
+          proposal_status: 'draft';
+          /**
+           * @format date-time
+           */
+          expires_at: string;
+        },
+        ...(CanonicalProposal & {
+          proposal_status: 'draft';
+          /**
+           * @format date-time
+           */
+          expires_at: string;
+        })[]
+      ];
+      /**
+       * @minItems 1
+       */
+      products?: [CanonicalProduct, ...CanonicalProduct[]];
+      /**
+       * Usable partial discovery result retained from the established get_products response. Absence means the source response did not declare an incomplete scope; it does not authorize an adapter to infer missing proposal terms.
+       *
+       * @minItems 1
+       */
+      incomplete?: [
+        {
+          scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
+          /**
+           * @minLength 1
+           */
+          description: string;
+          estimated_wait?: Duration;
+        },
+        ...{
+          scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
+          /**
+           * @minLength 1
+           */
+          description: string;
+          estimated_wait?: Duration;
+        }[]
+      ];
+      /**
+       * @deprecated
+       * Deprecated AdCP 3.x projection instruction for purchasing products returned without a proposal. This is coordinator state, not a claim that the established seller implements a compact task. A native 3.2 seller MUST NOT emit it.
+       */
+      purchase_continuation?:
+        | {
+            kind: 'listed_purchase';
+            /**
+             * Exact products the coordinator promoted and re-read through account-scoped list_products before returning this result. The set MUST match products[].product_id.
+             *
+             * @minItems 1
+             */
+            product_ids: [string, ...string[]];
+            cache_scope: 'account';
+            /**
+             * Real seller-issued account-scoped feed fence obtained by re-reading the promoted products through list_products.
+             * @minLength 1
+             */
+            feed_version: string;
+            /**
+             * Real seller-issued pricing fence from the same account-scoped list_products response, when the seller versions pricing independently.
+             * @minLength 1
+             */
+            pricing_version?: string;
+          }
+        | {
+            kind: 'legacy_create';
+            /**
+             * Opaque, short-lived coordinator token bound to the caller principal, account, and complete observed product/pricing payload. It is not a seller-issued feed fence.
+             * @minLength 16
+             */
+            continuation_token: string;
+            /**
+             * Absolute expiry of the single-use compatibility continuation.
+             * @format date-time
+             */
+            continuation_expires_at: string;
+            /**
+             * Established AdCP version actually negotiated with the peer. This provenance is required; the coordinator MUST NOT infer stronger guarantees from the label.
+             */
+            source_adcp_version: '2.5' | '3.0' | '3.1';
+            /**
+             * Exact products bound to this continuation. A follow-up MUST select a non-empty subset and MUST NOT substitute an ID from another discovery result.
+             *
+             * @minItems 1
+             */
+            product_ids: [string, ...string[]];
+            /**
+             * Guarantees that the established create_media_buy continuation cannot provide. The coordinator MUST fail before mutation unless the caller explicitly accepts every listed loss.
+             *
+             * @minItems 2
+             */
+            losses: [
+              'feed_version_not_atomic' | 'pricing_version_not_atomic' | 'mutation_idempotency_not_guaranteed',
+              'feed_version_not_atomic' | 'pricing_version_not_atomic' | 'mutation_idempotency_not_guaranteed',
+              ...('feed_version_not_atomic' | 'pricing_version_not_atomic' | 'mutation_idempotency_not_guaranteed')[]
+            ];
+            requires_explicit_acceptance: true;
+          };
+      targeting_resolution?: ProductDiscoveryTargetingResolution;
+      status: 'submitted';
+      /**
+       * @minLength 1
+       */
+      task_id: string;
+      /**
+       * @maxLength 2000
+       */
+      message?: string;
+      errors?: Error[];
+      context?: ContextObject;
+      ext?: ExtensionObject;
+      replayed?: true;
+    };
 // SYNCCREATIVESSUCCESS PRIORITY EXTRACTED TYPE
 /**
  * Success response - sync operation processed creatives (may include per-item failures)
@@ -16509,100 +16852,6 @@ export type GetProductsRejected = AdCPVersionEnvelope &
     context?: ContextObject;
     ext?: ExtensionObject;
   };
-/**
- * Terminal response for request_proposals
- */
-export type RequestProposalsResponse = (
-  | {
-      outcome: 'proposed';
-      status?: 'completed';
-    }
-  | {
-    }
-  | {
-      outcome: 'rejected';
-      status?: 'completed';
-    }
-  | CompactTaskSubmitted
-) & {
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  outcome?: 'proposed' | 'products_available' | 'rejected';
-  reason?: string;
-  /**
-   * @minItems 1
-   */
-  suggestions?: [string, ...string[]];
-  /**
-   * @minItems 1
-   */
-  proposals?: [
-    CanonicalProposal & {
-      proposal_status: 'draft';
-      expires_at: string;
-    },
-    ...(CanonicalProposal & {
-      proposal_status: 'draft';
-      expires_at: string;
-    })[]
-  ];
-  /**
-   * @minItems 1
-   */
-  products?: [CanonicalProduct, ...CanonicalProduct[]];
-  /**
-   * Usable partial discovery result retained from the established get_products response. Absence means the source response did not declare an incomplete scope; it does not authorize an adapter to infer missing proposal terms.
-   *
-   * @minItems 1
-   */
-  incomplete?: [
-    {
-      scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
-      description: string;
-      estimated_wait?: Duration;
-    },
-    ...{
-      scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
-      description: string;
-      estimated_wait?: Duration;
-    }[]
-  ];
-  /**
-   * @deprecated
-   * Deprecated AdCP 3.x projection instruction for purchasing products returned without a proposal. This is coordinator state, not a claim that the established seller implements a compact task. A native 3.2 seller MUST NOT emit it.
-   */
-  purchase_continuation?:
-    | {
-        kind: 'listed_purchase';
-        /**
-         * Exact products the coordinator promoted and re-read through account-scoped list_products before returning this result. The set MUST match products[].product_id.
-         *
-         * @minItems 1
-         */
-        product_ids: [string, ...string[]];
-        cache_scope: 'account';
-        /**
-         * Real seller-issued account-scoped feed fence obtained by re-reading the promoted products through list_products.
-         */
-        feed_version: string;
-        /**
-         * Real seller-issued pricing fence from the same account-scoped list_products response, when the seller versions pricing independently.
-         */
-        pricing_version?: string;
-      }
-    | {
-      };
-  targeting_resolution?: ProductDiscoveryTargetingResolution;
-  status?: 'completed' | 'submitted';
-  task_id?: string;
-  message?: string;
-  errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-  replayed?: true;
-};
 /**
  * Compact immutable proposal for the AdCP 3.2 lifecycle. commercial_terms is the sole authoritative commercial envelope; narrative fields do not duplicate legacy allocation or creative graphs.
  */

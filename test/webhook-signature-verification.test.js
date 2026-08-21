@@ -77,10 +77,10 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
     const rawBody = JSON.stringify({
       operation_id: 'op_1',
       task_id: 'task_1',
-      task_type: 'create_media_buy',
+      task_type: 'list_products',
       status: 'completed',
       timestamp: new Date().toISOString(),
-      result: { media_buy_id: 'mb_1' },
+      result: { products: [] },
     });
     const timestamp = Math.floor(Date.now() / 1000);
     const hmac = crypto.createHmac('sha256', webhookSecret);
@@ -95,7 +95,7 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
           'x-adcp-timestamp': String(timestamp),
         },
         body: rawBody,
-        params: { task_type: 'create_media_buy', operation_id: 'op_1' },
+        params: { task_type: 'list_products', operation_id: 'op_1' },
       },
       res
     );

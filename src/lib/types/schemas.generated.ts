@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-20T22:13:35.407Z
+// Generated at: 2026-08-21T05:29:30.153Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -2957,8 +2957,6 @@ export const DeclineProposalsResponseSchema = z.union([z.object({
             }).passthrough(), z.object({
                 outcome: z.literal("unable")
             }).passthrough()])),
-        status: z.literal("submitted").optional(),
-        task_id: z.string().min(1).optional(),
         message: z.string().max(2000).optional(),
         errors: z.array(ErrorSchema).optional(),
         context: ContextObjectSchema.optional(),
@@ -11633,6 +11631,11 @@ export const ValidationResultSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const ProductDiscoveryTargetingResolutionSchema = z.object({
+    brief_targeting: TargetingOverlaySchema,
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 export const AudienceEvidenceSchema: z.ZodType = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
     evidence_id: z.string(),
     snapshot_id: z.string(),
@@ -13214,11 +13217,6 @@ export const ProductSchema: z.ZodObject<{ product_id: z.ZodType; name: z.ZodType
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const ProductDiscoveryTargetingResolutionSchema = z.object({
-    brief_targeting: TargetingOverlaySchema,
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
 export const ProductAllocationSchema = z.object({
     product_id: z.string(),
     allocation_percentage: z.number().optional(),
@@ -14352,44 +14350,6 @@ export const RequestProposalsRequestSchema = z.object({
     }).passthrough()).optional()
 }).passthrough();
 
-export const CanonicalProductSchema = z.object({
-    product_id: z.string(),
-    name: z.string(),
-    description: z.string().optional(),
-    publisher_properties: z.array(PublisherPropertySelectorSchema.and(z.object({}).passthrough())).optional(),
-    channels: z.array(MediaChannelSchema).optional(),
-    video_placement_types: z.array(VideoPlacementTypeSchema).optional(),
-    audio_distribution_types: z.array(AudioDistributionTypeSchema).optional(),
-    sponsored_placement_types: z.array(SponsoredPlacementTypeSchema).optional(),
-    social_placement_surfaces: z.array(SocialPlacementSurfaceSchema).optional(),
-    format_options: z.array(CanonicalFormatOptionSchema).optional(),
-    placements: z.array(CanonicalProductPlacementSchema).optional(),
-    delivery_type: DeliveryTypeSchema.optional(),
-    exclusivity: ExclusivitySchema.optional(),
-    pricing_options: z.array(CanonicalPricingOptionSchema).optional(),
-    forecast: CanonicalDeliveryForecastSchema.optional(),
-    reporting_capabilities: CanonicalReportingCapabilitiesSchema.optional(),
-    measurement_terms: CanonicalMeasurementTermsSchema.optional(),
-    performance_standards: z.array(CanonicalPerformanceStandardSchema).optional(),
-    catalog_types: z.array(CatalogTypeSchema).optional(),
-    signal_targeting_allowed: z.boolean().optional(),
-    signal_targeting_rules: SignalTargetingRulesSchema.optional(),
-    demographic_targeting: DemographicTargetingCapabilitySchema.optional(),
-    audience_evidence: z.array(CanonicalAudienceEvidenceSchema).optional(),
-    audience_evidence_selections: z.array(CanonicalAudienceEvidenceSelectionSchema).optional(),
-    max_optimization_goals: z.number().optional(),
-    catalog_match: z.object({
-        matched_gtins: z.array(z.string()).optional(),
-        matched_ids: z.array(z.string()).optional(),
-        matched_count: z.number().optional(),
-        submitted_count: z.number()
-    }).passthrough().optional(),
-    brief_relevance: z.string().optional(),
-    expires_at: z.string().optional(),
-    allowed_actions: z.array(CanonicalProductActionSchema).optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
 export const CommercialTermsSchema = z.object({
     source_feed_version: z.string().optional(),
     source_pricing_version: z.string().optional(),
@@ -15159,6 +15119,44 @@ export const CanonicalProposalSchema: z.ZodObject<{ [K in keyof CanonicalProposa
         extend: objectSchema.extend.bind(objectSchema),
       });
     })();
+
+export const CanonicalProductSchema = z.object({
+    product_id: z.string(),
+    name: z.string(),
+    description: z.string().optional(),
+    publisher_properties: z.array(PublisherPropertySelectorSchema.and(z.object({}).passthrough())).optional(),
+    channels: z.array(MediaChannelSchema).optional(),
+    video_placement_types: z.array(VideoPlacementTypeSchema).optional(),
+    audio_distribution_types: z.array(AudioDistributionTypeSchema).optional(),
+    sponsored_placement_types: z.array(SponsoredPlacementTypeSchema).optional(),
+    social_placement_surfaces: z.array(SocialPlacementSurfaceSchema).optional(),
+    format_options: z.array(CanonicalFormatOptionSchema).optional(),
+    placements: z.array(CanonicalProductPlacementSchema).optional(),
+    delivery_type: DeliveryTypeSchema.optional(),
+    exclusivity: ExclusivitySchema.optional(),
+    pricing_options: z.array(CanonicalPricingOptionSchema).optional(),
+    forecast: CanonicalDeliveryForecastSchema.optional(),
+    reporting_capabilities: CanonicalReportingCapabilitiesSchema.optional(),
+    measurement_terms: CanonicalMeasurementTermsSchema.optional(),
+    performance_standards: z.array(CanonicalPerformanceStandardSchema).optional(),
+    catalog_types: z.array(CatalogTypeSchema).optional(),
+    signal_targeting_allowed: z.boolean().optional(),
+    signal_targeting_rules: SignalTargetingRulesSchema.optional(),
+    demographic_targeting: DemographicTargetingCapabilitySchema.optional(),
+    audience_evidence: z.array(CanonicalAudienceEvidenceSchema).optional(),
+    audience_evidence_selections: z.array(CanonicalAudienceEvidenceSelectionSchema).optional(),
+    max_optimization_goals: z.number().optional(),
+    catalog_match: z.object({
+        matched_gtins: z.array(z.string()).optional(),
+        matched_ids: z.array(z.string()).optional(),
+        matched_count: z.number().optional(),
+        submitted_count: z.number()
+    }).passthrough().optional(),
+    brief_relevance: z.string().optional(),
+    expires_at: z.string().optional(),
+    allowed_actions: z.array(CanonicalProductActionSchema).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
 
 export const BuyProductsRequestSchema = z.object({
     adcp_version: z.string().optional(),
@@ -16745,6 +16743,249 @@ export const ValidatePropertyDeliveryResponseSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const RequestProposalsResponseSchema = z.union([z.object({
+        adcp_version: z.string().optional(),
+        outcome: z.literal("proposed"),
+        reason: z.never().optional(),
+        suggestions: z.never().optional(),
+        proposals: z.tuple([CanonicalProposalSchema.and(z.object({
+                proposal_status: z.literal("draft"),
+                expires_at: z.iso.datetime()
+            }).passthrough())]).rest(CanonicalProposalSchema.and(z.object({
+            proposal_status: z.literal("draft"),
+            expires_at: z.iso.datetime()
+        }).passthrough())),
+        products: z.array(CanonicalProductSchema),
+        incomplete: z.tuple([z.object({
+                scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("proposals"), z.literal("wholesale_feed")]),
+                description: z.string().min(1),
+                estimated_wait: DurationSchema.optional()
+            }).passthrough()]).rest(z.object({
+            scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("proposals"), z.literal("wholesale_feed")]),
+            description: z.string().min(1),
+            estimated_wait: DurationSchema.optional()
+        }).passthrough()).optional(),
+        purchase_continuation: z.never().optional(),
+        targeting_resolution: ProductDiscoveryTargetingResolutionSchema.optional(),
+        status: z.literal("completed").optional(),
+        task_id: z.never().optional(),
+        message: z.string().max(2000).optional(),
+        errors: z.array(ErrorSchema).optional(),
+        context: ContextObjectSchema.optional(),
+        ext: ExtensionObjectSchema.optional(),
+        replayed: z.literal(true).optional()
+    }).passthrough(), z.object({
+        adcp_version: z.string().optional(),
+        outcome: z.literal("products_available"),
+        reason: z.never().optional(),
+        suggestions: z.never().optional(),
+        proposals: z.never().optional(),
+        products: z.array(CanonicalProductSchema),
+        incomplete: z.tuple([z.object({
+                scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("proposals"), z.literal("wholesale_feed")]),
+                description: z.string().min(1),
+                estimated_wait: DurationSchema.optional()
+            }).passthrough()]).rest(z.object({
+            scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("proposals"), z.literal("wholesale_feed")]),
+            description: z.string().min(1),
+            estimated_wait: DurationSchema.optional()
+        }).passthrough()).optional(),
+        purchase_continuation: z.union([z.object({
+                kind: z.literal("listed_purchase"),
+                product_ids: z.array(z.string()),
+                cache_scope: z.literal("account"),
+                feed_version: z.string().min(1),
+                pricing_version: z.string().min(1).optional()
+            }).passthrough(), z.object({
+                kind: z.literal("legacy_create"),
+                continuation_token: z.string().min(16),
+                continuation_expires_at: z.iso.datetime(),
+                source_adcp_version: z.union([z.literal("2.5"), z.literal("3.0"), z.literal("3.1")]),
+                product_ids: z.array(z.string()),
+                losses: z.tuple([z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")]), z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")])]).rest(z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")])),
+                requires_explicit_acceptance: z.literal(true)
+            }).passthrough().superRefine((value, ctx) => {
+            if (value.product_ids.length === 0) {
+                ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must contain at least one entry" });
+            }
+            if (value.product_ids.some(productId => productId.length === 0)) {
+                ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must not contain empty IDs" });
+            }
+            if (new Set(value.product_ids).size !== value.product_ids.length) {
+                ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must be unique" });
+            }
+            if (value.losses.length < 2) {
+                ctx.addIssue({ code: "custom", path: ["losses"], message: "losses must contain at least two entries" });
+            }
+            if (new Set(value.losses).size !== value.losses.length) {
+                ctx.addIssue({ code: "custom", path: ["losses"], message: "losses must be unique" });
+            }
+            for (const required of ["feed_version_not_atomic", "pricing_version_not_atomic"] as const) {
+                if (!value.losses.includes(required)) {
+                    ctx.addIssue({ code: "custom", path: ["losses"], message: `losses must contain ${required}` });
+                }
+            }
+            if (value.source_adcp_version === "2.5" && !value.losses.includes("mutation_idempotency_not_guaranteed")) {
+                ctx.addIssue({ code: "custom", path: ["losses"], message: "AdCP 2.5 losses must contain mutation_idempotency_not_guaranteed" });
+            }
+        })]),
+        targeting_resolution: ProductDiscoveryTargetingResolutionSchema.optional(),
+        status: z.literal("completed").optional(),
+        task_id: z.never().optional(),
+        message: z.string().max(2000).optional(),
+        errors: z.array(ErrorSchema).optional(),
+        context: ContextObjectSchema.optional(),
+        ext: ExtensionObjectSchema.optional(),
+        replayed: z.literal(true).optional()
+    }).passthrough(), z.object({
+        adcp_version: z.string().optional(),
+        outcome: z.literal("rejected"),
+        reason: z.string().min(1),
+        suggestions: z.array(z.string()).optional(),
+        proposals: z.never().optional(),
+        products: z.never().optional(),
+        incomplete: z.never().optional(),
+        purchase_continuation: z.never().optional(),
+        targeting_resolution: ProductDiscoveryTargetingResolutionSchema.optional(),
+        status: z.literal("completed").optional(),
+        task_id: z.never().optional(),
+        message: z.string().max(2000).optional(),
+        errors: z.array(ErrorSchema).optional(),
+        context: ContextObjectSchema.optional(),
+        ext: ExtensionObjectSchema.optional(),
+        replayed: z.literal(true).optional()
+    }).passthrough(), z.object({
+        adcp_version: z.string().optional(),
+        outcome: z.union([z.literal("proposed"), z.literal("products_available"), z.literal("rejected")]).optional(),
+        reason: z.string().min(1).optional(),
+        suggestions: z.array(z.string()).optional(),
+        proposals: z.tuple([CanonicalProposalSchema.and(z.object({
+                proposal_status: z.literal("draft"),
+                expires_at: z.iso.datetime()
+            }).passthrough())]).rest(CanonicalProposalSchema.and(z.object({
+            proposal_status: z.literal("draft"),
+            expires_at: z.iso.datetime()
+        }).passthrough())).optional(),
+        products: z.array(CanonicalProductSchema).optional(),
+        incomplete: z.tuple([z.object({
+                scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("proposals"), z.literal("wholesale_feed")]),
+                description: z.string().min(1),
+                estimated_wait: DurationSchema.optional()
+            }).passthrough()]).rest(z.object({
+            scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("proposals"), z.literal("wholesale_feed")]),
+            description: z.string().min(1),
+            estimated_wait: DurationSchema.optional()
+        }).passthrough()).optional(),
+        purchase_continuation: z.union([z.object({
+                kind: z.literal("listed_purchase"),
+                product_ids: z.array(z.string()),
+                cache_scope: z.literal("account"),
+                feed_version: z.string().min(1),
+                pricing_version: z.string().min(1).optional()
+            }).passthrough(), z.object({
+                kind: z.literal("legacy_create"),
+                continuation_token: z.string().min(16),
+                continuation_expires_at: z.iso.datetime(),
+                source_adcp_version: z.union([z.literal("2.5"), z.literal("3.0"), z.literal("3.1")]),
+                product_ids: z.array(z.string()),
+                losses: z.tuple([z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")]), z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")])]).rest(z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")])),
+                requires_explicit_acceptance: z.literal(true)
+            }).passthrough().superRefine((value, ctx) => {
+            if (value.product_ids.length === 0) {
+                ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must contain at least one entry" });
+            }
+            if (value.product_ids.some(productId => productId.length === 0)) {
+                ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must not contain empty IDs" });
+            }
+            if (new Set(value.product_ids).size !== value.product_ids.length) {
+                ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must be unique" });
+            }
+            if (value.losses.length < 2) {
+                ctx.addIssue({ code: "custom", path: ["losses"], message: "losses must contain at least two entries" });
+            }
+            if (new Set(value.losses).size !== value.losses.length) {
+                ctx.addIssue({ code: "custom", path: ["losses"], message: "losses must be unique" });
+            }
+            for (const required of ["feed_version_not_atomic", "pricing_version_not_atomic"] as const) {
+                if (!value.losses.includes(required)) {
+                    ctx.addIssue({ code: "custom", path: ["losses"], message: `losses must contain ${required}` });
+                }
+            }
+            if (value.source_adcp_version === "2.5" && !value.losses.includes("mutation_idempotency_not_guaranteed")) {
+                ctx.addIssue({ code: "custom", path: ["losses"], message: "AdCP 2.5 losses must contain mutation_idempotency_not_guaranteed" });
+            }
+        })]).optional(),
+        targeting_resolution: ProductDiscoveryTargetingResolutionSchema.optional(),
+        status: z.literal("submitted"),
+        task_id: z.string().min(1),
+        message: z.string().max(2000).optional(),
+        errors: z.array(ErrorSchema).optional(),
+        context: ContextObjectSchema.optional(),
+        ext: ExtensionObjectSchema.optional(),
+        replayed: z.literal(true).optional()
+    }).passthrough()]).superRefine((value: any, ctx) => {
+    const present = (field: string): boolean => Object.prototype.hasOwnProperty.call(value, field);
+    const requireNonEmptyArray = (field: "products" | "proposals"): void => {
+        if (!Array.isArray(value[field]) || value[field].length === 0) {
+            ctx.addIssue({ code: "custom", path: [field], message: `${field} must contain at least one entry` });
+        }
+    };
+    const forbid = (fields: readonly string[]): void => {
+        for (const field of fields) {
+            if (present(field)) ctx.addIssue({ code: "custom", path: [field], message: `${field} is forbidden for this outcome` });
+        }
+    };
+    forbid(["refinement_applied", "pagination", "unchanged", "wholesale_feed_version"]);
+    if (value.suggestions !== undefined && (value.suggestions.length === 0 || value.suggestions.some((suggestion: string) => suggestion.length === 0))) {
+        ctx.addIssue({ code: "custom", path: ["suggestions"], message: "suggestions must contain non-empty strings" });
+    }
+    if (value.incomplete !== undefined && value.incomplete.length === 0) {
+        ctx.addIssue({ code: "custom", path: ["incomplete"], message: "incomplete must contain at least one entry" });
+    }
+    if (value.outcome === "proposed") {
+        requireNonEmptyArray("proposals");
+        requireNonEmptyArray("products");
+        forbid(["reason", "suggestions", "purchase_continuation", "task_id"]);
+    } else if (value.outcome === "products_available") {
+        requireNonEmptyArray("products");
+        if (!present("purchase_continuation")) {
+            ctx.addIssue({ code: "custom", path: ["purchase_continuation"], message: "purchase_continuation is required" });
+        }
+        forbid(["proposals", "reason", "suggestions", "task_id"]);
+        if (value.purchase_continuation?.kind === "listed_purchase") {
+            const ids = value.purchase_continuation.product_ids;
+            if (ids.length === 0 || ids.some((productId: string) => productId.length === 0)) {
+                ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "product_ids must contain non-empty IDs" });
+            }
+            if (new Set(ids).size !== ids.length) {
+                ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "product_ids must be unique" });
+            }
+            const returnedIds = (value.products ?? []).map((product: any) => product.product_id);
+            const returnedIdSet = new Set(returnedIds);
+            if (
+                returnedIds.length !== ids.length ||
+                returnedIdSet.size !== returnedIds.length ||
+                ids.some((productId: string) => !returnedIdSet.has(productId))
+            ) {
+                ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "listed product_ids must exactly match returned products" });
+            }
+            for (const [index, product] of (value.products ?? []).entries()) {
+                if (!Array.isArray(product.pricing_options) || product.pricing_options.length === 0) {
+                    ctx.addIssue({ code: "custom", path: ["products", index, "pricing_options"], message: "listed products require pricing_options" });
+                }
+            }
+            for (const [index, incomplete] of (value.incomplete ?? []).entries()) {
+                if (["products", "pricing", "wholesale_feed"].includes(incomplete.scope)) {
+                    ctx.addIssue({ code: "custom", path: ["incomplete", index, "scope"], message: "listed purchase cannot report incomplete product or pricing data" });
+                }
+            }
+        }
+    } else if (value.outcome === "rejected") {
+        if (!present("reason")) ctx.addIssue({ code: "custom", path: ["reason"], message: "reason is required" });
+        forbid(["proposals", "products", "incomplete", "purchase_continuation", "task_id"]);
+    }
+});
+
 export const MediaBuySchema: z.ZodType = z.object({
     media_buy_id: z.string(),
     name: z.string().min(1).max(255).regex(/\S/).optional(),
@@ -16777,140 +17018,6 @@ export const MediaBuySchema: z.ZodType = z.object({
     updated_at: z.iso.datetime().optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
-
-export const RequestProposalsResponseSchema = z.union([z.object({
-        outcome: z.literal("proposed"),
-        status: z.literal("completed").optional()
-    }).passthrough(), z.object({
-        outcome: z.literal("products_available"),
-        status: z.literal("completed").optional()
-    }).passthrough(), z.object({
-        outcome: z.literal("rejected"),
-        status: z.literal("completed").optional()
-    }).passthrough(), CompactTaskSubmittedSchema]).and(z.object({
-    adcp_version: z.string().optional(),
-    outcome: z.union([z.literal("proposed"), z.literal("products_available"), z.literal("rejected")]).optional(),
-    reason: z.string().min(1).optional(),
-    suggestions: z.array(z.string()).optional(),
-    proposals: z.array(CanonicalProposalSchema.and(z.object({
-        proposal_status: z.literal("draft"),
-        expires_at: z.iso.datetime()
-    }).passthrough())).optional(),
-    products: z.array(CanonicalProductSchema).optional(),
-    incomplete: z.array(z.object({
-        scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("proposals"), z.literal("wholesale_feed")]),
-        description: z.string().min(1),
-        estimated_wait: DurationSchema.optional()
-    }).passthrough()).optional(),
-    purchase_continuation: z.union([z.object({
-            kind: z.literal("listed_purchase"),
-            product_ids: z.array(z.string()),
-            cache_scope: z.literal("account"),
-            feed_version: z.string().min(1),
-            pricing_version: z.string().min(1).optional()
-        }).passthrough(), z.object({
-            kind: z.literal("legacy_create"),
-            continuation_token: z.string().min(16),
-            continuation_expires_at: z.iso.datetime(),
-            source_adcp_version: z.union([z.literal("2.5"), z.literal("3.0"), z.literal("3.1")]),
-            product_ids: z.array(z.string()),
-            losses: z.array(z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")])),
-            requires_explicit_acceptance: z.literal(true)
-        }).passthrough().superRefine((value, ctx) => {
-            if (value.product_ids.length === 0) {
-                ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must contain at least one entry" });
-            }
-            if (value.product_ids.some(productId => productId.length === 0)) {
-                ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must not contain empty IDs" });
-            }
-            if (new Set(value.product_ids).size !== value.product_ids.length) {
-                ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must be unique" });
-            }
-            if (value.losses.length < 2) {
-                ctx.addIssue({ code: "custom", path: ["losses"], message: "losses must contain at least two entries" });
-            }
-            if (new Set(value.losses).size !== value.losses.length) {
-                ctx.addIssue({ code: "custom", path: ["losses"], message: "losses must be unique" });
-            }
-            for (const required of ["feed_version_not_atomic", "pricing_version_not_atomic"] as const) {
-                if (!value.losses.includes(required)) {
-                    ctx.addIssue({ code: "custom", path: ["losses"], message: `losses must contain ${required}` });
-                }
-            }
-            if (value.source_adcp_version === "2.5" && !value.losses.includes("mutation_idempotency_not_guaranteed")) {
-                ctx.addIssue({ code: "custom", path: ["losses"], message: "AdCP 2.5 losses must contain mutation_idempotency_not_guaranteed" });
-            }
-        })]).optional(),
-    targeting_resolution: ProductDiscoveryTargetingResolutionSchema.optional(),
-    status: z.union([z.literal("completed"), z.literal("submitted")]).optional(),
-    task_id: z.string().min(1).optional(),
-    message: z.string().max(2000).optional(),
-    errors: z.array(ErrorSchema).optional(),
-    context: ContextObjectSchema.optional(),
-    ext: ExtensionObjectSchema.optional(),
-    replayed: z.literal(true).optional()
-}).passthrough()).superRefine((value, ctx) => {
-    const present = (field: string): boolean => Object.prototype.hasOwnProperty.call(value, field);
-    const requireNonEmptyArray = (field: "products" | "proposals"): void => {
-        if (!Array.isArray(value[field]) || value[field].length === 0) {
-            ctx.addIssue({ code: "custom", path: [field], message: `${field} must contain at least one entry` });
-        }
-    };
-    const forbid = (fields: readonly string[]): void => {
-        for (const field of fields) {
-            if (present(field)) ctx.addIssue({ code: "custom", path: [field], message: `${field} is forbidden for this outcome` });
-        }
-    };
-    forbid(["refinement_applied", "pagination", "unchanged", "wholesale_feed_version"]);
-    if (value.suggestions !== undefined && (value.suggestions.length === 0 || value.suggestions.some(suggestion => suggestion.length === 0))) {
-        ctx.addIssue({ code: "custom", path: ["suggestions"], message: "suggestions must contain non-empty strings" });
-    }
-    if (value.incomplete !== undefined && value.incomplete.length === 0) {
-        ctx.addIssue({ code: "custom", path: ["incomplete"], message: "incomplete must contain at least one entry" });
-    }
-    if (value.outcome === "proposed") {
-        requireNonEmptyArray("proposals");
-        requireNonEmptyArray("products");
-        forbid(["reason", "suggestions", "purchase_continuation", "task_id"]);
-    } else if (value.outcome === "products_available") {
-        requireNonEmptyArray("products");
-        if (!present("purchase_continuation")) {
-            ctx.addIssue({ code: "custom", path: ["purchase_continuation"], message: "purchase_continuation is required" });
-        }
-        forbid(["proposals", "reason", "suggestions", "task_id"]);
-        if (value.purchase_continuation?.kind === "listed_purchase") {
-            const ids = value.purchase_continuation.product_ids;
-            if (ids.length === 0 || ids.some(productId => productId.length === 0)) {
-                ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "product_ids must contain non-empty IDs" });
-            }
-            if (new Set(ids).size !== ids.length) {
-                ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "product_ids must be unique" });
-            }
-            const returnedIds = (value.products ?? []).map(product => product.product_id);
-            const returnedIdSet = new Set(returnedIds);
-            if (
-                returnedIds.length !== ids.length ||
-                returnedIdSet.size !== returnedIds.length ||
-                ids.some(productId => !returnedIdSet.has(productId))
-            ) {
-                ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "listed product_ids must exactly match returned products" });
-            }
-            for (const [index, product] of (value.products ?? []).entries()) {
-                if (!Array.isArray(product.pricing_options) || product.pricing_options.length === 0) {
-                    ctx.addIssue({ code: "custom", path: ["products", index, "pricing_options"], message: "listed products require pricing_options" });
-                }
-            }
-            for (const [index, incomplete] of (value.incomplete ?? []).entries()) {
-                if (["products", "pricing", "wholesale_feed"].includes(incomplete.scope)) {
-                    ctx.addIssue({ code: "custom", path: ["incomplete", index, "scope"], message: "listed purchase cannot report incomplete product or pricing data" });
-                }
-            }
-        }
-    } else if (value.outcome === "rejected") {
-        if (!present("reason")) ctx.addIssue({ code: "custom", path: ["reason"], message: "reason is required" });
-        forbid(["proposals", "products", "incomplete", "purchase_continuation", "task_id"]);
-    }
-});
 
 export const RefineProposalsResponseSchema = z.union([z.object({
         adcp_version: z.string().optional(),

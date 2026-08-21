@@ -752,18 +752,18 @@ function postProcessCompatibilityPurchaseCoordinatorInput(content: string): stri
 /** Restore beta.4 runtime-only membership constraints on projected legacy continuations. */
 function postProcessLegacyPurchaseContinuationResponse(content: string): string {
   const schemaStart = content.indexOf('export const RequestProposalsResponseSchema = ');
-  const schemaEnd = content.indexOf('\n\nexport const RefineProposalsResponseSchema = ', schemaStart);
+  const schemaEnd = content.indexOf('\n\nexport const ', schemaStart + 1);
   if (schemaStart < 0 || schemaEnd < 0) {
     throw new Error('Could not locate RequestProposalsResponseSchema.');
   }
   const block = content.slice(schemaStart, schemaEnd);
   const armPattern =
-    /z\.object\(\{\n\s+kind: z\.literal\("legacy_create"\),[\s\S]*?requires_explicit_acceptance: z\.literal\(true\)\n\s+\}\)\.passthrough\(\)/;
-  const match = block.match(armPattern);
-  if (!match) {
+    /z\.object\(\{\n\s+kind: z\.literal\("legacy_create"\),[\s\S]*?requires_explicit_acceptance: z\.literal\(true\)\n\s+\}\)\.passthrough\(\)/g;
+  const matches = [...block.matchAll(armPattern)];
+  if (matches.length === 0) {
     throw new Error('Could not locate the legacy_create purchase continuation response arm.');
   }
-  const refinedArm = `${match[0]}.superRefine((value, ctx) => {
+  const refineArm = (arm: string) => `${arm}.superRefine((value, ctx) => {
             if (value.product_ids.length === 0) {
                 ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must contain at least one entry" });
             }
@@ -788,12 +788,15 @@ function postProcessLegacyPurchaseContinuationResponse(content: string): string 
                 ctx.addIssue({ code: "custom", path: ["losses"], message: "AdCP 2.5 losses must contain mutation_idempotency_not_guaranteed" });
             }
         })`;
-  const corrected = block.replace(armPattern, refinedArm);
-  const suffix = '}).passthrough());';
-  if (!corrected.endsWith(suffix)) {
-    throw new Error('RequestProposalsResponseSchema has an unexpected generated suffix.');
+  const corrected = block.replace(armPattern, refineArm);
+  if (!corrected.endsWith(';')) {
+    throw new Error('RequestProposalsResponseSchema has an unexpected generated terminator.');
   }
-  const rootRefinement = `}).passthrough()).superRefine((value, ctx) => {
+  // Attach the source-schema invariants to whichever top-level expression
+  // ts-to-zod emits. The old lossy type produced union(...).and(object(...));
+  // while the materialized discriminated type correctly produces union(...);
+  // coupling this postprocessor to either suffix makes type generation fragile.
+  const rootRefinement = `.superRefine((value: any, ctx) => {
     const present = (field: string): boolean => Object.prototype.hasOwnProperty.call(value, field);
     const requireNonEmptyArray = (field: "products" | "proposals"): void => {
         if (!Array.isArray(value[field]) || value[field].length === 0) {
@@ -806,7 +809,7 @@ function postProcessLegacyPurchaseContinuationResponse(content: string): string 
         }
     };
     forbid(["refinement_applied", "pagination", "unchanged", "wholesale_feed_version"]);
-    if (value.suggestions !== undefined && (value.suggestions.length === 0 || value.suggestions.some(suggestion => suggestion.length === 0))) {
+    if (value.suggestions !== undefined && (value.suggestions.length === 0 || value.suggestions.some((suggestion: string) => suggestion.length === 0))) {
         ctx.addIssue({ code: "custom", path: ["suggestions"], message: "suggestions must contain non-empty strings" });
     }
     if (value.incomplete !== undefined && value.incomplete.length === 0) {
@@ -824,18 +827,18 @@ function postProcessLegacyPurchaseContinuationResponse(content: string): string 
         forbid(["proposals", "reason", "suggestions", "task_id"]);
         if (value.purchase_continuation?.kind === "listed_purchase") {
             const ids = value.purchase_continuation.product_ids;
-            if (ids.length === 0 || ids.some(productId => productId.length === 0)) {
+            if (ids.length === 0 || ids.some((productId: string) => productId.length === 0)) {
                 ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "product_ids must contain non-empty IDs" });
             }
             if (new Set(ids).size !== ids.length) {
                 ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "product_ids must be unique" });
             }
-            const returnedIds = (value.products ?? []).map(product => product.product_id);
+            const returnedIds = (value.products ?? []).map((product: any) => product.product_id);
             const returnedIdSet = new Set(returnedIds);
             if (
                 returnedIds.length !== ids.length ||
                 returnedIdSet.size !== returnedIds.length ||
-                ids.some(productId => !returnedIdSet.has(productId))
+                ids.some((productId: string) => !returnedIdSet.has(productId))
             ) {
                 ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "listed product_ids must exactly match returned products" });
             }
@@ -855,7 +858,7 @@ function postProcessLegacyPurchaseContinuationResponse(content: string): string 
         forbid(["proposals", "products", "incomplete", "purchase_continuation", "task_id"]);
     }
 });`;
-  const constrained = corrected.slice(0, -suffix.length) + rootRefinement;
+  const constrained = corrected.slice(0, -1) + rootRefinement;
   return content.slice(0, schemaStart) + constrained + content.slice(schemaEnd);
 }
 

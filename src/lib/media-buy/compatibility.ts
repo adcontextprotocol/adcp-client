@@ -2,12 +2,14 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { AgentClient, CanonicalProjectionTaskOptions, ProposalRefinementTaskOptions } from '../core/AgentClient';
 import type {
   InputHandler,
+  TaskInfo,
   TaskOptions,
   TaskResult,
   TaskResultCompleted,
   TaskResultFailure,
   TaskResultIntermediate,
 } from '../core/ConversationTypes';
+import type { BeforeProtocolDispatchContext, BeforeProtocolDispatchHookResult } from '../core/TaskExecutor';
 import { attachMatch } from '../core/match';
 import { generateIdempotencyKey, isValidIdempotencyKey, type MutatingRequestInput } from '../utils/idempotency';
 import { canonicalize } from '../utils/jcs';
@@ -198,6 +200,7 @@ const CONTROL_MEDIA_BUY_FIELDS = new Set([
   'governance_context',
   'idempotency_key',
   'media_buy_id',
+  'name',
   'pacing',
   'packages',
   'paused',
@@ -555,16 +558,58 @@ interface CompatibleProposalResponseBase {
   context?: CompatibleContext;
 }
 
-export interface CompatibleRequestProposalsResponse extends CompatibleProposalResponseBase {
+type CompatibleRequestProposalsResponseBase = Omit<CompatibleProposalResponseBase, 'proposals' | 'products'> & {
   operation: 'request';
-  /** `legacy_unavailable` never overstates an empty legacy response as a seller rejection. */
-  outcome: 'proposed' | 'products_available' | 'rejected' | 'legacy_unavailable';
-  reason?: string;
-  suggestions?: string[];
-  incomplete?: RequestProposalsResponse['incomplete'];
-  purchase_continuation?: RequestProposalsResponse['purchase_continuation'];
   raw: RequestProposalsResponse | EstablishedProductsWireResponse;
-}
+};
+
+/** Completed request-proposal projection with branch fields narrowed by `outcome`. */
+export type CompatibleRequestProposalsResponse = CompatibleRequestProposalsResponseBase &
+  (
+    | {
+        outcome: 'proposed';
+        proposals: CompatibleProposal[];
+        products?: CompatibleProduct[];
+        incomplete?: RequestProposalsIncomplete;
+        reason?: never;
+        suggestions?: never;
+        purchase_continuation?: never;
+      }
+    | {
+        outcome: 'products_available';
+        proposals?: never;
+        products: CompatibleProduct[];
+        incomplete?: RequestProposalsIncomplete;
+        reason?: never;
+        suggestions?: never;
+        purchase_continuation: RequestProposalsPurchaseContinuation;
+      }
+    | {
+        outcome: 'rejected';
+        proposals?: never;
+        products?: never;
+        incomplete?: never;
+        reason: string;
+        suggestions?: string[];
+        purchase_continuation?: never;
+      }
+    | {
+        /** Never overstates an empty or unsafe legacy response as a seller rejection. */
+        outcome: 'legacy_unavailable';
+        proposals?: never;
+        products?: CompatibleProduct[];
+        incomplete?: RequestProposalsIncomplete;
+        reason?: never;
+        suggestions?: never;
+        purchase_continuation?: never;
+      }
+  );
+
+type RequestProposalsIncomplete = NonNullable<Extract<RequestProposalsResponse, { outcome: 'proposed' }>['incomplete']>;
+type RequestProposalsPurchaseContinuation = Extract<
+  RequestProposalsResponse,
+  { outcome: 'products_available' }
+>['purchase_continuation'];
 
 export interface CompatibleRefineProposalsResponse extends CompatibleProposalResponseBase {
   operation: 'refine';
@@ -625,7 +670,7 @@ export interface MediaBuyLifecycleCoordinatorOptions {
   /**
    * Stable, non-secret identity for the authenticated seller/account session.
    * Persist and reuse it when a coordinator is rehydrated. It is required for
-   * AdCP 2.5 sellers that do not provide a server context ID.
+   * every established 2.5, 3.0, or 3.1 seller that provides no server context ID.
    */
   legacyPurchaseSellerSessionScope?: string;
   /** Durable storage for products-only legacy purchase continuations. */
@@ -652,7 +697,7 @@ export type LegacyPurchaseContinuationErrorCode =
   | 'ambiguous'
   | 'store_error';
 
-/** Fail-closed local error raised before a legacy create is sent or replayed. */
+/** Fail-closed continuation error; ambiguous/store variants may be raised after seller dispatch. */
 export class LegacyPurchaseContinuationError extends Error {
   readonly name = 'LegacyPurchaseContinuationError';
 
@@ -796,18 +841,19 @@ function containsCredentialShapedKey(value: unknown, seen = new WeakSet<object>(
 function containsPresignedUrl(value: unknown, seen = new WeakSet<object>()): boolean {
   if (typeof value === 'string') {
     try {
-      const url = new URL(value);
-      const sensitiveQueryKeys = new Set([
-        'x-amz-credential',
-        'x-amz-signature',
-        'x-goog-credential',
-        'x-goog-signature',
-        'signature',
-        'sig',
-        'token',
-        'access_token',
-      ]);
-      return [...url.searchParams.keys()].some(key => sensitiveQueryKeys.has(key.toLowerCase()));
+      const url = new URL(value, 'https://adcp-relative.invalid');
+      const signedUrlAliases = new Set(['xamzcredential', 'xamzsignature', 'xgoogcredential', 'xgoogsignature', 'sig']);
+      const isSensitiveUrlKey = (key: string): boolean => {
+        const normalized = key.replace(/[-_]/g, '').toLowerCase();
+        return isCredentialShapedKey(key) || signedUrlAliases.has(normalized);
+      };
+      const fragmentParams = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.hash);
+      return (
+        url.username.length > 0 ||
+        url.password.length > 0 ||
+        [...url.searchParams.keys()].some(isSensitiveUrlKey) ||
+        [...fragmentParams.keys()].some(isSensitiveUrlKey)
+      );
     } catch {
       return false;
     }
@@ -904,7 +950,6 @@ function negotiatedVersion(capabilities: AdcpCapabilities, clientVersion: string
 
 const MAX_PROPOSAL_TRAVERSAL_NODES = 4096;
 const LEGACY_PROPOSAL_RAW = Symbol('legacyProposalRaw');
-const LEGACY_PURCHASE_CLIENT_SCOPES = new WeakMap<AgentClient, string>();
 const COMPACT_REQUEST_PROPOSALS_RESPONSE_FIELDS = new Set([
   'adcp_version',
   'outcome',
@@ -1075,15 +1120,15 @@ function projectRequestProposals(
     ...(typeof source.reason === 'string' && { reason: source.reason }),
     ...(Array.isArray(source.suggestions) && { suggestions: source.suggestions as string[] }),
     ...(Array.isArray(source.incomplete) && {
-      incomplete: source.incomplete as RequestProposalsResponse['incomplete'],
+      incomplete: source.incomplete as RequestProposalsIncomplete,
     }),
     ...(source.purchase_continuation !== undefined && {
-      purchase_continuation: source.purchase_continuation as RequestProposalsResponse['purchase_continuation'],
+      purchase_continuation: source.purchase_continuation as RequestProposalsPurchaseContinuation,
     }),
     raw: ((source as Record<PropertyKey, unknown>)[LEGACY_PROPOSAL_RAW] ?? source) as
       | RequestProposalsResponse
       | EstablishedProductsWireResponse,
-  };
+  } as CompatibleRequestProposalsResponse;
 }
 
 function projectRefineProposals(
@@ -2372,7 +2417,9 @@ export class MediaBuyLifecycleCoordinator {
     return [
       'feed_version_not_atomic',
       'pricing_version_not_atomic',
-      ...(sourceVersion === '2.5' ? (['mutation_idempotency_not_guaranteed'] as const) : []),
+      ...(sourceVersion === '2.5' || this.idempotencyReplayTtlMs === undefined
+        ? (['mutation_idempotency_not_guaranteed'] as const)
+        : []),
     ];
   }
 
@@ -2381,17 +2428,10 @@ export class MediaBuyLifecycleCoordinator {
     const contextId = this.agent.getContextId();
     if (this.resolvedLegacyPurchaseSellerSessionScope === undefined) {
       let sessionScope = this.configuredLegacyPurchaseSellerSessionScope ?? contextId;
-      if (sessionScope === undefined && this.legacyPurchaseSourceVersion() === '2.5') {
-        throw new ConfigurationError(
-          'Products-only AdCP 2.5 purchase continuations require mediaBuy.legacyPurchaseSellerSessionScope when the seller provides no context ID.'
-        );
-      }
       if (sessionScope === undefined) {
-        sessionScope = LEGACY_PURCHASE_CLIENT_SCOPES.get(this.agent);
-        if (sessionScope === undefined) {
-          sessionScope = randomBytes(32).toString('base64url');
-          LEGACY_PURCHASE_CLIENT_SCOPES.set(this.agent, sessionScope);
-        }
+        throw new ConfigurationError(
+          'Products-only legacy purchase continuations require legacyPurchaseSellerSessionScope in negotiateMediaBuyLifecycle() when the seller provides no context ID.'
+        );
       }
       this.resolvedLegacyPurchaseSellerSessionScope = sessionScope;
     }
@@ -4261,15 +4301,15 @@ export class MediaBuyLifecycleCoordinator {
     }
     const packages = array(legacyRequest.packages);
     const packageProductIds = packages.map(pkg => optionalString(record(pkg).product_id));
+    const distinctPackageProductIds = [...new Set(packageProductIds)];
     if (
       packages.length === 0 ||
       packageProductIds.some(productId => productId === undefined) ||
-      new Set(packageProductIds).size !== packageProductIds.length ||
-      !exactSet(packageProductIds, selectedProductIds)
+      !exactSet(distinctPackageProductIds, selectedProductIds)
     ) {
       throw new LegacyPurchaseContinuationError(
         'selection_mismatch',
-        'The distinct legacy_create_request package product IDs must exactly match selected_product_ids.'
+        'The legacy_create_request package product ID set must exactly match selected_product_ids.'
       );
     }
     const observedPricingOptions = new Map<string, Set<string>>();
@@ -4316,7 +4356,7 @@ export class MediaBuyLifecycleCoordinator {
         `legacy_create_request is invalid for AdCP ${continuation.sourceAdcpVersion}: ${formatIssues(validation.issues)}`
       );
     }
-    const claim: LegacyPurchaseClaim = {
+    let claim: LegacyPurchaseClaim = {
       idempotencyKey,
       inputFingerprint: requestFingerprint(input),
       operationKey: requestFingerprint({
@@ -4337,8 +4377,8 @@ export class MediaBuyLifecycleCoordinator {
     let claimedForDispatch = false;
     const claimBeforeDispatch = async (
       effectiveParams: unknown,
-      context: { governanceAdjusted: boolean }
-    ): Promise<{ action: 'dispatch_committed' } | { action: 'return'; result: TaskResult<CreateMediaBuyResponse> }> => {
+      context: BeforeProtocolDispatchContext
+    ): Promise<BeforeProtocolDispatchHookResult<CreateMediaBuyResponse>> => {
       // Legacy continuation consent binds the complete pre-governance purchase.
       // Unlike native 3.2 proposal execution, it has no mechanism for the
       // caller to approve rewritten commercial terms, so fail closed before
@@ -4352,11 +4392,11 @@ export class MediaBuyLifecycleCoordinator {
       const finalRequest = record(effectiveParams);
       const finalPackages = array(finalRequest.packages);
       const finalProductIds = finalPackages.map(pkg => optionalString(record(pkg).product_id));
+      const distinctFinalProductIds = [...new Set(finalProductIds)];
       if (
         finalPackages.length === 0 ||
         finalProductIds.some(productId => productId === undefined) ||
-        new Set(finalProductIds).size !== finalProductIds.length ||
-        !exactSet(finalProductIds, selectedProductIds)
+        !exactSet(distinctFinalProductIds, selectedProductIds)
       ) {
         throw new LegacyPurchaseContinuationError(
           'selection_mismatch',
@@ -4390,6 +4430,15 @@ export class MediaBuyLifecycleCoordinator {
         );
       }
 
+      // Capture the mutation/replay clock at the durable CAS boundary, after
+      // all awaited preflight and governance work. Earlier timestamps can
+      // make a slow claim look abandoned or shorten its replay window before
+      // the seller has even been dispatched.
+      claim = {
+        ...claim,
+        claimedAt: new Date().toISOString(),
+        replayExpiresAt: new Date(Date.now() + this.legacyPurchaseOperationTtlMs).toISOString(),
+      };
       let claimed;
       try {
         claimed = await this.legacyPurchaseContinuationStore.claim(token, {
@@ -4463,9 +4512,38 @@ export class MediaBuyLifecycleCoordinator {
         );
       }
       claimedForDispatch = true;
-      return { action: 'dispatch_committed' };
+      return {
+        action: 'dispatch_committed',
+        onResult: async result => {
+          const settled = await this.trackLegacyPurchaseResult(
+            token,
+            claim,
+            result,
+            context.publishSettledTaskStatus,
+            context.registerExternalTaskSettlement,
+            options?.transport
+          );
+          settledInsideExecutor = true;
+          return settled;
+        },
+        onError: async error => {
+          settledInsideExecutor = true;
+          if (error instanceof LegacyPurchaseContinuationError) {
+            if (error.code === 'ambiguous') {
+              await this.markLegacyPurchaseAmbiguous(token, claim, 'create_media_buy_result_invalid');
+            }
+            throw error;
+          }
+          await this.markLegacyPurchaseAmbiguous(token, claim, 'create_media_buy_transport_uncertain');
+          throw this.legacyPurchaseAmbiguousError(
+            'The legacy create transport failed after the token was claimed.',
+            error
+          );
+        },
+      };
     };
 
+    let settledInsideExecutor = false;
     try {
       const result = await this.agent.createMediaBuyLegacyWithPreDispatch(
         legacyRequest as unknown as CreateMediaBuyRequest,
@@ -4478,9 +4556,13 @@ export class MediaBuyLifecycleCoordinator {
         }
       );
       if (!claimedForDispatch) return result;
-      return this.trackLegacyPurchaseResult(token, claim, result);
+      if (settledInsideExecutor) return result;
+      // Test doubles and older internal façades may invoke the pre-dispatch
+      // hook without honoring its executor-owned settlement callbacks.
+      return this.trackLegacyPurchaseResult(token, claim, result, undefined, undefined, options?.transport);
     } catch (error) {
       if (!claimedForDispatch) throw error;
+      if (settledInsideExecutor) throw error;
       if (error instanceof LegacyPurchaseContinuationError) {
         if (error.code === 'ambiguous') {
           await this.markLegacyPurchaseAmbiguous(token, claim, 'create_media_buy_result_invalid');
@@ -4598,7 +4680,10 @@ export class MediaBuyLifecycleCoordinator {
   private async trackLegacyPurchaseResult(
     token: string,
     claim: LegacyPurchaseClaim,
-    result: TaskResult<CreateMediaBuyResponse>
+    result: TaskResult<CreateMediaBuyResponse>,
+    publishSettledTaskStatus?: BeforeProtocolDispatchContext['publishSettledTaskStatus'],
+    registerExternalTaskSettlement?: BeforeProtocolDispatchContext['registerExternalTaskSettlement'],
+    settlementTransport?: TaskOptions['transport']
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
     if (result.status === 'completed' || result.status === 'failed' || result.status === 'governance-denied') {
       // TaskExecutor also uses status=failed for local response-schema and
@@ -4606,19 +4691,99 @@ export class MediaBuyLifecycleCoordinator {
       // authoritatively rejected the mutation: it may have succeeded and
       // returned a malformed completion. Persist only structured AdCP
       // failures; otherwise fence the claimed operation as ambiguous.
-      if (result.status === 'failed' && result.adcpError === undefined) {
+      if (result.status === 'failed' && (result.adcpError === undefined || result.adcpError.synthetic === true)) {
         await this.markLegacyPurchaseAmbiguous(token, claim, 'create_media_buy_failure_not_authoritative');
         throw this.legacyPurchaseAmbiguousError(
           'The legacy create failure was not an authoritative structured AdCP error.'
         );
       }
-      const terminal = this.assertLegacyPurchaseTerminalResult(result, this.legacyPurchaseSourceVersion());
+      let terminal: LegacyPurchaseTerminalResult;
+      try {
+        terminal = this.assertLegacyPurchaseTerminalResult(result, this.legacyPurchaseSourceVersion());
+      } catch (error) {
+        if (error instanceof LegacyPurchaseContinuationError && error.code === 'ambiguous') {
+          await this.markLegacyPurchaseAmbiguous(token, claim, 'create_media_buy_result_invalid');
+        }
+        throw error;
+      }
       return attachMatch(await this.completeLegacyPurchase(token, claim, terminal));
     }
-    if (result.submitted) {
-      const submitted = result.submitted;
+
+    const settlementMetadata = {
+      taskId: result.metadata.taskId,
+      taskName: result.metadata.taskName,
+      agent: { ...result.metadata.agent },
+      responseTimeMs: result.metadata.responseTimeMs,
+      timestamp: result.metadata.timestamp,
+      clarificationRounds: result.metadata.clarificationRounds,
+      status: result.metadata.status,
+      ...(result.metadata.contextId !== undefined && { contextId: result.metadata.contextId }),
+      ...((result.submitted?.taskId ?? result.metadata.serverTaskId ?? claim.sellerTaskId) !== undefined && {
+        serverTaskId: result.submitted?.taskId ?? result.metadata.serverTaskId ?? claim.sellerTaskId,
+      }),
+      ...(result.metadata.idempotency_key !== undefined && { idempotency_key: result.metadata.idempotency_key }),
+      ...(result.metadata.replayed !== undefined && { replayed: result.metadata.replayed }),
+      ...(result.metadata.adcpVersion !== undefined && { adcpVersion: result.metadata.adcpVersion }),
+    };
+    const failureFieldsFromTask = (task: TaskInfo) => {
+      const extracted = extractAdcpErrorInfo(task.result);
+      const adcpError = extracted?.synthetic === true ? undefined : extracted;
+      const correlationId = extractCorrelationId(task.result);
+      return {
+        // tasks/get and webhook free text are not durable-safe boundaries.
+        // Preserve a structured AdCP message when present; otherwise replay a
+        // generic error while retaining the seller payload for inspection.
+        error: adcpError?.message ?? 'Legacy create failed.',
+        ...(adcpError !== undefined && { adcpError }),
+        ...(correlationId !== undefined && { correlationId }),
+      };
+    };
+    const resultFromTask = (task: TaskInfo): TaskResult<CreateMediaBuyResponse> | undefined => {
+      const metadata = {
+        ...settlementMetadata,
+        taskName: task.taskType,
+        timestamp: new Date().toISOString(),
+      };
+      if (
+        task.status === 'completed' &&
+        task.result !== undefined &&
+        isAdcpOperationSuccess(task.result, task.taskType)
+      ) {
+        return attachMatch({
+          success: true,
+          status: 'completed',
+          data: task.result as CreateMediaBuyResponse,
+          metadata: { ...metadata, status: 'completed' },
+        });
+      }
+      if (task.status === 'unknown') {
+        throw this.legacyPurchaseAmbiguousError(
+          'tasks/get returned an unrecognizable response for the submitted legacy purchase.'
+        );
+      }
+      if (['completed', 'failed', 'rejected', 'canceled', 'governance-denied'].includes(task.status)) {
+        const status = task.status === 'governance-denied' ? 'governance-denied' : 'failed';
+        return attachMatch({
+          success: false,
+          status,
+          ...failureFieldsFromTask(task),
+          ...(task.result !== undefined && { data: task.result as CreateMediaBuyResponse }),
+          metadata: { ...metadata, status },
+        } as TaskResult<CreateMediaBuyResponse>);
+      }
+      if (task.status === 'input-required' || task.status === 'auth-required') {
+        return attachMatch({
+          success: true,
+          status: task.status,
+          ...(task.result !== undefined && { data: task.result as CreateMediaBuyResponse }),
+          metadata: { ...metadata, status: task.status },
+        } as TaskResult<CreateMediaBuyResponse>);
+      }
+      return undefined;
+    };
+    const bindSellerTask = async (sellerTaskId: string) => {
       try {
-        const recorded = await this.legacyPurchaseContinuationStore.recordSubmittedTask(token, claim, submitted.taskId);
+        const recorded = await this.legacyPurchaseContinuationStore.recordSubmittedTask(token, claim, sellerTaskId);
         if (!recorded) {
           await this.markLegacyPurchaseAmbiguous(token, claim, 'submitted_task_persistence_failed');
           throw this.legacyPurchaseAmbiguousError('Could not durably bind the submitted seller task.');
@@ -4628,18 +4793,116 @@ export class MediaBuyLifecycleCoordinator {
         await this.markLegacyPurchaseAmbiguous(token, claim, 'submitted_task_persistence_failed');
         throw this.legacyPurchaseAmbiguousError('Could not durably bind the submitted seller task.', error);
       }
-      const failureFieldsFromTask = (task: Awaited<ReturnType<typeof submitted.track>>) => {
-        const adcpError = extractAdcpErrorInfo(task.result);
-        const correlationId = extractCorrelationId(task.result);
-        return {
-          // tasks/get free text is not a durable-safe boundary. Preserve a
-          // structured AdCP message when present; otherwise replay a generic
-          // error while retaining the seller payload in data for inspection.
-          error: adcpError?.message ?? 'Legacy create failed.',
-          ...(adcpError !== undefined && { adcpError }),
-          ...(correlationId !== undefined && { correlationId }),
-        };
-      };
+
+      // Register only after the seller task binding is durable. A webhook may
+      // already be queued in TaskExecutor, but it must never complete the
+      // operation before recordSubmittedTask commits the exact task identity.
+      registerExternalTaskSettlement?.(async observation => {
+        try {
+          if (observation.serverTaskId !== sellerTaskId) {
+            throw this.legacyPurchaseAmbiguousError(
+              'The pushed seller task ID does not match the durably recorded submitted task.'
+            );
+          }
+          if (observation.taskType !== 'create_media_buy') {
+            throw this.legacyPurchaseAmbiguousError('The pushed seller task has the wrong task identity.');
+          }
+          const task: TaskInfo = {
+            taskId: sellerTaskId,
+            taskType: observation.taskType,
+            status: observation.status,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            ...(observation.result !== undefined && { result: observation.result }),
+          };
+          const observed = resultFromTask(task);
+          if (!observed || !['completed', 'failed', 'governance-denied'].includes(observed.status)) {
+            throw this.legacyPurchaseAmbiguousError(
+              'The pushed legacy create status was not an authoritative terminal result.'
+            );
+          }
+          return await this.trackLegacyPurchaseResult(
+            token,
+            claim,
+            observed,
+            publishSettledTaskStatus,
+            registerExternalTaskSettlement,
+            settlementTransport
+          );
+        } catch (error) {
+          if (error instanceof LegacyPurchaseContinuationError && error.code === 'ambiguous') {
+            await this.markLegacyPurchaseAmbiguous(token, claim, 'pushed_task_result_invalid');
+          }
+          throw error;
+        }
+      });
+    };
+
+    if (result.status === 'working' || result.status === 'input-required' || result.status === 'auth-required') {
+      const sellerTaskId = result.metadata.serverTaskId;
+      if (!sellerTaskId) {
+        await this.markLegacyPurchaseAmbiguous(token, claim, 'paused_task_identity_missing');
+        throw this.legacyPurchaseAmbiguousError(
+          'The non-terminal legacy create response did not provide a durable seller task identity.'
+        );
+      }
+      await bindSellerTask(sellerTaskId);
+      if (result.status !== 'working') return attachMatch(result);
+      const watchSignal = AbortSignal.timeout(Math.min(this.legacyPurchaseOperationTtlMs, 5 * 60 * 1000));
+      const waitForWorkingPoll = () =>
+        new Promise<void>((resolve, reject) => {
+          if (watchSignal.aborted) {
+            reject(createAbortError(watchSignal.reason));
+            return;
+          }
+          const timer = setTimeout(finish, 60_000);
+          const abort = () => finish(createAbortError(watchSignal.reason));
+          watchSignal.addEventListener('abort', abort, { once: true });
+          function finish(error?: Error) {
+            clearTimeout(timer);
+            watchSignal.removeEventListener('abort', abort);
+            if (error) reject(error);
+            else resolve();
+          }
+        });
+      void new Promise<void>(resolve => setTimeout(resolve, 0))
+        .then(async () => {
+          while (!watchSignal.aborted) {
+            const task = await this.agent.getTaskStatus(sellerTaskId, settlementTransport, watchSignal);
+            if (task.taskId !== sellerTaskId || task.taskType !== 'create_media_buy') {
+              throw this.legacyPurchaseAmbiguousError(
+                'The polled working seller task does not match the durably recorded create_media_buy task.'
+              );
+            }
+            const observed = resultFromTask(task);
+            if (observed) {
+              return this.trackLegacyPurchaseResult(
+                token,
+                claim,
+                observed,
+                publishSettledTaskStatus,
+                registerExternalTaskSettlement,
+                settlementTransport
+              );
+            }
+            await waitForWorkingPoll();
+          }
+          throw createAbortError(watchSignal.reason);
+        })
+        .then(completion => {
+          publishSettledTaskStatus?.(completion.status, completion.data, completion.error);
+        })
+        .catch(async error => {
+          if (watchSignal.aborted || isAbortOrTimeoutError(error)) return;
+          await this.markLegacyPurchaseAmbiguous(token, claim, 'non_terminal_completion_watch_uncertain');
+          void error;
+        });
+      return attachMatch(result);
+    }
+
+    if (result.submitted) {
+      const submitted = result.submitted;
+      await bindSellerTask(submitted.taskId);
       const observeTask = async (
         transport?: import('../protocols').TransportOptions,
         observationSignal?: AbortSignal
@@ -4648,10 +4911,15 @@ export class MediaBuyLifecycleCoordinator {
           const task = observationSignal
             ? await withAbortSignal([observationSignal], undefined, () => submitted.track(transport))
             : await submitted.track(transport);
+          if (task.taskId !== submitted.taskId) {
+            throw this.legacyPurchaseAmbiguousError(
+              'The tracked seller task ID does not match the durably recorded submitted task.'
+            );
+          }
+          if (task.taskType !== 'create_media_buy') {
+            throw this.legacyPurchaseAmbiguousError('The tracked seller task has the wrong task identity.');
+          }
           if (['completed', 'failed', 'rejected', 'canceled', 'governance-denied'].includes(task.status)) {
-            if (task.taskType !== 'create_media_buy') {
-              throw this.legacyPurchaseAmbiguousError('The tracked seller task has the wrong task identity.');
-            }
             if (task.status === 'completed' && task.result === undefined) {
               throw this.legacyPurchaseAmbiguousError(
                 'The tracked seller task reported completion without a create_media_buy result.'
@@ -4662,7 +4930,10 @@ export class MediaBuyLifecycleCoordinator {
             if (
               !completedSuccessfully &&
               task.status !== 'governance-denied' &&
-              extractAdcpErrorInfo(task.result) === undefined
+              (() => {
+                const adcpError = extractAdcpErrorInfo(task.result);
+                return adcpError === undefined || adcpError.synthetic === true;
+              })()
             ) {
               throw this.legacyPurchaseAmbiguousError(
                 'The tracked legacy create failure was not an authoritative structured AdCP error.'
@@ -4683,7 +4954,7 @@ export class MediaBuyLifecycleCoordinator {
                       ...(task.result !== undefined && { data: task.result }),
                     }),
                 metadata: {
-                  ...result.metadata,
+                  ...settlementMetadata,
                   status: completedSuccessfully
                     ? 'completed'
                     : task.status === 'governance-denied'
@@ -4722,51 +4993,6 @@ export class MediaBuyLifecycleCoordinator {
           throw this.legacyPurchaseAmbiguousError('Legacy create task tracking failed after claim.', error);
         }
       };
-      const resultFromTask = (
-        task: Awaited<ReturnType<typeof submitted.track>>
-      ): TaskResult<CreateMediaBuyResponse> | undefined => {
-        const metadata = {
-          ...result.metadata,
-          taskName: task.taskType,
-          timestamp: new Date().toISOString(),
-        };
-        if (
-          task.status === 'completed' &&
-          task.result !== undefined &&
-          isAdcpOperationSuccess(task.result, task.taskType)
-        ) {
-          return attachMatch({
-            success: true,
-            status: 'completed',
-            data: task.result as CreateMediaBuyResponse,
-            metadata: { ...metadata, status: 'completed' },
-          });
-        }
-        if (task.status === 'unknown') {
-          throw this.legacyPurchaseAmbiguousError(
-            'tasks/get returned an unrecognizable response for the submitted legacy purchase.'
-          );
-        }
-        if (['completed', 'failed', 'rejected', 'canceled', 'governance-denied'].includes(task.status)) {
-          const status = task.status === 'governance-denied' ? 'governance-denied' : 'failed';
-          return attachMatch({
-            success: false,
-            status,
-            ...failureFieldsFromTask(task),
-            ...(task.result !== undefined && { data: task.result as CreateMediaBuyResponse }),
-            metadata: { ...metadata, status },
-          } as TaskResult<CreateMediaBuyResponse>);
-        }
-        if (task.status === 'input-required' || task.status === 'auth-required') {
-          return attachMatch({
-            success: true,
-            status: task.status,
-            ...(task.result !== undefined && { data: task.result as CreateMediaBuyResponse }),
-            metadata: { ...metadata, status: task.status },
-          } as TaskResult<CreateMediaBuyResponse>);
-        }
-        return undefined;
-      };
       type SharedCompletion = {
         controller: AbortController;
         pollInterval: number;
@@ -4797,9 +5023,18 @@ export class MediaBuyLifecycleCoordinator {
       const pollTrackedCompletion = async (state: SharedCompletion, signal: AbortSignal) => {
         while (true) {
           if (signal.aborted) throw createAbortError(signal.reason);
-          const task = await observeTask(undefined, signal);
+          const task = await observeTask(settlementTransport, signal);
           const observed = resultFromTask(task);
-          if (observed) return this.trackLegacyPurchaseResult(token, claim, observed);
+          if (observed) {
+            return this.trackLegacyPurchaseResult(
+              token,
+              claim,
+              observed,
+              publishSettledTaskStatus,
+              registerExternalTaskSettlement,
+              settlementTransport
+            );
+          }
           await waitForNextPoll(state, signal);
         }
       };
@@ -4902,6 +5137,9 @@ export class MediaBuyLifecycleCoordinator {
       const watchSignal = AbortSignal.timeout(Math.min(this.legacyPurchaseOperationTtlMs, 5 * 60 * 1000));
       void new Promise<void>(resolve => setTimeout(resolve, 0))
         .then(() => waitForSharedCompletion(undefined, watchSignal))
+        .then(completion => {
+          publishSettledTaskStatus?.(completion.status, completion.data, completion.error);
+        })
         .catch(async error => {
           if (watchSignal.aborted || isAbortOrTimeoutError(error)) return;
           await this.markLegacyPurchaseAmbiguous(token, claim, 'background_completion_watch_uncertain');
@@ -4916,7 +5154,14 @@ export class MediaBuyLifecycleCoordinator {
         ...deferred,
         resume: async (resumeInput: unknown) => {
           try {
-            return await this.trackLegacyPurchaseResult(token, claim, await deferred.resume(resumeInput));
+            return await this.trackLegacyPurchaseResult(
+              token,
+              claim,
+              await deferred.resume(resumeInput),
+              publishSettledTaskStatus,
+              registerExternalTaskSettlement,
+              settlementTransport
+            );
           } catch (error) {
             if (error instanceof LegacyPurchaseContinuationError) {
               if (error.code === 'ambiguous') {
@@ -5979,6 +6224,25 @@ export class MediaBuyLifecycleCoordinator {
     const input = record(params);
     const lifecycle = this.selectLifecycle('control_media_buy');
     this.assertLegacyReferenceShapes('controlMediaBuy', input);
+    const canceledControlConflicts = [
+      'name',
+      'paused',
+      'total_budget',
+      'daily_budget_cap',
+      'budget_cap_timezone',
+      'budget_allocation',
+      'pacing',
+      'bidding',
+      'packages',
+      'reporting_webhook',
+    ];
+    if (Object.hasOwn(input, 'canceled') && canceledControlConflicts.some(field => Object.hasOwn(input, field))) {
+      throw this.unsupported(
+        'controlMediaBuy',
+        'canceled',
+        'Compact media-buy cancellation cannot be combined with other operational controls.'
+      );
+    }
     if (lifecycle === 'compact') {
       this.assertValidCompactRequest('control_media_buy', params, lifecycle, true);
       const result = await this.agent.controlMediaBuy(params, inputHandler, options);
@@ -5997,6 +6261,9 @@ export class MediaBuyLifecycleCoordinator {
       'bidding',
       'governance_context',
     ]);
+    if (!isCompactRelease(this.negotiated_version)) {
+      this.assertCompactWireFieldsAbsent('controlMediaBuy', input, ['name']);
+    }
     if (compareRelease(this.negotiated_version, '3.0') < 0) {
       this.assertCompactWireFieldsAbsent('controlMediaBuy', input, ['reporting_webhook']);
     }
@@ -6203,29 +6470,12 @@ export class MediaBuyLifecycleCoordinator {
         'Compact media-buy cancellation_reason requires canceled=true.'
       );
     }
-    const canceledControlConflicts = [
-      'paused',
-      'total_budget',
-      'daily_budget_cap',
-      'budget_cap_timezone',
-      'budget_allocation',
-      'pacing',
-      'bidding',
-      'packages',
-      'reporting_webhook',
-    ];
-    if (Object.hasOwn(input, 'canceled') && canceledControlConflicts.some(field => Object.hasOwn(input, field))) {
-      throw this.unsupported(
-        'controlMediaBuy',
-        'canceled',
-        'Compact media-buy cancellation cannot be combined with other operational controls.'
-      );
-    }
     const request: MutatingRequestInput<CanonicalUpdateMediaBuyRequest> = {
       account: input.account as CanonicalUpdateMediaBuyRequest['account'],
       media_buy_id: input.media_buy_id as string,
       ...(input.idempotency_key !== undefined && { idempotency_key: input.idempotency_key as string }),
       revision: input.revision as number,
+      ...(input.name !== undefined && { name: input.name as string }),
       ...(input.paused !== undefined && { paused: input.paused as boolean }),
       ...(input.canceled !== undefined && { canceled: input.canceled as true }),
       ...(input.cancellation_reason !== undefined && { cancellation_reason: input.cancellation_reason as string }),

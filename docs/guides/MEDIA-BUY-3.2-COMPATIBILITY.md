@@ -167,23 +167,28 @@ accepted before the legacy `create_media_buy` mutation:
 const continuations = createInMemoryLegacyPurchaseContinuationStore();
 const lifecycle = await agent.negotiateMediaBuyLifecycle({
   principalScope: authenticatedPrincipalId,
-  // Required for 2.5 sellers that provide no server context ID. Persist this
-  // non-secret authenticated seller/account session ID across rehydration.
+  // Required for established 2.5, 3.0, and 3.1 sellers that provide no server
+  // context ID. Persist this non-secret authenticated session ID across rehydration.
   legacyPurchaseSellerSessionScope: authenticatedSellerSessionId,
   legacyPurchaseContinuationStore: continuations,
 });
 
 const discovery = await lifecycle.requestProposals({ account, brand, brief });
 if (discovery.status === 'completed' && discovery.data.outcome === 'products_available') {
-  const continuation = discovery.data.purchase_continuation!;
-  await lifecycle.continueLegacyPurchase({
-    idempotency_key: crypto.randomUUID(),
-    continuation_token: continuation.continuation_token,
-    account,
-    selected_product_ids: [continuation.product_ids[0]],
-    accepted_losses: continuation.losses,
-    legacy_create_request: exactLegacyCreateRequest,
-  });
+  const continuation = discovery.data.purchase_continuation;
+  if (continuation.kind === 'legacy_create') {
+    await lifecycle.continueLegacyPurchase({
+      idempotency_key: crypto.randomUUID(),
+      continuation_token: continuation.continuation_token,
+      account,
+      selected_product_ids: [continuation.product_ids[0]],
+      accepted_losses: continuation.losses,
+      legacy_create_request: exactLegacyCreateRequest,
+    });
+  } else {
+    // listed_purchase carries seller-issued feed/pricing fences and proceeds
+    // through the native buy_products flow.
+  }
 }
 ```
 
@@ -199,13 +204,22 @@ token. A claim is consumed at the first mutation; exact retries replay the
 recorded terminal `TaskResult` during the separate 24-hour operation replay
 window (configurable with `legacyPurchaseOperationTtlMs`).
 
-For an AdCP 2.5 seller without a server context ID,
+For any established seller without a server context ID,
 `legacyPurchaseSellerSessionScope` is required before a continuation can be
 issued. It must be a stable, non-secret ID derived by the application from the
 authenticated seller/account session—not a bearer token. Persist and reuse it
 with the continuation store so a restarted coordinator can redeem or replay
 the same operation without making the token portable to another credentialed
-session.
+session. This applies to 2.5, 3.0, and 3.1; endpoint identity is not an
+authenticated session identity. URL userinfo and presigned URLs are rejected
+before the discovered payload can enter durable storage.
+
+Every 2.5 continuation declares `mutation_idempotency_not_guaranteed`.
+3.0/3.1 continuations declare the same loss whenever the seller does not
+advertise a usable replay TTL; accepting an idempotency key alone is not treated
+as evidence that a mutation can be replayed safely. Submitted completions are
+accepted only for the exact seller task ID recorded at dispatch. Unstructured
+or SDK-synthetic terminal errors remain ambiguous and retain the durable fence.
 
 A transport crash becomes `LegacyPurchaseContinuationError` with
 `code: 'ambiguous'`. `reconcileLegacyPurchase(record, exactInput)` receives the
@@ -239,7 +253,7 @@ ambiguous, disposed, and expired refinements leave the source non-executable.
 | `declineProposals` | `decline_proposals` | proposal-scoped legacy omit | Rejected by default because omit is not a terminal decline and cannot carry the required compact reason/detail. Explicit opt-in reports `proposal_decline_not_terminal` and `proposal_decline_reason_not_forwarded`. |
 | `buyProducts` | `buy_products` | `create_media_buy` | Feed/pricing fencing is not atomic. Rejected by default; explicit opt-in names `feed_version_not_atomic` and, when present, `pricing_version_not_atomic`. Shared package fields and nested targeting/reporting enums map against the negotiated schema, including 3.1+ `format_option_refs`; newer targeting, metric, and postal shapes fail closed. v2.5 also rejects non-empty compact targeting and push notification configuration. A direct compact `total_budget` and fields introduced on the 3.2 established surface—including allocation, budget-cap, bidding, governance, opportunity, and newer package controls—map only on a negotiated 3.2 established lane. Compact `catalog_ids` and resolved `pricing` remain typed unsupported. |
 | `acceptProposal` | `accept_proposal` | `create_media_buy(proposal_id=...)` | A compact-shaped proposal retains strict digest, immutable-snapshot, account-scope, kind/status, and expiry checks. Caller values cannot override digest-bound budget, budget-cap, timezone, or purchase-order terms. An honest 3.0/3.1 proposal remains executable with its ordinary `proposal_id` semantics only after explicit opt-in to `proposal_terms_digest_not_enforced`, `proposal_terms_digest_unavailable`, and `proposal_snapshot_not_immutable` (plus `proposal_hold_not_verifiable` when it has no expiry). The caller supplies the original brand/flight as `established_fallback`; the SDK does not claim those values came from the seller or synthesize a digest. |
-| `controlMediaBuy` | `control_media_buy` | `update_media_buy` | Account, media-buy ID, and a positive revision are required. Revision and identically shaped fields present in the negotiated established schema map directly. v2.5 requires explicit `revision_not_atomic` opt-in and rejects cancellation plus v3-only package controls. Pre-3.2 lanes reject the broader compact optimization-goal union and nested targeting/keyword shapes they cannot represent. Compact `catalog_ids` cannot be cast to established `catalogs` objects, so it fails closed in every established lane. |
+| `controlMediaBuy` | `control_media_buy` | `update_media_buy` | Account, media-buy ID, and a positive revision are required. Revision and identically shaped fields present in the negotiated established schema map directly; `name` maps on the 3.2 established surface and fails closed on 3.0/3.1, whose update schemas do not define it. v2.5 requires explicit `revision_not_atomic` opt-in and rejects cancellation plus v3-only package controls. Pre-3.2 lanes reject the broader compact optimization-goal union and nested targeting/keyword shapes they cannot represent. Compact `catalog_ids` cannot be cast to established `catalogs` objects, so it fails closed in every established lane. |
 | Readback | shared tools | `get_media_buys`, `get_media_buy_delivery` | Same public calls and canonical creative projection in every lane. Versioned request additions fail closed: webhook-activity and delivery-window/granularity options require 3.1+, while `indicator_types`, demographic breakdowns, and spot breakdowns require 3.2. Native postal reporting shapes require 3.1+. |
 
 Lossy mutations are fail-closed. An adopter may opt into only the exact named
