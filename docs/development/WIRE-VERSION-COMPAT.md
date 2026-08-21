@@ -6,7 +6,10 @@ How `@adcp/sdk` keeps a buyer pinned to one AdCP major version while talking to 
 
 ## The shape of the problem
 
-The SDK speaks a single AdCP major version on its public surface — `ADCP_VERSION` in `src/lib/version.ts`. As of writing that's `3.0.1`. Every buyer-facing type, helper, and example assumes v3 shape.
+The SDK speaks one primary AdCP version on its public surface — `ADCP_VERSION`
+in `src/lib/version.ts`. The SDK 14 beta pin is `3.2.0-beta.4`; maintained side
+bundles cover `3.1.18`, `3.0.25`, and v2.5. Every buyer-facing type, helper,
+and example assumes the primary pin.
 
 In the field, sellers don't all upgrade in lockstep. There are still v2.5 sellers (Wonderstruck, others) and there will be v4 sellers before every v3 seller has finished migrating. The SDK has to:
 
@@ -24,9 +27,11 @@ There is exactly one active legacy compat layer at a time today: `legacy/v2-5/`.
 
 ```
 schemas/cache/
-├── 3.0.1/   # current SDK pin
-├── latest/  # symlink to 3.0.1
-└── v2.5/    # legacy bundle, pulled from 2.5-maintenance HEAD
+├── 3.2.0-beta.4/ # current SDK pin
+├── 3.1.18/       # maintained stable side bundle
+├── 3.0.25/       # maintained stable side bundle
+├── latest/       # symlink to the primary pin
+└── v2.5/         # legacy bundle, pulled from 2.5-maintenance HEAD
 ```
 
 Refresh:
@@ -34,7 +39,7 @@ Refresh:
 ```sh
 npm run sync-schemas         # SDK pin
 npm run sync-schemas:v2.5    # legacy bundle
-npm run sync-schemas:all     # both
+npm run sync-schemas:all     # primary pin plus maintained side bundles
 ```
 
 `sync-v2-5-schemas.ts` pulls from a pinned `2.5-maintenance` SHA with a sha256 verification — published v2.5 tags are stale (see `adcontextprotocol/adcp#3689` upstream).

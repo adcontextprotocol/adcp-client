@@ -207,8 +207,8 @@ describe('content-digest SF dictionary support (protocol finding)', () => {
 
 describe('AdCP 3.2 RFC 8941 binary profile', () => {
   test('version selection keeps 3.0/3.1 legacy and makes 3.2 standards-compliant', () => {
-    assert.strictEqual(requestSigningEncodingForVersion('3.0.24'), 'legacy-base64url');
-    assert.strictEqual(requestSigningEncodingForVersion('3.1.15'), 'legacy-base64url');
+    assert.strictEqual(requestSigningEncodingForVersion('3.0.25'), 'legacy-base64url');
+    assert.strictEqual(requestSigningEncodingForVersion('3.1.18'), 'legacy-base64url');
     assert.strictEqual(requestSigningEncodingForVersion('3.2-beta.1'), 'rfc8941-base64');
     assert.strictEqual(requestSigningEncodingForVersion('3.2.0-beta.1'), 'rfc8941-base64');
   });

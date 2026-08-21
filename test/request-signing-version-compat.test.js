@@ -27,7 +27,7 @@ function verificationOptions(vector, loaded, adcpVersion) {
 }
 
 describe('request-signing compatibility across frozen AdCP bundles', () => {
-  for (const version of ['3.0.24', '3.1.15']) {
+  for (const version of ['3.0.25', '3.1.18']) {
     test(`${version} positive vectors work with both omitted and explicit endpoint pins`, async () => {
       const loaded = loadRequestSigningVectors({ version });
       const vectors = ['001-basic-post', '002-post-with-content-digest'].map(id =>

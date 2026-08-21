@@ -18,7 +18,7 @@ declare const establishedProductsSource: EstablishedProductsWireResponse;
 void establishedProductsSource.projection.diagnostics;
 
 declare const requested: CompatibleRequestProposalsResponse;
-const requestOutcome: 'proposed' | 'rejected' | 'legacy_unavailable' = requested.outcome;
+const requestOutcome: 'proposed' | 'products_available' | 'rejected' | 'legacy_unavailable' = requested.outcome;
 const requestedProposalId: string | undefined = requested.proposals?.[0]?.proposal_id;
 void requestOutcome;
 void requestedProposalId;
@@ -71,7 +71,7 @@ for (const result of declined.results) {
 declare const requestTask: Awaited<ReturnType<MediaBuyLifecycleCoordinator['requestProposals']>>;
 if (requestTask.status === 'completed') {
   const operation: 'request' = requestTask.data.operation;
-  const outcome: 'proposed' | 'rejected' | 'legacy_unavailable' = requestTask.data.outcome;
+  const outcome: 'proposed' | 'products_available' | 'rejected' | 'legacy_unavailable' = requestTask.data.outcome;
   void operation;
   void outcome;
 } else if (requestTask.data !== undefined) {
@@ -90,7 +90,7 @@ async function assertCompatibilityContinuations(
     const compatibility = completed.compatibility.lifecycle;
     void compatibility;
     if (completed.status === 'completed') {
-      const outcome: 'proposed' | 'rejected' | 'legacy_unavailable' = completed.data.outcome;
+      const outcome: 'proposed' | 'products_available' | 'rejected' | 'legacy_unavailable' = completed.data.outcome;
       void outcome;
     }
   }

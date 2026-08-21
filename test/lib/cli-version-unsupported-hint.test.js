@@ -11,7 +11,7 @@ const builtIns = { 'test-mcp': { url: 'https://test.example/mcp/' } };
 test('built-in agent VERSION_UNSUPPORTED results include an actionable deployment hint', () => {
   const result = {
     overall_status: 'unreachable',
-    summary: { headline: 'Agent unreachable — VERSION_UNSUPPORTED: requested "3.2-beta.3"' },
+    summary: { headline: 'Agent unreachable — VERSION_UNSUPPORTED: requested "3.2-beta.4"' },
   };
 
   const hinted = appendBuiltInVersionUnsupportedHint(result, 'test-mcp', builtIns);
@@ -22,7 +22,7 @@ test('built-in agent VERSION_UNSUPPORTED results include an actionable deploymen
 
 test('version hints are limited to built-in aliases and version failures', () => {
   const versionFailure = {
-    summary: { headline: 'Agent unreachable — VERSION_UNSUPPORTED: requested "3.2-beta.3"' },
+    summary: { headline: 'Agent unreachable — VERSION_UNSUPPORTED: requested "3.2-beta.4"' },
   };
   const networkFailure = { summary: { headline: 'Agent unreachable — connection refused' } };
 

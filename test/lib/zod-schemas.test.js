@@ -17,6 +17,167 @@ describe('Zod Schema Validation', () => {
     assert.equal(typeof sdk.ADCP_VERSION, 'string', 'package root should expose its version');
   });
 
+  test('beta.4 enforces flexible-window and outcome-target constraints', async () => {
+    if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
+    assert.equal(
+      schemas.ForecastPointDimensionsSchema.safeParse([
+        { kind: 'time', start_time: '2027-01-01T00:00:00Z', end_time: '2027-01-02T00:00:00Z' },
+      ]).success,
+      true
+    );
+    assert.equal(
+      schemas.TimeForecastDimensionSchema.safeParse({
+        kind: 'time',
+        start_time: 'not-a-date-time',
+        end_time: 'also-invalid',
+      }).success,
+      false
+    );
+    const horizon = {
+      start_time: '2027-01-01T00:00:00Z',
+      end_time: '2027-02-01T00:00:00Z',
+    };
+    assert.equal(schemas.ProductOfferFiltersSchema.safeParse({ availability_horizon: horizon }).success, true);
+    assert.equal(
+      schemas.ProductOfferFiltersSchema.safeParse({
+        availability_horizon: { ...horizon, start_time: 'not-a-date-time' },
+      }).success,
+      false
+    );
+    assert.equal(
+      schemas.ProductOfferFiltersSchema.safeParse({ availability_horizon: horizon, start_date: '2027-01-01' }).success,
+      false
+    );
+    assert.equal(
+      schemas.OutcomeTargetSchema.safeParse({ goal: { kind: 'metric', metric: 'impressions' }, volume: 0 }).success,
+      false
+    );
+    assert.equal(
+      schemas.OutcomeTargetSchema.safeParse({ goal: { kind: 'event', event_type: 'custom' }, volume: 1 }).success,
+      false
+    );
+    assert.equal(
+      schemas.OutcomeTargetSchema.safeParse({
+        goal: { kind: 'event', event_type: 'custom', custom_event_name: '' },
+        volume: 1,
+      }).success,
+      false
+    );
+    assert.equal(schemas.AvailabilityStatusSchema.safeParse('available').success, true);
+  });
+
+  test('beta.4 continuation input schema accepts signed vectors and preserves closed loss consent', async () => {
+    if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
+    const vectors = JSON.parse(
+      readFileSync(
+        path.resolve(
+          __dirname,
+          '../../compliance/cache/3.2.0-beta.4/test-vectors/products-only-brief-compatibility/vectors.json'
+        ),
+        'utf8'
+      )
+    );
+    for (const vector of vectors.cases) {
+      assert.equal(
+        schemas.CompatibilityPurchaseCoordinatorInputSchema.safeParse(vector.continuation_input).success,
+        true
+      );
+    }
+    const valid = vectors.cases[1].continuation_input;
+    for (const invalid of [
+      { ...valid, accepted_losses: ['feed_version_not_atomic'] },
+      { ...valid, accepted_losses: [...valid.accepted_losses, valid.accepted_losses[0]] },
+      { ...valid, selected_product_ids: [...valid.selected_product_ids, valid.selected_product_ids[0]] },
+      { ...valid, unexpected: true },
+    ]) {
+      assert.equal(schemas.CompatibilityPurchaseCoordinatorInputSchema.safeParse(invalid).success, false);
+    }
+  });
+
+  test('beta.4 request-proposals response schema enforces every legacy continuation loss', async () => {
+    if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
+    const vectors = JSON.parse(
+      readFileSync(
+        path.resolve(
+          __dirname,
+          '../../compliance/cache/3.2.0-beta.4/test-vectors/products-only-brief-compatibility/vectors.json'
+        ),
+        'utf8'
+      )
+    );
+    for (const vector of vectors.cases) {
+      assert.equal(schemas.RequestProposalsResponseSchema.safeParse(vector.compact_projection).success, true);
+    }
+    const listed = vectors.listed_purchase_cases[0].compact_projection;
+    assert.equal(schemas.RequestProposalsResponseSchema.safeParse(listed).success, true);
+    const v25 = vectors.cases[0].compact_projection;
+    const invalidResponses = [
+      { outcome: 'products_available', status: 'completed' },
+      { outcome: 'products_available', status: 'completed', products: [] },
+      { outcome: 'rejected', status: 'completed', reason: 'no', purchase_continuation: v25.purchase_continuation },
+      {
+        ...v25,
+        purchase_continuation: {
+          ...v25.purchase_continuation,
+          losses: ['mutation_idempotency_not_guaranteed'],
+        },
+      },
+      {
+        ...v25,
+        purchase_continuation: {
+          ...v25.purchase_continuation,
+          losses: ['feed_version_not_atomic', 'pricing_version_not_atomic'],
+        },
+      },
+      {
+        ...v25,
+        purchase_continuation: {
+          ...v25.purchase_continuation,
+          losses: ['feed_version_not_atomic', 'feed_version_not_atomic', 'pricing_version_not_atomic'],
+        },
+      },
+      {
+        ...v25,
+        purchase_continuation: { ...v25.purchase_continuation, product_ids: [''] },
+      },
+      {
+        ...listed,
+        purchase_continuation: { ...listed.purchase_continuation, product_ids: ['', ''] },
+      },
+      {
+        ...listed,
+        purchase_continuation: { ...listed.purchase_continuation, product_ids: ['different-product'] },
+      },
+      {
+        ...listed,
+        purchase_continuation: {
+          ...listed.purchase_continuation,
+          product_ids: [listed.products[0].product_id, 'missing-product'],
+        },
+        products: [listed.products[0], { ...listed.products[0] }],
+      },
+      {
+        ...listed,
+        products: [...listed.products, { ...listed.products[0], product_id: 'extra-product' }],
+      },
+      {
+        ...listed,
+        products: listed.products.map(({ pricing_options: _pricing, ...product }) => product),
+      },
+      {
+        ...listed,
+        products: listed.products.map(product => ({ ...product, pricing_options: [] })),
+      },
+      {
+        ...listed,
+        incomplete: [{ scope: 'pricing', description: 'missing' }],
+      },
+    ];
+    for (const invalid of invalidResponses) {
+      assert.equal(schemas.RequestProposalsResponseSchema.safeParse(invalid).success, false);
+    }
+  });
+
   test('reference image and carousel fixtures conform to SDK schemas', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');
@@ -70,6 +231,40 @@ describe('Zod Schema Validation', () => {
       assert.strictEqual(schemas.CreativeManifestSchema.safeParse(manifest).success, true);
       assert.strictEqual(schemas.ProductFormatDeclarationSchema.safeParse(declaration).success, true);
       assert.strictEqual(prepare({ manifest, declaration }).ok, true);
+    }
+  });
+
+  test('PreviewCreativeRequestSchema enforces mode and one-generation batch routing', async () => {
+    if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
+    const legacyFormat = { agent_url: 'https://creative.example', id: 'display' };
+    const validBatch = {
+      request_type: 'batch',
+      target_capability_id: 'preview_capability',
+      requests: [{ creative_id: 'creative-1' }, { target_capability_id: 'item_capability', creative_id: 'creative-2' }],
+    };
+    assert.equal(schemas.PreviewCreativeRequestSchema.safeParse(validBatch).success, true);
+    for (const invalid of [
+      { request_type: 'single' },
+      { request_type: 'single', creative_id: 'one', creative_manifest: {} },
+      { request_type: 'single', creative_id: 'one', requests: [] },
+      { request_type: 'single', creative_id: 'one', requests: [{}] },
+      { request_type: 'variant' },
+      { request_type: 'variant', variant_id: undefined },
+      { request_type: 'batch' },
+      { request_type: 'batch', requests: [] },
+      { request_type: 'batch', requests: Array.from({ length: 51 }, (_, index) => ({ creative_id: `c-${index}` })) },
+      { request_type: 'batch', requests: [{}] },
+      { request_type: 'batch', requests: [{ creative_id: 'one', creative_manifest: {} }] },
+      { ...validBatch, format_id: legacyFormat },
+      {
+        request_type: 'batch',
+        requests: [
+          { target_capability_id: 'canonical', creative_id: 'one' },
+          { format_id: legacyFormat, creative_id: 'two' },
+        ],
+      },
+    ]) {
+      assert.equal(schemas.PreviewCreativeRequestSchema.safeParse(invalid).success, false);
     }
   });
 
@@ -1741,7 +1936,7 @@ describe('Zod Schema Validation', () => {
       ['space-separator', '2027-01-02 00:00:00Z'],
       ['compact-offset', '2027-01-02T00:00:00+0100'],
     ];
-    const exactValidator = getSchemaValidatorByRef('media-buy/refine-proposals-response.json', '3.2.0-beta.3');
+    const exactValidator = getSchemaValidatorByRef('media-buy/refine-proposals-response.json', '3.2.0-beta.4');
     assert.ok(exactValidator, 'exact refine_proposals response validator should be available');
     const exactAccepts = payload => exactValidator(payload);
     const zodAccepts = payload => schemas.RefineProposalsResponseSchema.safeParse(payload).success;

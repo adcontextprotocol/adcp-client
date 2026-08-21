@@ -368,7 +368,7 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
       suggestions: ['Try broadening the requested geography'],
     };
     const client = {
-      getAdcpVersion: () => '3.2.0-beta.3',
+      getAdcpVersion: () => '3.2.0-beta.4',
       getProducts: async () => rejection,
     };
 
@@ -386,7 +386,7 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
       suggestions: ['Try broadening the requested geography'],
     };
     const client = {
-      getAdcpVersion: () => '3.2.0-beta.3',
+      getAdcpVersion: () => '3.2.0-beta.4',
       getProducts: async () => ({ success: true, status: 'completed', data: rejection }),
     };
 

@@ -48,6 +48,7 @@
 
 import type {
   V1Product,
+  V1ProductInput,
   V1FormatId,
   V2Product,
   V2ProductFormatDeclaration,
@@ -549,12 +550,13 @@ function projectFormatId(
  * @see canonicalDeclarationFromBareId — resolve a single bare format-id
  * string (no surrounding Product) to a declaration or `format_kind`.
  */
-export function projectV1ProductToV2(v1: V1Product, options?: V1ToV2ProjectionOptions): V1ToV2Result {
+export function projectV1ProductToV2(v1: V1ProductInput, options?: V1ToV2ProjectionOptions): V1ToV2Result {
   const format_options: V2ProductFormatDeclaration[] = [];
   const diagnostics: ProjectionDiagnostic[] = [];
 
-  for (let i = 0; i < v1.format_ids.length; i++) {
-    const fid = v1.format_ids[i]!;
+  const inputFormatIds = v1.format_ids ?? [];
+  for (let i = 0; i < inputFormatIds.length; i++) {
+    const fid = inputFormatIds[i]! as V1FormatId;
     const field = `products[${v1.product_id}].format_ids[${i}]`;
     const { decl, diagnostic } = projectFormatId(fid, v1.product_id, field, options);
     if (decl) {
@@ -570,7 +572,7 @@ export function projectV1ProductToV2(v1: V1Product, options?: V1ToV2ProjectionOp
   const { format_ids: _drop, ...rest } = v1;
   void _drop;
   const v2Product: V2Product = {
-    ...(rest as Omit<V1Product, 'format_ids'>),
+    ...(rest as Omit<V1ProductInput, 'format_ids'>),
     format_options,
   } as V2Product;
 

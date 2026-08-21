@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-20T08:38:07.822Z
+// Generated at: 2026-08-20T22:13:35.407Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -60,6 +60,8 @@ export const AudioChannelLayoutSchema = z.union([z.literal("mono"), z.literal("s
 export const AudioDistributionTypeSchema = z.union([z.literal("music_streaming_service"), z.literal("fm_am_broadcast"), z.literal("podcast"), z.literal("catch_up_radio"), z.literal("web_radio"), z.literal("video_game"), z.literal("text_to_speech")]);
 
 export const AuthenticationSchemeSchema = z.union([z.literal("Bearer"), z.literal("HMAC-SHA256")]);
+
+export const AvailabilityStatusSchema = z.union([z.literal("available"), z.literal("unavailable")]);
 
 export const AvailableMetricSchema = z.union([z.literal("impressions"), z.literal("spend"), z.literal("clicks"), z.literal("ctr"), z.literal("views"), z.literal("completed_views"), z.literal("completion_rate"), z.literal("conversions"), z.literal("conversion_value"), z.literal("commissionable_value"), z.literal("roas"), z.literal("cost_per_acquisition"), z.literal("new_to_brand_rate"), z.literal("leads"), z.literal("reach"), z.literal("frequency"), z.literal("grps"), z.literal("engagements"), z.literal("engagement_rate"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits"), z.literal("viewability"), z.literal("quartile_data"), z.literal("dooh_metrics"), z.literal("cost_per_click"), z.literal("cost_per_completed_view"), z.literal("cpm"), z.literal("downloads"), z.literal("units_sold"), z.literal("new_to_brand_units"), z.literal("plays"), z.literal("incremental_sales_lift"), z.literal("brand_lift"), z.literal("foot_traffic"), z.literal("conversion_lift"), z.literal("brand_search_lift")]);
 
@@ -239,7 +241,7 @@ export const MediaBuyHealthSchema = z.union([z.literal("ok"), z.literal("impaire
 
 export const MediaBuyStatusSchema = z.union([z.literal("pending_creatives"), z.literal("pending_start"), z.literal("active"), z.literal("paused"), z.literal("completed"), z.literal("rejected"), z.literal("canceled")]);
 
-export const MediaBuyValidActionSchema = z.union([z.literal("pause"), z.literal("resume"), z.literal("cancel"), z.literal("extend_flight"), z.literal("shorten_flight"), z.literal("update_flight_dates"), z.literal("increase_budget"), z.literal("decrease_budget"), z.literal("reallocate_budget"), z.literal("update_budget_allocation"), z.literal("update_targeting"), z.literal("update_pacing"), z.literal("update_bidding"), z.literal("update_frequency_caps"), z.literal("replace_creative"), z.literal("update_creative_assignments"), z.literal("remove_creative"), z.literal("add_packages"), z.literal("remove_packages"), z.literal("update_budget"), z.literal("update_dates"), z.literal("update_packages"), z.literal("sync_creatives")]);
+export const MediaBuyValidActionSchema = z.union([z.literal("pause"), z.literal("resume"), z.literal("cancel"), z.literal("update_name"), z.literal("extend_flight"), z.literal("shorten_flight"), z.literal("update_flight_dates"), z.literal("increase_budget"), z.literal("decrease_budget"), z.literal("reallocate_budget"), z.literal("update_budget_allocation"), z.literal("update_targeting"), z.literal("update_pacing"), z.literal("update_bidding"), z.literal("update_frequency_caps"), z.literal("replace_creative"), z.literal("update_creative_assignments"), z.literal("remove_creative"), z.literal("add_packages"), z.literal("remove_packages"), z.literal("update_budget"), z.literal("update_dates"), z.literal("update_packages"), z.literal("sync_creatives")]);
 
 export const MetricScopeSchema = z.union([z.literal("standard"), z.literal("vendor")]);
 
@@ -543,6 +545,12 @@ export const AudienceForecastDimensionSchema = z.object({
     audience_name: z.string().optional()
 }).passthrough();
 
+export const TimeForecastDimensionSchema = z.object({
+    kind: z.literal("time"),
+    start_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+    end_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")
+}).passthrough();
+
 export const SignalRefSchema = z.union([z.object({
         scope: z.literal("product"),
         signal_id: z.string()
@@ -638,6 +646,11 @@ export const BrowserSupportSchema = z.union([SupportedSchema, z.object({
 
 export const KeywordSupportSchema = z.union([SupportedSchema, z.object({
         supported_match_types: z.array(MatchTypeSchema),
+        ext: ExtensionObjectSchema.optional()
+    }).passthrough()]);
+
+export const CountrySupportSchema = z.union([SupportedSchema, z.object({
+        max_values_per_package: z.number().min(1),
         ext: ExtensionObjectSchema.optional()
     }).passthrough()]);
 
@@ -3462,7 +3475,7 @@ export const CommitmentSubmittedSchema = z.object({
 
 export const CanonicalMediaBuyActionSchema = z.union([z.object({
         task: z.literal("control_media_buy"),
-        action: z.union([z.literal("pause"), z.literal("resume"), z.literal("cancel"), z.literal("increase_budget"), z.literal("decrease_budget"), z.literal("reallocate_budget"), z.literal("update_budget_allocation"), z.literal("update_targeting"), z.literal("update_pacing"), z.literal("update_bidding"), z.literal("update_frequency_caps"), z.literal("update_catalog_assignments"), z.literal("update_keywords"), z.literal("update_optimization_goals"), z.literal("update_impression_goal"), z.literal("update_spend_target"), z.literal("update_reporting_webhook"), z.literal("remove_packages")]),
+        action: z.union([z.literal("pause"), z.literal("resume"), z.literal("cancel"), z.literal("update_name"), z.literal("increase_budget"), z.literal("decrease_budget"), z.literal("reallocate_budget"), z.literal("update_budget_allocation"), z.literal("update_targeting"), z.literal("update_pacing"), z.literal("update_bidding"), z.literal("update_frequency_caps"), z.literal("update_catalog_assignments"), z.literal("update_keywords"), z.literal("update_optimization_goals"), z.literal("update_impression_goal"), z.literal("update_spend_target"), z.literal("update_reporting_webhook"), z.literal("remove_packages")]),
         mode: CanonicalMediaBuyActionModeSchema,
         sla: SLAWindowSchema.optional(),
         terms_ref: z.string().optional()
@@ -6909,6 +6922,38 @@ export const AdCPManifestSchema = z.object({
         }).passthrough())
 }).passthrough();
 
+export const CompatibilityPurchaseCoordinatorInputSchema = z.object({
+    idempotency_key: z.uuid(),
+    continuation_token: z.string().min(16),
+    account: AccountReferenceSchema,
+    selected_product_ids: z.array(z.string().min(1)).min(1).superRefine((ids, ctx) => {
+        if (new Set(ids).size !== ids.length) ctx.addIssue({ code: "custom", message: "selected_product_ids must be unique" });
+    }),
+    accepted_losses: z.array(z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")])).min(2).superRefine((losses, ctx) => {
+        if (new Set(losses).size !== losses.length) ctx.addIssue({ code: "custom", message: "accepted_losses must be unique" });
+        for (const required of ["feed_version_not_atomic", "pricing_version_not_atomic"] as const) {
+            if (!losses.includes(required)) ctx.addIssue({ code: "custom", message: `accepted_losses must contain ${required}` });
+        }
+    }),
+    legacy_create_request: z.object({}).passthrough().refine(value => Object.keys(value).length > 0, "legacy_create_request must not be empty")
+}).strict();
+
+export const OutcomeTargetSchema = z.object({
+    goal: z.union([z.object({
+            kind: z.literal("metric"),
+            metric: ForecastableMetricSchema
+        }).passthrough(), z.object({
+            kind: z.literal("event"),
+            event_type: EventTypeSchema,
+            custom_event_name: z.string().min(1).optional()
+        }).passthrough()]),
+    volume: z.number().gt(0)
+}).passthrough().superRefine((value, ctx) => {
+    if (value.goal.kind === "event" && value.goal.event_type === "custom" && !value.goal.custom_event_name) {
+        ctx.addIssue({ code: "custom", path: ["goal", "custom_event_name"], message: "custom_event_name is required for a custom event" });
+    }
+});
+
 export const ProductResponseFieldsSchema = z.tuple([z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("audio_distribution_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("reporting_capabilities"), z.literal("measurement_terms"), z.literal("performance_standards"), z.literal("catalog_types"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_rules"), z.literal("demographic_targeting"), z.literal("audience_evidence"), z.literal("audience_evidence_selections"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("brief_relevance"), z.literal("expires_at"), z.literal("allowed_actions")])]).rest(z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("audio_distribution_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("reporting_capabilities"), z.literal("measurement_terms"), z.literal("performance_standards"), z.literal("catalog_types"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_rules"), z.literal("demographic_targeting"), z.literal("audience_evidence"), z.literal("audience_evidence_selections"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("brief_relevance"), z.literal("expires_at"), z.literal("allowed_actions")]));
 
 export const ProductRefinementRequestsSchema = z.array(z.union([z.object({
@@ -7739,7 +7784,7 @@ export const BiddingPolicyCapabilitySchema = z.object({
     package: ScopeCapabilitySchema.optional()
 }).passthrough();
 
-export const ForecastPointDimensionsSchema = z.tuple([z.union([GeoForecastDimensionSchema, PlacementForecastDimensionSchema, DeviceTypeForecastDimensionSchema, DevicePlatformForecastDimensionSchema, AudienceForecastDimensionSchema, SignalForecastDimensionSchema])]).rest(z.union([GeoForecastDimensionSchema, PlacementForecastDimensionSchema, DeviceTypeForecastDimensionSchema, DevicePlatformForecastDimensionSchema, AudienceForecastDimensionSchema, SignalForecastDimensionSchema]));
+export const ForecastPointDimensionsSchema = z.tuple([z.union([GeoForecastDimensionSchema, PlacementForecastDimensionSchema, DeviceTypeForecastDimensionSchema, DevicePlatformForecastDimensionSchema, AudienceForecastDimensionSchema, SignalForecastDimensionSchema, TimeForecastDimensionSchema])]).rest(z.union([GeoForecastDimensionSchema, PlacementForecastDimensionSchema, DeviceTypeForecastDimensionSchema, DevicePlatformForecastDimensionSchema, AudienceForecastDimensionSchema, SignalForecastDimensionSchema, TimeForecastDimensionSchema]));
 
 export const DeclineProposalsRequestSchema = z.object({
     adcp_version: z.string().optional(),
@@ -8790,7 +8835,46 @@ export const PreviewCreativeRequestSchema: z.ZodObject<{ request_type: z.ZodType
     push_notification_config: PushNotificationConfigSchema.optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
-}).passthrough());
+}).passthrough()).superRefine((value, ctx) => {
+    const defined = (field: string): boolean => value[field as keyof typeof value] !== undefined;
+    const rejectPair = (left: string, right: string): void => {
+        if (defined(left) && defined(right)) {
+            ctx.addIssue({ code: "custom", path: [right], message: "the paired fields are mutually exclusive" });
+        }
+    };
+    rejectPair("target_capability_id", "format_id");
+    rejectPair("creative_manifest", "creative_id");
+    if (value.requests !== undefined) {
+        if (value.requests.length < 1 || value.requests.length > 50) {
+            ctx.addIssue({ code: "custom", path: ["requests"], message: "preview requests must contain 1 to 50 items" });
+        }
+        const canonicalRouting = defined("target_capability_id") || value.requests.some(item => item.target_capability_id !== undefined);
+        const legacyRouting = defined("format_id") || value.requests.some(item => item.format_id !== undefined);
+        if (canonicalRouting && legacyRouting) {
+            ctx.addIssue({ code: "custom", path: ["requests"], message: "preview requests cannot mix canonical and legacy routing selectors" });
+        }
+        for (const [index, item] of value.requests.entries()) {
+            const hasManifest = item.creative_manifest !== undefined;
+            const hasCreativeId = item.creative_id !== undefined;
+            if (hasManifest === hasCreativeId) {
+                ctx.addIssue({ code: "custom", path: ["requests", index, "creative_manifest"], message: "each preview request requires exactly one of creative_manifest or creative_id" });
+            }
+        }
+    }
+    if (value.request_type === "single") {
+        const hasManifest = defined("creative_manifest");
+        const hasCreativeId = defined("creative_id");
+        if (hasManifest === hasCreativeId) {
+            ctx.addIssue({ code: "custom", path: ["creative_manifest"], message: "single preview requires exactly one of creative_manifest or creative_id" });
+        }
+    } else if (value.request_type === "batch") {
+        if (value.requests === undefined) {
+            ctx.addIssue({ code: "custom", path: ["requests"], message: "batch preview requires 1 to 50 requests" });
+        }
+    } else if (value.request_type === "variant" && !defined("variant_id")) {
+        ctx.addIssue({ code: "custom", path: ["variant_id"], message: "variant_id is required for variant preview" });
+    }
+});
 
 export const PreviewCreativeBatchResponseSchema = z.object({
     response_type: z.literal("batch"),
@@ -9207,6 +9291,7 @@ export const ForecastPointSchema = z.object({
     budget: z.number().min(0).optional(),
     product_id: z.string().optional(),
     dimensions: ForecastPointDimensionsSchema.optional(),
+    availability_status: AvailabilityStatusSchema.optional(),
     metrics: z.object({
         audience_size: ForecastRangeSchema.optional(),
         reach: ForecastRangeSchema.optional(),
@@ -11387,8 +11472,8 @@ export const ListTransformersRequestSchema = ListTransformersRequestCreativeAgen
 export const ListTransformersResponseSchema = ListTransformersResponseCreativeAgentSchema;
 
 export const TargetingOverlaySupportSchema = z.object({
-    geo_countries: SupportedSchema.optional(),
-    geo_countries_exclude: SupportedSchema.optional(),
+    geo_countries: CountrySupportSchema.optional(),
+    geo_countries_exclude: CountrySupportSchema.optional(),
     geo_regions: z.union([SupportedSchema, GeographicRegionSupportSchema]).optional(),
     geo_regions_exclude: z.union([SupportedSchema, GeographicRegionSupportSchema]).optional(),
     geo_metros: MetroSupportSchema.optional(),
@@ -11402,6 +11487,7 @@ export const TargetingOverlaySupportSchema = z.object({
             travel_time: SupportedSchema.optional(),
             geometry: SupportedSchema.optional(),
             transport_modes: z.array(TransportModeSchema).optional(),
+            max_values_per_package: z.number().min(1).optional(),
             ext: ExtensionObjectSchema.optional()
         }).passthrough()]).optional(),
     daypart_targets: SupportedSchema.optional(),
@@ -13216,6 +13302,7 @@ export const CanonicalForecastPointSchema = z.object({
     budget: z.number().optional(),
     product_id: z.string().optional(),
     dimensions: ForecastPointDimensionsSchema.optional(),
+    availability_status: AvailabilityStatusSchema.optional(),
     metrics: z.record(z.string(), ForecastRangeSchema),
     viewability: z.object({
         vendor: BrandKeySchema.optional(),
@@ -13708,7 +13795,7 @@ export const ProductFiltersSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const ProductOfferFiltersSchema = z.object({
+export const ProductOfferFiltersSchema = z.object({}).passthrough().merge(z.object({
     delivery_type: DeliveryTypeSchema.optional(),
     exclusivity: ExclusivitySchema.optional(),
     is_fixed_price: z.boolean().optional(),
@@ -13718,8 +13805,12 @@ export const ProductOfferFiltersSchema = z.object({
     format_option_refs: z.array(FormatOptionReferenceSchema).optional(),
     standard_formats_only: z.boolean().optional(),
     min_exposures: z.number().optional(),
-    start_date: z.string().optional(),
-    end_date: z.string().optional(),
+    start_date: z.iso.date().optional(),
+    end_date: z.iso.date().optional(),
+    availability_horizon: z.object({
+        start_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+        end_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")
+    }).passthrough().optional(),
     budget_range: BudgetRangeSchema.optional(),
     countries: z.array(z.string()).optional(),
     property_list: PropertyListReferenceSchema.optional(),
@@ -13756,7 +13847,11 @@ export const ProductOfferFiltersSchema = z.object({
     required_vendor_metrics: z.tuple([z.union([z.object({}).passthrough(), z.object({}).passthrough()])]).rest(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).optional(),
     audience_evidence_requirements: ProductAudienceEvidenceRequirementsSchema.optional(),
     ext: ExtensionObjectSchema.optional()
-}).passthrough();
+}).passthrough()).superRefine((value, ctx) => {
+    if (value.availability_horizon !== undefined && (value.start_date !== undefined || value.end_date !== undefined)) {
+        ctx.addIssue({ code: "custom", path: ["availability_horizon"], message: "availability_horizon is mutually exclusive with start_date and end_date" });
+    }
+});
 
 export const CollectionPayloadSchema = z.object({
     collection_rid: z.uuid().optional(),
@@ -13998,6 +14093,7 @@ export const ProductDiscoveryCriteriaSchema = z.object({
     offer_filters: ProductOfferFiltersSchema.optional(),
     targeting_overlay: TargetingOverlaySchema.optional(),
     required_overlay_support: TargetingOverlayRequirementsSchema.optional(),
+    outcome_target: OutcomeTargetSchema.optional(),
     catalog: CatalogSelectionSchema.optional(),
     policy_ids: z.array(z.string()).optional(),
     ext: z.object({}).passthrough().optional()
@@ -15138,6 +15234,7 @@ export const ControlMediaBuyRequestSchema = z.object({
     account: CanonicalAccountReferenceSchema,
     media_buy_id: z.string().min(1),
     revision: z.number().min(1),
+    name: z.string().min(1).max(255).regex(/\S/).optional(),
     paused: z.boolean().optional(),
     canceled: z.literal(true).optional(),
     cancellation_reason: z.string().min(1).max(500).optional(),
@@ -16129,6 +16226,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
     media_buy: z.object({
         supported_pricing_models: z.array(PricingModelSchema).optional(),
         buying_modes: z.array(z.union([z.literal("brief"), z.literal("wholesale"), z.literal("refine")])).optional(),
+        availability_horizon: z.boolean().optional(),
         lifecycle_tools: z.array(z.union([z.literal("list_products"), z.literal("request_proposals"), z.literal("refine_proposals"), z.literal("decline_proposals"), z.literal("buy_products"), z.literal("accept_proposal"), z.literal("control_media_buy")])).optional(),
         proposal_refinement: z.object({
             supported_dimensions: z.array(z.union([z.literal("total_budget"), z.literal("cpm"), z.literal("impressions"), z.literal("flight"), z.literal("product_changes"), z.literal("alternatives"), z.literal("criteria")])),
@@ -16140,6 +16238,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
         }).passthrough().optional(),
         offline_delivery_protocols: z.array(CloudStorageProtocolSchema).optional(),
         supports_proposals: z.boolean().optional(),
+        outcome_target: z.boolean().optional(),
         governance_aware: z.boolean().optional(),
         propagation_surfaces: z.array(z.union([z.literal("snapshot"), z.literal("webhook"), z.literal("out_of_band")])).optional(),
         creative_approval_mode: z.union([z.literal("auto_approve"), z.literal("require_human")]).optional(),
@@ -16683,11 +16782,14 @@ export const RequestProposalsResponseSchema = z.union([z.object({
         outcome: z.literal("proposed"),
         status: z.literal("completed").optional()
     }).passthrough(), z.object({
+        outcome: z.literal("products_available"),
+        status: z.literal("completed").optional()
+    }).passthrough(), z.object({
         outcome: z.literal("rejected"),
         status: z.literal("completed").optional()
     }).passthrough(), CompactTaskSubmittedSchema]).and(z.object({
     adcp_version: z.string().optional(),
-    outcome: z.union([z.literal("proposed"), z.literal("rejected")]).optional(),
+    outcome: z.union([z.literal("proposed"), z.literal("products_available"), z.literal("rejected")]).optional(),
     reason: z.string().min(1).optional(),
     suggestions: z.array(z.string()).optional(),
     proposals: z.array(CanonicalProposalSchema.and(z.object({
@@ -16695,6 +16797,50 @@ export const RequestProposalsResponseSchema = z.union([z.object({
         expires_at: z.iso.datetime()
     }).passthrough())).optional(),
     products: z.array(CanonicalProductSchema).optional(),
+    incomplete: z.array(z.object({
+        scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("proposals"), z.literal("wholesale_feed")]),
+        description: z.string().min(1),
+        estimated_wait: DurationSchema.optional()
+    }).passthrough()).optional(),
+    purchase_continuation: z.union([z.object({
+            kind: z.literal("listed_purchase"),
+            product_ids: z.array(z.string()),
+            cache_scope: z.literal("account"),
+            feed_version: z.string().min(1),
+            pricing_version: z.string().min(1).optional()
+        }).passthrough(), z.object({
+            kind: z.literal("legacy_create"),
+            continuation_token: z.string().min(16),
+            continuation_expires_at: z.iso.datetime(),
+            source_adcp_version: z.union([z.literal("2.5"), z.literal("3.0"), z.literal("3.1")]),
+            product_ids: z.array(z.string()),
+            losses: z.array(z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")])),
+            requires_explicit_acceptance: z.literal(true)
+        }).passthrough().superRefine((value, ctx) => {
+            if (value.product_ids.length === 0) {
+                ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must contain at least one entry" });
+            }
+            if (value.product_ids.some(productId => productId.length === 0)) {
+                ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must not contain empty IDs" });
+            }
+            if (new Set(value.product_ids).size !== value.product_ids.length) {
+                ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must be unique" });
+            }
+            if (value.losses.length < 2) {
+                ctx.addIssue({ code: "custom", path: ["losses"], message: "losses must contain at least two entries" });
+            }
+            if (new Set(value.losses).size !== value.losses.length) {
+                ctx.addIssue({ code: "custom", path: ["losses"], message: "losses must be unique" });
+            }
+            for (const required of ["feed_version_not_atomic", "pricing_version_not_atomic"] as const) {
+                if (!value.losses.includes(required)) {
+                    ctx.addIssue({ code: "custom", path: ["losses"], message: `losses must contain ${required}` });
+                }
+            }
+            if (value.source_adcp_version === "2.5" && !value.losses.includes("mutation_idempotency_not_guaranteed")) {
+                ctx.addIssue({ code: "custom", path: ["losses"], message: "AdCP 2.5 losses must contain mutation_idempotency_not_guaranteed" });
+            }
+        })]).optional(),
     targeting_resolution: ProductDiscoveryTargetingResolutionSchema.optional(),
     status: z.union([z.literal("completed"), z.literal("submitted")]).optional(),
     task_id: z.string().min(1).optional(),
@@ -16703,7 +16849,68 @@ export const RequestProposalsResponseSchema = z.union([z.object({
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional(),
     replayed: z.literal(true).optional()
-}).passthrough());
+}).passthrough()).superRefine((value, ctx) => {
+    const present = (field: string): boolean => Object.prototype.hasOwnProperty.call(value, field);
+    const requireNonEmptyArray = (field: "products" | "proposals"): void => {
+        if (!Array.isArray(value[field]) || value[field].length === 0) {
+            ctx.addIssue({ code: "custom", path: [field], message: `${field} must contain at least one entry` });
+        }
+    };
+    const forbid = (fields: readonly string[]): void => {
+        for (const field of fields) {
+            if (present(field)) ctx.addIssue({ code: "custom", path: [field], message: `${field} is forbidden for this outcome` });
+        }
+    };
+    forbid(["refinement_applied", "pagination", "unchanged", "wholesale_feed_version"]);
+    if (value.suggestions !== undefined && (value.suggestions.length === 0 || value.suggestions.some(suggestion => suggestion.length === 0))) {
+        ctx.addIssue({ code: "custom", path: ["suggestions"], message: "suggestions must contain non-empty strings" });
+    }
+    if (value.incomplete !== undefined && value.incomplete.length === 0) {
+        ctx.addIssue({ code: "custom", path: ["incomplete"], message: "incomplete must contain at least one entry" });
+    }
+    if (value.outcome === "proposed") {
+        requireNonEmptyArray("proposals");
+        requireNonEmptyArray("products");
+        forbid(["reason", "suggestions", "purchase_continuation", "task_id"]);
+    } else if (value.outcome === "products_available") {
+        requireNonEmptyArray("products");
+        if (!present("purchase_continuation")) {
+            ctx.addIssue({ code: "custom", path: ["purchase_continuation"], message: "purchase_continuation is required" });
+        }
+        forbid(["proposals", "reason", "suggestions", "task_id"]);
+        if (value.purchase_continuation?.kind === "listed_purchase") {
+            const ids = value.purchase_continuation.product_ids;
+            if (ids.length === 0 || ids.some(productId => productId.length === 0)) {
+                ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "product_ids must contain non-empty IDs" });
+            }
+            if (new Set(ids).size !== ids.length) {
+                ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "product_ids must be unique" });
+            }
+            const returnedIds = (value.products ?? []).map(product => product.product_id);
+            const returnedIdSet = new Set(returnedIds);
+            if (
+                returnedIds.length !== ids.length ||
+                returnedIdSet.size !== returnedIds.length ||
+                ids.some(productId => !returnedIdSet.has(productId))
+            ) {
+                ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "listed product_ids must exactly match returned products" });
+            }
+            for (const [index, product] of (value.products ?? []).entries()) {
+                if (!Array.isArray(product.pricing_options) || product.pricing_options.length === 0) {
+                    ctx.addIssue({ code: "custom", path: ["products", index, "pricing_options"], message: "listed products require pricing_options" });
+                }
+            }
+            for (const [index, incomplete] of (value.incomplete ?? []).entries()) {
+                if (["products", "pricing", "wholesale_feed"].includes(incomplete.scope)) {
+                    ctx.addIssue({ code: "custom", path: ["incomplete", index, "scope"], message: "listed purchase cannot report incomplete product or pricing data" });
+                }
+            }
+        }
+    } else if (value.outcome === "rejected") {
+        if (!present("reason")) ctx.addIssue({ code: "custom", path: ["reason"], message: "reason is required" });
+        forbid(["proposals", "products", "incomplete", "purchase_continuation", "task_id"]);
+    }
+});
 
 export const RefineProposalsResponseSchema = z.union([z.object({
         adcp_version: z.string().optional(),

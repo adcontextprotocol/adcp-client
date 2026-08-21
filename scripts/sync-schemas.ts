@@ -115,12 +115,28 @@ function fetchStatusError(url: string, response: Response): Error {
 }
 
 async function fetchAvailable(url: string, init?: RequestInit): Promise<Response> {
-  try {
-    return await fetch(url, init);
-  } catch (cause) {
-    const detail = cause instanceof Error ? cause.message : String(cause);
-    throw new SchemaSyncAvailabilityError(`Failed to fetch ${url}: network error (${detail})`, { cause });
+  const delaysMs = [0, 250, 750];
+  let lastCause: unknown;
+  for (let attempt = 0; attempt < delaysMs.length; attempt += 1) {
+    if (attempt > 0) await new Promise(resolve => setTimeout(resolve, delaysMs[attempt]));
+    try {
+      const response = await fetch(url, init);
+      const retryableStatus =
+        response.status === 408 ||
+        response.status === 429 ||
+        (response.status === 403 &&
+          (response.headers.get('x-ratelimit-remaining') === '0' || response.headers.has('retry-after'))) ||
+        response.status >= 500;
+      if (!retryableStatus) return response;
+      lastCause = fetchStatusError(url, response);
+      await response.body?.cancel().catch(() => undefined);
+    } catch (cause) {
+      lastCause = cause;
+      if (init?.signal?.aborted) break;
+    }
   }
+  const detail = lastCause instanceof Error ? lastCause.message : String(lastCause);
+  throw new SchemaSyncAvailabilityError(`Failed to fetch ${url} after retries (${detail})`, { cause: lastCause });
 }
 
 async function fetchJson(url: string): Promise<any> {

@@ -26,7 +26,7 @@ function makeExecutor(responses, logSchemaViolations) {
     validation: { responses },
     logSchemaViolations,
     versionEnvelope: 'major-only',
-    adcpVersion: '3.1.15',
+    adcpVersion: '3.1.18',
   });
 }
 
@@ -43,7 +43,7 @@ function captureConsole(method, callback) {
 
 async function discoverWithCapabilities(response) {
   const client = createTestClient('https://example.com/mcp', 'mcp', {
-    adcpVersion: '3.1.15',
+    adcpVersion: '3.1.18',
     versionEnvelope: 'major-only',
   });
   client.getAgentInfo = async () => ({
@@ -58,7 +58,7 @@ async function discoverWithCapabilities(response) {
   ProtocolClient.callTool = async () => response;
   console.warn = (...args) => warnings.push(args);
   try {
-    const discovery = await discoverAgentProfile(client, undefined, '3.1.15');
+    const discovery = await discoverAgentProfile(client, undefined, '3.1.18');
     return { discovery, warnings };
   } finally {
     ProtocolClient.callTool = originalCallTool;
@@ -68,8 +68,8 @@ async function discoverWithCapabilities(response) {
 
 describe('TaskExecutor schema violation logging', () => {
   test('fixture is valid for 3.1 but not the provisional 3.0 compatibility schema', () => {
-    assert.strictEqual(validateResponse('get_adcp_capabilities', CAPABILITIES_RESPONSE, '3.1.15').valid, true);
-    assert.strictEqual(validateResponse('get_adcp_capabilities', CAPABILITIES_RESPONSE, '3.0.24').valid, false);
+    assert.strictEqual(validateResponse('get_adcp_capabilities', CAPABILITIES_RESPONSE, '3.1.18').valid, true);
+    assert.strictEqual(validateResponse('get_adcp_capabilities', CAPABILITIES_RESPONSE, '3.0.25').valid, false);
   });
 
   test('logSchemaViolations=false suppresses warn-mode console and debug output', () => {

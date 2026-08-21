@@ -45,6 +45,7 @@ test('the release version workflow leaves generated agent docs current', { timeo
     // caller's checkout. Generated inputs and dependencies are intentionally
     // shared read-only; `npm install --package-lock-only` does not alter them.
     copyFileSync(path.join(ROOT, 'package.json'), path.join(worktree, 'package.json'));
+    copyFileSync(path.join(ROOT, 'ADCP_VERSION'), path.join(worktree, 'ADCP_VERSION'));
     writeFileSync(
       path.join(worktree, '.changeset', 'release-version-docs-test.md'),
       "---\n'@adcp/sdk': patch\n---\n\nExercise release version documentation regeneration.\n"

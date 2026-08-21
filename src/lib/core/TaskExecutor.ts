@@ -29,6 +29,7 @@ import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extra
 import { generateIdempotencyKey, requestUsesIdempotency, redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
 import { normalizeLegacyMediaBuyStatusForReturn } from '../utils/envelope-status-compat';
+import { canonicalize } from '../utils/jcs';
 import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
 import type { AdcpCapabilities } from '../utils/capabilities';
 import { cancelA2ATask } from '../protocols/a2a';
@@ -88,6 +89,32 @@ export class InputRequiredError extends Error {
   constructor(question: string) {
     super(`Server requires input but no handler provided. Question: ${question}`);
     this.name = 'InputRequiredError';
+  }
+}
+
+/** Supporting contract for the internal pre-dispatch boundary. */
+export type BeforeProtocolDispatchHookResult<T> =
+  | { action: 'dispatch_committed' }
+  | { action: 'return'; result: TaskResult<T> };
+
+/** Context supplied to the internal pre-dispatch boundary. */
+export interface BeforeProtocolDispatchContext {
+  /** True when governance changed the payload rather than approving it unchanged. */
+  governanceAdjusted: boolean;
+}
+
+/** Hook used by higher-level SDK coordinators at the final dispatch boundary. */
+export type BeforeProtocolDispatchHook<T> = (
+  effectiveParams: any,
+  context: BeforeProtocolDispatchContext
+) => Promise<BeforeProtocolDispatchHookResult<T>>;
+
+/** Keeps internal dispatch-boundary failures out of the normal TaskResult error projection. */
+/** @internal */
+export class BeforeProtocolDispatchHookError extends Error {
+  constructor(readonly original: unknown) {
+    super('An SDK pre-dispatch hook failed.', { cause: original });
+    this.name = 'BeforeProtocolDispatchHookError';
   }
 }
 
@@ -685,7 +712,8 @@ export class TaskExecutor {
     inputHandler?: InputHandler,
     options: TaskOptions = {},
     serverVersion?: 'v2' | 'v3',
-    targetCapabilities?: AdcpCapabilities
+    targetCapabilities?: AdcpCapabilities,
+    beforeProtocolDispatch?: BeforeProtocolDispatchHook<T>
   ): Promise<TaskResult<T>> {
     return withTaskDeadline(options, effectiveOptions =>
       this.executeTaskWithinDeadline<T>(
@@ -695,7 +723,8 @@ export class TaskExecutor {
         inputHandler,
         effectiveOptions,
         serverVersion,
-        targetCapabilities
+        targetCapabilities,
+        beforeProtocolDispatch
       )
     );
   }
@@ -707,7 +736,8 @@ export class TaskExecutor {
     inputHandler?: InputHandler,
     options: TaskOptions = {},
     serverVersion?: 'v2' | 'v3',
-    targetCapabilities?: AdcpCapabilities
+    targetCapabilities?: AdcpCapabilities,
+    beforeProtocolDispatch?: BeforeProtocolDispatchHook<T>
   ): Promise<TaskResult<T>> {
     if (serverVersion) this.lastKnownServerVersion = serverVersion;
     // The client-minted `taskId` is a local correlation id for tracking this
@@ -791,6 +821,7 @@ export class TaskExecutor {
     let governanceCheckId: string | undefined;
     let governanceResult: GovernanceCheckResult | undefined;
     let effectiveParams = params;
+    let governanceAdjusted = false;
 
     try {
       // Emit protocol_request activity. The activity payload is the boundary
@@ -847,6 +878,7 @@ export class TaskExecutor {
           );
           throwIfAborted(options.signal);
           assertGovernedPayloadHasNoCallbackCredentials(taskName, adjustedParams, { sdkInjectedPushConfig });
+          governanceAdjusted = canonicalize(adjustedParams) !== canonicalize(governableParams);
 
           // Governance always blocks on denial/unapplied conditions.
           const isBlocking = true;
@@ -911,6 +943,31 @@ export class TaskExecutor {
         }
       }
 
+      // This is the final awaited preflight boundary. A durable mutation claim
+      // made by the hook must be followed immediately by the official protocol
+      // call; callers can therefore distinguish deterministic preflight failure
+      // from transport uncertainty after the commit point.
+      throwIfAborted(options.signal);
+      let dispatchCommitted = false;
+      if (beforeProtocolDispatch) {
+        let decision: BeforeProtocolDispatchHookResult<T>;
+        try {
+          decision = await beforeProtocolDispatch(effectiveParams, { governanceAdjusted });
+        } catch (error) {
+          throw new BeforeProtocolDispatchHookError(error);
+        }
+        if (decision.action === 'return') {
+          const earlyResult = decision.result;
+          if (
+            ['completed', 'failed', 'rejected', 'canceled', 'governance-denied', 'aborted'].includes(earlyResult.status)
+          ) {
+            this.updateTaskStatus(taskId, earlyResult.status as TaskStatus, earlyResult.data, earlyResult.error);
+          }
+          return attachMatch(earlyResult);
+        }
+        dispatchCommitted = true;
+      }
+
       // Send initial request and get streaming response with webhook URL.
       // Pass the caller's A2A session ids (contextId for conversation binding,
       // taskId for resuming a non-terminal server-side task). The adapter
@@ -925,7 +982,12 @@ export class TaskExecutor {
         ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
         ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: options.transport ?? this.config.transport,
-        signal: options.signal,
+        // Once a durable continuation claim commits, the seller call itself
+        // must cross the network boundary even if the caller's deadline fired
+        // while the atomic store operation was pending. The outer deadline
+        // still rejects promptly and post-call handling marks the outcome
+        // ambiguous for reconciliation.
+        signal: dispatchCommitted ? undefined : options.signal,
         onTransportActivity: this.config.onTransportActivity,
         transportActivityContext: {
           operationId: taskId,
@@ -1051,6 +1113,14 @@ export class TaskExecutor {
       }
       return attachMatch(result);
     } catch (error) {
+      if (error instanceof BeforeProtocolDispatchHookError) {
+        // Hook failures happen before seller dispatch. Preserve the original
+        // exception for the compatibility coordinator, but terminalize the
+        // local task so repeated invalid redemption attempts cannot retain
+        // full request payloads and options in activeTasks.
+        this.updateTaskStatus(taskId, 'failed', undefined, error.message);
+        throw error;
+      }
       if (isAbortOrTimeoutError(error)) {
         if (idempotencyKey && error && typeof error === 'object') {
           (error as Error & { idempotency_key?: string; idempotencyKey?: string }).idempotency_key = idempotencyKey;

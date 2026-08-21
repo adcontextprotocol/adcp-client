@@ -126,28 +126,28 @@ function startReferenceVerifier({ replayCap = 1000 } = {}) {
 describe('request-signing: synthesize step expansion', () => {
   test('compliance loader synthesizes vectors from the selected frozen bundle', () => {
     const previousComplianceDir = process.env.ADCP_COMPLIANCE_DIR;
-    process.env.ADCP_COMPLIANCE_DIR = path.join('compliance', 'cache', '3.2.0-beta.3');
+    process.env.ADCP_COMPLIANCE_DIR = path.join('compliance', 'cache', '3.2.0-beta.4');
     let storyboards;
     try {
       storyboards = loadBundleStoryboards({
         kind: 'universal',
         id: 'signed-requests',
-        path: path.join('compliance', 'cache', '3.0.24', 'universal', 'signed-requests.yaml'),
-        adcp_version: '3.0.24',
+        path: path.join('compliance', 'cache', '3.0.25', 'universal', 'signed-requests.yaml'),
+        adcp_version: '3.0.25',
       });
     } finally {
       if (previousComplianceDir === undefined) delete process.env.ADCP_COMPLIANCE_DIR;
       else process.env.ADCP_COMPLIANCE_DIR = previousComplianceDir;
     }
     const sb = storyboards.find(storyboard => storyboard.id === 'signed_requests');
-    assert.ok(sb, '3.0.24 signed_requests storyboard loaded');
-    assert.strictEqual(sb.adcp_version, '3.0.24');
-    assert.strictEqual(sb.compliance_dir, path.join('compliance', 'cache', '3.0.24'));
+    assert.ok(sb, '3.0.25 signed_requests storyboard loaded');
+    assert.strictEqual(sb.adcp_version, '3.0.25');
+    assert.strictEqual(sb.compliance_dir, path.join('compliance', 'cache', '3.0.25'));
     assert.strictEqual(sb.phases.find(phase => phase.id === 'positive_vectors').steps.length, 12);
     assert.strictEqual(
       sb.phases.find(phase => phase.id === 'negative_vectors').steps.length,
       27,
-      '3.0.24 must not synthesize the 28 vectors from the ambient 3.2 cache'
+      '3.0.25 must not synthesize the 28 vectors from the ambient 3.2 cache'
     );
   });
 

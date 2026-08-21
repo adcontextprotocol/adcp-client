@@ -459,6 +459,110 @@ function postProcessPriceBreakdownConstraints(content: string): string {
   return content.slice(0, breakdownStart) + breakdown + content.slice(breakdownEnd);
 }
 
+/** Restore beta.4 constraints that TypeScript cannot fully encode for Zod generation. */
+function postProcessBeta4OfferAndOutcomeConstraints(content: string): string {
+  const replaceBlock = (schemaName: string, transform: (block: string) => string): void => {
+    const start = content.indexOf(`export const ${schemaName}Schema = `);
+    const end = content.indexOf('\n\nexport const ', start + 1);
+    if (start < 0 || end < 0) throw new Error(`Unable to locate ${schemaName}Schema boundary`);
+    const block = content.slice(start, end);
+    const corrected = transform(block);
+    if (corrected === block) throw new Error(`Unable to restore ${schemaName}Schema constraints`);
+    content = content.slice(0, start) + corrected + content.slice(end);
+  };
+
+  replaceBlock('TimeForecastDimension', block =>
+    block
+      .replace('start_time: z.string(),', 'start_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),')
+      .replace('end_time: z.string()', 'end_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")')
+  );
+
+  replaceBlock('ProductOfferFilters', block => {
+    const corrected = block
+      .replace('start_date: z.string().optional(),', 'start_date: z.iso.date().optional(),')
+      .replace('end_date: z.string().optional(),', 'end_date: z.iso.date().optional(),')
+      .replace(
+        'start_time: z.string(),\n        end_time: z.string()',
+        'start_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),\n        end_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")'
+      );
+    return corrected.replace(
+      /;\s*$/,
+      `.superRefine((value, ctx) => {
+    if (value.availability_horizon !== undefined && (value.start_date !== undefined || value.end_date !== undefined)) {
+        ctx.addIssue({ code: "custom", path: ["availability_horizon"], message: "availability_horizon is mutually exclusive with start_date and end_date" });
+    }
+});`
+    );
+  });
+
+  replaceBlock('OutcomeTarget', block => {
+    const corrected = block
+      .replace('custom_event_name: z.string().optional()', 'custom_event_name: z.string().min(1).optional()')
+      .replace('volume: z.number()', 'volume: z.number().gt(0)');
+    return corrected.replace(
+      /;\s*$/,
+      `.superRefine((value, ctx) => {
+    if (value.goal.kind === "event" && value.goal.event_type === "custom" && !value.goal.custom_event_name) {
+        ctx.addIssue({ code: "custom", path: ["goal", "custom_event_name"], message: "custom_event_name is required for a custom event" });
+    }
+});`
+    );
+  });
+
+  return content;
+}
+
+/** Restore preview mode and batch routing constraints that TypeScript cannot encode. */
+function postProcessPreviewCreativeRequestConstraints(content: string): string {
+  const schemaStart = content.indexOf('export const PreviewCreativeRequestSchema');
+  const schemaEnd = content.indexOf('\n\nexport const PreviewCreativeBatchResponseSchema = ', schemaStart);
+  if (schemaStart < 0 || schemaEnd < 0) throw new Error('Could not locate PreviewCreativeRequestSchema.');
+  const block = content.slice(schemaStart, schemaEnd);
+  const suffix = '}).passthrough());';
+  if (!block.endsWith(suffix)) throw new Error('PreviewCreativeRequestSchema has an unexpected generated suffix.');
+  const refined = `${block.slice(0, -suffix.length)}}).passthrough()).superRefine((value, ctx) => {
+    const defined = (field: string): boolean => value[field as keyof typeof value] !== undefined;
+    const rejectPair = (left: string, right: string): void => {
+        if (defined(left) && defined(right)) {
+            ctx.addIssue({ code: "custom", path: [right], message: "the paired fields are mutually exclusive" });
+        }
+    };
+    rejectPair("target_capability_id", "format_id");
+    rejectPair("creative_manifest", "creative_id");
+    if (value.requests !== undefined) {
+        if (value.requests.length < 1 || value.requests.length > 50) {
+            ctx.addIssue({ code: "custom", path: ["requests"], message: "preview requests must contain 1 to 50 items" });
+        }
+        const canonicalRouting = defined("target_capability_id") || value.requests.some(item => item.target_capability_id !== undefined);
+        const legacyRouting = defined("format_id") || value.requests.some(item => item.format_id !== undefined);
+        if (canonicalRouting && legacyRouting) {
+            ctx.addIssue({ code: "custom", path: ["requests"], message: "preview requests cannot mix canonical and legacy routing selectors" });
+        }
+        for (const [index, item] of value.requests.entries()) {
+            const hasManifest = item.creative_manifest !== undefined;
+            const hasCreativeId = item.creative_id !== undefined;
+            if (hasManifest === hasCreativeId) {
+                ctx.addIssue({ code: "custom", path: ["requests", index, "creative_manifest"], message: "each preview request requires exactly one of creative_manifest or creative_id" });
+            }
+        }
+    }
+    if (value.request_type === "single") {
+        const hasManifest = defined("creative_manifest");
+        const hasCreativeId = defined("creative_id");
+        if (hasManifest === hasCreativeId) {
+            ctx.addIssue({ code: "custom", path: ["creative_manifest"], message: "single preview requires exactly one of creative_manifest or creative_id" });
+        }
+    } else if (value.request_type === "batch") {
+        if (value.requests === undefined) {
+            ctx.addIssue({ code: "custom", path: ["requests"], message: "batch preview requires 1 to 50 requests" });
+        }
+    } else if (value.request_type === "variant" && !defined("variant_id")) {
+        ctx.addIssue({ code: "custom", path: ["variant_id"], message: "variant_id is required for variant preview" });
+    }
+});`;
+  return content.slice(0, schemaStart) + refined + content.slice(schemaEnd);
+}
+
 /**
  * Post-process generated Zod schemas to strip .and(z.record(...)) intersections
  * and equivalent record-only union intersections from object schemas that
@@ -617,6 +721,142 @@ function postProcessPostalAreaValues(content: string): string {
     throw new Error('postProcessPostalAreaValues: unable to append native values refinement.');
   }
   return content.slice(0, schemaStart) + correctedBlock + content.slice(schemaEnd);
+}
+
+/** Restore the closed beta.4 SDK-local continuation schema exactly. */
+function postProcessCompatibilityPurchaseCoordinatorInput(content: string): string {
+  const startMarker = 'export const CompatibilityPurchaseCoordinatorInputSchema = ';
+  const endMarker = '\n\nexport const OutcomeTargetSchema = ';
+  const start = content.indexOf(startMarker);
+  if (start < 0) throw new Error('CompatibilityPurchaseCoordinatorInputSchema was not generated.');
+  const end = content.indexOf(endMarker, start);
+  if (end < 0) throw new Error('Could not locate the end of CompatibilityPurchaseCoordinatorInputSchema.');
+  const replacement = `export const CompatibilityPurchaseCoordinatorInputSchema = z.object({
+    idempotency_key: z.uuid(),
+    continuation_token: z.string().min(16),
+    account: AccountReferenceSchema,
+    selected_product_ids: z.array(z.string().min(1)).min(1).superRefine((ids, ctx) => {
+        if (new Set(ids).size !== ids.length) ctx.addIssue({ code: "custom", message: "selected_product_ids must be unique" });
+    }),
+    accepted_losses: z.array(z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")])).min(2).superRefine((losses, ctx) => {
+        if (new Set(losses).size !== losses.length) ctx.addIssue({ code: "custom", message: "accepted_losses must be unique" });
+        for (const required of ["feed_version_not_atomic", "pricing_version_not_atomic"] as const) {
+            if (!losses.includes(required)) ctx.addIssue({ code: "custom", message: \`accepted_losses must contain \${required}\` });
+        }
+    }),
+    legacy_create_request: z.object({}).passthrough().refine(value => Object.keys(value).length > 0, "legacy_create_request must not be empty")
+}).strict();`;
+  return `${content.slice(0, start)}${replacement}${content.slice(end)}`;
+}
+
+/** Restore beta.4 runtime-only membership constraints on projected legacy continuations. */
+function postProcessLegacyPurchaseContinuationResponse(content: string): string {
+  const schemaStart = content.indexOf('export const RequestProposalsResponseSchema = ');
+  const schemaEnd = content.indexOf('\n\nexport const RefineProposalsResponseSchema = ', schemaStart);
+  if (schemaStart < 0 || schemaEnd < 0) {
+    throw new Error('Could not locate RequestProposalsResponseSchema.');
+  }
+  const block = content.slice(schemaStart, schemaEnd);
+  const armPattern =
+    /z\.object\(\{\n\s+kind: z\.literal\("legacy_create"\),[\s\S]*?requires_explicit_acceptance: z\.literal\(true\)\n\s+\}\)\.passthrough\(\)/;
+  const match = block.match(armPattern);
+  if (!match) {
+    throw new Error('Could not locate the legacy_create purchase continuation response arm.');
+  }
+  const refinedArm = `${match[0]}.superRefine((value, ctx) => {
+            if (value.product_ids.length === 0) {
+                ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must contain at least one entry" });
+            }
+            if (value.product_ids.some(productId => productId.length === 0)) {
+                ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must not contain empty IDs" });
+            }
+            if (new Set(value.product_ids).size !== value.product_ids.length) {
+                ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must be unique" });
+            }
+            if (value.losses.length < 2) {
+                ctx.addIssue({ code: "custom", path: ["losses"], message: "losses must contain at least two entries" });
+            }
+            if (new Set(value.losses).size !== value.losses.length) {
+                ctx.addIssue({ code: "custom", path: ["losses"], message: "losses must be unique" });
+            }
+            for (const required of ["feed_version_not_atomic", "pricing_version_not_atomic"] as const) {
+                if (!value.losses.includes(required)) {
+                    ctx.addIssue({ code: "custom", path: ["losses"], message: \`losses must contain \${required}\` });
+                }
+            }
+            if (value.source_adcp_version === "2.5" && !value.losses.includes("mutation_idempotency_not_guaranteed")) {
+                ctx.addIssue({ code: "custom", path: ["losses"], message: "AdCP 2.5 losses must contain mutation_idempotency_not_guaranteed" });
+            }
+        })`;
+  const corrected = block.replace(armPattern, refinedArm);
+  const suffix = '}).passthrough());';
+  if (!corrected.endsWith(suffix)) {
+    throw new Error('RequestProposalsResponseSchema has an unexpected generated suffix.');
+  }
+  const rootRefinement = `}).passthrough()).superRefine((value, ctx) => {
+    const present = (field: string): boolean => Object.prototype.hasOwnProperty.call(value, field);
+    const requireNonEmptyArray = (field: "products" | "proposals"): void => {
+        if (!Array.isArray(value[field]) || value[field].length === 0) {
+            ctx.addIssue({ code: "custom", path: [field], message: \`\${field} must contain at least one entry\` });
+        }
+    };
+    const forbid = (fields: readonly string[]): void => {
+        for (const field of fields) {
+            if (present(field)) ctx.addIssue({ code: "custom", path: [field], message: \`\${field} is forbidden for this outcome\` });
+        }
+    };
+    forbid(["refinement_applied", "pagination", "unchanged", "wholesale_feed_version"]);
+    if (value.suggestions !== undefined && (value.suggestions.length === 0 || value.suggestions.some(suggestion => suggestion.length === 0))) {
+        ctx.addIssue({ code: "custom", path: ["suggestions"], message: "suggestions must contain non-empty strings" });
+    }
+    if (value.incomplete !== undefined && value.incomplete.length === 0) {
+        ctx.addIssue({ code: "custom", path: ["incomplete"], message: "incomplete must contain at least one entry" });
+    }
+    if (value.outcome === "proposed") {
+        requireNonEmptyArray("proposals");
+        requireNonEmptyArray("products");
+        forbid(["reason", "suggestions", "purchase_continuation", "task_id"]);
+    } else if (value.outcome === "products_available") {
+        requireNonEmptyArray("products");
+        if (!present("purchase_continuation")) {
+            ctx.addIssue({ code: "custom", path: ["purchase_continuation"], message: "purchase_continuation is required" });
+        }
+        forbid(["proposals", "reason", "suggestions", "task_id"]);
+        if (value.purchase_continuation?.kind === "listed_purchase") {
+            const ids = value.purchase_continuation.product_ids;
+            if (ids.length === 0 || ids.some(productId => productId.length === 0)) {
+                ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "product_ids must contain non-empty IDs" });
+            }
+            if (new Set(ids).size !== ids.length) {
+                ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "product_ids must be unique" });
+            }
+            const returnedIds = (value.products ?? []).map(product => product.product_id);
+            const returnedIdSet = new Set(returnedIds);
+            if (
+                returnedIds.length !== ids.length ||
+                returnedIdSet.size !== returnedIds.length ||
+                ids.some(productId => !returnedIdSet.has(productId))
+            ) {
+                ctx.addIssue({ code: "custom", path: ["purchase_continuation", "product_ids"], message: "listed product_ids must exactly match returned products" });
+            }
+            for (const [index, product] of (value.products ?? []).entries()) {
+                if (!Array.isArray(product.pricing_options) || product.pricing_options.length === 0) {
+                    ctx.addIssue({ code: "custom", path: ["products", index, "pricing_options"], message: "listed products require pricing_options" });
+                }
+            }
+            for (const [index, incomplete] of (value.incomplete ?? []).entries()) {
+                if (["products", "pricing", "wholesale_feed"].includes(incomplete.scope)) {
+                    ctx.addIssue({ code: "custom", path: ["incomplete", index, "scope"], message: "listed purchase cannot report incomplete product or pricing data" });
+                }
+            }
+        }
+    } else if (value.outcome === "rejected") {
+        if (!present("reason")) ctx.addIssue({ code: "custom", path: ["reason"], message: "reason is required" });
+        forbid(["proposals", "products", "incomplete", "purchase_continuation", "task_id"]);
+    }
+});`;
+  const constrained = corrected.slice(0, -suffix.length) + rootRefinement;
+  return content.slice(0, schemaStart) + constrained + content.slice(schemaEnd);
 }
 
 /** Replace the lossy TS round-trip with Zod generated from the dereferenced canonical wire schema. */
@@ -2630,6 +2870,8 @@ async function generateZodSchemas() {
     zodSchemas = postProcessUnionStringLengthConstraints(zodSchemas);
     zodSchemas = postProcessForecastRangeConstraint(zodSchemas);
     zodSchemas = postProcessPriceBreakdownConstraints(zodSchemas);
+    zodSchemas = postProcessBeta4OfferAndOutcomeConstraints(zodSchemas);
+    zodSchemas = postProcessPreviewCreativeRequestConstraints(zodSchemas);
 
     // TypeScript cannot retain JSON Schema `format: uri` or root oneOf
     // exclusivity. Restore both for legacy/canonical creative identity.
@@ -2661,6 +2903,8 @@ async function generateZodSchemas() {
     zodSchemas = postProcessCanonicalFormatSlots(zodSchemas);
     zodSchemas = postProcessCreativeBriefRequiredDisclosures(zodSchemas);
     zodSchemas = postProcessPostalAreaValues(zodSchemas);
+    zodSchemas = postProcessCompatibilityPurchaseCoordinatorInput(zodSchemas);
+    zodSchemas = postProcessLegacyPurchaseContinuationResponse(zodSchemas);
     const refineResponseSource = JSON.parse(
       readFileSync(
         path.join(__dirname, '../schemas/cache/latest/bundled/media-buy/refine-proposals-response.json'),

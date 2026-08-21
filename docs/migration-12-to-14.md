@@ -1,17 +1,23 @@
 # Migrating from 12.x to 14 beta
 
-This is the direct upgrade path for applications skipping SDK 13. SDK 14 includes both SDK 13's canonical-creative and security boundary changes and the AdCP `3.2.0-beta.3` preview surface. Treat it as two review checkpoints even if you deploy one package update.
+This is the direct upgrade path for applications skipping SDK 13. SDK 14 includes both SDK 13's canonical-creative and security boundary changes and the AdCP `3.2.0-beta.4` preview surface. Treat it as two review checkpoints even if you deploy one package update.
 
-AdCP prerelease pins are exact: beta.3 supersedes beta.2. Beta.2 added canonical
+AdCP prerelease pins are exact: beta.4 supersedes beta.3. Beta.2 added canonical
 compact proposal and direct-buy lifecycle storyboards through operational
-control and MediaBuy readback; beta.3 preserves that wire contract and
-clarifies request invariants.
+control and MediaBuy readback; beta.4 adds flexible-window availability and
+durable products-only legacy purchase continuations.
 
 Install the beta explicitly:
 
 ```bash
 npm install @adcp/sdk@beta
 ```
+
+If a pre-3.2 brief can return products without a proposal, configure a durable
+`LegacyPurchaseContinuationStore`, a stable non-secret `principalScope`, and an
+authoritative `reconcileLegacyPurchase(record, exactInput)` callback before
+offering `continueLegacyPurchase()`. Reverse compact-seller support for older
+buyers remains application-owned through explicit legacy sales handlers.
 
 The npm `latest` tag remains on SDK 13, the maintained AdCP 3.1 stable line. If you do not need AdCP 3.2 yet, upgrading 12→13 first is the lower-risk production move.
 

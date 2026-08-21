@@ -38,7 +38,7 @@ async function scenario(
   let error: string | undefined;
   let source: 'primary' | 'github' | undefined;
   const options = {
-    version: '3.0.24',
+    version: '3.0.25',
     primaryBaseUrl: 'https://primary.example',
     includeSharedSurfaces: false,
     githubFallbackEnabled: true,
@@ -69,11 +69,11 @@ async function scenario(
 }
 
 async function main() {
-  const tag = getGithubDistFallbackBaseUrls('3.0.24')[0];
-  const main = getGithubDistFallbackBaseUrls('3.0.24')[1];
+  const tag = getGithubDistFallbackBaseUrls('3.0.25')[0];
+  const main = getGithubDistFallbackBaseUrls('3.0.25')[1];
   const primary = 'https://primary.example';
   const results = {
-    urls: getGithubDistFallbackBaseUrls('3.0.24'),
+    urls: getGithubDistFallbackBaseUrls('3.0.25'),
     latestUrls: getGithubDistFallbackBaseUrls('latest'),
     primaryError: await scenario({ [primary]: 'unavailable', [tag]: false, [main]: false }),
     perFileMainSuccess: await scenario(
@@ -111,7 +111,7 @@ async function main() {
     results.invalidVersion = error instanceof Error ? error.message : String(error);
   }
   try {
-    assertBundleVersion('3.0.24', '3.0.23');
+    assertBundleVersion('3.0.25', '3.0.23');
   } catch (error) {
     results.versionMismatch = error instanceof Error ? error.message : String(error);
   }
@@ -126,11 +126,57 @@ async function main() {
       }
       return new Response('missing', { status: 404, statusText: 'Not Found' });
     }) as typeof fetch;
-    await syncFromTarball('3.0.24', 'https://custom.example', false);
+    await syncFromTarball('3.0.25', 'https://custom.example', false);
   } catch (error) {
     results.head405 = {
       calls: head405Calls,
       availability: error instanceof SchemaSyncAvailabilityError,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    globalThis.fetch = fetchBefore;
+  }
+
+  const bundle = 'not-needed-before-sidecar-check';
+  let transientShaFetches = 0;
+  try {
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === 'HEAD') return new Response(null, { status: 200 });
+      if (url.endsWith('.sha256')) {
+        transientShaFetches += 1;
+        if (transientShaFetches === 1) throw new Error('temporary socket reset');
+        return new Response(createHash('sha256').update(bundle).digest('hex'));
+      }
+      return new Response(bundle);
+    }) as typeof fetch;
+    await syncFromTarball('3.0.25', 'https://transient-network.example', false);
+  } catch (error) {
+    results.transientNetworkRetry = {
+      shaFetches: transientShaFetches,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    globalThis.fetch = fetchBefore;
+  }
+
+  let transientHttpShaFetches = 0;
+  try {
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === 'HEAD') return new Response(null, { status: 200 });
+      if (url.endsWith('.sha256')) {
+        transientHttpShaFetches += 1;
+        if (transientHttpShaFetches === 1) return new Response('busy', { status: 429, statusText: 'Too Many Requests' });
+        if (transientHttpShaFetches === 2) return new Response('down', { status: 500, statusText: 'Server Error' });
+        return new Response(createHash('sha256').update(bundle).digest('hex'));
+      }
+      return new Response(bundle);
+    }) as typeof fetch;
+    await syncFromTarball('3.0.25', 'https://transient-http.example', false);
+  } catch (error) {
+    results.transientHttpRetry = {
+      shaFetches: transientHttpShaFetches,
       error: error instanceof Error ? error.message : String(error),
     };
   } finally {
@@ -148,7 +194,7 @@ async function main() {
         },
       } as Response;
     }) as typeof fetch;
-    await syncFromTarball('3.0.24', 'https://body-reset.example', false);
+    await syncFromTarball('3.0.25', 'https://body-reset.example', false);
   } catch (error) {
     results.bodyReset = {
       availability: error instanceof SchemaSyncAvailabilityError,
@@ -158,13 +204,12 @@ async function main() {
     globalThis.fetch = fetchBefore;
   }
 
-  const bundle = 'not-needed-before-sidecar-check';
   try {
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       if (init?.method === 'HEAD') {
         if (url.endsWith('.tgz.sig')) return new Response(null, { status: 404 });
-        if (url.endsWith('.tgz.crt')) return new Response(null, { status: 500 });
+        if (url.endsWith('.tgz.crt')) return new Response(null, { status: 200 });
         return new Response(null, { status: 200 });
       }
       if (url.endsWith('.sha256')) {
@@ -172,7 +217,7 @@ async function main() {
       }
       return new Response(bundle);
     }) as typeof fetch;
-    await syncFromTarball('3.0.24', 'https://partial-sidecars.example', false);
+    await syncFromTarball('3.0.25', 'https://partial-sidecars.example', false);
   } catch (error) {
     results.partialSidecars = {
       availability: error instanceof SchemaSyncAvailabilityError,
@@ -189,7 +234,7 @@ async function main() {
       if (url.endsWith('.sha256')) return new Response('missing', { status: 404 });
       return new Response(bundle);
     }) as typeof fetch;
-    await syncFromTarball('3.0.24', 'https://missing-sha.example', false);
+    await syncFromTarball('3.0.25', 'https://missing-sha.example', false);
   } catch (error) {
     results.missingSha = {
       availability: error instanceof SchemaSyncAvailabilityError,
@@ -205,7 +250,7 @@ async function main() {
       if (String(input).endsWith('.sha256')) return new Response('0'.repeat(64));
       return new Response(bundle);
     }) as typeof fetch;
-    await syncFromTarball('3.0.24', 'https://checksum-mismatch.example', false);
+    await syncFromTarball('3.0.25', 'https://checksum-mismatch.example', false);
   } catch (error) {
     results.checksumMismatch = {
       availability: error instanceof SchemaSyncAvailabilityError,
@@ -231,7 +276,7 @@ async function main() {
       }
       return new Response(bundle);
     }) as typeof fetch;
-    await syncFromTarball('3.0.24', 'https://missing-signature.example', false);
+    await syncFromTarball('3.0.25', 'https://missing-signature.example', false);
   } catch (error) {
     results.missingSignature = {
       availability: error instanceof SchemaSyncAvailabilityError,
@@ -255,7 +300,7 @@ async function main() {
     }) as typeof fetch;
     await syncSchemasWithFallbacks(
       {
-        version: '3.0.24',
+        version: '3.0.25',
         primaryBaseUrl: primary,
         includeSharedSurfaces: false,
         githubFallbackEnabled: true,
@@ -304,7 +349,7 @@ main().catch(error => {
 
 test('schema sync coordinates tagged, moving, per-file, and signed fallbacks', () => {
   const results = runHarness();
-  const tag = 'https://raw.githubusercontent.com/adcontextprotocol/adcp/v3.0.24/dist';
+  const tag = 'https://raw.githubusercontent.com/adcontextprotocol/adcp/v3.0.25/dist';
   const main = 'https://raw.githubusercontent.com/adcontextprotocol/adcp/main/dist';
   const primary = 'https://primary.example';
 
@@ -347,8 +392,12 @@ test('schema sync coordinates tagged, moving, per-file, and signed fallbacks', (
   assert.match(results.head405.error, /404 Not Found/);
   assert.equal(results.bodyReset.availability, true);
   assert.match(results.bodyReset.error, /socket reset/);
+  assert.equal(results.transientNetworkRetry.shaFetches, 2);
+  assert.doesNotMatch(results.transientNetworkRetry.error, /network error/);
+  assert.equal(results.transientHttpRetry.shaFetches, 3);
+  assert.doesNotMatch(results.transientHttpRetry.error, /after retries/);
   assert.match(results.invalidVersion, /expected a semantic version or "latest"/);
-  assert.match(results.versionMismatch, /requested 3\.0\.24, received 3\.0\.23/);
+  assert.match(results.versionMismatch, /requested 3\.0\.25, received 3\.0\.23/);
   assert.equal(results.partialSidecars.availability, true);
   assert.match(results.partialSidecars.error, /Incomplete cosign sidecars/);
   assert.equal(results.missingSha.availability, true);

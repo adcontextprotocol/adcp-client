@@ -15,7 +15,7 @@ describe('TaskExecutor business rejection diagnostics', () => {
         suggestions: ['Try broadening the requested geography'],
       },
     });
-    const executor = new TaskExecutor({ strictSchemaValidation: false, adcpVersion: '3.2.0-beta.3' });
+    const executor = new TaskExecutor({ strictSchemaValidation: false, adcpVersion: '3.2.0-beta.4' });
     try {
       const result = await executor.executeTask(
         { id: 'seller', name: 'Seller', agent_uri: 'https://seller.example/mcp', protocol: 'mcp' },

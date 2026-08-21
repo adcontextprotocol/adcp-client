@@ -445,7 +445,7 @@ Apply operational controls inside accepted commercial terms.
 
 **Request:**
 - Required: `idempotency_key: string`, `account: Canonical Account Ref`, `media_buy_id: string`, `revision: integer`
-- Optional: `adcp_version: Adcp_version`, `paused: boolean`, `canceled: 'true'`, `cancellation_reason: string`, `total_budget: object`, `daily_budget_cap: number,null`, `budget_cap_timezone: string,null`, `budget_allocation: Canonical Budget Allocation`, +7 more
+- Optional: `adcp_version: Adcp_version`, `name: string`, `paused: boolean`, `canceled: 'true'`, `cancellation_reason: string`, `total_budget: object`, `daily_budget_cap: number,null`, `budget_cap_timezone: string,null`, +8 more
 
 **Response (success branch):**
 - Required: `status: 'completed'`, `media_buy_id: string`, `revision: integer`
@@ -1199,6 +1199,9 @@ Flow: `get_adcp_capabilities → sync_accounts → list_accounts`
 **Seller fulfills a media buy with audience targeting from a synced CRM audience** — Verifies that a seller advertising audience_targeting can ingest a CRM audience via sync_audiences, accept a media buy whose targeting_overlay references the bound audience_id, reject malformed audience references, and report delivery for the audience-targeted buy. Sibling to media_buy_seller/performance_buy_flow on the audience side: the unbound-id rejection is the discriminating assertion.
 Flow: `sync_accounts → get_products → sync_audiences → create_media_buy → comply_test_controller → get_media_buy_delivery`
 
+**Seller answers flexible-window availability with eligibility-aware status** — Verifies offer_filters.availability_horizon discovery: time-dimensioned forecast points that partition the horizon, availability_status computed from booking eligibility (not only holds), forecast excluded from conditional reads, and PRODUCT_UNAVAILABLE on buys against closed or too-short windows.
+Flow: `sync_accounts → list_products → buy_products`
+
 **Seller carries product allowed actions into per-buy available actions** — Validates the AdCP 3.1 media-buy action-discovery flow: product allowed_actions[], buy available_actions[], SLAWindow duration fields, self-serve mutation, and ACTION_NOT_ALLOWED enforcement.
 Flow: `get_products → sync_creatives → create_media_buy → get_media_buys → update_media_buy`
 
@@ -1374,7 +1377,7 @@ Flow: `sync_accounts → sync_event_sources → get_products → create_media_bu
 Flow: `sync_accounts → get_products → create_media_buy → get_media_buys → create_media_buy → get_media_buys → get_products → create_media_buy → get_media_buys`
 
 **Seller resolves targeting during discovery and persists inventory selection** — Verifies targeting-scoped discovery forecasts, future overlay support, sparse configured-product modifications, opaque product acceptance, and inventory targeting across create/update/readback.
-Flow: `get_products → create_media_buy → update_media_buy → get_media_buys → update_media_buy → create_media_buy → get_products → create_media_buy → update_media_buy → get_media_buys`
+Flow: `get_products → create_media_buy → update_media_buy → get_media_buys → update_media_buy → create_media_buy → get_products → create_media_buy → update_media_buy → get_media_buys → update_media_buy → get_media_buys`
 
 **Atomic media-buy total budget redistribution** — Verifies that a fixed media-buy total_budget update proportionally rescales active packages, returns auditable package state, and rejects competing package patches atomically.
 Flow: `sync_accounts → create_media_buy → update_media_buy → get_media_buys → update_media_buy`

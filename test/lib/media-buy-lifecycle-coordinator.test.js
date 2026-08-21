@@ -1,7 +1,25 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
+const { readFileSync } = require('node:fs');
+const path = require('node:path');
 
-const { AgentClient, MediaBuyLifecycleCompatibilityError, proposalTermsDigest } = require('../../dist/lib/index.js');
+const {
+  AgentClient,
+  MediaBuyLifecycleCompatibilityError,
+  createInMemoryLegacyPurchaseContinuationStore,
+  proposalTermsDigest,
+} = require('../../dist/lib/index.js');
+const { normalizeGetProductsResponse } = require('../../dist/lib/utils/pricing-adapter.js');
+
+const PRODUCTS_ONLY_BRIEF_VECTORS = JSON.parse(
+  readFileSync(
+    path.resolve(
+      __dirname,
+      '../../compliance/cache/3.2.0-beta.4/test-vectors/products-only-brief-compatibility/vectors.json'
+    ),
+    'utf8'
+  )
+);
 
 const AGENT = {
   id: 'compat-seller',
@@ -10,7 +28,7 @@ const AGENT = {
   protocol: 'mcp',
 };
 
-function capabilities({ version = '3.2.0-beta.3', tools, discoveredTools, replayTtlSeconds = 3600 } = {}) {
+function capabilities({ version = '3.2.0-beta.4', tools, discoveredTools, replayTtlSeconds = 3600 } = {}) {
   if (version === '2.5') {
     return {
       version: 'v2',
@@ -49,6 +67,22 @@ function completed(taskName, data) {
       clarificationRounds: 0,
       status: 'completed',
     },
+  };
+}
+
+function legacyListedProduct(product_id, name, extra = {}) {
+  return {
+    product_id,
+    name,
+    pricing_options: [
+      {
+        pricing_option_id: 'fixed-cpm',
+        pricing_model: 'cpm',
+        currency: 'USD',
+        fixed_price: 10,
+      },
+    ],
+    ...extra,
   };
 }
 
@@ -134,6 +168,10 @@ function deferred(taskName, resume) {
 function clientWithCaps(caps, adcpVersion) {
   const agent = new AgentClient(AGENT, { validateFeatures: false, ...(adcpVersion && { adcpVersion }) });
   agent.getCapabilities = async () => caps;
+  agent.createMediaBuyLegacyWithPreDispatch = async (params, beforeDispatch, inputHandler, options) => {
+    const decision = await beforeDispatch(params, { governanceAdjusted: false });
+    return decision.action === 'return' ? decision.result : agent.createMediaBuyLegacy(params, inputHandler, options);
+  };
   return agent;
 }
 
@@ -3512,8 +3550,8 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
   test('a 3.1-pinned buyer does not select compact from a dual-surface 3.2 seller', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.supportedVersions = ['3.0', '3.1', '3.2.0-beta.3'];
-    const agent = clientWithCaps(caps, '3.1.15');
+    caps.supportedVersions = ['3.0', '3.1', '3.2.0-beta.4'];
+    const agent = clientWithCaps(caps, '3.1.18');
     const calls = [];
     agent.listProducts = async () => {
       calls.push('list_products');
@@ -3534,7 +3572,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
   test('authoritative served release wins over the seller support window', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.supportedVersions = ['3.0', '3.1', '3.2.0-beta.3'];
+    caps.supportedVersions = ['3.0', '3.1', '3.2.0-beta.4'];
     caps.servedVersion = '3.1';
     const agent = clientWithCaps(caps);
     const calls = [];
@@ -3570,8 +3608,8 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
   test('does not select a newer prerelease than the compact buyer pin', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.supportedVersions = ['3.1', '3.2.0-beta.4'];
-    const agent = clientWithCaps(caps, '3.2.0-beta.3');
+    caps.supportedVersions = ['3.1', '3.2.0-beta.5'];
+    const agent = clientWithCaps(caps, '3.2.0-beta.4');
     const calls = [];
     agent.getProducts = async () => {
       calls.push('get_products');
@@ -3587,12 +3625,12 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
   test('fails closed when every valid advertised version is newer than the buyer pin', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.supportedVersions = ['3.2.0-beta.4'];
-    const agent = clientWithCaps(caps, '3.2.0-beta.3');
+    caps.supportedVersions = ['3.2.0-beta.5'];
+    const agent = clientWithCaps(caps, '3.2.0-beta.4');
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /advertises only AdCP versions newer than the client pin 3\.2\.0-beta\.3/
+      /advertises only AdCP versions newer than the client pin 3\.2\.0-beta\.4/
     );
   });
 
@@ -3600,7 +3638,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
     delete caps.supportedVersions;
     caps._synthetic = true;
-    const agent = clientWithCaps(caps, '3.2.0-beta.3');
+    const agent = clientWithCaps(caps, '3.2.0-beta.4');
     const calls = [];
     agent.listProducts = async () => {
       calls.push('list_products');
@@ -3611,7 +3649,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
     const coordinator = await agent.negotiateMediaBuyLifecycle();
     await coordinator.listProducts({});
 
-    assert.equal(coordinator.negotiated_version, '3.2.0-beta.3');
+    assert.equal(coordinator.negotiated_version, '3.2.0-beta.4');
     assert.deepEqual(calls, ['list_products']);
   });
 
@@ -3622,39 +3660,39 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /served AdCP 3\.3, which is newer than the client pin 3\.2\.0-beta\.3/
+      /served AdCP 3\.3, which is newer than the client pin 3\.2\.0-beta\.4/
     );
   });
 
   test('fails closed when an exact newer prerelease is served despite an older advertised fallback', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.servedVersion = '3.2.0-beta.4';
-    caps.supportedVersions = ['3.2.0-beta.3', '3.2.0-beta.4'];
-    const agent = clientWithCaps(caps, '3.2.0-beta.3');
+    caps.servedVersion = '3.2.0-beta.5';
+    caps.supportedVersions = ['3.2.0-beta.4', '3.2.0-beta.5'];
+    const agent = clientWithCaps(caps, '3.2.0-beta.4');
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /served AdCP 3\.2\.0-beta\.4, which is newer than the client pin 3\.2\.0-beta\.3/
+      /served AdCP 3\.2\.0-beta\.5, which is newer than the client pin 3\.2\.0-beta\.4/
     );
   });
 
   test('fails closed when a newer patch release is served on the same minor line', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.servedVersion = '3.1.15';
-    caps.supportedVersions = ['3.1', '3.1.15'];
+    caps.servedVersion = '3.1.18';
+    caps.supportedVersions = ['3.1', '3.1.18'];
     const agent = clientWithCaps(caps, '3.1');
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /served AdCP 3\.1\.15, which is newer than the client pin 3\.1/
+      /served AdCP 3\.1\.18, which is newer than the client pin 3\.1/
     );
   });
 
   test('accepts an authoritative served release at or below the buyer pin', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
     caps.servedVersion = '3.2.0-beta.2';
-    caps.supportedVersions = ['3.2.0-beta.3'];
-    const agent = clientWithCaps(caps, '3.2.0-beta.3');
+    caps.supportedVersions = ['3.2.0-beta.4'];
+    const agent = clientWithCaps(caps, '3.2.0-beta.4');
     agent.listProducts = async () => completed('list_products', { products: [], feed_version: 'feed-1' });
 
     const coordinator = await agent.negotiateMediaBuyLifecycle();
@@ -3667,8 +3705,8 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
   test('advisory build metadata cannot select a compact wire lifecycle', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
     delete caps.supportedVersions;
-    caps.buildVersion = '3.2.0-beta.3+sha.abc123';
-    const agent = clientWithCaps(caps, '3.2.0-beta.3');
+    caps.buildVersion = '3.2.0-beta.4+sha.abc123';
+    const agent = clientWithCaps(caps, '3.2.0-beta.4');
     agent.getProducts = async () => completed('get_products', { products: [] });
     agent.listProducts = async () => assert.fail('build metadata must not enable compact wire tools');
 
@@ -3693,6 +3731,1383 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
     assert.equal(coordinator.negotiated_version, '3.0');
     assert.equal(coordinator.lifecycle, 'established');
+  });
+});
+
+describe('legacy products-only purchase continuations', () => {
+  function validLegacyCreateResponse(sourceVersion, request, productId) {
+    return {
+      media_buy_id: `buy-${productId}`,
+      packages: [],
+      ...(sourceVersion.startsWith('2.5') && { buyer_ref: request.buyer_ref }),
+      ...(sourceVersion.startsWith('3.1') && { confirmed_at: '2099-01-01T00:00:00Z', revision: 1 }),
+    };
+  }
+
+  test('keeps unsafe products-only discovery readable without issuing a purchase continuation', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.1' }), '3.1');
+    let products = [legacyListedProduct('p-readable-only', 'Readable only')];
+    agent.getProducts = async () => completed('get_products', { products });
+
+    const withoutPrincipal = await agent.negotiateMediaBuyLifecycle();
+    const principalResult = await withoutPrincipal.requestProposals({
+      idempotency_key: 'request-proposals-readable-principal-0001',
+      account: { account_id: 'account-readable' },
+      brand: { domain: 'example.com' },
+      brief: 'Readable discovery',
+    });
+    assert.equal(principalResult.data.outcome, 'legacy_unavailable');
+    assert.equal(principalResult.data.purchase_continuation, undefined);
+    assert.equal(principalResult.data.products[0].product_id, 'p-readable-only');
+
+    const withoutAccount = await agent.negotiateMediaBuyLifecycle({ principalScope: 'buyer-readable' });
+    const accountResult = await withoutAccount.requestProposals({
+      idempotency_key: 'request-proposals-readable-account-0001',
+      brand: { domain: 'example.com' },
+      brief: 'Readable discovery',
+    });
+    assert.equal(accountResult.data.outcome, 'legacy_unavailable');
+    assert.equal(accountResult.data.purchase_continuation, undefined);
+
+    products = [{ product_id: 'p-no-pricing', name: 'No pricing' }];
+    const missingPricing = await withoutAccount.requestProposals({
+      idempotency_key: 'request-proposals-readable-pricing-0001',
+      account: { account_id: 'account-readable' },
+      brand: { domain: 'example.com' },
+      brief: 'Readable discovery',
+    });
+    assert.equal(missingPricing.data.outcome, 'legacy_unavailable');
+    assert.equal(missingPricing.data.purchase_continuation, undefined);
+  });
+
+  test('runs deterministic create preflight before atomically claiming the continuation', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-preflight-claim', 'Preflight claim')] });
+    agent.createMediaBuyLegacyWithPreDispatch = async () => {
+      throw new Error('deterministic local preflight failed');
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-preflight-claim',
+      legacyPurchaseContinuationStore: store,
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-preflight-claim-0001',
+      account: { account_id: 'account-preflight-claim' },
+      brand: { domain: 'example.com' },
+      brief: 'Preflight before claim',
+    });
+    const token = discovery.data.purchase_continuation.continuation_token;
+    await assert.rejects(
+      coordinator.continueLegacyPurchase({
+        idempotency_key: '16a32ab9-9d5b-4578-91eb-c9e8ef810a09',
+        continuation_token: token,
+        account: { account_id: 'account-preflight-claim' },
+        selected_product_ids: ['p-preflight-claim'],
+        accepted_losses: discovery.data.purchase_continuation.losses,
+        legacy_create_request: {
+          idempotency_key: 'legacy-preflight-claim-create-0001',
+          account: { account_id: 'account-preflight-claim' },
+          brand: { domain: 'example.com' },
+          packages: [{ product_id: 'p-preflight-claim', budget: 10, pricing_option_id: 'fixed-cpm' }],
+          start_time: '2099-01-01T00:00:00Z',
+          end_time: '2099-02-01T00:00:00Z',
+        },
+      }),
+      /deterministic local preflight failed/
+    );
+    assert.equal((await store.get(token)).operation.state, 'available');
+  });
+
+  test('rejects governance rewrites and final pricing drift before claiming the continuation', async () => {
+    const issueContinuation = async suffix => {
+      const store = createInMemoryLegacyPurchaseContinuationStore();
+      const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+      agent.getProducts = async () =>
+        completed('get_products', { products: [legacyListedProduct(`p-${suffix}`, 'Bound product')] });
+      const coordinator = await agent.negotiateMediaBuyLifecycle({
+        principalScope: `buyer-${suffix}`,
+        legacyPurchaseContinuationStore: store,
+      });
+      const discovery = await coordinator.requestProposals({
+        idempotency_key: `request-proposals-${suffix}`,
+        account: { account_id: `account-${suffix}` },
+        brand: { domain: 'example.com' },
+        brief: 'Bind the final seller payload',
+      });
+      const input = {
+        idempotency_key:
+          suffix === 'governance-rewrite'
+            ? 'bd71379f-1c36-41a5-8ed0-0a33a629f91f'
+            : '3aa4d66a-d542-434f-8f57-bf2ed17fd717',
+        continuation_token: discovery.data.purchase_continuation.continuation_token,
+        account: { account_id: `account-${suffix}` },
+        selected_product_ids: [`p-${suffix}`],
+        accepted_losses: discovery.data.purchase_continuation.losses,
+        legacy_create_request: {
+          idempotency_key: `create-${suffix}`,
+          account: { account_id: `account-${suffix}` },
+          brand: { domain: 'example.com' },
+          packages: [{ product_id: `p-${suffix}`, budget: 10, pricing_option_id: 'fixed-cpm' }],
+          start_time: '2099-01-01T00:00:00Z',
+          end_time: '2099-02-01T00:00:00Z',
+        },
+      };
+      return { agent, coordinator, input, store, token: input.continuation_token };
+    };
+
+    const governance = await issueContinuation('governance-rewrite');
+    governance.agent.createMediaBuyLegacyWithPreDispatch = async (params, beforeDispatch) => {
+      const decision = await beforeDispatch(params, { governanceAdjusted: true });
+      assert.fail(`unexpected dispatch decision: ${decision.action}`);
+    };
+    await assert.rejects(governance.coordinator.continueLegacyPurchase(governance.input), /cannot rewrite/i);
+    assert.equal((await governance.store.get(governance.token)).operation.state, 'available');
+
+    const pricing = await issueContinuation('pricing-drift');
+    pricing.agent.createMediaBuyLegacyWithPreDispatch = async (params, beforeDispatch) => {
+      const altered = {
+        ...params,
+        packages: params.packages.map(pkg => ({ ...pkg, pricing_option_id: 'unobserved-price' })),
+      };
+      const decision = await beforeDispatch(altered, { governanceAdjusted: false });
+      assert.fail(`unexpected dispatch decision: ${decision.action}`);
+    };
+    await assert.rejects(pricing.coordinator.continueLegacyPurchase(pricing.input), /pricing options must match/i);
+    assert.equal((await pricing.store.get(pricing.token)).operation.state, 'available');
+  });
+
+  for (const vector of PRODUCTS_ONLY_BRIEF_VECTORS.cases) {
+    const version = vector.source_version.startsWith('2.5')
+      ? '2.5'
+      : vector.source_version.startsWith('3.0')
+        ? '3.0'
+        : '3.1';
+    const productId = vector.continuation_input.selected_product_ids[0];
+    test(`projects and redeems signed ${vector.source_version} products-only vector`, async () => {
+      const agent = clientWithCaps(capabilities({ version }), version === '2.5' ? undefined : vector.source_version);
+      const creates = [];
+      agent.getProducts = async () =>
+        completed(
+          'get_products',
+          version === '2.5' ? normalizeGetProductsResponse(vector.legacy_response) : vector.legacy_response
+        );
+      agent.createMediaBuyLegacy = async request => {
+        creates.push(request);
+        return completed('create_media_buy', validLegacyCreateResponse(vector.source_version, request, productId));
+      };
+      const coordinator = await agent.negotiateMediaBuyLifecycle({
+        principalScope: 'buyer-acme',
+        ...(version === '2.5' && { legacyPurchaseSellerSessionScope: 'seller-session-acme' }),
+      });
+      const projected = await coordinator.requestProposals({
+        idempotency_key: 'request-proposals-vector-0001',
+        account: { account_id: 'account-acme' },
+        brand: { domain: 'acme.example' },
+        brief: 'A premium display campaign for Acme.',
+      });
+
+      assert.equal(projected.data.outcome, 'products_available');
+      assert.deepEqual(
+        projected.data.products.map(({ product_id, name, description, pricing_options }) => ({
+          product_id,
+          name,
+          description,
+          pricing_options,
+        })),
+        vector.compact_projection.products
+      );
+      assert.equal(
+        projected.data.purchase_continuation.source_adcp_version,
+        vector.compact_projection.purchase_continuation.source_adcp_version
+      );
+      assert.deepEqual(
+        projected.data.purchase_continuation.product_ids,
+        vector.compact_projection.purchase_continuation.product_ids
+      );
+      assert.deepEqual(
+        projected.data.purchase_continuation.losses,
+        vector.compact_projection.purchase_continuation.losses
+      );
+      assert.equal('feed_version' in projected.data, false);
+      assert.equal('proposals' in projected.data, false);
+
+      const continuationInput = {
+        ...vector.continuation_input,
+        continuation_token: projected.data.purchase_continuation.continuation_token,
+      };
+      const purchased = await coordinator.continueLegacyPurchase(continuationInput);
+      const replayed = await coordinator.continueLegacyPurchase(continuationInput);
+
+      assert.equal(purchased.data.media_buy_id, `buy-${productId}`);
+      assert.equal(replayed.data.media_buy_id, purchased.data.media_buy_id);
+      assert.equal(creates.length, 1);
+      assert.deepEqual(creates[0], vector.continuation_input.legacy_create_request);
+    });
+  }
+
+  test('binds a v2.5 continuation to the authenticated seller session at the same endpoint', async () => {
+    const vector = PRODUCTS_ONLY_BRIEF_VECTORS.cases[0];
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const firstAgent = clientWithCaps(capabilities({ version: '2.5' }));
+    firstAgent.getProducts = async () =>
+      completed('get_products', normalizeGetProductsResponse(vector.legacy_response));
+    firstAgent.createMediaBuyLegacy = async request =>
+      completed(
+        'create_media_buy',
+        validLegacyCreateResponse(vector.source_version, request, vector.continuation_input.selected_product_ids[0])
+      );
+    const first = await firstAgent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-session-bound',
+      legacyPurchaseSellerSessionScope: 'authenticated-session-one',
+      legacyPurchaseContinuationStore: store,
+    });
+    const discovery = await first.requestProposals({
+      account: vector.continuation_input.account,
+      brand: { domain: 'acme.example' },
+      brief: 'A premium display campaign for Acme.',
+    });
+    const input = {
+      ...vector.continuation_input,
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+    };
+
+    const secondAgent = clientWithCaps(capabilities({ version: '2.5' }));
+    secondAgent.createMediaBuyLegacy = async () => assert.fail('session binding must fail before mutation');
+    const second = await secondAgent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-session-bound',
+      legacyPurchaseSellerSessionScope: 'authenticated-session-two',
+      legacyPurchaseContinuationStore: store,
+    });
+    await assert.rejects(second.continueLegacyPurchase(input), error => error.code === 'binding_mismatch');
+    assert.equal((await first.continueLegacyPurchase(input)).success, true);
+  });
+
+  test('atomically rejects a concurrent second claim and fails closed after ambiguity', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.1' }), '3.1');
+    let releaseCreate;
+    const createStarted = new Promise(resolve => {
+      agent.createMediaBuyLegacy = async () => {
+        await new Promise(release => {
+          releaseCreate = release;
+          resolve();
+        });
+        return completed('create_media_buy', {
+          media_buy_id: 'buy-concurrent',
+          packages: [],
+          confirmed_at: '2099-01-01T00:00:00Z',
+          revision: 1,
+        });
+      };
+    });
+    agent.getProducts = async () =>
+      completed('get_products', {
+        products: [legacyListedProduct('p-concurrent', 'Concurrent', { description: 'Test' })],
+      });
+    const coordinator = await agent.negotiateMediaBuyLifecycle({ principalScope: 'buyer-concurrent' });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-concurrent-0001',
+      account: { account_id: 'account-1' },
+      brand: { domain: 'example.com' },
+      brief: 'Test concurrent claims',
+    });
+    const input = {
+      idempotency_key: '754d5421-52a6-4e93-8e32-917bb107fd24',
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-1' },
+      selected_product_ids: ['p-concurrent'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-concurrent-create-0001',
+        account: { account_id: 'account-1' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-concurrent', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+    const first = coordinator.continueLegacyPurchase(input);
+    await createStarted;
+    await assert.rejects(coordinator.continueLegacyPurchase(input), error => error.code === 'in_flight');
+    releaseCreate();
+    await first;
+
+    const failedDiscovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-ambiguous-0001',
+      account: { account_id: 'account-1' },
+      brand: { domain: 'example.com' },
+      brief: 'Test ambiguous claim',
+    });
+    agent.createMediaBuyLegacy = async () => {
+      throw new Error('connection reset');
+    };
+    const ambiguousInput = {
+      ...input,
+      idempotency_key: '60888384-bdb4-4388-a9ce-c08597492c0c',
+      continuation_token: failedDiscovery.data.purchase_continuation.continuation_token,
+    };
+    await assert.rejects(
+      coordinator.continueLegacyPurchase(ambiguousInput),
+      error => error.code === 'ambiguous' && /reconcileLegacyPurchase/.test(error.recovery)
+    );
+    await assert.rejects(coordinator.continueLegacyPurchase(ambiguousInput), error => error.code === 'ambiguous');
+  });
+
+  test('replays a completed operation after issuance expiry but rejects an unclaimed expired token', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    let creates = 0;
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-expiry', 'Expiry')] });
+    agent.createMediaBuyLegacy = async () => {
+      creates += 1;
+      return completed('create_media_buy', { media_buy_id: 'buy-expiry', packages: [] });
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-expiry',
+      legacyPurchaseContinuationTtlMs: 10,
+      legacyPurchaseOperationTtlMs: 1000,
+    });
+    const discover = idempotency_key =>
+      coordinator.requestProposals({
+        idempotency_key,
+        account: { account_id: 'account-expiry' },
+        brand: { domain: 'example.com' },
+        brief: 'Expiry test',
+      });
+    const first = await discover('request-proposals-expiry-0001');
+    const input = {
+      idempotency_key: '26701544-60b7-4b52-8124-6ef4669ea26b',
+      continuation_token: first.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-expiry' },
+      selected_product_ids: ['p-expiry'],
+      accepted_losses: first.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-expiry-create-0001',
+        account: { account_id: 'account-expiry' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-expiry', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+    await coordinator.continueLegacyPurchase(input);
+    const unused = await discover('request-proposals-expiry-0002');
+    await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal((await coordinator.continueLegacyPurchase(input)).data.media_buy_id, 'buy-expiry');
+    await assert.rejects(
+      coordinator.continueLegacyPurchase({
+        ...input,
+        idempotency_key: '781a6d21-9e2b-4f3b-94b1-54d2891835b9',
+        continuation_token: unused.data.purchase_continuation.continuation_token,
+      }),
+      error => error.code === 'expired'
+    );
+    assert.equal(creates, 1);
+  });
+
+  test('enforces seller binding and operation-wide idempotency across continuation tokens', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    let creates = 0;
+    agent.getProducts = async () => completed('get_products', { products: [legacyListedProduct('p-bound', 'Bound')] });
+    agent.createMediaBuyLegacy = async () => {
+      creates += 1;
+      return completed('create_media_buy', { media_buy_id: 'buy-bound', packages: [] });
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-bound',
+      legacyPurchaseContinuationStore: store,
+    });
+    const discover = idempotency_key =>
+      coordinator.requestProposals({
+        idempotency_key,
+        account: { account_id: 'account-bound' },
+        brand: { domain: 'example.com' },
+        brief: 'Binding test',
+      });
+    const [first, second] = await Promise.all([
+      discover('request-proposals-bound-0001'),
+      discover('request-proposals-bound-0002'),
+    ]);
+    const base = {
+      idempotency_key: '17cb18b0-2857-49a1-8073-9f4618f2094d',
+      account: { account_id: 'account-bound' },
+      selected_product_ids: ['p-bound'],
+      accepted_losses: first.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-bound-create-0001',
+        account: { account_id: 'account-bound' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-bound', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+    await coordinator.continueLegacyPurchase({
+      ...base,
+      continuation_token: first.data.purchase_continuation.continuation_token,
+    });
+    await assert.rejects(
+      coordinator.continueLegacyPurchase({
+        ...base,
+        continuation_token: second.data.purchase_continuation.continuation_token,
+      }),
+      error => error.code === 'conflict'
+    );
+
+    const otherSeller = new AgentClient(
+      { ...AGENT, id: 'other-seller', agent_uri: 'https://other-seller.example/mcp' },
+      { validateFeatures: false, adcpVersion: '3.0' }
+    );
+    otherSeller.getCapabilities = async () => capabilities({ version: '3.0' });
+    otherSeller.createMediaBuyLegacy = async () => assert.fail('seller binding must fail before mutation');
+    const otherCoordinator = await otherSeller.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-bound',
+      legacyPurchaseContinuationStore: store,
+    });
+    const third = await discover('request-proposals-bound-0003');
+    await assert.rejects(
+      otherCoordinator.continueLegacyPurchase({
+        ...base,
+        idempotency_key: '6de32b73-469d-44c7-8135-387b1fe5c14d',
+        continuation_token: third.data.purchase_continuation.continuation_token,
+      }),
+      error => error.code === 'binding_mismatch'
+    );
+    assert.equal(creates, 1);
+  });
+
+  test('rejects shared-vector substitution, incomplete consent, account drift, and unknown fields before mutation', async () => {
+    const vector = PRODUCTS_ONLY_BRIEF_VECTORS.cases[1];
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    let creates = 0;
+    agent.getProducts = async () => completed('get_products', { products: vector.compact_projection.products });
+    agent.createMediaBuyLegacy = async () => {
+      creates += 1;
+      return completed('create_media_buy', { media_buy_id: 'must-not-run', packages: [] });
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({ principalScope: 'buyer-negative' });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-negative-0001',
+      account: vector.continuation_input.account,
+      brand: { domain: 'acme.example' },
+      brief: vector.legacy_request.brief,
+    });
+    const valid = {
+      ...vector.continuation_input,
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+    };
+    for (const [candidate, code] of [
+      [{ ...valid, selected_product_ids: ['substituted-product'] }, 'selection_mismatch'],
+      [
+        {
+          ...valid,
+          legacy_create_request: {
+            ...valid.legacy_create_request,
+            packages: valid.legacy_create_request.packages.map(pkg => ({
+              ...pkg,
+              pricing_option_id: 'substituted-pricing-option',
+            })),
+          },
+        },
+        'selection_mismatch',
+      ],
+      [{ ...valid, accepted_losses: ['feed_version_not_atomic'] }, 'loss_mismatch'],
+      [{ ...valid, account: { account_id: 'other-account' } }, 'binding_mismatch'],
+      [{ ...valid, unexpected: true }, 'request_invalid'],
+    ]) {
+      await assert.rejects(coordinator.continueLegacyPurchase(candidate), error => error.code === code);
+    }
+    assert.equal(creates, 0);
+  });
+
+  test('re-observing one async discovery returns one token and native 3.2 never emits the projection arm', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.1' }), '3.1');
+    const terminal = completed('get_products', { products: [legacyListedProduct('p-async', 'Async')] });
+    agent.getProducts = async () => submitted('get_products', terminal);
+    const coordinator = await agent.negotiateMediaBuyLifecycle({ principalScope: 'buyer-async' });
+    const pending = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-async-0001',
+      account: { account_id: 'account-async' },
+      brand: { domain: 'example.com' },
+      brief: 'Async products',
+    });
+    const [first, second] = await Promise.all([
+      pending.submitted.waitForCompletion(),
+      pending.submitted.waitForCompletion(),
+    ]);
+    assert.equal(
+      first.data.purchase_continuation.continuation_token,
+      second.data.purchase_continuation.continuation_token
+    );
+
+    const native = clientWithCaps(
+      capabilities({
+        version: '3.2.0-beta.4',
+        tools: COMPACT_TOOLS,
+        discoveredTools: ['get_products', ...COMPACT_TOOLS],
+      }),
+      '3.2.0-beta.4'
+    );
+    native.getProducts = async () =>
+      completed('get_products', { products: [{ product_id: 'p-native', name: 'Native' }] });
+    const forced = await native.negotiateMediaBuyLifecycle({
+      preferredLifecycle: 'established',
+      principalScope: 'buyer-native',
+    });
+    const nativeResult = await forced.requestProposals({
+      idempotency_key: 'request-proposals-native-0001',
+      account: { account_id: 'account-native' },
+      brand: { domain: 'example.com' },
+      brief: 'Native products',
+    });
+    assert.equal(nativeResult.data.outcome, 'legacy_unavailable');
+    assert.equal(nativeResult.data.purchase_continuation, undefined);
+  });
+
+  test('executes the signed account-fenced listed_purchase vector through native buy_products', async () => {
+    const vector = PRODUCTS_ONLY_BRIEF_VECTORS.listed_purchase_cases[0];
+    const agent = clientWithCaps(capabilities({ version: '3.2.0-beta.4', tools: COMPACT_TOOLS }), '3.2.0-beta.4');
+    const calls = [];
+    agent.buyProducts = async request => {
+      calls.push(request);
+      return completed('buy_products', { media_buy_id: 'buy-listed', revision: 1 });
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({ principalScope: 'buyer-listed' });
+    const result = await coordinator.buyProducts(vector.buy_products_request);
+    assert.equal(result.data.media_buy_id, 'buy-listed');
+    assert.deepEqual(calls, [vector.buy_products_request]);
+    assert.equal(calls[0].feed_version, vector.compact_projection.purchase_continuation.feed_version);
+    assert.equal(calls[0].pricing_version, vector.compact_projection.purchase_continuation.pricing_version);
+  });
+
+  test('reconciles an ambiguous claim from its durable natural key and rejects malformed completion', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-reconcile', 'Reconcile')] });
+    let mutationMode = 'throw';
+    agent.createMediaBuyLegacy = async () => {
+      if (mutationMode === 'throw') throw new Error('connection lost');
+      return completed('create_media_buy', undefined);
+    };
+    let reconciliationCalls = 0;
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-reconcile',
+      reconcileLegacyPurchase: async (record, exactInput) => {
+        reconciliationCalls += 1;
+        assert.equal(record.operation.sourceMutationKey, 'legacy-reconcile-create-0001');
+        assert.deepEqual(record.operation.selectedProductIds, ['p-reconcile']);
+        assert.equal(exactInput.legacy_create_request.idempotency_key, record.operation.sourceMutationKey);
+        return {
+          outcome: 'completed',
+          result: completed('create_media_buy', { media_buy_id: 'buy-reconciled', packages: [] }),
+        };
+      },
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-reconcile-0001',
+      account: { account_id: 'account-reconcile' },
+      brand: { domain: 'example.com' },
+      brief: 'Reconcile products',
+    });
+    const input = {
+      idempotency_key: '117b3ee1-8034-4195-bf64-365eaac08cb0',
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-reconcile' },
+      selected_product_ids: ['p-reconcile'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-reconcile-create-0001',
+        account: { account_id: 'account-reconcile' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-reconcile', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+    await assert.rejects(coordinator.continueLegacyPurchase(input), error => error.code === 'ambiguous');
+    assert.equal((await coordinator.continueLegacyPurchase(input)).data.media_buy_id, 'buy-reconciled');
+    assert.equal(reconciliationCalls, 1);
+
+    const malformedDiscovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-malformed-0001',
+      account: { account_id: 'account-reconcile' },
+      brand: { domain: 'example.com' },
+      brief: 'Malformed completion',
+    });
+    mutationMode = 'malformed';
+    await assert.rejects(
+      coordinator.continueLegacyPurchase({
+        ...input,
+        idempotency_key: 'f3aad00b-24a8-42c8-b948-3269f488032e',
+        continuation_token: malformedDiscovery.data.purchase_continuation.continuation_token,
+        legacy_create_request: {
+          ...input.legacy_create_request,
+          idempotency_key: 'legacy-malformed-create-0001',
+        },
+      }),
+      error => error.code === 'ambiguous'
+    );
+  });
+
+  test('background-observes submitted legacy purchase completion for deterministic replay', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-submitted', 'Submitted')] });
+    agent.createMediaBuyLegacy = async () =>
+      submitted('create_media_buy', completed('create_media_buy', { media_buy_id: 'buy-submitted', packages: [] }));
+    const coordinator = await agent.negotiateMediaBuyLifecycle({ principalScope: 'buyer-submitted' });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-submitted-0001',
+      account: { account_id: 'account-submitted' },
+      brand: { domain: 'example.com' },
+      brief: 'Submitted purchase',
+    });
+    const input = {
+      idempotency_key: 'e52cf054-a288-4781-8018-c48cb8da0451',
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-submitted' },
+      selected_product_ids: ['p-submitted'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-submitted-create-0001',
+        account: { account_id: 'account-submitted' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-submitted', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+    assert.equal((await coordinator.continueLegacyPurchase(input)).status, 'submitted');
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const replay = await coordinator.continueLegacyPurchase(input);
+    assert.equal(replay.status, 'completed');
+    assert.equal(replay.data.media_buy_id, 'buy-submitted');
+  });
+
+  test('shares one seller polling loop between the background observer and callers', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-shared-poll', 'Shared poll')] });
+    let polls = 0;
+    let finished = false;
+    let originalWaits = 0;
+    agent.createMediaBuyLegacy = async () => {
+      const result = submitted(
+        'create_media_buy',
+        completed('create_media_buy', { media_buy_id: 'buy-shared-poll', packages: [] })
+      );
+      result.submitted.waitForCompletion = async () => {
+        originalWaits += 1;
+        return new Promise(() => {});
+      };
+      result.submitted.track = async () => {
+        polls += 1;
+        return {
+          taskId: 'create_media_buy-task',
+          status: finished ? 'completed' : 'working',
+          taskType: 'create_media_buy',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          ...(finished && { result: { media_buy_id: 'buy-shared-poll', packages: [] } }),
+        };
+      };
+      return result;
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({ principalScope: 'buyer-shared-poll' });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-shared-poll-0001',
+      account: { account_id: 'account-shared-poll' },
+      brand: { domain: 'example.com' },
+      brief: 'Shared polling',
+    });
+    const input = {
+      idempotency_key: 'cc7f3687-3b44-4c66-9578-7580b03c6a60',
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-shared-poll' },
+      selected_product_ids: ['p-shared-poll'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-shared-poll-create-0001',
+        account: { account_id: 'account-shared-poll' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-shared-poll', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+    const pending = await coordinator.continueLegacyPurchase(input);
+    const first = pending.submitted.waitForCompletion(1);
+    const second = pending.submitted.waitForCompletion(1);
+    assert.equal(polls, 1);
+    finished = true;
+    const results = await Promise.all([first, second]);
+    assert.deepEqual(
+      results.map(value => value.data.media_buy_id),
+      ['buy-shared-poll', 'buy-shared-poll']
+    );
+    assert.equal(polls, 2);
+    assert.equal(originalWaits, 0, 'SDK observer deadlines must never enter the remote-cancel polling path');
+  });
+
+  test('starts a fresh polling epoch after a shared input-required pause', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-shared-pause', 'Shared pause')] });
+    let status = 'input-required';
+    let polls = 0;
+    agent.createMediaBuyLegacy = async () => {
+      const result = submitted('create_media_buy', completed('create_media_buy', {}));
+      result.submitted.track = async () => {
+        polls += 1;
+        return {
+          taskId: 'create_media_buy-task',
+          status,
+          taskType: 'create_media_buy',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          result:
+            status === 'completed'
+              ? { media_buy_id: 'buy-shared-pause', packages: [] }
+              : { question: 'Approval required' },
+        };
+      };
+      return result;
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({ principalScope: 'buyer-shared-pause' });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-shared-pause-0001',
+      account: { account_id: 'account-shared-pause' },
+      brand: { domain: 'example.com' },
+      brief: 'Shared pause',
+    });
+    const pending = await coordinator.continueLegacyPurchase({
+      idempotency_key: 'cb584864-ac5e-4c69-a8b0-d1d12ebf43a3',
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-shared-pause' },
+      selected_product_ids: ['p-shared-pause'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-shared-pause-create-0001',
+        account: { account_id: 'account-shared-pause' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-shared-pause', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    });
+    assert.equal((await pending.submitted.waitForCompletion(1)).status, 'input-required');
+    status = 'completed';
+    const completion = await pending.submitted.waitForCompletion(1);
+    assert.equal(completion.status, 'completed');
+    assert.equal(completion.data.media_buy_id, 'buy-shared-pause');
+    assert.ok(polls >= 2);
+  });
+
+  test('rejects invalid shared polling intervals', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-poll-interval', 'Poll interval')] });
+    agent.createMediaBuyLegacy = async () => submitted('create_media_buy', completed('create_media_buy', {}));
+    const coordinator = await agent.negotiateMediaBuyLifecycle({ principalScope: 'buyer-poll-interval' });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-poll-interval-0001',
+      account: { account_id: 'account-poll-interval' },
+      brand: { domain: 'example.com' },
+      brief: 'Poll interval validation',
+    });
+    const pending = await coordinator.continueLegacyPurchase({
+      idempotency_key: '7e0df2b7-ebda-43a9-ace9-c0e0313a73a7',
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-poll-interval' },
+      selected_product_ids: ['p-poll-interval'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-poll-interval-create-0001',
+        account: { account_id: 'account-poll-interval' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-poll-interval', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    });
+    await assert.rejects(pending.submitted.waitForCompletion(Number.NaN), RangeError);
+    await assert.rejects(pending.submitted.waitForCompletion(-1), RangeError);
+    await assert.rejects(pending.submitted.waitForCompletion(2_147_483_648), RangeError);
+  });
+
+  test('treats a seller tracking RangeError as durable mutation uncertainty', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-track-range', 'Track range')] });
+    agent.createMediaBuyLegacy = async () => {
+      const result = submitted('create_media_buy', completed('create_media_buy', {}));
+      result.submitted.track = async () => {
+        throw new RangeError('protocol response exceeded parser bounds');
+      };
+      return result;
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({ principalScope: 'buyer-track-range' });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-track-range-0001',
+      account: { account_id: 'account-track-range' },
+      brand: { domain: 'example.com' },
+      brief: 'Track RangeError',
+    });
+    const input = {
+      idempotency_key: '0c4ff6ce-d295-485e-bb69-a1badb0badf3',
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-track-range' },
+      selected_product_ids: ['p-track-range'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-track-range-create-0001',
+        account: { account_id: 'account-track-range' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-track-range', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+    const pending = await coordinator.continueLegacyPurchase(input);
+    await assert.rejects(pending.submitted.waitForCompletion(1), error => error.code === 'ambiguous');
+    await assert.rejects(coordinator.continueLegacyPurchase(input), error => error.code === 'ambiguous');
+  });
+
+  test('keeps shared observation authoritative when one caller aborts', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-abort-poll', 'Abort poll')] });
+    let finished = false;
+    let polls = 0;
+    let originalWaits = 0;
+    agent.createMediaBuyLegacy = async () => {
+      const result = submitted(
+        'create_media_buy',
+        completed('create_media_buy', { media_buy_id: 'buy-abort-poll', packages: [] })
+      );
+      result.submitted.waitForCompletion = async () => {
+        originalWaits += 1;
+        return new Promise(() => {});
+      };
+      result.submitted.track = async () => {
+        polls += 1;
+        return {
+          taskId: 'create_media_buy-task',
+          status: finished ? 'completed' : 'working',
+          taskType: 'create_media_buy',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          ...(finished && { result: { media_buy_id: 'buy-abort-poll', packages: [] } }),
+        };
+      };
+      return result;
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({ principalScope: 'buyer-abort-poll' });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-abort-poll-0001',
+      account: { account_id: 'account-abort-poll' },
+      brand: { domain: 'example.com' },
+      brief: 'Abort polling',
+    });
+    const input = {
+      idempotency_key: '898176bd-d07f-45cd-9267-6b8d87cc028d',
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-abort-poll' },
+      selected_product_ids: ['p-abort-poll'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-abort-poll-create-0001',
+        account: { account_id: 'account-abort-poll' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-abort-poll', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+    const pending = await coordinator.continueLegacyPurchase(input);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const backgroundPolls = polls;
+    const abort = new AbortController();
+    const stopped = pending.submitted.waitForCompletion(1, abort.signal);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    assert.ok(polls > backgroundPolls, 'caller cadence should accelerate the shared observer');
+    abort.abort('caller stopped waiting');
+    await assert.rejects(stopped, error => error.name === 'AbortError');
+    const pollsAfterAbort = polls;
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.ok(polls <= pollsAfterAbort + 1, 'background observer must not retain the departed caller cadence');
+
+    finished = true;
+    const completion = await pending.submitted.waitForCompletion(1);
+    assert.equal(completion.status, 'completed');
+    assert.equal(completion.data.media_buy_id, 'buy-abort-poll');
+    assert.equal(originalWaits, 0);
+  });
+
+  test('does not let the background observation deadline shorten an active caller wait', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-deadline-poll', 'Deadline poll')] });
+    let finished = false;
+    let originalWaits = 0;
+    agent.createMediaBuyLegacy = async () => {
+      const result = submitted(
+        'create_media_buy',
+        completed('create_media_buy', { media_buy_id: 'buy-deadline-poll', packages: [] })
+      );
+      result.submitted.waitForCompletion = async () => {
+        originalWaits += 1;
+        return new Promise(() => {});
+      };
+      result.submitted.track = async () => ({
+        taskId: 'create_media_buy-task',
+        status: finished ? 'completed' : 'working',
+        taskType: 'create_media_buy',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        ...(finished && { result: { media_buy_id: 'buy-deadline-poll', packages: [] } }),
+      });
+      return result;
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-deadline-poll',
+      legacyPurchaseOperationTtlMs: 15,
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-deadline-poll-0001',
+      account: { account_id: 'account-deadline-poll' },
+      brand: { domain: 'example.com' },
+      brief: 'Deadline polling',
+    });
+    const input = {
+      idempotency_key: 'd987f636-37c2-4bd5-9098-f0b962ab19a1',
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-deadline-poll' },
+      selected_product_ids: ['p-deadline-poll'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-deadline-poll-create-0001',
+        account: { account_id: 'account-deadline-poll' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-deadline-poll', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+    const pending = await coordinator.continueLegacyPurchase(input);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const completion = pending.submitted.waitForCompletion(1);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    finished = true;
+    const terminal = await completion;
+    assert.equal(terminal.status, 'completed');
+    assert.equal(terminal.data.media_buy_id, 'buy-deadline-poll');
+    assert.equal(originalWaits, 0);
+  });
+
+  test('does not mark a claim ambiguous when an abandoned background poll rejects late', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-late-rejection', 'Late rejection')] });
+    let rejectTrack;
+    let markTrackStarted;
+    const trackStarted = new Promise(resolve => {
+      markTrackStarted = resolve;
+    });
+    agent.createMediaBuyLegacy = async () => {
+      const result = submitted('create_media_buy', completed('create_media_buy', {}));
+      result.submitted.track = async () =>
+        new Promise((_, reject) => {
+          rejectTrack = reject;
+          markTrackStarted();
+        });
+      return result;
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-late-rejection',
+      legacyPurchaseContinuationStore: store,
+      legacyPurchaseOperationTtlMs: 15,
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-late-rejection-0001',
+      account: { account_id: 'account-late-rejection' },
+      brand: { domain: 'example.com' },
+      brief: 'Late poll rejection',
+    });
+    const token = discovery.data.purchase_continuation.continuation_token;
+    const input = {
+      idempotency_key: '31b9774c-7d27-4587-aefd-2ff93ee89535',
+      continuation_token: token,
+      account: { account_id: 'account-late-rejection' },
+      selected_product_ids: ['p-late-rejection'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-late-rejection-create-0001',
+        account: { account_id: 'account-late-rejection' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-late-rejection', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+    assert.equal((await coordinator.continueLegacyPurchase(input)).status, 'submitted');
+    await trackStarted;
+    await new Promise(resolve => setTimeout(resolve, 25));
+    rejectTrack(new Error('late tasks/get rejection'));
+    await new Promise(resolve => setImmediate(resolve));
+
+    const record = await store.get(token);
+    assert.equal(record.operation.state, 'claimed');
+  });
+
+  test('persists a completed transport task with an AdCP error payload as a failed replay', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-operation-error', 'Operation error')] });
+    const operationError = {
+      adcp_error: { code: 'BUDGET_INVALID', message: 'Budget rejected' },
+      context: { correlation_id: 'correlation-operation-error' },
+    };
+    agent.createMediaBuyLegacy = async () => {
+      const result = submitted('create_media_buy', completed('create_media_buy', operationError));
+      result.submitted.track = async () => ({
+        taskId: 'create_media_buy-task',
+        status: 'completed',
+        taskType: 'create_media_buy',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        result: operationError,
+      });
+      return result;
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({ principalScope: 'buyer-operation-error' });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-operation-error-0001',
+      account: { account_id: 'account-operation-error' },
+      brand: { domain: 'example.com' },
+      brief: 'Operation error replay',
+    });
+    const input = {
+      idempotency_key: 'e5fc47d0-f308-439c-be46-213b3bf550f2',
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-operation-error' },
+      selected_product_ids: ['p-operation-error'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-operation-error-create-0001',
+        account: { account_id: 'account-operation-error' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-operation-error', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+    const pending = await coordinator.continueLegacyPurchase(input);
+    const failure = await pending.submitted.waitForCompletion(1);
+    assert.equal(failure.status, 'failed');
+    assert.equal(failure.error, 'Budget rejected');
+    assert.equal(failure.adcpError.code, 'BUDGET_INVALID');
+    assert.equal(failure.correlationId, 'correlation-operation-error');
+    assert.deepEqual(failure.data, operationError);
+
+    const replay = await coordinator.continueLegacyPurchase(input);
+    assert.equal(replay.status, 'failed');
+    assert.equal(replay.error, 'Budget rejected');
+    assert.equal(replay.adcpError.code, 'BUDGET_INVALID');
+    assert.equal(replay.correlationId, 'correlation-operation-error');
+    assert.deepEqual(replay.data, operationError);
+  });
+
+  test('fences an immediate unstructured failure as ambiguous instead of replaying it', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-malformed-completion', 'Malformed')] });
+    agent.createMediaBuyLegacy = async () => ({
+      ...completed('create_media_buy', { media_buy_id: 'possibly-created' }),
+      success: false,
+      status: 'failed',
+      error: 'Schema validation failed: packages is required',
+      metadata: {
+        ...completed('create_media_buy', {}).metadata,
+        status: 'failed',
+      },
+    });
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-malformed-completion',
+      legacyPurchaseContinuationStore: store,
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-malformed-completion-0001',
+      account: { account_id: 'account-malformed-completion' },
+      brand: { domain: 'example.com' },
+      brief: 'Malformed completion',
+    });
+    const token = discovery.data.purchase_continuation.continuation_token;
+    const input = {
+      idempotency_key: '6919bb43-64f3-4a70-b264-8df0f023fce1',
+      continuation_token: token,
+      account: { account_id: 'account-malformed-completion' },
+      selected_product_ids: ['p-malformed-completion'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-malformed-completion-create-0001',
+        account: { account_id: 'account-malformed-completion' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-malformed-completion', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+
+    await assert.rejects(
+      coordinator.continueLegacyPurchase(input),
+      error => error.code === 'ambiguous' && /not an authoritative structured AdCP error/.test(error.message)
+    );
+    assert.equal((await store.get(token)).operation.state, 'ambiguous');
+    await assert.rejects(coordinator.continueLegacyPurchase(input), error => error.code === 'ambiguous');
+  });
+
+  test('fences submitted unstructured terminal failures as ambiguous instead of replaying them', async () => {
+    for (const [index, taskStatus] of ['failed', 'rejected', 'canceled'].entries()) {
+      const store = createInMemoryLegacyPurchaseContinuationStore();
+      const productId = `p-unstructured-${taskStatus}`;
+      const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+      agent.getProducts = async () =>
+        completed('get_products', { products: [legacyListedProduct(productId, `Unstructured ${taskStatus}`)] });
+      agent.createMediaBuyLegacy = async () => {
+        const result = submitted('create_media_buy', { status: taskStatus });
+        result.submitted.track = async () => ({
+          taskId: 'create_media_buy-task',
+          status: taskStatus,
+          taskType: 'create_media_buy',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          result: { error: `Seller reported ${taskStatus} without an AdCP error envelope` },
+        });
+        return result;
+      };
+      const coordinator = await agent.negotiateMediaBuyLifecycle({
+        principalScope: `buyer-unstructured-${taskStatus}`,
+        legacyPurchaseContinuationStore: store,
+      });
+      const discovery = await coordinator.requestProposals({
+        idempotency_key: `request-proposals-unstructured-${taskStatus}-0001`,
+        account: { account_id: `account-unstructured-${taskStatus}` },
+        brand: { domain: 'example.com' },
+        brief: `Unstructured submitted ${taskStatus}`,
+      });
+      const token = discovery.data.purchase_continuation.continuation_token;
+      const input = {
+        idempotency_key: `6919bb43-64f3-4a70-b264-8df0f023fce${index + 2}`,
+        continuation_token: token,
+        account: { account_id: `account-unstructured-${taskStatus}` },
+        selected_product_ids: [productId],
+        accepted_losses: discovery.data.purchase_continuation.losses,
+        legacy_create_request: {
+          idempotency_key: `legacy-unstructured-${taskStatus}-create-0001`,
+          account: { account_id: `account-unstructured-${taskStatus}` },
+          brand: { domain: 'example.com' },
+          packages: [{ product_id: productId, budget: 10, pricing_option_id: 'fixed-cpm' }],
+          start_time: '2099-01-01T00:00:00Z',
+          end_time: '2099-02-01T00:00:00Z',
+        },
+      };
+
+      const pending = await coordinator.continueLegacyPurchase(input);
+      await assert.rejects(
+        pending.submitted.waitForCompletion(0),
+        error => error.code === 'ambiguous' && /not an authoritative structured AdCP error/.test(error.message)
+      );
+      assert.equal((await store.get(token)).operation.state, 'ambiguous');
+      await assert.rejects(coordinator.continueLegacyPurchase(input), error => error.code === 'ambiguous');
+    }
+  });
+
+  test('keeps an unrecognizable tracked task fail-closed as ambiguous', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-unknown-task', 'Unknown task')] });
+    agent.createMediaBuyLegacy = async () => {
+      const result = submitted('create_media_buy', completed('create_media_buy', {}));
+      result.submitted.track = async () => ({
+        taskId: 'create_media_buy-task',
+        status: 'unknown',
+        taskType: 'unknown',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      return result;
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({ principalScope: 'buyer-unknown-task' });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-unknown-task-0001',
+      account: { account_id: 'account-unknown-task' },
+      brand: { domain: 'example.com' },
+      brief: 'Unknown tracked task',
+    });
+    const input = {
+      idempotency_key: 'd73411da-982c-4448-ab18-49c5b1c53450',
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-unknown-task' },
+      selected_product_ids: ['p-unknown-task'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-unknown-task-create-0001',
+        account: { account_id: 'account-unknown-task' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-unknown-task', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+    const pending = await coordinator.continueLegacyPurchase(input);
+    await assert.rejects(pending.submitted.waitForCompletion(1), error => error.code === 'ambiguous');
+    await assert.rejects(coordinator.continueLegacyPurchase(input), error => error.code === 'ambiguous');
+  });
+
+  test('returns the persisted terminal winner when submitted observers race', async () => {
+    const baseStore = createInMemoryLegacyPurchaseContinuationStore();
+    const winner = completed('create_media_buy', { media_buy_id: 'buy-persisted-winner', packages: [] });
+    const store = {
+      create: record => baseStore.create(record),
+      get: token => baseStore.get(token),
+      claim: (token, request) => baseStore.claim(token, request),
+      complete: (token, claim) => baseStore.complete(token, claim, winner),
+      recordSubmittedTask: (token, claim, taskId) => baseStore.recordSubmittedTask(token, claim, taskId),
+      markAmbiguous: (token, claim, reason) => baseStore.markAmbiguous(token, claim, reason),
+    };
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () => completed('get_products', { products: [legacyListedProduct('p-race', 'Race')] });
+    agent.createMediaBuyLegacy = async () => {
+      const result = submitted(
+        'create_media_buy',
+        completed('create_media_buy', { media_buy_id: 'buy-losing-observer', packages: [] })
+      );
+      result.submitted.waitForCompletion = async () => new Promise(() => {});
+      return result;
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-race',
+      legacyPurchaseContinuationStore: store,
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-race-0001',
+      account: { account_id: 'account-race' },
+      brand: { domain: 'example.com' },
+      brief: 'Race purchase observers',
+    });
+    const input = {
+      idempotency_key: '54ec2250-c4d0-4f03-a669-e77821fb3c7e',
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-race' },
+      selected_product_ids: ['p-race'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-race-create-0001',
+        account: { account_id: 'account-race' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-race', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+    const pending = await coordinator.continueLegacyPurchase(input);
+    const tracked = await pending.submitted.track();
+    assert.equal(tracked.result.media_buy_id, 'buy-persisted-winner');
+    assert.equal((await coordinator.continueLegacyPurchase(input)).data.media_buy_id, 'buy-persisted-winner');
+  });
+
+  test('preserves the original durable claim descriptor through submitted, ambiguous, and completed states', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const claim = {
+      idempotencyKey: 'claim-key',
+      inputFingerprint: 'input-fingerprint',
+      operationKey: 'operation-key',
+      claimedAt: '2027-01-01T00:00:00Z',
+      replayExpiresAt: '2099-01-01T00:00:00Z',
+      selectedProductIds: ['p-store'],
+      sourceMutationKey: 'source-key',
+    };
+    const binding = {
+      principalScope: 'principal',
+      accountScope: 'account',
+      sellerScope: 'seller',
+      clientSessionScope: 'session',
+      sourceAdcpVersion: '3.0',
+    };
+    const created = await store.create({
+      ...binding,
+      token: 'store-preservation-token',
+      expiresAt: '2099-01-01T00:00:00Z',
+      issuanceFingerprint: 'issuance',
+      discoveryRequestFingerprint: 'discovery',
+      observedResponse: { products: [{ product_id: 'p-store' }] },
+      productIds: ['p-store'],
+      losses: ['feed_version_not_atomic', 'pricing_version_not_atomic'],
+      operation: { state: 'available' },
+    });
+    assert.equal(created.outcome, 'created');
+    assert.equal((await store.claim('store-preservation-token', { claim, expected: binding })).outcome, 'claimed');
+    assert.equal(await store.recordSubmittedTask('store-preservation-token', claim, 'seller-task-1'), true);
+    assert.equal(await store.markAmbiguous('store-preservation-token', claim, 'transport'), true);
+    const ambiguous = await store.get('store-preservation-token');
+    assert.equal(ambiguous.operation.claimedAt, claim.claimedAt);
+    assert.equal(ambiguous.operation.replayExpiresAt, claim.replayExpiresAt);
+    assert.equal(ambiguous.operation.sellerTaskId, 'seller-task-1');
+    await store.complete('store-preservation-token', claim, winnerForStore());
+    const completedRecord = await store.get('store-preservation-token');
+    assert.equal(completedRecord.operation.claimedAt, claim.claimedAt);
+    assert.equal(completedRecord.operation.replayExpiresAt, claim.replayExpiresAt);
+    assert.equal(completedRecord.operation.sellerTaskId, 'seller-task-1');
+
+    function winnerForStore() {
+      return completed('create_media_buy', { media_buy_id: 'buy-store', packages: [] });
+    }
+  });
+
+  test('retains an ambiguous operation fence after the seller replay window expires', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore({ maxRecords: 2 });
+    const binding = {
+      principalScope: 'principal',
+      accountScope: 'account',
+      sellerScope: 'seller',
+      clientSessionScope: 'session',
+      sourceAdcpVersion: '3.0',
+    };
+    const claim = {
+      idempotencyKey: 'expired-replay-key',
+      inputFingerprint: 'expired-replay-input',
+      operationKey: 'expired-replay-operation',
+      claimedAt: '2027-01-01T00:00:00Z',
+      replayExpiresAt: '2000-01-01T00:00:00Z',
+      selectedProductIds: ['p-expired-replay'],
+      sourceMutationKey: 'expired-replay-source',
+    };
+    const continuation = (token, issuanceFingerprint) => ({
+      ...binding,
+      token,
+      expiresAt: '2099-01-01T00:00:00Z',
+      issuanceFingerprint,
+      discoveryRequestFingerprint: `${issuanceFingerprint}-discovery`,
+      observedResponse: { products: [{ product_id: 'p-expired-replay' }] },
+      productIds: ['p-expired-replay'],
+      losses: ['feed_version_not_atomic', 'pricing_version_not_atomic'],
+      operation: { state: 'available' },
+    });
+
+    assert.equal((await store.create(continuation('ambiguous-token', 'ambiguous-issuance'))).outcome, 'created');
+    assert.equal((await store.claim('ambiguous-token', { claim, expected: binding })).outcome, 'claimed');
+    assert.equal(await store.markAmbiguous('ambiguous-token', claim, 'transport_uncertain'), true);
+
+    // create() runs pruning. The expired replay window must not remove the
+    // ambiguous record or its operation-wide duplicate-dispatch fence.
+    assert.equal((await store.create(continuation('retry-token', 'retry-issuance'))).outcome, 'created');
+    assert.equal((await store.claim('retry-token', { claim, expected: binding })).outcome, 'conflict');
+    assert.equal((await store.get('ambiguous-token')).operation.state, 'ambiguous');
   });
 });
 
@@ -3887,7 +5302,7 @@ describe('MediaBuyLifecycleCoordinator mutation boundaries', () => {
     assert.equal(mutations, 0);
   });
 
-  test('v2.5 proposal operations are typed unsupported and revision loss is opt-in', async () => {
+  test('v2.5 products-only proposal reads are supported while proposal mutations remain unsupported', async () => {
     const agent = clientWithCaps(capabilities({ version: '2.5' }));
     let reads = 0;
     const updates = [];
@@ -3900,8 +5315,9 @@ describe('MediaBuyLifecycleCoordinator mutation boundaries', () => {
       return completed('update_media_buy', { media_buy_id: request.media_buy_id });
     };
     const strict = await agent.negotiateMediaBuyLifecycle();
+    const requested = await strict.requestProposals({ brief: 'test' });
+    assert.equal(requested.data.outcome, 'legacy_unavailable');
     for (const operation of [
-      () => strict.requestProposals({ brief: 'test' }),
       () => strict.refineProposals({ refinements: [{ proposal_id: 'p1', action: 'revise', ask: 'test' }] }),
       () => strict.declineProposals({ declines: [{ proposal_id: 'p1', reason: 'other' }] }),
       () => strict.acceptProposal({ account: { account_id: 'account-1' }, proposal_id: 'p1' }),
@@ -3937,7 +5353,7 @@ describe('MediaBuyLifecycleCoordinator mutation boundaries', () => {
       revision: 1,
       paused: true,
     });
-    assert.equal(reads, 0);
+    assert.equal(reads, 1);
     assert.equal(updates.length, 1);
     assert.deepEqual(result.compatibility.losses, ['revision_not_atomic']);
   });
@@ -4906,7 +6322,7 @@ describe('MediaBuyLifecycleCoordinator mutation boundaries', () => {
   });
 
   test('readback fields are gated by the exact established schema version', async () => {
-    for (const version of ['3.0', '3.1', '3.2.0-beta.3']) {
+    for (const version of ['3.0', '3.1', '3.2.0-beta.4']) {
       const tools = version.startsWith('3.2')
         ? [...COMPACT_TOOLS, 'get_media_buys', 'get_media_buy_delivery']
         : undefined;

@@ -190,7 +190,7 @@ describe('parseCapabilitiesResponse', () => {
   test('preserves the release selected for capability discovery', () => {
     const capabilities = parseCapabilitiesResponse({
       adcp_version: '3.1',
-      adcp: { major_versions: [3], supported_versions: ['3.0', '3.1', '3.2-beta.3'] },
+      adcp: { major_versions: [3], supported_versions: ['3.0', '3.1', '3.2-beta.4'] },
       supported_protocols: ['media_buy'],
     });
 

@@ -95,7 +95,7 @@ import { A2AClient as A2AClientImpl } from '@a2a-js/sdk/client';
 // the prior CommonJS `require('@a2a-js/sdk/client')` behaviour.
 const A2AClient: any = A2AClientImpl;
 
-import { TaskExecutor, DeferredTaskError } from './TaskExecutor';
+import { TaskExecutor, BeforeProtocolDispatchHookError, type BeforeProtocolDispatchHook } from './TaskExecutor';
 import { attachMatch } from './match';
 import { withTaskDeadline } from './task-deadline';
 import { createMCPRequestHeaders } from '../auth';
@@ -225,7 +225,7 @@ import {
 import type { CanonicalFormatLegacyResolutionContext, CanonicalFormatLegacyResolver } from '../v2/projection/v2-to-v1';
 import { toCanonicalOnlyResponse } from '../v2/projection/augment-response';
 import { legacyFormatRefsForDeclaration } from '../v2/projection/legacy-metadata';
-import type { V1FormatId, V1Product } from '../v2/projection/types';
+import { isProjectionProductInput, type V1FormatId, type V1Product } from '../v2/projection/types';
 import { canonicalize as canonicalizeJson } from '../utils/jcs';
 
 type ReadRequestOptions = Pick<TaskOptions, 'signal' | 'transport'>;
@@ -238,6 +238,7 @@ const CAPABILITY_DISCOVERY_CONTEXT = Symbol('capabilityDiscoveryContext');
 type InternalReadRequestOptions = ReadRequestOptions & {
   [CAPABILITY_DISCOVERY_CONTEXT]?: CapabilityDiscoveryContext;
 };
+type UnprojectedPreDispatchHook<T> = BeforeProtocolDispatchHook<T>;
 
 function creativeSchemaSupport(value: unknown, depth = 0): CreativeFormatWireMode {
   if (depth > 24 || value === null || typeof value !== 'object') return 'unknown';
@@ -563,15 +564,8 @@ function projectPreparedCanonicalCreativeResponseValue(
   if (!value || typeof value !== 'object') return value;
 
   let projected = value as Record<string, unknown>;
-  const isProduct =
-    typeof projected.product_id === 'string' &&
-    ('name' in projected || 'description' in projected) &&
-    (Array.isArray(projected.format_ids) || Array.isArray(projected.format_options));
-  if (isProduct) {
-    const canonical = toCanonicalOnlyResponse(
-      { products: [projected as unknown as V1Product] },
-      { legacyFormatConverter }
-    );
+  if (isProjectionProductInput(projected)) {
+    const canonical = toCanonicalOnlyResponse({ products: [projected] }, { legacyFormatConverter });
     if (canonical.diagnostics.length > 0 || canonical.response.products.length !== 1) {
       throw new CreativeFormatProjectionError(
         taskType,
@@ -5004,6 +4998,23 @@ export class SingleAgentClient {
     );
   }
 
+  /** @internal Run deterministic legacy-create preflight before the caller atomically claims its mutation. */
+  async createMediaBuyLegacyWithPreDispatch(
+    params: MutatingRequestInput<CreateMediaBuyRequest>,
+    beforeDispatch: UnprojectedPreDispatchHook<CreateMediaBuyResponse>,
+    inputHandler?: InputHandler,
+    options?: CreativeDeliveryTaskOptions
+  ): Promise<TaskResult<CreateMediaBuyResponse>> {
+    return this.executeTaskUnprojected<CreateMediaBuyResponse>(
+      'create_media_buy',
+      params,
+      inputHandler,
+      options,
+      'onCreateMediaBuyStatusChange',
+      beforeDispatch
+    );
+  }
+
   /**
    * Update an existing media buy
    *
@@ -5979,14 +5990,16 @@ export class SingleAgentClient {
     params: any,
     inputHandler?: InputHandler,
     options?: TaskOptions,
-    handlerName?: keyof AsyncHandlerConfig
+    handlerName?: keyof AsyncHandlerConfig,
+    beforeDispatch?: UnprojectedPreDispatchHook<T>
   ): Promise<TaskResult<T>> {
     return withTaskDeadline(options, async effectiveOptions => {
       const result = await this.executeTaskUnprojectedWithinDeadline<T>(
         taskName,
         params,
         inputHandler,
-        effectiveOptions
+        effectiveOptions,
+        beforeDispatch
       );
       if (handlerName) await this.notifyCompletedStatusHandler(result, taskName, handlerName, effectiveOptions);
       return result;
@@ -5997,7 +6010,8 @@ export class SingleAgentClient {
     taskName: string,
     params: any,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: TaskOptions,
+    beforeDispatch?: UnprojectedPreDispatchHook<T>
   ): Promise<TaskResult<T>> {
     throwIfAborted(options?.signal);
     const startTime = Date.now();
@@ -6062,7 +6076,8 @@ export class SingleAgentClient {
         inputHandler,
         effectiveOptions,
         serverVersion,
-        capabilityDiscoveryContext.capabilities
+        capabilityDiscoveryContext.capabilities,
+        beforeDispatch
       );
 
       const postAdapterLogs = [...inputSchemaStripLogs, ...v25DriftLogs];
@@ -6083,6 +6098,7 @@ export class SingleAgentClient {
 
       return result;
     } catch (error) {
+      if (error instanceof BeforeProtocolDispatchHookError) throw error.original;
       // Structured protocol errors carry typed fields (reason, actualVersion,
       // unsupportedFeatures, …) that callers use for recovery decisions. Auth
       // and timeout errors trigger OAuth flows / cancellation. All four are

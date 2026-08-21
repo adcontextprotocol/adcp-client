@@ -141,8 +141,8 @@ const MAX_PATCH_ENUMERATION = 500;
  * Update this when 3.0 reaches EOL — at that point drop the 3.0.x
  * enumeration entirely.
  */
-const LAST_3_0_GA_PATCH = 24;
-const LAST_3_1_GA_PATCH = 15;
+const LAST_3_0_GA_PATCH = 25;
+const LAST_3_1_GA_PATCH = 18;
 
 function withVersionAliases(versions: readonly string[]): string[] {
   const out: string[] = [];

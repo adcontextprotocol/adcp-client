@@ -194,7 +194,13 @@ import {
   resolveCanonicalFormatLegacyRefs,
 } from '../../../v2/projection/v2-to-v1';
 import type { CanonicalFormatLegacyResolver } from '../../../v2/projection/v2-to-v1';
-import type { ProjectionDiagnostic, V1FormatId, V1Product, V2Product } from '../../../v2/projection/types';
+import {
+  isProjectionProductInput,
+  type ProjectionDiagnostic,
+  type V1FormatId,
+  type V1Product,
+  type V2Product,
+} from '../../../v2/projection/types';
 import { legacyFormatRefsForDeclaration } from '../../../v2/projection/legacy-metadata';
 import { canonicalizeAgentUrl } from '../../../discovery/resolve-agent-properties';
 import { ADCP_VERSION } from '../../../version';
@@ -493,16 +499,9 @@ function projectResponseCreativeIdentities(
   // wire.
   const dataRecord = isPlainObject(value) ? value : inspectedRecord;
   let projected: Record<string, unknown> = dataRecord;
-  const isProduct =
-    typeof projected.product_id === 'string' &&
-    ('name' in projected || 'description' in projected) &&
-    (Array.isArray(projected.format_ids) || Array.isArray(projected.format_options));
-  if (isProduct) {
+  if (isProjectionProductInput(projected)) {
     if (wireMode === 'canonical') {
-      const canonical = toCanonicalOnlyResponse(
-        { products: [projected as unknown as V1Product] },
-        { legacyFormatConverter }
-      );
+      const canonical = toCanonicalOnlyResponse({ products: [projected] }, { legacyFormatConverter });
       if (canonical.diagnostics.length > 0 || canonical.response.products.length !== 1) {
         throw new CreativeFormatProjectionError(
           operation,
@@ -512,7 +511,7 @@ function projectResponseCreativeIdentities(
       }
       projected = canonical.response.products[0] as unknown as Record<string, unknown>;
     } else if (Array.isArray(projected.format_options)) {
-      const legacy = projectV2ProductToV1(projected as unknown as V2Product, { canonicalFormatLegacyResolver });
+      const legacy = projectV2ProductToV1(projected, { canonicalFormatLegacyResolver });
       if (legacy.diagnostics.length > 0 || (legacy.v1.format_ids.length === 0 && projected.format_options.length > 0)) {
         throw new CreativeFormatProjectionError(
           operation,
