@@ -343,6 +343,7 @@ const RECORDLESS_HMAC_READ_ONLY_TASKS = new Set([
   'list_creatives',
   'get_media_buys',
   'get_media_buy_delivery',
+  'media_buy_delivery',
   'get_creative_delivery',
   'get_signals',
   'list_accounts',
