@@ -29,6 +29,7 @@ import {
 } from './SingleAgentClient';
 import type { InputHandler, TaskOptions, TaskResult, TaskInfo, Message } from './ConversationTypes';
 import type { BeforeProtocolDispatchHook } from './TaskExecutor';
+import { assertNativeRequestProposalsTask, guardNativeRequestProposalsCompletion } from './request-proposals-guard';
 import type { AdcpCapabilities } from '../utils/capabilities';
 import type { WebhookHeaderValue } from '../webhooks';
 import type {
@@ -404,6 +405,15 @@ export class AgentClient {
     return (this.client as any).executor;
   }
 
+  /** Poll one authoritative server task status for compatibility coordinators. @internal */
+  getTaskStatus(
+    taskId: string,
+    transport?: import('../protocols').TransportOptions,
+    signal?: AbortSignal
+  ): Promise<TaskInfo> {
+    return this.executor.getTaskStatus(this.agent, taskId, transport, signal) as Promise<TaskInfo>;
+  }
+
   /**
    * Returns the AdCP protocol version this client speaks. Mirrors
    * `SingleAgentClient.getAdcpVersion()`. See {@link SingleAgentClientConfig.adcpVersion}.
@@ -683,14 +693,7 @@ export class AgentClient {
       inputHandler,
       this.withSession('request_proposals', options)
     );
-    if (
-      result.data &&
-      (result.data.outcome === 'products_available' || result.data.purchase_continuation !== undefined)
-    ) {
-      throw new TypeError(
-        'request_proposals returned the projection-only products_available outcome from a native compact seller.'
-      );
-    }
+    guardNativeRequestProposalsCompletion(result);
     this.retainSession(result);
     return result;
   }
@@ -1737,7 +1740,7 @@ export class AgentClient {
    * Get active tasks for this agent
    */
   getActiveTasks() {
-    return this.client.getActiveTasks();
+    return this.client.getActiveTasks().map(assertNativeRequestProposalsTask);
   }
 
   // ====== GENERIC TASK EXECUTION ======
@@ -1771,6 +1774,12 @@ export class AgentClient {
     switch (taskName) {
       case 'get_products':
         return this.getProducts(params as CanonicalGetProductsRequest, inputHandler, options);
+      case 'request_proposals':
+        return (await this.requestProposals(
+          params as MutatingRequestInput<RequestProposalsRequest>,
+          inputHandler,
+          options
+        )) as TaskResult<unknown>;
       case 'refine_proposals':
         return (await this.refineProposals(
           params as RefineProposalsInput,
@@ -1851,21 +1860,22 @@ export class AgentClient {
    * List all tasks for this agent
    */
   async listTasks(): Promise<TaskInfo[]> {
-    return this.client.listTasks();
+    return (await this.client.listTasks()).map(assertNativeRequestProposalsTask);
   }
 
   /**
    * Get detailed information about a specific task
    */
   async getTaskInfo(taskId: string): Promise<TaskInfo | null> {
-    return this.client.getTaskInfo(taskId);
+    const task = await this.client.getTaskInfo(taskId);
+    return task ? assertNativeRequestProposalsTask(task) : null;
   }
 
   /**
    * Subscribe to task notifications for this agent
    */
   onTaskUpdate(callback: (task: TaskInfo) => void): () => void {
-    return this.client.onTaskUpdate(callback);
+    return this.client.onTaskUpdate(task => callback(assertNativeRequestProposalsTask(task)));
   }
 
   /**
@@ -1877,7 +1887,15 @@ export class AgentClient {
     onTaskCompleted?: (task: TaskInfo) => void;
     onTaskFailed?: (task: TaskInfo, error: string) => void;
   }): () => void {
-    return this.client.onTaskEvents(callbacks);
+    const safe = (task: TaskInfo): TaskInfo => assertNativeRequestProposalsTask(task);
+    return this.client.onTaskEvents({
+      ...(callbacks.onTaskCreated && { onTaskCreated: task => callbacks.onTaskCreated!(safe(task)) }),
+      ...(callbacks.onTaskUpdated && { onTaskUpdated: task => callbacks.onTaskUpdated!(safe(task)) }),
+      ...(callbacks.onTaskCompleted && { onTaskCompleted: task => callbacks.onTaskCompleted!(safe(task)) }),
+      ...(callbacks.onTaskFailed && {
+        onTaskFailed: (task, error) => callbacks.onTaskFailed!(safe(task), error),
+      }),
+    });
   }
 
   /**

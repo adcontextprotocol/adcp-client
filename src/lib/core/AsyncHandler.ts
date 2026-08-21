@@ -48,7 +48,6 @@ import type {
   SyncCreativesAsyncInputRequired,
   SyncCreativesAsyncSubmitted,
   SyncCreativesAsyncWorking,
-  TaskStatus,
   TaskType,
   UpdateMediaBuyAsyncInputRequired,
   UpdateMediaBuyAsyncSubmitted,
@@ -80,7 +79,7 @@ export interface WebhookMetadata {
   /** Task type/tool name */
   task_type: string;
   /** Task status (completed, failed, needs_input, working, etc) */
-  status: TaskStatus;
+  status: TaskResultMetadata['status'] | 'unknown';
   /** Server's context ID */
   context_id?: string;
   /** Human-readable context about the status change */
@@ -371,6 +370,21 @@ export interface AsyncHandlerConfig {
 export class AsyncHandler {
   constructor(private config: AsyncHandlerConfig) {}
 
+  /** Emit duplicate observability without re-running public result handlers. */
+  async handleDurableSettlementDuplicate(metadata: WebhookMetadata): Promise<void> {
+    await this.emitActivity({
+      type: 'webhook_duplicate',
+      operation_id: metadata.operation_id,
+      agent_id: metadata.agent_id,
+      context_id: metadata.context_id,
+      task_id: metadata.task_id,
+      task_type: metadata.task_type,
+      status: metadata.status,
+      idempotency_key: metadata.idempotency_key,
+      timestamp: metadata.timestamp,
+    });
+  }
+
   /**
    * Handle incoming webhook payload (both task completions and notifications)
    */
@@ -409,7 +423,7 @@ export class AsyncHandler {
       task_id: metadata.task_id,
       task_type: metadata.task_type,
       status: metadata.status,
-      payload: metadata.rawHTTPPayload?.result ?? result,
+      payload: result,
       timestamp: metadata.timestamp,
     });
 

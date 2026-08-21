@@ -5,7 +5,21 @@ import type {
   CompatibleRequestProposalsResponse,
   EstablishedProductsWireResponse,
   MediaBuyLifecycleCoordinator,
+  RequestProposalsResponse,
 } from '../lib';
+
+type ProductsAvailableResponse = Extract<RequestProposalsResponse, { outcome: 'products_available' }>;
+type RequestContinuation = RequestProposalsResponse['purchase_continuation'];
+type IsNonEmpty<T> = T extends readonly [unknown, ...unknown[]] ? true : false;
+declare const productsAvailableResponse: ProductsAvailableResponse;
+const projectedProductId: string = productsAvailableResponse.products[0]!.product_id;
+const continuationKind: 'listed_purchase' | 'legacy_create' = productsAvailableResponse.purchase_continuation.kind;
+const productsStayNonEmpty: IsNonEmpty<ProductsAvailableResponse['products']> = true;
+declare const requestContinuation: RequestContinuation;
+void projectedProductId;
+void continuationKind;
+void productsStayNonEmpty;
+void requestContinuation;
 
 declare const products: CompatibleProductsResponse;
 const productId: string | undefined = products.products?.[0]?.product_id;
@@ -23,6 +37,12 @@ const requestedProposalId: string | undefined = requested.proposals?.[0]?.propos
 void requestOutcome;
 void requestedProposalId;
 void requested.raw.context;
+if (requested.outcome === 'products_available') {
+  const continuation = requested.purchase_continuation;
+  const firstProjectedProductId: string = requested.products[0]!.product_id;
+  void continuation;
+  void firstProjectedProductId;
+}
 
 declare const refined: CompatibleRefineProposalsResponse;
 for (const result of refined.results ?? []) {

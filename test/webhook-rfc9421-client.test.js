@@ -103,6 +103,25 @@ function makeResponse() {
   };
 }
 
+test('webhook registrations persist durable-settlement routing provenance', async () => {
+  const store = new InMemoryWebhookRegistrationStore();
+  await store.putIfAbsent({
+    agentId: agent.id,
+    agentUrl: agent.agent_uri,
+    protocol: agent.protocol,
+    operationId: 'op-durable-settlement-marker',
+    taskType: 'create_media_buy',
+    callbackUrl: 'https://buyer.example/webhooks/create_media_buy/op-durable-settlement-marker',
+    method: 'POST',
+    mode: 'rfc9421',
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 60_000,
+  });
+
+  await store.markRequiresDurableSettlement(agent.id, 'op-durable-settlement-marker');
+  assert.equal((await store.get(agent.id, 'op-durable-settlement-marker')).requiresDurableSettlement, true);
+});
+
 describe('SingleAgentClient RFC 9421 webhook receiver', () => {
   test('verifies the registered seller, public URL, and exact raw bytes', async () => {
     const { client, callbackUrl, signer } = await registeredRfcClient();
@@ -245,7 +264,7 @@ describe('SingleAgentClient RFC 9421 webhook receiver', () => {
     assert.strictEqual(substituted.code, 'webhook_mode_mismatch');
   });
 
-  test('preserves recordless legacy HMAC compatibility after restart or replica changes', async () => {
+  test('preserves recordless legacy HMAC compatibility only for explicitly read-only tasks', async () => {
     const secret = 'legacy-secret';
     const unavailableStore = {
       async get() {
@@ -259,15 +278,52 @@ describe('SingleAgentClient RFC 9421 webhook receiver', () => {
       webhookSecret: secret,
       webhookRegistrationStore: unavailableStore,
     });
-    const rawBody = JSON.stringify(envelope({ operation_id: 'unregistered-operation' }));
+    const rawBody = JSON.stringify(envelope({ operation_id: 'unregistered-operation', task_type: 'list_products' }));
     const headers = hmacHeaders(rawBody, secret);
     const verified = await client.verifyAndParseWebhook({
       rawBody,
       headers,
-      taskType: 'get_products',
+      taskType: 'list_products',
       operationId: 'unregistered-operation',
     });
     assert.strictEqual(verified.ok, true);
+
+    const mutatingRawBody = JSON.stringify(
+      envelope({
+        operation_id: 'unregistered-mutation',
+        task_type: 'create_media_buy',
+        result: { media_buy_id: 'must-not-dispatch' },
+      })
+    );
+    const mutatingVerified = await client.verifyAndParseWebhook({
+      rawBody: mutatingRawBody,
+      headers: hmacHeaders(mutatingRawBody, secret),
+      taskType: 'create_media_buy',
+      operationId: 'unregistered-mutation',
+    });
+    assert.strictEqual(mutatingVerified.ok, false);
+    assert.strictEqual(mutatingVerified.code, 'webhook_registration_store_unavailable');
+
+    const recoveredStoreClient = new SingleAgentClient(agent, {
+      webhookSecret: secret,
+      webhookRegistrationStore: {
+        async get() {
+          return undefined;
+        },
+        async putIfAbsent() {},
+      },
+    });
+    for (const taskType of ['create_media_buy', 'get_products', 'extension_task']) {
+      const missingRawBody = JSON.stringify(envelope({ operation_id: `missing-${taskType}`, task_type: taskType }));
+      const missing = await recoveredStoreClient.verifyAndParseWebhook({
+        rawBody: missingRawBody,
+        headers: hmacHeaders(missingRawBody, secret),
+        taskType,
+        operationId: `missing-${taskType}`,
+      });
+      assert.strictEqual(missing.ok, false);
+      assert.strictEqual(missing.code, 'webhook_registration_store_unavailable');
+    }
 
     const registrationBase = {
       agent,
@@ -305,6 +361,41 @@ describe('webhook registration provenance', () => {
       /different trusted provenance/
     );
     await assert.rejects(store.putIfAbsent({ ...registration, previewMode: 'legacy' }), /different trusted provenance/);
+    await assert.rejects(
+      store.putIfAbsent({
+        ...registration,
+        operationId: 'op-agent-userinfo',
+        agentUrl: 'https://seller-user:secret@seller.example/mcp',
+      }),
+      /userinfo credentials/
+    );
+  });
+
+  test('strips seller URL userinfo before durable webhook registration', async () => {
+    let persisted;
+    const client = new SingleAgentClient(
+      { ...agent, agent_uri: 'https://seller-user:secret@seller.example/mcp#fragment' },
+      {
+        webhookSecret: 'legacy-secret',
+        webhookRegistrationStore: {
+          async get() {
+            return undefined;
+          },
+          async putIfAbsent(registration) {
+            persisted = registration;
+          },
+        },
+      }
+    );
+    await client.persistWebhookRegistration({
+      agent: { ...agent, agent_uri: 'https://seller-user:secret@seller.example/mcp#fragment' },
+      taskType: 'get_products',
+      operationId: 'op-sanitized-agent-url',
+      callbackUrl: 'https://buyer.example/webhook/op-sanitized-agent-url',
+      mode: 'hmac-sha256',
+    });
+    assert.strictEqual(persisted.agentUrl, 'https://seller.example/mcp');
+    assert.strictEqual(JSON.stringify(persisted).includes('secret'), false);
   });
 
   test('TaskExecutor persists the single prepared call before dispatch', async () => {
@@ -347,6 +438,121 @@ describe('webhook registration provenance', () => {
     } finally {
       ProtocolClient.callTool = original;
     }
+  });
+
+  test('does not claim or dispatch after timing out while the durable marker is pending', async () => {
+    const original = ProtocolClient.callTool;
+    let markStarted;
+    const markerStarted = new Promise(resolve => {
+      markStarted = resolve;
+    });
+    let releaseMarker;
+    const markerRelease = new Promise(resolve => {
+      releaseMarker = resolve;
+    });
+    let claims = 0;
+    let dispatches = 0;
+    ProtocolClient.callTool = async () => {
+      dispatches += 1;
+      return { status: 'completed', result: {} };
+    };
+    try {
+      const executor = new TaskExecutor({
+        webhookUrlTemplate: 'https://buyer.example/webhook/{operation_id}',
+        agentId: agent.id,
+        onWebhookRegistration: async () => {},
+        onDurableSettlementRequired: async () => {
+          markStarted();
+          await markerRelease;
+        },
+        validation: { requests: 'off', responses: 'off' },
+      });
+      const execution = executor.executeTask(
+        agent,
+        'create_media_buy',
+        { idempotency_key: 'marker-timeout-before-claim' },
+        undefined,
+        { timeout: 10 },
+        'v3',
+        undefined,
+        async () => {
+          claims += 1;
+          return { action: 'dispatch_committed' };
+        }
+      );
+      await markerStarted;
+      await assert.rejects(execution, error => error?.name === 'TaskTimeoutError');
+      releaseMarker();
+      await new Promise(resolve => setImmediate(resolve));
+      assert.strictEqual(claims, 0);
+      assert.strictEqual(dispatches, 0);
+    } finally {
+      ProtocolClient.callTool = original;
+    }
+  });
+
+  test('custom durable stores must implement the pre-claim settlement marker', async () => {
+    const original = ProtocolClient.callTool;
+    let claims = 0;
+    let dispatches = 0;
+    ProtocolClient.callTool = async () => {
+      dispatches += 1;
+      return { status: 'completed', result: {} };
+    };
+    try {
+      const client = new SingleAgentClient(agent, {
+        webhookUrlTemplate: 'https://buyer.example/webhook/{operation_id}',
+        webhookSecret: 'legacy-secret',
+        webhookRegistrationStore: {
+          async get() {
+            return undefined;
+          },
+          async putIfAbsent() {},
+        },
+        validation: { requests: 'off', responses: 'off' },
+      });
+      await assert.rejects(
+        client.executor.executeTask(
+          agent,
+          'create_media_buy',
+          { idempotency_key: 'missing-marker-contract' },
+          undefined,
+          {},
+          'v3',
+          undefined,
+          async () => {
+            claims += 1;
+            return { action: 'dispatch_committed' };
+          }
+        ),
+        error => /must implement markRequiresDurableSettlement/.test(error?.cause?.message ?? '')
+      );
+      assert.strictEqual(claims, 0);
+      assert.strictEqual(dispatches, 0);
+    } finally {
+      ProtocolClient.callTool = original;
+    }
+  });
+
+  test('webhook HTTP helpers do not reflect arbitrary infrastructure errors', async () => {
+    const client = new SingleAgentClient(agent, {
+      allowUnauthenticatedWebhooks: true,
+      onActivity: () => {
+        throw new Error('database password appeared in an internal failure');
+      },
+    });
+    const handler = client.createWebhookHandler();
+    const response = makeResponse();
+    await handler(
+      {
+        body: envelope({ operation_id: 'op-generic-http-error' }),
+        params: { task_type: 'get_products', operation_id: 'op-generic-http-error' },
+      },
+      response
+    );
+    assert.strictEqual(response.statusCode, 500);
+    assert.strictEqual(response.body.error, 'Webhook could not be processed.');
+    assert.strictEqual(JSON.stringify(response.body).includes('password'), false);
   });
 
   test('prepares MCP and A2A placement exactly and never treats reporting_webhook as task registration', async () => {

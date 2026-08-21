@@ -123,6 +123,8 @@ app.post(
 
 The default registration and replay stores are process-local. Production receivers that can restart or run multiple replicas must inject a shared durable `webhookRegistrationStore` and `webhookVerification.replayStore`; registration writes must be atomic create-or-identical, and replay insertion must be atomic across replicas. Retain registrations for at least the seller retry horizon (seven days by default).
 
+Custom registration stores used by durability-protected mutation flows must also implement `markRequiresDurableSettlement(agentId, operationId)` as an atomic update of the live registration. The SDK calls this after registration but before claiming or dispatching the mutation. If the method is absent or the update fails, dispatch fails closed.
+
 For deterministic tests or infrastructure-managed keys, set `webhookVerification.jwks`. Otherwise seller key discovery is automatic and uses an unauthenticated official protocol client for the capabilities step, so credentials configured for one endpoint are never transplanted to the registered callback origin. Sellers whose capability discovery requires authentication should provide an origin-bound `webhookVerification.fetchCapabilities(agentUrl, protocol)` callback or inject `webhookVerification.jwks` directly.
 
 ### Legacy HMAC-SHA256
@@ -132,7 +134,7 @@ When `webhookSecret` is configured, the legacy webhook authentication path uses 
 - `x-adcp-signature: sha256=<hex digest>`
 - `x-adcp-timestamp: <unix seconds>`
 
-HMAC registration provenance never stores the credential or a secret-derived fingerprint. The configured global `webhookSecret` remains the verification key, preserving the established behavior across process restarts and replicas. If the optional registration store is unavailable, HMAC dispatch and verification continue; RFC 9421 dispatch fails closed because seller-pinned provenance is required for safe verification.
+HMAC registration provenance never stores the credential or a secret-derived fingerprint. The configured global `webhookSecret` remains the verification key. Recordless fallback is limited to an explicit set of read-only tasks; mutations, unknown extensions, and `get_products` (which has a state-changing legacy finalization variant) require a live trusted registration and fail closed when registration state is missing or unavailable. RFC 9421 always fails closed without seller-pinned provenance.
 
 Capture the raw request body before JSON parsing and verify it with the SDK helper:
 

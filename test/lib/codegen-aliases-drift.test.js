@@ -62,6 +62,6 @@ describe('Codegen drift guard: numbered Foo1 exports must be aliased', () => {
     const src = readFileSync(CORE_GENERATED_PATH, 'utf8');
 
     assert.doesNotMatch(src, /export type TaskStatus2\b/);
-    assert.match(src, /outcome: 'rejected';\n\s+status\?: 'completed';/);
+    assert.match(src, /outcome: 'rejected';[\s\S]{0,1200}?status\?: 'completed';/);
   });
 });
