@@ -722,6 +722,27 @@ describe('canonical creative asynchronous boundaries', () => {
     const storage = {
       get: async key => stored.get(key),
       set: async (key, value) => stored.set(key, value),
+      putIfAbsent: async (key, value) => {
+        if (stored.has(key)) return false;
+        stored.set(key, value);
+        return true;
+      },
+      replaceIfVersion: async (key, expectedVersion, value) => {
+        if (stored.get(key)?.continuationVersion !== expectedVersion) return false;
+        stored.set(key, value);
+        return true;
+      },
+      takeIfVersion: async (key, expectedVersion) => {
+        const value = stored.get(key);
+        if (value?.continuationVersion !== expectedVersion) return undefined;
+        stored.delete(key);
+        return value;
+      },
+      take: async key => {
+        const value = stored.get(key);
+        stored.delete(key);
+        return value;
+      },
       delete: async key => stored.delete(key),
       has: async key => stored.has(key),
     };
@@ -731,6 +752,10 @@ describe('canonical creative asynchronous boundaries', () => {
       agent_uri: 'https://seller.example/a2a',
       protocol: 'a2a',
     };
+    let deeplyNestedSecret = { auth_token: 'over-depth-deferred-secret' };
+    for (let depth = 0; depth < 260; depth += 1) {
+      deeplyNestedSecret = { next: deeplyNestedSecret };
+    }
     try {
       ProtocolClient.callTool = mock.fn(async (_agent, _taskName, params, options) => {
         if (Object.hasOwn(params, 'input')) {
@@ -755,7 +780,11 @@ describe('canonical creative asynchronous boundaries', () => {
                 parts: [
                   {
                     kind: 'data',
-                    data: { question: 'Approve this media buy?', field: 'approval' },
+                    data: {
+                      question: 'Approve this media buy?',
+                      field: 'approval',
+                      credentials: { private_key: 'message-private-key' },
+                    },
                   },
                 ],
               },
@@ -771,14 +800,44 @@ describe('canonical creative asynchronous boundaries', () => {
       const request = {
         creatives: [{ assets: { hero: { data: `deferred-inline-${'x'.repeat(128 * 1024)}` } } }],
         reporting_webhook: { authentication: { credentials: 'deferred-webhook-secret' } },
+        asset_access: {
+          credentials: {
+            private_key: 'params-private-key',
+            secretAccessKey: 'params-aws-secret',
+          },
+        },
+        extension: deeplyNestedSecret,
+        property_list: {
+          agent_url: 'https://property-list.example/mcp',
+          list_id: 'private-list',
+          auth_token: 'deferred-property-token',
+        },
       };
-      const deferred = await executor.executeTask(pauseAgent, 'create_media_buy', request, async () => ({
-        defer: true,
-        token: 'deferred-token',
-      }));
+      const deferred = await executor.executeTask(
+        pauseAgent,
+        'create_media_buy',
+        request,
+        async () => ({ defer: true, token: 'deferred-token' }),
+        {},
+        'v3',
+        undefined,
+        undefined,
+        {
+          productPolicyRequest: { property_list: { auth_token: 'deferred-client-context-token' } },
+          credentials: { private_key: 'client-context-private-key' },
+        }
+      );
       assert.equal(deferred.status, 'deferred');
       assert.equal(stored.has('deferred-token'), true);
-      assert.match(JSON.stringify(stored.get('deferred-token')), /deferred-webhook-secret/);
+      assert.doesNotMatch(JSON.stringify(stored.get('deferred-token')), /deferred-webhook-secret/);
+      assert.doesNotMatch(JSON.stringify(stored.get('deferred-token')), /deferred-property-token/);
+      assert.doesNotMatch(JSON.stringify(stored.get('deferred-token')), /deferred-client-context-token/);
+      assert.doesNotMatch(
+        JSON.stringify(stored.get('deferred-token')),
+        /params-private-key|params-aws-secret|message-private-key|client-context-private-key|over-depth-deferred-secret/
+      );
+      assert.match(JSON.stringify(stored.get('deferred-token')), /\[redacted\]/);
+      assert.match(JSON.stringify(stored.get('deferred-token')), /\[Truncated\]/);
 
       const resumed = await deferred.deferred.resume('approved');
       assert.equal(continuing, true);
@@ -794,9 +853,23 @@ describe('canonical creative asynchronous boundaries', () => {
       const rejectingStorage = {
         get: async key => rejectingStored.get(key),
         set: async (key, value) => rejectingStored.set(key, value),
-        delete: async () => {
+        putIfAbsent: async (key, value) => {
+          if (rejectingStored.has(key)) return false;
+          rejectingStored.set(key, value);
+          return true;
+        },
+        replaceIfVersion: async (key, expectedVersion, value) => {
+          if (rejectingStored.get(key)?.continuationVersion !== expectedVersion) return false;
+          rejectingStored.set(key, value);
+          return true;
+        },
+        takeIfVersion: async () => {
           throw new Error('deferred delete failed');
         },
+        take: async () => {
+          throw new Error('deferred delete failed');
+        },
+        delete: async key => rejectingStored.delete(key),
         has: async key => rejectingStored.has(key),
       };
       const rejectingExecutor = new TaskExecutor({
@@ -811,6 +884,8 @@ describe('canonical creative asynchronous boundaries', () => {
       );
       await assert.rejects(rejectingDeferred.deferred.resume('approved'), /deferred delete failed/);
       const rejectingActive = rejectingExecutor.getActiveTasks()[0];
+      // The seller completed, but removing the claimed fence failed. The
+      // local task fails closed and the claimed generation remains durable.
       assert.equal(rejectingActive.status, 'failed');
       assert.equal(rejectingActive.params, undefined);
       assert.deepEqual(rejectingActive.messages, []);
@@ -1316,43 +1391,67 @@ describe('canonical creative asynchronous boundaries', () => {
       { onActivity: activity => activities.push(activity) }
     );
 
-    await client.createMediaBuy({
-      account: { account_id: 'activity-account' },
-      brand: { domain: 'brand.example' },
-      start_time: 'asap',
-      end_time: '2027-12-31T00:00:00Z',
-      idempotency_key: 'custom-activity-idempotency',
-      reporting_webhook: {
-        url: 'https://buyer.example/reporting',
-        authentication: { schemes: ['HMAC-SHA256'], credentials: webhookCredential },
-        reporting_frequency: 'daily',
-      },
-      packages: [
-        {
-          product_id: 'custom-product',
-          budget: 1000,
-          pricing_option_id: 'custom-cpm',
-          ...selected,
-          creatives: [
-            {
-              creative_id: 'custom-activity-creative',
-              name: 'Custom activity creative',
-              format_kind: 'custom',
-              format_option_ref: selected.format_option_refs[0],
-              assets: {
-                hero: {
-                  asset_type: 'image',
-                  url: 'https://cdn.example.com/hero.png',
-                  width: 300,
-                  height: 250,
-                  alt_text: inlineAssetPayload,
+    await client.createMediaBuy(
+      {
+        account: { account_id: 'activity-account' },
+        brand: { domain: 'brand.example' },
+        start_time: 'asap',
+        end_time: '2027-12-31T00:00:00Z',
+        idempotency_key: 'custom-activity-idempotency',
+        reporting_webhook: {
+          url: 'https://buyer.example/reporting',
+          authentication: { schemes: ['HMAC-SHA256'], credentials: webhookCredential },
+          reporting_frequency: 'daily',
+        },
+        packages: [
+          {
+            product_id: 'custom-product',
+            budget: 1000,
+            pricing_option_id: 'custom-cpm',
+            ...selected,
+            creatives: [
+              {
+                creative_id: 'custom-activity-creative',
+                name: 'Custom activity creative',
+                format_kind: 'custom',
+                format_option_ref: selected.format_option_refs[0],
+                assets: {
+                  hero: {
+                    asset_type: 'image',
+                    url: 'https://cdn.example.com/hero.png',
+                    width: 300,
+                    height: 250,
+                    alt_text: inlineAssetPayload,
+                  },
                 },
               },
-            },
-          ],
-        },
-      ],
-    });
+            ],
+          },
+        ],
+      },
+      undefined,
+      {
+        canonicalFormatLegacyResolver: () => customLegacyFormat,
+        projectionCatalogs: [
+          {
+            source: 'configured',
+            formats: [
+              {
+                format_option_id: 'homepage-takeover',
+                format_kind: 'custom',
+                format_shape: 'homepage_takeover',
+                format_schema: {
+                  uri: 'https://seller.example/formats/homepage-takeover.json',
+                  digest: `sha256:${'a'.repeat(64)}`,
+                },
+                params: {},
+                v1_format_ref: [customLegacyFormat],
+              },
+            ],
+          },
+        ],
+      }
+    );
 
     assert.ok(activities[0]?.payload?.params, JSON.stringify(activities));
     const observed = activities[0].payload.params.packages[0].creatives[0];

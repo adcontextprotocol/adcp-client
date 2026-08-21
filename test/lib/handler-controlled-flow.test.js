@@ -110,6 +110,27 @@ describe(
         const mockStorage = new Map();
         const storageInterface = {
           set: mock.fn(async (key, value) => mockStorage.set(key, value)),
+          putIfAbsent: mock.fn(async (key, value) => {
+            if (mockStorage.has(key)) return false;
+            mockStorage.set(key, value);
+            return true;
+          }),
+          replaceIfVersion: mock.fn(async (key, expectedVersion, value) => {
+            if (mockStorage.get(key)?.continuationVersion !== expectedVersion) return false;
+            mockStorage.set(key, value);
+            return true;
+          }),
+          takeIfVersion: mock.fn(async (key, expectedVersion) => {
+            const value = mockStorage.get(key);
+            if (value?.continuationVersion !== expectedVersion) return undefined;
+            mockStorage.delete(key);
+            return value;
+          }),
+          take: mock.fn(async key => {
+            const value = mockStorage.get(key);
+            mockStorage.delete(key);
+            return value;
+          }),
           get: mock.fn(async key => mockStorage.get(key)),
           delete: mock.fn(async key => mockStorage.delete(key)),
         };

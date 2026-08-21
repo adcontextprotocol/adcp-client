@@ -281,6 +281,27 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
       const mockStorage = new Map();
       const storageInterface = {
         set: mock.fn(async (key, value) => mockStorage.set(key, value)),
+        putIfAbsent: mock.fn(async (key, value) => {
+          if (mockStorage.has(key)) return false;
+          mockStorage.set(key, value);
+          return true;
+        }),
+        replaceIfVersion: mock.fn(async (key, expectedVersion, value) => {
+          if (mockStorage.get(key)?.continuationVersion !== expectedVersion) return false;
+          mockStorage.set(key, value);
+          return true;
+        }),
+        takeIfVersion: mock.fn(async (key, expectedVersion) => {
+          const value = mockStorage.get(key);
+          if (value?.continuationVersion !== expectedVersion) return undefined;
+          mockStorage.delete(key);
+          return value;
+        }),
+        take: mock.fn(async key => {
+          const value = mockStorage.get(key);
+          mockStorage.delete(key);
+          return value;
+        }),
         get: mock.fn(async key => mockStorage.get(key)),
         delete: mock.fn(async key => mockStorage.delete(key)),
         clear: mock.fn(async () => mockStorage.clear()),
@@ -328,14 +349,14 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
       // Deferred is a valid intermediate state - success: true
       assert.strictEqual(result.success, true);
       assert.strictEqual(result.status, 'deferred');
-      assert.strictEqual(storageInterface.set.mock.callCount(), 1);
+      assert.strictEqual(storageInterface.putIfAbsent.mock.callCount(), 1);
 
       // Verify stored data structure
-      const [token, storedState] = storageInterface.set.mock.calls[0].arguments;
+      const [token, storedState] = storageInterface.putIfAbsent.mock.calls[0].arguments;
       assert.strictEqual(token, 'TEST_STORAGE_TOKEN_PLACEHOLDER');
       assert.strictEqual(storedState.taskName, 'storageTask');
       assert.deepStrictEqual(storedState.params, { testData: 'storage-test' });
-      assert.strictEqual(storedState.agent.id, 'mock-agent');
+      assert.strictEqual(storedState.agentId, 'mock-agent');
 
       // Test resumption
       const resumeResult = await result.deferred.resume('resumed-value');
@@ -347,6 +368,18 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
 
     test('should handle storage failures gracefully', async () => {
       const failingStorage = {
+        putIfAbsent: mock.fn(async () => {
+          throw new Error('Storage unavailable');
+        }),
+        replaceIfVersion: mock.fn(async () => {
+          throw new Error('Storage unavailable');
+        }),
+        takeIfVersion: mock.fn(async () => {
+          throw new Error('Storage unavailable');
+        }),
+        take: mock.fn(async () => {
+          throw new Error('Storage unavailable');
+        }),
         set: mock.fn(async () => {
           throw new Error('Storage unavailable');
         }),

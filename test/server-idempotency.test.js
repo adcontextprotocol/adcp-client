@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const { createAdcpServer: _createAdcpServer } = require('../dist/lib/server/create-adcp-server');
 const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/idempotency');
+const { adcpError } = require('../dist/lib/server/errors');
 
 // Idempotency tests use sparse handler fixtures; opt out of the strict
 // response-validation default so we stay focused on replay/claim behavior.
@@ -816,6 +817,42 @@ describe('createAdcpServer with idempotency', () => {
         'in-flight branch must carry a retry_after hint'
       );
     }
+  });
+
+  it('fails closed when a thrown handler error cannot release its idempotency claim', async () => {
+    const idempotency = {
+      ttlSeconds: 3600,
+      capability: () => ({ replay_ttl_seconds: 3600 }),
+      check: async () => ({
+        kind: 'miss',
+        payloadHash: 'request-payload-hash',
+        claimToken: '__adcp_in_flight__:request-payload-hash:owner',
+      }),
+      renew: async () => {},
+      save: async () => {},
+      release: async () => {
+        throw new Error('idempotency backend unavailable');
+      },
+    };
+    const server = createAdcpServer({
+      name: 'Release failure seller',
+      version: '1.0.0',
+      idempotency,
+      resolveSessionKey: () => 'tenant',
+      mediaBuy: {
+        createMediaBuy: async () => {
+          throw adcpError('RATE_LIMITED', { message: 'retryable domain error', retry_after: 1 });
+        },
+      },
+    });
+
+    const result = await callTool(server, 'create_media_buy', {
+      ...basePayload,
+      idempotency_key: 'release_failure_abcdefgh',
+    });
+
+    assert.equal(result.adcp_error?.code, 'SERVICE_UNAVAILABLE');
+    assert.notEqual(result.adcp_error?.code, 'RATE_LIMITED');
   });
 
   it('keeps a long-running handler fenced beyond the working-response timeout', async t => {

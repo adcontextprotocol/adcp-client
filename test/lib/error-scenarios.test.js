@@ -498,6 +498,18 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
   describe('Resource Exhaustion Scenarios', () => {
     test('should handle storage failures in deferred tasks', async () => {
       const failingStorage = {
+        putIfAbsent: mock.fn(async () => {
+          throw new Error('Storage quota exceeded');
+        }),
+        replaceIfVersion: mock.fn(async () => {
+          throw new Error('Storage unavailable');
+        }),
+        takeIfVersion: mock.fn(async () => {
+          throw new Error('Storage unavailable');
+        }),
+        take: mock.fn(async () => {
+          throw new Error('Storage unavailable');
+        }),
         set: mock.fn(async () => {
           throw new Error('Storage quota exceeded');
         }),

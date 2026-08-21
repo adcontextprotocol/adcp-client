@@ -319,6 +319,9 @@ export type InProcessAgentClientConfig = Pick<
   | 'workingTimeout'
   | 'defaultMaxClarifications'
   | 'persistConversations'
+  | 'deferredStorage'
+  | 'resolveDeferredAgent'
+  | 'deferredTaskTtlSeconds'
 > & {
   /**
    * Human-readable name for this agent, used in debug logs and

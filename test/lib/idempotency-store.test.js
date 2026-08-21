@@ -122,6 +122,18 @@ describe('createIdempotencyStore', () => {
       assert.equal(result.kind, 'conflict');
     });
 
+    it('returns conflict immediately when an active claim has a different payload', async () => {
+      const store = makeStore();
+      const first = await store.check({ principal: 'p1', key: 'active-key', payload: { budget: 5000 } });
+      assert.equal(first.kind, 'miss');
+
+      const exactRetry = await store.check({ principal: 'p1', key: 'active-key', payload: { budget: 5000 } });
+      const changedRetry = await store.check({ principal: 'p1', key: 'active-key', payload: { budget: 9999 } });
+
+      assert.equal(exactRetry.kind, 'in-flight');
+      assert.equal(changedRetry.kind, 'conflict');
+    });
+
     it('treats missing-vs-explicit-null as different payloads', async () => {
       const store = makeStore();
       const p1 = { budget: 5000, coupon: null };
@@ -275,6 +287,83 @@ describe('createIdempotencyStore', () => {
       const result = await store.check({ principal: 'p', key: 'k', payload });
       assert.equal(result.kind, 'replay');
     });
+
+    it('keeps just-expired in-flight claims fenced through clock skew', async () => {
+      const backend = memoryBackend({ sweepIntervalMs: 0 });
+      const store = createIdempotencyStore({ backend, ttlSeconds: 3600, clockSkewSeconds: 60 });
+      const payload = { budget: 42 };
+      const hash = hashPayload(payload);
+      const expiresAt = Math.floor(Date.now() / 1000) - 30;
+      await backend.put('p\u001fclaim-skew', {
+        payloadHash: `__adcp_in_flight__:${hash}:owner`,
+        response: null,
+        expiresAt,
+        retainUntil: expiresAt + 60,
+      });
+
+      const result = await store.check({ principal: 'p', key: 'claim-skew', payload });
+      assert.equal(result.kind, 'in-flight');
+      assert.equal((await backend.get('p\u001fclaim-skew')).expiresAt, expiresAt);
+    });
+
+    it('persists a physical retention horizon through the configured clock-skew window', async () => {
+      const backend = memoryBackend({ sweepIntervalMs: 0 });
+      const store = createIdempotencyStore({ backend, ttlSeconds: 3600, clockSkewSeconds: 90 });
+      const payload = { budget: 42 };
+      const claim = await store.check({ principal: 'p', key: 'retention-key', payload });
+      await store.save({
+        principal: 'p',
+        key: 'retention-key',
+        payloadHash: claim.payloadHash,
+        claimToken: claim.claimToken,
+        response: { media_buy_id: 'retained-buy' },
+      });
+
+      const persisted = await backend.get('p\u001fretention-key');
+      assert.equal(persisted.retainUntil - persisted.expiresAt, 90);
+    });
+
+    it('retains transient failures through the configured clock-skew horizon', async () => {
+      const backend = memoryBackend({ sweepIntervalMs: 0 });
+      const store = createIdempotencyStore({ backend, ttlSeconds: 3600, clockSkewSeconds: 90 });
+      const claim = await store.check({ principal: 'p', key: 'transient-retention-key', payload: { budget: 42 } });
+      await store.saveTransientError({
+        principal: 'p',
+        key: 'transient-retention-key',
+        payloadHash: claim.payloadHash,
+        claimToken: claim.claimToken,
+        response: { error: 'temporary' },
+      });
+
+      const persisted = await backend.get('p\u001ftransient-retention-key');
+      assert.equal(persisted.retainUntil - persisted.expiresAt, 90);
+    });
+
+    it('memory sweeping preserves entries until the physical retention horizon', async () => {
+      const originalNow = Date.now;
+      let nowMs = originalNow();
+      Date.now = () => nowMs;
+      const backend = memoryBackend({ sweepIntervalMs: 5 });
+      try {
+        const nowSeconds = Math.floor(nowMs / 1000);
+        await backend.put('retained-through-skew', {
+          payloadHash: 'hash',
+          response: { media_buy_id: 'retained-buy' },
+          expiresAt: nowSeconds - 1,
+          retainUntil: nowSeconds + 60,
+        });
+
+        await new Promise(resolve => setTimeout(resolve, 20));
+        assert.ok(await backend.get('retained-through-skew'));
+
+        nowMs += 61_000;
+        await new Promise(resolve => setTimeout(resolve, 20));
+        assert.equal(await backend.get('retained-through-skew'), null);
+      } finally {
+        Date.now = originalNow;
+        await backend.close();
+      }
+    });
   });
 
   describe('capability()', () => {
@@ -286,6 +375,45 @@ describe('createIdempotencyStore', () => {
 });
 
 describe('createLazyBackend', () => {
+  it('exposes declared legacy retention grace for synchronous store validation', () => {
+    const backend = createLazyBackend(async () => memoryBackend({ sweepIntervalMs: 0 }), {
+      legacyRetentionGraceSeconds: 60,
+    });
+    assert.throws(
+      () => createIdempotencyStore({ backend, clockSkewSeconds: 120 }),
+      /legacy retention grace \(60s\) must be at least clockSkewSeconds \(120s\)/
+    );
+  });
+
+  it('rejects an unsafe resolved backend even when its grace was not known at construction', async () => {
+    const backend = createLazyBackend(async () => ({
+      ...memoryBackend({ sweepIntervalMs: 0 }),
+      legacyRetentionGraceSeconds: 60,
+    }));
+    createIdempotencyStore({ backend, clockSkewSeconds: 120 });
+    await assert.rejects(
+      () => backend.get('p\u001fk'),
+      error =>
+        error?.cause?.message ===
+        'createLazyBackend: resolved backend legacy retention grace (60s) must be at least clockSkewSeconds (120s).'
+    );
+  });
+
+  it('retains the largest skew required by stores sharing one unresolved backend', async () => {
+    const backend = createLazyBackend(async () => ({
+      ...memoryBackend({ sweepIntervalMs: 0 }),
+      legacyRetentionGraceSeconds: 60,
+    }));
+    createIdempotencyStore({ backend, clockSkewSeconds: 120 });
+    createIdempotencyStore({ backend, clockSkewSeconds: 0 });
+    await assert.rejects(
+      () => backend.get('p\u001fk'),
+      error =>
+        error?.cause?.message ===
+        'createLazyBackend: resolved backend legacy retention grace (60s) must be at least clockSkewSeconds (120s).'
+    );
+  });
+
   it('resolves the backend on first operation', async () => {
     let calls = 0;
     const inner = memoryBackend({ sweepIntervalMs: 0 });
@@ -302,6 +430,7 @@ describe('createLazyBackend', () => {
       payloadHash: 'hash',
       response: { ok: true },
       expiresAt,
+      retainUntil: expiresAt,
     });
   });
 
@@ -318,7 +447,8 @@ describe('createLazyBackend', () => {
       return inner;
     });
 
-    const entry = { payloadHash: 'hash', response: 'cached', expiresAt: futureSeconds() };
+    const expiresAt = futureSeconds();
+    const entry = { payloadHash: 'hash', response: 'cached', expiresAt, retainUntil: expiresAt };
     const putA = backend.put('p\u001fk-a', entry);
     const putB = backend.put('p\u001fk-b', entry);
     await Promise.resolve();
@@ -375,7 +505,12 @@ describe('createLazyBackend', () => {
     assert.equal(typeof backend.clearAll, 'function');
     assert.equal(typeof store.clearAll, 'function');
     await backend.put('p\u001fk', { payloadHash: 'hash', response: 'cached', expiresAt });
-    assert.deepEqual(await backend.get('p\u001fk'), { payloadHash: 'hash', response: 'cached', expiresAt });
+    assert.deepEqual(await backend.get('p\u001fk'), {
+      payloadHash: 'hash',
+      response: 'cached',
+      expiresAt,
+      retainUntil: expiresAt,
+    });
     await store.clearAll();
     assert.equal(await backend.get('p\u001fk'), null);
   });
@@ -397,6 +532,7 @@ describe('createLazyBackend', () => {
       payloadHash: 'hash',
       response: 'cached',
       expiresAt,
+      retainUntil: expiresAt,
     });
   });
 });
@@ -462,6 +598,55 @@ describe('release (in-flight claim rollback)', () => {
     const second = await store.check({ principal: 'p', key: 'release_test_abcdefg', payload });
     assert.equal(second.kind, 'miss', 'after release, key should be reclaimable');
   });
+
+  it('release preserves the original payload binding', async () => {
+    const store = makeStore();
+    const first = await store.check({ principal: 'p', key: 'released_binding_abcdef', payload: { budget: 10 } });
+    await store.release({ principal: 'p', key: 'released_binding_abcdef', claimToken: first.claimToken });
+
+    const changed = await store.check({ principal: 'p', key: 'released_binding_abcdef', payload: { budget: 20 } });
+    assert.equal(changed.kind, 'conflict');
+  });
+
+  for (const [label, delayedPayload, expectedKind] of [
+    ['exact payload', { budget: 10 }, 'in-flight'],
+    ['changed payload', { budget: 20 }, 'conflict'],
+  ]) {
+    it(`classifies ${label} correctly when release wins a pending claim race`, async () => {
+      const delegate = memoryBackend({ sweepIntervalMs: 0 });
+      let putCount = 0;
+      let releaseFirstPut;
+      let markFirstPut;
+      const firstPutStarted = new Promise(resolve => {
+        markFirstPut = resolve;
+      });
+      const firstPutGate = new Promise(resolve => {
+        releaseFirstPut = resolve;
+      });
+      const backend = {
+        ...delegate,
+        putIfAbsent: async (...args) => {
+          putCount += 1;
+          if (putCount === 1) {
+            markFirstPut();
+            await firstPutGate;
+          }
+          return delegate.putIfAbsent(...args);
+        },
+      };
+      const store = createIdempotencyStore({ backend, ttlSeconds: 3600, clockSkewSeconds: 60 });
+      const key = `release-race-${expectedKind}`;
+      const delayed = store.check({ principal: 'p', key, payload: delayedPayload });
+      await firstPutStarted;
+
+      const owner = await store.check({ principal: 'p', key, payload: { budget: 10 } });
+      assert.equal(owner.kind, 'miss');
+      await store.release({ principal: 'p', key, claimToken: owner.claimToken });
+      releaseFirstPut();
+
+      assert.equal((await delayed).kind, expectedKind);
+    });
+  }
 });
 
 describe('request claim ownership fencing', () => {

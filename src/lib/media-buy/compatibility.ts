@@ -9,11 +9,12 @@ import type {
   TaskResultFailure,
   TaskResultIntermediate,
 } from '../core/ConversationTypes';
-import type {
-  BeforeProtocolDispatchContext,
-  BeforeProtocolDispatchHookResult,
-  ExternalTaskSettlementObservation,
-  ExternalTaskStatusResult,
+import {
+  DEFERRED_SETTLEMENT_ACK,
+  type BeforeProtocolDispatchContext,
+  type BeforeProtocolDispatchHookResult,
+  type ExternalTaskSettlementObservation,
+  type ExternalTaskStatusResult,
 } from '../core/TaskExecutor';
 import { attachMatch } from '../core/match';
 import { generateIdempotencyKey, isValidIdempotencyKey, type MutatingRequestInput } from '../utils/idempotency';
@@ -6506,6 +6507,36 @@ export class MediaBuyLifecycleCoordinator {
   }
 
   private async trackLegacyPurchaseResult(
+    token: string,
+    claim: LegacyPurchaseClaim,
+    result: TaskResult<CreateMediaBuyResponse>,
+    publishSettledTaskStatus?: BeforeProtocolDispatchContext['publishSettledTaskStatus'],
+    registerExternalTaskSettlement?: BeforeProtocolDispatchContext['registerExternalTaskSettlement'],
+    settlementTransport?: TaskOptions['transport']
+  ): Promise<TaskResult<CreateMediaBuyResponse>> {
+    const acknowledge = (
+      result as TaskResult<CreateMediaBuyResponse> & { [DEFERRED_SETTLEMENT_ACK]?: () => Promise<void> }
+    )[DEFERRED_SETTLEMENT_ACK];
+    const tracked = await this.trackLegacyPurchaseResultInternal(
+      token,
+      claim,
+      result,
+      publishSettledTaskStatus,
+      registerExternalTaskSettlement,
+      settlementTransport
+    );
+    if (acknowledge && !(DEFERRED_SETTLEMENT_ACK in tracked)) {
+      Object.defineProperty(tracked, DEFERRED_SETTLEMENT_ACK, {
+        value: acknowledge,
+        enumerable: true,
+        configurable: false,
+        writable: false,
+      });
+    }
+    return tracked;
+  }
+
+  private async trackLegacyPurchaseResultInternal(
     token: string,
     claim: LegacyPurchaseClaim,
     result: TaskResult<CreateMediaBuyResponse>,

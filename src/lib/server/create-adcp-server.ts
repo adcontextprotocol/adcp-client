@@ -7119,6 +7119,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // we unwrap a typed envelope or fall through to SERVICE_UNAVAILABLE,
           // the handler did not produce a cached response and the next retry
           // should proceed normally.
+          let idempotencyReleaseError: unknown;
           if (idempotencyCheck && idempotency) {
             try {
               await idempotency.release({
@@ -7133,7 +7134,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 tool: toolName,
                 error: releaseReason,
               });
+              idempotencyReleaseError = releaseErr;
             }
+          }
+          if (idempotencyReleaseError !== undefined) {
+            return finalize(
+              adcpError('SERVICE_UNAVAILABLE', {
+                message:
+                  idempotencyReleaseError instanceof IdempotencyClaimOwnershipError
+                    ? 'The failed request lost its idempotency claim before the claim could be released. Retry safely.'
+                    : 'The failed request could not be released from the idempotency store. Reconcile by natural key before retrying.',
+              })
+            );
           }
           // Auto-unwrap `throw adcpError(...)`. Handlers that throw an
           // envelope (instead of returning it) should behave identically —

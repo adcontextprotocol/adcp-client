@@ -7497,6 +7497,51 @@ describe('legacy products-only purchase continuations', () => {
     }
   });
 
+  test('persists the seller task binding when a pending callback is promoted to completed', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const token = 'pending-promotion-binding-token';
+    const binding = {
+      principalScope: 'principal-promotion',
+      accountScope: 'account-promotion',
+      sellerScope: 'seller-promotion',
+      clientSessionScope: 'session-promotion',
+      sourceAdcpVersion: '3.0',
+    };
+    const claim = {
+      idempotencyKey: 'promotion-idempotency-key',
+      inputFingerprint: 'promotion-input-fingerprint',
+      operationKey: 'promotion-operation-key',
+      callbackOperationId: 'promotion-callback-operation',
+      claimedAt: '2027-01-01T00:00:00Z',
+      replayExpiresAt: '2099-01-01T00:00:00Z',
+      selectedProductIds: ['promotion-product'],
+    };
+    await store.create({
+      ...binding,
+      token,
+      expiresAt: '2099-01-01T00:00:00Z',
+      issuanceFingerprint: 'promotion-issuance',
+      discoveryRequestFingerprint: 'promotion-discovery',
+      observedResponse: { products: [] },
+      productIds: ['promotion-product'],
+      losses: [],
+      operation: { state: 'available' },
+    });
+    assert.equal((await store.claim(token, { claim, expected: binding })).outcome, 'claimed');
+    const settlement = {
+      operationId: claim.callbackOperationId,
+      serverTaskId: 'promotion-seller-task',
+      taskType: 'create_media_buy',
+      terminal: completed('create_media_buy', { media_buy_id: 'promotion-buy', packages: [] }),
+    };
+    assert.equal((await store.recordPendingSettlement(token, claim, settlement)).outcome, 'recorded');
+    assert.equal((await store.complete(token, claim, settlement.terminal)).outcome, 'pending_completed');
+    assert.equal((await store.get(token)).operation.sellerTaskId, settlement.serverTaskId);
+    assert.equal(await store.acknowledgePendingSettlement(token, claim, settlement), true);
+    assert.equal(await store.recordSubmittedTask(token, claim, settlement.serverTaskId), true);
+    assert.equal(await store.recordSubmittedTask(token, claim, 'different-seller-task'), false);
+  });
+
   test('rejects a partially upgraded durable callback store at negotiation', async () => {
     const baseStore = createInMemoryLegacyPurchaseContinuationStore();
     const partialStore = {

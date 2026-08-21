@@ -137,8 +137,10 @@ export interface RedisBackendOptions {
    * the store layer can still read it during the clock-skew window and
    * return `IDEMPOTENCY_EXPIRED` (rather than treating it as a fresh
    * miss). Defaults to 120s — covers the store's default 60s skew with
-   * margin. Set to 0 to collapse `expired` into `miss` (not recommended
-   * — buyers lose the explicit expired signal).
+   * margin. This is additive to the store-supplied `retainUntil` safety
+   * horizon, so setting it to 0 cannot undercut the configured clock-skew
+   * window; it only removes any extra Redis-specific linger beyond that
+   * horizon.
    */
   expiredGraceSeconds?: number;
 }
@@ -158,6 +160,7 @@ interface SerializedEntry {
   payloadHash: string;
   response: unknown;
   expiresAt: number;
+  retainUntil: number;
 }
 
 /**
@@ -262,9 +265,9 @@ export function redisBackend(client: RedisBackendClient, options: RedisBackendOp
     options.keyPrefix === undefined || keyPrefix.trim().length === 0 || keyPrefix === DEFAULT_KEY_PREFIX;
   const expiredGraceSeconds = options.expiredGraceSeconds ?? DEFAULT_EXPIRED_GRACE_SECONDS;
 
-  if (!Number.isFinite(expiredGraceSeconds) || expiredGraceSeconds < 0) {
+  if (!Number.isSafeInteger(expiredGraceSeconds) || expiredGraceSeconds < 0) {
     throw new Error(
-      `redisBackend: expiredGraceSeconds must be a non-negative finite number. Got ${expiredGraceSeconds}.`
+      `redisBackend: expiredGraceSeconds must be a non-negative safe integer. Got ${expiredGraceSeconds}.`
     );
   }
 
@@ -323,12 +326,19 @@ export function redisBackend(client: RedisBackendClient, options: RedisBackendOp
    * clamp would let the entry vanish in 1s and the next caller would
    * see `miss` and re-execute the side effect.
    */
-  function ttlFor(expiresAt: number): number {
+  function ttlFor(entry: Pick<IdempotencyCacheEntry, 'expiresAt' | 'retainUntil'>): number {
     const nowSeconds = Math.floor(Date.now() / 1000);
-    const ttl = Math.floor(expiresAt - nowSeconds + expiredGraceSeconds);
-    if (ttl <= 0) {
+    const physicalExpiry = Math.max(entry.retainUntil ?? entry.expiresAt, entry.expiresAt + expiredGraceSeconds);
+    if (!Number.isSafeInteger(physicalExpiry)) {
+      throw new Error('redisBackend: refusing to write an entry with an invalid retention horizon.');
+    }
+    // Logical store and SQL/memory cleanup use strict `<` boundaries, so the
+    // equality second remains live. Redis must retain through that complete
+    // second as well instead of evicting exactly at `physicalExpiry`.
+    const ttl = Math.floor(physicalExpiry - nowSeconds) + 1;
+    if (!Number.isSafeInteger(ttl) || ttl <= 0) {
       throw new Error(
-        `redisBackend: refusing to write an entry whose expiresAt (${expiresAt}) is already past — ` +
+        `redisBackend: refusing to write an entry whose retention horizon (${physicalExpiry}) is already past — ` +
           `the substrate-level TTL would be ${ttl}s. Caller logic error.`
       );
     }
@@ -336,6 +346,7 @@ export function redisBackend(client: RedisBackendClient, options: RedisBackendOp
   }
 
   return {
+    legacyRetentionGraceSeconds: expiredGraceSeconds,
     async probe(): Promise<void> {
       try {
         await c.ping();
@@ -375,13 +386,12 @@ export function redisBackend(client: RedisBackendClient, options: RedisBackendOp
         payloadHash: parsed.payloadHash,
         response: parsed.response,
         expiresAt: parsed.expiresAt,
+        retainUntil: parsed.retainUntil ?? parsed.expiresAt + expiredGraceSeconds,
       };
     },
 
     async put(scopedKey: string, entry: IdempotencyCacheEntry): Promise<void> {
-      await runtimeCall('put', () =>
-        c.set(prefixed(scopedKey), JSON.stringify(entry), { EX: ttlFor(entry.expiresAt) })
-      );
+      await runtimeCall('put', () => c.set(prefixed(scopedKey), JSON.stringify(entry), { EX: ttlFor(entry) }));
     },
 
     async putIfAbsent(scopedKey: string, entry: IdempotencyCacheEntry): Promise<boolean> {
@@ -402,7 +412,7 @@ export function redisBackend(client: RedisBackendClient, options: RedisBackendOp
          return 1`,
           {
             keys: [prefixed(scopedKey)],
-            arguments: [JSON.stringify(entry), String(ttlFor(entry.expiresAt))],
+            arguments: [JSON.stringify(entry), String(ttlFor(entry))],
           }
         )
       );
@@ -424,7 +434,7 @@ export function redisBackend(client: RedisBackendClient, options: RedisBackendOp
          return 1`,
           {
             keys: [prefixed(scopedKey)],
-            arguments: [expectedPayloadHash, JSON.stringify(entry), String(ttlFor(entry.expiresAt))],
+            arguments: [expectedPayloadHash, JSON.stringify(entry), String(ttlFor(entry))],
           }
         )
       );

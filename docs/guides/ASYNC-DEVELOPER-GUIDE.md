@@ -377,7 +377,11 @@ const executor = new TaskExecutor({
   workingTimeout: 120000,
   enableConversationStorage: true,
   webhookManager: new CustomWebhookManager(),
-  deferredStorage: new RedisStorage()
+  // Must implement atomic putIfAbsent(), replaceIfVersion(), and takeIfVersion()
+  // so a continuation stays fenced through seller dispatch and cleanup.
+  deferredStorage: new RedisDeferredTaskStorage(),
+  resolveDeferredAgent: agentId => trustedAgentRegistry.get(agentId),
+  deferredTaskTtlSeconds: 7 * 24 * 60 * 60
 });
 
 async function manageTaskLifecycle() {
@@ -407,6 +411,14 @@ async function manageTaskLifecycle() {
   }
 }
 ```
+
+Durable snapshots redact entire secret-shaped containers and truncate
+over-depth subtrees. `SingleAgentClient.getProducts()` rejects an authenticated
+request `property_list` before seller dispatch when durable storage also needs
+buyer-side request-list verification, because the credential is intentionally
+not persisted for restart recovery. Disable that verification only when the
+seller is the intended filtering trust boundary, or use a non-durable client
+for that request.
 
 ## Best Practices
 

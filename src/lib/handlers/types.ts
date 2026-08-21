@@ -269,7 +269,7 @@ export async function normalizeHandlerResponse(
   const resolved = await response;
 
   if (isDeferResponse(resolved)) {
-    throw new Error(`Task deferred with token: ${resolved.token}`);
+    throw new Error('Task deferred with an opaque continuation token.');
   }
 
   if (isAbortResponse(resolved)) {

@@ -89,7 +89,7 @@ test('memory backend payload-hash fencing rejects stale replace and delete', asy
   const replacement = { payloadHash: 'owner-b', response: { owner: 'b' }, expiresAt: 4_000_000_001 };
   await backend.put('fenced-key', original);
   assert.strictEqual(await backend.replaceIfPayloadHash('fenced-key', 'stale-owner', replacement), false);
-  assert.deepStrictEqual(await backend.get('fenced-key'), original);
+  assert.deepStrictEqual(await backend.get('fenced-key'), { ...original, retainUntil: original.expiresAt });
   assert.strictEqual(await backend.replaceIfPayloadHash('fenced-key', 'owner-a', replacement), true);
   assert.strictEqual(await backend.deleteIfPayloadHash('fenced-key', 'owner-a'), false);
   assert.strictEqual(await backend.deleteIfPayloadHash('fenced-key', 'owner-b'), true);

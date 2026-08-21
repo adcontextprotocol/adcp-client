@@ -613,6 +613,8 @@ export * from './handlers/types';
 // ====== STORAGE INTERFACES ======
 export type {
   Storage,
+  AtomicTakeStorage,
+  DeferredTaskStorage,
   BatchStorage,
   PatternStorage,
   AgentCapabilities,

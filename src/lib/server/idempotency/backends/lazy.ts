@@ -10,6 +10,12 @@ export interface LazyBackendOptions {
    * presence as the reset-safety contract.
    */
   clearAll?: boolean;
+  /**
+   * Minimum legacy-record retention grace promised by the eventual backend.
+   * Declare this for lazy PostgreSQL backends so unsafe skew is rejected at
+   * store construction, before the asynchronous factory runs.
+   */
+  legacyRetentionGraceSeconds?: number;
 }
 
 /**
@@ -35,6 +41,36 @@ export interface LazyBackendOptions {
 export function createLazyBackend(factory: LazyBackendFactory, options: LazyBackendOptions = {}): IdempotencyBackend {
   let backend: IdempotencyBackend | undefined;
   let resolving: Promise<IdempotencyBackend> | undefined;
+  let requiredClockSkewSeconds: number | undefined;
+
+  if (
+    options.legacyRetentionGraceSeconds !== undefined &&
+    (!Number.isSafeInteger(options.legacyRetentionGraceSeconds) || options.legacyRetentionGraceSeconds < 0)
+  ) {
+    throw new TypeError('legacyRetentionGraceSeconds must be a non-negative safe integer.');
+  }
+
+  function validateResolvedRetention(resolved: IdempotencyBackend): void {
+    const declaredGrace = options.legacyRetentionGraceSeconds;
+    const resolvedGrace = resolved.legacyRetentionGraceSeconds;
+    if (declaredGrace !== undefined && resolvedGrace !== undefined && resolvedGrace < declaredGrace) {
+      throw new Error(
+        `createLazyBackend: resolved backend legacy retention grace (${resolvedGrace}s) is below ` +
+          `the wrapper's declared grace (${declaredGrace}s).`
+      );
+    }
+    if (
+      requiredClockSkewSeconds !== undefined &&
+      resolvedGrace !== undefined &&
+      resolvedGrace < requiredClockSkewSeconds
+    ) {
+      throw new Error(
+        `createLazyBackend: resolved backend legacy retention grace (${resolvedGrace}s) must be at least ` +
+          `clockSkewSeconds (${requiredClockSkewSeconds}s).`
+      );
+    }
+    resolved.validateClockSkewSeconds?.(requiredClockSkewSeconds ?? 0);
+  }
 
   async function resolveBackend(): Promise<IdempotencyBackend> {
     if (backend) return backend;
@@ -53,6 +89,7 @@ export function createLazyBackend(factory: LazyBackendFactory, options: LazyBack
               'createLazyBackend: resolved backend must support atomic replaceIfPayloadHash and deleteIfPayloadHash fencing.'
             );
           }
+          validateResolvedRetention(resolved);
           backend = resolved;
           return resolved;
         })
@@ -65,6 +102,13 @@ export function createLazyBackend(factory: LazyBackendFactory, options: LazyBack
   }
 
   const lazyBackend: IdempotencyBackend = {
+    ...(options.legacyRetentionGraceSeconds !== undefined && {
+      legacyRetentionGraceSeconds: options.legacyRetentionGraceSeconds,
+    }),
+    validateClockSkewSeconds(clockSkewSeconds: number): void {
+      requiredClockSkewSeconds = Math.max(requiredClockSkewSeconds ?? 0, clockSkewSeconds);
+      if (backend) validateResolvedRetention(backend);
+    },
     async get(scopedKey: string): Promise<IdempotencyCacheEntry | null> {
       return (await resolveBackend()).get(scopedKey);
     },

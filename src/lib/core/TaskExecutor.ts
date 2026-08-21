@@ -14,7 +14,7 @@ import { withPreparedProtocolToolCall } from '../protocols/prepared-call-context
 import { getAuthToken } from '../auth';
 import { is401Error, adcpErrorToTypedError, ConfigurationError } from '../errors';
 import type { ADCPError } from '../errors';
-import type { Storage } from '../storage/interfaces';
+import type { DeferredTaskState, DeferredTaskStorage } from '../storage/interfaces';
 import {
   validateOutgoingRequest,
   validateIncomingResponse,
@@ -30,6 +30,8 @@ import { generateIdempotencyKey, requestUsesIdempotency, redactIdempotencyKeyInA
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
 import { normalizeLegacyMediaBuyStatusForReturn } from '../utils/envelope-status-compat';
 import { canonicalize } from '../utils/jcs';
+import { SECRET_KEY_PATTERN, secretKeyPatternMatches } from '../utils/redact-secrets';
+import { MAX_JSON_DEPTH } from '../utils/json-depth';
 import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
 import type { AdcpCapabilities } from '../utils/capabilities';
 import { cancelA2ATask } from '../protocols/a2a';
@@ -80,7 +82,7 @@ export class MaxClarificationError extends Error {
 
 export class DeferredTaskError extends Error {
   constructor(public token: string) {
-    super(`Task deferred with token: ${token}`);
+    super('Task deferred with an opaque continuation token.');
     this.name = 'DeferredTaskError';
   }
 }
@@ -90,6 +92,28 @@ export class InputRequiredError extends Error {
     super(`Server requires input but no handler provided. Question: ${question}`);
     this.name = 'InputRequiredError';
   }
+}
+
+/** Internal settlement acknowledgement carried through higher-level result projection. */
+export const DEFERRED_SETTLEMENT_ACK = Symbol('adcp.deferredSettlementAck');
+const DEFERRED_SETTLEMENT_NACK = Symbol('adcp.deferredSettlementNack');
+
+export async function acknowledgeDeferredSettlement(result: TaskResult<any>): Promise<void> {
+  const acknowledge = (
+    result as TaskResult<any> & {
+      [DEFERRED_SETTLEMENT_ACK]?: (finalizedResult?: TaskResult<any>) => Promise<void>;
+    }
+  )[DEFERRED_SETTLEMENT_ACK];
+  await acknowledge?.(result);
+}
+
+export async function rejectDeferredSettlement(result: TaskResult<any>): Promise<void> {
+  const reject = (
+    result as TaskResult<any> & {
+      [DEFERRED_SETTLEMENT_NACK]?: () => Promise<void>;
+    }
+  )[DEFERRED_SETTLEMENT_NACK];
+  await reject?.();
 }
 
 /** Supporting contract for the internal pre-dispatch boundary. */
@@ -506,22 +530,6 @@ interface WebhookManager {
   processWebhook(token: string, body: any): Promise<void>;
 }
 
-/**
- * Deferred task storage for client deferrals
- */
-interface DeferredTaskState {
-  taskId: string;
-  /** Seller-issued A2A conversation identity, when one was supplied. */
-  contextId?: string;
-  /** A2A transport Task.id; never the AdCP tasks/get work handle. */
-  a2aTaskId?: string;
-  agent: AgentConfig;
-  taskName: string;
-  params: any;
-  messages: Message[];
-  createdAt: number;
-}
-
 interface TaskStatusPollResult {
   task: TaskInfo;
   rawResponse: Record<string, unknown>;
@@ -550,6 +558,71 @@ const TERMINAL_TASK_STATUSES = new Set<TaskStatus>([
 ]);
 const MAX_PENDING_EXTERNAL_TASK_OBSERVATIONS = 8;
 const MAX_RETAINED_EXTERNAL_TASK_ERROR_CHARS = 1_024;
+const DEFAULT_DEFERRED_TASK_TTL_SECONDS = 7 * 24 * 60 * 60;
+// Human continuation tokens may intentionally be short-lived. Once seller
+// dispatch is admitted, mutation fencing and terminal recovery need their own
+// substantially longer horizon that cannot be shortened by that option.
+const DEFAULT_DEFERRED_SAFETY_RETENTION_SECONDS = 7 * 24 * 60 * 60;
+const DEFERRED_SAFETY_MARGIN_SECONDS = 60;
+const DEFERRED_FINALIZATION_LEASE_MS = 30_000;
+const DEFERRED_FINALIZATION_RENEW_MS = 10_000;
+const DEFERRED_SECRET_KEY_PATTERN = new RegExp(
+  `(?:${SECRET_KEY_PATTERN.source})|^(?:auth|oauth)[_-]?token$`,
+  SECRET_KEY_PATTERN.flags
+);
+
+function snapshotTaskOptions(options: TaskOptions): TaskOptions {
+  return {
+    ...options,
+    ...(options.transport !== undefined && { transport: { ...options.transport } }),
+    ...(options.metadata !== undefined && { metadata: structuredClone(options.metadata) }),
+  };
+}
+
+function durableDeferredSnapshot<T>(value: T): T {
+  const snapshot = (current: unknown, depth: number, seen: WeakSet<object>): unknown => {
+    // Durable continuations must never preserve an unvisited subtree. The
+    // shared recorder redactor relies on a later depth assertion, whereas
+    // this path writes the clone directly to adopter-controlled storage.
+    if (depth > MAX_JSON_DEPTH) return '[Truncated]';
+    if (Array.isArray(current)) {
+      if (seen.has(current)) return '[Circular]';
+      seen.add(current);
+      const result = current.map(item => snapshot(item, depth + 1, seen));
+      seen.delete(current);
+      return result;
+    }
+    if (current && typeof current === 'object') {
+      if (seen.has(current)) return '[Circular]';
+      seen.add(current);
+      const result: Record<string, unknown> = {};
+      for (const [key, item] of Object.entries(current as Record<string, unknown>)) {
+        // Secret-shaped containers (for example service-account
+        // `credentials`) are opaque. Redact the entire value rather than
+        // assuming its vendor-specific child keys also match our pattern.
+        const retained = secretKeyPatternMatches(DEFERRED_SECRET_KEY_PATTERN, key)
+          ? '[redacted]'
+          : snapshot(item, depth + 1, seen);
+        Object.defineProperty(result, key, {
+          value: retained,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+      }
+      seen.delete(current);
+      return result;
+    }
+    return current;
+  };
+
+  return snapshot(value, 0, new WeakSet()) as T;
+}
+
+interface DeferredFinalizationLease {
+  finalize<T>(result: TaskResult<T>): Promise<void>;
+  release(): Promise<void>;
+}
 
 /**
  * Core task execution engine that handles the conversation loop with agents
@@ -564,6 +637,7 @@ export class TaskExecutor {
   private readonly externalTaskSettlementExpiry = new Map<string, number>();
   private readonly externalTaskSettlementTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pendingExternalTaskObservations = new Map<string, ExternalTaskSettlementObservation[]>();
+  private readonly deferredAgents = new Map<string, AgentConfig>();
   private responseParser: ProtocolResponseParser;
   private activeTasks = new Map<string, TaskState>();
   private compactedTaskIds = new Map<string, true>();
@@ -586,7 +660,19 @@ export class TaskExecutor {
       /** Webhook manager for submitted tasks */
       webhookManager?: WebhookManager;
       /** Storage for deferred task state */
-      deferredStorage?: Storage<DeferredTaskState>;
+      deferredStorage?: DeferredTaskStorage;
+      /** Resolve current trusted agent configuration after a process restart. */
+      resolveDeferredAgent?: (agentId: string) => AgentConfig | undefined | Promise<AgentConfig | undefined>;
+      /** Lifetime of a durable human-continuation token. Defaults to seven days. */
+      deferredTaskTtlSeconds?: number;
+      /** Check whether the owning client can recover a committed deferred settlement. */
+      canRecoverDeferredSettlement?: (operationId: string) => boolean | Promise<boolean>;
+      /** Settle a committed deferred result before it can be published or returned. */
+      recoverDeferredSettlement?: (
+        result: TaskResult<any>,
+        operationId: string,
+        serverTaskId?: string
+      ) => Promise<{ result: TaskResult<any>; afterFinalize?: () => Promise<void> }>;
       /** Webhook URL template for protocol-level webhook support */
       webhookUrlTemplate?: WebhookUrlTemplate;
       /** Agent ID for webhook URL generation */
@@ -649,6 +735,21 @@ export class TaskExecutor {
       (!Number.isSafeInteger(config.externalTaskSettlementRetentionMs) || config.externalTaskSettlementRetentionMs < 1)
     ) {
       throw new ConfigurationError('externalTaskSettlementRetentionMs must be a positive safe integer.');
+    }
+    if (
+      config.deferredTaskTtlSeconds !== undefined &&
+      (!Number.isSafeInteger(config.deferredTaskTtlSeconds) || config.deferredTaskTtlSeconds < 1)
+    ) {
+      throw new ConfigurationError('deferredTaskTtlSeconds must be a positive safe integer.');
+    }
+    if (config.deferredStorage && typeof config.deferredStorage.putIfAbsent !== 'function') {
+      throw new ConfigurationError('Deferred storage must implement atomic putIfAbsent() creation.');
+    }
+    if (config.deferredStorage && typeof config.deferredStorage.replaceIfVersion !== 'function') {
+      throw new ConfigurationError('Deferred storage must implement atomic replaceIfVersion() fencing.');
+    }
+    if (config.deferredStorage && typeof config.deferredStorage.takeIfVersion !== 'function') {
+      throw new ConfigurationError('Deferred storage must implement atomic takeIfVersion() fencing.');
     }
     this.responseParser = new ProtocolResponseParser();
     if (config.enableConversationStorage) {
@@ -859,9 +960,11 @@ export class TaskExecutor {
     options: TaskOptions = {},
     serverVersion?: 'v2' | 'v3',
     targetCapabilities?: AdcpCapabilities,
-    beforeProtocolDispatch?: BeforeProtocolDispatchHook<T>
+    beforeProtocolDispatch?: BeforeProtocolDispatchHook<T>,
+    deferredClientContext?: unknown
   ): Promise<TaskResult<T>> {
-    return withTaskDeadline(options, effectiveOptions =>
+    const optionsSnapshot = snapshotTaskOptions(options);
+    return withTaskDeadline(optionsSnapshot, effectiveOptions =>
       this.executeTaskWithinDeadline<T>(
         agent,
         taskName,
@@ -870,7 +973,8 @@ export class TaskExecutor {
         effectiveOptions,
         serverVersion,
         targetCapabilities,
-        beforeProtocolDispatch
+        beforeProtocolDispatch,
+        deferredClientContext
       )
     );
   }
@@ -883,9 +987,11 @@ export class TaskExecutor {
     options: TaskOptions = {},
     serverVersion?: 'v2' | 'v3',
     targetCapabilities?: AdcpCapabilities,
-    beforeProtocolDispatch?: BeforeProtocolDispatchHook<T>
+    beforeProtocolDispatch?: BeforeProtocolDispatchHook<T>,
+    deferredClientContext?: unknown
   ): Promise<TaskResult<T>> {
-    if (serverVersion) this.lastKnownServerVersion = serverVersion;
+    const effectiveServerVersion = serverVersion ?? 'v3';
+    this.lastKnownServerVersion = effectiveServerVersion;
     // Own the request graph before the first awaited activity/governance
     // boundary. This executor is internal, but direct callers and higher
     // layers may still retain the original nested objects.
@@ -1020,7 +1126,7 @@ export class TaskExecutor {
               toolName: taskName,
               webhookUrl,
               webhookSecret: this.config.webhookSecret,
-              serverVersion,
+              serverVersion: effectiveServerVersion,
               adcpVersion: this.config.adcpVersion,
               wireAdcpVersion: this.config.wireAdcpVersion,
               versionEnvelope: this.config.versionEnvelope,
@@ -1097,7 +1203,7 @@ export class TaskExecutor {
         toolName: taskName,
         webhookUrl,
         webhookSecret: this.config.webhookSecret,
-        serverVersion,
+        serverVersion: effectiveServerVersion,
         adcpVersion: this.config.adcpVersion,
         wireAdcpVersion: this.config.wireAdcpVersion,
         versionEnvelope: this.config.versionEnvelope,
@@ -1192,7 +1298,7 @@ export class TaskExecutor {
         debugLogs,
         webhookUrl,
         webhookSecret: this.config.webhookSecret,
-        serverVersion,
+        serverVersion: effectiveServerVersion,
         session: { contextId: options.contextId, taskId: options.taskId },
         adcpVersion: this.config.adcpVersion,
         ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
@@ -1253,7 +1359,10 @@ export class TaskExecutor {
         postDispatchOptions,
         debugLogs,
         startTime,
-        dispatchCommitted
+        dispatchCommitted,
+        true,
+        effectiveServerVersion,
+        deferredClientContext
       );
       throwIfAborted(postDispatchOptions.signal);
 
@@ -1442,23 +1551,26 @@ export class TaskExecutor {
     options: TaskOptions = {},
     debugLogs: any[] = [],
     startTime: number = Date.now(),
-    deferTerminalTaskStatus = false
+    deferTerminalTaskStatus = false,
+    persistPausedContinuation = true,
+    serverVersion: 'v2' | 'v3' = 'v3',
+    deferredClientContext?: unknown
   ): Promise<TaskResult<T>> {
     const status = this.responseParser.getStatus(response) as ADCPStatus;
 
     switch (status) {
       case ADCP_STATUS.COMPLETED:
         // Task completed immediately
-        const completedData = this.extractResponseData(response, debugLogs, taskName);
+        const completedData = this.extractResponseData(response, debugLogs, taskName, serverVersion);
         // Ordinary calls retain the historical behavior of publishing seller
         // completion before optional governance postflight work. A committed
         // compatibility mutation defers this until durable settlement.
         if (!deferTerminalTaskStatus) this.updateTaskStatus(taskId, 'completed', completedData);
 
-        const operationSuccess = this.isOperationSuccess(completedData, taskName);
+        const operationSuccess = this.isOperationSuccess(completedData, taskName, serverVersion);
 
         // Validate response against AdCP schema - validate extracted data, not protocol wrapper
-        const validationResult = this.validateResponseSchema(completedData, taskName, debugLogs);
+        const validationResult = this.validateResponseSchema(completedData, taskName, debugLogs, serverVersion);
 
         // In strict mode, schema validation failures cause task to fail
         const finalSuccess = operationSuccess && validationResult.valid;
@@ -1518,7 +1630,8 @@ export class TaskExecutor {
           inputHandler,
           options,
           debugLogs,
-          startTime
+          startTime,
+          serverVersion
         );
 
       case ADCP_STATUS.SUBMITTED:
@@ -1532,7 +1645,8 @@ export class TaskExecutor {
           options,
           debugLogs,
           startTime,
-          deferTerminalTaskStatus
+          deferTerminalTaskStatus,
+          serverVersion
         );
 
       case ADCP_STATUS.INPUT_REQUIRED:
@@ -1551,13 +1665,16 @@ export class TaskExecutor {
           debugLogs,
           startTime,
           deferTerminalTaskStatus,
-          status
+          status,
+          persistPausedContinuation,
+          serverVersion,
+          deferredClientContext
         );
 
       case ADCP_STATUS.FAILED:
       case ADCP_STATUS.REJECTED:
       case ADCP_STATUS.CANCELED: {
-        const failedData = this.extractResponseData(response, debugLogs, taskName);
+        const failedData = this.extractResponseData(response, debugLogs, taskName, serverVersion);
         // Raw/in-process protocol clients may wrap the tool payload under
         // `data` while carrying the task lifecycle status at the top level.
         // The generic unwrapper intentionally preserves that wrapper, so
@@ -1612,15 +1729,15 @@ export class TaskExecutor {
 
       default:
         // Unknown status - treat as completed if we have data
-        const defaultData = this.extractResponseData(response, debugLogs, taskName);
+        const defaultData = this.extractResponseData(response, debugLogs, taskName, serverVersion);
         if (
           defaultData &&
           (defaultData !== response || response.structuredContent || response.result || response.data)
         ) {
-          const defaultSuccess = this.isOperationSuccess(defaultData, taskName);
+          const defaultSuccess = this.isOperationSuccess(defaultData, taskName, serverVersion);
 
           // Validate response against AdCP schema - validate extracted data, not protocol wrapper
-          const defaultValidation = this.validateResponseSchema(defaultData, taskName, debugLogs);
+          const defaultValidation = this.validateResponseSchema(defaultData, taskName, debugLogs, serverVersion);
 
           // In strict mode, schema validation failures cause task to fail
           const defaultFinalSuccess = defaultSuccess && defaultValidation.valid;
@@ -1678,7 +1795,7 @@ export class TaskExecutor {
    *
    * @internal Exposed for testing purposes
    */
-  public extractResponseData(response: any, debugLogs?: any[], toolName?: string): any {
+  public extractResponseData(response: any, debugLogs?: any[], toolName?: string, serverVersion?: 'v2' | 'v3'): any {
     // MCP error responses (isError: true) flow through here — the response unwrapper
     // extracts structured data (adcp_error, context, ext) from structuredContent or text
 
@@ -1745,7 +1862,7 @@ export class TaskExecutor {
       // Now unwrap the response
       const unwrapped = unwrapProtocolResponse(response, toolName, undefined, {
         filterInvalidProducts: this.config.filterInvalidProducts,
-        responseAdcpVersion: this.effectiveResponseAdcpVersion(),
+        responseAdcpVersion: this.effectiveResponseAdcpVersion(serverVersion),
       });
 
       // Log successful extraction with result details
@@ -1785,8 +1902,8 @@ export class TaskExecutor {
    * Check if extracted response data represents a successful operation.
    * Handles singular `error`, plural `errors` (AdCP schema), and `success: false`.
    */
-  private isOperationSuccess(data: any, taskName?: string): boolean {
-    return isAdcpOperationSuccess(data, taskName, this.effectiveResponseAdcpVersion());
+  private isOperationSuccess(data: any, taskName?: string, serverVersion?: 'v2' | 'v3'): boolean {
+    return isAdcpOperationSuccess(data, taskName, this.effectiveResponseAdcpVersion(serverVersion));
   }
 
   /**
@@ -1842,10 +1959,11 @@ export class TaskExecutor {
     inputHandler?: InputHandler,
     options: TaskOptions = {},
     debugLogs: any[] = [],
-    startTime: number = Date.now()
+    startTime: number = Date.now(),
+    serverVersion: 'v2' | 'v3' = 'v3'
   ): Promise<TaskResult<T>> {
     // Extract any data that came with the working response
-    const partialData = this.extractResponseData(initialResponse, debugLogs, taskName);
+    const partialData = this.extractResponseData(initialResponse, debugLogs, taskName, serverVersion);
     const metadata = this.buildMetadata({
       taskId,
       taskName,
@@ -1880,10 +1998,11 @@ export class TaskExecutor {
     options: TaskOptions = {},
     debugLogs: any[] = [],
     startTime: number = Date.now(),
-    deferTerminalTaskStatus = false
+    deferTerminalTaskStatus = false,
+    serverVersion: 'v2' | 'v3' = 'v3'
   ): Promise<TaskResult<T>> {
     // Extract any data that came with the submitted response
-    const partialData = this.extractResponseData(response, debugLogs, taskName);
+    const partialData = this.extractResponseData(response, debugLogs, taskName, serverVersion);
 
     let webhookUrl = response.webhookUrl;
 
@@ -1952,7 +2071,8 @@ export class TaskExecutor {
             serverTaskId,
             transport ?? pollingTransport,
             undefined,
-            taskName
+            taskName,
+            serverVersion
           )
         ).task;
         if (!deferTerminalTaskStatus && ['completed', 'failed', 'rejected', 'canceled'].includes(task.status)) {
@@ -1968,7 +2088,9 @@ export class TaskExecutor {
           pollingTransport,
           signal,
           metadata.a2aTaskId,
-          requireExactTaskIdentity ? taskName : undefined
+          requireExactTaskIdentity ? taskName : undefined,
+          taskId,
+          serverVersion
         );
         // `pollTaskCompletion` also returns nonresumable paused
         // input-required/auth-required states. Preserve that status so callers
@@ -2041,10 +2163,12 @@ export class TaskExecutor {
         ...deferred,
         resume: async input => {
           const completion = this.attachSettledContinuationTaskStatus(taskId, await deferred.resume(input));
-          publish(completion.status as TaskStatus, completion.data, completion.error, {
-            serverTaskId: completion.metadata.serverTaskId,
-            taskType: completion.metadata.taskName,
-          });
+          if (!(DEFERRED_SETTLEMENT_ACK in completion)) {
+            publish(completion.status as TaskStatus, completion.data, completion.error, {
+              serverTaskId: completion.metadata.serverTaskId,
+              taskType: completion.metadata.taskName,
+            });
+          }
           return completion;
         },
       };
@@ -2326,11 +2450,15 @@ export class TaskExecutor {
     debugLogs: any[] = [],
     startTime: number = Date.now(),
     deferTerminalTaskStatus = false,
-    pauseStatus: 'input-required' | 'auth-required' = 'input-required'
+    pauseStatus: 'input-required' | 'auth-required' = 'input-required',
+    persistPausedContinuation = true,
+    serverVersion: 'v2' | 'v3' = 'v3',
+    deferredClientContext?: unknown
   ): Promise<TaskResult<T>> {
     const inputRequest = this.responseParser.parseInputRequest(response);
     const serverContextId = this.responseParser.getContextId(response) ?? response.contextId;
     const a2aTaskId = this.responseParser.getA2AContinuationTaskId(response);
+    const settlementServerTaskId = deferTerminalTaskStatus ? this.responseParser.getTaskId(response) : undefined;
 
     // MCP has no standard continuation after a returned pause. A2A can resume
     // only when the seller supplied an official task ID; without one, a same-
@@ -2338,7 +2466,7 @@ export class TaskExecutor {
     // continuation. In either case, return the nonresumable pause without
     // invoking a handler or inventing a continuation call.
     if (agent.protocol === 'mcp' || !a2aTaskId) {
-      const partialData = this.extractResponseData(response, debugLogs, taskName);
+      const partialData = this.extractResponseData(response, debugLogs, taskName, serverVersion);
       const metadata = this.buildMetadata({
         taskId,
         taskName,
@@ -2363,7 +2491,7 @@ export class TaskExecutor {
     // state so callers can collect input or refresh credentials themselves.
     if (!inputHandler) {
       // Extract any data that came with the response (some agents include partial results)
-      const partialData = this.extractResponseData(response, debugLogs, taskName);
+      const partialData = this.extractResponseData(response, debugLogs, taskName, serverVersion);
       const metadata = this.buildMetadata({
         taskId,
         taskName,
@@ -2378,25 +2506,76 @@ export class TaskExecutor {
       // Preserve a safe same-process resume path for callers that choose to
       // collect HITL input themselves. This continues the existing seller task
       // and never replays the original mutation as a fresh dispatch.
-      const deferred: DeferredContinuation<T> = {
-        token: taskId,
-        question: inputRequest.question,
-        resume: input =>
-          this.continueTaskWithInput<T>(
-            agent,
+      const token = randomUUID();
+      const deferredStorage = this.config.deferredStorage;
+      const usesDurableStorage = deferredStorage !== undefined && persistPausedContinuation;
+      if (usesDurableStorage) {
+        const createdAt = Date.now();
+        const ttlSeconds = this.config.deferredTaskTtlSeconds ?? DEFAULT_DEFERRED_TASK_TTL_SECONDS;
+        const continuationVersion = randomUUID();
+        this.deferredAgents.set(agent.id, agent);
+        const stored = await deferredStorage.putIfAbsent(
+          token,
+          {
+            continuationVersion,
             taskId,
-            taskName,
-            params,
-            serverContextId,
+            ...(serverContextId !== undefined && { contextId: serverContextId }),
             a2aTaskId,
-            input,
-            messages,
-            undefined,
-            options,
-            debugLogs,
-            startTime,
-            deferTerminalTaskStatus
-          ),
+            serverVersion,
+            agentId: agent.id,
+            taskName,
+            params: durableDeferredSnapshot(params),
+            messages: durableDeferredSnapshot(messages),
+            ...(deferredClientContext !== undefined && {
+              clientContext: durableDeferredSnapshot(deferredClientContext),
+            }),
+            ...(deferTerminalTaskStatus && { settlementOperationId: taskId }),
+            ...(settlementServerTaskId !== undefined && { settlementServerTaskId }),
+            createdAt,
+            expiresAt: createdAt + ttlSeconds * 1000,
+          },
+          ttlSeconds
+        );
+        if (!stored) {
+          throw new Error('Deferred continuation token already exists; refusing to replace another task.');
+        }
+        try {
+          throwIfAborted(options.signal);
+        } catch (error) {
+          await deferredStorage.takeIfVersion(token, continuationVersion);
+          throw error;
+        }
+      }
+      let inProcessResumeConsumed = false;
+      const resumeInProcess = async (input: unknown): Promise<TaskResult<T>> => {
+        const inputSnapshot = structuredClone(input);
+        if (inProcessResumeConsumed) throw new Error('Deferred continuation token has already been consumed.');
+        inProcessResumeConsumed = true;
+        return this.continueTaskWithInput<T>(
+          agent,
+          taskId,
+          taskName,
+          params,
+          serverContextId,
+          a2aTaskId,
+          inputSnapshot,
+          messages,
+          undefined,
+          options,
+          debugLogs,
+          startTime,
+          deferTerminalTaskStatus,
+          true,
+          serverVersion,
+          deferredClientContext
+        );
+      };
+      const deferred: DeferredContinuation<T> = {
+        token,
+        question: inputRequest.question,
+        resume: usesDurableStorage
+          ? input => this.resumeDeferredTaskFromLiveClosure<T>(token, input, !deferTerminalTaskStatus)
+          : resumeInProcess,
       };
 
       return {
@@ -2459,22 +2638,42 @@ export class TaskExecutor {
 
       // Save deferred state for later resumption
       if (this.config.deferredStorage) {
-        await this.config.deferredStorage.set(token, {
-          taskId,
-          ...(serverContextId !== undefined && { contextId: serverContextId }),
-          a2aTaskId,
-          agent,
-          taskName,
-          params,
-          messages,
-          createdAt: Date.now(),
-        });
+        const createdAt = Date.now();
+        const ttlSeconds = this.config.deferredTaskTtlSeconds ?? DEFAULT_DEFERRED_TASK_TTL_SECONDS;
+        const continuationVersion = randomUUID();
+        this.deferredAgents.set(agent.id, agent);
+        const stored = await this.config.deferredStorage.putIfAbsent(
+          token,
+          {
+            continuationVersion,
+            taskId,
+            ...(serverContextId !== undefined && { contextId: serverContextId }),
+            a2aTaskId,
+            serverVersion,
+            agentId: agent.id,
+            taskName,
+            params: durableDeferredSnapshot(params),
+            messages: durableDeferredSnapshot(messages),
+            ...(deferredClientContext !== undefined && {
+              clientContext: durableDeferredSnapshot(deferredClientContext),
+            }),
+            ...(deferTerminalTaskStatus && { settlementOperationId: taskId }),
+            ...(settlementServerTaskId !== undefined && { settlementServerTaskId }),
+            createdAt,
+            expiresAt: createdAt + ttlSeconds * 1000,
+          },
+          ttlSeconds
+        );
+        if (!stored) {
+          throw new Error('Deferred continuation token already exists; refusing to replace another task.');
+        }
         try {
           throwIfAborted(options.signal);
         } catch (error) {
           // Cancellation may race a storage adapter that ignores the signal.
-          // Remove the just-written resume record before propagating it.
-          await this.config.deferredStorage.delete(token);
+          // Remove only the exact generation just written. A concurrent resume
+          // may already have claimed and advanced a newer generation.
+          await this.config.deferredStorage.takeIfVersion(token, continuationVersion);
           throw error;
         }
       }
@@ -2482,10 +2681,36 @@ export class TaskExecutor {
       // duplicate full request (including assets/credentials) in activeTasks.
       this.compactIntermediateTaskState(taskId, 'deferred');
 
+      let inProcessResumeConsumed = false;
+      const resumeInProcess = async (input: unknown): Promise<TaskResult<T>> => {
+        const inputSnapshot = structuredClone(input);
+        if (inProcessResumeConsumed) throw new Error('Deferred continuation token has already been consumed.');
+        inProcessResumeConsumed = true;
+        return this.continueTaskWithInput<T>(
+          agent,
+          taskId,
+          taskName,
+          params,
+          serverContextId,
+          a2aTaskId,
+          inputSnapshot,
+          messages,
+          undefined,
+          options,
+          debugLogs,
+          startTime,
+          deferTerminalTaskStatus,
+          true,
+          serverVersion,
+          deferredClientContext
+        );
+      };
       const deferred: DeferredContinuation<T> = {
         token,
         question: inputRequest.question,
-        resume: input => this.resumeDeferredTask<T>(token, input, !deferTerminalTaskStatus),
+        resume: this.config.deferredStorage
+          ? input => this.resumeDeferredTaskFromLiveClosure<T>(token, input, !deferTerminalTaskStatus)
+          : resumeInProcess,
       };
 
       return {
@@ -2521,7 +2746,10 @@ export class TaskExecutor {
       options,
       debugLogs,
       startTime,
-      deferTerminalTaskStatus
+      deferTerminalTaskStatus,
+      true,
+      serverVersion,
+      deferredClientContext
     );
   }
 
@@ -2585,7 +2813,8 @@ export class TaskExecutor {
     taskId: string,
     transport?: import('../protocols').TransportOptions,
     signal?: AbortSignal,
-    expectedTaskType?: string
+    expectedTaskType?: string,
+    serverVersion?: 'v2' | 'v3'
   ): Promise<TaskStatusPollResult> {
     // AdCP `tasks/get` is the cross-protocol work-status interface
     // (`schemas/cache/<v>/bundled/core/tasks-get-{request,response}.json`).
@@ -2619,7 +2848,7 @@ export class TaskExecutor {
       toolName,
       { task_id: taskId, include_result: true },
       {
-        serverVersion: this.lastKnownServerVersion,
+        serverVersion: serverVersion ?? this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
         ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
         ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
@@ -2672,12 +2901,18 @@ export class TaskExecutor {
     transport?: import('../protocols').TransportOptions,
     signal?: AbortSignal,
     a2aCancellationTaskId?: string,
-    expectedTaskType?: string
+    expectedTaskType?: string,
+    metadataTaskId = taskId,
+    serverVersion?: 'v2' | 'v3'
   ): Promise<TaskResult<T>> {
     if (!Number.isFinite(pollInterval) || pollInterval < 0 || pollInterval > MAX_TIMER_DELAY_MS) {
       throw new RangeError(`pollInterval must be a finite non-negative number <= ${MAX_TIMER_DELAY_MS}`);
     }
     const pollStartTime = Date.now();
+    const withServerTaskId = (metadata: TaskResultMetadata): TaskResultMetadata => ({
+      ...metadata,
+      serverTaskId: taskId,
+    });
     while (true) {
       // adcp-client#1612: When the outer storyboard race timer fires, the
       // caller's AbortSignal is already aborted. Exit cleanly rather than
@@ -2723,13 +2958,15 @@ export class TaskExecutor {
           success: false as const,
           status: 'failed' as const,
           error: `tasks/get polling was cancelled before a terminal state was observed: ${reason}`,
-          metadata: this.buildMetadata({
-            taskId,
-            taskName: 'unknown',
-            agent,
-            startTime: pollStartTime,
-            status: 'failed',
-          }),
+          metadata: withServerTaskId(
+            this.buildMetadata({
+              taskId: metadataTaskId,
+              taskName: 'unknown',
+              agent,
+              startTime: pollStartTime,
+              status: 'failed',
+            })
+          ),
         });
       }
 
@@ -2743,7 +2980,14 @@ export class TaskExecutor {
       let status: TaskInfo;
       let rawResponse: Record<string, unknown> | undefined;
       try {
-        const pollResult = await this.getTaskStatusWithRawResponse(agent, taskId, transport, signal, expectedTaskType);
+        const pollResult = await this.getTaskStatusWithRawResponse(
+          agent,
+          taskId,
+          transport,
+          signal,
+          expectedTaskType,
+          serverVersion
+        );
         status = pollResult.task;
         rawResponse = pollResult.rawResponse;
       } catch (err) {
@@ -2752,14 +2996,16 @@ export class TaskExecutor {
             success: false as const,
             status: 'failed' as const,
             error: err.message,
-            metadata: this.buildMetadata({
-              taskId,
-              taskName: 'unknown',
-              agent,
-              startTime: pollStartTime,
-              status: 'failed',
-              response: err.rawResponse,
-            }),
+            metadata: withServerTaskId(
+              this.buildMetadata({
+                taskId: metadataTaskId,
+                taskName: 'unknown',
+                agent,
+                startTime: pollStartTime,
+                status: 'failed',
+                response: err.rawResponse,
+              })
+            ),
           });
         }
         const msg = err instanceof Error ? err.message : String(err);
@@ -2771,13 +3017,15 @@ export class TaskExecutor {
             success: false as const,
             status: 'failed' as const,
             error: `Task ${taskId} is no longer queryable — it may have been completed and evicted by the seller before this poll arrived. Consider using push notifications (reporting_webhook) instead of polling, or configuring a longer task retention TTL on the seller.`,
-            metadata: this.buildMetadata({
-              taskId,
-              taskName: 'unknown',
-              agent,
-              startTime: pollStartTime,
-              status: 'failed',
-            }),
+            metadata: withServerTaskId(
+              this.buildMetadata({
+                taskId: metadataTaskId,
+                taskName: 'unknown',
+                agent,
+                startTime: pollStartTime,
+                status: 'failed',
+              })
+            ),
           });
         }
         throw err;
@@ -2799,21 +3047,23 @@ export class TaskExecutor {
       }
 
       if (status.status === ADCP_STATUS.COMPLETED) {
-        const pollSuccess = this.isOperationSuccess(status.result, status.taskType);
+        const pollSuccess = this.isOperationSuccess(status.result, status.taskType, serverVersion);
 
         if (pollSuccess) {
           return attachMatch({
             success: true as const,
             status: 'completed' as const,
             data: status.result,
-            metadata: this.buildMetadata({
-              taskId,
-              taskName: status.taskType,
-              agent,
-              responseTimeMs: Date.now() - status.createdAt,
-              status: 'completed',
-              response: rawResponse,
-            }),
+            metadata: withServerTaskId(
+              this.buildMetadata({
+                taskId: metadataTaskId,
+                taskName: status.taskType,
+                agent,
+                responseTimeMs: Date.now() - status.createdAt,
+                status: 'completed',
+                response: rawResponse,
+              })
+            ),
           });
         }
         const asyncResultErr = extractAdcpErrorInfo(status.result);
@@ -2823,16 +3073,18 @@ export class TaskExecutor {
           data: status.result,
           error: this.extractOperationError(status.result),
           adcpError: asyncResultErr,
-          errorInstance: this.buildErrorInstance(taskId, asyncResultErr),
+          errorInstance: this.buildErrorInstance(metadataTaskId, asyncResultErr),
           correlationId: extractCorrelationId(status.result),
-          metadata: this.buildMetadata({
-            taskId,
-            taskName: status.taskType,
-            agent,
-            responseTimeMs: Date.now() - status.createdAt,
-            status: 'failed',
-            response: rawResponse,
-          }),
+          metadata: withServerTaskId(
+            this.buildMetadata({
+              taskId: metadataTaskId,
+              taskName: status.taskType,
+              agent,
+              responseTimeMs: Date.now() - status.createdAt,
+              status: 'failed',
+              response: rawResponse,
+            })
+          ),
         });
       }
 
@@ -2848,16 +3100,18 @@ export class TaskExecutor {
           data: status.result,
           error: status.error || status.message || `Task ${status.status}`,
           adcpError: asyncFailedErr,
-          errorInstance: this.buildErrorInstance(taskId, asyncFailedErr),
+          errorInstance: this.buildErrorInstance(metadataTaskId, asyncFailedErr),
           correlationId: extractCorrelationId(status.result),
-          metadata: this.buildMetadata({
-            taskId,
-            taskName: status.taskType,
-            agent,
-            responseTimeMs: Date.now() - status.createdAt,
-            status: 'failed',
-            response: rawResponse,
-          }),
+          metadata: withServerTaskId(
+            this.buildMetadata({
+              taskId: metadataTaskId,
+              taskName: status.taskType,
+              agent,
+              responseTimeMs: Date.now() - status.createdAt,
+              status: 'failed',
+              response: rawResponse,
+            })
+          ),
         });
       }
 
@@ -2874,14 +3128,16 @@ export class TaskExecutor {
           success: true as const,
           status: status.status,
           data: status.result as T,
-          metadata: this.buildMetadata({
-            taskId,
-            taskName: status.taskType,
-            agent,
-            responseTimeMs: Date.now() - status.createdAt,
-            status: status.status,
-            response: rawResponse,
-          }),
+          metadata: withServerTaskId(
+            this.buildMetadata({
+              taskId: metadataTaskId,
+              taskName: status.taskType,
+              agent,
+              responseTimeMs: Date.now() - status.createdAt,
+              status: status.status,
+              response: rawResponse,
+            })
+          ),
         });
       }
 
@@ -2900,14 +3156,16 @@ export class TaskExecutor {
             `tasks/get returned an unrecognizable response (parsed status: "unknown", taskId: "${status.taskId}"). ` +
             `The seller may not implement tasks/get as an AdCP skill, or its response did not match any ` +
             `supported envelope shape (flat AdCP, MCP structuredContent, or A2A DataPart artifact).`,
-          metadata: this.buildMetadata({
-            taskId,
-            taskName: 'unknown',
-            agent,
-            startTime: pollStartTime,
-            status: 'failed',
-            response: rawResponse,
-          }),
+          metadata: withServerTaskId(
+            this.buildMetadata({
+              taskId: metadataTaskId,
+              taskName: 'unknown',
+              agent,
+              startTime: pollStartTime,
+              status: 'failed',
+              response: rawResponse,
+            })
+          ),
         });
       }
 
@@ -2922,52 +3180,352 @@ export class TaskExecutor {
    * Resume a deferred task (client deferral)
    */
   async resumeDeferredTask<T>(token: string, input: any, publishTerminalTaskStatus = true): Promise<TaskResult<T>> {
+    const result = (await this.resumeDeferredTaskWithContext<T>(token, input, publishTerminalTaskStatus)).result;
+    await acknowledgeDeferredSettlement(result);
+    return result;
+  }
+
+  /** A live owner closure may carry its committed settlement wrapper in process. */
+  private async resumeDeferredTaskFromLiveClosure<T>(
+    token: string,
+    input: any,
+    publishTerminalTaskStatus: boolean
+  ): Promise<TaskResult<T>> {
+    return (await this.resumeDeferredTaskCore<T>(token, input, publishTerminalTaskStatus, true)).result;
+  }
+
+  /** Resume and return the opaque owner context needed by higher-level clients. @internal */
+  async resumeDeferredTaskWithContext<T>(
+    token: string,
+    input: any,
+    publishTerminalTaskStatus = true
+  ): Promise<{
+    result: TaskResult<T>;
+    clientContext?: unknown;
+    settlementOperationId?: string;
+    settlementServerTaskId?: string;
+  }> {
+    return this.resumeDeferredTaskCore<T>(token, input, publishTerminalTaskStatus, false);
+  }
+
+  private async resumeDeferredTaskCore<T>(
+    token: string,
+    input: any,
+    publishTerminalTaskStatus: boolean,
+    liveSettlementOwner: boolean
+  ): Promise<{
+    result: TaskResult<T>;
+    clientContext?: unknown;
+    settlementOperationId?: string;
+    settlementServerTaskId?: string;
+  }> {
+    // Caller-owned nested input must not remain live across the storage or
+    // trusted-agent resolution awaits below.
+    const inputSnapshot = structuredClone(input);
     if (!this.config.deferredStorage) {
       throw new Error('Deferred storage not configured');
     }
 
+    // Read first, then atomically transition the exact record generation to a
+    // claimed fence below. The key is never physically absent during seller
+    // dispatch, so neither a replica nor a reused handler token can create an
+    // ABA replacement while settlement is pending.
     const state = await this.config.deferredStorage.get(token);
     if (!state) {
-      throw new Error(`Deferred task not found: ${token}`);
+      throw new Error('Deferred task not found.');
     }
+    if (state.expiresAt < Date.now()) {
+      throw new Error('Deferred task expired.');
+    }
+
+    const committedOperationId = state.settlementOperationId;
+    const requiresSettlement = committedOperationId !== undefined;
+    const requiresRecoveredSettlement = requiresSettlement && !liveSettlementOwner;
+    // Once durable settlement and public-client finalization both succeeded,
+    // replay the exact finalized value without re-running application handlers
+    // or settlement recovery.
+    if (requiresSettlement && state.settlementFinalizedResult !== undefined) {
+      return {
+        result: attachMatch(structuredClone(state.settlementFinalizedResult) as TaskResult<T>),
+        settlementOperationId: committedOperationId,
+        ...(state.settlementServerTaskId !== undefined && {
+          settlementServerTaskId: state.settlementServerTaskId,
+        }),
+      };
+    }
+    if (requiresRecoveredSettlement) {
+      let recoveryAvailable = false;
+      try {
+        recoveryAvailable =
+          this.config.recoverDeferredSettlement !== undefined &&
+          this.config.canRecoverDeferredSettlement !== undefined &&
+          (await this.config.canRecoverDeferredSettlement(committedOperationId));
+      } catch (error) {
+        throw error;
+      }
+      if (!recoveryAvailable) {
+        throw new Error(
+          'This deferred task crossed a committed mutation boundary, but durable settlement recovery is unavailable.'
+        );
+      }
+    }
+
+    // A prior seller continuation reached a terminal result but recovery did
+    // not finish. Retry the saved observation without contacting the seller.
+    if (requiresSettlement && state.settlementTerminalResult !== undefined) {
+      const finalizationLease = await this.acquireDeferredFinalizationLease(token, state);
+      try {
+        const checkpointed = attachMatch(structuredClone(state.settlementTerminalResult) as TaskResult<T>);
+        const settlement = requiresRecoveredSettlement
+          ? await this.config.recoverDeferredSettlement!(
+              checkpointed,
+              committedOperationId,
+              state.settlementServerTaskId
+            )
+          : { result: checkpointed };
+        const recovered = this.attachDeferredSettlementAcknowledgement(
+          settlement.result as TaskResult<T>,
+          state.taskId,
+          publishTerminalTaskStatus,
+          settlement.afterFinalize,
+          finalized => finalizationLease.finalize(finalized),
+          () => finalizationLease.release()
+        );
+        return {
+          result: attachMatch(recovered),
+          ...(state.clientContext !== undefined && { clientContext: structuredClone(state.clientContext) }),
+          settlementOperationId: committedOperationId,
+          ...(state.settlementServerTaskId !== undefined && {
+            settlementServerTaskId: state.settlementServerTaskId,
+          }),
+        };
+      } catch (error) {
+        await finalizationLease.release();
+        throw error;
+      }
+    }
+
+    if (state.continuationClaimed) {
+      throw new Error('Deferred task is already being resumed.');
+    }
+    if (typeof state.continuationVersion !== 'string' || state.continuationVersion.length === 0) {
+      throw new Error('Deferred task state does not contain the atomic continuation version required for resumption.');
+    }
+    const remainingTtlSeconds = Math.ceil((state.expiresAt - Date.now()) / 1000);
+    if (remainingTtlSeconds < 1) throw new Error('Deferred task expired.');
+    // Admission is governed by the original human-input deadline above. Once
+    // admitted, keep the exact claim generation alive for a fresh dispatch
+    // horizon so a slow seller cannot outlive the fence or defeat checkpoint
+    // persistence after it has already advanced the mutation.
+    const claimTtlSeconds = this.deferredSafetyRetentionSeconds();
+    const claimedVersion = randomUUID();
+    const claimedAt = Date.now();
+    const claimed = await this.config.deferredStorage.replaceIfVersion(
+      token,
+      state.continuationVersion,
+      {
+        ...state,
+        continuationVersion: claimedVersion,
+        continuationClaimed: true,
+        createdAt: claimedAt,
+        expiresAt: claimedAt + claimTtlSeconds * 1000,
+      },
+      claimTtlSeconds
+    );
+    if (!claimed) {
+      throw new Error('Deferred task was already consumed or replaced.');
+    }
+
+    let agent: AgentConfig | undefined;
+    let terminalObservationPersisted = false;
+    let finalizationLease: DeferredFinalizationLease | undefined;
+    try {
+      agent = this.deferredAgents.get(state.agentId) ?? (await this.config.resolveDeferredAgent?.(state.agentId));
+    } catch (error) {
+      await this.restoreUnadvancedDeferredState(token, claimedVersion, state);
+      throw error;
+    }
+    if (!agent || agent.id !== state.agentId) {
+      await this.restoreUnadvancedDeferredState(token, claimedVersion, state);
+      throw new Error('Deferred task agent could not be resolved from trusted configuration.');
+    }
+    if (state.expiresAt < Date.now()) {
+      await this.config.deferredStorage.takeIfVersion(token, claimedVersion);
+      throw new Error('Deferred task expired during trusted-agent resolution.');
+    }
+    if (agent.protocol !== 'a2a') {
+      await this.restoreUnadvancedDeferredState(token, claimedVersion, state);
+      throw new Error('A persisted deferred task can only resume an exact A2A seller task.');
+    }
+    if (!state.a2aTaskId) {
+      await this.restoreUnadvancedDeferredState(token, claimedVersion, state);
+      throw new Error('A persisted A2A deferred task requires a seller task ID.');
+    }
+    this.deferredAgents.set(agent.id, agent);
 
     try {
       // Continue task with the provided input (no handler for resumed deferred tasks)
       const resumed = await this.continueTaskWithInput<T>(
-        state.agent,
+        agent,
         state.taskId,
         state.taskName,
         state.params,
         state.contextId,
         state.a2aTaskId,
-        input,
+        inputSnapshot,
         state.messages,
         undefined, // No handler for deferred tasks - input was provided by human
         {},
         [],
         Date.now(),
-        !publishTerminalTaskStatus
+        !publishTerminalTaskStatus || requiresSettlement,
+        false,
+        state.serverVersion,
+        state.clientContext
       );
       const remainsPaused = ['input-required', 'auth-required', 'deferred'].includes(resumed.status);
+      // A resumed seller may pause again with a replacement continuation.
+      // Persist that exact new task identity before returning it; otherwise
+      // only the in-process closure can resume and a restart falls back to the
+      // already-consumed token.
+      if (remainsPaused && resumed.deferred !== undefined) {
+        const nextA2ATaskId = resumed.metadata.a2aTaskId;
+        if (!nextA2ATaskId) {
+          throw new Error('A resumable A2A pause did not expose the seller task ID required for durable storage.');
+        }
+        const nextToken = resumed.deferred.token;
+        const createdAt = Date.now();
+        const ttlSeconds = this.config.deferredTaskTtlSeconds ?? DEFAULT_DEFERRED_TASK_TTL_SECONDS;
+        const stored = await this.config.deferredStorage.putIfAbsent(
+          nextToken,
+          {
+            continuationVersion: randomUUID(),
+            taskId: state.taskId,
+            ...(resumed.metadata.contextId !== undefined
+              ? { contextId: resumed.metadata.contextId }
+              : state.contextId !== undefined
+                ? { contextId: state.contextId }
+                : {}),
+            a2aTaskId: nextA2ATaskId,
+            serverVersion: state.serverVersion,
+            agentId: state.agentId,
+            taskName: state.taskName,
+            params: durableDeferredSnapshot(state.params),
+            messages: durableDeferredSnapshot(resumed.conversation ?? state.messages),
+            ...(state.clientContext !== undefined && {
+              clientContext: durableDeferredSnapshot(state.clientContext),
+            }),
+            ...(state.settlementOperationId !== undefined && {
+              settlementOperationId: state.settlementOperationId,
+            }),
+            ...((resumed.metadata.serverTaskId ?? state.settlementServerTaskId) !== undefined && {
+              settlementServerTaskId: resumed.metadata.serverTaskId ?? state.settlementServerTaskId,
+            }),
+            createdAt,
+            expiresAt: createdAt + ttlSeconds * 1000,
+          },
+          ttlSeconds
+        );
+        if (!stored) {
+          throw new Error('Replacement deferred continuation token already exists; refusing unsafe overwrite.');
+        }
+        resumed.deferred.resume = nextInput =>
+          liveSettlementOwner
+            ? this.resumeDeferredTaskFromLiveClosure<T>(nextToken, nextInput, publishTerminalTaskStatus)
+            : this.resumeDeferredTask<T>(nextToken, nextInput, publishTerminalTaskStatus);
+      }
+
+      let settledResult = attachMatch(resumed) as TaskResult<T>;
+      let afterFinalize: (() => Promise<void>) | undefined;
+      if (requiresSettlement) {
+        if (TERMINAL_TASK_STATUSES.has(resumed.status as TaskStatus)) {
+          const { match: _match, submitted: _submitted, deferred: _deferred, ...serializableResult } = resumed as any;
+          const checkpointCreatedAt = Date.now();
+          const checkpointTtlSeconds = this.deferredSafetyRetentionSeconds();
+          const checkpointVersion = randomUUID();
+          const checkpointState: DeferredTaskState = {
+            ...state,
+            continuationVersion: checkpointVersion,
+            continuationClaimed: true,
+            params: durableDeferredSnapshot(state.params),
+            messages: durableDeferredSnapshot(resumed.conversation ?? state.messages),
+            ...(state.clientContext !== undefined && {
+              clientContext: durableDeferredSnapshot(state.clientContext),
+            }),
+            settlementTerminalResult: durableDeferredSnapshot(serializableResult),
+            createdAt: checkpointCreatedAt,
+            expiresAt: checkpointCreatedAt + checkpointTtlSeconds * 1000,
+          };
+          const saved = await this.config.deferredStorage.replaceIfVersion(
+            token,
+            claimedVersion,
+            checkpointState,
+            checkpointTtlSeconds
+          );
+          if (!saved) {
+            throw new Error('Committed deferred terminal observation could not be saved without overwriting state.');
+          }
+          terminalObservationPersisted = true;
+          finalizationLease = await this.acquireDeferredFinalizationLease(token, checkpointState);
+        }
+        if (requiresRecoveredSettlement) {
+          const settlement = await this.config.recoverDeferredSettlement!(
+            settledResult,
+            committedOperationId,
+            state.settlementServerTaskId
+          );
+          settledResult = settlement.result as TaskResult<T>;
+          afterFinalize = settlement.afterFinalize;
+        }
+      }
       if (
         publishTerminalTaskStatus &&
-        ['completed', 'failed', 'rejected', 'canceled', 'governance-denied', 'aborted'].includes(resumed.status) &&
-        this.activeTasks.get(state.taskId)?.status !== resumed.status
+        !requiresSettlement &&
+        TERMINAL_TASK_STATUSES.has(settledResult.status as TaskStatus) &&
+        this.activeTasks.get(state.taskId)?.status !== settledResult.status
       ) {
-        this.updateTaskStatus(state.taskId, resumed.status as TaskStatus, resumed.data, resumed.error);
+        this.updateTaskStatus(
+          state.taskId,
+          settledResult.status as TaskStatus,
+          settledResult.data,
+          settledResult.error
+        );
       }
-      // A subsequent pause can itself be nonresumable (for example an A2A
-      // response that omits Task.id). Do not retain the older seller task ID
-      // as a stale resume route after that downgrade.
-      if (!remainsPaused || resumed.deferred === undefined) {
-        await this.config.deferredStorage.delete(token);
+      if (requiresSettlement && TERMINAL_TASK_STATUSES.has(settledResult.status as TaskStatus)) {
+        const activeFinalizationLease = finalizationLease;
+        settledResult = this.attachDeferredSettlementAcknowledgement(
+          settledResult,
+          state.taskId,
+          publishTerminalTaskStatus,
+          afterFinalize,
+          activeFinalizationLease ? finalized => activeFinalizationLease.finalize(finalized) : undefined,
+          activeFinalizationLease ? () => activeFinalizationLease.release() : undefined
+        );
       }
-      return attachMatch(resumed);
+      if (!terminalObservationPersisted) {
+        const consumedFence = await this.config.deferredStorage.takeIfVersion(token, claimedVersion);
+        if (!consumedFence) {
+          throw new Error('Deferred continuation claim was replaced before version-fenced completion.');
+        }
+      }
+      return {
+        result: attachMatch(settledResult),
+        ...(state.clientContext !== undefined && { clientContext: structuredClone(state.clientContext) }),
+        ...(state.settlementOperationId !== undefined && {
+          settlementOperationId: state.settlementOperationId,
+        }),
+        ...(state.settlementServerTaskId !== undefined && {
+          settlementServerTaskId: state.settlementServerTaskId,
+        }),
+      };
     } catch (error) {
+      if (finalizationLease) {
+        await finalizationLease.release();
+      }
       // A thrown continuation failure is terminal for this deferred token.
       // Release both persistence and the in-memory request payload before the
       // error escapes to the caller.
-      if (publishTerminalTaskStatus) {
+      if (publishTerminalTaskStatus && !terminalObservationPersisted) {
         this.updateTaskStatus(
           state.taskId,
           'failed',
@@ -2975,13 +3533,258 @@ export class TaskExecutor {
           error instanceof Error ? error.message : String(error)
         );
       }
-      try {
-        await this.config.deferredStorage.delete(token);
-      } catch {
-        // Local request compaction above is the safety boundary. Preserve the
-        // original continuation/delete error if external cleanup also fails.
-      }
+      // The versioned claim fence stays in storage after uncertain dispatch:
+      // the seller may have advanced even when its response did not reach
+      // this process, so the human continuation must not become resumable.
       throw error;
+    }
+  }
+
+  private async acquireDeferredFinalizationLease(
+    token: string,
+    checkpoint: DeferredTaskState
+  ): Promise<DeferredFinalizationLease> {
+    const storage = this.config.deferredStorage;
+    if (!storage) throw new Error('Deferred storage not configured');
+    const now = Date.now();
+    if (checkpoint.settlementFinalizationLease && checkpoint.settlementFinalizationLease.expiresAt > now) {
+      throw new Error('Deferred settlement finalization is already in progress.');
+    }
+
+    const ownerId = randomUUID();
+    const safetyTtlSeconds = this.deferredSafetyRetentionSeconds();
+    let currentVersion = randomUUID();
+    let currentState: DeferredTaskState = {
+      ...checkpoint,
+      continuationVersion: currentVersion,
+      settlementFinalizationLease: {
+        ownerId,
+        expiresAt: now + DEFERRED_FINALIZATION_LEASE_MS,
+      },
+      expiresAt: now + safetyTtlSeconds * 1000,
+    };
+    const acquired = await storage.replaceIfVersion(
+      token,
+      checkpoint.continuationVersion,
+      currentState,
+      safetyTtlSeconds
+    );
+    if (!acquired) throw new Error('Deferred settlement finalization was claimed by another replica.');
+
+    let stopped = false;
+    let lostError: Error | undefined;
+    let renewal = Promise.resolve();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleRenewal = (): void => {
+      if (stopped || lostError) return;
+      timer = setTimeout(() => {
+        renewal = renewal.then(async () => {
+          if (stopped || lostError) return;
+          try {
+            const renewedAt = Date.now();
+            const nextVersion = randomUUID();
+            const nextState: DeferredTaskState = {
+              ...currentState,
+              continuationVersion: nextVersion,
+              settlementFinalizationLease: {
+                ownerId,
+                expiresAt: renewedAt + DEFERRED_FINALIZATION_LEASE_MS,
+              },
+              expiresAt: renewedAt + safetyTtlSeconds * 1000,
+            };
+            const renewed = await storage.replaceIfVersion(token, currentVersion, nextState, safetyTtlSeconds);
+            if (!renewed) {
+              lostError = new Error('Deferred settlement finalization lease was lost.');
+              return;
+            }
+            currentVersion = nextVersion;
+            currentState = nextState;
+            scheduleRenewal();
+          } catch (error) {
+            lostError = new Error('Deferred settlement finalization lease could not be renewed.', { cause: error });
+          }
+        });
+      }, DEFERRED_FINALIZATION_RENEW_MS);
+      timer.unref?.();
+    };
+    scheduleRenewal();
+
+    const stop = async (): Promise<void> => {
+      if (!stopped) {
+        stopped = true;
+        if (timer) clearTimeout(timer);
+      }
+      await renewal;
+      if (lostError) throw lostError;
+    };
+
+    let completed = false;
+    return {
+      finalize: async <T>(result: TaskResult<T>): Promise<void> => {
+        if (completed) return;
+        await stop();
+        await this.markDeferredSettlementFinalized(token, currentVersion, result);
+        completed = true;
+      },
+      release: async (): Promise<void> => {
+        if (completed) return;
+        await stop();
+        const { settlementFinalizationLease: _lease, ...retryableCheckpoint } = currentState;
+        void _lease;
+        const releasedAt = Date.now();
+        const released = await storage.replaceIfVersion(
+          token,
+          currentVersion,
+          {
+            ...retryableCheckpoint,
+            continuationVersion: randomUUID(),
+            createdAt: releasedAt,
+            expiresAt: releasedAt + safetyTtlSeconds * 1000,
+          },
+          safetyTtlSeconds
+        );
+        if (!released) throw new Error('Deferred settlement finalization lease could not be released safely.');
+        completed = true;
+      },
+    };
+  }
+
+  private attachDeferredSettlementAcknowledgement<T>(
+    result: TaskResult<T>,
+    taskId: string,
+    publishTerminalTaskStatus: boolean,
+    afterFinalize?: () => Promise<void>,
+    persistFinalized?: (finalizedResult: TaskResult<T>) => Promise<void>,
+    rejectFinalization?: () => Promise<void>
+  ): TaskResult<T> {
+    let acknowledged = false;
+    let rejected = false;
+    const acknowledge = async (finalizedResult: TaskResult<T> = result): Promise<void> => {
+      if (acknowledged) return;
+      try {
+        await afterFinalize?.();
+        await persistFinalized?.(finalizedResult);
+        if (
+          publishTerminalTaskStatus &&
+          TERMINAL_TASK_STATUSES.has(finalizedResult.status as TaskStatus) &&
+          this.activeTasks.get(taskId)?.status !== finalizedResult.status
+        ) {
+          this.updateTaskStatus(
+            taskId,
+            finalizedResult.status as TaskStatus,
+            finalizedResult.data,
+            finalizedResult.error
+          );
+        }
+        acknowledged = true;
+      } catch (error) {
+        if (!rejected) {
+          await rejectFinalization?.();
+          rejected = true;
+        }
+        throw error;
+      }
+    };
+    const reject = async (): Promise<void> => {
+      if (acknowledged || rejected) return;
+      await rejectFinalization?.();
+      rejected = true;
+    };
+    Object.defineProperty(result, DEFERRED_SETTLEMENT_ACK, {
+      value: acknowledge,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    });
+    Object.defineProperty(result, DEFERRED_SETTLEMENT_NACK, {
+      value: reject,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    });
+    return result;
+  }
+
+  private async markDeferredSettlementFinalized<T>(
+    token: string,
+    expectedVersion: string,
+    finalizedResult: TaskResult<T>
+  ): Promise<void> {
+    const storage = this.config.deferredStorage;
+    if (!storage) throw new Error('Deferred storage not configured');
+    const current = await storage.get(token);
+    if (!current || current.continuationVersion !== expectedVersion) {
+      throw new Error('Committed deferred completion could not be durably acknowledged.');
+    }
+    const { match: _match, submitted: _submitted, deferred: _deferred, ...serializableResult } = finalizedResult as any;
+    void _match;
+    void _submitted;
+    void _deferred;
+    const acknowledgedAt = Date.now();
+    const ttlSeconds = this.deferredSafetyRetentionSeconds();
+    const { settlementFinalizationLease: _lease, ...finalizedCheckpoint } = current;
+    void _lease;
+    const saved = await storage.replaceIfVersion(
+      token,
+      expectedVersion,
+      {
+        ...finalizedCheckpoint,
+        continuationVersion: randomUUID(),
+        continuationClaimed: true,
+        params: durableDeferredSnapshot(current.params),
+        messages: durableDeferredSnapshot(current.messages),
+        ...(current.clientContext !== undefined && {
+          clientContext: durableDeferredSnapshot(current.clientContext),
+        }),
+        settlementFinalizedResult: durableDeferredSnapshot(serializableResult),
+        createdAt: acknowledgedAt,
+        expiresAt: acknowledgedAt + ttlSeconds * 1000,
+      },
+      ttlSeconds
+    );
+    if (!saved) throw new Error('Committed deferred completion could not be durably acknowledged.');
+  }
+
+  private deferredSafetyRetentionSeconds(): number {
+    const configuredWorkingMs = this.config.workingTimeout ?? 120_000;
+    const workingMs =
+      Number.isFinite(configuredWorkingMs) && configuredWorkingMs > 0
+        ? Math.min(configuredWorkingMs, MAX_TIMER_DELAY_MS)
+        : 120_000;
+    const configuredRequestMs = this.config.transport?.requestTimeoutMs;
+    const requestMs =
+      configuredRequestMs === 0
+        ? MAX_TIMER_DELAY_MS
+        : configuredRequestMs !== undefined && Number.isFinite(configuredRequestMs) && configuredRequestMs > 0
+          ? Math.min(configuredRequestMs, MAX_TIMER_DELAY_MS)
+          : 0;
+    const configuredOperationHorizonSeconds =
+      Math.ceil((workingMs + requestMs) / 1000) + DEFERRED_SAFETY_MARGIN_SECONDS;
+    return Math.max(
+      DEFAULT_DEFERRED_SAFETY_RETENTION_SECONDS,
+      this.config.deferredTaskTtlSeconds ?? 0,
+      configuredOperationHorizonSeconds
+    );
+  }
+
+  /** Restore a consumed token only when no seller continuation was dispatched. */
+  private async restoreUnadvancedDeferredState(
+    token: string,
+    claimedVersion: string,
+    state: DeferredTaskState
+  ): Promise<void> {
+    const remainingTtlSeconds = Math.ceil((state.expiresAt - Date.now()) / 1000);
+    if (remainingTtlSeconds < 1) return;
+    const restored = await this.config.deferredStorage?.replaceIfVersion(
+      token,
+      claimedVersion,
+      state,
+      remainingTtlSeconds
+    );
+    if (!restored) {
+      throw new Error(
+        'Deferred continuation token was reused during trusted-agent resolution; original state was not restored.'
+      );
     }
   }
 
@@ -3001,8 +3804,15 @@ export class TaskExecutor {
     options: TaskOptions = {},
     debugLogs: any[] = [],
     startTime: number = Date.now(),
-    deferTerminalTaskStatus = false
+    deferTerminalTaskStatus = false,
+    persistPausedContinuation = true,
+    serverVersion: 'v2' | 'v3' = 'v3',
+    deferredClientContext?: unknown
   ): Promise<TaskResult<T>> {
+    // This is also the direct same-process continuation when durable storage
+    // is absent. Snapshot before the first await so nested caller-owned input
+    // cannot change after the user selects it.
+    const inputSnapshot = structuredClone(input);
     if (agent.protocol !== 'a2a') {
       throw new Error('MCP does not define a standard continuation for a returned input-required task.');
     }
@@ -3015,7 +3825,7 @@ export class TaskExecutor {
     const inputMessage: Message = {
       id: randomUUID(),
       role: 'user',
-      content: input,
+      content: inputSnapshot,
       timestamp: new Date().toISOString(),
       metadata: { type: 'input_response' },
     };
@@ -3025,10 +3835,10 @@ export class TaskExecutor {
     const response = await ProtocolClient.callTool(
       agent,
       taskName,
-      { input },
+      { input: inputSnapshot },
       {
         debugLogs,
-        serverVersion: this.lastKnownServerVersion,
+        serverVersion,
         adcpVersion: this.config.adcpVersion,
         ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
         ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
@@ -3066,7 +3876,10 @@ export class TaskExecutor {
       options,
       debugLogs,
       startTime,
-      deferTerminalTaskStatus
+      deferTerminalTaskStatus,
+      persistPausedContinuation,
+      serverVersion,
+      deferredClientContext
     );
   }
 
@@ -3336,7 +4149,8 @@ export class TaskExecutor {
   private validateResponseSchema(
     response: any,
     taskName: string,
-    debugLogs: any[]
+    debugLogs: any[],
+    serverVersion?: 'v2' | 'v3'
   ): { valid: boolean; errors: string[] } {
     const mode = this.responseValidationMode;
     const logViolations = this.config.logSchemaViolations !== false;
@@ -3347,9 +4161,11 @@ export class TaskExecutor {
       // responses and the SDK rejects them as malformed v3 — surfaces as
       // `pricing_options must NOT have fewer than 1 items` and similar
       // shape mismatches that don't exist in v2.5. The v3 → v2 path is
-      // already correctly version-pinned via lastKnownServerVersion.
+      // Normal dispatch uses lastKnownServerVersion; restart recovery passes
+      // the persisted continuation version explicitly so concurrent or fresh
+      // executors cannot validate the seller's response against another wire.
       const validationVersion =
-        this.lastKnownServerVersion === 'v2'
+        (serverVersion ?? this.lastKnownServerVersion) === 'v2'
           ? 'v2.5'
           : (this.responseAdcpVersionForValidation() ?? this.config.adcpVersion ?? ADCP_VERSION);
       const normalizedResponse = this.normalizeResponseForValidation(response, taskName, validationVersion === 'v2.5');
@@ -3404,8 +4220,8 @@ export class TaskExecutor {
     return undefined;
   }
 
-  private effectiveResponseAdcpVersion(): string {
-    if (this.lastKnownServerVersion === 'v2') return 'v2.5';
+  private effectiveResponseAdcpVersion(serverVersion?: 'v2' | 'v3'): string {
+    if ((serverVersion ?? this.lastKnownServerVersion) === 'v2') return 'v2.5';
     return this.responseAdcpVersionForValidation() ?? this.config.adcpVersion ?? ADCP_VERSION;
   }
 

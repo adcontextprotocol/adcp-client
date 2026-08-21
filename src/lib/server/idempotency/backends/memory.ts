@@ -30,7 +30,7 @@ export function memoryBackend(options: MemoryBackendOptions = {}): IdempotencyBa
     sweeper = setInterval(() => {
       const nowSeconds = Math.floor(Date.now() / 1000);
       for (const [k, entry] of store) {
-        if (entry.expiresAt < nowSeconds) store.delete(k);
+        if ((entry.retainUntil ?? entry.expiresAt) < nowSeconds) store.delete(k);
       }
     }, sweepIntervalMs);
     // Don't hold the event loop open for this timer.
@@ -95,5 +95,6 @@ function cloneEntry(entry: IdempotencyCacheEntry): IdempotencyCacheEntry {
     payloadHash: entry.payloadHash,
     response: entry.response == null ? entry.response : structuredClone(entry.response),
     expiresAt: entry.expiresAt,
+    retainUntil: entry.retainUntil ?? entry.expiresAt,
   };
 }

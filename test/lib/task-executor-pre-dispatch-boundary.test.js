@@ -31,6 +31,36 @@ function a2aPause({ question, field, contextId, taskId }) {
   };
 }
 
+function deferredStorage(records) {
+  return {
+    set: async (token, state) => records.set(token, state),
+    putIfAbsent: async (token, state) => {
+      if (records.has(token)) return false;
+      records.set(token, state);
+      return true;
+    },
+    replaceIfVersion: async (token, expectedVersion, state) => {
+      if (records.get(token)?.continuationVersion !== expectedVersion) return false;
+      records.set(token, state);
+      return true;
+    },
+    takeIfVersion: async (token, expectedVersion) => {
+      const state = records.get(token);
+      if (state?.continuationVersion !== expectedVersion) return undefined;
+      records.delete(token);
+      return state;
+    },
+    get: async token => records.get(token),
+    take: async token => {
+      const state = records.get(token);
+      records.delete(token);
+      return state;
+    },
+    delete: async token => records.delete(token),
+    has: async token => records.has(token),
+  };
+}
+
 const originalCallTool = ProtocolClient.callTool;
 
 afterEach(() => {
@@ -457,6 +487,63 @@ describe('TaskExecutor pre-dispatch boundary', () => {
     assert.deepEqual(dispatchedParams.packages[0].targeting.geo_countries, ['US']);
   });
 
+  test('snapshots direct-executor transport policy before an awaited pre-dispatch boundary', async () => {
+    let releaseActivity;
+    const activityRelease = new Promise(resolve => {
+      releaseActivity = resolve;
+    });
+    let markActivityStarted;
+    const activityStarted = new Promise(resolve => {
+      markActivityStarted = resolve;
+    });
+    let dispatchedOptions;
+    ProtocolClient.callTool = mock.fn(async (_agent, _taskName, _params, options) => {
+      dispatchedOptions = options;
+      return { status: 'completed', data: { media_buy_id: 'buy-transport-snapshot' } };
+    });
+    const executor = new TaskExecutor({
+      strictSchemaValidation: false,
+      onActivity: async activity => {
+        if (activity.type !== 'protocol_request') return;
+        markActivityStarted();
+        await activityRelease;
+      },
+    });
+    const trustedFetchFn = async () => new Response();
+    const mutatedFetchFn = async () => new Response();
+    const options = {
+      transport: {
+        allowPrivateIp: false,
+        maxResponseBytes: 1024,
+        requestTimeoutMs: 5000,
+        trustedFetchFn,
+      },
+      metadata: { admission: { policy: 'original' } },
+    };
+
+    const execution = executor.executeTask(
+      AGENT,
+      'create_media_buy',
+      { idempotency_key: 'transport-snapshot' },
+      undefined,
+      options
+    );
+    await activityStarted;
+    options.transport.allowPrivateIp = true;
+    options.transport.maxResponseBytes = 999_999_999;
+    options.transport.requestTimeoutMs = 1;
+    options.transport.trustedFetchFn = mutatedFetchFn;
+    options.metadata.admission.policy = 'mutated';
+    releaseActivity();
+
+    const result = await execution;
+    assert.equal(result.status, 'completed');
+    assert.equal(dispatchedOptions.transport.allowPrivateIp, false);
+    assert.equal(dispatchedOptions.transport.maxResponseBytes, 1024);
+    assert.equal(dispatchedOptions.transport.requestTimeoutMs, 5000);
+    assert.equal(dispatchedOptions.transport.trustedFetchFn, trustedFetchFn);
+  });
+
   test('runs the committed error settlement exactly once when seller dispatch throws', async () => {
     const transportError = new Error('seller transport failed after dispatch');
     const durableError = new Error('durable outcome fenced with secret-db-token');
@@ -757,11 +844,7 @@ describe('TaskExecutor pre-dispatch boundary', () => {
     });
     const executor = new TaskExecutor({
       strictSchemaValidation: false,
-      deferredStorage: {
-        set: async (token, state) => deferredRecords.set(token, state),
-        get: async token => deferredRecords.get(token),
-        delete: async token => deferredRecords.delete(token),
-      },
+      deferredStorage: deferredStorage(deferredRecords),
     });
     const observedStatuses = [];
     executor.onTaskUpdate(pauseAgent.id, task => observedStatuses.push(task.status));
@@ -798,6 +881,77 @@ describe('TaskExecutor pre-dispatch boundary', () => {
     await assert.rejects(pending.deferred.resume({ approved: true }), error => error === durableError);
     assert.equal(observedStatuses.includes('completed'), false);
     assert.equal(executor.getActiveTasks()[0].status, 'deferred');
+  });
+
+  test('SingleAgentClient preserves committed-settlement wrappers on a live durable resume closure', async () => {
+    const pauseAgent = { ...AGENT, protocol: 'a2a', agent_uri: 'https://seller.example/a2a' };
+    const records = new Map();
+    let createCalls = 0;
+    let settlementCompletions = 0;
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+      assert.equal(taskName, 'create_media_buy');
+      createCalls += 1;
+      if (createCalls === 1) {
+        return a2aPause({
+          question: 'Approve the committed purchase?',
+          field: 'approval',
+          contextId: 'committed-resume-context',
+          taskId: 'committed-resume-task',
+        });
+      }
+      return { status: 'completed', data: { media_buy_id: 'committed-resumed-buy', packages: [] } };
+    });
+    const client = new SingleAgentClient(pauseAgent, {
+      deferredStorage: deferredStorage(records),
+      validateFeatures: false,
+      validation: { requests: 'off', responses: 'off' },
+    });
+    client.ensureEndpointDiscovered = async () => pauseAgent;
+    client.detectServerVersion = async () => 'v3';
+    client.getEarlyResultForUnsupportedFeatures = async () => null;
+    const paused = await client.createMediaBuyLegacyWithPreDispatch(
+      {
+        idempotency_key: 'committed-resume-wrapper-key',
+        account: { account_id: 'account-1' },
+        brand: { domain: 'buyer.example' },
+        start_time: 'asap',
+        end_time: '2027-12-31T00:00:00Z',
+        packages: [],
+      },
+      async () => ({
+        action: 'dispatch_committed',
+        onResult: async result => {
+          const deferred = result.deferred;
+          if (deferred) {
+            result.deferred = {
+              ...deferred,
+              resume: async input => {
+                const completion = await deferred.resume(input);
+                settlementCompletions += 1;
+                return completion;
+              },
+            };
+          }
+          return result;
+        },
+        onError: async error => {
+          throw error;
+        },
+      }),
+      async () => ({ defer: true, token: 'committed-resume-wrapper-token' })
+    );
+
+    assert.equal(paused.status, 'deferred', paused.error);
+    assert.equal(
+      records.get(paused.deferred.token).settlementOperationId,
+      paused.metadata.taskId,
+      'committed pauses must persist the trusted durable settlement route'
+    );
+    assert.equal(records.get(paused.deferred.token).settlementServerTaskId, paused.metadata.serverTaskId);
+    const completed = await paused.deferred.resume({ approved: true });
+    assert.equal(completed.status, 'completed');
+    assert.equal(settlementCompletions, 1);
+    assert.equal(createCalls, 2);
   });
 
   test('publishes deferred-to-submitted completion only after recursive durable settlement', async () => {
@@ -837,11 +991,7 @@ describe('TaskExecutor pre-dispatch boundary', () => {
     });
     const executor = new TaskExecutor({
       strictSchemaValidation: false,
-      deferredStorage: {
-        set: async (token, state) => deferredRecords.set(token, state),
-        get: async token => deferredRecords.get(token),
-        delete: async token => deferredRecords.delete(token),
-      },
+      deferredStorage: deferredStorage(deferredRecords),
     });
     const observedStatuses = [];
     executor.onTaskUpdate(pauseAgent.id, task => observedStatuses.push(task.status));
@@ -1334,6 +1484,52 @@ describe('TaskExecutor pre-dispatch boundary', () => {
         error?.code === 'webhook_durable_settlement_unavailable' &&
         /no recoverable settlement route/i.test(error.message)
     );
+  });
+
+  test('webhook HTTP helper returns retryable 503 while durable settlement recovery is unavailable', async () => {
+    const client = new SingleAgentClient(AGENT, {
+      allowUnauthenticatedWebhooks: true,
+      strictSchemaValidation: false,
+      validateFeatures: false,
+    });
+    let recoveryAvailable = false;
+    client.registerDurableSettlementRecovery(async (_operationId, observation) =>
+      recoveryAvailable ? { settled: true, status: 'completed', result: observation.result } : undefined
+    );
+    client.verifyAndParseWebhook = async () => ({
+      ok: true,
+      protocol: 'mcp',
+      envelope: {},
+      result: { media_buy_id: 'durable-http-buy' },
+      metadata: {
+        operationId: 'durable-http-operation',
+        taskId: 'durable-http-seller-task',
+        taskType: 'create_media_buy',
+        status: 'completed',
+        requiresDurableSettlement: true,
+      },
+    });
+    const handler = client.createWebhookHandler();
+    const response = () => ({
+      statusCode: 0,
+      body: undefined,
+      status(code) {
+        this.statusCode = code;
+        return this;
+      },
+      json(body) {
+        this.body = body;
+      },
+    });
+
+    const unavailable = response();
+    await handler({ body: {}, params: {} }, unavailable);
+    assert.equal(unavailable.statusCode, 503);
+
+    recoveryAvailable = true;
+    const retried = response();
+    await handler({ body: {}, params: {} }, retried);
+    assert.equal(retried.statusCode, 202);
   });
 
   test('does not acknowledge a durable callback into process memory when recovery is unavailable', async () => {

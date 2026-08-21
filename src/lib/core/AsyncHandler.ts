@@ -530,6 +530,7 @@ export class AsyncHandler {
           state: WEBHOOK_DEDUP_HANDLED,
           eventFingerprint: dedupClaim.eventFingerprint ?? '',
         };
+        const handledExpiresAt = Math.floor(Date.now() / 1000) + dedupClaim.ttlSeconds!;
         const published = await this.config.webhookDedup.backend.replaceIfPayloadHash(
           dedupClaim.claimKey,
           dedupClaim.claimToken,
@@ -542,7 +543,8 @@ export class AsyncHandler {
             // Retention starts when processing completes, not when it was
             // claimed. Long-running handlers therefore receive the full
             // configured duplicate fence after their side effects finish.
-            expiresAt: Math.floor(Date.now() / 1000) + dedupClaim.ttlSeconds!,
+            expiresAt: handledExpiresAt,
+            retainUntil: handledExpiresAt,
           }
         );
         if (!published) {
@@ -587,6 +589,7 @@ export class AsyncHandler {
             payloadHash: currentToken,
             response: { claimToken: currentToken, eventFingerprint: claim.eventFingerprint },
             expiresAt: nowSeconds + claim.claimTtlSeconds!,
+            retainUntil: nowSeconds + claim.claimTtlSeconds!,
           });
           if (!renewed) {
             stopped = true;
@@ -782,6 +785,7 @@ export class AsyncHandler {
       payloadHash: claimToken,
       response: { claimToken, eventFingerprint },
       expiresAt: claimExpiresAt,
+      retainUntil: claimExpiresAt,
     };
     // Atomic logical-expiry takeover belongs in putIfAbsent. A read-derived
     // CAS can overwrite a claim renewed after this receiver's stale read, or
@@ -793,6 +797,7 @@ export class AsyncHandler {
         payloadHash: claimToken,
         response: { claimToken, eventFingerprint },
         expiresAt: claimExpiresAt,
+        retainUntil: claimExpiresAt,
       });
       if (!fenced) throw new Error('Webhook processing claim could not establish atomic ownership.');
       return {

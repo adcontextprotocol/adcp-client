@@ -1,7 +1,7 @@
 // Default in-memory storage implementation
 // Works out of the box without any external dependencies
 
-import type { Storage, BatchStorage, PatternStorage } from './interfaces';
+import type { AtomicTakeStorage, BatchStorage, PatternStorage } from './interfaces';
 
 /**
  * Stored item with optional expiration
@@ -29,7 +29,7 @@ interface StoredItem<T> {
  * const value = await storage.get('key');
  * ```
  */
-export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternStorage<T> {
+export class MemoryStorage<T> implements AtomicTakeStorage<T>, BatchStorage<T>, PatternStorage<T> {
   private store = new Map<string, StoredItem<T>>();
   private cleanupInterval?: NodeJS.Timeout;
   private lastCleanup = 0;
@@ -70,6 +70,61 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
     }
 
     return item.value;
+  }
+
+  async take(key: string): Promise<T | undefined> {
+    const item = this.store.get(key);
+    if (!item) return undefined;
+
+    // Consume expired entries too, but never return their value.
+    this.store.delete(key);
+    if (item.expiresAt && Date.now() > item.expiresAt) return undefined;
+    return item.value;
+  }
+
+  async putIfAbsent(key: string, value: T, ttl?: number): Promise<boolean> {
+    if (ttl !== undefined && (!Number.isFinite(ttl) || ttl <= 0)) {
+      throw new Error('MemoryStorage atomic TTL must be a positive finite number.');
+    }
+    const existing = this.store.get(key);
+    const now = Date.now();
+    if (existing && (!existing.expiresAt || now <= existing.expiresAt)) return false;
+    if (existing) this.store.delete(key);
+    await this.set(key, value, ttl);
+    return true;
+  }
+
+  async replaceIfVersion(key: string, expectedVersion: string, value: T, ttl?: number): Promise<boolean> {
+    if (ttl !== undefined && (!Number.isFinite(ttl) || ttl <= 0)) {
+      throw new Error('MemoryStorage atomic TTL must be a positive finite number.');
+    }
+    const existing = this.store.get(key);
+    const now = Date.now();
+    if (!existing || (existing.expiresAt !== undefined && now > existing.expiresAt)) {
+      if (existing) this.store.delete(key);
+      return false;
+    }
+    const currentVersion = (existing.value as { continuationVersion?: unknown })?.continuationVersion;
+    if (currentVersion !== expectedVersion) return false;
+    this.store.set(key, {
+      value,
+      ...(ttl !== undefined && { expiresAt: now + ttl * 1000 }),
+      createdAt: now,
+    });
+    return true;
+  }
+
+  async takeIfVersion(key: string, expectedVersion: string): Promise<T | undefined> {
+    const existing = this.store.get(key);
+    const now = Date.now();
+    if (!existing || (existing.expiresAt !== undefined && now > existing.expiresAt)) {
+      if (existing) this.store.delete(key);
+      return undefined;
+    }
+    const currentVersion = (existing.value as { continuationVersion?: unknown })?.continuationVersion;
+    if (currentVersion !== expectedVersion) return undefined;
+    this.store.delete(key);
+    return existing.value;
   }
 
   async set(key: string, value: T, ttl?: number): Promise<void> {

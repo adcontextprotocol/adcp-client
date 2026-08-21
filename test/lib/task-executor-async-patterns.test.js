@@ -24,6 +24,36 @@ function a2aPausedTask({ state = 'input-required', question, field, contextId, t
   };
 }
 
+function atomicDeferredStorage(states = new Map()) {
+  return {
+    set: mock.fn(async (token, state) => states.set(token, state)),
+    putIfAbsent: mock.fn(async (token, state) => {
+      if (states.has(token)) return false;
+      states.set(token, state);
+      return true;
+    }),
+    replaceIfVersion: mock.fn(async (token, expectedVersion, state) => {
+      if (states.get(token)?.continuationVersion !== expectedVersion) return false;
+      states.set(token, state);
+      return true;
+    }),
+    takeIfVersion: mock.fn(async (token, expectedVersion) => {
+      const state = states.get(token);
+      if (state?.continuationVersion !== expectedVersion) return undefined;
+      states.delete(token);
+      return state;
+    }),
+    get: mock.fn(async token => states.get(token)),
+    take: mock.fn(async token => {
+      const state = states.get(token);
+      states.delete(token);
+      return state;
+    }),
+    delete: mock.fn(async token => states.delete(token)),
+    has: mock.fn(async token => states.has(token)),
+  };
+}
+
 /**
  * Test Strategy Overview:
  * 1. Mock ProtocolClient at the module level to control responses
@@ -362,6 +392,42 @@ describe(
         assert.strictEqual(resumed.status, 'completed');
       });
 
+      test('persists handler-less A2A pauses for restart-safe resumption', async () => {
+        const a2aAgent = { ...mockAgent, protocol: 'a2a' };
+        const storage = atomicDeferredStorage();
+        let callCount = 0;
+        ProtocolClient.callTool = mock.fn(async (_agent, taskName, params, options) => {
+          callCount += 1;
+          if (callCount === 1) {
+            return a2aPausedTask({
+              question: 'Approve after restart?',
+              contextId: 'restart-context',
+              taskId: 'restart-seller-task',
+            });
+          }
+          assert.strictEqual(taskName, 'needsInput');
+          assert.deepStrictEqual(params, { input: 'approved' });
+          assert.deepStrictEqual(options.session, {
+            contextId: 'restart-context',
+            taskId: 'restart-seller-task',
+          });
+          return { status: ADCP_STATUS.COMPLETED, data: { approved: true } };
+        });
+
+        const firstExecutor = new TaskExecutor({ deferredStorage: storage, strictSchemaValidation: false });
+        const paused = await firstExecutor.executeTask(a2aAgent, 'needsInput', {});
+        assert.strictEqual(await storage.has(paused.deferred.token), true);
+
+        const restartedExecutor = new TaskExecutor({
+          deferredStorage: storage,
+          resolveDeferredAgent: async agentId => (agentId === a2aAgent.id ? a2aAgent : undefined),
+          strictSchemaValidation: false,
+        });
+        const resumed = await restartedExecutor.resumeDeferredTask(paused.deferred.token, 'approved');
+        assert.strictEqual(resumed.status, 'completed');
+        assert.strictEqual(await storage.has(paused.deferred.token), false);
+      });
+
       test('does not resume an A2A pause that omits seller task identity', async () => {
         const a2aAgent = { ...mockAgent, protocol: 'a2a' };
         const handler = mock.fn(async () => 'approved');
@@ -553,6 +619,68 @@ describe(
         assert.strictEqual(status.taskType, 'submitTask');
       });
 
+      test('waitForCompletion preserves the client correlation ID and exposes the seller work ID separately', async () => {
+        ProtocolClient.callTool = mock.fn(async (_agent, taskName, params) => {
+          if (taskName === 'tasks/get' || taskName === 'tasks_get') {
+            return {
+              task: {
+                taskId: params.task_id,
+                status: 'completed',
+                taskType: 'create_media_buy',
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                result: { media_buy_id: 'buy-polled-identity' },
+              },
+            };
+          }
+          return { status: ADCP_STATUS.SUBMITTED, task_id: 'seller-work-identity' };
+        });
+        const executor = new TaskExecutor({ strictSchemaValidation: false });
+        const submitted = await executor.executeTask(mockAgent, 'create_media_buy', {
+          idempotency_key: 'poll-identity-key-0001',
+        });
+        const clientTaskId = submitted.metadata.taskId;
+
+        const completed = await submitted.submitted.waitForCompletion(0);
+
+        assert.strictEqual(completed.metadata.taskId, clientTaskId);
+        assert.strictEqual(completed.metadata.serverTaskId, 'seller-work-identity');
+        assert.notStrictEqual(completed.metadata.taskId, completed.metadata.serverTaskId);
+      });
+
+      test('polled typed errors retain the client request idempotency key', async () => {
+        ProtocolClient.callTool = mock.fn(async (_agent, taskName, params) => {
+          if (taskName === 'tasks/get' || taskName === 'tasks_get') {
+            return {
+              task: {
+                taskId: params.task_id,
+                status: 'failed',
+                taskType: 'create_media_buy',
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                result: {
+                  adcp_error: {
+                    code: 'IDEMPOTENCY_CONFLICT',
+                    message: 'Payload changed',
+                    recovery: 'correctable',
+                  },
+                },
+              },
+            };
+          }
+          return { status: ADCP_STATUS.SUBMITTED, task_id: 'seller-error-work-id' };
+        });
+        const executor = new TaskExecutor({ strictSchemaValidation: false });
+        const submitted = await executor.executeTask(mockAgent, 'create_media_buy', {
+          idempotency_key: 'poll-error-idempotency-key',
+        });
+
+        const failed = await submitted.submitted.waitForCompletion(0);
+        assert.strictEqual(failed.errorInstance.idempotencyKey, 'poll-error-idempotency-key');
+        assert.strictEqual(failed.metadata.taskId, submitted.metadata.taskId);
+        assert.strictEqual(failed.metadata.serverTaskId, 'seller-error-work-id');
+      });
+
       test('rejects invalid core polling intervals before polling the seller', async () => {
         ProtocolClient.callTool = mock.fn(async () => ({
           status: ADCP_STATUS.SUBMITTED,
@@ -598,29 +726,68 @@ describe(
     });
 
     describe('DEFERRED Status Pattern (Client Deferral)', () => {
+      test('rejects durable storage without atomic create before any seller dispatch', () => {
+        assert.throws(
+          () =>
+            new TaskExecutor({
+              deferredStorage: {
+                get: async () => undefined,
+                set: async () => {},
+                delete: async () => {},
+                has: async () => false,
+                replaceIfVersion: async () => false,
+                takeIfVersion: async () => undefined,
+              },
+            }),
+          /putIfAbsent/
+        );
+      });
+
+      test('does not echo bearer-style continuation tokens in resume errors', async () => {
+        const secretToken = 'resume-capability-do-not-log';
+        const executor = new TaskExecutor({ deferredStorage: atomicDeferredStorage() });
+        await assert.rejects(executor.resumeDeferredTask(secretToken, {}), error => {
+          assert.doesNotMatch(error.message, new RegExp(secretToken));
+          assert.match(error.message, /Deferred task not found/);
+          return true;
+        });
+        const deferredError = new DeferredTaskError(secretToken);
+        assert.doesNotMatch(deferredError.message, new RegExp(secretToken));
+        assert.equal(deferredError.token, secretToken);
+      });
+
       test('rejects a persisted A2A deferral that lacks seller task identity', async () => {
-        const storage = {
-          set: mock.fn(async () => {}),
-          get: mock.fn(async () => ({
-            taskId: 'local-legacy-deferred-task',
-            contextId: 'legacy-context',
-            agent: { ...mockAgent, protocol: 'a2a' },
-            taskName: 'create_media_buy',
-            params: { idempotency_key: 'legacy-deferred-key' },
-            messages: [],
-            createdAt: Date.now(),
-          })),
-          delete: mock.fn(async () => {}),
-        };
+        const states = new Map([
+          [
+            'legacy-identity-less-token',
+            {
+              continuationVersion: 'legacy-identity-less-version',
+              taskId: 'local-legacy-deferred-task',
+              contextId: 'legacy-context',
+              serverVersion: 'v3',
+              agentId: mockAgent.id,
+              taskName: 'create_media_buy',
+              params: { idempotency_key: 'legacy-deferred-key' },
+              messages: [],
+              createdAt: Date.now(),
+              expiresAt: Date.now() + 60_000,
+            },
+          ],
+        ]);
+        const storage = atomicDeferredStorage(states);
         ProtocolClient.callTool = mock.fn(async () => ({ status: ADCP_STATUS.COMPLETED }));
-        const executor = new TaskExecutor({ deferredStorage: storage });
+        const executor = new TaskExecutor({
+          deferredStorage: storage,
+          resolveDeferredAgent: async () => mockAgent,
+        });
 
         await assert.rejects(
           executor.resumeDeferredTask('legacy-identity-less-token', { approved: true }),
           /requires a seller task ID/
         );
         assert.strictEqual(ProtocolClient.callTool.mock.callCount(), 0);
-        assert.strictEqual(storage.delete.mock.callCount(), 1);
+        assert.strictEqual(storage.take.mock.callCount(), 0);
+        assert.strictEqual(storage.replaceIfVersion.mock.callCount(), 2);
       });
 
       test('should handle handler deferral with resume capability', async () => {
@@ -646,13 +813,7 @@ describe(
           return { status: ADCP_STATUS.COMPLETED, data: { approved: true } };
         });
 
-        const executor = new TaskExecutor({
-          deferredStorage: {
-            set: mock.fn(async (token, state) => mockDeferredStorage.set(token, state)),
-            get: mock.fn(async token => mockDeferredStorage.get(token)),
-            delete: mock.fn(async token => mockDeferredStorage.delete(token)),
-          },
-        });
+        const executor = new TaskExecutor({ deferredStorage: atomicDeferredStorage(mockDeferredStorage) });
 
         const result = await executor.executeTask(mockAgent, 'approvalTask', {}, mockHandler);
 
@@ -670,13 +831,41 @@ describe(
         assert.strictEqual(resumeResult.status, 'completed');
       });
 
+      test('handler deferral without durable storage keeps an exact in-process continuation', async () => {
+        let calls = 0;
+        ProtocolClient.callTool = mock.fn(async (_agent, _taskName, params, options) => {
+          calls += 1;
+          if (calls === 1) {
+            return a2aPausedTask({
+              question: 'Approve in process?',
+              contextId: 'in-process-context',
+              taskId: 'in-process-seller-task',
+            });
+          }
+          assert.deepStrictEqual(params, { input: { approved: true } });
+          assert.deepStrictEqual(options.session, {
+            contextId: 'in-process-context',
+            taskId: 'in-process-seller-task',
+          });
+          return { status: ADCP_STATUS.COMPLETED, data: { approved: true } };
+        });
+        const executor = new TaskExecutor({ strictSchemaValidation: false });
+        const paused = await executor.executeTask(mockAgent, 'approvalTask', {}, async () => ({
+          defer: true,
+          token: 'in-process-handler-token',
+        }));
+
+        const callerInput = { approved: true };
+        const resumePromise = paused.deferred.resume(callerInput);
+        callerInput.approved = false;
+        const resumed = await resumePromise;
+        assert.strictEqual(resumed.status, 'completed');
+        await assert.rejects(paused.deferred.resume({ approved: true }), /already been consumed/);
+      });
+
       test('should save deferred state to storage', async () => {
         const mockHandler = mock.fn(async () => ({ defer: true, token: 'save-token' }));
-        const mockStorage = {
-          set: mock.fn(async () => {}),
-          get: mock.fn(async () => {}),
-          delete: mock.fn(async () => {}),
-        };
+        const mockStorage = atomicDeferredStorage();
 
         ProtocolClient.callTool = mock.fn(async () =>
           a2aPausedTask({
@@ -690,23 +879,25 @@ describe(
           deferredStorage: mockStorage,
         });
 
-        await executor.executeTask(mockAgent, 'saveTask', { data: 'important' }, mockHandler);
+        await executor.executeTask(
+          { ...mockAgent, auth_token: 'must-not-persist-agent-token' },
+          'saveTask',
+          { data: 'important' },
+          mockHandler
+        );
 
-        assert.strictEqual(mockStorage.set.mock.callCount(), 1);
-        const [token, state] = mockStorage.set.mock.calls[0].arguments;
+        assert.strictEqual(mockStorage.putIfAbsent.mock.callCount(), 1);
+        const [token, state] = mockStorage.putIfAbsent.mock.calls[0].arguments;
         assert.strictEqual(token, 'save-token');
         assert.strictEqual(state.taskName, 'saveTask');
         assert.deepStrictEqual(state.params, { data: 'important' });
-        assert.strictEqual(state.agent.id, 'test-agent');
+        assert.strictEqual(state.agentId, 'test-agent');
+        assert.doesNotMatch(JSON.stringify(state), /must-not-persist-agent-token/);
       });
 
       test('persists and resumes an A2A deferral without inventing a seller context ID', async () => {
         const states = new Map();
-        const storage = {
-          set: mock.fn(async (token, state) => states.set(token, state)),
-          get: mock.fn(async token => states.get(token)),
-          delete: mock.fn(async token => states.delete(token)),
-        };
+        const storage = atomicDeferredStorage(states);
         let calls = 0;
         ProtocolClient.callTool = mock.fn(async (_agent, taskName, params, options) => {
           calls += 1;
@@ -744,35 +935,205 @@ describe(
           [
             'stale-resume-token',
             {
+              continuationVersion: 'stale-resume-version',
               taskId: 'local-deferred-task',
               contextId: 'original-context',
               a2aTaskId: 'original-seller-task',
-              agent: { ...mockAgent, protocol: 'a2a' },
+              serverVersion: 'v3',
+              agentId: mockAgent.id,
               taskName: 'approvalTask',
               params: {},
               messages: [],
               createdAt: Date.now(),
+              expiresAt: Date.now() + 60_000,
             },
           ],
         ]);
-        const storage = {
-          set: mock.fn(async (token, state) => states.set(token, state)),
-          get: mock.fn(async token => states.get(token)),
-          delete: mock.fn(async token => states.delete(token)),
-        };
+        const storage = atomicDeferredStorage(states);
         ProtocolClient.callTool = mock.fn(async () =>
           a2aPausedTask({ question: 'New pause omitted its task identity', taskId: undefined })
         );
-        const executor = new TaskExecutor({ deferredStorage: storage, strictSchemaValidation: false });
+        const executor = new TaskExecutor({
+          deferredStorage: storage,
+          resolveDeferredAgent: async () => mockAgent,
+          strictSchemaValidation: false,
+        });
 
         const resumed = await executor.resumeDeferredTask('stale-resume-token', { approved: true });
         assert.strictEqual(resumed.status, 'input-required');
         assert.strictEqual(resumed.deferred, undefined);
-        assert.strictEqual(storage.delete.mock.callCount(), 1);
+        assert.strictEqual(storage.takeIfVersion.mock.callCount(), 1);
         await assert.rejects(
           executor.resumeDeferredTask('stale-resume-token', { approved: true }),
           /Deferred task not found/
         );
+      });
+
+      test('atomically consumes one deferred token across concurrent executors', async () => {
+        const states = new Map();
+        const storage = atomicDeferredStorage(states);
+        let continuationCalls = 0;
+        ProtocolClient.callTool = mock.fn(async (_agent, _taskName, params) => {
+          if (!Object.hasOwn(params, 'input')) {
+            return a2aPausedTask({ question: 'Approve once?', taskId: 'seller-atomic-task' });
+          }
+          continuationCalls += 1;
+          return { status: ADCP_STATUS.COMPLETED, data: { approved: params.input } };
+        });
+        const firstExecutor = new TaskExecutor({ deferredStorage: storage, strictSchemaValidation: false });
+        const deferred = await firstExecutor.executeTask(mockAgent, 'approvalTask', {}, async () => ({
+          defer: true,
+          token: 'atomic-resume-token',
+        }));
+        const secondExecutor = new TaskExecutor({
+          deferredStorage: storage,
+          resolveDeferredAgent: async () => mockAgent,
+          strictSchemaValidation: false,
+        });
+
+        const results = await Promise.allSettled([
+          firstExecutor.resumeDeferredTask('atomic-resume-token', { choice: 'first' }),
+          secondExecutor.resumeDeferredTask('atomic-resume-token', { choice: 'second' }),
+        ]);
+
+        assert.strictEqual(results.filter(result => result.status === 'fulfilled').length, 1);
+        assert.strictEqual(results.filter(result => result.status === 'rejected').length, 1);
+        assert.strictEqual(continuationCalls, 1);
+      });
+
+      test('a delayed resolver cannot consume a replacement state that reuses the same token', async () => {
+        const token = 'resolver-aba-token';
+        const stateA = {
+          continuationVersion: 'resolver-state-a-version',
+          taskId: 'local-task-a',
+          contextId: 'context-a',
+          a2aTaskId: 'seller-task-a',
+          serverVersion: 'v3',
+          agentId: mockAgent.id,
+          taskName: 'approvalTask',
+          params: {},
+          messages: [],
+          createdAt: Date.now(),
+          expiresAt: Date.now() + 60_000,
+        };
+        const stateB = { ...stateA, taskId: 'local-task-b', contextId: 'context-b', a2aTaskId: 'seller-task-b' };
+        const states = new Map([[token, stateA]]);
+        const storage = atomicDeferredStorage(states);
+        let releaseResolver;
+        let resolverStarted;
+        const resolverGate = new Promise(resolve => {
+          releaseResolver = resolve;
+        });
+        const resolverEntered = new Promise(resolve => {
+          resolverStarted = resolve;
+        });
+        ProtocolClient.callTool = mock.fn(async (_agent, _taskName, params, options) => {
+          assert.deepStrictEqual(params, { input: { approved: 'for-a' } });
+          assert.deepStrictEqual(options.session, { contextId: 'context-a', taskId: 'seller-task-a' });
+          return { status: ADCP_STATUS.COMPLETED, data: { approved: true } };
+        });
+        const executor = new TaskExecutor({
+          deferredStorage: storage,
+          resolveDeferredAgent: async () => {
+            resolverStarted();
+            await resolverGate;
+            return mockAgent;
+          },
+          strictSchemaValidation: false,
+        });
+
+        const resumed = executor.resumeDeferredTask(token, { approved: 'for-a' });
+        await resolverEntered;
+        assert.strictEqual(await storage.putIfAbsent(token, stateB), false);
+        releaseResolver();
+        assert.strictEqual((await resumed).status, 'completed');
+        assert.strictEqual(await storage.get(token), undefined);
+      });
+
+      test('persists a replacement continuation that resumes after restart', async () => {
+        const states = new Map();
+        const storage = atomicDeferredStorage(states);
+        let calls = 0;
+        ProtocolClient.callTool = mock.fn(async (_agent, _taskName, params) => {
+          calls += 1;
+          if (calls === 1) {
+            return a2aPausedTask({
+              question: 'First approval?',
+              contextId: 'seller-context-one',
+              taskId: 'seller-task-one',
+            });
+          }
+          if (calls === 2) {
+            assert.deepStrictEqual(params, { input: { approved: true } });
+            return a2aPausedTask({
+              question: 'Second approval?',
+              contextId: 'seller-context-two',
+              taskId: 'seller-task-two',
+            });
+          }
+          assert.deepStrictEqual(params, { input: { confirmed: true } });
+          return { status: ADCP_STATUS.COMPLETED, data: { media_buy_id: 'buy-after-restart' } };
+        });
+
+        const firstExecutor = new TaskExecutor({ deferredStorage: storage, strictSchemaValidation: false });
+        const initial = await firstExecutor.executeTask(mockAgent, 'approvalTask', {}, async () => ({
+          defer: true,
+          token: 'initial-durable-token',
+        }));
+        const pausedAgain = await initial.deferred.resume({ approved: true });
+        assert.strictEqual(pausedAgain.status, 'input-required');
+        assert.ok(pausedAgain.deferred);
+        assert.notStrictEqual(pausedAgain.deferred.token, 'initial-durable-token');
+        assert.strictEqual(states.has('initial-durable-token'), false);
+        const replacement = states.get(pausedAgain.deferred.token);
+        assert.strictEqual(replacement.a2aTaskId, 'seller-task-two');
+        assert.strictEqual(replacement.contextId, 'seller-context-two');
+        assert.strictEqual(replacement.serverVersion, 'v3');
+
+        const restartedExecutor = new TaskExecutor({
+          deferredStorage: storage,
+          resolveDeferredAgent: async agentId => (agentId === mockAgent.id ? mockAgent : undefined),
+          strictSchemaValidation: false,
+        });
+        const completed = await restartedExecutor.resumeDeferredTask(pausedAgain.deferred.token, { confirmed: true });
+        assert.strictEqual(completed.status, 'completed');
+        assert.strictEqual(calls, 3);
+      });
+
+      test('snapshots nested resume input before awaiting durable storage', async () => {
+        const token = 'resume-input-snapshot-token';
+        const states = new Map([
+          [
+            token,
+            {
+              continuationVersion: 'resume-input-version',
+              taskId: 'resume-input-local-task',
+              a2aTaskId: 'resume-input-seller-task',
+              serverVersion: 'v3',
+              agentId: mockAgent.id,
+              taskName: 'approvalTask',
+              params: {},
+              messages: [],
+              createdAt: Date.now(),
+              expiresAt: Date.now() + 60_000,
+            },
+          ],
+        ]);
+        const storage = atomicDeferredStorage(states);
+        ProtocolClient.callTool = mock.fn(async (_agent, _taskName, params) => {
+          assert.deepStrictEqual(params, { input: { approval: { accepted: true } } });
+          return { status: ADCP_STATUS.COMPLETED, data: { approved: true } };
+        });
+        const executor = new TaskExecutor({
+          deferredStorage: storage,
+          resolveDeferredAgent: async () => mockAgent,
+          strictSchemaValidation: false,
+        });
+        const callerInput = { approval: { accepted: true } };
+
+        const resumed = executor.resumeDeferredTask(token, callerInput);
+        callerInput.approval.accepted = false;
+        assert.strictEqual((await resumed).status, 'completed');
       });
     });
 

@@ -63,7 +63,7 @@ export class DeferredTaskError extends ADCPError {
   readonly code = 'TASK_DEFERRED';
 
   constructor(public readonly token: string) {
-    super(`Task deferred with token: ${token}`);
+    super('Task deferred with an opaque continuation token.');
   }
 }
 

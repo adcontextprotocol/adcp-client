@@ -230,6 +230,64 @@ test('redisBackend putIfAbsent uses Redis server time inside the atomic expiry t
   assert.equal(observedArguments.length, 2, 'application wall-clock time must not be passed into the Lua decision');
 });
 
+test('redisBackend cannot configure physical expiry before retainUntil', async () => {
+  const { redisBackend } = require('../../dist/lib/server/index.js');
+  let observedTtl;
+  const client = {
+    get: async () => null,
+    set: async (_key, _value, options) => {
+      observedTtl = options.EX;
+      return 'OK';
+    },
+    del: async () => 0,
+    eval: async () => 1,
+    ping: async () => 'PONG',
+  };
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const backend = redisBackend(client, {
+    keyPrefix: 'retention-horizon-test:',
+    expiredGraceSeconds: 0,
+  });
+  await backend.put('scope', {
+    payloadHash: 'owner',
+    response: null,
+    expiresAt: nowSeconds + 3600,
+    retainUntil: nowSeconds + 3690,
+  });
+
+  assert.ok(observedTtl >= 3690, `expected Redis TTL to retain through retainUntil equality, received ${observedTtl}`);
+});
+
+test('redisBackend validates legacy retention grace against store clock skew', () => {
+  const { redisBackend, createIdempotencyStore } = require('../../dist/lib/server/index.js');
+  const client = {
+    get: async () => null,
+    set: async () => 'OK',
+    del: async () => 0,
+    eval: async () => 1,
+    ping: async () => 'PONG',
+  };
+  const backend = redisBackend(client, { keyPrefix: 'legacy-grace-test:', expiredGraceSeconds: 30 });
+  assert.throws(
+    () => createIdempotencyStore({ backend, clockSkewSeconds: 60 }),
+    /legacy retention grace \(30s\) must be at least clockSkewSeconds \(60s\)/
+  );
+});
+
+test('redisBackend assigns configured retention to legacy serialized entries', async () => {
+  const { redisBackend } = require('../../dist/lib/server/index.js');
+  const client = {
+    get: async () => JSON.stringify({ payloadHash: 'legacy', response: {}, expiresAt: 1_000 }),
+    set: async () => 'OK',
+    del: async () => 0,
+    eval: async () => 1,
+    ping: async () => 'PONG',
+  };
+  const backend = redisBackend(client, { keyPrefix: 'legacy-entry-test:', expiredGraceSeconds: 90 });
+  const entry = await backend.get('scope');
+  assert.equal(entry.retainUntil, 1_090);
+});
+
 describe('redisBackend', { skip: !REDIS_URL && 'REDIS_URL not set' }, () => {
   let client;
   let redisBackend, createIdempotencyStore;
@@ -262,6 +320,10 @@ describe('redisBackend', { skip: !REDIS_URL && 'REDIS_URL not set' }, () => {
 
   test('rejects negative expiredGraceSeconds', () => {
     assert.throws(() => redisBackend(client, { expiredGraceSeconds: -1 }), /must be a non-negative/);
+  });
+
+  test('rejects fractional expiredGraceSeconds', () => {
+    assert.throws(() => redisBackend(client, { expiredGraceSeconds: 1.5 }), /must be a non-negative safe integer/);
   });
 
   // ────────── backend primitives ──────────
@@ -368,7 +430,7 @@ describe('redisBackend', { skip: !REDIS_URL && 'REDIS_URL not set' }, () => {
           response: {},
           expiresAt: Math.floor(Date.now() / 1000) - 3600,
         }),
-      /expiresAt .* is already past/
+      /retention horizon .* is already past/
     );
   });
 

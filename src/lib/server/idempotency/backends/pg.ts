@@ -27,12 +27,32 @@ import type { IdempotencyBackend, IdempotencyCacheEntry } from '../store';
 import type { PgQueryable } from '../../postgres-task-store';
 
 const DEFAULT_TABLE = 'adcp_idempotency';
+const DEFAULT_LEGACY_RETENTION_GRACE_SECONDS = 120;
 const VALID_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
-const MAX_TABLE_NAME_LENGTH = 48;
+// The derived `idx_${table}_retain_until` identifier must also fit Postgres's
+// 63-byte limit. All allowed characters are one byte, and the wrapper is 17.
+const MAX_TABLE_NAME_LENGTH = 46;
 
 export interface PgBackendOptions {
   /** Table name. Must be lowercase letters/digits/underscores. Defaults to `"adcp_idempotency"`. */
   tableName?: string;
+  /**
+   * Physical grace for rows written by pre-retainUntil SDKs. Must be at
+   * least the store's clockSkewSeconds. Defaults to 120 seconds.
+   */
+  legacyRetentionGraceSeconds?: number;
+}
+
+function legacyRetentionGraceSeconds(options?: PgBackendOptions): number {
+  const seconds = options?.legacyRetentionGraceSeconds ?? DEFAULT_LEGACY_RETENTION_GRACE_SECONDS;
+  if (!Number.isSafeInteger(seconds) || seconds < 0) {
+    throw new TypeError('legacyRetentionGraceSeconds must be a non-negative safe integer.');
+  }
+  return seconds;
+}
+
+function retentionExpression(seconds: number): string {
+  return `GREATEST(COALESCE(retain_until, expires_at), expires_at + INTERVAL '${seconds} seconds')`;
 }
 
 /**
@@ -67,17 +87,21 @@ export function getIdempotencyMigration(options?: PgBackendOptions): string {
   const tableName = options?.tableName ?? DEFAULT_TABLE;
   const table = quoteIdent(tableName);
   const indexTable = tableName; // already validated by quoteIdent, safe to interpolate
+  legacyRetentionGraceSeconds(options);
   return `
 CREATE TABLE IF NOT EXISTS ${table} (
   scoped_key    TEXT PRIMARY KEY,
   payload_hash  TEXT NOT NULL,
   response      JSONB NOT NULL,
   expires_at    TIMESTAMPTZ NOT NULL,
+  retain_until  TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_${indexTable}_expires_at
-  ON ${table}(expires_at);
+ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS retain_until TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_${indexTable}_retain_until
+  ON ${table}(retain_until, expires_at);
 `.trim();
 }
 
@@ -133,6 +157,8 @@ export function pgBackend(db: PgQueryable, options: PgBackendOptions = {}): Idem
   // tableName is trusted SDK config (compile-time / startup), not user input —
   // quoteIdent validates the identifier shape and is safe to interpolate.
   const table = quoteIdent(options.tableName ?? DEFAULT_TABLE);
+  const legacyGraceSeconds = legacyRetentionGraceSeconds(options);
+  const retention = retentionExpression(legacyGraceSeconds);
   const query = async (operation: string, text: string, values?: unknown[]): ReturnType<PgQueryable['query']> => {
     try {
       return await db.query(text, values);
@@ -142,9 +168,12 @@ export function pgBackend(db: PgQueryable, options: PgBackendOptions = {}): Idem
   };
 
   return {
+    legacyRetentionGraceSeconds: legacyGraceSeconds,
     async probe(): Promise<void> {
       try {
-        await db.query(`SELECT 1 FROM ${table} LIMIT 0`);
+        // Name every runtime-required column so readiness fails before serving
+        // mutations when an existing table has not run the current migration.
+        await db.query(`SELECT scoped_key, payload_hash, response, expires_at, retain_until FROM ${table} LIMIT 0`);
       } catch (err) {
         throw new Error(
           `idempotency backend probe failed: cannot reach the "${options.tableName ?? DEFAULT_TABLE}" table. ` +
@@ -160,7 +189,10 @@ export function pgBackend(db: PgQueryable, options: PgBackendOptions = {}): Idem
     async get(scopedKey: string): Promise<IdempotencyCacheEntry | null> {
       const result = await query(
         'get',
-        `SELECT payload_hash, response, EXTRACT(EPOCH FROM expires_at)::BIGINT AS expires_at FROM ${table} WHERE scoped_key = $1`,
+        `SELECT payload_hash, response,
+                EXTRACT(EPOCH FROM expires_at)::BIGINT AS expires_at,
+                EXTRACT(EPOCH FROM ${retention})::BIGINT AS retain_until
+         FROM ${table} WHERE scoped_key = $1`,
         [scopedKey]
       );
       const row = result.rows[0];
@@ -169,19 +201,27 @@ export function pgBackend(db: PgQueryable, options: PgBackendOptions = {}): Idem
         payloadHash: row.payload_hash as string,
         response: row.response as unknown,
         expiresAt: Number(row.expires_at),
+        retainUntil: Number(row.retain_until),
       };
     },
 
     async put(scopedKey: string, entry: IdempotencyCacheEntry): Promise<void> {
       await query(
         'put',
-        `INSERT INTO ${table} (scoped_key, payload_hash, response, expires_at)
-         VALUES ($1, $2, $3::jsonb, TO_TIMESTAMP($4))
+        `INSERT INTO ${table} (scoped_key, payload_hash, response, expires_at, retain_until)
+         VALUES ($1, $2, $3::jsonb, TO_TIMESTAMP($4), TO_TIMESTAMP($5))
          ON CONFLICT (scoped_key) DO UPDATE SET
            payload_hash = EXCLUDED.payload_hash,
            response = EXCLUDED.response,
-           expires_at = EXCLUDED.expires_at`,
-        [scopedKey, entry.payloadHash, JSON.stringify(entry.response), entry.expiresAt]
+           expires_at = EXCLUDED.expires_at,
+           retain_until = EXCLUDED.retain_until`,
+        [
+          scopedKey,
+          entry.payloadHash,
+          JSON.stringify(entry.response),
+          entry.expiresAt,
+          entry.retainUntil ?? entry.expiresAt,
+        ]
       );
     },
 
@@ -190,15 +230,22 @@ export function pgBackend(db: PgQueryable, options: PgBackendOptions = {}): Idem
       // stale claim from a crashed handler be reclaimed on retry.
       const result = await query(
         'putIfAbsent',
-        `INSERT INTO ${table} (scoped_key, payload_hash, response, expires_at)
-         VALUES ($1, $2, $3::jsonb, TO_TIMESTAMP($4))
+        `INSERT INTO ${table} (scoped_key, payload_hash, response, expires_at, retain_until)
+         VALUES ($1, $2, $3::jsonb, TO_TIMESTAMP($4), TO_TIMESTAMP($5))
          ON CONFLICT (scoped_key) DO UPDATE SET
            payload_hash = EXCLUDED.payload_hash,
            response = EXCLUDED.response,
-           expires_at = EXCLUDED.expires_at
+           expires_at = EXCLUDED.expires_at,
+           retain_until = EXCLUDED.retain_until
          WHERE ${table}.expires_at < DATE_TRUNC('second', NOW())
          RETURNING scoped_key`,
-        [scopedKey, entry.payloadHash, JSON.stringify(entry.response), entry.expiresAt]
+        [
+          scopedKey,
+          entry.payloadHash,
+          JSON.stringify(entry.response),
+          entry.expiresAt,
+          entry.retainUntil ?? entry.expiresAt,
+        ]
       );
       return (result.rowCount ?? 0) > 0;
     },
@@ -212,9 +259,17 @@ export function pgBackend(db: PgQueryable, options: PgBackendOptions = {}): Idem
         'replaceIfPayloadHash',
         `UPDATE ${table}
          SET payload_hash = $3, response = $4::jsonb, expires_at = TO_TIMESTAMP($5)
+             , retain_until = TO_TIMESTAMP($6)
          WHERE scoped_key = $1 AND payload_hash = $2
          RETURNING scoped_key`,
-        [scopedKey, expectedPayloadHash, entry.payloadHash, JSON.stringify(entry.response), entry.expiresAt]
+        [
+          scopedKey,
+          expectedPayloadHash,
+          entry.payloadHash,
+          JSON.stringify(entry.response),
+          entry.expiresAt,
+          entry.retainUntil ?? entry.expiresAt,
+        ]
       );
       return (result.rowCount ?? 0) > 0;
     },
@@ -240,9 +295,20 @@ export function pgBackend(db: PgQueryable, options: PgBackendOptions = {}): Idem
  */
 export async function cleanupExpiredIdempotency(db: PgQueryable, options: PgBackendOptions = {}): Promise<number> {
   const table = quoteIdent(options.tableName ?? DEFAULT_TABLE);
+  const graceSeconds = legacyRetentionGraceSeconds(options);
   let result: Awaited<ReturnType<PgQueryable['query']>>;
   try {
-    result = await db.query(`DELETE FROM ${table} WHERE expires_at < DATE_TRUNC('second', NOW())`);
+    result = await db.query(
+      `DELETE FROM ${table}
+       WHERE (
+         retain_until IS NULL
+         AND expires_at < DATE_TRUNC('second', NOW()) - INTERVAL '${graceSeconds} seconds'
+       ) OR (
+         retain_until IS NOT NULL
+         AND retain_until < DATE_TRUNC('second', NOW())
+         AND expires_at < DATE_TRUNC('second', NOW()) - INTERVAL '${graceSeconds} seconds'
+       )`
+    );
   } catch (err) {
     throw pgDatabaseError('cleanupExpiredIdempotency', err);
   }

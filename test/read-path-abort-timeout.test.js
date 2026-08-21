@@ -896,6 +896,27 @@ describe('read-path cancellation and timeout', () => {
       const executor = new TaskExecutor({
         deferredStorage: {
           set: async (token, value) => stored.set(token, value),
+          putIfAbsent: async (token, value) => {
+            if (stored.has(token)) return false;
+            stored.set(token, value);
+            return true;
+          },
+          replaceIfVersion: async (token, expectedVersion, value) => {
+            if (stored.get(token)?.continuationVersion !== expectedVersion) return false;
+            stored.set(token, value);
+            return true;
+          },
+          takeIfVersion: async (token, expectedVersion) => {
+            const value = stored.get(token);
+            if (value?.continuationVersion !== expectedVersion) return undefined;
+            stored.delete(token);
+            return value;
+          },
+          take: async token => {
+            const value = stored.get(token);
+            stored.delete(token);
+            return value;
+          },
           get: async token => stored.get(token),
           delete: async token => stored.delete(token),
           has: async token => stored.has(token),
@@ -919,6 +940,95 @@ describe('read-path cancellation and timeout', () => {
       );
       await new Promise(resolve => setTimeout(resolve, 80));
       assert.strictEqual(stored.size, 0);
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+    }
+  });
+
+  it('does not delete a newer claimed generation during post-store abort cleanup', async () => {
+    const originalCallTool = ProtocolClient.callTool;
+    const stored = new Map();
+    let releasePut;
+    let announcePut;
+    const putAnnounced = new Promise(resolve => {
+      announcePut = resolve;
+    });
+    const putGate = new Promise(resolve => {
+      releasePut = resolve;
+    });
+    ProtocolClient.callTool = async () => ({
+      result: {
+        kind: 'task',
+        id: 'abort-cleanup-seller-task',
+        contextId: 'abort-cleanup-context',
+        status: {
+          state: 'input-required',
+          message: {
+            kind: 'message',
+            messageId: 'abort-cleanup-question',
+            role: 'agent',
+            parts: [{ kind: 'data', data: { question: 'Defer this?', field: 'approval' } }],
+          },
+        },
+        artifacts: [],
+      },
+    });
+
+    try {
+      const storage = {
+        set: async (token, value) => stored.set(token, value),
+        putIfAbsent: async (token, value) => {
+          if (stored.has(token)) return false;
+          stored.set(token, value);
+          announcePut();
+          await putGate;
+          return true;
+        },
+        replaceIfVersion: async (token, expectedVersion, value) => {
+          if (stored.get(token)?.continuationVersion !== expectedVersion) return false;
+          stored.set(token, value);
+          return true;
+        },
+        takeIfVersion: async (token, expectedVersion) => {
+          const value = stored.get(token);
+          if (value?.continuationVersion !== expectedVersion) return undefined;
+          stored.delete(token);
+          return value;
+        },
+        take: async token => {
+          const value = stored.get(token);
+          stored.delete(token);
+          return value;
+        },
+        get: async token => stored.get(token),
+        delete: async token => stored.delete(token),
+        has: async token => stored.has(token),
+      };
+      const executor = new TaskExecutor({ deferredStorage: storage });
+      const execution = executor.executeTask(
+        { id: 'abort-cleanup', name: 'test', protocol: 'a2a', agent_uri: 'http://example.test/a2a' },
+        'custom_input_task',
+        {},
+        async () => ({ defer: true, token: 'abort-cleanup-token' }),
+        { timeout: 20 }
+      );
+      const rejected = assert.rejects(execution, error => error instanceof TaskTimeoutError);
+      await putAnnounced;
+      await new Promise(resolve => setTimeout(resolve, 30));
+      const originalState = stored.get('abort-cleanup-token');
+      const claimedState = {
+        ...originalState,
+        continuationVersion: 'concurrent-claimed-version',
+        continuationClaimed: true,
+      };
+      assert.equal(
+        await storage.replaceIfVersion('abort-cleanup-token', originalState.continuationVersion, claimedState),
+        true
+      );
+      releasePut();
+      await rejected;
+      await new Promise(resolve => setTimeout(resolve, 10));
+      assert.equal(stored.get('abort-cleanup-token')?.continuationVersion, 'concurrent-claimed-version');
     } finally {
       ProtocolClient.callTool = originalCallTool;
     }

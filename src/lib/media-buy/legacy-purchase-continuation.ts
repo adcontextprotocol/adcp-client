@@ -138,7 +138,9 @@ export interface LegacyPurchaseContinuationStore {
    * already-bound seller task ID before committing. Invalid descriptors
    * return `conflict` without changing state. A valid pending settlement is
    * promoted instead of the caller's candidate and returned as
-   * `pending_completed`.
+   * `pending_completed`. Promotion MUST atomically persist the pending
+   * settlement's `serverTaskId` as the operation's `sellerTaskId` when no
+   * seller task has been bound yet, so later exact task recording succeeds.
    */
   complete(
     token: string,
@@ -420,6 +422,9 @@ export class InMemoryLegacyPurchaseContinuationStore implements LegacyPurchaseCo
         ...record.operation,
         state: 'completed' as const,
         result: winner,
+        ...(record.operation.sellerTaskId === undefined && pendingSettlement !== undefined
+          ? { sellerTaskId: pendingSettlement.serverTaskId }
+          : {}),
       },
     };
     if (!this.replace(completed)) return { outcome: 'capacity' };

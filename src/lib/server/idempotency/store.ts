@@ -68,6 +68,8 @@ export interface IdempotencyCacheEntry {
   response: unknown;
   /** Unix epoch seconds when this entry expires. */
   expiresAt: number;
+  /** Unix epoch seconds before which the backend must not physically prune the entry. */
+  retainUntil: number;
 }
 
 /** A request attempted to publish or release after its owner lease was replaced. */
@@ -98,6 +100,14 @@ export class IdempotencyClaimOwnershipError extends Error {
  * serialize (e.g., `pgBackend` via JSON) get this for free.
  */
 export interface IdempotencyBackend {
+  /**
+   * Minimum physical grace applied to legacy records that do not carry an
+   * explicit `retainUntil`. When present, store construction rejects a
+   * larger logical clock-skew window instead of allowing early pruning.
+   */
+  legacyRetentionGraceSeconds?: number;
+  /** Validate backend-specific physical retention against the logical skew. */
+  validateClockSkewSeconds?(clockSkewSeconds: number): void;
   get(scopedKey: string): Promise<IdempotencyCacheEntry | null>;
   /**
    * Atomically install an entry only if no entry exists for `scopedKey` or
@@ -117,11 +127,11 @@ export interface IdempotencyBackend {
   putIfAbsent(scopedKey: string, entry: IdempotencyCacheEntry): Promise<boolean>;
   /** Atomically replace an entry only when its current payload hash matches. */
   replaceIfPayloadHash(scopedKey: string, expectedPayloadHash: string, entry: IdempotencyCacheEntry): Promise<boolean>;
-  /** Atomically delete an entry only when its current payload hash matches. */
+  /** Atomically delete an entry only when its current payload hash matches (used by webhook dedup claims). */
   deleteIfPayloadHash(scopedKey: string, expectedPayloadHash: string): Promise<boolean>;
   /** Store an entry unconditionally. Middleware publication uses fenced replacement instead. */
   put(scopedKey: string, entry: IdempotencyCacheEntry): Promise<void>;
-  /** Delete an entry unconditionally. Middleware claim release uses fenced deletion instead. */
+  /** Delete an entry unconditionally. */
   delete(scopedKey: string): Promise<void>;
   /**
    * Optional startup probe. Implementations that wrap an external store
@@ -300,8 +310,9 @@ export interface IdempotencyStore {
   }): Promise<void>;
   /**
    * Release the in-flight claim written at check time — used by the
-   * middleware when the handler fails, so a retry can re-execute rather
-   * than replay a cached error.
+   * middleware when the handler fails. The built-in store atomically replaces
+   * ownership with a retryable marker, preserving the original payload
+   * binding while allowing an exact retry to re-execute.
    */
   release(params: { principal: string; key: string; claimToken: string; extraScope?: string }): Promise<void>;
   /**
@@ -388,9 +399,27 @@ const TRANSIENT_ERROR_TTL_SECONDS = 10;
  * valid cached response).
  */
 const IN_FLIGHT_HASH_PREFIX = '__adcp_in_flight__:';
+const RETRYABLE_HASH_PREFIX = '__adcp_retryable__:';
 
 function isInFlightHash(payloadHash: string): boolean {
   return payloadHash.startsWith(IN_FLIGHT_HASH_PREFIX);
+}
+
+function reservedRequestHash(token: string, prefix: string): string | undefined {
+  if (!token.startsWith(prefix)) return undefined;
+  const suffix = token.slice(prefix.length);
+  const separator = suffix.indexOf(':');
+  if (separator < 0) return undefined;
+  const requestHash = suffix.slice(0, separator);
+  return /^[0-9a-f]{64}$/.test(requestHash) ? requestHash : undefined;
+}
+
+function inFlightRequestHash(claimToken: string): string | undefined {
+  return reservedRequestHash(claimToken, IN_FLIGHT_HASH_PREFIX);
+}
+
+function retryableRequestHash(marker: string): string | undefined {
+  return reservedRequestHash(marker, RETRYABLE_HASH_PREFIX);
 }
 /**
  * Soft cap on the retry hint surfaced to buyers on the in-flight branch.
@@ -441,6 +470,13 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
     throw new TypeError('clockSkewSeconds must be a non-negative safe integer.');
   }
   const backend = config.backend;
+  if (backend.legacyRetentionGraceSeconds !== undefined && backend.legacyRetentionGraceSeconds < clockSkewSeconds) {
+    throw new TypeError(
+      `Idempotency backend legacy retention grace (${backend.legacyRetentionGraceSeconds}s) must be at least ` +
+        `clockSkewSeconds (${clockSkewSeconds}s).`
+    );
+  }
+  backend.validateClockSkewSeconds?.(clockSkewSeconds);
   if (typeof backend.replaceIfPayloadHash !== 'function' || typeof backend.deleteIfPayloadHash !== 'function') {
     throw new TypeError(
       'createIdempotencyStore requires a backend with atomic replaceIfPayloadHash and deleteIfPayloadHash fencing.'
@@ -457,9 +493,47 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
       const cached = await backend.get(scopedKey);
       if (cached) {
         const nowSeconds = Math.floor(Date.now() / 1000);
+        const retryablePayloadHash = retryableRequestHash(cached.payloadHash);
+        if (retryablePayloadHash !== undefined) {
+          if (cached.expiresAt + clockSkewSeconds < nowSeconds) return { kind: 'expired' };
+          if (retryablePayloadHash !== payloadHash) return { kind: 'conflict' };
+          const expiresAt = nowSeconds + ttlSeconds;
+          const retainUntil = expiresAt + clockSkewSeconds;
+          const claimToken = `${IN_FLIGHT_HASH_PREFIX}${payloadHash}:${randomUUID()}`;
+          const reclaimed = await backend.replaceIfPayloadHash(scopedKey, cached.payloadHash, {
+            payloadHash: claimToken,
+            response: null,
+            expiresAt,
+            retainUntil,
+          });
+          if (reclaimed) return { kind: 'miss', payloadHash, claimToken };
+          const raced = await backend.get(scopedKey);
+          if (!raced) return { kind: 'in-flight', retryAfterSeconds: 1 };
+          const racedRequestHash = retryableRequestHash(raced.payloadHash) ?? inFlightRequestHash(raced.payloadHash);
+          if (racedRequestHash !== undefined && racedRequestHash !== payloadHash) return { kind: 'conflict' };
+          if (retryableRequestHash(raced.payloadHash) !== undefined) {
+            return { kind: 'in-flight', retryAfterSeconds: 1 };
+          }
+          if (isInFlightHash(raced.payloadHash)) {
+            return { kind: 'in-flight', retryAfterSeconds: inFlightRetryAfter(raced.expiresAt, nowSeconds) };
+          }
+          if (raced.payloadHash !== payloadHash) return { kind: 'conflict' };
+          return { kind: 'replay', response: raced.response };
+        }
         if (isInFlightHash(cached.payloadHash)) {
+          const activePayloadHash = inFlightRequestHash(cached.payloadHash);
+          if (activePayloadHash !== undefined && activePayloadHash !== payloadHash) {
+            return { kind: 'conflict' };
+          }
           if (cached.expiresAt >= nowSeconds) {
             return { kind: 'in-flight', retryAfterSeconds: inFlightRetryAfter(cached.expiresAt, nowSeconds) };
+          }
+          if (cached.expiresAt + clockSkewSeconds >= nowSeconds) {
+            // Do not turn a just-expired mutation claim into fresh execution
+            // while peers may still reasonably observe it as live. The same
+            // skew horizon used for completed replay must fence unresolved
+            // ownership too.
+            return { kind: 'in-flight', retryAfterSeconds: 1 };
           }
           // Fall through to putIfAbsent, whose atomic logical-expiry
           // replacement protects a concurrent renewal from stale-read
@@ -484,11 +558,13 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
       // the advertised replay window, after which natural-key reconciliation
       // is required anyway.
       const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
-      const claimToken = `${IN_FLIGHT_HASH_PREFIX}${randomUUID()}`;
+      const retainUntil = expiresAt + clockSkewSeconds;
+      const claimToken = `${IN_FLIGHT_HASH_PREFIX}${payloadHash}:${randomUUID()}`;
       const claimed = await backend.putIfAbsent(scopedKey, {
         payloadHash: claimToken,
         response: null,
         expiresAt,
+        retainUntil,
       });
 
       if (!claimed) {
@@ -497,7 +573,18 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
         const nowSeconds = Math.floor(Date.now() / 1000);
         if (!recheck) return { kind: 'in-flight', retryAfterSeconds: 1 };
         if (isInFlightHash(recheck.payloadHash)) {
+          const activePayloadHash = inFlightRequestHash(recheck.payloadHash);
+          if (activePayloadHash !== undefined && activePayloadHash !== payloadHash) return { kind: 'conflict' };
           return { kind: 'in-flight', retryAfterSeconds: inFlightRetryAfter(recheck.expiresAt, nowSeconds) };
+        }
+        const releasedPayloadHash = retryableRequestHash(recheck.payloadHash);
+        if (releasedPayloadHash !== undefined) {
+          if (releasedPayloadHash !== payloadHash) return { kind: 'conflict' };
+          // The failed owner released while this request's initial claim was
+          // pending. A following retry can reclaim the marker through the
+          // normal initial-read path; never misclassify its reserved token as
+          // a different canonical request hash.
+          return { kind: 'in-flight', retryAfterSeconds: 1 };
         }
         if (recheck.payloadHash !== payloadHash) return { kind: 'conflict' };
         return { kind: 'replay', response: recheck.response };
@@ -510,6 +597,7 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
         payloadHash: claimToken,
         response: null,
         expiresAt,
+        retainUntil,
       });
       if (!fenced) {
         return { kind: 'in-flight', retryAfterSeconds: inFlightRetryAfter(expiresAt, Math.floor(Date.now() / 1000)) };
@@ -524,10 +612,12 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
         throw new Error('Idempotency renew requires the claimToken returned by check().');
       }
       const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
+      const retainUntil = expiresAt + clockSkewSeconds;
       const renewed = await backend.replaceIfPayloadHash(scopedKey, claimToken, {
         payloadHash: claimToken,
         response: null,
         expiresAt,
+        retainUntil,
       });
       if (!renewed) throw new IdempotencyClaimOwnershipError('renew');
     },
@@ -535,20 +625,33 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
     async save({ principal, key, payloadHash, claimToken, response, extraScope }): Promise<void> {
       const scopedKey = scope(principal, key, extraScope);
       const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
+      const retainUntil = expiresAt + clockSkewSeconds;
       if (!claimToken || !isInFlightHash(claimToken)) {
         throw new Error('Idempotency save requires the claimToken returned by check().');
       }
-      const replaced = await backend.replaceIfPayloadHash(scopedKey, claimToken, { payloadHash, response, expiresAt });
+      const replaced = await backend.replaceIfPayloadHash(scopedKey, claimToken, {
+        payloadHash,
+        response,
+        expiresAt,
+        retainUntil,
+      });
       if (!replaced) throw new IdempotencyClaimOwnershipError('save');
     },
 
     async release({ principal, key, claimToken, extraScope }): Promise<void> {
       const scopedKey = scope(principal, key, extraScope);
-      if (!claimToken || !isInFlightHash(claimToken)) {
+      const payloadHash = inFlightRequestHash(claimToken);
+      if (!claimToken || payloadHash === undefined) {
         throw new Error('Idempotency release requires the claimToken returned by check().');
       }
-      const deleted = await backend.deleteIfPayloadHash(scopedKey, claimToken);
-      if (!deleted) throw new IdempotencyClaimOwnershipError('release');
+      const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
+      const released = await backend.replaceIfPayloadHash(scopedKey, claimToken, {
+        payloadHash: `${RETRYABLE_HASH_PREFIX}${payloadHash}:${randomUUID()}`,
+        response: null,
+        expiresAt,
+        retainUntil: expiresAt + clockSkewSeconds,
+      });
+      if (!released) throw new IdempotencyClaimOwnershipError('release');
     },
 
     async saveTransientError({ principal, key, payloadHash, claimToken, response, extraScope }): Promise<void> {
@@ -557,7 +660,12 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
       if (!claimToken || !isInFlightHash(claimToken)) {
         throw new Error('Idempotency transient-error save requires the claimToken returned by check().');
       }
-      const replaced = await backend.replaceIfPayloadHash(scopedKey, claimToken, { payloadHash, response, expiresAt });
+      const replaced = await backend.replaceIfPayloadHash(scopedKey, claimToken, {
+        payloadHash,
+        response,
+        expiresAt,
+        retainUntil: expiresAt + clockSkewSeconds,
+      });
       if (!replaced) {
         throw new IdempotencyClaimOwnershipError('transient-error save');
       }
