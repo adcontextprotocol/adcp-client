@@ -65,3 +65,53 @@ export function transferLegacyCreativeMetadata(source: object, target: object): 
   const selected = selectedOptionsByRefs.get(source);
   if (selected) selectedOptionsByRefs.set(target, selected);
 }
+
+/**
+ * Own a caller-provided canonical request without losing the SDK-private
+ * downgrade routes attached by `packageRefsForFormatOptions()`.
+ *
+ * Native `structuredClone()` deliberately copies only the visible data graph;
+ * the WeakMap sidecars therefore need to be transferred to each corresponding
+ * cloned object after the data snapshot is complete.
+ */
+export function structuredCloneWithLegacyCreativeMetadata<T>(value: T): T {
+  const clone = structuredClone(value);
+  const visited = new WeakMap<object, object>();
+
+  const snapshotMetadata = (source: object, target: object): void => {
+    const refs = legacyRefsByDeclaration.get(source);
+    if (refs) legacyRefsByDeclaration.set(target, structuredClone(refs));
+    const selected = selectedOptionsByRefs.get(source);
+    if (selected) {
+      selectedOptionsByRefs.set(
+        target,
+        selected.map(declaration => {
+          const declarationClone = structuredClone(declaration) as DeclarationWithMetadata;
+          snapshotMetadata(declaration, declarationClone);
+          return declarationClone;
+        })
+      );
+    }
+  };
+
+  const transferGraph = (source: unknown, target: unknown): void => {
+    if (source === null || target === null || typeof source !== 'object' || typeof target !== 'object') {
+      return;
+    }
+    if (visited.has(source)) return;
+    visited.set(source, target);
+    snapshotMetadata(source, target);
+
+    for (const key of Reflect.ownKeys(source)) {
+      const sourceDescriptor = Object.getOwnPropertyDescriptor(source, key);
+      const targetDescriptor = Object.getOwnPropertyDescriptor(target, key);
+      if (!sourceDescriptor || !targetDescriptor || !('value' in sourceDescriptor) || !('value' in targetDescriptor)) {
+        continue;
+      }
+      transferGraph(sourceDescriptor.value, targetDescriptor.value);
+    }
+  };
+
+  transferGraph(value, clone);
+  return clone;
+}

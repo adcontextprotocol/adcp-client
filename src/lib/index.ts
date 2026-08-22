@@ -344,6 +344,8 @@ export {
 export {
   InMemoryLegacyPurchaseContinuationStore,
   createInMemoryLegacyPurchaseContinuationStore,
+  LEGACY_PURCHASE_PUBLICATION_PROOF_RETENTION_MS,
+  legacyPurchaseSettlementFingerprint,
   type InMemoryLegacyPurchaseContinuationStoreOptions,
   type LegacyPurchaseBinding,
   type LegacyPurchaseClaim,
@@ -355,6 +357,9 @@ export {
   type LegacyPurchaseCreateResult,
   type LegacyPurchaseLoss,
   type LegacyPurchaseOperation,
+  type LegacyPurchasePendingSettlement,
+  type LegacyPurchasePendingSettlementResult,
+  type LegacyPurchasePublicationLease,
   type LegacyPurchaseReconciliationResult,
   type LegacyPurchaseSourceVersion,
   type LegacyPurchaseTerminalResult,
@@ -588,7 +593,12 @@ export type {
   SyncCreativesStatusChangeHandler,
   GetProductsStatusChangeHandler,
 } from './core/AsyncHandler';
-export { AsyncHandler, createAsyncHandler } from './core/AsyncHandler';
+export {
+  AsyncHandler,
+  WebhookDedupConflictError,
+  WebhookDedupInputError,
+  createAsyncHandler,
+} from './core/AsyncHandler';
 
 // ====== WHOLESALE FEED WEBHOOKS ======
 export {
@@ -611,6 +621,8 @@ export * from './handlers/types';
 // ====== STORAGE INTERFACES ======
 export type {
   Storage,
+  AtomicTakeStorage,
+  DeferredTaskStorage,
   BatchStorage,
   PatternStorage,
   AgentCapabilities,
@@ -1251,6 +1263,7 @@ export {
   redisBackend,
   createLazyBackend,
   hashPayload,
+  IdempotencyClaimOwnershipError,
   getServeRequestContext,
   ADCP_SERVE_REQUEST_CONTEXT,
   createA2AAdapter,

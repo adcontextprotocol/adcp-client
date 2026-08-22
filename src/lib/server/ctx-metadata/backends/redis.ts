@@ -36,7 +36,9 @@
  * await client.connect();
  *
  * const ctxMetadata = createCtxMetadataStore({
- *   backend: redisCtxMetadataStore(client),
+ *   backend: redisCtxMetadataStore(client, {
+ *     keyPrefix: 'adcp:ctx_meta:prod-eu:',
+ *   }),
  * });
  * ```
  */
@@ -95,12 +97,12 @@ export interface RedisCtxMetadataBackendOptions {
    * to `"adcp:ctx_meta:"`.
    *
    * **Sharing a Redis db across deployments? Override this.** The
-   * default is fine for a dedicated Redis (or a dedicated db index).
    * Two AdCP servers sharing the same db with the same default prefix
-   * collide on any overlapping `accountId` — the per-tenant scope
-   * segment can't carry deployment isolation on its own. Set a
-   * deployment-unique prefix (`"adcp:ctx_meta:prod-eu:"`, etc.) or use
-   * separate Redis dbs.
+   * collide on any overlapping `accountId` — the per-tenant scope segment
+   * can't carry deployment isolation on its own. Set a deployment-unique
+   * prefix (`"adcp:ctx_meta:prod-eu:"`, etc.) or use separate Redis dbs.
+   * Outside development and test, using the default with a dedicated
+   * database additionally requires `acknowledgeIsolatedDatabase: true`.
    */
   keyPrefix?: string;
   /**
@@ -118,9 +120,18 @@ export interface RedisCtxMetadataBackendOptions {
    * the default `keyPrefix` is used against a node-redis client on db
    * 0. Set to `true` if you know your Redis is dedicated to this
    * deployment. The recommended fix is to set `keyPrefix` explicitly,
-   * not to suppress.
+   * not to suppress. This controls development/test warnings only; it
+   * is not a production isolation acknowledgement.
    */
   suppressDefaultPrefixWarning?: boolean;
+  /**
+   * Explicitly acknowledge that this client uses a Redis database isolated
+   * to one AdCP deployment. Outside development and test, this is required
+   * when `keyPrefix` is omitted, blank, or equal to the shared SDK default.
+   * Prefer a deployment-unique `keyPrefix`; use this only for a dedicated
+   * database whose isolation is enforced operationally.
+   */
+  acknowledgeIsolatedDatabase?: boolean;
 }
 
 const DEFAULT_KEY_PREFIX = 'adcp:ctx_meta:';
@@ -184,6 +195,9 @@ export function redisCtxMetadataStore(
   // without forcing a cast at the call site; internally we narrow.
   const c = client as CtxMetadataRedisLikeClient;
 
+  if (options.keyPrefix !== undefined && typeof options.keyPrefix !== 'string') {
+    throw new Error('redisCtxMetadataStore: keyPrefix must be a string when provided.');
+  }
   const keyPrefix = options.keyPrefix ?? DEFAULT_KEY_PREFIX;
   const expiredGraceSeconds = options.expiredGraceSeconds ?? DEFAULT_EXPIRED_GRACE_SECONDS;
 
@@ -193,11 +207,21 @@ export function redisCtxMetadataStore(
     );
   }
 
+  const usesUnsafeDefaultPrefix =
+    options.keyPrefix === undefined || keyPrefix.trim().length === 0 || keyPrefix === DEFAULT_KEY_PREFIX;
+  const isAllowlistedDevEnv = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development';
+  if (!isAllowlistedDevEnv && usesUnsafeDefaultPrefix && !options.acknowledgeIsolatedDatabase) {
+    throw new Error(
+      'redisCtxMetadataStore: non-development environments require a deployment-unique keyPrefix. ' +
+        'Use a dedicated Redis database and pass acknowledgeIsolatedDatabase: true only as an explicit isolation acknowledgement.'
+    );
+  }
+
   maybeWarnOnSharedRedisPrefix({
     client,
     callerKeyPrefix: options.keyPrefix,
     defaultKeyPrefix: DEFAULT_KEY_PREFIX,
-    suppress: options.suppressDefaultPrefixWarning,
+    suppress: options.suppressDefaultPrefixWarning || options.acknowledgeIsolatedDatabase,
     backendName: 'redisCtxMetadataStore',
   });
 

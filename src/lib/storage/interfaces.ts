@@ -1,6 +1,8 @@
 // Optional storage interfaces for caching and persistence
 // These are completely optional - everything works in-memory by default
 
+import type { Message } from '../core/ConversationTypes';
+
 /**
  * Generic storage interface for caching and persistence
  *
@@ -49,6 +51,19 @@ export interface Storage<T> {
    * Get storage size/count (optional, for monitoring)
    */
   size?(): Promise<number>;
+}
+
+/**
+ * Storage that can atomically consume a value.
+ *
+ * `take()` MUST read and delete the value as one indivisible operation. A
+ * `get()` followed by `delete()` is not equivalent: two replicas could both
+ * read the same continuation and advance one seller task twice.
+ */
+export interface AtomicTakeStorage<T> extends Storage<T> {
+  /** Atomically create a value only when the key is absent or expired. */
+  putIfAbsent(key: string, value: T, ttl?: number): Promise<boolean>;
+  take(key: string): Promise<T | undefined>;
 }
 
 /**
@@ -109,38 +124,111 @@ export interface ConversationState {
  * Deferred task state for resumption
  */
 export interface DeferredTaskState {
-  /** Unique token for this deferred task */
-  token: string;
-  /** Task ID */
-  taskId: string;
-  /** Task name */
-  taskName: string;
-  /** Agent ID */
-  agentId: string;
-  /** Task parameters */
-  params: any;
-  /** Message history up to deferral point */
-  messages: Array<{
-    id: string;
-    role: 'user' | 'agent' | 'system';
-    content: any;
-    timestamp: string;
-    metadata?: Record<string, any>;
-  }>;
-  /** Pending input request that caused deferral */
-  pendingInput?: {
-    question: string;
-    field?: string;
-    expectedType?: string;
-    suggestions?: any[];
-    validation?: Record<string, any>;
+  /** Opaque record generation used for atomic claim/replace fencing. */
+  continuationVersion: string;
+  /** True after the human continuation has been claimed for seller dispatch. */
+  continuationClaimed?: boolean;
+  /**
+   * Renewable owner fence for a committed continuation between human-input
+   * admission and the seller protocol call. Only an expired `admission` phase
+   * may be reclaimed; `dispatch-committed` is an uncertain-dispatch fence and
+   * must never permit the input to be sent again.
+   */
+  settlementResumeDispatchLease?: {
+    ownerId: string;
+    phase: 'admission' | 'dispatch-committed';
+    expiresAt: number;
   };
-  /** When task was deferred */
-  deferredAt: string;
-  /** When token expires */
-  expiresAt: string;
-  /** Additional metadata */
-  metadata?: Record<string, any>;
+  /** Client-minted correlation ID for the original request. */
+  taskId: string;
+  /** Seller-issued A2A conversation identity, when one was supplied. */
+  contextId?: string;
+  /** Live A2A transport Task.id used to resume the exact seller task. */
+  a2aTaskId: string;
+  /** Seller wire generation used for the original task and every continuation. */
+  serverVersion: 'v2' | 'v3';
+  /** Trusted agent identifier resolved through current client configuration. */
+  agentId: string;
+  /** Task/tool name. */
+  taskName: string;
+  /** Snapshotted original task parameters. */
+  params: any;
+  /** Message history through the response that caused the pause. */
+  messages: Message[];
+  /** Exact resumable pause status retained for crash-safe route discovery. */
+  pauseStatus?: 'input-required' | 'auth-required' | 'deferred';
+  /** Human-facing prompt retained for crash-safe route discovery. */
+  pauseQuestion?: string;
+  /** Opaque, serializable owner context. Storage adapters must round-trip it unchanged. */
+  clientContext?: unknown;
+  /** Trusted committed-mutation route that must durably settle any terminal resume. */
+  settlementOperationId?: string;
+  /** New-format records whose operation index must fence every state transition. */
+  settlementOperationRouteRequired?: true;
+  /** Require the owning durable coordinator to authorize this token before sending seller continuation input. */
+  settlementResumeAuthorizationRequired?: boolean;
+  /** Seller work handle bound by the durable mutation owner before the pause. */
+  settlementServerTaskId?: string;
+  /** Seller work handle retained while a committed resume remains nonterminal. */
+  settlementPendingTaskId?: string;
+  /**
+   * Opaque terminal observation retained when seller continuation succeeded but
+   * committed-mutation settlement has not yet been acknowledged. Storage
+   * adapters must round-trip it unchanged so retry never redispatches the
+   * seller mutation.
+   */
+  settlementTerminalResult?: unknown;
+  /** Internal renewable active-owner lease for settlement finalization. */
+  settlementFinalizationLease?: {
+    ownerId: string;
+    expiresAt: number;
+  };
+  /** Exact public result after settlement and completion handlers succeeded. */
+  settlementFinalizedResult?: unknown;
+  /** Internal fence proving callback publication already invoked the configured completion handler. */
+  settlementCompletionHandlerPublished?: boolean;
+  /** Epoch milliseconds when this resumable state was stored. */
+  createdAt: number;
+  /** Epoch milliseconds after which this token must not be resumed. */
+  expiresAt: number;
+}
+
+/** Durable deferred-task storage must generation-fence claim and cleanup. */
+export interface DeferredTaskStorage extends Storage<DeferredTaskState> {
+  /** Atomically create a value only when the key is absent or expired. */
+  putIfAbsent(key: string, value: DeferredTaskState, ttl?: number): Promise<boolean>;
+  /** Atomically replace only the exact record generation currently stored. */
+  replaceIfVersion(key: string, expectedVersion: string, value: DeferredTaskState, ttl?: number): Promise<boolean>;
+  /** Atomically return and remove only the exact record generation currently stored. */
+  takeIfVersion(key: string, expectedVersion: string): Promise<DeferredTaskState | undefined>;
+  /**
+   * Atomically create a committed continuation and its operation route. The
+   * route is the crash-recovery source of truth when the owning coordinator
+   * has not yet recorded the opaque token.
+   */
+  putForSettlementOperationIfAbsent(
+    operationId: string,
+    key: string,
+    value: DeferredTaskState,
+    ttl?: number
+  ): Promise<boolean>;
+  /** Atomically resolve the current committed continuation generation. */
+  getBySettlementOperationId(operationId: string): Promise<{ token: string; state: DeferredTaskState } | undefined>;
+  /**
+   * Atomically replace the exact routed generation. With a distinct
+   * replacement key this installs a nested generation and moves the route,
+   * retaining the predecessor as a dispatch fence. With the same key it
+   * performs an in-place route-fenced state transition (for example, terminal
+   * callback checkpointing).
+   */
+  replaceForSettlementOperationIfVersion(
+    operationId: string,
+    currentKey: string,
+    expectedVersion: string,
+    replacementKey: string,
+    replacementValue: DeferredTaskState,
+    ttl?: number
+  ): Promise<boolean>;
 }
 
 /**
@@ -154,7 +242,7 @@ export interface StorageConfig {
   conversations?: Storage<ConversationState>;
 
   /** Storage for deferred task tokens */
-  tokens?: Storage<DeferredTaskState>;
+  tokens?: DeferredTaskStorage;
 
   /** Storage for debug logs (optional) */
   debugLogs?: Storage<any>;
@@ -168,7 +256,11 @@ export interface StorageConfig {
  */
 export interface StorageFactory {
   /**
-   * Create a storage instance for a specific data type
+   * Create durable token storage with the atomic generation-fencing contract.
+   */
+  createStorage(type: 'tokens', options?: any): DeferredTaskStorage;
+  /**
+   * Create a storage instance for another data type.
    */
   createStorage<T>(type: string, options?: any): Storage<T>;
 }

@@ -47,14 +47,18 @@ CREATE TABLE adcp_idempotency (
   payload_hash TEXT NOT NULL,        -- SHA-256 of canonical request payload (RFC 8785 JCS)
   response     JSONB NOT NULL,        -- cached response envelope for replay
   expires_at   TIMESTAMPTZ NOT NULL,
+  retain_until TIMESTAMPTZ,            -- physical replay-retention horizon
   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_adcp_idempotency_expires_at ON adcp_idempotency(expires_at);
+CREATE INDEX idx_adcp_idempotency_retain_until
+  ON adcp_idempotency(retain_until, expires_at);
 ```
 
 - **PK on `scoped_key`** — every lookup is a primary-key seek; O(1) on B-tree.
-- **Index on `expires_at`** — supports `cleanupExpiredIdempotency()` deletes (`WHERE expires_at < NOW()`).
-- **No row-level TTL extension required** — Postgres doesn't have native TTL; cleanup is adopter-driven via the helper.
+- **Cleanup-compatible raw-column index** — cleanup uses an equivalent two-branch predicate over `retain_until` and `expires_at`, allowing this valid immutable index to assist without indexing a non-immutable `TIMESTAMPTZ + INTERVAL` expression.
+- **Rolling-writer safety** — `retain_until` remains nullable. Reads and cleanup use the greater of it and `expires_at + legacyRetentionGraceSeconds`, so an older replica that updates only `expires_at` cannot make a live claim cleanup-eligible.
+- **Configuration coupling** — `legacyRetentionGraceSeconds` defaults to 120 and must be at least the store's `clockSkewSeconds`. Pass the same `PgBackendOptions` to `getIdempotencyMigration()`, `pgBackend()`, and `cleanupExpiredIdempotency()` when overriding it; unsafe store/backend combinations throw at construction. When PostgreSQL is wrapped by `createLazyBackend()`, also declare that grace in the lazy-backend options so it can be checked synchronously; the resolved backend is checked again before its first operation.
+- **Cleanup remains adopter-driven** — Postgres has no native TTL; run `cleanupExpiredIdempotency()` periodically.
 
 **Sizing.** With a 24h default TTL: row count ≈ `requests_per_second × 86400 × write_proportion`. At 10 req/s of mutating traffic, ~864K rows steady-state. JSONB response payloads are typically 1-5KB; expect ~5GB table size at that volume.
 
@@ -134,7 +138,11 @@ Each request does at most 2 PG queries (idempotency check + write). HITL request
 pool.on('error', (err) => console.error('pg pool error', err));
 ```
 
-The framework's PG backends emit no-op SELECTs (`SELECT 1 FROM ${table} LIMIT 0`) via `probe()` to surface bad credentials at boot rather than first-mutating-request.
+The framework's PG backends issue zero-row shape probes via `probe()` to
+surface bad credentials and stale migrations at boot rather than on the first
+mutating request. The idempotency probe names every runtime-required column,
+including `retain_until`; a reachable table with an older column shape therefore
+fails readiness instead of advertising idempotency that cannot be persisted.
 
 ## Statement timeout
 

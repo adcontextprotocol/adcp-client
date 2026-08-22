@@ -1,0 +1,123 @@
+import type {
+  AgentClient,
+  DeferredTaskState,
+  DeferredTaskStorage,
+  SingleAgentClientConfig,
+  StorageFactory,
+} from '../../../dist/lib/index.js';
+
+const states = new Map<string, DeferredTaskState>();
+const operationRoutes = new Map<string, string>();
+
+const storage: DeferredTaskStorage = {
+  async get(key) {
+    return states.get(key);
+  },
+  async set(key, value) {
+    states.set(key, value);
+  },
+  async delete(key) {
+    states.delete(key);
+  },
+  async has(key) {
+    return states.has(key);
+  },
+  async putIfAbsent(key, value) {
+    if (states.has(key)) return false;
+    states.set(key, value);
+    return true;
+  },
+  async replaceIfVersion(key, expectedVersion, value) {
+    if (states.get(key)?.continuationVersion !== expectedVersion) return false;
+    states.set(key, value);
+    return true;
+  },
+  async takeIfVersion(key, expectedVersion) {
+    const value = states.get(key);
+    if (value?.continuationVersion !== expectedVersion) return undefined;
+    states.delete(key);
+    return value;
+  },
+  async putForSettlementOperationIfAbsent(operationId, key, value) {
+    if (operationRoutes.has(operationId) || states.has(key) || value.settlementOperationId !== operationId) {
+      return false;
+    }
+    states.set(key, value);
+    operationRoutes.set(operationId, key);
+    return true;
+  },
+  async getBySettlementOperationId(operationId) {
+    const token = operationRoutes.get(operationId);
+    const state = token ? states.get(token) : undefined;
+    return token && state ? { token, state } : undefined;
+  },
+  async replaceForSettlementOperationIfVersion(
+    operationId,
+    currentKey,
+    expectedVersion,
+    replacementKey,
+    replacementValue
+  ) {
+    if (
+      operationRoutes.get(operationId) !== currentKey ||
+      states.get(currentKey)?.continuationVersion !== expectedVersion ||
+      (replacementKey !== currentKey && states.has(replacementKey)) ||
+      replacementValue.settlementOperationId !== operationId
+    ) {
+      return false;
+    }
+    states.set(replacementKey, replacementValue);
+    operationRoutes.set(operationId, replacementKey);
+    return true;
+  },
+};
+
+const state: DeferredTaskState = {
+  continuationVersion: 'record-generation-id',
+  taskId: 'client-correlation-id',
+  contextId: 'seller-context-id',
+  a2aTaskId: 'a2a-transport-task-id',
+  serverVersion: 'v3',
+  agentId: 'trusted-agent-id',
+  taskName: 'create_media_buy',
+  params: { idempotency_key: 'purchase-key' },
+  messages: [],
+  createdAt: Date.now(),
+  expiresAt: Date.now() + 60_000,
+};
+
+void storage;
+void state;
+
+const clientConfig: SingleAgentClientConfig = {
+  deferredStorage: storage,
+  resolveDeferredAgent: async agentId =>
+    agentId === 'trusted-agent-id'
+      ? {
+          id: agentId,
+          name: 'Trusted agent',
+          protocol: 'a2a',
+          agent_uri: 'https://seller.example/a2a',
+        }
+      : undefined,
+  deferredTaskTtlSeconds: 60,
+};
+
+void clientConfig;
+
+declare const storageFactory: StorageFactory;
+const factoryTokenStorage: DeferredTaskStorage = storageFactory.createStorage('tokens');
+const factoryConversationStorage = storageFactory.createStorage<{ messages: string[] }>('conversations');
+void factoryTokenStorage.replaceIfVersion;
+void factoryConversationStorage.get;
+
+declare const agentClient: AgentClient;
+const resumedPurchase = agentClient.resumeDeferredTask<{ media_buy_id: string }>('durable-token', {
+  approved: true,
+});
+void resumedPurchase.then(result => {
+  if (result.status === 'completed') {
+    const mediaBuyId: string = result.data.media_buy_id;
+    void mediaBuyId;
+  }
+});

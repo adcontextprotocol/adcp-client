@@ -8,6 +8,7 @@ process.env.NODE_ENV = 'test';
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning/runtime/from-platform');
+const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/idempotency');
 
 function basePlatform(capabilityOverrides = {}) {
   return {
@@ -106,14 +107,7 @@ describe('Capability projections — declarative capability blocks on Decisionin
       basePlatform({
         supported_versions: ['3.0', '3.1'],
         overrides: {
-          oauth: { supported: true },
           measurement: { supported: true },
-          wholesale_feed_versioning: { supported: true },
-          adcp: {
-            capability_changes: { supported: true },
-            governance_enforcement: { mode: 'strict' },
-            idempotency: { supported: true, replay_ttl_seconds: 3600, in_flight_max_seconds: 30 },
-          },
           account: { timezone: { supported: true }, notifications: { supported: true } },
           media_buy: {
             buying_modes: ['brief'],
@@ -136,13 +130,16 @@ describe('Capability projections — declarative capability blocks on Decisionin
           creative: { supports_transformers: true, preview: { supported: true } },
           request_signing: { protocol_methods_required_for: ['tools/call'] },
           identity: { brand_json_url: 'https://seller.example/.well-known/brand.json' },
-          specialisms: ['sales-non-guaranteed', 'creative-transformers', 'sponsored-intelligence'],
-          supported_protocols: ['media_buy', 'measurement'],
         },
       }),
       {
         name: 'capability-downshift',
         version: '4.0.0',
+        idempotency: createIdempotencyStore({
+          backend: memoryBackend({ sweepIntervalMs: 0 }),
+          ttlSeconds: 3600,
+        }),
+        resolveSessionKey: () => 'capability-downshift',
         validation: { requests: 'off', responses: 'strict' },
       }
     );
@@ -176,7 +173,7 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.strictEqual(result.structuredContent?.creative?.preview, undefined);
     assert.strictEqual(result.structuredContent?.request_signing?.protocol_methods_required_for, undefined);
     assert.strictEqual(result.structuredContent?.identity?.brand_json_url, undefined);
-    assert.deepStrictEqual(result.structuredContent?.supported_protocols, ['media_buy']);
+    assert.deepStrictEqual(result.structuredContent?.supported_protocols, ['media_buy', 'creative']);
     assert.deepStrictEqual(result.structuredContent?.specialisms, ['sales-non-guaranteed']);
     assert.deepStrictEqual(result.structuredContent?.media_buy?.supported_pricing_models, ['cpm']);
   });
@@ -186,7 +183,6 @@ describe('Capability projections — declarative capability blocks on Decisionin
       basePlatform({
         supported_versions: ['2.5', '3.2'],
         overrides: {
-          adcp: { capability_changes: { supported: true } },
           media_buy: {
             lifecycle_tools: ['create_media_buy', 'sync_media_buy'],
             proposal_refinement: { supported: true },

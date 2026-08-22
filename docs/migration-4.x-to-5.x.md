@@ -397,7 +397,7 @@ serve(() => createAdcpServer({
       await ctx.emitWebhook({
         url: params.push_notification_config.url,
         payload: { task: { task_id, status: 'completed', result: { media_buy_id } } },
-        operation_id: `create_media_buy.${media_buy_id}`,   // stable across retries
+        delivery_id: `create_media_buy.${media_buy_id}`,   // stable across exact retries
       });
       return { media_buy_id, packages: [] };
     },
@@ -406,9 +406,14 @@ serve(() => createAdcpServer({
 ```
 
 The emitter handles RFC 9421 signing, stable `idempotency_key` per
-`operation_id`, compact JSON serialization, retry with exponential
+`delivery_id`, compact JSON serialization, retry with exponential
 backoff + jitter on 5xx/429, and terminal handling of
 `WWW-Authenticate: Signature error="webhook_signature_*"` responses.
+
+> SDK 14 note: this argument was originally named `operation_id` in SDK 5.
+> Current emitters use SDK-local `delivery_id`; the AdCP `operation_id` remains
+> inside the payload as task correlation and must not be substituted for the
+> delivery-attempt identity.
 
 ### 3j. Receiver-side webhook dedup (new)
 
@@ -797,7 +802,7 @@ silently fell back to new-session-every-call.
 
 ```typescript
 client.getContextId();          // read retained contextId
-client.getPendingTaskId();      // read pending server taskId (HITL resume)
+client.getPendingTaskId();      // read live A2A transport Task.id (HITL resume only)
 client.resetContext();          // wipe session state
 client.resetContext(id);        // rehydrate persisted contextId across process restart
 ```

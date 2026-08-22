@@ -17,14 +17,20 @@ test('public barrels expose canonical format and payload helper types', () => {
 import {
   CanonicalFormat,
   FormatAsset,
+  IdempotencyClaimOwnershipError,
+  WebhookDedupConflictError,
+  WebhookDedupInputError,
   createLazyBackend,
   ensureGetProductsCacheScope,
   getFormatAssets,
+  LEGACY_PURCHASE_PUBLICATION_PROOF_RETENTION_MS,
+  legacyPurchaseSettlementFingerprint,
   resolveTaskState,
   type CanonicalFormatParams,
   type EffectiveTaskState,
   type FormatAssetsInput,
   type GetProductsResponse,
+  type LegacyPurchasePublicationLease,
   type ManagerRevalidationRequest,
   type ManagerRevalidationResponse,
   type Placement,
@@ -38,6 +44,7 @@ import type {
   LegacyListCreativeFormatsPayload,
   SyncCreativesPayload as ServerSyncCreativesPayload,
 } from '@adcp/sdk/server';
+import { IdempotencyClaimOwnershipError as ServerIdempotencyClaimOwnershipError } from '@adcp/sdk/server';
 import {
   createCanonicalReferenceResolver,
   type CanonicalRef,
@@ -88,10 +95,44 @@ const acceptsListPayload = (_payload: LegacyListCreativeFormatsPayload) => {};
 acceptsListPayload({ formats: [] });
 
 const authErrors = [new AuthMissingError(), new AuthInvalidError(), new AuthRequiredError()];
+const idempotencyErrors = [
+  new IdempotencyClaimOwnershipError('save'),
+  new ServerIdempotencyClaimOwnershipError('release'),
+];
+const webhookDedupErrors = [new WebhookDedupInputError('invalid webhook key'), new WebhookDedupConflictError()];
+const settlementFingerprint: string = legacyPurchaseSettlementFingerprint({
+  operationId: 'operation-1',
+  serverTaskId: 'seller-task-1',
+  taskType: 'create_media_buy',
+  terminal: {
+    success: false,
+    status: 'failed',
+    error: 'seller failed',
+    metadata: {
+      taskId: 'client-task-1',
+      taskName: 'create_media_buy',
+      agent: { id: 'agent-1', name: 'Agent', protocol: 'a2a' },
+      responseTimeMs: 1,
+      timestamp: '2026-08-22T00:00:00Z',
+      clarificationRounds: 0,
+      status: 'failed',
+    },
+  },
+});
+const publicationProofRetentionMs: number = LEGACY_PURCHASE_PUBLICATION_PROOF_RETENTION_MS;
+void publicationProofRetentionMs;
+const publicationLease: LegacyPurchasePublicationLease = {
+  ownerId: 'public-barrel-owner',
+  expiresAt: new Date(Date.now() + 60_000).toISOString(),
+};
+void publicationLease;
 
 const lazyBackendFactory: LazyBackendFactory = async () => ({
   async get() { return null; },
   async putIfAbsent() { return true; },
+  async replaceIfPayloadHash() { return true; },
+  async replaceIfPayloadHashAndExpired() { return true; },
+  async deleteIfPayloadHash() { return true; },
   async put() {},
   async delete() {},
 });
@@ -165,6 +206,9 @@ void mediaBuyShape;
 void inspectedAssets;
 void serverSyncError;
 void authErrors;
+void idempotencyErrors;
+void webhookDedupErrors;
+void settlementFingerprint;
 void lazyBackend;
 void lazyBackendOptions;
 void serverLazyBackend;
@@ -215,6 +259,14 @@ void acceptsTypesPlacement;
   });
 
   assert.strictEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+});
+
+test('root barrel exports webhook dedup error classes', () => {
+  const root = require('../../dist/lib/index.js');
+  assert.strictEqual(typeof root.WebhookDedupInputError, 'function');
+  assert.strictEqual(typeof root.WebhookDedupConflictError, 'function');
+  assert.ok(new root.WebhookDedupInputError() instanceof Error);
+  assert.ok(new root.WebhookDedupConflictError() instanceof Error);
 });
 
 test('schema exports stay behind @adcp/sdk/schemas', () => {

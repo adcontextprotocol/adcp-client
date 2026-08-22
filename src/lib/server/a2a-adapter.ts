@@ -355,6 +355,7 @@ export class A2AInvocationError extends Error {
 type ClassifiedResult =
   | { kind: 'success'; data: Record<string, unknown> }
   | { kind: 'submitted'; adcpTaskId: string; data: Record<string, unknown> }
+  | { kind: 'paused'; status: 'input-required' | 'auth-required'; data: Record<string, unknown> }
   | { kind: 'error_arm'; data: Record<string, unknown> }
   | { kind: 'adcp_error'; data: Record<string, unknown> };
 
@@ -368,6 +369,9 @@ function classifyResponse(res: McpToolResponse): ClassifiedResult {
   }
   if (structured.status === 'submitted' && typeof structured.task_id === 'string') {
     return { kind: 'submitted', adcpTaskId: structured.task_id, data: structured };
+  }
+  if (structured.status === 'input-required' || structured.status === 'auth-required') {
+    return { kind: 'paused', status: structured.status, data: structured };
   }
   return { kind: 'success', data: structured };
 }
@@ -475,11 +479,18 @@ class AdcpA2AAgentExecutor implements AgentExecutor {
       // non-conformant transition per A2A 0.3.0 (`submitted` is the
       // INITIAL state before `working`, never terminal). Buyers read
       // the AdCP-level status from the artifact's `data.status` field.
+      // The v0 server adapter does not expose a continuation dispatcher.
+      // A handler-returned pause is therefore terminal at the A2A transport
+      // layer and rides in the artifact as an explicitly nonresumable AdCP
+      // result. Leaving the Task live would invite `{input}` to re-enter the
+      // ordinary request/idempotency pipeline as an unsafe fresh mutation.
       this.publishStatus(
         eventBus,
         taskId,
         contextId,
-        classified.kind === 'success' || classified.kind === 'submitted' ? 'completed' : 'failed',
+        classified.kind === 'success' || classified.kind === 'submitted' || classified.kind === 'paused'
+          ? 'completed'
+          : 'failed',
         true
       );
     } finally {
@@ -531,7 +542,8 @@ class AdcpA2AAgentExecutor implements AgentExecutor {
     taskId: string,
     contextId: string,
     state: TaskStatusUpdateEvent['status']['state'],
-    final: boolean
+    final: boolean,
+    messageData?: Record<string, unknown>
   ): void {
     const event: TaskStatusUpdateEvent = {
       kind: 'status-update',
@@ -540,6 +552,14 @@ class AdcpA2AAgentExecutor implements AgentExecutor {
       status: {
         state,
         timestamp: new Date().toISOString(),
+        ...(messageData && {
+          message: {
+            kind: 'message',
+            messageId: randomUUID(),
+            role: 'agent',
+            parts: [{ kind: 'data', data: messageData }],
+          },
+        }),
       },
       final,
     };
@@ -553,7 +573,13 @@ class AdcpA2AAgentExecutor implements AgentExecutor {
     classified: ClassifiedResult
   ): void {
     const artifactName =
-      classified.kind === 'success' ? 'result' : classified.kind === 'submitted' ? 'submitted' : 'error';
+      classified.kind === 'success'
+        ? 'result'
+        : classified.kind === 'submitted'
+          ? 'submitted'
+          : classified.kind === 'paused'
+            ? 'result'
+            : 'error';
     // DataPart `data` is the AdCP tool's typed response — no
     // transport-level fields injected here so the payload still
     // validates against the tool's AdCP response schema. AdCP
@@ -564,9 +590,17 @@ class AdcpA2AAgentExecutor implements AgentExecutor {
       artifactId: randomUUID(),
       name: artifactName,
       parts: [{ kind: 'data', data: classified.data }],
-      ...(classified.kind === 'submitted' && {
-        metadata: { adcp_task_id: classified.adcpTaskId },
-      }),
+      metadata: {
+        adcp_status:
+          classified.kind === 'submitted'
+            ? 'submitted'
+            : classified.kind === 'paused'
+              ? classified.status
+              : classified.kind === 'success'
+                ? 'completed'
+                : 'failed',
+        ...(classified.kind === 'submitted' && { adcp_task_id: classified.adcpTaskId }),
+      },
     };
     const event: TaskArtifactUpdateEvent = {
       kind: 'artifact-update',

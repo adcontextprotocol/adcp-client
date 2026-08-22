@@ -485,7 +485,8 @@ function hasTerminalTaskWithDataArtifact(response: unknown): boolean {
  * conversation; `taskId` resumes an existing non-terminal task.
  *
  * Callers (buyers) typically retain these across calls on a per-conversation
- * AgentClient; see AgentClient.getContextId() / getPendingTaskId().
+ * AgentClient. `getPendingTaskId()` returns this transport Task.id, not the
+ * AdCP work handle used by `tasks/get`; see `TaskResult.metadata.serverTaskId`.
  */
 export interface A2ASessionIds {
   contextId?: string;

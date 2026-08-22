@@ -441,15 +441,10 @@ createAdcpServerFromPlatform(platform, {
 - **`autoEmitCompletionWebhooks` now defaults to `false`.** AdCP sends
   completion webhooks only for status changes after the initial response;
   a request that returns a terminal result inline does not also emit a
-  completion webhook. This reverses the v6.0 default. Existing integrations
-  that temporarily require the old duplicate-delivery behavior can pass
-  `autoEmitCompletionWebhooks: true` to `createAdcpServerFromPlatform`.
-  That opt-in is a non-conformant compatibility extension: its synthesized
-  `sync-*` task ID is not registered and cannot be polled with
-  `get_task_status`, and it applies to synchronous discovery responses
-  (`get_products`, `get_signals`) as well as mutations. Delivery is detached
-  and best-effort. Use a durable request idempotency store, ingress rate
-  limits, and bounded emitter timeouts while the option is enabled to avoid
+  completion webhook. SDK 13 temporarily retained a non-conformant `true`
+  compatibility mode. SDK 14 ignores the deprecated option because AdCP 3.2
+  requires synchronous task-webhook silence. Use a durable request
+  idempotency store, ingress rate limits, and bounded emitter timeouts to avoid
   replayed duplicates or unbounded work from slow receivers. Migrate buyers
   to consume the inline terminal result, then remove the option.
 - **`allowPrivateWebhookUrls` for sandbox testing.** The framework

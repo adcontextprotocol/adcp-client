@@ -9,6 +9,7 @@ process.env.NODE_ENV = 'test';
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert');
 const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning/runtime/from-platform');
+const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/idempotency');
 
 function buildPlatform(handlers = {}) {
   return {
@@ -206,7 +207,12 @@ describe('#1399 — dev-mode multi-id truncation warning', () => {
           media_buy_deliveries: [{ media_buy_id: filter.media_buy_ids[0], impressions: 0, spend: 0 }],
         }),
       });
-      const server = createAdcpServerFromPlatform(platform, { ...SERVER_OPTS_BASE, logger: cap.logger });
+      const server = createAdcpServerFromPlatform(platform, {
+        ...SERVER_OPTS_BASE,
+        logger: cap.logger,
+        idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
+        resolveSessionKey: () => 'multi-id-production',
+      });
       await server.dispatchTestRequest({
         method: 'tools/call',
         params: {

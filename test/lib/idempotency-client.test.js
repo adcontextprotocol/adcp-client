@@ -234,7 +234,7 @@ describe('TaskExecutor surfaces response adcp_version on result metadata', () =>
     }
   });
 
-  it('input handler deferral preserves response adcp_version metadata', async () => {
+  it('nonresumable MCP pause preserves response adcp_version metadata', async () => {
     const capture = [];
     const restore = stubProtocolClient({
       response: {
@@ -253,7 +253,8 @@ describe('TaskExecutor surfaces response adcp_version on result metadata', () =>
         defer: true,
         token: 'deferred-token-1',
       }));
-      assert.equal(result.status, 'deferred');
+      assert.equal(result.status, 'input-required');
+      assert.equal(result.deferred, undefined);
       assert.equal(result.metadata.adcpVersion, '3.1-beta.5');
     } finally {
       restore();

@@ -4,6 +4,29 @@
 const { test, describe, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert');
 const { EventEmitter } = require('events');
+const { createHash } = require('node:crypto');
+
+const testDurableToken = label => createHash('sha256').update(label).digest('base64url');
+
+function a2aPause(question, field, taskId, contextId) {
+  return {
+    result: {
+      kind: 'task',
+      id: taskId,
+      contextId,
+      status: {
+        state: 'input-required',
+        message: {
+          kind: 'message',
+          messageId: `${taskId}-question`,
+          role: 'agent',
+          parts: [{ kind: 'data', data: { question, field } }],
+        },
+      },
+      artifacts: [],
+    },
+  };
+}
 
 /**
  * Mock Strategy Overview:
@@ -121,9 +144,16 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
           pollCount++;
           // Return working a few times then complete to avoid infinite loop
           if (pollCount > 3) {
-            return { task: { status: 'completed', result: { data: 'completed after polls' } } };
+            return {
+              task: {
+                taskId: params.task_id,
+                taskType: 'timeoutWebhookTask',
+                status: 'completed',
+                result: { data: 'completed after polls' },
+              },
+            };
           }
-          return { task: { status: 'working' } };
+          return { task: { taskId: params.task_id, taskType: 'timeoutWebhookTask', status: 'working' } };
         } else {
           return { status: 'submitted' };
         }
@@ -254,22 +284,58 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
       const mockStorage = new Map();
       const storageInterface = {
         set: mock.fn(async (key, value) => mockStorage.set(key, value)),
+        putIfAbsent: mock.fn(async (key, value) => {
+          if (mockStorage.has(key)) return false;
+          mockStorage.set(key, value);
+          return true;
+        }),
+        replaceIfVersion: mock.fn(async (key, expectedVersion, value) => {
+          if (mockStorage.get(key)?.continuationVersion !== expectedVersion) return false;
+          mockStorage.set(key, value);
+          return true;
+        }),
+        takeIfVersion: mock.fn(async (key, expectedVersion) => {
+          const value = mockStorage.get(key);
+          if (value?.continuationVersion !== expectedVersion) return undefined;
+          mockStorage.delete(key);
+          return value;
+        }),
+        take: mock.fn(async key => {
+          const value = mockStorage.get(key);
+          mockStorage.delete(key);
+          return value;
+        }),
         get: mock.fn(async key => mockStorage.get(key)),
         delete: mock.fn(async key => mockStorage.delete(key)),
         clear: mock.fn(async () => mockStorage.clear()),
         size: mock.fn(() => mockStorage.size),
       };
 
-      const mockHandler = mock.fn(async () => ({ defer: true, token: 'TEST_STORAGE_TOKEN_PLACEHOLDER' }));
+      const mockHandler = mock.fn(async () => ({
+        defer: true,
+        token: testDurableToken('TEST_STORAGE_TOKEN_PLACEHOLDER'),
+      }));
 
       ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-        if (taskName === 'continue_task') {
+        if (Object.hasOwn(params, 'input')) {
           return { status: 'completed', data: { resumed: true } };
         } else {
           return {
-            status: 'input-required',
-            question: 'Test storage?',
-            contextId: 'ctx-storage',
+            result: {
+              kind: 'task',
+              id: 'seller-storage-task',
+              contextId: 'ctx-storage',
+              status: {
+                state: 'input-required',
+                message: {
+                  kind: 'message',
+                  messageId: 'storage-question',
+                  role: 'agent',
+                  parts: [{ kind: 'data', data: { question: 'Test storage?', field: 'storage' } }],
+                },
+              },
+              artifacts: [],
+            },
           };
         }
       });
@@ -279,19 +345,24 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
         strictSchemaValidation: false,
       });
 
-      const result = await executor.executeTask(mockAgent, 'storageTask', { testData: 'storage-test' }, mockHandler);
+      const result = await executor.executeTask(
+        { ...mockAgent, protocol: 'a2a' },
+        'storageTask',
+        { testData: 'storage-test' },
+        mockHandler
+      );
 
       // Deferred is a valid intermediate state - success: true
       assert.strictEqual(result.success, true);
       assert.strictEqual(result.status, 'deferred');
-      assert.strictEqual(storageInterface.set.mock.callCount(), 1);
+      assert.strictEqual(storageInterface.putIfAbsent.mock.callCount(), 1);
 
       // Verify stored data structure
-      const [token, storedState] = storageInterface.set.mock.calls[0].arguments;
-      assert.strictEqual(token, 'TEST_STORAGE_TOKEN_PLACEHOLDER');
+      const [token, storedState] = storageInterface.putIfAbsent.mock.calls[0].arguments;
+      assert.strictEqual(token, testDurableToken('TEST_STORAGE_TOKEN_PLACEHOLDER'));
       assert.strictEqual(storedState.taskName, 'storageTask');
       assert.deepStrictEqual(storedState.params, { testData: 'storage-test' });
-      assert.strictEqual(storedState.agent.id, 'mock-agent');
+      assert.strictEqual(storedState.agentId, 'mock-agent');
 
       // Test resumption
       const resumeResult = await result.deferred.resume('resumed-value');
@@ -303,6 +374,18 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
 
     test('should handle storage failures gracefully', async () => {
       const failingStorage = {
+        putIfAbsent: mock.fn(async () => {
+          throw new Error('Storage unavailable');
+        }),
+        replaceIfVersion: mock.fn(async () => {
+          throw new Error('Storage unavailable');
+        }),
+        takeIfVersion: mock.fn(async () => {
+          throw new Error('Storage unavailable');
+        }),
+        take: mock.fn(async () => {
+          throw new Error('Storage unavailable');
+        }),
         set: mock.fn(async () => {
           throw new Error('Storage unavailable');
         }),
@@ -314,19 +397,23 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
         }),
       };
 
-      const mockHandler = mock.fn(async () => ({ defer: true, token: 'fail-token' }));
+      const mockHandler = mock.fn(async () => ({ defer: true, token: testDurableToken('fail-token') }));
 
-      ProtocolClient.callTool = mock.fn(async () => ({
-        status: 'input-required',
-        question: 'Test failing storage?',
-      }));
+      ProtocolClient.callTool = mock.fn(async () =>
+        a2aPause('Test failing storage?', 'storage', 'seller-failing-storage-task', 'ctx-failing-storage')
+      );
 
       const executor = new TaskExecutor({
         deferredStorage: failingStorage,
       });
 
       // Storage failure is caught by executeTask's try/catch and returned as an error result.
-      const result = await executor.executeTask(mockAgent, 'failingStorageTask', {}, mockHandler);
+      const result = await executor.executeTask(
+        { ...mockAgent, protocol: 'a2a' },
+        'failingStorageTask',
+        {},
+        mockHandler
+      );
       assert.strictEqual(result.success, false);
       assert.ok(result.error.includes('Storage unavailable'), `Expected storage error, got: ${result.error}`);
     });
@@ -346,13 +433,14 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
             task:
               state === 'completed'
                 ? {
+                    taskId: params.task_id,
                     status: 'completed',
                     result: { polls: pollCount },
                     taskType: 'pollingTask',
                     createdAt: Date.now(),
                     updatedAt: Date.now(),
                   }
-                : { status: 'working' },
+                : { taskId: params.task_id, taskType: 'pollingTask', status: 'working' },
           };
         } else {
           return { status: 'submitted' }; // Initial call returns submitted
@@ -384,20 +472,21 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
     test('should handle rapid polling scenarios', async () => {
       let quickPollCount = 0;
 
-      ProtocolClient.callTool = mock.fn(async (agent, taskName) => {
+      ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
         if (taskName === 'tasks/get' || taskName === 'tasks_get') {
           quickPollCount++;
           return {
             task:
               quickPollCount >= 5
                 ? {
+                    taskId: params.task_id,
                     status: 'completed',
                     result: { rapidPolls: quickPollCount },
                     taskType: 'rapidPollingTask',
                     createdAt: Date.now(),
                     updatedAt: Date.now(),
                   }
-                : { status: 'working' },
+                : { taskId: params.task_id, taskType: 'rapidPollingTask', status: 'working' },
           };
         } else {
           return { status: 'submitted' }; // Initial call
@@ -426,7 +515,7 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
       let callCount = 0;
       const failurePattern = [false, true, false, false]; // fail on second call
 
-      ProtocolClient.callTool = mock.fn(async (agent, taskName) => {
+      ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
         callCount++;
         if (failurePattern[callCount - 1]) {
           throw new Error('Network timeout');
@@ -507,28 +596,20 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
         return 'default';
       });
 
-      let callCount = 0;
       ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-        callCount++;
-        if (callCount === 1) {
-          // Initial call returns input-required
-          return {
-            status: 'input-required',
-            question: 'Confirm action?',
-            field: 'confirm',
-            contextId: 'ctx-workflow',
-          };
-        } else if (taskName === 'continue_task') {
-          // After handler provides input, return completed
+        if (Object.hasOwn(params, 'input')) {
+          assert.equal(taskName, 'workflowTask');
+          assert.equal(params.input, 'YES');
           return {
             status: 'completed',
             data: { workflow: 'completed', steps: 4 },
           };
         }
+        return a2aPause('Confirm action?', 'confirm', 'seller-workflow-task', 'ctx-workflow');
       });
 
       const executor = new TaskExecutor({ strictSchemaValidation: false });
-      const result = await executor.executeTask(mockAgent, 'workflowTask', {}, mockHandler);
+      const result = await executor.executeTask({ ...mockAgent, protocol: 'a2a' }, 'workflowTask', {}, mockHandler);
 
       assert.strictEqual(result.success, true);
       // workflow and steps are accessible either directly or nested under data
@@ -559,7 +640,7 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
       const stepDurations = [50, 100, 80, 0]; // Milliseconds for each step
       let stepTransitionScheduled = false;
 
-      ProtocolClient.callTool = mock.fn(async (agent, taskName) => {
+      ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
         if (taskName === 'tasks/get' || taskName === 'tasks_get') {
           // Simulate realistic timing - only schedule one transition per step
           const currentStep = Math.min(stepIndex, realWorldSteps.length - 1);
@@ -576,7 +657,7 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
             );
           }
 
-          return { task: step };
+          return { task: { ...step, taskId: params.task_id, taskType: 'realWorldTask' } };
         } else {
           return { status: 'submitted' }; // Initial call
         }

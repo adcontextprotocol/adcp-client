@@ -42,9 +42,9 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
   test('submitted continuation surfaces the server-assigned task_id, not the runner-side UUID', async () => {
     const SERVER_TASK_ID = 'tk_seller_assigned_42';
 
-    ProtocolClient.callTool = mock.fn(async (_agent, taskName, _params) => {
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName, params) => {
       if (taskName === 'tasks/get' || taskName === 'tasks_get') {
-        return { task: { status: 'completed', result: { ok: true } } };
+        return { task: { taskId: params.task_id, status: 'completed', result: { ok: true } } };
       }
       // Initial submitted-arm response carries the seller's task handle.
       return { status: 'submitted', task_id: SERVER_TASK_ID };
@@ -72,7 +72,14 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
         // surface. Pre-fix it was the runner-side UUID; post-fix it
         // must be the seller's task handle.
         polledIds.push(params?.taskId ?? params?.task_id);
-        return { task: { status: 'completed', result: { polls: polledIds.length } } };
+        return {
+          task: {
+            taskId: params.task_id,
+            taskType: 'pollingTest',
+            status: 'completed',
+            result: { polls: polledIds.length },
+          },
+        };
       }
       return { status: 'submitted', task_id: SERVER_TASK_ID };
     });
@@ -97,7 +104,7 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
     ProtocolClient.callTool = mock.fn(async (_agent, taskName, params) => {
       if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         trackedId = params?.taskId ?? params?.task_id;
-        return { task: { status: 'working' } };
+        return { task: { taskId: params.task_id, taskType: 'trackTest', status: 'working' } };
       }
       return { status: 'submitted', task_id: SERVER_TASK_ID };
     });
@@ -108,6 +115,56 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
     assert.strictEqual(trackedId, SERVER_TASK_ID, 'track() must address the server task_id');
   });
 
+  for (const returnedTaskId of ['', 'another-task']) {
+    test(`track() rejects ${returnedTaskId ? 'a different' : 'a missing'} returned task identity`, async () => {
+      const SERVER_TASK_ID = 'tk_track_binding';
+      ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+        if (taskName === 'tasks/get' || taskName === 'tasks_get') {
+          return { task: { taskId: returnedTaskId, taskType: 'trackBindingTest', status: 'completed' } };
+        }
+        return { status: 'submitted', task_id: SERVER_TASK_ID };
+      });
+
+      const executor = new TaskExecutor({ pollingInterval: 5 });
+      const result = await executor.executeTask(mockAgent, 'trackBindingTest', {});
+      await assert.rejects(result.submitted.track(), /task identity.*does not match/);
+    });
+  }
+
+  test('track() rejects a returned task type from another operation', async () => {
+    const SERVER_TASK_ID = 'tk_track_type_binding';
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
+        return {
+          task: { taskId: SERVER_TASK_ID, taskType: 'anotherOperation', status: 'completed' },
+        };
+      }
+      return { status: 'submitted', task_id: SERVER_TASK_ID };
+    });
+
+    const executor = new TaskExecutor({ pollingInterval: 5 });
+    const result = await executor.executeTask(mockAgent, 'trackTypeBindingTest', {});
+    await assert.rejects(result.submitted.track(), /task type.*does not match/);
+  });
+
+  test('waitForCompletion() fails closed on a returned task type from another operation', async () => {
+    const SERVER_TASK_ID = 'tk_wait_type_binding';
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
+        return {
+          task: { taskId: SERVER_TASK_ID, taskType: 'anotherOperation', status: 'completed' },
+        };
+      }
+      return { status: 'submitted', task_id: SERVER_TASK_ID };
+    });
+
+    const executor = new TaskExecutor({ pollingInterval: 5 });
+    const result = await executor.executeTask(mockAgent, 'waitTypeBindingTest', {});
+    const completion = await result.submitted.waitForCompletion(5);
+    assert.strictEqual(completion.success, false);
+    assert.match(completion.error, /task type.*does not match/);
+  });
+
   test('falls back to runner-side UUID and emits debug-log advisory when seller omits task_id', async () => {
     // Spec violation: submitted arm with no task_id field. SDK can't
     // address polling at the seller's task — fall back to the local
@@ -115,9 +172,9 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
     // The fallback path also writes an advisory entry to debug_logs
     // so operators grepping for "task_id" / "spec violation" can
     // pinpoint the offending seller call.
-    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName, params) => {
       if (taskName === 'tasks/get' || taskName === 'tasks_get') {
-        return { task: { status: 'completed', result: {} } };
+        return { task: { taskId: params.task_id, status: 'completed', result: {} } };
       }
       return { status: 'submitted' }; // no task_id
     });
@@ -133,32 +190,27 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
     assert.ok(advisory, 'fallback path emits a debug_logs advisory naming the spec violation');
   });
 
-  test('A2A wrapped response with `result.kind: "task"` extracts result.id as the server handle', async () => {
-    // For A2A submitted-arm responses, the protocol client returns the
-    // JSON-RPC envelope (`{ id, jsonrpc, result: <Task> }`).
-    // responseParser walks `response.result.kind === 'task'` →
-    // `response.result.id` and returns the A2A Task.id. Distinct
-    // sentinels on `result.id` vs the flat shape ensure the test is
-    // exercising the result-branch, not silently passing because both
-    // fields carry the same value. Note: this test pins the CURRENT
-    // parser behavior; #967 will revisit this priority for A2A
-    // submitted arms (where the AdCP work handle on
-    // `artifact.metadata.adcp_task_id` is the buyer's polling key,
-    // not `result.id`).
-    const A2A_TASK_ID = 'a2a-server-task-uuid-99';
-    const FLAT_TASK_ID = 'flat-task-id-should-be-ignored';
+  test('A2A wrapped response separates transport Task.id from the AdCP work handle', async () => {
+    const A2A_TRANSPORT_TASK_ID = 'a2a-transport-task-uuid-99';
+    const ADCP_WORK_ID = 'adcp-work-id-99';
 
-    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName, params) => {
       if (taskName === 'tasks/get' || taskName === 'tasks_get') {
-        return { task: { status: 'completed', result: {} } };
+        return { task: { taskId: params.task_id, status: 'completed', result: {} } };
       }
-      // The wrapped envelope branch: `result.kind === 'task'` wins
-      // over `response.task_id` (flat) per ProtocolResponseParser
-      // priority (`response.result` checked first).
       return {
-        status: 'submitted',
-        task_id: FLAT_TASK_ID,
-        result: { kind: 'task', id: A2A_TASK_ID, status: { state: 'submitted' } },
+        result: {
+          kind: 'task',
+          id: A2A_TRANSPORT_TASK_ID,
+          status: { state: 'submitted' },
+          artifacts: [
+            {
+              artifactId: 'submitted-work',
+              metadata: { adcp_task_id: ADCP_WORK_ID },
+              parts: [{ kind: 'data', data: { status: 'submitted', task_id: ADCP_WORK_ID } }],
+            },
+          ],
+        },
       };
     });
 
@@ -166,9 +218,10 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
     const result = await executor.executeTask({ ...mockAgent, protocol: 'a2a' }, 'a2aSubmittedTest', {});
     assert.strictEqual(
       result.submitted.taskId,
-      A2A_TASK_ID,
-      `wrapped result.id branch must take precedence over flat task_id; got ${result.submitted.taskId}`
+      ADCP_WORK_ID,
+      `A2A artifact work identity must be the polling handle; got ${result.submitted.taskId}`
     );
+    assert.strictEqual(result.metadata.a2aTaskId, A2A_TRANSPORT_TASK_ID);
   });
 
   test('MCP `structuredContent.task_id` extraction path', async () => {
@@ -177,9 +230,9 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
     // future parser refactor can't drop this branch silently.
     const MCP_TASK_ID = 'mcp-structured-content-task-id';
 
-    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName, params) => {
       if (taskName === 'tasks/get' || taskName === 'tasks_get') {
-        return { task: { status: 'completed', result: {} } };
+        return { task: { taskId: params.task_id, status: 'completed', result: {} } };
       }
       return { structuredContent: { status: 'submitted', task_id: MCP_TASK_ID } };
     });
@@ -206,8 +259,15 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
         polledIds.push(params?.taskId ?? params?.task_id);
         const state = sequence[Math.min(pollCount++, sequence.length - 1)];
         return state === 'completed'
-          ? { task: { status: 'completed', result: { polls: pollCount } } }
-          : { task: { status: 'working' } };
+          ? {
+              task: {
+                taskId: params.task_id,
+                taskType: 'multipollTest',
+                status: 'completed',
+                result: { polls: pollCount },
+              },
+            }
+          : { task: { taskId: params.task_id, taskType: 'multipollTest', status: 'working' } };
       }
       return { status: 'submitted', task_id: SERVER_TASK_ID };
     });
@@ -239,7 +299,14 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
         const id = params?.taskId ?? params?.task_id;
         if (id === SERVER_A) polledFor.A.push(id);
         if (id === SERVER_B) polledFor.B.push(id);
-        return { task: { status: 'completed', result: { id } } };
+        return {
+          task: {
+            taskId: id,
+            taskType: id === SERVER_A ? 'taskA' : 'taskB',
+            status: 'completed',
+            result: { id },
+          },
+        };
       }
       const handle = nextSeller;
       nextSeller = nextSeller === SERVER_A ? SERVER_B : SERVER_A;
@@ -288,9 +355,9 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
       processWebhook: async () => {},
     };
 
-    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName, params) => {
       if (taskName === 'tasks/get' || taskName === 'tasks_get') {
-        return { task: { status: 'working' } };
+        return { task: { taskId: params.task_id, status: 'working' } };
       }
       return { status: 'submitted', task_id: SERVER_TASK_ID };
     });
@@ -322,11 +389,18 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
     // poll errors and looping indefinitely.
     const SERVER_TASK_ID = 'tk_error_path';
 
-    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName, params) => {
       if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         // Returns a failed task — within the poll loop's normal
         // failed-status handling path.
-        return { task: { status: 'failed', error: 'simulated seller failure' } };
+        return {
+          task: {
+            taskId: params.task_id,
+            taskType: 'errorPathTest',
+            status: 'failed',
+            error: 'simulated seller failure',
+          },
+        };
       }
       return { status: 'submitted', task_id: SERVER_TASK_ID };
     });

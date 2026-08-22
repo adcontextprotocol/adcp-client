@@ -1600,23 +1600,17 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * separate from your other webhook emissions, or to inject a fake for
    * tests without wiring full RFC 9421 signing.
    *
-   * **Signing posture is your responsibility.** When adopters claim
-   * `signed-requests` capability, buyers expect RFC 9421-signed webhooks.
-   * The default emitter (bound to `serve({ webhooks })`) signs;
-   * a custom emitter passed here MUST either delegate to the same signed
-   * pipeline or sign itself. Set `unsigned: true` to acknowledge that this
-   * emitter intentionally bypasses signing — without that flag, an
-   * unsigned emitter wired in production would silently ship unsigned
-   * webhooks to buyers expecting signatures. Tests / dev paths set
-   * `unsigned: true`.
+   * Custom emitters are restricted to test/development because they cannot
+   * prove the AdCP 3.2 durable delivery binding, retry horizon, or retired-ID
+   * tombstone contract. Production deployments MUST configure `webhooks` and
+   * use the framework emitter exposed as `ctx.emitWebhook`.
    */
   taskWebhookEmitter?: {
     emit: NonNullable<HandlerContext<Account>['emitWebhook']>;
     /**
-     * Set to `true` to acknowledge this emitter does NOT sign the webhook
-     * payload (RFC 9421). Required for tests and development; production
-     * deployments with `signed-requests` claimed should leave this
-     * unset / `false` and rely on the framework's signing path.
+     * Set to `true` when this test/development emitter does NOT sign the
+     * webhook payload (RFC 9421). This flag is descriptive only; custom task
+     * emitters are rejected outside test/development regardless of signing.
      */
     unsigned?: boolean;
   };
@@ -1838,36 +1832,9 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
   strictSpecialismValidation?: boolean;
 
   /**
-   * Auto-fire a completion webhook on the sync-success arm of task-capable
-   * tools when the request supplied `push_notification_config.url`. This
-   * includes discovery (`get_products`, `get_signals`) as well as mutations
-   * such as `create_media_buy`, `update_media_buy`, and `sync_creatives`.
-   * Default is `false`: AdCP completion webhooks describe status changes
-   * after the initial response, so a terminal response delivered inline
-   * must not also emit a webhook.
-   *
-   * Setting this to `true` preserves the legacy compatibility behavior,
-   * but is a non-conformant extension. The webhook payload mirrors the
-   * HITL completion shape: top-level
-   * `task_type` (the wire tool name), `status: 'completed'`, and
-   * `result` carrying the projected sync response. `task_id` is
-   * synthesized per call (sync responses don't allocate a registry
-   * task), cannot be used with `get_task_status`, and exists only to
-   * satisfy the webhook payload shape. Buyers must correlate via the
-   * resource IDs (`media_buy_id`, `creative_id`, etc.) on `result`.
-   *
-   * Same `SPEC_WEBHOOK_TASK_TYPES` gate as the HITL path: tools outside
-   * the closed wire enum don't emit (adopters use `publishStatusChange`
-   * for those). Sync auto-emit and the HITL path share the same
-   * `emitWebhook` plumbing — host-wired signing, redelivery, and
-   * observability hooks all apply uniformly.
-   *
-   * Use this opt-in only while migrating an existing integration that
-   * relies on duplicate inline + webhook delivery. New integrations
-   * should handle the terminal inline response instead. Compatibility
-   * delivery is detached and best-effort: use durable request idempotency,
-   * ingress rate limits, and bounded emitter timeouts to avoid duplicate
-   * deliveries or unbounded work from replayed or slow requests.
+   * @deprecated Ignored under AdCP 3.2. Synchronous terminal responses MUST
+   * remain silent on the task-webhook channel; only an async task lifecycle
+   * may publish later status observations.
    */
   autoEmitCompletionWebhooks?: boolean;
 
@@ -2073,20 +2040,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     );
   }
 
-  // Sec-M2: warn when `signed-requests` is claimed but a custom
-  // taskWebhookEmitter is wired without acknowledging signing posture.
-  // The default emitter (bound to `serve({ webhooks })`) signs; a custom
-  // emitter that doesn't declare `unsigned: true` and doesn't delegate
-  // to the framework's signed pipeline ships unsigned webhooks to buyers
-  // who expect signatures.
-  //
-  // Gate via DEV_ALLOWLIST inversion (matches feedback_node_env_allowlist):
-  // warn when NODE_ENV is NOT in {test, development} AND no explicit ack
-  // env. Catches NODE_ENV unset, 'staging', 'prod', 'live' — common
-  // production deployments that the previous `=== 'production'` check
-  // failed open on.
   // Footgun guard for `allowPrivateWebhookUrls` — same DEV_ALLOWLIST
-  // inversion pattern as the unsigned-emitter check below. Adopters
+  // inversion pattern as other production guards. Adopters
   // intentionally relaxing the SSRF gate for sandbox testing aren't
   // doing anything wrong; production deployments that flip this on
   // accidentally are. Warn on construction when the flag is true AND
@@ -2109,23 +2064,12 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     }
   }
 
-  if (opts.taskWebhookEmitter && !opts.taskWebhookEmitter.unsigned) {
-    const claimsSigned = platform.capabilities?.specialisms?.includes('signed-requests' as never);
-    const env = process.env.NODE_ENV;
-    const isDevOrTest = env === 'test' || env === 'development';
-    const ackUnsignedTestEmitter = process.env.ADCP_DECISIONING_ALLOW_UNSIGNED_TEST_EMITTER === '1';
-    if (claimsSigned && !isDevOrTest && !ackUnsignedTestEmitter) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        '[adcp/decisioning] taskWebhookEmitter wired without unsigned:true while ' +
-          "platform.capabilities.specialisms claims 'signed-requests'. " +
-          'Buyers expecting RFC 9421 signatures will receive unsigned webhooks ' +
-          'unless your custom emitter delegates to the framework signing path. ' +
-          'If this is intentional (your emitter signs internally), set ' +
-          'unsigned: true on the emitter. For dev/test fakes, set ' +
-          'ADCP_DECISIONING_ALLOW_UNSIGNED_TEST_EMITTER=1 or NODE_ENV=test.'
-      );
-    }
+  if (opts.taskWebhookEmitter && process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'development') {
+    throw new PlatformConfigError(
+      'taskWebhookEmitter is test/development-only under AdCP 3.2. Production task webhooks must use the ' +
+        'framework webhooks configuration so durable delivery binding, retry-horizon advertisement, signing, ' +
+        'and retired delivery-ID tombstones are enforced.'
+    );
   }
 
   // Pool shortcut: when `opts.pool` is wired and a specific store/registry
@@ -4044,13 +3988,7 @@ interface DispatchHitlOpts {
   emitWebhook?: HandlerContext<Account>['emitWebhook'];
   observability?: DecisioningObservabilityHooks;
   logger: AdcpLogger;
-  /**
-   * Auto-emit a completion webhook on the sync-success arm too — see
-   * `CreateAdcpServerFromPlatformOptions.autoEmitCompletionWebhooks`.
-   * `routeIfHandoff` consults this when the platform returns a sync
-   * Success (not a TaskHandoff). Threaded from per-handler call sites
-   * so each tool's dispatcher reads the constructor flag once.
-   */
+  /** @deprecated Ignored; retained internally during the SDK 14 compatibility window. */
   autoEmitCompletion?: boolean;
 }
 
@@ -4165,87 +4103,7 @@ async function routeIfHandoff<TInner, TWire>(
     );
   }
   rejectHandRolledSubmitted(result);
-  const projected = await project(result);
-  if (opts.autoEmitCompletion === true && opts.pushNotificationUrl) {
-    // Auto-emit completion webhook on sync-success arm — fire-and-forget.
-    // Awaiting inline would let an attacker-controlled
-    // `push_notification_config.url` (e.g., a slowloris receiver) hold
-    // the seller's request worker for the full retry budget — minutes-
-    // to-tens-of-minutes per call, by spec-conformant payload. The buyer
-    // already has the result inline; webhook delivery is purely a
-    // notification convenience and shares the SPEC_WEBHOOK_TASK_TYPES
-    // gate with the HITL path. Errors land on the framework logger and
-    // the `onWebhookEmit` observability hook for operator alerting.
-    void emitSyncCompletionWebhook(opts, projected).catch((err: unknown) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      opts.logger.warn(`[adcp/decisioning] sync completion webhook background-error: ${msg}`);
-    });
-  }
-  return projected;
-}
-
-/**
- * Auto-fire the post-success webhook for the sync arm of a mutating
- * tool. Mirrors `emitTaskWebhook` (HITL path) but synthesizes a
- * `task_id` since sync responses don't allocate a registry task.
- * Buyers correlate via the resource IDs embedded in `result`
- * (`media_buy_id`, `creative_id`, etc.) — `task_id` is informational
- * for the spec's required-field shape.
- *
- * Webhook delivery failures are logged-and-swallowed: the sync
- * response succeeded and the buyer has the result inline, so blocking
- * the response on a flaky webhook receiver would be strictly worse
- * than the buyer eventually polling.
- */
-async function emitSyncCompletionWebhook(opts: DispatchHitlOpts, result: unknown): Promise<void> {
-  if (!opts.emitWebhook || !opts.pushNotificationUrl) return;
-  if (!SPEC_WEBHOOK_TASK_TYPES.has(opts.tool)) {
-    opts.logger.warn(
-      `[adcp/decisioning] sync completion webhook for ${opts.tool} skipped — ` +
-        `tool not in spec task-type enum (closed 20-value set per enums/task-type.json). ` +
-        `Use publishStatusChange for long-running ${opts.tool} state.`
-    );
-    return;
-  }
-  const taskId = `sync-${randomUUID()}`;
-  const wirePayload = buildTaskWebhookPayload(opts, taskId, 'completed', { result });
-  const start = Date.now();
-  let success = false;
-  let errorMessages: string[] | undefined;
-  let errorCode: string | undefined;
-  try {
-    const r = await opts.emitWebhook({
-      url: opts.pushNotificationUrl,
-      payload: wirePayload,
-      operation_id: resolveWebhookDeliveryOperationId(opts, taskId),
-    });
-    success = r?.delivered === true;
-    if (r && Array.isArray(r.errors) && r.errors.length > 0) {
-      errorMessages = r.errors;
-      errorCode = bucketWebhookError(r.errors[0] ?? '');
-    }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    errorMessages = [msg];
-    errorCode = bucketWebhookError(msg);
-    opts.logger.warn(`[adcp/decisioning] sync completion webhook for ${opts.tool} failed: ${msg}`);
-  } finally {
-    safeFire(
-      opts.observability?.onWebhookEmit,
-      {
-        taskId,
-        tool: opts.tool,
-        status: 'completed' as const,
-        url: opts.pushNotificationUrl,
-        success,
-        durationMs: Date.now() - start,
-        ...(errorCode && { errorCode }),
-        ...(errorMessages && { errorMessages }),
-      },
-      'onWebhookEmit',
-      opts.logger
-    );
-  }
+  return await project(result);
 }
 
 async function dispatchHitl<TResult>(
@@ -4385,11 +4243,10 @@ async function dispatchHitl<TResult>(
  * `push_notification_config.token`) outside the spec but consistent with the
  * intent — receivers that don't expect it ignore the extra property.
  *
- * The webhook emitter generates `idempotency_key` internally from
- * `operation_id`; we mirror it on the payload body so receivers running
- * spec-conformant `mcp-webhook-payload.json` validation see the required
- * field. Same value is on the HTTP `Idempotency-Key` header for HTTP-level
- * dedup.
+ * The webhook emitter replaces the placeholder `idempotency_key` with the
+ * immutable key bound to its SDK-local `delivery_id`. The payload's
+ * `operation_id` remains independent task correlation and can span multiple
+ * lifecycle observations, each with a distinct delivery id/key.
  */
 function buildTaskWebhookPayload(
   opts: DispatchHitlOpts,
@@ -4433,7 +4290,7 @@ function resolveWebhookPayloadOperationId(opts: DispatchHitlOpts, taskId: string
   return opts.pushNotificationOperationId ?? `${opts.tool}.${taskId}`;
 }
 
-function resolveWebhookDeliveryOperationId(opts: DispatchHitlOpts, taskId: string): string {
+function resolveWebhookDeliveryId(opts: DispatchHitlOpts, taskId: string): string {
   return `task-webhook:${opts.accountId}:${opts.tool}:${taskId}`;
 }
 
@@ -4472,7 +4329,7 @@ async function emitTaskWebhook(
     const result = await opts.emitWebhook({
       url: opts.pushNotificationUrl,
       payload: wirePayload,
-      operation_id: resolveWebhookDeliveryOperationId(opts, taskId),
+      delivery_id: resolveWebhookDeliveryId(opts, taskId),
     });
     success = result?.delivered === true;
     if (result && Array.isArray(result.errors) && result.errors.length > 0) {

@@ -1,7 +1,7 @@
 // Default in-memory storage implementation
 // Works out of the box without any external dependencies
 
-import type { Storage, BatchStorage, PatternStorage } from './interfaces';
+import type { AtomicTakeStorage, BatchStorage, PatternStorage } from './interfaces';
 
 /**
  * Stored item with optional expiration
@@ -29,8 +29,9 @@ interface StoredItem<T> {
  * const value = await storage.get('key');
  * ```
  */
-export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternStorage<T> {
+export class MemoryStorage<T> implements AtomicTakeStorage<T>, BatchStorage<T>, PatternStorage<T> {
   private store = new Map<string, StoredItem<T>>();
+  private settlementOperationRoutes = new Map<string, string>();
   private cleanupInterval?: NodeJS.Timeout;
   private lastCleanup = 0;
 
@@ -64,17 +65,150 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
     }
 
     // Check if expired
-    if (item.expiresAt && Date.now() > item.expiresAt) {
+    if (item.expiresAt && Date.now() >= item.expiresAt) {
       this.store.delete(key);
+      this.deleteSettlementRouteForKey(key);
       return undefined;
     }
 
     return item.value;
   }
 
-  async set(key: string, value: T, ttl?: number): Promise<void> {
+  async take(key: string): Promise<T | undefined> {
+    const item = this.store.get(key);
+    if (!item) return undefined;
+
+    // Consume expired entries too, but never return their value.
+    this.store.delete(key);
+    this.deleteSettlementRouteForKey(key);
+    if (item.expiresAt && Date.now() >= item.expiresAt) return undefined;
+    return item.value;
+  }
+
+  async putIfAbsent(key: string, value: T, ttl?: number): Promise<boolean> {
+    if (ttl !== undefined && (!Number.isFinite(ttl) || ttl <= 0)) {
+      throw new Error('MemoryStorage atomic TTL must be a positive finite number.');
+    }
+    const existing = this.store.get(key);
     const now = Date.now();
-    const expiresAt = ttl ? now + ttl * 1000 : undefined;
+    if (existing && (!existing.expiresAt || now < existing.expiresAt)) return false;
+    if (existing) {
+      this.store.delete(key);
+      this.deleteSettlementRouteForKey(key);
+    }
+    await this.set(key, value, ttl);
+    return true;
+  }
+
+  async replaceIfVersion(key: string, expectedVersion: string, value: T, ttl?: number): Promise<boolean> {
+    if (ttl !== undefined && (!Number.isFinite(ttl) || ttl <= 0)) {
+      throw new Error('MemoryStorage atomic TTL must be a positive finite number.');
+    }
+    const existing = this.store.get(key);
+    const now = Date.now();
+    if (!existing || (existing.expiresAt !== undefined && now >= existing.expiresAt)) {
+      if (existing) {
+        this.store.delete(key);
+        this.deleteSettlementRouteForKey(key);
+      }
+      return false;
+    }
+    const currentVersion = (existing.value as { continuationVersion?: unknown })?.continuationVersion;
+    if (currentVersion !== expectedVersion) return false;
+    this.store.set(key, {
+      value,
+      ...(ttl !== undefined && { expiresAt: now + ttl * 1000 }),
+      createdAt: now,
+    });
+    return true;
+  }
+
+  async takeIfVersion(key: string, expectedVersion: string): Promise<T | undefined> {
+    const existing = this.store.get(key);
+    const now = Date.now();
+    if (!existing || (existing.expiresAt !== undefined && now >= existing.expiresAt)) {
+      if (existing) {
+        this.store.delete(key);
+        this.deleteSettlementRouteForKey(key);
+      }
+      return undefined;
+    }
+    const currentVersion = (existing.value as { continuationVersion?: unknown })?.continuationVersion;
+    if (currentVersion !== expectedVersion) return undefined;
+    this.store.delete(key);
+    this.deleteSettlementRouteForKey(key);
+    return existing.value;
+  }
+
+  async putForSettlementOperationIfAbsent(operationId: string, key: string, value: T, ttl?: number): Promise<boolean> {
+    this.assertAtomicTtl(ttl);
+    if (
+      (value as { settlementOperationId?: unknown })?.settlementOperationId !== operationId ||
+      (value as { settlementOperationRouteRequired?: unknown })?.settlementOperationRouteRequired !== true
+    ) {
+      return false;
+    }
+    const now = Date.now();
+    const routedKey = this.settlementOperationRoutes.get(operationId);
+    if (routedKey && this.liveItem(routedKey, now)) return false;
+    if (routedKey) this.settlementOperationRoutes.delete(operationId);
+    if (this.liveItem(key, now)) return false;
+    this.store.delete(key);
+    this.store.set(key, this.storedItem(value, ttl, now));
+    this.settlementOperationRoutes.set(operationId, key);
+    return true;
+  }
+
+  async getBySettlementOperationId(operationId: string): Promise<{ token: string; state: T } | undefined> {
+    const token = this.settlementOperationRoutes.get(operationId);
+    if (!token) return undefined;
+    const item = this.liveItem(token, Date.now());
+    if (!item || (item.value as { settlementOperationId?: unknown })?.settlementOperationId !== operationId) {
+      this.settlementOperationRoutes.delete(operationId);
+      return undefined;
+    }
+    return { token, state: item.value };
+  }
+
+  async replaceForSettlementOperationIfVersion(
+    operationId: string,
+    currentKey: string,
+    expectedVersion: string,
+    replacementKey: string,
+    replacementValue: T,
+    ttl?: number
+  ): Promise<boolean> {
+    this.assertAtomicTtl(ttl);
+    if (
+      (replacementValue as { settlementOperationId?: unknown })?.settlementOperationId !== operationId ||
+      (replacementValue as { settlementOperationRouteRequired?: unknown })?.settlementOperationRouteRequired !== true
+    ) {
+      return false;
+    }
+    const now = Date.now();
+    if (this.settlementOperationRoutes.get(operationId) !== currentKey) return false;
+    const current = this.liveItem(currentKey, now);
+    if (
+      !current ||
+      (current.value as { continuationVersion?: unknown })?.continuationVersion !== expectedVersion ||
+      (current.value as { settlementOperationId?: unknown })?.settlementOperationId !== operationId ||
+      (current.value as { settlementOperationRouteRequired?: unknown })?.settlementOperationRouteRequired !== true
+    ) {
+      return false;
+    }
+    if (replacementKey !== currentKey && this.liveItem(replacementKey, now)) return false;
+    if (replacementKey !== currentKey) this.store.delete(replacementKey);
+    this.store.set(replacementKey, this.storedItem(replacementValue, ttl, now));
+    this.settlementOperationRoutes.set(operationId, replacementKey);
+    return true;
+  }
+
+  async set(key: string, value: T, ttl?: number): Promise<void> {
+    if (ttl !== undefined && (!Number.isFinite(ttl) || ttl <= 0)) {
+      throw new Error('MemoryStorage TTL must be a positive finite number.');
+    }
+    const now = Date.now();
+    const expiresAt = ttl !== undefined ? now + ttl * 1000 : undefined;
 
     this.store.set(key, {
       value,
@@ -91,6 +225,7 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
 
   async delete(key: string): Promise<void> {
     this.store.delete(key);
+    this.deleteSettlementRouteForKey(key);
   }
 
   async has(key: string): Promise<boolean> {
@@ -100,6 +235,7 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
 
   async clear(): Promise<void> {
     this.store.clear();
+    this.settlementOperationRoutes.clear();
   }
 
   async keys(): Promise<string[]> {
@@ -108,7 +244,7 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
     const now = Date.now();
 
     for (const [key, item] of this.store) {
-      if (!item.expiresAt || now <= item.expiresAt) {
+      if (!item.expiresAt || now < item.expiresAt) {
         keys.push(key);
       }
     }
@@ -139,6 +275,7 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
     for (const key of keys) {
       if (this.store.has(key)) {
         this.store.delete(key);
+        this.deleteSettlementRouteForKey(key);
         deleted++;
       }
     }
@@ -168,8 +305,9 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
     let cleaned = 0;
 
     for (const [key, item] of this.store) {
-      if (item.expiresAt && now > item.expiresAt) {
+      if (item.expiresAt && now >= item.expiresAt) {
         this.store.delete(key);
+        this.deleteSettlementRouteForKey(key);
         cleaned++;
       }
     }
@@ -195,7 +333,7 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
     let newestItem: number | undefined;
 
     for (const [, item] of this.store) {
-      if (item.expiresAt && now > item.expiresAt) {
+      if (item.expiresAt && now >= item.expiresAt) {
         expiredItems++;
       }
 
@@ -258,6 +396,38 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
       this.cleanupInterval = undefined;
     }
     this.store.clear();
+    this.settlementOperationRoutes.clear();
+  }
+
+  private assertAtomicTtl(ttl?: number): void {
+    if (ttl !== undefined && (!Number.isFinite(ttl) || ttl <= 0)) {
+      throw new Error('MemoryStorage atomic TTL must be a positive finite number.');
+    }
+  }
+
+  private liveItem(key: string, now: number): StoredItem<T> | undefined {
+    const item = this.store.get(key);
+    if (!item) return undefined;
+    if (item.expiresAt !== undefined && now >= item.expiresAt) {
+      this.store.delete(key);
+      this.deleteSettlementRouteForKey(key);
+      return undefined;
+    }
+    return item;
+  }
+
+  private storedItem(value: T, ttl: number | undefined, now: number): StoredItem<T> {
+    return {
+      value,
+      ...(ttl !== undefined && { expiresAt: now + ttl * 1000 }),
+      createdAt: now,
+    };
+  }
+
+  private deleteSettlementRouteForKey(key: string): void {
+    for (const [operationId, routedKey] of this.settlementOperationRoutes) {
+      if (routedKey === key) this.settlementOperationRoutes.delete(operationId);
+    }
   }
 }
 

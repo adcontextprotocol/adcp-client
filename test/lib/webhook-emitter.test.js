@@ -74,7 +74,7 @@ describe('createWebhookEmitter: happy path', () => {
     const result = await emitter.emit({
       url: 'http://127.0.0.1:9999/webhook',
       payload: { task: { task_id: 'mb-1', status: 'completed' } },
-      operation_id: 'op.mb-1',
+      delivery_id: 'delivery.mb-1',
     });
 
     assert.strictEqual(result.delivered, true);
@@ -98,7 +98,7 @@ describe('createWebhookEmitter: happy path', () => {
     await emitter.emit({
       url: 'https://buyer.example/webhook',
       payload: { task: { task_id: 'mb-x' } },
-      operation_id: 'op.mb-x',
+      delivery_id: 'delivery.mb-x',
     });
 
     const call = fetch.calls[0];
@@ -127,7 +127,7 @@ describe('createWebhookEmitter: retry behavior', () => {
     const result = await emitter.emit({
       url: 'http://127.0.0.1/hook',
       payload: { event: 'x' },
-      operation_id: 'op.retry',
+      delivery_id: 'delivery.retry',
     });
 
     assert.strictEqual(result.delivered, true);
@@ -145,7 +145,7 @@ describe('createWebhookEmitter: retry behavior', () => {
     await emitter.emit({
       url: 'http://127.0.0.1/hook',
       payload: { event: 'y' },
-      operation_id: 'op.nonce',
+      delivery_id: 'delivery.nonce',
     });
 
     const bodies = fetch.calls.map(c => c.body);
@@ -158,7 +158,7 @@ describe('createWebhookEmitter: retry behavior', () => {
     const { signerKey } = makeSignerKey();
     const fetch = stubFetch([{ status: 429 }, { status: 204 }]);
     const emitter = createWebhookEmitter({ signerKey, fetch, sleep: noSleep });
-    const result = await emitter.emit({ url: 'http://x/h', payload: {}, operation_id: 'op.429' });
+    const result = await emitter.emit({ url: 'http://x/h', payload: {}, delivery_id: 'delivery.429' });
     assert.strictEqual(result.delivered, true);
     assert.strictEqual(fetch.calls.length, 2);
   });
@@ -167,7 +167,7 @@ describe('createWebhookEmitter: retry behavior', () => {
     const { signerKey } = makeSignerKey();
     const fetch = stubFetch([{ status: 400 }]);
     const emitter = createWebhookEmitter({ signerKey, fetch, sleep: noSleep });
-    const result = await emitter.emit({ url: 'http://x/h', payload: {}, operation_id: 'op.400' });
+    const result = await emitter.emit({ url: 'http://x/h', payload: {}, delivery_id: 'delivery.400' });
     assert.strictEqual(result.delivered, false);
     assert.strictEqual(result.attempts, 1);
     assert.strictEqual(fetch.calls.length, 1);
@@ -182,7 +182,7 @@ describe('createWebhookEmitter: retry behavior', () => {
       },
     ]);
     const emitter = createWebhookEmitter({ signerKey, fetch, sleep: noSleep });
-    const result = await emitter.emit({ url: 'http://x/h', payload: {}, operation_id: 'op.401' });
+    const result = await emitter.emit({ url: 'http://x/h', payload: {}, delivery_id: 'delivery.401' });
     assert.strictEqual(result.delivered, false);
     assert.strictEqual(fetch.calls.length, 1);
     assert.match(result.errors[0], /webhook_signature_tag_invalid/);
@@ -192,7 +192,7 @@ describe('createWebhookEmitter: retry behavior', () => {
     const { signerKey } = makeSignerKey();
     const fetch = stubFetch(Array(10).fill({ status: 503 }));
     const emitter = createWebhookEmitter({ signerKey, fetch, sleep: noSleep, retries: { maxAttempts: 3 } });
-    const result = await emitter.emit({ url: 'http://x/h', payload: {}, operation_id: 'op.cap' });
+    const result = await emitter.emit({ url: 'http://x/h', payload: {}, delivery_id: 'delivery.cap' });
     assert.strictEqual(result.delivered, false);
     assert.strictEqual(fetch.calls.length, 3);
   });
@@ -203,27 +203,387 @@ describe('createWebhookEmitter: retry behavior', () => {
 // ────────────────────────────────────────────────────────────
 
 describe('createWebhookEmitter: cross-call stability', () => {
-  test('same operation_id across two emit() calls reuses the stored key', async () => {
+  test('same delivery_id and canonical payload reuse the immutable binding', async () => {
     const { signerKey } = makeSignerKey();
     const fetch = stubFetch([{ status: 204 }, { status: 204 }]);
     const store = memoryWebhookKeyStore();
     const emitter = createWebhookEmitter({ signerKey, fetch, sleep: noSleep, idempotencyKeyStore: store });
 
-    const first = await emitter.emit({ url: 'http://x/h', payload: {}, operation_id: 'op.same' });
-    const second = await emitter.emit({ url: 'http://x/h', payload: { updated: true }, operation_id: 'op.same' });
+    const first = await emitter.emit({ url: 'http://x/h', payload: { value: 1 }, delivery_id: 'delivery.same' });
+    const second = await emitter.emit({ url: 'http://x/h', payload: { value: 1 }, delivery_id: 'delivery.same' });
 
     assert.strictEqual(first.idempotency_key, second.idempotency_key);
-    assert.strictEqual(await store.get('op.same'), first.idempotency_key);
   });
 
-  test('different operation_ids produce different keys', async () => {
+  test('same delivery_id plus a different canonical payload fails closed before delivery', async () => {
     const { signerKey } = makeSignerKey();
     const fetch = stubFetch([{ status: 204 }, { status: 204 }]);
     const emitter = createWebhookEmitter({ signerKey, fetch, sleep: noSleep });
 
-    const a = await emitter.emit({ url: 'http://x/h', payload: {}, operation_id: 'op.A' });
-    const b = await emitter.emit({ url: 'http://x/h', payload: {}, operation_id: 'op.B' });
+    await emitter.emit({ url: 'http://x/h', payload: { status: 'working' }, delivery_id: 'delivery.conflict' });
+    await assert.rejects(
+      () =>
+        emitter.emit({
+          url: 'http://x/h',
+          payload: { status: 'completed' },
+          delivery_id: 'delivery.conflict',
+        }),
+      /different canonical payload/
+    );
+    assert.strictEqual(fetch.calls.length, 1);
+  });
+
+  test('different delivery_ids produce different keys', async () => {
+    const { signerKey } = makeSignerKey();
+    const fetch = stubFetch([{ status: 204 }, { status: 204 }]);
+    const emitter = createWebhookEmitter({ signerKey, fetch, sleep: noSleep });
+
+    const a = await emitter.emit({ url: 'http://x/h', payload: {}, delivery_id: 'delivery.A' });
+    const b = await emitter.emit({ url: 'http://x/h', payload: {}, delivery_id: 'delivery.B' });
     assert.notStrictEqual(a.idempotency_key, b.idempotency_key);
+  });
+
+  test('concurrent changed payloads have one atomic binding winner', async () => {
+    const { signerKey } = makeSignerKey();
+    const fetch = stubFetch([{ status: 204 }, { status: 204 }]);
+    const emitter = createWebhookEmitter({ signerKey, fetch, sleep: noSleep });
+
+    const outcomes = await Promise.allSettled([
+      emitter.emit({ url: 'http://x/h', payload: { status: 'completed' }, delivery_id: 'delivery.race' }),
+      emitter.emit({ url: 'http://x/h', payload: { status: 'failed' }, delivery_id: 'delivery.race' }),
+    ]);
+
+    assert.strictEqual(outcomes.filter(outcome => outcome.status === 'fulfilled').length, 1);
+    assert.strictEqual(outcomes.filter(outcome => outcome.status === 'rejected').length, 1);
+    assert.match(outcomes.find(outcome => outcome.status === 'rejected').reason.message, /different canonical payload/);
+    assert.strictEqual(fetch.calls.length, 1);
+  });
+
+  test('refuses the retained key after the advertised retry horizon', async () => {
+    const { signerKey } = makeSignerKey();
+    const fetch = stubFetch([{ status: 503 }, { status: 204 }]);
+    let nowMs = 1_000;
+    const emitter = createWebhookEmitter({
+      signerKey,
+      fetch,
+      sleep: noSleep,
+      retries: { maxAttempts: 1 },
+      deliveryRetryHorizonSeconds: 86_400,
+      now: () => nowMs,
+    });
+
+    const params = { url: 'http://x/h', payload: { status: 'completed' }, delivery_id: 'delivery.expired' };
+    await emitter.emit(params);
+    nowMs += 86_400_001;
+    await assert.rejects(() => emitter.emit(params), /is retired after its retry horizon and MUST NOT be rebound/);
+    assert.strictEqual(fetch.calls.length, 1);
+  });
+
+  test('an expired durable binding becomes an un-rebindable tombstone', async () => {
+    const { signerKey } = makeSignerKey();
+    const fetch = stubFetch([{ status: 204 }, { status: 204 }]);
+    let nowMs = 1_000;
+    const records = new Map();
+    const durableStore = {
+      durability: 'durable',
+      claim(key, proposed, retentionMs) {
+        const storageKey = JSON.stringify([key.publisherScope, key.tenantScope, key.deliveryId]);
+        const existing = records.get(storageKey);
+        if (existing?.status === 'bound' && nowMs > existing.retainUntilMs) {
+          const retired = { status: 'retired' };
+          records.set(storageKey, retired);
+          return retired;
+        }
+        if (existing) return { ...existing };
+        const binding = {
+          status: 'bound',
+          ...proposed,
+          firstAttemptAtMs: nowMs,
+          retainUntilMs: nowMs + retentionMs,
+        };
+        records.set(storageKey, binding);
+        return { ...binding };
+      },
+    };
+    const emitter = createWebhookEmitter({
+      signerKey,
+      fetch,
+      sleep: noSleep,
+      deliveryStore: durableStore,
+      deliveryRetryHorizonSeconds: 86_400,
+      now: () => nowMs,
+    });
+    const params = { url: 'http://x/h', payload: { status: 'completed' }, delivery_id: 'delivery.retired' };
+    await emitter.emit(params);
+    nowMs += 86_400_001;
+    await assert.rejects(() => emitter.emit(params), /retired after its retry horizon/);
+    assert.strictEqual(fetch.calls.length, 1);
+  });
+
+  test('shared-store delivery IDs are isolated by trusted publisher and tenant scope', async () => {
+    const { signerKey } = makeSignerKey();
+    const fetch = stubFetch([{ status: 204 }, { status: 204 }]);
+    const store = memoryWebhookKeyStore();
+    const publisher = createWebhookEmitter({
+      signerKey,
+      fetch,
+      sleep: noSleep,
+      deliveryStore: store,
+      publisherScope: 'publisher-a',
+      tenantScope: 'tenant-a',
+    });
+    const tenantB = publisher.forTenantScope('tenant-b');
+    const first = await publisher.emit({
+      url: 'http://x/h',
+      payload: { tenant: 'a' },
+      delivery_id: 'shared-delivery-id',
+    });
+    const second = await tenantB.emit({
+      url: 'http://x/h',
+      payload: { tenant: 'b' },
+      delivery_id: 'shared-delivery-id',
+    });
+    assert.notStrictEqual(first.idempotency_key, second.idempotency_key);
+    assert.strictEqual(fetch.calls.length, 2);
+  });
+
+  test('tolerates a store-authoritative first-attempt clock slightly ahead of the caller', async () => {
+    const { signerKey } = makeSignerKey();
+    const fetch = stubFetch([{ status: 204 }]);
+    const store = {
+      durability: 'durable',
+      claim(_key, proposed, retentionMs) {
+        return {
+          status: 'bound',
+          ...proposed,
+          firstAttemptAtMs: 61_000,
+          retainUntilMs: 61_000 + retentionMs,
+        };
+      },
+    };
+    const emitter = createWebhookEmitter({ signerKey, fetch, sleep: noSleep, deliveryStore: store, now: () => 1_000 });
+    const result = await emitter.emit({ url: 'http://x/h', payload: {}, delivery_id: 'delivery.clock-skew' });
+    assert.strictEqual(result.delivered, true);
+  });
+
+  test('store-authoritative expiry wins when the emitter replica clock is behind', async () => {
+    const { signerKey } = makeSignerKey();
+    const fetch = stubFetch([{ status: 503 }, { status: 204 }]);
+    let storeNowMs = 61_000;
+    const records = new Map();
+    const store = {
+      durability: 'durable',
+      claim(key, proposed, retentionMs) {
+        const id = JSON.stringify([key.publisherScope, key.tenantScope, key.deliveryId]);
+        const existing = records.get(id);
+        if (existing?.status === 'bound' && storeNowMs > existing.retainUntilMs) {
+          const retired = { status: 'retired' };
+          records.set(id, retired);
+          return retired;
+        }
+        if (existing) return { ...existing };
+        const binding = {
+          status: 'bound',
+          ...proposed,
+          firstAttemptAtMs: storeNowMs,
+          retainUntilMs: storeNowMs + retentionMs,
+        };
+        records.set(id, binding);
+        return { ...binding };
+      },
+    };
+    const emitter = createWebhookEmitter({
+      signerKey,
+      fetch,
+      sleep: noSleep,
+      retries: { maxAttempts: 1 },
+      deliveryStore: store,
+      now: () => 1_000,
+    });
+    const params = { url: 'http://x/h', payload: {}, delivery_id: 'delivery.authoritative-expiry' };
+    await emitter.emit(params);
+    storeNowMs += 86_400_001;
+    await assert.rejects(() => emitter.emit(params), /retired after its retry horizon/);
+    assert.strictEqual(fetch.calls.length, 1);
+  });
+
+  test('rejects lone Unicode surrogates before binding or delivery', async () => {
+    const { signerKey } = makeSignerKey();
+    const fetch = stubFetch([{ status: 204 }]);
+    const emitter = createWebhookEmitter({ signerKey, fetch, sleep: noSleep });
+    await assert.rejects(
+      () => emitter.emit({ url: 'http://x/h', payload: { value: '\ud800' }, delivery_id: 'delivery.surrogate' }),
+      /lone Unicode surrogate/
+    );
+    await assert.rejects(
+      () =>
+        emitter.emit({ url: 'http://x/h', payload: { ['\udc00']: 'value' }, delivery_id: 'delivery.surrogate-key' }),
+      /lone Unicode surrogate/
+    );
+    assert.strictEqual(fetch.calls.length, 0);
+  });
+
+  test('rejects cycles before binding while allowing repeated acyclic references', async () => {
+    const { signerKey } = makeSignerKey();
+    const fetch = stubFetch([{ status: 204 }]);
+    const emitter = createWebhookEmitter({ signerKey, fetch, sleep: noSleep });
+    const cyclic = { value: 1 };
+    cyclic.self = cyclic;
+    await assert.rejects(
+      () => emitter.emit({ url: 'http://x/h', payload: cyclic, delivery_id: 'delivery.cycle' }),
+      /circular reference/
+    );
+    const shared = { value: 2 };
+    const result = await emitter.emit({
+      url: 'http://x/h',
+      payload: { first: shared, second: shared },
+      delivery_id: 'delivery.shared-dag',
+    });
+    assert.strictEqual(result.delivered, true);
+    assert.strictEqual(fetch.calls.length, 1);
+  });
+
+  test('durable recovery checkpoints before claim and settles only final outcomes', async () => {
+    const { signerKey } = makeSignerKey();
+    const events = [];
+    const store = memoryWebhookKeyStore();
+    const recovery = {
+      durability: 'durable',
+      checkpoint(key, snapshot) {
+        events.push({ kind: 'checkpoint', key: { ...key }, snapshot: structuredClone(snapshot) });
+      },
+      settle(key, disposition) {
+        events.push({ kind: 'settle', key: { ...key }, disposition });
+      },
+    };
+    const delivered = createWebhookEmitter({
+      signerKey,
+      fetch: stubFetch([{ status: 204 }]),
+      sleep: noSleep,
+      deliveryStore: {
+        ...store,
+        claim(key, proposed, retentionMs) {
+          events.push({ kind: 'claim' });
+          return store.claim(key, proposed, retentionMs);
+        },
+      },
+      deliveryRecovery: recovery,
+    });
+    await delivered.emit({ url: 'http://x/h', payload: { timestamp: 'stable' }, delivery_id: 'delivery.outbox-ok' });
+    assert.deepStrictEqual(
+      events.map(event => event.kind),
+      ['checkpoint', 'claim', 'settle']
+    );
+    assert.strictEqual(events[2].disposition, 'delivered');
+
+    events.length = 0;
+    const retryable = createWebhookEmitter({
+      signerKey,
+      fetch: stubFetch([{ status: 503 }]),
+      sleep: noSleep,
+      retries: { maxAttempts: 1 },
+      deliveryRecovery: recovery,
+    });
+    await retryable.emit({ url: 'http://x/h', payload: {}, delivery_id: 'delivery.outbox-pending' });
+    assert.deepStrictEqual(
+      events.map(event => event.kind),
+      ['checkpoint']
+    );
+
+    events.length = 0;
+    const terminal = createWebhookEmitter({
+      signerKey,
+      fetch: stubFetch([{ status: 400 }]),
+      sleep: noSleep,
+      deliveryRecovery: recovery,
+    });
+    await terminal.emit({ url: 'http://x/h', payload: {}, delivery_id: 'delivery.outbox-terminal' });
+    assert.deepStrictEqual(
+      events.map(event => event.kind),
+      ['checkpoint', 'settle']
+    );
+    assert.strictEqual(events[1].disposition, 'terminal');
+  });
+
+  test('snapshots delivery identity, destination, auth, retries, and payload before the durable claim await', async () => {
+    const { signerKey } = makeSignerKey();
+    const fetch = stubFetch([{ status: 204 }]);
+    let releaseClaim;
+    const claimGate = new Promise(resolve => {
+      releaseClaim = resolve;
+    });
+    const store = {
+      durability: 'durable',
+      async claim(_key, proposed, retentionMs) {
+        await claimGate;
+        return {
+          status: 'bound',
+          ...proposed,
+          firstAttemptAtMs: 1_000,
+          retainUntilMs: 1_000 + retentionMs,
+        };
+      },
+    };
+    const emitter = createWebhookEmitter({
+      signerKey,
+      fetch,
+      sleep: noSleep,
+      deliveryStore: store,
+      now: () => 1_000,
+    });
+    const params = {
+      url: 'http://original/h',
+      payload: { value: 'original' },
+      delivery_id: 'delivery.original',
+      authentication: { type: 'bearer', token: 'original-token' },
+      retries: { maxAttempts: 1 },
+    };
+    const pending = emitter.emit(params);
+    params.url = 'http://mutated/h';
+    params.payload.value = 'mutated';
+    params.delivery_id = 'delivery.mutated';
+    params.authentication.token = 'mutated-token';
+    params.retries.maxAttempts = 5;
+    releaseClaim();
+    const result = await pending;
+    assert.strictEqual(result.delivery_id, 'delivery.original');
+    assert.strictEqual(fetch.calls[0].url, 'http://original/h');
+    assert.strictEqual(fetch.calls[0].headers.authorization, 'Bearer original-token');
+    assert.strictEqual(JSON.parse(fetch.calls[0].body).value, 'original');
+  });
+
+  test('does not start a later in-process attempt after the horizon', async () => {
+    const { signerKey } = makeSignerKey();
+    const fetch = stubFetch([{ status: 503 }, { status: 204 }]);
+    let nowMs = 1_000;
+    const emitter = createWebhookEmitter({
+      signerKey,
+      fetch,
+      retries: { maxAttempts: 2 },
+      deliveryRetryHorizonSeconds: 86_400,
+      now: () => nowMs,
+      sleep: async () => {
+        nowMs += 86_400_001;
+      },
+    });
+
+    await assert.rejects(
+      () => emitter.emit({ url: 'http://x/h', payload: { status: 'completed' }, delivery_id: 'delivery.loop-expired' }),
+      /is retired after its retry horizon and MUST NOT be rebound/
+    );
+    assert.strictEqual(fetch.calls.length, 1);
+  });
+
+  test('validates the advertised retry-horizon bounds', () => {
+    const { signerKey } = makeSignerKey();
+    assert.throws(
+      () => createWebhookEmitter({ signerKey, deliveryRetryHorizonSeconds: 86_399 }),
+      /integer from 86400 through 604800/
+    );
+    assert.throws(
+      () => createWebhookEmitter({ signerKey, deliveryRetryHorizonSeconds: 604_801 }),
+      /integer from 86400 through 604800/
+    );
   });
 
   test('rejects an injected generator that produces a malformed key', async () => {
@@ -235,7 +595,10 @@ describe('createWebhookEmitter: cross-call stability', () => {
       sleep: noSleep,
       generateIdempotencyKey: () => 'tooShort',
     });
-    await assert.rejects(() => emitter.emit({ url: 'http://x/h', payload: {}, operation_id: 'op.bad' }), /must match/);
+    await assert.rejects(
+      () => emitter.emit({ url: 'http://x/h', payload: {}, delivery_id: 'delivery.bad' }),
+      /does not match/
+    );
   });
 });
 
@@ -264,7 +627,7 @@ describe('createWebhookEmitter: HMAC fallback', () => {
     const result = await emitter.emit({
       url: 'http://x/h',
       payload: { event: 'hmac' },
-      operation_id: 'op.hmac',
+      delivery_id: 'delivery.hmac',
       authentication: { type: 'hmac_sha256', secret: 'shh-its-a-secret' },
     });
     assert.strictEqual(result.delivered, true);
@@ -283,7 +646,7 @@ describe('createWebhookEmitter: HMAC fallback', () => {
     await emitter.emit({
       url: 'http://x/h',
       payload: { event: 'bearer' },
-      operation_id: 'op.bearer',
+      delivery_id: 'delivery.bearer',
       authentication: { type: 'bearer', token: 'opaque-token' },
     });
     const headers = fetch.calls[0].headers;
@@ -310,7 +673,7 @@ describe('createWebhookEmitter: observability', () => {
       onAttempt: info => attempts.push(info),
       onAttemptResult: info => results.push(info),
     });
-    await emitter.emit({ url: 'http://x/h', payload: {}, operation_id: 'op.obs' });
+    await emitter.emit({ url: 'http://x/h', payload: {}, delivery_id: 'delivery.obs' });
     assert.strictEqual(attempts.length, 2);
     assert.strictEqual(results.length, 2);
     assert.strictEqual(attempts[0].attempt, 1);
@@ -335,7 +698,7 @@ describe('createWebhookEmitter: signerProvider path', () => {
     await emitter.emit({
       url: 'https://buyer.example/webhook',
       payload: { task: { task_id: 'mb-provider' } },
-      operation_id: 'op.provider',
+      delivery_id: 'delivery.provider',
     });
 
     const call = fetch.calls[0];
@@ -359,7 +722,7 @@ describe('createWebhookEmitter: signerProvider path', () => {
     const result = await emitter.emit({
       url: 'http://127.0.0.1:9999/webhook',
       payload: { task: { task_id: 'mb-provider-2' } },
-      operation_id: 'op.provider2',
+      delivery_id: 'delivery.provider2',
     });
 
     assert.strictEqual(result.delivered, true);
@@ -379,7 +742,7 @@ describe('createWebhookEmitter: signerProvider path', () => {
     const result = await emitter.emit({
       url: 'http://127.0.0.1/hook',
       payload: { event: 'retry' },
-      operation_id: 'op.provider-retry',
+      delivery_id: 'delivery.provider-retry',
     });
 
     assert.strictEqual(result.delivered, true);
@@ -437,6 +800,54 @@ describe('createWebhookEmitter: signerKey and signerProvider produce byte-identi
 // ────────────────────────────────────────────────────────────
 
 describe('createWebhookEmitter: construction validation', () => {
+  test('production rejects an explicit process-local delivery store', () => {
+    const { signerKey } = makeSignerKey();
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      assert.throws(
+        () =>
+          createWebhookEmitter({
+            signerKey,
+            deliveryStore: memoryWebhookKeyStore(),
+            publisherScope: 'publisher',
+            tenantScope: 'tenant',
+          }),
+        /requires a durable WebhookDeliveryStore/
+      );
+    } finally {
+      process.env.NODE_ENV = previousNodeEnv ?? 'test';
+    }
+  });
+
+  test('production rejects a durable binding store without durable recovery state', () => {
+    const { signerKey } = makeSignerKey();
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      assert.throws(
+        () =>
+          createWebhookEmitter({
+            signerKey,
+            deliveryStore: {
+              durability: 'durable',
+              claim: (_key, proposed, retentionMs) => ({
+                status: 'bound',
+                ...proposed,
+                firstAttemptAtMs: 1_000,
+                retainUntilMs: 1_000 + retentionMs,
+              }),
+            },
+            publisherScope: 'publisher',
+            tenantScope: 'tenant',
+          }),
+        /requires durable deliveryRecovery/
+      );
+    } finally {
+      process.env.NODE_ENV = previousNodeEnv ?? 'test';
+    }
+  });
+
   test('throws when neither signerKey nor signerProvider is provided', () => {
     const fetch = stubFetch([]);
     assert.throws(

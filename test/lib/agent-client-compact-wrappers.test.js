@@ -51,8 +51,54 @@ const CASES = [
 ];
 
 describe('AgentClient compact lifecycle wrappers', () => {
+  test('resumeDeferredTask delegates through the owned client and retains resumed A2A session state', async () => {
+    const wrapper = new AgentClient(
+      {
+        ...TEST_AGENT,
+        agent_uri: 'https://seller.example/a2a',
+        protocol: 'a2a',
+      },
+      { validateFeatures: false }
+    );
+    const calls = [];
+    wrapper.client.resumeDeferredTask = async (token, input) => {
+      calls.push([token, input]);
+      return {
+        success: true,
+        status: 'input-required',
+        metadata: {
+          status: 'input-required',
+          contextId: 'resumed-context',
+          a2aTaskId: 'resumed-a2a-task',
+          taskName: 'create_media_buy',
+        },
+        deferred: {
+          token: 'replacement-token',
+          resume: async () => ({
+            success: true,
+            status: 'completed',
+            data: { media_buy_id: 'buy-1' },
+            metadata: { status: 'completed', taskName: 'create_media_buy' },
+          }),
+        },
+        conversation: [],
+        debug_logs: [],
+      };
+    };
+
+    const resumed = await wrapper.resumeDeferredTask('durable-token', { approved: true });
+
+    assert.deepStrictEqual(calls, [['durable-token', { approved: true }]]);
+    assert.strictEqual(wrapper.getContextId(), 'resumed-context');
+    assert.strictEqual(wrapper.getPendingTaskId(), 'resumed-a2a-task');
+
+    const completed = await resumed.deferred.resume({ confirmed: true });
+    assert.strictEqual(completed.status, 'completed');
+    assert.strictEqual(wrapper.getPendingTaskId(), undefined);
+  });
+
   for (const [method, taskName, params] of CASES) {
-    test(`${method} dispatches ${taskName} and retains its session`, async () => {
+    test(`${method} dispatches ${taskName} and retains MCP context without treating work handles as sessions`, async () => {
       const wrapper = new AgentClient(TEST_AGENT, { validateFeatures: false });
       const calls = [];
       const inputHandler = async () => undefined;
@@ -87,10 +133,10 @@ describe('AgentClient compact lifecycle wrappers', () => {
         { contextId: 'ctx-explicit', taskId: 'task-explicit', maxClarifications: 7 },
       ]);
       assert.strictEqual(wrapper.getContextId(), 'ctx-server');
-      assert.strictEqual(wrapper.getPendingTaskId(), 'task-server');
+      assert.strictEqual(wrapper.getPendingTaskId(), undefined);
 
       await wrapper[method](params);
-      assert.deepStrictEqual(calls[1][3], { contextId: 'ctx-server', taskId: 'task-server' });
+      assert.deepStrictEqual(calls[1][3], { contextId: 'ctx-server', taskId: undefined });
     });
   }
 });

@@ -174,8 +174,13 @@ class TaskExecutor {
     enableConversationStorage?: boolean;
     /** Webhook manager for submitted tasks */
     webhookManager?: WebhookManager;
-    /** Storage for deferred task state */
-    deferredStorage?: Storage<DeferredTaskState>;
+    /** Durable storage with atomic create, generation-claim, and conditional-cleanup operations */
+    deferredStorage?: DeferredTaskStorage;
+    /** Resolve current trusted agent configuration after restart */
+    resolveDeferredAgent?: (agentId: string) =>
+      AgentConfig | undefined | Promise<AgentConfig | undefined>;
+    /** Persisted continuation lifetime in seconds (default seven days) */
+    deferredTaskTtlSeconds?: number;
   });
 
   /** Execute a task with an agent using PR #78 async patterns */
@@ -376,7 +381,7 @@ const asyncHandler: InputHandler = async (context) => {
 // Defer response
 const deferHandler: InputHandler = (context) => {
   if (context.inputRequest.field === 'approval') {
-    return { defer: true, token: `approval-${Date.now()}` };
+    return context.deferToHuman();
   }
   return true;
 };
@@ -644,7 +649,12 @@ type ADCPStatus = typeof ADCP_STATUS[keyof typeof ADCP_STATUS];
 
 ### InputRequiredError
 
-Thrown when server requires input but no handler is provided.
+Legacy compatibility export. Current execution does not throw this as normal
+handler-less pause control flow. Inspect the returned `input-required` or
+`auth-required` status instead. A2A can expose a continuation only when the
+seller supplied an exact task ID. A2A without that ID and MCP return the pause
+without invoking an input handler or attaching a resume closure, so recovery
+is application/protocol-specific.
 
 ```typescript
 class InputRequiredError extends Error {
@@ -652,13 +662,15 @@ class InputRequiredError extends Error {
 }
 ```
 
-**Usage:**
+**Pause handling:**
 ```typescript
-try {
-  const result = await agent.getProducts(params); // No handler provided
-} catch (error) {
-  if (error instanceof InputRequiredError) {
-    console.log('Missing handler for:', error.message);
+const result = await agent.getProducts(params);
+if (result.status === 'input-required' || result.status === 'auth-required') {
+  if (result.deferred) {
+    // A2A: resume the exact seller task.
+    await result.deferred.resume(userInput);
+  } else {
+    // MCP: use an application/protocol-specific recovery path.
   }
 }
 ```
@@ -723,7 +735,8 @@ Thrown when a task is deferred (normal flow for deferred tasks).
 
 ```typescript
 class DeferredTaskError extends Error {
-  constructor(public token: string);
+  readonly token: string; // Readable, but non-enumerable and non-writable at runtime
+  constructor(token: string);
 }
 ```
 
@@ -734,10 +747,13 @@ try {
   const result = await internalTaskExecution();
 } catch (error) {
   if (error instanceof DeferredTaskError) {
-    console.log('Task deferred with token:', error.token);
+    await approvedContinuationStore.save(error.token);
+    console.log('Task deferred; continuation stored securely.');
   }
 }
 ```
+
+The token is a bearer capability. Do not log or expose it; persist and pass it only through an approved secret-bearing path.
 
 ---
 
@@ -827,10 +843,212 @@ interface Storage<T> {
   get(key: string): Promise<T | undefined>;
   set(key: string, value: T, ttl?: number): Promise<void>;
   delete(key: string): Promise<void>;
+  has(key: string): Promise<boolean>;
   keys(): Promise<string[]>;
   clear(): Promise<void>;
 }
 ```
+
+#### DeferredTaskStorage
+
+Durable storage for restart-safe A2A `input-required` and `auth-required`
+continuations. Claiming must atomically replace the exact record generation;
+implementing it as separate `get()` and `set()` calls can let two replicas
+resume the same seller task or create a token-reuse ABA gap.
+
+```typescript
+interface DeferredTaskState {
+  continuationVersion: string; // Opaque atomic record generation
+  continuationClaimed?: boolean; // Seller continuation dispatch is fenced
+  settlementResumeDispatchLease?: {
+    ownerId: string;
+    phase: 'admission' | 'dispatch-committed';
+    expiresAt: number;
+  }; // Renewable admission owner or permanent uncertain-dispatch fence
+  taskId: string; // Client correlation ID
+  contextId?: string; // Seller A2A context ID
+  a2aTaskId: string; // Exact seller A2A Task.id
+  serverVersion: 'v2' | 'v3'; // Original seller wire generation
+  agentId: string; // Resolved through trusted current configuration
+  taskName: string;
+  params: unknown;
+  messages: Message[];
+  pauseStatus?: 'input-required' | 'auth-required' | 'deferred'; // Exact public pause arm
+  pauseQuestion?: string; // Prompt returned when an interrupted handoff is rediscovered
+  clientContext?: unknown; // Opaque SDK context; round-trip unchanged
+  settlementOperationId?: string; // Trusted committed-mutation recovery route
+  settlementOperationRouteRequired?: true; // New-format routed record; preserve on every successor
+  settlementResumeAuthorizationRequired?: boolean; // Owning coordinator must authorize seller-input dispatch
+  settlementServerTaskId?: string; // Durably bound seller work handle
+  settlementPendingTaskId?: string; // Nonterminal seller work retained for restart polling
+  settlementTerminalResult?: unknown; // Opaque retryable terminal observation; round-trip unchanged
+  settlementFinalizationLease?: { ownerId: string; expiresAt: number }; // Internal renewable active-owner fence
+  settlementFinalizedResult?: unknown; // Exact finalized replay; handlers do not run again
+  settlementCompletionHandlerPublished?: boolean; // Internal durable handler-publication fence
+  createdAt: number; // Epoch milliseconds
+  expiresAt: number; // Epoch milliseconds
+}
+
+interface DeferredTaskStorage extends Storage<DeferredTaskState> {
+  putIfAbsent(key: string, value: DeferredTaskState, ttl?: number): Promise<boolean>;
+  replaceIfVersion(
+    key: string,
+    expectedVersion: string,
+    value: DeferredTaskState,
+    ttl?: number,
+  ): Promise<boolean>;
+  takeIfVersion(key: string, expectedVersion: string): Promise<DeferredTaskState | undefined>;
+  putForSettlementOperationIfAbsent(
+    operationId: string,
+    key: string,
+    value: DeferredTaskState,
+    ttl?: number,
+  ): Promise<boolean>;
+  getBySettlementOperationId(
+    operationId: string,
+  ): Promise<{ token: string; state: DeferredTaskState } | undefined>;
+  replaceForSettlementOperationIfVersion(
+    operationId: string,
+    currentKey: string,
+    expectedVersion: string,
+    replacementKey: string,
+    replacementValue: DeferredTaskState,
+    ttl?: number,
+  ): Promise<boolean>;
+}
+```
+
+`putIfAbsent()` must atomically reject an existing unexpired key.
+For ordinary and marker-absent legacy records, `replaceIfVersion()` is the
+exclusive seller-dispatch claim: it must replace only the exact generation and
+keep the key present under the SDK-supplied internal safety TTL. New
+`settlementOperationRouteRequired: true` records use same-key
+`replaceForSettlementOperationIfVersion()` for that claim and every later
+transition so token and route remain one linearizable unit. This safety horizon
+is independent of the configurable human-input token lifetime and expands for
+configured transport/working waits.
+Committed continuations first hold a renewable `admission` lease while current
+route authorization and trusted-agent resolution run. The SDK then performs an
+exact generation CAS to `dispatch-committed` immediately before calling the
+seller. Only an expired `admission` lease is reclaimable; a
+`dispatch-committed` record represents uncertain seller dispatch and must never
+redispatch the human input. Authoritative callbacks may replace either phase.
+`takeIfVersion()` performs post-completion cleanup only when that claimed
+generation is still current. If trusted agent resolution fails before
+dispatch, the SDK generation-conditionally restores the original state with
+its remaining human-input TTL.
+
+The three settlement-operation methods form a second atomic index over
+committed continuations. Initial pause creation writes the opaque token and
+operation route together. A nested pause writes B and moves the route from the
+exact dispatch-committed generation A in one transaction while retaining A as
+a dispatch fence. `getBySettlementOperationId()` returns that exact current
+token/state pair. Passing the same current and replacement key performs an
+in-place route-fenced state CAS; callback terminal checkpointing uses this mode
+so it competes atomically with A→B. New atomically indexed records carry
+`settlementOperationRouteRequired: true`; adapters and record reconstruction
+MUST preserve that discriminator on every successor so generic state updates
+cannot detach the record TTL from its operation route. Marker-absent records
+written by earlier prereleases retain exact-token compatibility behavior. An
+exact purchase retry can therefore rediscover B after a
+crash between SDK checkpointing, coordinator binding, and returning the token
+to the caller, without resending A's human input.
+
+When a pause crossed a committed mutation boundary, the SDK persists its
+trusted settlement operation identity. A terminal restart resume is returned
+only after a reconstructed durable coordinator settles it; without a matching
+recoverer, the resume fails closed.
+
+If seller continuation reaches a terminal result, the SDK replaces the human
+input record with an opaque terminal checkpoint using the same independent
+safety horizon. Recovery and application completion handlers retry from that
+checkpoint without redispatching seller work. The checkpoint is retained
+through its TTL as an exact-replay fence, so custom storage must not recycle
+its token early. After settlement, public response finalization, and completion
+handlers all succeed, the checkpoint records the exact finalized result. Later
+token retries replay that value without rerunning seller dispatch, settlement
+recovery, or application handlers. Recovery and handler publication are
+protected by a renewable generation-fenced active lease, so healthy concurrent
+replicas do not finalize the same checkpoint at once. Failed finalization releases
+the checkpoint for retry, while a crashed owner's lease eventually expires.
+Recovery callbacks and completion handlers must still be idempotent: after lease
+expiry or loss, a replacement owner cannot stop a partitioned or event-loop-stalled
+former owner from finishing an already-started external side effect.
+
+If a committed resume instead returns `working` or `submitted`, the same token
+retains the seller work handle under the safety horizon. After restart,
+`resumeDeferredTask()` reconstructs a submitted polling continuation from that
+handle and never sends the human input a second time. Only an authoritative
+terminal `tasks/get` response advances that checkpoint; local cancellation,
+task eviction, binding mismatch, and malformed polling responses leave the
+pending route retryable. A terminal result observed through `track()` is saved
+but not finalized through that `TaskInfo` surface: resume the durable token to
+run settlement, response projection, and completion handlers. If polling
+instead observes `input-required` or `auth-required`, the SDK returns the pause
+without inventing a continuation: the AdCP polling work handle is not an A2A
+transport task ID. The durable pending route remains intact for later polling,
+but the pause is nonresumable unless a future protocol response supplies a
+verified continuation identity.
+
+Configure durable continuation recovery on `SingleAgentClient`:
+
+```typescript
+const client = new SingleAgentClient(agent, {
+  deferredStorage,
+  deferredTaskTtlSeconds: 7 * 24 * 60 * 60,
+  // Optional for registries that can resolve more than this client's agent.
+  resolveDeferredAgent: agentId => trustedAgentRegistry.get(agentId),
+});
+
+const result = await client.resumeDeferredTask(token, humanInput);
+```
+
+When the token belongs to a committed legacy-purchase compatibility flow,
+reconstruct an `AgentClient`, negotiate its `MediaBuyLifecycleCoordinator` with
+the same durable continuation store and scopes, and call
+`agent.resumeDeferredTask(token, humanInput)`. The coordinator registers its
+settlement recoverer and exact-token authorizer on that `AgentClient`'s owned
+client, so a separate `SingleAgentClient` cannot safely redeem the token.
+If the seller pauses again, that same coordinator generation-conditionally
+rebinds the committed operation from the consumed token to the replacement
+before the old checkpoint is removed or the replacement is returned.
+
+Durable continuation tokens are bearer capabilities and must be generated by a
+cryptographically secure random source. The SDK accepts either a UUIDv4 or an
+opaque URL-safe identifier containing 43–256 ASCII letters, digits,
+underscores, or hyphens (43 base64url characters can encode 256 random bits).
+It rejects weaker or malformed tokens before a storage lookup or write. The
+built-in `context.deferToHuman()` uses `crypto.randomUUID()`.
+
+When `resolveDeferredAgent` is omitted, `SingleAgentClient` accepts only its own
+configured agent ID and repeats MCP endpoint discovery or A2A canonical URL
+resolution before dispatch. Persisted state stores no agent credentials or
+endpoint authority.
+
+`DeferredTaskState` does contain snapshotted request parameters, conversation
+messages, and opaque client projection context. The SDK recursively redacts
+secret-shaped fields (including callback credentials and auth tokens) before
+writing those snapshots. A matched object-valued credentials container is
+removed as a whole, and a subtree deeper than the supported JSON depth is
+truncated rather than written unvisited. Treat the remaining backing store as
+sensitive application data: encrypt it at rest, restrict access by service
+identity, enforce the configured expiry, and do not place bearer tokens or
+other credentials in unstructured values that cannot be recognized by key.
+
+An authenticated request `property_list` normally needs its `auth_token` again
+when buyer-side product-property policy runs after restart. Because the SDK
+does not persist that credential, `getProducts()` fails before seller dispatch
+when durable storage and request-list verification are both enabled. Use a
+client without durable continuation storage for that request, or explicitly
+set `validation.productPropertyPolicy.enforceRequestPropertyList` to `false`
+when seller-side filtering is the intended trust boundary.
+
+Canonical projection remains deterministic across recovery. Per-call
+`projectionCatalogs` are snapshotted into the opaque client context and reused
+after restart. Per-call `legacyFormatConverter` functions are rejected when
+`deferredStorage` is configured because executable functions cannot be
+serialized; configure the converter on `SingleAgentClient` so every replica
+can supply the same implementation, or use serializable projection catalogs.
 
 #### WebhookManager
 
@@ -856,7 +1074,6 @@ import {
   TaskExecutor,
   createFieldHandler,
   createConditionalHandler,
-  InputRequiredError,
   TaskTimeoutError
 } from '@adcp/sdk';
 
@@ -910,9 +1127,7 @@ async function executeTaskWithHandling() {
     }
 
   } catch (error) {
-    if (error instanceof InputRequiredError) {
-      console.error('Handler required:', error.message);
-    } else if (error instanceof TaskTimeoutError) {
+    if (error instanceof TaskTimeoutError) {
       console.error('Task timeout:', error.message);
     } else {
       console.error('Unexpected error:', error.message);

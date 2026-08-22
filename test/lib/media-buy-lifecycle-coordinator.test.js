@@ -2,21 +2,34 @@ const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
+
+const testDurableToken = label => crypto.createHash('sha256').update(label).digest('base64url');
 
 const {
   AgentClient,
+  InMemoryWebhookRegistrationStore,
+  MemoryStorage,
   MediaBuyLifecycleCompatibilityError,
   createInMemoryEstablishedProposalStore,
+  ProtocolClient,
   createInMemoryLegacyPurchaseContinuationStore,
+  legacyPurchaseSettlementFingerprint,
+  memoryBackend,
   proposalTermsDigest,
 } = require('../../dist/lib/index.js');
 const { normalizeGetProductsResponse } = require('../../dist/lib/utils/pricing-adapter.js');
+const {
+  DEFERRED_SETTLEMENT_ACK,
+  DeferredSettlementOwnershipError,
+  hasCompletionHandlerAlreadyPublished,
+} = require('../../dist/lib/core/TaskExecutor.js');
 
 const PRODUCTS_ONLY_BRIEF_VECTORS = JSON.parse(
   readFileSync(
     path.resolve(
       __dirname,
-      '../../compliance/cache/3.2.0-beta.4/test-vectors/products-only-brief-compatibility/vectors.json'
+      '../../compliance/cache/3.2.0-beta.5/test-vectors/products-only-brief-compatibility/vectors.json'
     ),
     'utf8'
   )
@@ -29,7 +42,7 @@ const AGENT = {
   protocol: 'mcp',
 };
 
-function capabilities({ version = '3.2.0-beta.4', tools, discoveredTools, replayTtlSeconds = 3600 } = {}) {
+function capabilities({ version = '3.2.0-beta.5', tools, discoveredTools, replayTtlSeconds = 3600 } = {}) {
   if (version === '2.5') {
     return {
       version: 'v2',
@@ -127,6 +140,7 @@ function submitted(taskName, terminal, { localTaskId = `${taskName}-task`, selle
     status: 'submitted',
     metadata: {
       taskId: localTaskId,
+      serverTaskId: sellerTaskId,
       taskName,
       agent: { id: AGENT.id, name: AGENT.name, protocol: AGENT.protocol },
       responseTimeMs: 1,
@@ -162,12 +176,18 @@ function deferred(taskName, resume) {
       clarificationRounds: 0,
       status: 'deferred',
     },
-    deferred: { resume },
+    deferred: { token: testDurableToken(`${taskName}-deferred-token`), resume },
   };
 }
 
-function clientWithCaps(caps, adcpVersion) {
-  const agent = new AgentClient(AGENT, { validateFeatures: false, ...(adcpVersion && { adcpVersion }) });
+let compatibilityOperationSequence = 0;
+
+function clientWithCaps(caps, adcpVersion, clientOptions = {}, agentConfig = AGENT) {
+  const agent = new AgentClient(agentConfig, {
+    validateFeatures: false,
+    ...(adcpVersion && { adcpVersion }),
+    ...clientOptions,
+  });
   agent.getCapabilities = async () => caps;
   const negotiate = agent.negotiateMediaBuyLifecycle.bind(agent);
   agent.negotiateMediaBuyLifecycle = options =>
@@ -194,6 +214,7 @@ function clientWithCaps(caps, adcpVersion) {
   };
   agent.createMediaBuyLegacyWithPreDispatch = async (params, beforeDispatch, inputHandler, options) => {
     const decision = await beforeDispatch(params, {
+      operationId: `compat-operation-${++compatibilityOperationSequence}`,
       governanceAdjusted: false,
       publishSettledTaskStatus: (status, data, error) => {
         agent.lastSettledTaskStatus = { status, data, error };
@@ -3592,7 +3613,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
   test('a 3.1-pinned buyer does not select compact from a dual-surface 3.2 seller', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.supportedVersions = ['3.0', '3.1', '3.2.0-beta.4'];
+    caps.supportedVersions = ['3.0', '3.1', '3.2.0-beta.5'];
     const agent = clientWithCaps(caps, '3.1.18');
     const calls = [];
     agent.listProducts = async () => {
@@ -3614,7 +3635,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
   test('authoritative served release wins over the seller support window', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.supportedVersions = ['3.0', '3.1', '3.2.0-beta.4'];
+    caps.supportedVersions = ['3.0', '3.1', '3.2.0-beta.5'];
     caps.servedVersion = '3.1';
     const agent = clientWithCaps(caps);
     const calls = [];
@@ -3650,8 +3671,8 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
   test('does not select a newer prerelease than the compact buyer pin', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.supportedVersions = ['3.1', '3.2.0-beta.5'];
-    const agent = clientWithCaps(caps, '3.2.0-beta.4');
+    caps.supportedVersions = ['3.1', '3.2.0-beta.6'];
+    const agent = clientWithCaps(caps, '3.2.0-beta.5');
     const calls = [];
     agent.getProducts = async () => {
       calls.push('get_products');
@@ -3667,12 +3688,12 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
   test('fails closed when every valid advertised version is newer than the buyer pin', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.supportedVersions = ['3.2.0-beta.5'];
-    const agent = clientWithCaps(caps, '3.2.0-beta.4');
+    caps.supportedVersions = ['3.2.0-beta.6'];
+    const agent = clientWithCaps(caps, '3.2.0-beta.5');
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /advertises only AdCP versions newer than the client pin 3\.2\.0-beta\.4/
+      /advertises only AdCP versions newer than the client pin 3\.2\.0-beta\.5/
     );
   });
 
@@ -3680,7 +3701,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
     delete caps.supportedVersions;
     caps._synthetic = true;
-    const agent = clientWithCaps(caps, '3.2.0-beta.4');
+    const agent = clientWithCaps(caps, '3.2.0-beta.5');
     const calls = [];
     agent.listProducts = async () => {
       calls.push('list_products');
@@ -3691,7 +3712,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
     const coordinator = await agent.negotiateMediaBuyLifecycle();
     await coordinator.listProducts({});
 
-    assert.equal(coordinator.negotiated_version, '3.2.0-beta.4');
+    assert.equal(coordinator.negotiated_version, '3.2.0-beta.5');
     assert.deepEqual(calls, ['list_products']);
   });
 
@@ -3702,19 +3723,19 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /served AdCP 3\.3, which is newer than the client pin 3\.2\.0-beta\.4/
+      /served AdCP 3\.3, which is newer than the client pin 3\.2\.0-beta\.5/
     );
   });
 
   test('fails closed when an exact newer prerelease is served despite an older advertised fallback', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.servedVersion = '3.2.0-beta.5';
-    caps.supportedVersions = ['3.2.0-beta.4', '3.2.0-beta.5'];
-    const agent = clientWithCaps(caps, '3.2.0-beta.4');
+    caps.servedVersion = '3.2.0-beta.6';
+    caps.supportedVersions = ['3.2.0-beta.5', '3.2.0-beta.6'];
+    const agent = clientWithCaps(caps, '3.2.0-beta.5');
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /served AdCP 3\.2\.0-beta\.5, which is newer than the client pin 3\.2\.0-beta\.4/
+      /served AdCP 3\.2\.0-beta\.6, which is newer than the client pin 3\.2\.0-beta\.5/
     );
   });
 
@@ -3733,8 +3754,8 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
   test('accepts an authoritative served release at or below the buyer pin', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
     caps.servedVersion = '3.2.0-beta.2';
-    caps.supportedVersions = ['3.2.0-beta.4'];
-    const agent = clientWithCaps(caps, '3.2.0-beta.4');
+    caps.supportedVersions = ['3.2.0-beta.5'];
+    const agent = clientWithCaps(caps, '3.2.0-beta.5');
     agent.listProducts = async () => completed('list_products', { products: [], feed_version: 'feed-1' });
 
     const coordinator = await agent.negotiateMediaBuyLifecycle();
@@ -3747,8 +3768,8 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
   test('advisory build metadata cannot select a compact wire lifecycle', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
     delete caps.supportedVersions;
-    caps.buildVersion = '3.2.0-beta.4+sha.abc123';
-    const agent = clientWithCaps(caps, '3.2.0-beta.4');
+    caps.buildVersion = '3.2.0-beta.5+sha.abc123';
+    const agent = clientWithCaps(caps, '3.2.0-beta.5');
     agent.getProducts = async () => completed('get_products', { products: [] });
     agent.listProducts = async () => assert.fail('build metadata must not enable compact wire tools');
 
@@ -4958,6 +4979,34 @@ describe('durable established proposal compatibility', () => {
 });
 
 describe('legacy products-only purchase continuations', () => {
+  test('hashes account bindings and rejects non-minted continuation token shapes', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    const coordinator = await agent.negotiateMediaBuyLifecycle({ principalScope: 'buyer-binding-hardening' });
+    const scope = coordinator.accountScope({
+      account_id: 'account-binding-hardening',
+      ctx_metadata: { authorization: 'Bearer must-not-persist' },
+    });
+    assert.match(scope, /^sha256:[A-Za-z0-9_-]{43}$/);
+    assert.strictEqual(scope.includes('must-not-persist'), false);
+    assert.strictEqual(scope.includes('account-binding-hardening'), false);
+    const binding = coordinator.legacyPurchaseBinding(scope);
+    assert.match(binding.clientSessionScope, /^sha256:[A-Za-z0-9_-]{43}$/);
+    assert.strictEqual(binding.clientSessionScope.includes('test-authenticated-seller-session'), false);
+
+    for (const continuation_token of ['A'.repeat(31), 'A'.repeat(33), 'A'.repeat(100_000), `${'A'.repeat(31)}!`]) {
+      await assert.rejects(
+        coordinator.continueLegacyPurchase({
+          idempotency_key: '3d787652-ae8f-45a8-9fea-016670a66fd1',
+          continuation_token,
+          account: { account_id: 'account-binding-hardening' },
+          selected_product_ids: ['p-binding-hardening'],
+          accepted_losses: [],
+          legacy_create_request: {},
+        }),
+        error => error.code === 'request_invalid' && /32-character base64url/.test(error.message)
+      );
+    }
+  });
   function validLegacyCreateResponse(sourceVersion, request, productId) {
     return {
       media_buy_id: `buy-${productId}`,
@@ -5041,6 +5090,162 @@ describe('legacy products-only purchase continuations', () => {
       /deterministic local preflight failed/
     );
     assert.equal((await store.get(token)).operation.state, 'available');
+  });
+
+  test('snapshots nested continuation input before awaiting durable storage', async () => {
+    const baseStore = createInMemoryLegacyPurchaseContinuationStore();
+    let releaseGet;
+    const getRelease = new Promise(resolve => {
+      releaseGet = resolve;
+    });
+    let markGetStarted;
+    const getStarted = new Promise(resolve => {
+      markGetStarted = resolve;
+    });
+    const store = {
+      create: record => baseStore.create(record),
+      get: async token => {
+        markGetStarted();
+        await getRelease;
+        return baseStore.get(token);
+      },
+      claim: (token, request) => baseStore.claim(token, request),
+      complete: (token, claim, result) => baseStore.complete(token, claim, result),
+      recordSubmittedTask: (token, claim, taskId) => baseStore.recordSubmittedTask(token, claim, taskId),
+      markAmbiguous: (token, claim, reason) => baseStore.markAmbiguous(token, claim, reason),
+    };
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-snapshot', 'Snapshot')] });
+    let dispatched;
+    let dispatchOptions;
+    agent.createMediaBuyLegacy = async (request, _inputHandler, options) => {
+      dispatched = request;
+      dispatchOptions = options;
+      return completed('create_media_buy', { media_buy_id: 'buy-snapshot', packages: [] });
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-snapshot',
+      legacyPurchaseContinuationStore: store,
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-snapshot-0001',
+      account: { account_id: 'account-snapshot' },
+      brand: { domain: 'example.com' },
+      brief: 'Snapshot nested terms',
+    });
+    const input = {
+      idempotency_key: 'a8190964-71bb-49af-a760-c06f10527ea8',
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-snapshot' },
+      selected_product_ids: ['p-snapshot'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-snapshot-create-0001',
+        account: { account_id: 'account-snapshot' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-snapshot', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+
+    const trustedFetch = async () => new Response('{}', { status: 200 });
+    const substitutedFetch = async () => new Response('{}', { status: 500 });
+    const taskOptions = {
+      transport: { trustedFetchFn: trustedFetch, allowPrivateIp: false, requestTimeoutMs: 1_000 },
+      metadata: { tenant: { id: 'tenant-snapshot' } },
+    };
+    const purchase = coordinator.continueLegacyPurchase(input, undefined, taskOptions);
+    await getStarted;
+    input.account.account_id = 'attacker-account';
+    input.legacy_create_request.account.account_id = 'attacker-account';
+    input.legacy_create_request.packages[0].budget = 999999;
+    input.legacy_create_request.packages[0].pricing_option_id = 'attacker-price';
+    taskOptions.transport.trustedFetchFn = substitutedFetch;
+    taskOptions.transport.allowPrivateIp = true;
+    taskOptions.metadata.tenant.id = 'attacker-tenant';
+    releaseGet();
+
+    assert.equal((await purchase).status, 'completed');
+    assert.equal(dispatched.account.account_id, 'account-snapshot');
+    assert.equal(dispatched.packages[0].budget, 10);
+    assert.equal(dispatched.packages[0].pricing_option_id, 'fixed-cpm');
+    assert.equal(dispatchOptions.disableWebhook, true, 'polling-only custom stores must suppress task webhooks');
+    assert.strictEqual(dispatchOptions.transport.trustedFetchFn, trustedFetch);
+    assert.equal(dispatchOptions.transport.allowPrivateIp, false);
+    assert.equal(dispatchOptions.metadata.tenant.id, 'tenant-snapshot');
+  });
+
+  test('continuation replay fingerprints exclude only write-only webhook credentials', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', {
+        products: [legacyListedProduct('p-credential-fingerprint', 'Credential fingerprint')],
+      });
+    let dispatches = 0;
+    agent.createMediaBuyLegacy = async () => {
+      dispatches += 1;
+      return completed('create_media_buy', { media_buy_id: 'buy-credential-fingerprint', packages: [] });
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-credential-fingerprint',
+      legacyPurchaseContinuationStore: store,
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-credential-fingerprint-0001',
+      account: { account_id: 'account-credential-fingerprint' },
+      brand: { domain: 'example.com' },
+      brief: 'Credential-safe replay fingerprint',
+    });
+    const input = {
+      idempotency_key: '7ed655a5-dbc0-455a-8dc7-5f8d2052aa81',
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-credential-fingerprint' },
+      selected_product_ids: ['p-credential-fingerprint'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-credential-fingerprint-create-0001',
+        account: { account_id: 'account-credential-fingerprint' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-credential-fingerprint', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+        push_notification_config: {
+          url: 'https://buyer.example/tasks',
+          authentication: {
+            schemes: ['HMAC-SHA256'],
+            credentials: 'task-secret-first-0123456789abcdef',
+          },
+        },
+        reporting_webhook: {
+          url: 'https://buyer.example/reports',
+          authentication: {
+            schemes: ['HMAC-SHA256'],
+            credentials: 'report-secret-first-0123456789abcdef',
+          },
+          reporting_frequency: 'daily',
+        },
+      },
+    };
+
+    assert.equal((await coordinator.continueLegacyPurchase(input)).status, 'completed');
+    const rotated = structuredClone(input);
+    rotated.legacy_create_request.push_notification_config.authentication.credentials =
+      'task-secret-rotated-0123456789abcdef';
+    rotated.legacy_create_request.reporting_webhook.authentication.credentials =
+      'report-secret-rotated-0123456789abcdef';
+    assert.equal((await coordinator.continueLegacyPurchase(rotated)).status, 'completed');
+    assert.equal(dispatches, 1, 'credential rotation must replay the original mutation');
+
+    const rerouted = structuredClone(rotated);
+    rerouted.legacy_create_request.reporting_webhook.url = 'https://other-buyer.example/reports';
+    await assert.rejects(coordinator.continueLegacyPurchase(rerouted), error => error.code === 'conflict');
+    assert.equal(dispatches, 1, 'routing changes remain bound by the replay fingerprint');
+
+    const persisted = await store.get(input.continuation_token);
+    assert.doesNotMatch(JSON.stringify(persisted), /task-secret|report-secret/);
   });
 
   test('rejects governance rewrites and final pricing drift before claiming the continuation', async () => {
@@ -5277,6 +5482,352 @@ describe('legacy products-only purchase continuations', () => {
     await assert.rejects(coordinator.continueLegacyPurchase(ambiguousInput), error => error.code === 'ambiguous');
   });
 
+  test('a restart retry validates and settles a queued callback before seller task binding', async () => {
+    const baseStore = createInMemoryLegacyPurchaseContinuationStore();
+    const completedClaims = [];
+    const store = {
+      create: record => baseStore.create(record),
+      get: token => baseStore.get(token),
+      getByCallbackOperationId: operationId => baseStore.getByCallbackOperationId(operationId),
+      claim: (token, request) => baseStore.claim(token, request),
+      complete: (token, claim, result) => {
+        completedClaims.push(claim);
+        return baseStore.complete(token, claim, result);
+      },
+      recordPendingSettlement: (token, claim, settlement) =>
+        baseStore.recordPendingSettlement(token, claim, settlement),
+      claimPendingSettlementPublication: (token, claim, settlement, lease) =>
+        baseStore.claimPendingSettlementPublication(token, claim, settlement, lease),
+      releasePendingSettlementPublication: (token, claim, settlement, ownerId) =>
+        baseStore.releasePendingSettlementPublication(token, claim, settlement, ownerId),
+      acknowledgePendingSettlement: (token, claim, settlement, ownerId) =>
+        baseStore.acknowledgePendingSettlement(token, claim, settlement, ownerId),
+      recordSubmittedTask: (token, claim, taskId) => baseStore.recordSubmittedTask(token, claim, taskId),
+      recordDeferredTaskToken: (token, claim, deferredToken, expectedDeferredToken) =>
+        baseStore.recordDeferredTaskToken(token, claim, deferredToken, expectedDeferredToken),
+      markAmbiguous: (token, claim, reason) => baseStore.markAmbiguous(token, claim, reason),
+    };
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-retry-push', 'Retry push')] });
+    const callbackResult = completed('create_media_buy', {
+      media_buy_id: 'buy-retry-push',
+      packages: [],
+    });
+    const sellerTaskId = 'seller-retry-push-task';
+    agent.getTaskStatus = async taskId => {
+      assert.equal(taskId, sellerTaskId);
+      return {
+        taskId,
+        taskType: 'create_media_buy',
+        status: 'completed',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        result: callbackResult.data,
+      };
+    };
+    const publications = [];
+    agent.publishDurablySettledWebhook = async publication => publications.push(publication);
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-retry-push',
+      legacyPurchaseContinuationStore: store,
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-retry-push-0001',
+      account: { account_id: 'account-retry-push' },
+      brand: { domain: 'example.com' },
+      brief: 'Retry a queued callback',
+    });
+    const token = discovery.data.purchase_continuation.continuation_token;
+    const input = {
+      idempotency_key: 'da54aab1-4499-4ba4-a437-d618e5710184',
+      continuation_token: token,
+      account: { account_id: 'account-retry-push' },
+      selected_product_ids: ['p-retry-push'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-retry-push-create-0001',
+        account: { account_id: 'account-retry-push' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-retry-push', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+    let releaseFirst;
+    const firstRelease = new Promise(resolve => {
+      releaseFirst = resolve;
+    });
+    let signalClaimed;
+    const claimed = new Promise(resolve => {
+      signalClaimed = resolve;
+    });
+    let dispatches = 0;
+    const operationIds = [];
+    agent.createMediaBuyLegacyWithPreDispatch = async (params, beforeDispatch) => {
+      const operationId = `retry-push-operation-${++dispatches}`;
+      operationIds.push(operationId);
+      const decision = await beforeDispatch(params, {
+        operationId,
+        governanceAdjusted: false,
+        publishSettledTaskStatus: () => {},
+        registerExternalTaskSettlement: () => {},
+      });
+      if (decision.action === 'return') return decision.result;
+      const persistedClaim = (await store.get(token)).operation;
+      assert.equal(
+        (
+          await store.recordPendingSettlement(token, persistedClaim, {
+            operationId,
+            serverTaskId: sellerTaskId,
+            taskType: 'create_media_buy',
+            terminal: callbackResult,
+          })
+        ).outcome,
+        'recorded'
+      );
+      signalClaimed();
+      await firstRelease;
+      return callbackResult;
+    };
+
+    const first = coordinator.continueLegacyPurchase(input);
+    await claimed;
+    const retry = await coordinator.continueLegacyPurchase(input);
+    assert.equal(retry.status, 'completed');
+    assert.equal(retry.data.media_buy_id, 'buy-retry-push');
+    assert.equal(operationIds.length, 2);
+    assert.notEqual(operationIds[0], operationIds[1]);
+    assert.equal(completedClaims.at(-1).callbackOperationId, operationIds[0]);
+    assert.equal(publications.length, 1);
+    assert.equal(publications[0].operationId, operationIds[0]);
+    assert.equal(publications[0].serverTaskId, sellerTaskId);
+    assert.equal(publications[0].result.media_buy_id, 'buy-retry-push');
+    releaseFirst();
+    assert.equal((await first).status, 'completed');
+  });
+
+  test('retries durable callback publication after a transient handler failure', async () => {
+    const baseStore = createInMemoryLegacyPurchaseContinuationStore();
+    let strictCompletionObserved = false;
+    const store = {
+      create: record => baseStore.create(record),
+      get: token => baseStore.get(token),
+      getByCallbackOperationId: operationId => baseStore.getByCallbackOperationId(operationId),
+      claim: (token, request) => baseStore.claim(token, request),
+      complete: async (token, claim, result) => {
+        const persisted = await baseStore.get(token);
+        assert.notEqual(persisted.operation.state, 'available');
+        assert.equal(claim.sellerTaskId, persisted.operation.sellerTaskId);
+        strictCompletionObserved = true;
+        return baseStore.complete(token, claim, result);
+      },
+      recordPendingSettlement: (token, claim, settlement) =>
+        baseStore.recordPendingSettlement(token, claim, settlement),
+      claimPendingSettlementPublication: (token, claim, settlement, lease) =>
+        baseStore.claimPendingSettlementPublication(token, claim, settlement, lease),
+      releasePendingSettlementPublication: (token, claim, settlement, ownerId) =>
+        baseStore.releasePendingSettlementPublication(token, claim, settlement, ownerId),
+      acknowledgePendingSettlement: (token, claim, settlement, ownerId) =>
+        baseStore.acknowledgePendingSettlement(token, claim, settlement, ownerId),
+      recordSubmittedTask: (token, claim, taskId) => baseStore.recordSubmittedTask(token, claim, taskId),
+      recordDeferredTaskToken: (token, claim, deferredToken, expectedDeferredToken) =>
+        baseStore.recordDeferredTaskToken(token, claim, deferredToken, expectedDeferredToken),
+      markAmbiguous: (token, claim, reason) => baseStore.markAmbiguous(token, claim, reason),
+    };
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-strict-bind', 'Strict bind')] });
+    const terminal = completed('create_media_buy', { media_buy_id: 'buy-strict-bind', packages: [] });
+    const sellerTaskId = 'seller-strict-bind-task';
+    const publications = [];
+    let publicationAttempts = 0;
+    agent.publishDurablySettledWebhook = async publication => {
+      publicationAttempts += 1;
+      if (publicationAttempts === 1) throw new Error('transient adopter handler failure');
+      publications.push(publication);
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-strict-bind',
+      legacyPurchaseContinuationStore: store,
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-strict-bind-0001',
+      account: { account_id: 'account-strict-bind' },
+      brand: { domain: 'example.com' },
+      brief: 'Strict durable binding',
+    });
+    const token = discovery.data.purchase_continuation.continuation_token;
+    const input = {
+      idempotency_key: '7ce62f36-2cf8-429b-8abf-a56fddc65376',
+      continuation_token: token,
+      account: { account_id: 'account-strict-bind' },
+      selected_product_ids: ['p-strict-bind'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-strict-bind-create-0001',
+        account: { account_id: 'account-strict-bind' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-strict-bind', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+    agent.createMediaBuyLegacyWithPreDispatch = async (params, beforeDispatch) => {
+      const operationId = 'strict-bind-operation';
+      const decision = await beforeDispatch(params, {
+        operationId,
+        governanceAdjusted: false,
+        publishSettledTaskStatus: () => {},
+        registerExternalTaskSettlement: () => {},
+      });
+      if (decision.action === 'return') return decision.result;
+      const persistedClaim = (await store.get(token)).operation;
+      assert.equal(
+        (
+          await store.recordPendingSettlement(token, persistedClaim, {
+            operationId,
+            serverTaskId: sellerTaskId,
+            taskType: 'create_media_buy',
+            terminal,
+          })
+        ).outcome,
+        'recorded'
+      );
+      return decision.onResult(terminal);
+    };
+
+    await assert.rejects(
+      coordinator.continueLegacyPurchase(input),
+      error => error.code === 'store_error' && error.cause?.message === 'transient adopter handler failure'
+    );
+    const awaitingPublication = await store.get(token);
+    assert.equal(awaitingPublication.operation.state, 'completed');
+    assert.equal(awaitingPublication.operation.pendingSettlement.serverTaskId, sellerTaskId);
+    const result = await coordinator.continueLegacyPurchase(input);
+    assert.equal(result.status, 'completed');
+    assert.equal(result.data.media_buy_id, 'buy-strict-bind');
+    assert.equal(strictCompletionObserved, true);
+    assert.equal((await store.get(token)).operation.sellerTaskId, sellerTaskId);
+    assert.equal(publications.length, 1);
+    assert.equal(publications[0].operationId, 'strict-bind-operation');
+    assert.equal((await store.get(token)).operation.pendingSettlement, undefined);
+  });
+
+  test('an ambiguous retry reconciles a queued callback with the original durable operation identity', async () => {
+    const baseStore = createInMemoryLegacyPurchaseContinuationStore();
+    const completedClaims = [];
+    const store = {
+      create: record => baseStore.create(record),
+      get: token => baseStore.get(token),
+      getByCallbackOperationId: operationId => baseStore.getByCallbackOperationId(operationId),
+      claim: (token, request) => baseStore.claim(token, request),
+      complete: (token, claim, result) => {
+        completedClaims.push(claim);
+        return baseStore.complete(token, claim, result);
+      },
+      recordPendingSettlement: (token, claim, settlement) =>
+        baseStore.recordPendingSettlement(token, claim, settlement),
+      claimPendingSettlementPublication: (token, claim, settlement, lease) =>
+        baseStore.claimPendingSettlementPublication(token, claim, settlement, lease),
+      releasePendingSettlementPublication: (token, claim, settlement, ownerId) =>
+        baseStore.releasePendingSettlementPublication(token, claim, settlement, ownerId),
+      acknowledgePendingSettlement: (token, claim, settlement, ownerId) =>
+        baseStore.acknowledgePendingSettlement(token, claim, settlement, ownerId),
+      recordSubmittedTask: (token, claim, taskId) => baseStore.recordSubmittedTask(token, claim, taskId),
+      recordDeferredTaskToken: (token, claim, deferredToken, expectedDeferredToken) =>
+        baseStore.recordDeferredTaskToken(token, claim, deferredToken, expectedDeferredToken),
+      markAmbiguous: (token, claim, reason) => baseStore.markAmbiguous(token, claim, reason),
+    };
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-reconcile-push', 'Reconcile push')] });
+    const publications = [];
+    agent.publishDurablySettledWebhook = async publication => publications.push(publication);
+    const callbackResult = completed('create_media_buy', {
+      media_buy_id: 'buy-reconcile-push',
+      packages: [],
+    });
+    let reconciledSellerTaskId = 'conflicting-reconcile-push-task';
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-reconcile-push',
+      legacyPurchaseContinuationStore: store,
+      reconcileLegacyPurchase: async () => ({
+        outcome: 'completed',
+        result: {
+          ...callbackResult,
+          metadata: { ...callbackResult.metadata, serverTaskId: reconciledSellerTaskId },
+        },
+      }),
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-reconcile-push-0001',
+      account: { account_id: 'account-reconcile-push' },
+      brand: { domain: 'example.com' },
+      brief: 'Reconcile a queued callback',
+    });
+    const token = discovery.data.purchase_continuation.continuation_token;
+    const input = {
+      idempotency_key: 'ffbca0d4-aa0c-4904-890e-23f614502c5f',
+      continuation_token: token,
+      account: { account_id: 'account-reconcile-push' },
+      selected_product_ids: ['p-reconcile-push'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-reconcile-push-create-0001',
+        account: { account_id: 'account-reconcile-push' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-reconcile-push', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+    let dispatches = 0;
+    const operationIds = [];
+    agent.createMediaBuyLegacyWithPreDispatch = async (params, beforeDispatch) => {
+      const operationId = `reconcile-push-operation-${++dispatches}`;
+      operationIds.push(operationId);
+      const decision = await beforeDispatch(params, {
+        operationId,
+        governanceAdjusted: false,
+        publishSettledTaskStatus: () => {},
+        registerExternalTaskSettlement: () => {},
+      });
+      if (decision.action === 'return') return decision.result;
+      const persistedClaim = (await store.get(token)).operation;
+      assert.equal(
+        (
+          await store.recordPendingSettlement(token, persistedClaim, {
+            operationId,
+            serverTaskId: 'seller-reconcile-push-task',
+            taskType: 'create_media_buy',
+            terminal: callbackResult,
+          })
+        ).outcome,
+        'recorded'
+      );
+      throw new Error('simulated transport loss after seller dispatch');
+    };
+
+    await assert.rejects(coordinator.continueLegacyPurchase(input), error => error.code === 'ambiguous');
+    await assert.rejects(
+      coordinator.continueLegacyPurchase(input),
+      error => error.code === 'ambiguous' && /task identity conflicts/.test(error.message)
+    );
+    assert.equal(publications.length, 0);
+    reconciledSellerTaskId = 'seller-reconcile-push-task';
+    const retry = await coordinator.continueLegacyPurchase(input);
+    assert.equal(retry.status, 'completed');
+    assert.equal(retry.data.media_buy_id, 'buy-reconcile-push');
+    assert.equal(operationIds.length, 3);
+    assert.notEqual(operationIds[0], operationIds[1]);
+    assert.equal(completedClaims.at(-1).callbackOperationId, operationIds[0]);
+    assert.equal(publications.length, 1);
+    assert.equal(publications[0].operationId, operationIds[0]);
+    assert.equal(publications[0].serverTaskId, 'seller-reconcile-push-task');
+    assert.equal(publications[0].result.media_buy_id, 'buy-reconcile-push');
+  });
+
   test('replays a completed operation after issuance expiry but rejects an unclaimed expired token', async () => {
     const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
     let creates = 0;
@@ -5288,7 +5839,7 @@ describe('legacy products-only purchase continuations', () => {
     };
     const coordinator = await agent.negotiateMediaBuyLifecycle({
       principalScope: 'buyer-expiry',
-      legacyPurchaseContinuationTtlMs: 10,
+      legacyPurchaseContinuationTtlMs: 1000,
       legacyPurchaseOperationTtlMs: 1000,
     });
     const discover = idempotency_key =>
@@ -5315,8 +5866,15 @@ describe('legacy products-only purchase continuations', () => {
       },
     };
     await coordinator.continueLegacyPurchase(input);
+    const completedRecord = await coordinator.legacyPurchaseContinuationStore.get(
+      first.data.purchase_continuation.continuation_token
+    );
+    assert.ok(
+      Date.parse(completedRecord.operation.replayExpiresAt) >= Date.now() + 6 * 24 * 60 * 60 * 1000,
+      'a short monitoring timeout cannot shorten the seven-day terminal replay fence'
+    );
     const unused = await discover('request-proposals-expiry-0002');
-    await new Promise(resolve => setTimeout(resolve, 25));
+    await new Promise(resolve => setTimeout(resolve, 1025));
     assert.equal((await coordinator.continueLegacyPurchase(input)).data.media_buy_id, 'buy-expiry');
     await assert.rejects(
       coordinator.continueLegacyPurchase({
@@ -5468,11 +6026,11 @@ describe('legacy products-only purchase continuations', () => {
 
     const native = clientWithCaps(
       capabilities({
-        version: '3.2.0-beta.4',
+        version: '3.2.0-beta.5',
         tools: COMPACT_TOOLS,
         discoveredTools: ['get_products', ...COMPACT_TOOLS],
       }),
-      '3.2.0-beta.4'
+      '3.2.0-beta.5'
     );
     native.getProducts = async () =>
       completed('get_products', { products: [{ product_id: 'p-native', name: 'Native' }] });
@@ -5492,7 +6050,7 @@ describe('legacy products-only purchase continuations', () => {
 
   test('executes the signed account-fenced listed_purchase vector through native buy_products', async () => {
     const vector = PRODUCTS_ONLY_BRIEF_VECTORS.listed_purchase_cases[0];
-    const agent = clientWithCaps(capabilities({ version: '3.2.0-beta.4', tools: COMPACT_TOOLS }), '3.2.0-beta.4');
+    const agent = clientWithCaps(capabilities({ version: '3.2.0-beta.5', tools: COMPACT_TOOLS }), '3.2.0-beta.5');
     const calls = [];
     agent.buyProducts = async request => {
       calls.push(request);
@@ -5516,6 +6074,9 @@ describe('legacy products-only purchase continuations', () => {
       return completed('create_media_buy', undefined);
     };
     let reconciliationCalls = 0;
+    let reconciliationHasTaskId = false;
+    const publications = [];
+    agent.publishDurablySettledWebhook = async publication => publications.push(publication);
     const coordinator = await agent.negotiateMediaBuyLifecycle({
       principalScope: 'buyer-reconcile',
       reconcileLegacyPurchase: async (record, exactInput) => {
@@ -5525,7 +6086,13 @@ describe('legacy products-only purchase continuations', () => {
         assert.equal(exactInput.legacy_create_request.idempotency_key, record.operation.sourceMutationKey);
         return {
           outcome: 'completed',
-          result: completed('create_media_buy', { media_buy_id: 'buy-reconciled', packages: [] }),
+          result: {
+            ...completed('create_media_buy', { media_buy_id: 'buy-reconciled', packages: [] }),
+            metadata: {
+              ...completed('create_media_buy', {}).metadata,
+              ...(reconciliationHasTaskId && { serverTaskId: 'seller-reconciled-task' }),
+            },
+          },
         };
       },
     });
@@ -5551,8 +6118,18 @@ describe('legacy products-only purchase continuations', () => {
       },
     };
     await assert.rejects(coordinator.continueLegacyPurchase(input), error => error.code === 'ambiguous');
+    await assert.rejects(
+      coordinator.continueLegacyPurchase(input),
+      error => error.code === 'ambiguous' && /authoritative seller task identity/.test(error.message)
+    );
+    assert.equal(publications.length, 0);
+    reconciliationHasTaskId = true;
     assert.equal((await coordinator.continueLegacyPurchase(input)).data.media_buy_id, 'buy-reconciled');
-    assert.equal(reconciliationCalls, 1);
+    assert.equal(reconciliationCalls, 2);
+    assert.equal(publications.length, 1, 'reconciliation durably publishes the completion handler exactly once');
+    assert.equal(publications[0].serverTaskId, 'seller-reconciled-task');
+    assert.equal((await coordinator.continueLegacyPurchase(input)).data.media_buy_id, 'buy-reconciled');
+    assert.equal(publications.length, 1, 'completed reconciliation replay restores its publication proof');
 
     const malformedDiscovery = await coordinator.requestProposals({
       idempotency_key: 'request-proposals-malformed-0001',
@@ -5573,6 +6150,85 @@ describe('legacy products-only purchase continuations', () => {
       }),
       error => error.code === 'ambiguous'
     );
+  });
+
+  test('rejects reconciliation when the seller task is bound concurrently to another route', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-reconcile-race', 'Reconcile race')] });
+    agent.createMediaBuyLegacy = async () => {
+      throw new Error('connection lost');
+    };
+    let reconciliationStarted;
+    const started = new Promise(resolve => {
+      reconciliationStarted = resolve;
+    });
+    let releaseReconciliation;
+    const release = new Promise(resolve => {
+      releaseReconciliation = resolve;
+    });
+    const publications = [];
+    agent.publishDurablySettledWebhook = async publication => publications.push(publication);
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-reconcile-race',
+      legacyPurchaseContinuationStore: store,
+      reconcileLegacyPurchase: async () => {
+        reconciliationStarted();
+        await release;
+        return {
+          outcome: 'completed',
+          result: {
+            ...completed('create_media_buy', { media_buy_id: 'buy-wrong-route', packages: [] }),
+            metadata: {
+              ...completed('create_media_buy', {}).metadata,
+              serverTaskId: 'seller-task-b',
+            },
+          },
+        };
+      },
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-reconcile-race-0001',
+      account: { account_id: 'account-reconcile-race' },
+      brand: { domain: 'example.com' },
+      brief: 'Reconcile a concurrently bound task',
+    });
+    const input = {
+      idempotency_key: '68708bbc-cc86-412f-ad24-845e9ef493ca',
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-reconcile-race' },
+      selected_product_ids: ['p-reconcile-race'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-reconcile-race-create-0001',
+        account: { account_id: 'account-reconcile-race' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-reconcile-race', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+    await assert.rejects(coordinator.continueLegacyPurchase(input), error => error.code === 'ambiguous');
+
+    const reconciling = coordinator.continueLegacyPurchase(input);
+    await started;
+    const beforeBinding = await store.get(input.continuation_token);
+    assert.ok(beforeBinding && beforeBinding.operation.state !== 'available');
+    assert.equal(
+      await store.recordSubmittedTask(input.continuation_token, beforeBinding.operation, 'seller-task-a'),
+      true
+    );
+    releaseReconciliation();
+
+    await assert.rejects(
+      reconciling,
+      error => error.code === 'ambiguous' && /freshly loaded durable purchase route/.test(error.message)
+    );
+    const afterConflict = await store.get(input.continuation_token);
+    assert.equal(afterConflict.operation.state, 'ambiguous');
+    assert.equal(afterConflict.operation.sellerTaskId, 'seller-task-a');
+    assert.equal(publications.length, 0);
   });
 
   test('background-observes submitted legacy purchase completion for deterministic replay', async () => {
@@ -5610,13 +6266,432 @@ describe('legacy products-only purchase continuations', () => {
     assert.equal(replay.data.media_buy_id, 'buy-submitted');
   });
 
+  test('restores completion-handler publication proof when seller binding reloads a completed winner', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const originalGet = store.get.bind(store);
+    const originalRecordSubmittedTask = store.recordSubmittedTask.bind(store);
+    const terminal = completed('create_media_buy', { media_buy_id: 'buy-proof-race', packages: [] });
+    terminal.metadata.serverTaskId = 'create_media_buy-task';
+    let exposeCompletedWinner = false;
+    store.recordSubmittedTask = async (token, claim, sellerTaskId) => {
+      const recorded = await originalRecordSubmittedTask(token, claim, sellerTaskId);
+      exposeCompletedWinner = recorded;
+      return recorded;
+    };
+    store.get = async token => {
+      const record = await originalGet(token);
+      if (!record || !exposeCompletedWinner || record.operation.state === 'available') return record;
+      const operationId = record.operation.callbackOperationId;
+      assert.equal(typeof operationId, 'string');
+      const completedOperation = {
+        ...record.operation,
+        state: 'completed',
+        sellerTaskId: 'create_media_buy-task',
+        result: terminal,
+      };
+      completedOperation.acknowledgedSettlementFingerprint = legacyPurchaseSettlementFingerprint({
+        operationId,
+        serverTaskId: 'create_media_buy-task',
+        taskType: 'create_media_buy',
+        terminal,
+      });
+      return { ...record, operation: completedOperation };
+    };
+
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-proof-race', 'Proof race')] });
+    agent.createMediaBuyLegacy = async () => submitted('create_media_buy', terminal);
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-proof-race',
+      legacyPurchaseContinuationStore: store,
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-proof-race-0001',
+      account: { account_id: 'account-proof-race' },
+      brand: { domain: 'example.com' },
+      brief: 'Reload an acknowledged winner',
+    });
+    const result = await coordinator.continueLegacyPurchase({
+      idempotency_key: 'f523f107-9044-433b-a524-cce71048a722',
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-proof-race' },
+      selected_product_ids: ['p-proof-race'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-proof-race-create-0001',
+        account: { account_id: 'account-proof-race' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-proof-race', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    });
+
+    assert.equal(result.status, 'completed');
+    assert.equal(result.data.media_buy_id, 'buy-proof-race');
+    assert.equal(hasCompletionHandlerAlreadyPublished(result), true);
+  });
+
+  test('restores publication proof when completion loses a concurrent ACK race', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const originalGet = store.get.bind(store);
+    let acknowledgedWinner;
+    store.complete = async (_token, _claim, result) => {
+      acknowledgedWinner = structuredClone(result);
+      return { outcome: 'duplicate', result: structuredClone(result) };
+    };
+    store.get = async token => {
+      const record = await originalGet(token);
+      if (!record || !acknowledgedWinner || record.operation.state === 'available') return record;
+      const operationId = record.operation.callbackOperationId;
+      const sellerTaskId = acknowledgedWinner.metadata.serverTaskId;
+      assert.equal(typeof operationId, 'string');
+      assert.equal(typeof sellerTaskId, 'string');
+      const completedOperation = {
+        ...record.operation,
+        state: 'completed',
+        sellerTaskId,
+        pendingSettlement: undefined,
+        result: acknowledgedWinner,
+        acknowledgedSettlementFingerprint: legacyPurchaseSettlementFingerprint({
+          operationId,
+          serverTaskId: sellerTaskId,
+          taskType: 'create_media_buy',
+          terminal: acknowledgedWinner,
+        }),
+      };
+      return { ...record, operation: completedOperation };
+    };
+
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-proof-complete-race', 'Complete race')] });
+    agent.createMediaBuyLegacy = async () => {
+      const result = completed('create_media_buy', { media_buy_id: 'buy-proof-complete-race', packages: [] });
+      result.metadata.serverTaskId = 'seller-proof-complete-race';
+      return result;
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-proof-complete-race',
+      legacyPurchaseContinuationStore: store,
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-proof-complete-race-0001',
+      account: { account_id: 'account-proof-complete-race' },
+      brand: { domain: 'example.com' },
+      brief: 'Lose completion CAS to an acknowledged winner',
+    });
+    const result = await coordinator.continueLegacyPurchase({
+      idempotency_key: 'c2077f25-b1fc-41b7-a7cf-f0650fcf3b12',
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-proof-complete-race' },
+      selected_product_ids: ['p-proof-complete-race'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-proof-complete-race-create-0001',
+        account: { account_id: 'account-proof-complete-race' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-proof-complete-race', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    });
+
+    assert.equal(result.status, 'completed');
+    assert.equal(result.data.media_buy_id, 'buy-proof-complete-race');
+    assert.equal(hasCompletionHandlerAlreadyPublished(result), true);
+  });
+
+  test('rejects a submitted legacy purchase that omits its authoritative seller task handle', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-missing-task-id', 'Missing task ID')] });
+    let trackCalls = 0;
+    agent.createMediaBuyLegacy = async () => {
+      const result = submitted(
+        'create_media_buy',
+        completed('create_media_buy', { media_buy_id: 'must-not-be-authoritative', packages: [] })
+      );
+      delete result.metadata.serverTaskId;
+      result.submitted.taskId = result.metadata.taskId;
+      result.submitted.track = async () => {
+        trackCalls += 1;
+        return {
+          taskId: result.metadata.taskId,
+          status: 'completed',
+          taskType: 'create_media_buy',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          result: { media_buy_id: 'must-not-be-authoritative', packages: [] },
+        };
+      };
+      return result;
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-missing-task-id',
+      legacyPurchaseContinuationStore: store,
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-missing-task-id-0001',
+      account: { account_id: 'account-missing-task-id' },
+      brand: { domain: 'example.com' },
+      brief: 'Reject a buyer-local submitted fallback',
+    });
+    const token = discovery.data.purchase_continuation.continuation_token;
+    await assert.rejects(
+      coordinator.continueLegacyPurchase({
+        idempotency_key: '6d78eed3-ee7b-4794-bf35-a2a004b19a2a',
+        continuation_token: token,
+        account: { account_id: 'account-missing-task-id' },
+        selected_product_ids: ['p-missing-task-id'],
+        accepted_losses: discovery.data.purchase_continuation.losses,
+        legacy_create_request: {
+          idempotency_key: 'legacy-missing-task-id-create-0001',
+          account: { account_id: 'account-missing-task-id' },
+          brand: { domain: 'example.com' },
+          packages: [{ product_id: 'p-missing-task-id', budget: 10, pricing_option_id: 'fixed-cpm' }],
+          start_time: '2099-01-01T00:00:00Z',
+          end_time: '2099-02-01T00:00:00Z',
+        },
+      }),
+      error => error.code === 'ambiguous' && /durable seller task identity/.test(error.message)
+    );
+    const persisted = await store.get(token);
+    assert.equal(persisted.operation.state, 'ambiguous');
+    assert.equal(persisted.operation.sellerTaskId, undefined);
+    assert.equal(trackCalls, 0);
+  });
+
+  test('does not background-poll or poison a safely resumable paused legacy purchase', async () => {
+    const baseStore = createInMemoryLegacyPurchaseContinuationStore();
+    const store = {
+      create: record => baseStore.create(record),
+      get: token => baseStore.get(token),
+      claim: (token, request) => baseStore.claim(token, request),
+      complete: (token, claim, result) => baseStore.complete(token, claim, result),
+      recordSubmittedTask: (token, claim, taskId) => baseStore.recordSubmittedTask(token, claim, taskId),
+      markAmbiguous: (token, claim, reason) => baseStore.markAmbiguous(token, claim, reason),
+    };
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-paused-resume', 'Paused resume')] });
+    let pollCalls = 0;
+    agent.getTaskStatus = async () => {
+      pollCalls += 1;
+      throw new Error('paused tasks/get is not an authoritative recovery path');
+    };
+    let resumeCalls = 0;
+    agent.createMediaBuyLegacy = async () => ({
+      success: true,
+      status: 'input-required',
+      metadata: {
+        taskId: 'buyer-paused-resume-operation',
+        serverTaskId: 'seller-paused-resume-work',
+        a2aTaskId: 'a2a-paused-resume-task',
+        contextId: 'a2a-paused-resume-context',
+        taskName: 'create_media_buy',
+        agent: { id: AGENT.id, name: AGENT.name, protocol: 'a2a' },
+        responseTimeMs: 1,
+        timestamp: new Date().toISOString(),
+        clarificationRounds: 0,
+        status: 'input-required',
+      },
+      deferred: {
+        token: 'sdk-paused-resume-token',
+        resume: async () => {
+          resumeCalls += 1;
+          return completed('create_media_buy', { media_buy_id: 'buy-paused-resume', packages: [] });
+        },
+      },
+    });
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-paused-resume',
+      legacyPurchaseContinuationStore: store,
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-paused-resume-0001',
+      account: { account_id: 'account-paused-resume' },
+      brand: { domain: 'example.com' },
+      brief: 'Pause safely before purchase completion',
+    });
+    const token = discovery.data.purchase_continuation.continuation_token;
+    const paused = await coordinator.continueLegacyPurchase({
+      idempotency_key: '67638bb8-a114-466f-a2fc-b6384a728e72',
+      continuation_token: token,
+      account: { account_id: 'account-paused-resume' },
+      selected_product_ids: ['p-paused-resume'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-paused-resume-create-0001',
+        account: { account_id: 'account-paused-resume' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-paused-resume', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    });
+
+    assert.equal(paused.status, 'input-required');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(pollCalls, 0);
+    const pausedRecord = await store.get(token);
+    assert.equal(pausedRecord.operation.state, 'claimed');
+    assert.notEqual(paused.deferred.token, token);
+    assert.equal(pausedRecord.operation.deferredTaskToken, undefined, 'an in-process-only token is not a durable link');
+    const resumed = await paused.deferred.resume({ approved: true });
+    assert.equal(resumed.status, 'completed');
+    assert.equal(resumed.data.media_buy_id, 'buy-paused-resume');
+    assert.equal((await store.get(token)).operation.state, 'completed');
+    await assert.rejects(paused.deferred.resume({ approved: true }), /no longer the current claimed purchase route/);
+    assert.equal(resumeCalls, 1, 'completion invalidates a previously held in-process continuation');
+  });
+
+  test('fails closed when callback-capable purchase recovery cannot persist a pause', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-undurable-pause', 'Undurable pause')] });
+    let resumeCalls = 0;
+    agent.createMediaBuyLegacy = async () =>
+      deferred('create_media_buy', async () => {
+        resumeCalls += 1;
+        return completed('create_media_buy', { media_buy_id: 'must-not-dispatch', packages: [] });
+      });
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-undurable-pause',
+      legacyPurchaseContinuationStore: store,
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-undurable-pause-0001',
+      account: { account_id: 'account-undurable-pause' },
+      brand: { domain: 'example.com' },
+      brief: 'Require a durable checkpoint before callback-capable pause recovery',
+    });
+    const token = discovery.data.purchase_continuation.continuation_token;
+
+    await assert.rejects(
+      coordinator.continueLegacyPurchase({
+        idempotency_key: '2d281340-7c20-4cf1-a96e-f44df51ff0aa',
+        continuation_token: token,
+        account: { account_id: 'account-undurable-pause' },
+        selected_product_ids: ['p-undurable-pause'],
+        accepted_losses: discovery.data.purchase_continuation.losses,
+        legacy_create_request: {
+          idempotency_key: 'legacy-undurable-pause-create-0001',
+          account: { account_id: 'account-undurable-pause' },
+          brand: { domain: 'example.com' },
+          packages: [{ product_id: 'p-undurable-pause', budget: 10, pricing_option_id: 'fixed-cpm' }],
+          start_time: '2099-01-01T00:00:00Z',
+          end_time: '2099-02-01T00:00:00Z',
+        },
+      }),
+      error => error.code === 'ambiguous' && /requires a durable deferred checkpoint/.test(error.message)
+    );
+    assert.equal(resumeCalls, 0);
+    assert.equal((await store.get(token)).operation.state, 'ambiguous');
+    coordinator.dispose();
+  });
+
+  test('carries a live deferred track checkpoint acknowledgement through compatibility waiting', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const deferredStorage = new MemoryStorage({ autoCleanup: false });
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0', { deferredStorage });
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-live-track-ack', 'Live track ACK')] });
+    let acknowledgementCalls = 0;
+    agent.createMediaBuyLegacy = async () =>
+      deferred('create_media_buy', async () => {
+        const result = submitted(
+          'create_media_buy',
+          completed('create_media_buy', { media_buy_id: 'buy-live-track-ack', packages: [] })
+        );
+        const track = result.submitted.track;
+        result.submitted.track = async transport => {
+          const task = await track(transport);
+          Object.defineProperty(task, DEFERRED_SETTLEMENT_ACK, {
+            value: async () => {
+              acknowledgementCalls += 1;
+            },
+            enumerable: true,
+          });
+          return task;
+        };
+        return result;
+      });
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-live-track-ack',
+      legacyPurchaseContinuationStore: store,
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-live-track-ack-0001',
+      account: { account_id: 'account-live-track-ack' },
+      brand: { domain: 'example.com' },
+      brief: 'Preserve the live track checkpoint acknowledgement',
+    });
+    const token = discovery.data.purchase_continuation.continuation_token;
+    const deferredCreatedAt = Date.now();
+    await deferredStorage.putIfAbsent(
+      testDurableToken('create_media_buy-deferred-token'),
+      {
+        continuationVersion: 'live-track-ack-version',
+        taskId: 'live-track-ack-operation',
+        a2aTaskId: 'live-track-ack-a2a-task',
+        serverVersion: 'v3',
+        agentId: AGENT.id,
+        taskName: 'create_media_buy',
+        params: {},
+        messages: [],
+        createdAt: deferredCreatedAt,
+        expiresAt: deferredCreatedAt + 60_000,
+      },
+      60
+    );
+    const paused = await coordinator.continueLegacyPurchase({
+      idempotency_key: '0601c93d-ed40-4c43-a0be-0d5019dc52c8',
+      continuation_token: token,
+      account: { account_id: 'account-live-track-ack' },
+      selected_product_ids: ['p-live-track-ack'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-live-track-ack-create-0001',
+        account: { account_id: 'account-live-track-ack' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-live-track-ack', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    });
+
+    const pending = await paused.deferred.resume({ approved: true });
+    const completion = await pending.submitted.waitForCompletion(0);
+    assert.equal(completion.status, 'completed');
+    assert.equal(completion.data.media_buy_id, 'buy-live-track-ack');
+    assert.equal(typeof completion[DEFERRED_SETTLEMENT_ACK], 'function');
+    await completion[DEFERRED_SETTLEMENT_ACK](completion);
+    assert.equal(acknowledgementCalls, 1);
+    assert.equal((await store.get(token)).operation.state, 'completed');
+    deferredStorage.destroy();
+  });
+
   for (const initialStatus of ['submitted', 'working']) {
     test(`durably settles an authoritative ${initialStatus} legacy purchase ${
       initialStatus === 'working' ? 'poll' : 'push'
     }`, async () => {
       const suffix = `push-${initialStatus}`;
       const sellerTaskId = `${suffix}-seller-task`;
-      const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+      let completionHandlerCalls = 0;
+      const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0', {
+        handlers: {
+          onCreateMediaBuyStatusChange: async () => {
+            completionHandlerCalls += 1;
+          },
+          ...(initialStatus === 'working' && {
+            webhookDedup: { backend: memoryBackend({ sweepIntervalMs: 0 }) },
+          }),
+        },
+      });
       agent.getProducts = async () =>
         completed('get_products', { products: [legacyListedProduct(`p-${suffix}`, `Push ${initialStatus}`)] });
       agent.createMediaBuyLegacy = async () => {
@@ -5626,6 +6701,7 @@ describe('legacy products-only purchase continuations', () => {
             completed('create_media_buy', { media_buy_id: `${suffix}-background`, packages: [] })
           );
           result.submitted.taskId = sellerTaskId;
+          result.metadata.serverTaskId = sellerTaskId;
           result.submitted.track = async () => ({
             taskId: sellerTaskId,
             status: 'completed',
@@ -5698,7 +6774,17 @@ describe('legacy products-only purchase continuations', () => {
         const replay = await coordinator.continueLegacyPurchase(input);
         assert.equal(replay.status, 'completed');
         assert.equal(replay.data.media_buy_id, `${suffix}-settled`);
-        assert.equal(polledTransport, settlementTransport);
+        assert.deepEqual(polledTransport, settlementTransport);
+        assert.notStrictEqual(polledTransport, settlementTransport, 'polling must use the owned transport snapshot');
+        assert.equal(completionHandlerCalls, 1);
+        await agent.externalTaskSettlementHandler({
+          status: 'completed',
+          result: { media_buy_id: `${suffix}-settled`, packages: [] },
+          serverTaskId: sellerTaskId,
+          taskType: 'create_media_buy',
+          idempotencyKey: `${suffix}-later-webhook`,
+        });
+        assert.equal(completionHandlerCalls, 1);
         return;
       }
       const settled = await agent.externalTaskSettlementHandler({
@@ -5709,11 +6795,1321 @@ describe('legacy products-only purchase continuations', () => {
       });
       assert.equal(settled.status, 'completed');
       assert.equal(settled.data.media_buy_id, `${suffix}-settled`);
+      await settled.afterDispatch?.();
+      assert.equal(completionHandlerCalls, 1);
       const replay = await coordinator.continueLegacyPurchase(input);
       assert.equal(replay.status, 'completed');
       assert.equal(replay.data.media_buy_id, `${suffix}-settled`);
     });
   }
+
+  test('keeps a durable callback pending until its status handler succeeds', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const deferredBackend = new MemoryStorage({ autoCleanup: false });
+    let failNextDeferredFinalization = false;
+    const deferredStorage = {
+      get: (...args) => deferredBackend.get(...args),
+      set: (...args) => deferredBackend.set(...args),
+      delete: (...args) => deferredBackend.delete(...args),
+      putIfAbsent: (...args) => deferredBackend.putIfAbsent(...args),
+      putForSettlementOperationIfAbsent: (...args) => deferredBackend.putForSettlementOperationIfAbsent(...args),
+      getBySettlementOperationId: (...args) => deferredBackend.getBySettlementOperationId(...args),
+      replaceForSettlementOperationIfVersion: (...args) => {
+        const replacementValue = args[4];
+        if (failNextDeferredFinalization && replacementValue.settlementFinalizedResult !== undefined) {
+          failNextDeferredFinalization = false;
+          return Promise.resolve(false);
+        }
+        return deferredBackend.replaceForSettlementOperationIfVersion(...args);
+      },
+      takeIfVersion: (...args) => deferredBackend.takeIfVersion(...args),
+      replaceIfVersion: (key, expectedVersion, value, ttl) => {
+        if (failNextDeferredFinalization && value.settlementFinalizedResult !== undefined) {
+          failNextDeferredFinalization = false;
+          return Promise.resolve(false);
+        }
+        return deferredBackend.replaceIfVersion(key, expectedVersion, value, ttl);
+      },
+    };
+    const webhookRegistrationStore = new InMemoryWebhookRegistrationStore();
+    const webhookSecret = 'durable-handler-retry-webhook-secret';
+    const sellerTaskId = 'durable-handler-retry-seller-task';
+    let handlerCalls = 0;
+    let releaseFirstHandler;
+    let markFirstHandlerEntered;
+    const firstHandlerEntered = new Promise(resolve => {
+      markFirstHandlerEntered = resolve;
+    });
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0', {
+      webhookSecret,
+      webhookRegistrationStore,
+      deferredStorage,
+      handlers: {
+        webhookDedup: { backend: memoryBackend({ sweepIntervalMs: 0 }) },
+        onCreateMediaBuyStatusChange: async () => {
+          handlerCalls += 1;
+          if (handlerCalls === 1) {
+            markFirstHandlerEntered();
+            await new Promise(resolve => {
+              releaseFirstHandler = resolve;
+            });
+            throw new Error('downstream status publication failed');
+          }
+        },
+      },
+    });
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-handler-retry', 'Handler retry')] });
+    agent.createMediaBuyLegacy = async () => {
+      const result = submitted(
+        'create_media_buy',
+        completed('create_media_buy', { media_buy_id: 'buy-background-should-not-win', packages: [] })
+      );
+      result.submitted.taskId = sellerTaskId;
+      result.metadata.serverTaskId = sellerTaskId;
+      result.submitted.track = async () => new Promise(() => {});
+      result.submitted.waitForCompletion = async () => new Promise(() => {});
+      return result;
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-handler-retry',
+      legacyPurchaseContinuationStore: store,
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-handler-retry-0001',
+      account: { account_id: 'account-handler-retry' },
+      brand: { domain: 'example.com' },
+      brief: 'Retry durable callback publication',
+    });
+    const token = discovery.data.purchase_continuation.continuation_token;
+    const pending = await coordinator.continueLegacyPurchase({
+      idempotency_key: '984e7da9-72c9-4eeb-85e7-07f0d403ada0',
+      continuation_token: token,
+      account: { account_id: 'account-handler-retry' },
+      selected_product_ids: ['p-handler-retry'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-handler-retry-create-0001',
+        account: { account_id: 'account-handler-retry' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-handler-retry', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    });
+    assert.equal(pending.status, 'submitted');
+
+    const claimed = await store.get(token);
+    assert.equal(claimed.operation.state, 'claimed');
+    assert.equal(claimed.operation.sellerTaskId, sellerTaskId);
+    const operationId = claimed.operation.callbackOperationId;
+    const deferredToken = testDurableToken('durable-handler-retry-sdk-deferred-token');
+    assert.notEqual(deferredToken, token);
+    assert.equal(await store.recordDeferredTaskToken(token, claimed.operation, deferredToken), true);
+    const deferredNow = Date.now();
+    await deferredStorage.putForSettlementOperationIfAbsent(
+      operationId,
+      deferredToken,
+      {
+        continuationVersion: 'durable-handler-retry-deferred-version',
+        continuationClaimed: true,
+        taskId: operationId,
+        a2aTaskId: 'durable-handler-retry-a2a-task',
+        serverVersion: 'v3',
+        agentId: AGENT.id,
+        taskName: 'create_media_buy',
+        params: {},
+        messages: [],
+        clientContext: {
+          kind: 'single-agent',
+          taskType: 'create_media_buy',
+          handlerName: 'onCreateMediaBuyStatusChange',
+          canonical: false,
+          productPolicyRequest: {},
+        },
+        settlementOperationId: operationId,
+        settlementOperationRouteRequired: true,
+        settlementResumeAuthorizationRequired: true,
+        settlementServerTaskId: sellerTaskId,
+        settlementPendingTaskId: sellerTaskId,
+        createdAt: deferredNow,
+        expiresAt: deferredNow + 60_000,
+      },
+      60
+    );
+    const crashedPublication = completed('create_media_buy', {
+      media_buy_id: 'buy-handler-retry',
+      packages: [],
+    });
+    crashedPublication.metadata.taskId = operationId;
+    crashedPublication.metadata.serverTaskId = sellerTaskId;
+    assert.deepEqual(
+      await store.recordPendingSettlement(token, (await store.get(token)).operation, {
+        operationId,
+        serverTaskId: sellerTaskId,
+        taskType: 'create_media_buy',
+        publicationSource: 'sdk',
+        terminal: crashedPublication,
+      }),
+      { outcome: 'recorded' }
+    );
+    await webhookRegistrationStore.putIfAbsent({
+      agentId: AGENT.id,
+      agentUrl: AGENT.agent_uri,
+      protocol: AGENT.protocol,
+      operationId,
+      taskType: 'create_media_buy',
+      callbackUrl: `https://buyer.example/webhooks/create_media_buy/${operationId}`,
+      method: 'POST',
+      mode: 'hmac-sha256',
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+      requiresDurableSettlement: true,
+    });
+    const payload = {
+      idempotency_key: 'durable-handler-retry-webhook-event',
+      operation_id: operationId,
+      task_id: sellerTaskId,
+      task_type: 'create_media_buy',
+      status: 'completed',
+      timestamp: new Date().toISOString(),
+      result: { media_buy_id: 'buy-handler-retry', packages: [] },
+    };
+    const rawBody = JSON.stringify(payload);
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signature = `sha256=${crypto
+      .createHmac('sha256', webhookSecret)
+      .update(`${timestamp}.${rawBody}`)
+      .digest('hex')}`;
+    const dispatch = () =>
+      agent.handleWebhook(payload, 'create_media_buy', operationId, signature, String(timestamp), rawBody);
+
+    const firstDispatch = dispatch();
+    await firstHandlerEntered;
+    await assert.rejects(
+      dispatch(),
+      /(?:matching callback publication|deferred settlement finalization).*in progress/i
+    );
+    const concurrentRetry = await store.get(token);
+    assert.equal(concurrentRetry.operation.state, 'completed');
+    assert.equal(concurrentRetry.operation.pendingSettlement.idempotencyKey, undefined);
+    releaseFirstHandler();
+    await assert.rejects(firstDispatch, /downstream status publication failed/);
+    const publicationFailed = await store.get(token);
+    assert.equal(publicationFailed.operation.state, 'completed');
+    assert.equal(publicationFailed.operation.pendingSettlement.idempotencyKey, undefined);
+    assert.equal(publicationFailed.operation.result.data.media_buy_id, 'buy-handler-retry');
+    const retryableCheckpoint = await deferredStorage.get(deferredToken);
+    assert.ok(retryableCheckpoint.settlementTerminalResult);
+    assert.equal(retryableCheckpoint.settlementFinalizationLease, undefined);
+    assert.equal(retryableCheckpoint.settlementFinalizedResult, undefined);
+
+    failNextDeferredFinalization = true;
+    await assert.rejects(
+      agent.resumeDeferredTask(deferredToken, { retry: true }),
+      /committed deferred completion could not be durably acknowledged/i
+    );
+    assert.equal(handlerCalls, 2);
+    const legacyAcknowledged = await store.get(token);
+    assert.equal(legacyAcknowledged.operation.pendingSettlement, undefined);
+    assert.equal(typeof legacyAcknowledged.operation.acknowledgedSettlementFingerprint, 'string');
+    assert.ok(legacyAcknowledged.operation.acknowledgedSettlementFingerprint.length > 0);
+
+    const recovered = await agent.resumeDeferredTask(deferredToken, { retry: true });
+    assert.equal(recovered.status, 'completed');
+    assert.equal(recovered.data.media_buy_id, 'buy-handler-retry');
+    assert.equal(handlerCalls, 2);
+
+    const rotatedPayload = { ...payload, idempotency_key: 'durable-handler-rotated-webhook-event' };
+    const rotatedRawBody = JSON.stringify(rotatedPayload);
+    const rotatedSignature = `sha256=${crypto
+      .createHmac('sha256', webhookSecret)
+      .update(`${timestamp}.${rotatedRawBody}`)
+      .digest('hex')}`;
+    assert.equal(
+      await agent.handleWebhook(
+        rotatedPayload,
+        'create_media_buy',
+        operationId,
+        rotatedSignature,
+        String(timestamp),
+        rotatedRawBody
+      ),
+      true
+    );
+    assert.equal(handlerCalls, 2);
+
+    assert.equal(await dispatch(), true);
+    assert.equal(handlerCalls, 2);
+    const published = await store.get(token);
+    assert.equal(published.operation.state, 'completed');
+    assert.equal(published.operation.pendingSettlement, undefined);
+    assert.equal(published.operation.result.data.media_buy_id, 'buy-handler-retry');
+    const finalizedCheckpoint = await deferredStorage.get(deferredToken);
+    assert.equal(finalizedCheckpoint.settlementPendingTaskId, undefined);
+    assert.equal(finalizedCheckpoint.settlementFinalizationLease, undefined);
+    assert.equal(finalizedCheckpoint.settlementFinalizedResult.data.media_buy_id, 'buy-handler-retry');
+    deferredBackend.destroy();
+  });
+
+  test('rejects a callback that conflicts with an earlier deferred terminal checkpoint', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const deferredStorage = new MemoryStorage({ autoCleanup: false });
+    const deferredToken = testDurableToken('callback-conflict-sdk-deferred-token');
+    const sellerTaskId = 'callback-conflict-seller-task';
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0', { deferredStorage });
+    let recoverSettlement;
+    agent.registerDurableSettlementRecovery = recoverer => {
+      recoverSettlement = recoverer;
+      return () => {};
+    };
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-callback-conflict', 'Callback conflict')] });
+    agent.createMediaBuyLegacy = async () => ({
+      success: true,
+      status: 'input-required',
+      metadata: {
+        taskId: 'callback-conflict-client-task',
+        serverTaskId: sellerTaskId,
+        taskName: 'create_media_buy',
+        agent: { id: AGENT.id, name: AGENT.name, protocol: AGENT.protocol },
+        responseTimeMs: 1,
+        timestamp: new Date().toISOString(),
+        clarificationRounds: 0,
+        status: 'input-required',
+      },
+      deferred: { token: deferredToken, resume: async () => new Promise(() => {}) },
+    });
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-callback-conflict',
+      legacyPurchaseContinuationStore: store,
+    });
+
+    try {
+      const discovery = await coordinator.requestProposals({
+        idempotency_key: 'request-proposals-callback-conflict-0001',
+        account: { account_id: 'account-callback-conflict' },
+        brand: { domain: 'example.com' },
+        brief: 'Preserve the first terminal winner',
+      });
+      const token = discovery.data.purchase_continuation.continuation_token;
+      const pauseCreatedAt = Date.now();
+      await deferredStorage.putIfAbsent(
+        deferredToken,
+        {
+          continuationVersion: 'callback-conflict-pause-version',
+          taskId: 'callback-conflict-client-task',
+          a2aTaskId: 'callback-conflict-a2a-task',
+          serverVersion: 'v3',
+          agentId: AGENT.id,
+          taskName: 'create_media_buy',
+          params: {},
+          messages: [],
+          createdAt: pauseCreatedAt,
+          expiresAt: pauseCreatedAt + 60_000,
+        },
+        60
+      );
+      const paused = await coordinator.continueLegacyPurchase({
+        idempotency_key: 'a4b2c3d4-e5f6-4789-8abc-def012345678',
+        continuation_token: token,
+        account: { account_id: 'account-callback-conflict' },
+        selected_product_ids: ['p-callback-conflict'],
+        accepted_losses: discovery.data.purchase_continuation.losses,
+        legacy_create_request: {
+          idempotency_key: 'legacy-callback-conflict-create-0001',
+          account: { account_id: 'account-callback-conflict' },
+          brand: { domain: 'example.com' },
+          packages: [{ product_id: 'p-callback-conflict', budget: 10, pricing_option_id: 'fixed-cpm' }],
+          start_time: '2099-01-01T00:00:00Z',
+          end_time: '2099-02-01T00:00:00Z',
+        },
+      });
+      assert.equal(paused.status, 'input-required');
+      const claimed = await store.get(token);
+      assert.equal(claimed.operation.state, 'claimed');
+      assert.equal(claimed.operation.deferredTaskToken, deferredToken);
+      assert.equal(claimed.operation.sellerTaskId, sellerTaskId);
+      const operationId = claimed.operation.callbackOperationId;
+      const terminalWinner = completed('create_media_buy', {
+        media_buy_id: 'poll-terminal-winner',
+        packages: [],
+      });
+      terminalWinner.metadata.taskId = operationId;
+      terminalWinner.metadata.serverTaskId = sellerTaskId;
+      const now = Date.now();
+      await deferredStorage.set(
+        deferredToken,
+        {
+          continuationVersion: 'callback-conflict-deferred-version',
+          continuationClaimed: true,
+          taskId: operationId,
+          a2aTaskId: 'callback-conflict-a2a-task',
+          serverVersion: 'v3',
+          agentId: AGENT.id,
+          taskName: 'create_media_buy',
+          params: {},
+          messages: [],
+          settlementOperationId: operationId,
+          settlementServerTaskId: sellerTaskId,
+          settlementTerminalResult: terminalWinner,
+          createdAt: now,
+          expiresAt: now + 60_000,
+        },
+        60
+      );
+
+      await assert.rejects(
+        recoverSettlement(operationId, {
+          status: 'completed',
+          result: { media_buy_id: 'conflicting-callback-winner', packages: [] },
+          serverTaskId: sellerTaskId,
+          taskType: 'create_media_buy',
+          idempotencyKey: 'callback-conflict-event',
+        }),
+        /conflicts with the saved deferred terminal observation/
+      );
+      const legacyAfterConflict = await store.get(token);
+      assert.equal(legacyAfterConflict.operation.state, 'claimed');
+      assert.equal(legacyAfterConflict.operation.pendingSettlement, undefined);
+      const deferredAfterConflict = await deferredStorage.get(deferredToken);
+      assert.equal(deferredAfterConflict.settlementTerminalResult.data.media_buy_id, 'poll-terminal-winner');
+      assert.equal(deferredAfterConflict.settlementFinalizationLease, undefined);
+
+      const exact = await recoverSettlement(operationId, {
+        status: 'completed',
+        result: { media_buy_id: 'poll-terminal-winner', packages: [] },
+        serverTaskId: sellerTaskId,
+        taskType: 'create_media_buy',
+        idempotencyKey: 'callback-exact-event',
+      });
+      assert.equal(exact.settled, true);
+      await exact.afterDispatch();
+      const legacyFinal = await store.get(token);
+      assert.equal(legacyFinal.operation.state, 'completed');
+      assert.equal(legacyFinal.operation.result.data.media_buy_id, 'poll-terminal-winner');
+      assert.equal(legacyFinal.operation.pendingSettlement, undefined);
+      const deferredFinal = await deferredStorage.get(deferredToken);
+      assert.equal(deferredFinal.settlementFinalizedResult.data.media_buy_id, 'poll-terminal-winner');
+    } finally {
+      coordinator.dispose();
+      deferredStorage.destroy();
+    }
+  });
+
+  test('hands a restarted callback-capable purchase from deferred token A to nested token B', async () => {
+    const originalCallTool = ProtocolClient.callTool;
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const deferredStorage = new MemoryStorage({ autoCleanup: false });
+    const initialDeferredToken = testDurableToken('restart-nested-token-a');
+    const sellerTaskId = 'restart-nested-seller-work';
+    const a2aAgent = {
+      id: 'restart-nested-seller',
+      name: 'Restart nested seller',
+      agent_uri: 'https://seller.example/a2a',
+      protocol: 'a2a',
+    };
+    const clientOptions = {
+      deferredStorage,
+      resolveDeferredAgent: async agentId => (agentId === a2aAgent.id ? a2aAgent : undefined),
+      validation: { requests: 'off', responses: 'off' },
+    };
+    const first = clientWithCaps(capabilities({ version: '3.0' }), '3.0', clientOptions, a2aAgent);
+    first.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-restart-nested', 'Restart nested')] });
+    first.createMediaBuyLegacy = async () => ({
+      success: true,
+      status: 'input-required',
+      metadata: {
+        taskId: 'restart-nested-client-task',
+        serverTaskId: sellerTaskId,
+        a2aTaskId: 'restart-nested-a2a-a',
+        contextId: 'restart-nested-context-a',
+        taskName: 'create_media_buy',
+        agent: { id: a2aAgent.id, name: a2aAgent.name, protocol: 'a2a' },
+        responseTimeMs: 1,
+        timestamp: new Date().toISOString(),
+        clarificationRounds: 0,
+        status: 'input-required',
+      },
+      deferred: { token: initialDeferredToken, resume: async () => assert.fail('live token must not resume') },
+    });
+
+    let firstCoordinator;
+    let restartedCoordinator;
+    try {
+      const seededAt = Date.now();
+      await deferredStorage.putIfAbsent(
+        initialDeferredToken,
+        {
+          continuationVersion: 'restart-nested-version-a',
+          taskId: 'restart-nested-client-task',
+          contextId: 'restart-nested-context-a',
+          a2aTaskId: 'restart-nested-a2a-a',
+          serverVersion: 'v3',
+          agentId: a2aAgent.id,
+          taskName: 'create_media_buy',
+          params: {},
+          messages: [],
+          createdAt: seededAt,
+          expiresAt: seededAt + 60_000,
+        },
+        60
+      );
+      firstCoordinator = await first.negotiateMediaBuyLifecycle({
+        principalScope: 'buyer-restart-nested',
+        legacyPurchaseContinuationStore: store,
+      });
+      const discovery = await firstCoordinator.requestProposals({
+        idempotency_key: 'request-proposals-restart-nested-0001',
+        account: { account_id: 'account-restart-nested' },
+        brand: { domain: 'example.com' },
+        brief: 'Restart and pause a second time',
+      });
+      const continuationToken = discovery.data.purchase_continuation.continuation_token;
+      const paused = await firstCoordinator.continueLegacyPurchase({
+        idempotency_key: '388932cb-bb9d-4804-bf27-df36f19cb891',
+        continuation_token: continuationToken,
+        account: { account_id: 'account-restart-nested' },
+        selected_product_ids: ['p-restart-nested'],
+        accepted_losses: discovery.data.purchase_continuation.losses,
+        legacy_create_request: {
+          idempotency_key: 'legacy-restart-nested-create-0001',
+          account: { account_id: 'account-restart-nested' },
+          brand: { domain: 'example.com' },
+          packages: [{ product_id: 'p-restart-nested', budget: 10, pricing_option_id: 'fixed-cpm' }],
+          start_time: '2099-01-01T00:00:00Z',
+          end_time: '2099-02-01T00:00:00Z',
+        },
+      });
+      assert.equal(paused.deferred.token, initialDeferredToken);
+      const claimed = await store.get(continuationToken);
+      assert.equal(claimed.operation.state, 'claimed');
+      assert.equal(claimed.operation.deferredTaskToken, initialDeferredToken);
+      const operationId = claimed.operation.callbackOperationId;
+
+      const initialState = await deferredStorage.get(initialDeferredToken);
+      await deferredStorage.delete(initialDeferredToken);
+      await deferredStorage.putForSettlementOperationIfAbsent(
+        operationId,
+        initialDeferredToken,
+        {
+          ...initialState,
+          taskId: operationId,
+          clientContext: {
+            kind: 'single-agent',
+            taskType: 'create_media_buy',
+            canonical: false,
+            productPolicyRequest: {},
+          },
+          settlementOperationId: operationId,
+          settlementOperationRouteRequired: true,
+          settlementResumeAuthorizationRequired: true,
+          settlementServerTaskId: sellerTaskId,
+        },
+        60
+      );
+      firstCoordinator.dispose();
+      firstCoordinator = undefined;
+
+      const restarted = clientWithCaps(capabilities({ version: '3.0' }), '3.0', clientOptions, a2aAgent);
+      let recoverCallback;
+      const registerRecovery = restarted.registerDurableSettlementRecovery.bind(restarted);
+      restarted.registerDurableSettlementRecovery = recoverer => {
+        recoverCallback = recoverer;
+        return registerRecovery(recoverer);
+      };
+      restartedCoordinator = await restarted.negotiateMediaBuyLifecycle({
+        principalScope: 'buyer-restart-nested',
+        legacyPurchaseContinuationStore: store,
+      });
+
+      let sellerCalls = 0;
+      let pollCalls = 0;
+      ProtocolClient.callTool = async (_agent, taskName, params, options) => {
+        if (taskName === 'tasks/get') {
+          pollCalls += 1;
+          assert.deepEqual(params, { task_id: sellerTaskId, include_result: true });
+          return {
+            task_id: sellerTaskId,
+            task_type: 'create_media_buy',
+            status: 'completed',
+            result: { media_buy_id: 'buy-restart-nested', packages: [] },
+          };
+        }
+        assert.equal(taskName, 'create_media_buy');
+        sellerCalls += 1;
+        if (sellerCalls === 1) {
+          assert.deepEqual(params, { input: { approved: true } });
+          assert.equal(options.session.taskId, 'restart-nested-a2a-a');
+          return {
+            result: {
+              kind: 'task',
+              id: 'restart-nested-a2a-b',
+              contextId: 'restart-nested-context-b',
+              status: {
+                state: 'input-required',
+                message: {
+                  kind: 'message',
+                  messageId: 'restart-nested-question-b',
+                  role: 'agent',
+                  parts: [{ kind: 'data', data: { status: 'input-required', question: 'Confirm again?' } }],
+                },
+              },
+              artifacts: [],
+            },
+          };
+        }
+        assert.deepEqual(params, { input: { confirmed: true } });
+        assert.equal(options.session.taskId, 'restart-nested-a2a-b');
+        return { status: 'submitted' };
+      };
+
+      const pausedAgain = await restarted.resumeDeferredTask(initialDeferredToken, { approved: true });
+      assert.equal(pausedAgain.status, 'input-required');
+      assert.equal(pausedAgain.metadata.serverTaskId, sellerTaskId);
+      const replacementToken = pausedAgain.deferred.token;
+      assert.notEqual(replacementToken, initialDeferredToken);
+      assert.equal(await deferredStorage.has(initialDeferredToken), false);
+      assert.equal(await deferredStorage.has(replacementToken), true);
+      const rebound = await store.get(continuationToken);
+      assert.equal(rebound.operation.state, 'claimed');
+      assert.equal(rebound.operation.deferredTaskToken, replacementToken);
+      assert.equal((await store.getByCallbackOperationId(operationId)).operation.deferredTaskToken, replacementToken);
+      assert.equal((await deferredStorage.get(replacementToken)).settlementServerTaskId, sellerTaskId);
+
+      const pendingResult = await restarted.resumeDeferredTask(replacementToken, { confirmed: true });
+      assert.equal(pendingResult.status, 'submitted');
+      assert.equal(pendingResult.metadata.serverTaskId, sellerTaskId);
+      assert.equal(pendingResult.submitted.taskId, sellerTaskId);
+      const completedResult = await pendingResult.submitted.waitForCompletion(0);
+      assert.equal(completedResult.status, 'completed');
+      assert.equal(completedResult.data.media_buy_id, 'buy-restart-nested');
+      assert.equal(sellerCalls, 2);
+      assert.equal(pollCalls, 1);
+
+      const laterCallback = await recoverCallback(operationId, {
+        status: 'completed',
+        result: structuredClone(completedResult.data),
+        serverTaskId: sellerTaskId,
+        taskType: 'create_media_buy',
+        idempotencyKey: 'restart-nested-later-callback',
+      });
+      assert.equal(laterCallback.duplicate, true);
+      assert.equal(laterCallback.settled, true);
+      assert.equal(sellerCalls, 2, 'an exact later callback must not redispatch either continuation input');
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+      firstCoordinator?.dispose();
+      restartedCoordinator?.dispose();
+      deferredStorage.destroy();
+    }
+  });
+
+  test('callback winning during deferred agent resolution does not poison the completed coordinator route', async () => {
+    const originalCallTool = ProtocolClient.callTool;
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const deferredStorage = new MemoryStorage({ autoCleanup: false });
+    const deferredToken = testDurableToken('resolution-callback-winner-deferred-token');
+    const sellerTaskId = 'resolution-callback-winner-seller-work';
+    const a2aAgent = {
+      id: 'resolution-callback-winner-seller',
+      name: 'Resolution callback winner seller',
+      agent_uri: 'https://seller.example/a2a',
+      protocol: 'a2a',
+    };
+    let releaseResolution;
+    const resolutionGate = new Promise(resolve => {
+      releaseResolution = resolve;
+    });
+    let markResolutionEntered;
+    const resolutionEntered = new Promise(resolve => {
+      markResolutionEntered = resolve;
+    });
+    const agent = clientWithCaps(
+      capabilities({ version: '3.0' }),
+      '3.0',
+      {
+        deferredStorage,
+        resolveDeferredAgent: async agentId => {
+          assert.equal(agentId, a2aAgent.id);
+          markResolutionEntered();
+          await resolutionGate;
+          return a2aAgent;
+        },
+        validation: { requests: 'off', responses: 'off' },
+      },
+      a2aAgent
+    );
+    agent.getProducts = async () =>
+      completed('get_products', {
+        products: [legacyListedProduct('p-resolution-callback-winner', 'Resolution callback winner')],
+      });
+    let continuationToken;
+    agent.createMediaBuyLegacy = async () => {
+      const claimed = await store.get(continuationToken);
+      const operationId = claimed.operation.callbackOperationId;
+      const createdAt = Date.now();
+      assert.equal(
+        await deferredStorage.putForSettlementOperationIfAbsent(
+          operationId,
+          deferredToken,
+          {
+            continuationVersion: 'resolution-callback-winner-version',
+            taskId: operationId,
+            contextId: 'resolution-callback-winner-context',
+            a2aTaskId: 'resolution-callback-winner-a2a-task',
+            serverVersion: 'v3',
+            agentId: a2aAgent.id,
+            taskName: 'create_media_buy',
+            params: {},
+            messages: [],
+            settlementOperationId: operationId,
+            settlementOperationRouteRequired: true,
+            settlementResumeAuthorizationRequired: true,
+            settlementServerTaskId: sellerTaskId,
+            createdAt,
+            expiresAt: createdAt + 500,
+          },
+          60
+        ),
+        true
+      );
+      return {
+        success: true,
+        status: 'input-required',
+        metadata: {
+          taskId: operationId,
+          serverTaskId: sellerTaskId,
+          a2aTaskId: 'resolution-callback-winner-a2a-task',
+          contextId: 'resolution-callback-winner-context',
+          taskName: 'create_media_buy',
+          agent: { id: a2aAgent.id, name: a2aAgent.name, protocol: 'a2a' },
+          responseTimeMs: 1,
+          timestamp: new Date().toISOString(),
+          clarificationRounds: 0,
+          status: 'input-required',
+        },
+        deferred: {
+          token: deferredToken,
+          resume: input => agent.client.executor.resumeDeferredTaskFromLiveClosure(deferredToken, input, false),
+        },
+      };
+    };
+
+    let recoverCallback;
+    const registerRecovery = agent.registerDurableSettlementRecovery.bind(agent);
+    agent.registerDurableSettlementRecovery = recoverer => {
+      recoverCallback = recoverer;
+      return registerRecovery(recoverer);
+    };
+    let coordinator;
+    let sellerCalls = 0;
+    ProtocolClient.callTool = async () => {
+      sellerCalls += 1;
+      assert.fail('the callback winner must prevent deferred seller input dispatch');
+    };
+    try {
+      coordinator = await agent.negotiateMediaBuyLifecycle({
+        principalScope: 'buyer-resolution-callback-winner',
+        legacyPurchaseContinuationStore: store,
+      });
+      const discovery = await coordinator.requestProposals({
+        idempotency_key: 'request-proposals-resolution-callback-winner-0001',
+        account: { account_id: 'account-resolution-callback-winner' },
+        brand: { domain: 'example.com' },
+        brief: 'Let an authoritative callback win during trusted resolution',
+      });
+      continuationToken = discovery.data.purchase_continuation.continuation_token;
+      const input = {
+        idempotency_key: '9658de0d-c377-4247-b722-ab39bc04559f',
+        continuation_token: continuationToken,
+        account: { account_id: 'account-resolution-callback-winner' },
+        selected_product_ids: ['p-resolution-callback-winner'],
+        accepted_losses: discovery.data.purchase_continuation.losses,
+        legacy_create_request: {
+          idempotency_key: 'legacy-resolution-callback-winner-create-0001',
+          account: { account_id: 'account-resolution-callback-winner' },
+          brand: { domain: 'example.com' },
+          packages: [{ product_id: 'p-resolution-callback-winner', budget: 10, pricing_option_id: 'fixed-cpm' }],
+          start_time: '2099-01-01T00:00:00Z',
+          end_time: '2099-02-01T00:00:00Z',
+        },
+      };
+      const paused = await coordinator.continueLegacyPurchase(input);
+      assert.equal(paused.status, 'input-required');
+      assert.equal(paused.deferred.token, deferredToken);
+      const operationId = (await store.get(continuationToken)).operation.callbackOperationId;
+
+      const deferredReadFailure = new Error('injected compatibility deferred storage read outage');
+      const originalDeferredGet = deferredStorage.get.bind(deferredStorage);
+      let failDeferredRead = true;
+      deferredStorage.get = async key => {
+        if (failDeferredRead) {
+          failDeferredRead = false;
+          throw deferredReadFailure;
+        }
+        return originalDeferredGet(key);
+      };
+      await assert.rejects(
+        paused.deferred.resume({ approved: 'retry-after-storage-outage' }),
+        error => error instanceof DeferredSettlementOwnershipError && error.cause === deferredReadFailure
+      );
+      const retainedAfterOutage = await store.get(continuationToken);
+      assert.equal(retainedAfterOutage.operation.state, 'claimed');
+      assert.equal(retainedAfterOutage.operation.deferredTaskToken, deferredToken);
+      assert.equal(sellerCalls, 0);
+      deferredStorage.get = originalDeferredGet;
+
+      const resume = paused.deferred.resume({ approved: true });
+      await resolutionEntered;
+      await new Promise(resolve => setTimeout(resolve, 550));
+      await assert.rejects(
+        paused.deferred.resume({ approved: 'duplicate-must-not-dispatch' }),
+        error => error instanceof DeferredSettlementOwnershipError
+      );
+      assert.equal((await store.get(continuationToken)).operation.state, 'claimed');
+      const callback = await recoverCallback(operationId, {
+        status: 'completed',
+        result: { media_buy_id: 'buy-resolution-callback-winner', packages: [] },
+        serverTaskId: sellerTaskId,
+        taskType: 'create_media_buy',
+        idempotencyKey: 'resolution-callback-winner-event',
+      });
+      assert.equal(callback.settled, true);
+      await callback.afterDispatch?.();
+      releaseResolution();
+
+      await assert.rejects(resume, error => error instanceof DeferredSettlementOwnershipError);
+      assert.equal(sellerCalls, 0);
+      const completedRecord = await store.get(continuationToken);
+      assert.equal(completedRecord.operation.state, 'completed');
+      assert.equal(completedRecord.operation.result.data.media_buy_id, 'buy-resolution-callback-winner');
+      const replay = await coordinator.continueLegacyPurchase(input);
+      assert.equal(replay.status, 'completed');
+      assert.equal(replay.data.media_buy_id, 'buy-resolution-callback-winner');
+    } finally {
+      releaseResolution?.();
+      ProtocolClient.callTool = originalCallTool;
+      coordinator?.dispose();
+      deferredStorage.destroy();
+    }
+  });
+
+  test('pending deferred agent resolution outage preserves a retryable coordinator claim', async () => {
+    const originalCallTool = ProtocolClient.callTool;
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const deferredStorage = new MemoryStorage({ autoCleanup: false });
+    const deferredToken = testDurableToken('pending-resolution-retry-deferred-token');
+    const sellerTaskId = 'pending-resolution-retry-seller-work';
+    const a2aAgent = {
+      id: 'pending-resolution-retry-seller',
+      name: 'Pending resolution retry seller',
+      agent_uri: 'https://seller.example/a2a',
+      protocol: 'a2a',
+    };
+    const resolverFailure = new Error('injected trusted-agent resolver outage');
+    let resolveCalls = 0;
+    const agent = clientWithCaps(
+      capabilities({ version: '3.0' }),
+      '3.0',
+      {
+        deferredStorage,
+        resolveDeferredAgent: async agentId => {
+          assert.equal(agentId, a2aAgent.id);
+          resolveCalls += 1;
+          if (resolveCalls === 1) throw resolverFailure;
+          return a2aAgent;
+        },
+        validation: { requests: 'off', responses: 'off' },
+      },
+      a2aAgent
+    );
+    agent.getProducts = async () =>
+      completed('get_products', {
+        products: [legacyListedProduct('p-pending-resolution-retry', 'Pending resolution retry')],
+      });
+    let continuationToken;
+    agent.createMediaBuyLegacy = async () => {
+      const claimed = await store.get(continuationToken);
+      const operationId = claimed.operation.callbackOperationId;
+      const createdAt = Date.now();
+      assert.equal(
+        await deferredStorage.putForSettlementOperationIfAbsent(
+          operationId,
+          deferredToken,
+          {
+            continuationVersion: 'pending-resolution-retry-version',
+            continuationClaimed: true,
+            taskId: operationId,
+            contextId: 'pending-resolution-retry-context',
+            a2aTaskId: 'pending-resolution-retry-a2a-task',
+            serverVersion: 'v3',
+            agentId: a2aAgent.id,
+            taskName: 'create_media_buy',
+            params: {},
+            messages: [],
+            settlementOperationId: operationId,
+            settlementOperationRouteRequired: true,
+            settlementResumeAuthorizationRequired: true,
+            settlementServerTaskId: sellerTaskId,
+            settlementPendingTaskId: sellerTaskId,
+            createdAt,
+            expiresAt: createdAt + 60_000,
+          },
+          60
+        ),
+        true
+      );
+      return {
+        success: true,
+        status: 'input-required',
+        metadata: {
+          taskId: operationId,
+          serverTaskId: sellerTaskId,
+          a2aTaskId: 'pending-resolution-retry-a2a-task',
+          contextId: 'pending-resolution-retry-context',
+          taskName: 'create_media_buy',
+          agent: { id: a2aAgent.id, name: a2aAgent.name, protocol: 'a2a' },
+          responseTimeMs: 1,
+          timestamp: new Date().toISOString(),
+          clarificationRounds: 0,
+          status: 'input-required',
+        },
+        deferred: {
+          token: deferredToken,
+          resume: input => agent.client.executor.resumeDeferredTaskFromLiveClosure(deferredToken, input, false),
+        },
+      };
+    };
+
+    let coordinator;
+    let pollCalls = 0;
+    ProtocolClient.callTool = async (_agent, taskName, params) => {
+      assert.equal(taskName, 'tasks/get', 'pending recovery must never redispatch continuation input');
+      pollCalls += 1;
+      assert.deepEqual(params, { task_id: sellerTaskId, include_result: true });
+      return {
+        task_id: sellerTaskId,
+        task_type: 'create_media_buy',
+        status: 'completed',
+        result: { media_buy_id: 'buy-pending-resolution-retry', packages: [] },
+      };
+    };
+    try {
+      coordinator = await agent.negotiateMediaBuyLifecycle({
+        principalScope: 'buyer-pending-resolution-retry',
+        legacyPurchaseContinuationStore: store,
+      });
+      const discovery = await coordinator.requestProposals({
+        idempotency_key: 'request-proposals-pending-resolution-retry-0001',
+        account: { account_id: 'account-pending-resolution-retry' },
+        brand: { domain: 'example.com' },
+        brief: 'Retry trusted agent resolution without redispatching seller input',
+      });
+      continuationToken = discovery.data.purchase_continuation.continuation_token;
+      const input = {
+        idempotency_key: 'bf4a4312-e791-4fb3-ad49-d9f30ed2a92f',
+        continuation_token: continuationToken,
+        account: { account_id: 'account-pending-resolution-retry' },
+        selected_product_ids: ['p-pending-resolution-retry'],
+        accepted_losses: discovery.data.purchase_continuation.losses,
+        legacy_create_request: {
+          idempotency_key: 'legacy-pending-resolution-retry-create-0001',
+          account: { account_id: 'account-pending-resolution-retry' },
+          brand: { domain: 'example.com' },
+          packages: [{ product_id: 'p-pending-resolution-retry', budget: 10, pricing_option_id: 'fixed-cpm' }],
+          start_time: '2099-01-01T00:00:00Z',
+          end_time: '2099-02-01T00:00:00Z',
+        },
+      };
+      const paused = await coordinator.continueLegacyPurchase(input);
+      assert.equal(paused.status, 'input-required');
+      assert.equal(paused.deferred.token, deferredToken);
+      const checkpointBeforeOutage = await deferredStorage.get(deferredToken);
+
+      await assert.rejects(
+        paused.deferred.resume({ approved: 'retry-after-resolver-outage' }),
+        error => error instanceof DeferredSettlementOwnershipError && error.cause === resolverFailure
+      );
+
+      assert.equal(resolveCalls, 1);
+      assert.equal(pollCalls, 0);
+      assert.deepEqual(await deferredStorage.get(deferredToken), checkpointBeforeOutage);
+      const retained = await store.get(continuationToken);
+      assert.equal(retained.operation.state, 'claimed');
+      assert.equal(retained.operation.deferredTaskToken, deferredToken);
+      assert.equal(retained.operation.pendingSettlement, undefined);
+      assert.equal(retained.operation.result, undefined);
+
+      const pending = await paused.deferred.resume({ approved: true });
+      assert.equal(pending.status, 'submitted');
+      assert.equal(pending.metadata.serverTaskId, sellerTaskId);
+      assert.equal(pending.submitted.taskId, sellerTaskId);
+      const result = await pending.submitted.waitForCompletion(0);
+      assert.equal(result.status, 'completed');
+      assert.equal(result.data.media_buy_id, 'buy-pending-resolution-retry');
+      assert.equal(resolveCalls, 2);
+      assert.equal(pollCalls, 1);
+      assert.equal((await store.get(continuationToken)).operation.state, 'completed');
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+      coordinator?.dispose();
+      deferredStorage.destroy();
+    }
+  });
+
+  test('reconciles a terminal callback between the live nested-token CAS and outer confirmation', async () => {
+    const originalCallTool = ProtocolClient.callTool;
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const deferredStorage = new MemoryStorage({ autoCleanup: false });
+    const initialDeferredToken = testDurableToken('live-nested-token-a');
+    const sellerTaskId = 'live-nested-seller-work';
+    const a2aAgent = {
+      id: 'live-nested-seller',
+      name: 'Live nested seller',
+      agent_uri: 'https://seller.example/a2a',
+      protocol: 'a2a',
+    };
+    const agent = clientWithCaps(
+      capabilities({ version: '3.0' }),
+      '3.0',
+      {
+        deferredStorage,
+        resolveDeferredAgent: async agentId => (agentId === a2aAgent.id ? a2aAgent : undefined),
+        validation: { requests: 'off', responses: 'off' },
+      },
+      a2aAgent
+    );
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-live-nested', 'Live nested')] });
+    let continuationToken;
+    agent.createMediaBuyLegacy = async () => {
+      const claimed = await store.get(continuationToken);
+      assert.equal(claimed.operation.state, 'claimed');
+      const operationId = claimed.operation.callbackOperationId;
+      const createdAt = Date.now();
+      assert.equal(
+        await deferredStorage.putForSettlementOperationIfAbsent(
+          operationId,
+          initialDeferredToken,
+          {
+            continuationVersion: 'live-nested-version-a',
+            taskId: operationId,
+            contextId: 'live-nested-context-a',
+            a2aTaskId: 'live-nested-a2a-a',
+            serverVersion: 'v3',
+            agentId: a2aAgent.id,
+            taskName: 'create_media_buy',
+            params: {},
+            messages: [],
+            settlementOperationId: operationId,
+            settlementOperationRouteRequired: true,
+            settlementResumeAuthorizationRequired: true,
+            settlementServerTaskId: sellerTaskId,
+            createdAt,
+            expiresAt: createdAt + 60_000,
+          },
+          60
+        ),
+        true
+      );
+      return {
+        success: true,
+        status: 'input-required',
+        metadata: {
+          taskId: operationId,
+          serverTaskId: sellerTaskId,
+          a2aTaskId: 'live-nested-a2a-a',
+          contextId: 'live-nested-context-a',
+          taskName: 'create_media_buy',
+          agent: { id: a2aAgent.id, name: a2aAgent.name, protocol: 'a2a' },
+          responseTimeMs: 1,
+          timestamp: new Date().toISOString(),
+          clarificationRounds: 0,
+          status: 'input-required',
+        },
+        deferred: {
+          token: initialDeferredToken,
+          resume: input => agent.client.executor.resumeDeferredTaskFromLiveClosure(initialDeferredToken, input, false),
+        },
+      };
+    };
+    let sellerCalls = 0;
+    ProtocolClient.callTool = async (_agent, taskName, params, options) => {
+      assert.equal(taskName, 'create_media_buy');
+      sellerCalls += 1;
+      assert.deepEqual(params, { input: { approved: true } });
+      assert.equal(options.session.taskId, 'live-nested-a2a-a');
+      return {
+        result: {
+          kind: 'task',
+          id: 'live-nested-a2a-b',
+          contextId: 'live-nested-context-b',
+          status: {
+            state: 'input-required',
+            message: {
+              kind: 'message',
+              messageId: 'live-nested-question-b',
+              role: 'agent',
+              parts: [{ kind: 'data', data: { status: 'input-required', question: 'Approve?' } }],
+            },
+          },
+          artifacts: [
+            {
+              artifactId: 'live-nested-work-b',
+              metadata: { adcp_task_id: sellerTaskId },
+              parts: [],
+            },
+          ],
+        },
+      };
+    };
+
+    let recoverCallback;
+    const registerRecovery = agent.registerDurableSettlementRecovery.bind(agent);
+    agent.registerDurableSettlementRecovery = recoverer => {
+      recoverCallback = recoverer;
+      return registerRecovery(recoverer);
+    };
+    let injectedCallback = false;
+    const registerReplacement = agent.registerDurableDeferredResumeTokenReplacement.bind(agent);
+    agent.registerDurableDeferredResumeTokenReplacement = replacer =>
+      registerReplacement(async (operationId, currentToken, replacementToken) => {
+        if (!injectedCallback) {
+          injectedCallback = true;
+          const callback = await recoverCallback(operationId, {
+            status: 'completed',
+            result: { media_buy_id: 'buy-live-nested-callback', packages: [] },
+            serverTaskId: sellerTaskId,
+            taskType: 'create_media_buy',
+            idempotencyKey: 'live-nested-callback-event',
+          });
+          assert.equal(callback.settled, true);
+          await callback.afterDispatch?.();
+        }
+        return replacer(operationId, currentToken, replacementToken);
+      });
+    let coordinator;
+    try {
+      coordinator = await agent.negotiateMediaBuyLifecycle({
+        principalScope: 'buyer-live-nested',
+        legacyPurchaseContinuationStore: store,
+      });
+      const discovery = await coordinator.requestProposals({
+        idempotency_key: 'request-proposals-live-nested-0001',
+        account: { account_id: 'account-live-nested' },
+        brand: { domain: 'example.com' },
+        brief: 'Pause twice through the live compatibility wrapper',
+      });
+      continuationToken = discovery.data.purchase_continuation.continuation_token;
+      const paused = await coordinator.continueLegacyPurchase({
+        idempotency_key: '6aec2638-506c-48c7-909b-b0e1798fcafe',
+        continuation_token: continuationToken,
+        account: { account_id: 'account-live-nested' },
+        selected_product_ids: ['p-live-nested'],
+        accepted_losses: discovery.data.purchase_continuation.losses,
+        legacy_create_request: {
+          idempotency_key: 'legacy-live-nested-create-0001',
+          account: { account_id: 'account-live-nested' },
+          brand: { domain: 'example.com' },
+          packages: [{ product_id: 'p-live-nested', budget: 10, pricing_option_id: 'fixed-cpm' }],
+          start_time: '2099-01-01T00:00:00Z',
+          end_time: '2099-02-01T00:00:00Z',
+        },
+      });
+      assert.equal(paused.status, 'input-required');
+      assert.equal(paused.deferred.token, initialDeferredToken);
+      const claimed = await store.get(continuationToken);
+      assert.equal(claimed.operation.state, 'claimed');
+      assert.equal(claimed.operation.deferredTaskToken, initialDeferredToken);
+
+      const originalRecordDeferredTaskToken = store.recordDeferredTaskToken.bind(store);
+      const handoffObservations = [];
+      store.recordDeferredTaskToken = async (token, claim, replacementToken, expectedToken) => {
+        if (expectedToken !== undefined) {
+          handoffObservations.push({
+            expectedToken,
+            replacementToken,
+            oldCheckpointPresent: await deferredStorage.has(expectedToken),
+            replacementCheckpointPresent: await deferredStorage.has(replacementToken),
+          });
+        }
+        return originalRecordDeferredTaskToken(token, claim, replacementToken, expectedToken);
+      };
+
+      const completedDuringHandoff = await paused.deferred.resume({ approved: true });
+      assert.equal(completedDuringHandoff.status, 'completed');
+      assert.equal(completedDuringHandoff.data.media_buy_id, 'buy-live-nested-callback');
+      const replacementToken = handoffObservations[0].replacementToken;
+      assert.notEqual(replacementToken, initialDeferredToken);
+      assert.equal(handoffObservations.length, 1, 'the callback must bind B before the original coordinator CAS');
+      assert.deepEqual(handoffObservations[0], {
+        expectedToken: initialDeferredToken,
+        replacementToken,
+        oldCheckpointPresent: true,
+        replacementCheckpointPresent: true,
+      });
+      const deferredWinner = await deferredStorage.getBySettlementOperationId(
+        (await store.get(continuationToken)).operation.callbackOperationId
+      );
+      assert.equal(deferredWinner.token, replacementToken);
+      assert.equal(deferredWinner.state.settlementTerminalResult.data.media_buy_id, 'buy-live-nested-callback');
+      const completed = await store.get(continuationToken);
+      assert.equal(completed.operation.state, 'completed');
+      assert.equal(completed.operation.deferredTaskToken, replacementToken);
+      assert.equal(sellerCalls, 1);
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+      coordinator?.dispose();
+      deferredStorage.destroy();
+    }
+  });
+
+  test('recovers a legacy purchase callback from durable state after the local settlement route is lost', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const webhookRegistrationStore = new InMemoryWebhookRegistrationStore();
+    const webhookSecret = 'restart-recovery-webhook-secret';
+    const sellerTaskId = 'restart-recovery-seller-task';
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0', {
+      webhookSecret,
+      webhookRegistrationStore,
+    });
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-restart-recovery', 'Restart recovery')] });
+    let releaseSellerResponse;
+    let markDispatchStarted;
+    const dispatchStarted = new Promise(resolve => {
+      markDispatchStarted = resolve;
+    });
+    agent.createMediaBuyLegacy = async () => {
+      markDispatchStarted();
+      await new Promise(resolve => {
+        releaseSellerResponse = resolve;
+      });
+      return completed('create_media_buy', { media_buy_id: 'buy-conflicting-inline', packages: [] });
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-restart-recovery',
+      legacyPurchaseContinuationStore: store,
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-restart-recovery-0001',
+      account: { account_id: 'account-restart-recovery' },
+      brand: { domain: 'example.com' },
+      brief: 'Restart recovery purchase',
+    });
+    const token = discovery.data.purchase_continuation.continuation_token;
+    const input = {
+      idempotency_key: '8baf407d-2954-4b1b-9dfe-3cf657a446c8',
+      continuation_token: token,
+      account: { account_id: 'account-restart-recovery' },
+      selected_product_ids: ['p-restart-recovery'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-restart-recovery-create-0001',
+        account: { account_id: 'account-restart-recovery' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-restart-recovery', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+
+    const continuation = coordinator.continueLegacyPurchase(input);
+    await dispatchStarted;
+    const claimed = await store.get(token);
+    assert.equal(claimed.operation.state, 'claimed');
+    const operationId = claimed.operation.callbackOperationId;
+    assert.equal(typeof operationId, 'string');
+    await webhookRegistrationStore.putIfAbsent({
+      agentId: AGENT.id,
+      agentUrl: AGENT.agent_uri,
+      protocol: AGENT.protocol,
+      operationId,
+      taskType: 'create_media_buy',
+      callbackUrl: `https://buyer.example/webhooks/create_media_buy/${operationId}`,
+      method: 'POST',
+      mode: 'hmac-sha256',
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+      requiresDurableSettlement: true,
+    });
+
+    // Simulate a cold replica: a fresh client/coordinator installs recovery
+    // against the shared store and has no executor-local settlement handler.
+    const replicaAgent = clientWithCaps(capabilities({ version: '3.0' }), '3.0', {
+      webhookSecret,
+      webhookRegistrationStore,
+    });
+    const replicaCoordinator = await replicaAgent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-restart-recovery',
+      legacyPurchaseContinuationStore: store,
+    });
+    const payload = {
+      idempotency_key: 'restart-recovery-webhook-event',
+      operation_id: operationId,
+      task_id: sellerTaskId,
+      task_type: 'create_media_buy',
+      status: 'completed',
+      timestamp: new Date().toISOString(),
+      result: { media_buy_id: 'buy-restart-recovery', packages: [] },
+    };
+    const rawBody = JSON.stringify(payload);
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signature = `sha256=${crypto
+      .createHmac('sha256', webhookSecret)
+      .update(`${timestamp}.${rawBody}`)
+      .digest('hex')}`;
+    assert.equal(
+      await replicaAgent.handleWebhook(payload, 'create_media_buy', operationId, signature, String(timestamp), rawBody),
+      true
+    );
+    const queued = await store.get(token);
+    assert.equal(queued.operation.state, 'claimed');
+    assert.equal(queued.operation.pendingSettlement.serverTaskId, sellerTaskId);
+    assert.equal(await store.recordSubmittedTask(token, queued.operation, sellerTaskId), true);
+
+    const laterPayload = {
+      ...payload,
+      idempotency_key: 'restart-recovery-later-webhook-event',
+      result: { media_buy_id: 'buy-conflicting-later-callback', packages: [] },
+    };
+    const laterRawBody = JSON.stringify(laterPayload);
+    const laterTimestamp = timestamp + 1;
+    const laterSignature = `sha256=${crypto
+      .createHmac('sha256', webhookSecret)
+      .update(`${laterTimestamp}.${laterRawBody}`)
+      .digest('hex')}`;
+    await assert.rejects(
+      replicaAgent.handleWebhook(
+        laterPayload,
+        'create_media_buy',
+        operationId,
+        laterSignature,
+        String(laterTimestamp),
+        laterRawBody
+      ),
+      error => error.code === 'ambiguous' && /callback event identity does not match/.test(error.message)
+    );
+    const durableCallbackWinner = await store.get(token);
+    assert.equal(durableCallbackWinner.operation.state, 'claimed');
+    assert.equal(durableCallbackWinner.operation.pendingSettlement.terminal.data.media_buy_id, 'buy-restart-recovery');
+
+    releaseSellerResponse();
+    await assert.rejects(
+      continuation,
+      error => error.code === 'ambiguous' && /earlier durably acknowledged callback/.test(error.message)
+    );
+    const durableWinner = await store.get(token);
+    assert.equal(durableWinner.operation.state, 'completed');
+    assert.equal(durableWinner.operation.result.data.media_buy_id, 'buy-restart-recovery');
+    const replay = await coordinator.continueLegacyPurchase(input);
+    assert.equal(replay.status, 'completed');
+    assert.equal(replay.data.media_buy_id, 'buy-restart-recovery');
+    replicaCoordinator.dispose();
+    coordinator.dispose();
+  });
 
   test('shares one seller polling loop between the background observer and callers', async () => {
     const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
@@ -5780,7 +8176,7 @@ describe('legacy products-only purchase continuations', () => {
     assert.equal(originalWaits, 0, 'SDK observer deadlines must never enter the remote-cancel polling path');
   });
 
-  test('starts a fresh polling epoch after a shared input-required pause', async () => {
+  test('reports a non-resumable polled pause explicitly and permits later authoritative completion', async () => {
     const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
     agent.getProducts = async () =>
       completed('get_products', { products: [legacyListedProduct('p-shared-pause', 'Shared pause')] });
@@ -5826,7 +8222,7 @@ describe('legacy products-only purchase continuations', () => {
         end_time: '2099-02-01T00:00:00Z',
       },
     });
-    assert.equal((await pending.submitted.waitForCompletion(1)).status, 'input-required');
+    await assert.rejects(pending.submitted.waitForCompletion(1), error => error.code === 'ambiguous');
     status = 'completed';
     const completion = await pending.submitted.waitForCompletion(1);
     assert.equal(completion.status, 'completed');
@@ -6298,7 +8694,7 @@ describe('legacy products-only purchase continuations', () => {
     await assert.rejects(coordinator.continueLegacyPurchase(input), error => error.code === 'ambiguous');
   });
 
-  test('returns the persisted terminal winner when submitted observers race', async () => {
+  test('rejects a custom store that substitutes a different submitted terminal winner', async () => {
     const baseStore = createInMemoryLegacyPurchaseContinuationStore();
     const winner = completed('create_media_buy', { media_buy_id: 'buy-persisted-winner', packages: [] });
     const store = {
@@ -6345,13 +8741,286 @@ describe('legacy products-only purchase continuations', () => {
       },
     };
     const pending = await coordinator.continueLegacyPurchase(input);
-    const tracked = await pending.submitted.track();
-    assert.equal(tracked.result.media_buy_id, 'buy-persisted-winner');
+    await assert.rejects(
+      pending.submitted.track(),
+      error => error.code === 'ambiguous' && /conflicts with the seller observation/.test(error.message)
+    );
     assert.equal((await coordinator.continueLegacyPurchase(input)).data.media_buy_id, 'buy-persisted-winner');
+  });
+
+  test('atomically preserves a queued callback that races a stale completion read', async () => {
+    const baseStore = createInMemoryLegacyPurchaseContinuationStore();
+    let releaseComplete;
+    const completeGate = new Promise(resolve => {
+      releaseComplete = resolve;
+    });
+    let signalCompleteEntered;
+    const completeEntered = new Promise(resolve => {
+      signalCompleteEntered = resolve;
+    });
+    const store = {
+      create: record => baseStore.create(record),
+      get: token => baseStore.get(token),
+      getByCallbackOperationId: operationId => baseStore.getByCallbackOperationId(operationId),
+      claim: (token, request) => baseStore.claim(token, request),
+      complete: async (token, claim, result) => {
+        signalCompleteEntered();
+        await completeGate;
+        return baseStore.complete(token, claim, result);
+      },
+      recordPendingSettlement: (token, claim, settlement) =>
+        baseStore.recordPendingSettlement(token, claim, settlement),
+      claimPendingSettlementPublication: (token, claim, settlement, lease) =>
+        baseStore.claimPendingSettlementPublication(token, claim, settlement, lease),
+      releasePendingSettlementPublication: (token, claim, settlement, ownerId) =>
+        baseStore.releasePendingSettlementPublication(token, claim, settlement, ownerId),
+      acknowledgePendingSettlement: (token, claim, settlement, ownerId) =>
+        baseStore.acknowledgePendingSettlement(token, claim, settlement, ownerId),
+      recordSubmittedTask: (token, claim, taskId) => baseStore.recordSubmittedTask(token, claim, taskId),
+      recordDeferredTaskToken: (token, claim, deferredToken, expectedDeferredToken) =>
+        baseStore.recordDeferredTaskToken(token, claim, deferredToken, expectedDeferredToken),
+      markAmbiguous: (token, claim, reason) => baseStore.markAmbiguous(token, claim, reason),
+    };
+    const binding = {
+      principalScope: 'principal-race',
+      accountScope: 'account-race',
+      sellerScope: 'seller-race',
+      clientSessionScope: 'session-race',
+      sourceAdcpVersion: '3.0',
+    };
+    const claim = {
+      idempotencyKey: 'claim-race-key',
+      inputFingerprint: 'claim-race-input',
+      operationKey: 'claim-race-operation',
+      claimedAt: '2027-01-01T00:00:00Z',
+      replayExpiresAt: '2099-01-01T00:00:00Z',
+      selectedProductIds: ['p-race-store'],
+      callbackOperationId: 'callback-race-operation',
+    };
+    const token = 'store-race-token';
+    assert.equal(
+      (
+        await store.create({
+          ...binding,
+          token,
+          expiresAt: '2099-01-01T00:00:00Z',
+          issuanceFingerprint: 'issuance-race',
+          discoveryRequestFingerprint: 'discovery-race',
+          observedResponse: { products: [{ product_id: 'p-race-store' }] },
+          productIds: ['p-race-store'],
+          losses: ['feed_version_not_atomic'],
+          operation: { state: 'available' },
+        })
+      ).outcome,
+      'created'
+    );
+    assert.equal((await store.claim(token, { claim, expected: binding })).outcome, 'claimed');
+    const staleClaim = (await store.get(token)).operation;
+    const inline = completed('create_media_buy', { media_buy_id: 'buy-inline-later', packages: [] });
+    const callback = completed('create_media_buy', { media_buy_id: 'buy-callback-first', packages: [] });
+    const completing = store.complete(token, staleClaim, inline);
+    await completeEntered;
+    assert.equal(
+      (
+        await store.recordPendingSettlement(token, staleClaim, {
+          operationId: claim.callbackOperationId,
+          serverTaskId: 'seller-task-race',
+          taskType: 'create_media_buy',
+          terminal: callback,
+        })
+      ).outcome,
+      'recorded'
+    );
+    assert.equal(await store.recordSubmittedTask(token, staleClaim, 'different-seller-task'), false);
+    assert.equal(await store.recordSubmittedTask(token, staleClaim, 'seller-task-race'), true);
+    releaseComplete();
+
+    const installed = await completing;
+    assert.equal(installed.outcome, 'pending_completed');
+    assert.equal(installed.result.data.media_buy_id, 'buy-callback-first');
+    assert.equal(installed.pendingSettlement.serverTaskId, 'seller-task-race');
+    assert.equal((await store.get(token)).operation.result.data.media_buy_id, 'buy-callback-first');
+    assert.equal((await baseStore.complete(token, staleClaim, inline)).outcome, 'conflict');
+    assert.equal((await store.get(token)).operation.pendingSettlement.serverTaskId, 'seller-task-race');
+    const publicationOwnerId = 'store-race-publication-owner';
+    assert.equal(
+      await store.claimPendingSettlementPublication(token, staleClaim, installed.pendingSettlement, {
+        ownerId: publicationOwnerId,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+      true
+    );
+    assert.equal(
+      await store.acknowledgePendingSettlement(token, staleClaim, installed.pendingSettlement, publicationOwnerId),
+      true
+    );
+    const acknowledged = await store.get(token);
+    assert.equal(acknowledged.operation.pendingSettlement, undefined);
+    assert.equal(typeof acknowledged.operation.acknowledgedSettlementFingerprint, 'string');
+    assert.ok(acknowledged.operation.acknowledgedSettlementFingerprint.length > 0);
+    assert.equal(await store.acknowledgePendingSettlement(token, staleClaim, installed.pendingSettlement), true);
+    assert.equal(
+      (await store.get(token)).operation.acknowledgedSettlementFingerprint,
+      acknowledged.operation.acknowledgedSettlementFingerprint
+    );
+    assert.equal(
+      await store.acknowledgePendingSettlement(token, staleClaim, {
+        ...installed.pendingSettlement,
+        idempotencyKey: 'different-callback-event-id',
+      }),
+      true
+    );
+
+    const boundFirstToken = 'store-race-bound-first-token';
+    const boundFirstDescriptor = {
+      ...claim,
+      idempotencyKey: 'claim-race-key-bound-first',
+      inputFingerprint: 'claim-race-input-bound-first',
+      operationKey: 'claim-race-operation-bound-first',
+      callbackOperationId: 'callback-race-operation-bound-first',
+    };
+    assert.equal(
+      (
+        await store.create({
+          ...binding,
+          token: boundFirstToken,
+          expiresAt: '2099-01-01T00:00:00Z',
+          issuanceFingerprint: 'issuance-race-bound-first',
+          discoveryRequestFingerprint: 'discovery-race-bound-first',
+          observedResponse: { products: [{ product_id: 'p-race-store' }] },
+          productIds: ['p-race-store'],
+          losses: ['feed_version_not_atomic'],
+          operation: { state: 'available' },
+        })
+      ).outcome,
+      'created'
+    );
+    assert.equal(
+      (await store.claim(boundFirstToken, { claim: boundFirstDescriptor, expected: binding })).outcome,
+      'claimed'
+    );
+    const boundFirstClaim = (await store.get(boundFirstToken)).operation;
+    assert.equal(await store.recordSubmittedTask(boundFirstToken, boundFirstClaim, 'seller-task-bound-first'), true);
+    assert.equal(
+      (
+        await store.recordPendingSettlement(boundFirstToken, boundFirstClaim, {
+          operationId: boundFirstDescriptor.callbackOperationId,
+          serverTaskId: 'seller-task-bound-first',
+          taskType: 'get_products',
+          terminal: callback,
+        })
+      ).outcome,
+      'conflict'
+    );
+    assert.equal(
+      (
+        await store.recordPendingSettlement(boundFirstToken, boundFirstClaim, {
+          operationId: boundFirstDescriptor.callbackOperationId,
+          serverTaskId: 'different-seller-task',
+          taskType: 'create_media_buy',
+          terminal: callback,
+        })
+      ).outcome,
+      'conflict'
+    );
+    assert.equal(
+      (
+        await store.recordPendingSettlement(boundFirstToken, boundFirstClaim, {
+          operationId: boundFirstDescriptor.callbackOperationId,
+          serverTaskId: 'seller-task-bound-first',
+          taskType: 'create_media_buy',
+          terminal: callback,
+        })
+      ).outcome,
+      'recorded'
+    );
+  });
+
+  test('surfaces ambiguity when an atomically promoted callback conflicts with an inline seller result', async () => {
+    const baseStore = createInMemoryLegacyPurchaseContinuationStore();
+    const callbackWinner = completed('create_media_buy', {
+      media_buy_id: 'buy-promoted-callback-winner',
+      packages: [],
+    });
+    let injected = false;
+    const store = {
+      create: record => baseStore.create(record),
+      get: token => baseStore.get(token),
+      getByCallbackOperationId: operationId => baseStore.getByCallbackOperationId(operationId),
+      claim: (token, request) => baseStore.claim(token, request),
+      complete: async (token, claim, result) => {
+        if (!injected) {
+          injected = true;
+          assert.equal(
+            (
+              await baseStore.recordPendingSettlement(token, claim, {
+                operationId: claim.callbackOperationId,
+                serverTaskId: 'seller-task-promoted-callback',
+                taskType: 'create_media_buy',
+                terminal: callbackWinner,
+              })
+            ).outcome,
+            'recorded'
+          );
+        }
+        return baseStore.complete(token, claim, result);
+      },
+      recordPendingSettlement: (token, claim, settlement) =>
+        baseStore.recordPendingSettlement(token, claim, settlement),
+      claimPendingSettlementPublication: (token, claim, settlement, lease) =>
+        baseStore.claimPendingSettlementPublication(token, claim, settlement, lease),
+      releasePendingSettlementPublication: (token, claim, settlement, ownerId) =>
+        baseStore.releasePendingSettlementPublication(token, claim, settlement, ownerId),
+      acknowledgePendingSettlement: (token, claim, settlement, ownerId) =>
+        baseStore.acknowledgePendingSettlement(token, claim, settlement, ownerId),
+      recordSubmittedTask: (token, claim, taskId) => baseStore.recordSubmittedTask(token, claim, taskId),
+      recordDeferredTaskToken: (token, claim, deferredToken, expectedDeferredToken) =>
+        baseStore.recordDeferredTaskToken(token, claim, deferredToken, expectedDeferredToken),
+      markAmbiguous: (token, claim, reason) => baseStore.markAmbiguous(token, claim, reason),
+    };
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-promoted-race', 'Promoted race')] });
+    agent.createMediaBuyLegacy = async () =>
+      completed('create_media_buy', { media_buy_id: 'buy-conflicting-inline-result', packages: [] });
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-promoted-race',
+      legacyPurchaseContinuationStore: store,
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-promoted-race-0001',
+      account: { account_id: 'account-promoted-race' },
+      brand: { domain: 'example.com' },
+      brief: 'Promoted callback race',
+    });
+    const token = discovery.data.purchase_continuation.continuation_token;
+    const input = {
+      idempotency_key: '17bcfe41-ac25-4325-bbc7-67122855a84a',
+      continuation_token: token,
+      account: { account_id: 'account-promoted-race' },
+      selected_product_ids: ['p-promoted-race'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-promoted-race-create-0001',
+        account: { account_id: 'account-promoted-race' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-promoted-race', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+
+    await assert.rejects(coordinator.continueLegacyPurchase(input), error => error.code === 'ambiguous');
+    assert.equal((await baseStore.get(token)).operation.result.data.media_buy_id, 'buy-promoted-callback-winner');
+    assert.equal((await coordinator.continueLegacyPurchase(input)).data.media_buy_id, 'buy-promoted-callback-winner');
+    coordinator.dispose();
   });
 
   test('preserves the original durable claim descriptor through submitted, ambiguous, and completed states', async () => {
     const store = createInMemoryLegacyPurchaseContinuationStore();
+    const deferredTokenA = testDurableToken('sdk-deferred-token-a');
+    const deferredTokenB = testDurableToken('sdk-deferred-token-b');
+    const deferredTokenC = testDurableToken('sdk-deferred-token-c');
     const claim = {
       idempotencyKey: 'claim-key',
       inputFingerprint: 'input-fingerprint',
@@ -6381,13 +9050,42 @@ describe('legacy products-only purchase continuations', () => {
     });
     assert.equal(created.outcome, 'created');
     assert.equal((await store.claim('store-preservation-token', { claim, expected: binding })).outcome, 'claimed');
+    assert.equal(await store.recordDeferredTaskToken('store-preservation-token', claim, deferredTokenA), true);
+    assert.equal(
+      await store.recordDeferredTaskToken('store-preservation-token', claim, deferredTokenB, deferredTokenA),
+      true
+    );
+    assert.equal(
+      await store.recordDeferredTaskToken('store-preservation-token', claim, deferredTokenC, deferredTokenA),
+      false
+    );
+    assert.equal(
+      await store.recordDeferredTaskToken('store-preservation-token', claim, deferredTokenB, deferredTokenA),
+      true
+    );
+    assert.equal((await store.get('store-preservation-token')).operation.deferredTaskToken, deferredTokenB);
     assert.equal(await store.recordSubmittedTask('store-preservation-token', claim, 'seller-task-1'), true);
+    assert.equal(await store.recordSubmittedTask('store-preservation-token', claim, 'seller-task-1'), true);
+    assert.equal(await store.recordSubmittedTask('store-preservation-token', claim, 'seller-task-2'), false);
     assert.equal(await store.markAmbiguous('store-preservation-token', claim, 'transport'), true);
     const ambiguous = await store.get('store-preservation-token');
     assert.equal(ambiguous.operation.claimedAt, claim.claimedAt);
     assert.equal(ambiguous.operation.replayExpiresAt, claim.replayExpiresAt);
     assert.equal(ambiguous.operation.sellerTaskId, 'seller-task-1');
     await store.complete('store-preservation-token', claim, winnerForStore());
+    assert.equal(await store.recordSubmittedTask('store-preservation-token', claim, 'seller-task-1'), true);
+    assert.equal(await store.recordSubmittedTask('store-preservation-token', claim, 'seller-task-2'), false);
+    assert.equal(
+      (
+        await store.complete(
+          'store-preservation-token',
+          claim,
+          completed('create_media_buy', { media_buy_id: 'buy-conflicting-store', packages: [] })
+        )
+      ).outcome,
+      'conflict'
+    );
+    assert.equal((await store.complete('store-preservation-token', claim, winnerForStore())).outcome, 'duplicate');
     const completedRecord = await store.get('store-preservation-token');
     assert.equal(completedRecord.operation.claimedAt, claim.claimedAt);
     assert.equal(completedRecord.operation.replayExpiresAt, claim.replayExpiresAt);
@@ -6396,6 +9094,100 @@ describe('legacy products-only purchase continuations', () => {
     function winnerForStore() {
       return completed('create_media_buy', { media_buy_id: 'buy-store', packages: [] });
     }
+  });
+
+  test('persists the seller task binding when a pending callback is promoted to completed', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const token = 'pending-promotion-binding-token';
+    const binding = {
+      principalScope: 'principal-promotion',
+      accountScope: 'account-promotion',
+      sellerScope: 'seller-promotion',
+      clientSessionScope: 'session-promotion',
+      sourceAdcpVersion: '3.0',
+    };
+    const claim = {
+      idempotencyKey: 'promotion-idempotency-key',
+      inputFingerprint: 'promotion-input-fingerprint',
+      operationKey: 'promotion-operation-key',
+      callbackOperationId: 'promotion-callback-operation',
+      claimedAt: '2027-01-01T00:00:00Z',
+      replayExpiresAt: '2099-01-01T00:00:00Z',
+      selectedProductIds: ['promotion-product'],
+    };
+    await store.create({
+      ...binding,
+      token,
+      expiresAt: '2099-01-01T00:00:00Z',
+      issuanceFingerprint: 'promotion-issuance',
+      discoveryRequestFingerprint: 'promotion-discovery',
+      observedResponse: { products: [] },
+      productIds: ['promotion-product'],
+      losses: [],
+      operation: { state: 'available' },
+    });
+    assert.equal((await store.claim(token, { claim, expected: binding })).outcome, 'claimed');
+    const settlement = {
+      operationId: claim.callbackOperationId,
+      serverTaskId: 'promotion-seller-task',
+      taskType: 'create_media_buy',
+      terminal: completed('create_media_buy', { media_buy_id: 'promotion-buy', packages: [] }),
+    };
+    assert.equal((await store.recordPendingSettlement(token, claim, settlement)).outcome, 'recorded');
+    assert.equal((await store.complete(token, claim, settlement.terminal)).outcome, 'pending_completed');
+    assert.equal((await store.get(token)).operation.sellerTaskId, settlement.serverTaskId);
+    for (const ownerId of ['', '   ', null, 42, {}, []]) {
+      assert.equal(
+        await store.claimPendingSettlementPublication(token, claim, settlement, {
+          ownerId,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        }),
+        false
+      );
+      assert.equal((await store.get(token)).operation.pendingSettlementPublicationLease, undefined);
+    }
+    const publicationOwnerId = 'promotion-publication-owner';
+    assert.equal(
+      await store.claimPendingSettlementPublication(token, claim, settlement, {
+        ownerId: publicationOwnerId,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+      true
+    );
+    assert.equal(
+      await store.claimPendingSettlementPublication(token, claim, settlement, {
+        ownerId: 'competing-publication-owner',
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+      false
+    );
+    assert.equal(await store.acknowledgePendingSettlement(token, claim, settlement), false);
+    assert.equal(await store.acknowledgePendingSettlement(token, claim, settlement, publicationOwnerId), true);
+    const acknowledged = await store.get(token);
+    assert.equal(typeof acknowledged.operation.acknowledgedSettlementFingerprint, 'string');
+    assert.ok(acknowledged.operation.acknowledgedSettlementFingerprint.length > 0);
+    assert.equal(await store.recordSubmittedTask(token, claim, settlement.serverTaskId), true);
+    assert.equal(await store.recordSubmittedTask(token, claim, 'different-seller-task'), false);
+  });
+
+  test('rejects a partially upgraded durable callback store at negotiation', async () => {
+    const baseStore = createInMemoryLegacyPurchaseContinuationStore();
+    const partialStore = {
+      create: record => baseStore.create(record),
+      get: token => baseStore.get(token),
+      getByCallbackOperationId: operationId => baseStore.getByCallbackOperationId(operationId),
+      claim: (token, request) => baseStore.claim(token, request),
+      complete: (token, claim, result) => baseStore.complete(token, claim, result),
+      recordSubmittedTask: (token, claim, taskId) => baseStore.recordSubmittedTask(token, claim, taskId),
+      recordDeferredTaskToken: (token, claim, deferredToken, expectedDeferredToken) =>
+        baseStore.recordDeferredTaskToken(token, claim, deferredToken, expectedDeferredToken),
+      markAmbiguous: (token, claim, reason) => baseStore.markAmbiguous(token, claim, reason),
+    };
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    await assert.rejects(
+      agent.negotiateMediaBuyLifecycle({ legacyPurchaseContinuationStore: partialStore }),
+      /must implement callback lookup, pending settlement, publication lease, acknowledgement, and deferred-token methods together/
+    );
   });
 
   test('retains an ambiguous operation fence after the seller replay window expires', async () => {
@@ -6415,6 +9207,7 @@ describe('legacy products-only purchase continuations', () => {
       replayExpiresAt: '2000-01-01T00:00:00Z',
       selectedProductIds: ['p-expired-replay'],
       sourceMutationKey: 'expired-replay-source',
+      callbackOperationId: 'expired-replay-callback',
     };
     const continuation = (token, issuanceFingerprint) => ({
       ...binding,
@@ -6431,12 +9224,284 @@ describe('legacy products-only purchase continuations', () => {
     assert.equal((await store.create(continuation('ambiguous-token', 'ambiguous-issuance'))).outcome, 'created');
     assert.equal((await store.claim('ambiguous-token', { claim, expected: binding })).outcome, 'claimed');
     assert.equal(await store.markAmbiguous('ambiguous-token', claim, 'transport_uncertain'), true);
+    assert.equal(
+      (
+        await store.recordPendingSettlement('ambiguous-token', claim, {
+          operationId: claim.callbackOperationId,
+          serverTaskId: 'expired-replay-seller-task',
+          taskType: 'create_media_buy',
+          terminal: completed('create_media_buy', { media_buy_id: 'must-not-settle', packages: [] }),
+        })
+      ).outcome,
+      'conflict'
+    );
 
     // create() runs pruning. The expired replay window must not remove the
     // ambiguous record or its operation-wide duplicate-dispatch fence.
     assert.equal((await store.create(continuation('retry-token', 'retry-issuance'))).outcome, 'created');
     assert.equal((await store.claim('retry-token', { claim, expected: binding })).outcome, 'conflict');
     assert.equal((await store.get('ambiguous-token')).operation.state, 'ambiguous');
+  });
+
+  test('retains an expired completed SDK publication outbox until owner acknowledgement', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore({ maxRecords: 2 });
+    const binding = {
+      principalScope: 'sdk-publication-principal',
+      accountScope: 'sdk-publication-account',
+      sellerScope: 'sdk-publication-seller',
+      clientSessionScope: 'sdk-publication-session',
+      sourceAdcpVersion: '3.0',
+    };
+    const claim = {
+      idempotencyKey: 'sdk-publication-key',
+      inputFingerprint: 'sdk-publication-input',
+      operationKey: 'sdk-publication-operation',
+      claimedAt: '2027-01-01T00:00:00Z',
+      replayExpiresAt: '2000-01-01T00:00:00Z',
+      selectedProductIds: ['p-sdk-publication'],
+      callbackOperationId: 'sdk-publication-callback',
+      sellerTaskId: 'sdk-publication-task',
+    };
+    const continuation = (token, issuanceFingerprint) => ({
+      ...binding,
+      token,
+      expiresAt: '2099-01-01T00:00:00Z',
+      issuanceFingerprint,
+      discoveryRequestFingerprint: `${issuanceFingerprint}-discovery`,
+      observedResponse: { products: [{ product_id: 'p-sdk-publication' }] },
+      productIds: ['p-sdk-publication'],
+      losses: ['feed_version_not_atomic'],
+      operation: { state: 'available' },
+    });
+    const token = 'sdk-publication-token';
+    assert.equal((await store.create(continuation(token, 'sdk-publication-issuance'))).outcome, 'created');
+    assert.equal((await store.claim(token, { claim, expected: binding })).outcome, 'claimed');
+    assert.equal(await store.recordSubmittedTask(token, claim, claim.sellerTaskId), true);
+    const terminal = completed('create_media_buy', { media_buy_id: 'sdk-publication-buy', packages: [] });
+    const pending = {
+      operationId: claim.callbackOperationId,
+      serverTaskId: claim.sellerTaskId,
+      taskType: 'create_media_buy',
+      publicationSource: 'sdk',
+      terminal,
+    };
+    assert.equal((await store.recordPendingSettlement(token, claim, pending)).outcome, 'recorded');
+    assert.equal((await store.complete(token, claim, terminal)).outcome, 'pending_completed');
+
+    // create() runs pruning, but the unacknowledged SDK outbox is a durable
+    // handler-publication obligation even though the replay deadline elapsed.
+    assert.equal((await store.create(continuation('other-token', 'other-issuance'))).outcome, 'created');
+    assert.ok((await store.get(token)).operation.pendingSettlement);
+
+    const ownerId = 'sdk-publication-owner';
+    assert.equal(
+      await store.claimPendingSettlementPublication(token, claim, pending, {
+        ownerId,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+      true
+    );
+    assert.equal(await store.acknowledgePendingSettlement(token, claim, pending, ownerId), true);
+    assert.equal((await store.create(continuation('replacement-token', 'replacement-issuance'))).outcome, 'capacity');
+    const acknowledgedSdkPublication = await store.get(token);
+    assert.equal(typeof acknowledgedSdkPublication.operation.acknowledgedSettlementFingerprint, 'string');
+    assert.ok(Date.parse(acknowledgedSdkPublication.operation.replayExpiresAt) > Date.now());
+
+    const originalDateNow = Date.now;
+    let senderNow = originalDateNow();
+    Date.now = () => senderNow;
+    try {
+      const senderStore = createInMemoryLegacyPurchaseContinuationStore({ maxRecords: 1 });
+      const senderToken = 'sender-publication-token';
+      const senderClaim = {
+        ...claim,
+        idempotencyKey: 'sender-publication-key',
+        inputFingerprint: 'sender-publication-input',
+        operationKey: 'sender-publication-operation',
+        callbackOperationId: 'sender-publication-callback',
+        sellerTaskId: 'sender-publication-task',
+        replayExpiresAt: new Date(Date.now() + 10).toISOString(),
+      };
+      assert.equal(
+        (await senderStore.create(continuation(senderToken, 'sender-publication-issuance'))).outcome,
+        'created'
+      );
+      assert.equal(
+        (await senderStore.claim(senderToken, { claim: senderClaim, expected: binding })).outcome,
+        'claimed'
+      );
+      assert.equal(await senderStore.recordSubmittedTask(senderToken, senderClaim, senderClaim.sellerTaskId), true);
+      const senderPending = {
+        operationId: senderClaim.callbackOperationId,
+        serverTaskId: senderClaim.sellerTaskId,
+        taskType: 'create_media_buy',
+        idempotencyKey: 'sender-publication-event',
+        terminal,
+      };
+      assert.equal(
+        (await senderStore.recordPendingSettlement(senderToken, senderClaim, senderPending)).outcome,
+        'recorded'
+      );
+      assert.equal((await senderStore.complete(senderToken, senderClaim, terminal)).outcome, 'pending_completed');
+      const senderOwnerId = 'sender-publication-owner';
+      assert.equal(
+        await senderStore.claimPendingSettlementPublication(senderToken, senderClaim, senderPending, {
+          ownerId: senderOwnerId,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        }),
+        true
+      );
+      senderNow += 11;
+      assert.equal(
+        (await senderStore.create(continuation('blocked-replacement-token', 'blocked-replacement-issuance'))).outcome,
+        'capacity'
+      );
+      assert.ok(await senderStore.get(senderToken));
+      assert.equal(
+        await senderStore.releasePendingSettlementPublication(senderToken, senderClaim, senderPending, senderOwnerId),
+        true
+      );
+      assert.equal(
+        (await senderStore.create(continuation('sender-replacement-token', 'sender-replacement-issuance'))).outcome,
+        'capacity'
+      );
+      const retainedSenderPublication = await senderStore.get(senderToken);
+      assert.ok(retainedSenderPublication.operation.pendingSettlement);
+      assert.ok(Date.parse(retainedSenderPublication.operation.replayExpiresAt) > Date.now());
+    } finally {
+      Date.now = originalDateNow;
+    }
+  });
+
+  test('extends SDK proof retention when acknowledging a completed result without an outbox', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const binding = {
+      principalScope: 'sdk-proof-principal',
+      accountScope: 'sdk-proof-account',
+      sellerScope: 'sdk-proof-seller',
+      clientSessionScope: 'sdk-proof-session',
+      sourceAdcpVersion: '3.0',
+    };
+    const claim = {
+      idempotencyKey: 'sdk-proof-key',
+      inputFingerprint: 'sdk-proof-input',
+      operationKey: 'sdk-proof-operation',
+      claimedAt: new Date().toISOString(),
+      replayExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      selectedProductIds: ['p-sdk-proof'],
+      callbackOperationId: 'sdk-proof-callback',
+      sellerTaskId: 'sdk-proof-task',
+    };
+    const token = 'sdk-proof-token';
+    assert.equal(
+      (
+        await store.create({
+          ...binding,
+          token,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          issuanceFingerprint: 'sdk-proof-issuance',
+          discoveryRequestFingerprint: 'sdk-proof-discovery',
+          observedResponse: { products: [{ product_id: 'p-sdk-proof' }] },
+          productIds: ['p-sdk-proof'],
+          losses: [],
+          operation: { state: 'available' },
+        })
+      ).outcome,
+      'created'
+    );
+    assert.equal((await store.claim(token, { claim, expected: binding })).outcome, 'claimed');
+    assert.equal(await store.recordSubmittedTask(token, claim, claim.sellerTaskId), true);
+    const terminal = completed('create_media_buy', { media_buy_id: 'sdk-proof-buy', packages: [] });
+    assert.equal((await store.complete(token, claim, terminal)).outcome, 'completed');
+    const settlement = {
+      operationId: claim.callbackOperationId,
+      serverTaskId: claim.sellerTaskId,
+      taskType: 'create_media_buy',
+      publicationSource: 'sdk',
+      terminal,
+    };
+    const acknowledgedAt = Date.now();
+    assert.equal(await store.acknowledgePendingSettlement(token, claim, settlement), true);
+    const acknowledged = await store.get(token);
+    assert.ok(Date.parse(acknowledged.operation.replayExpiresAt) >= acknowledgedAt + 7 * 24 * 60 * 60 * 1000);
+  });
+
+  test('completed callback re-emissions reserve exactly one publication owner before dispatch', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const binding = {
+      principalScope: 'completed-publication-principal',
+      accountScope: 'completed-publication-account',
+      sellerScope: 'completed-publication-seller',
+      clientSessionScope: 'completed-publication-session',
+      sourceAdcpVersion: '3.0',
+    };
+    const claim = {
+      idempotencyKey: 'completed-publication-key',
+      inputFingerprint: 'completed-publication-input',
+      operationKey: 'completed-publication-operation',
+      claimedAt: new Date().toISOString(),
+      replayExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      selectedProductIds: ['p-completed-publication'],
+      callbackOperationId: 'completed-publication-callback',
+      sellerTaskId: 'completed-publication-task',
+    };
+    const token = 'completed-publication-token';
+    assert.equal(
+      (
+        await store.create({
+          ...binding,
+          token,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          issuanceFingerprint: 'completed-publication-issuance',
+          discoveryRequestFingerprint: 'completed-publication-discovery',
+          observedResponse: { products: [{ product_id: 'p-completed-publication' }] },
+          productIds: ['p-completed-publication'],
+          losses: [],
+          operation: { state: 'available' },
+        })
+      ).outcome,
+      'created'
+    );
+    assert.equal((await store.claim(token, { claim, expected: binding })).outcome, 'claimed');
+    assert.equal(await store.recordSubmittedTask(token, claim, claim.sellerTaskId), true);
+    const terminal = completed('create_media_buy', { media_buy_id: 'completed-publication-buy', packages: [] });
+    assert.equal((await store.complete(token, claim, terminal)).outcome, 'completed');
+    const first = {
+      operationId: claim.callbackOperationId,
+      serverTaskId: claim.sellerTaskId,
+      taskType: 'create_media_buy',
+      idempotencyKey: 'completed-publication-delivery-a',
+      terminal,
+    };
+    const second = { ...first, idempotencyKey: 'completed-publication-delivery-b' };
+    const reservations = await Promise.all([
+      store.recordPendingSettlement(token, claim, first),
+      store.recordPendingSettlement(token, claim, second),
+    ]);
+    assert.deepEqual(reservations.map(result => result.outcome).sort(), ['duplicate', 'recorded']);
+    const reserved = await store.get(token);
+    assert.equal(reserved.operation.state, 'completed');
+    assert.equal(reserved.operation.pendingSettlement.idempotencyKey, first.idempotencyKey);
+
+    const leases = await Promise.all([
+      store.claimPendingSettlementPublication(token, claim, reserved.operation.pendingSettlement, {
+        ownerId: 'completed-publication-owner-a',
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+      store.claimPendingSettlementPublication(token, claim, reserved.operation.pendingSettlement, {
+        ownerId: 'completed-publication-owner-b',
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    ]);
+    assert.deepEqual(leases.slice().sort(), [false, true]);
+    const ownerId = leases[0] ? 'completed-publication-owner-a' : 'completed-publication-owner-b';
+    assert.equal(
+      await store.acknowledgePendingSettlement(token, claim, reserved.operation.pendingSettlement, ownerId),
+      true
+    );
+    const acknowledged = await store.get(token);
+    assert.equal(acknowledged.operation.pendingSettlement, undefined);
+    assert.equal(acknowledged.operation.acknowledgedSettlementFingerprint, legacyPurchaseSettlementFingerprint(first));
   });
 
   test('declares missing seller replay guarantees for 3.0 and 3.1 continuations', async () => {
@@ -7885,7 +10950,7 @@ describe('MediaBuyLifecycleCoordinator mutation boundaries', () => {
   });
 
   test('readback fields are gated by the exact established schema version', async () => {
-    for (const version of ['3.0', '3.1', '3.2.0-beta.4']) {
+    for (const version of ['3.0', '3.1', '3.2.0-beta.5']) {
       const tools = version.startsWith('3.2')
         ? [...COMPACT_TOOLS, 'get_media_buys', 'get_media_buy_delivery']
         : undefined;
@@ -10527,7 +13592,7 @@ describe('MediaBuyLifecycleCoordinator mutation boundaries', () => {
   });
 
   test('rejects media-buy cancellation combined with name on compact and established lifecycles', async () => {
-    for (const { version, tools } of [{ version: '3.0' }, { version: '3.2.0-beta.4', tools: COMPACT_TOOLS }]) {
+    for (const { version, tools } of [{ version: '3.0' }, { version: '3.2.0-beta.5', tools: COMPACT_TOOLS }]) {
       const agent = clientWithCaps(capabilities({ version, tools }));
       let mutations = 0;
       agent.updateMediaBuy = async () => {

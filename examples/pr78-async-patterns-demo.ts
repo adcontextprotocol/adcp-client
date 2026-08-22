@@ -103,7 +103,7 @@ async function main() {
   const humanApprovalHandler = (context: any) => {
     if (context.inputRequest.field === 'final_approval') {
       console.log('• Handler choosing to defer for human approval...');
-      return { defer: true, token: `approval-${Date.now()}` };
+      return { defer: true, token: crypto.randomUUID() };
     }
     return 'auto-approved';
   };
@@ -113,7 +113,7 @@ async function main() {
 
     if (result.status === 'deferred' && result.deferred) {
       console.log('✅ Task successfully deferred!');
-      console.log(`   Token: ${result.deferred.token}`);
+      console.log('   Continuation capability retained privately by the resume closure.');
       console.log(`   Question: ${result.deferred.question}`);
 
       // Later, when human provides input...

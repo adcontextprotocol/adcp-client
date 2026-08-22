@@ -553,9 +553,14 @@ function generateLlmsTxt(
   ln(`import { serve } from '@adcp/sdk';`);
   ln(`import {`);
   ln(`  createAdcpServerFromPlatform,`);
+  ln(`  createIdempotencyStore,`);
   ln(`  definePlatform,`);
   ln(`  defineSignalsPlatform,`);
+  ln(`  memoryBackend,`);
   ln(`} from '@adcp/sdk/server';`);
+  ln();
+  ln(`// Single-process example. Use pgBackend(pool) or redisBackend(client) in production.`);
+  ln(`const idempotency = createIdempotencyStore({ backend: memoryBackend(), ttlSeconds: 86400 });`);
   ln();
   ln(`const platform = definePlatform({`);
   ln(`  capabilities: {`);
@@ -574,11 +579,12 @@ function generateLlmsTxt(
   ln(`serve(() => createAdcpServerFromPlatform(platform, {`);
   ln(`  name: 'My Signals Agent',`);
   ln(`  version: '1.0.0',`);
+  ln(`  idempotency,`);
   ln(`})); // http://localhost:3001/mcp`);
   ln('```');
   ln();
   ln(
-    `Compile-time enforcement: \`RequiredPlatformsFor<S>\` catches missing specialism methods. Capability projection auto-derives \`get_adcp_capabilities\` blocks (\`audience_targeting\`, \`conversion_tracking\`, \`compliance_testing.scenarios\`, etc.). Idempotency, RFC 9421 signing, async tasks, and status normalization are framework-owned. Synchronous terminal responses do not emit completion webhooks by default; \`autoEmitCompletionWebhooks: true\` is available only as a non-conformant compatibility extension.`
+    `Compile-time enforcement: \`RequiredPlatformsFor<S>\` catches missing specialism methods. Capability projection auto-derives \`get_adcp_capabilities\` blocks (\`audience_targeting\`, \`conversion_tracking\`, \`compliance_testing.scenarios\`, etc.). Idempotency, RFC 9421 signing, async tasks, and status normalization are framework-owned. Under AdCP 3.2, synchronous terminal responses remain silent on the task-webhook channel; the deprecated \`autoEmitCompletionWebhooks\` option is ignored.`
   );
   ln();
   ln(
@@ -751,7 +757,7 @@ function generateLlmsTxt(
   ln('```');
   ln();
   ln(
-    `For exhaustive handling across all seven statuses, prefer the \`match()\` dispatcher (fluent method on every result returned from the SDK, or free function import):`
+    `For exhaustive handling across all eight statuses, prefer the \`match()\` dispatcher (fluent method on every result returned from the SDK, or free function import):`
   );
   ln();
   ln('```typescript');
@@ -762,6 +768,7 @@ function generateLlmsTxt(
   ln("  'governance-denied': r => `Denied: ${r.adcpError?.code ?? r.error}`,");
   ln('  working: r => `Running: ${r.metadata.taskId}`,');
   ln("  'input-required': r => `Needs input: ${r.metadata.inputRequest?.question}`,");
+  ln("  'auth-required': r => `Needs authorization: ${r.metadata.taskId}`,");
   ln('  deferred: r => `Deferred: ${r.deferred?.token}`,');
   ln('});');
   ln('// Optional `_` catchall makes every arm optional:');
@@ -1112,7 +1119,12 @@ function generateLlmsTxt(
   ln(`Every tool call returns a \`TaskResult\` with one of these statuses:`);
   ln();
   ln(`- \`completed\` — Success. Data in \`result.data\`.`);
-  ln(`- \`input-required\` — Agent needs clarification. Use \`InputHandler\` or \`result.deferred.resume(answer)\`.`);
+  ln(
+    `- \`input-required\` — Agent needs clarification. On A2A, when the seller returns a task ID, an \`InputHandler\` can continue the exchange and a handler-less call exposes \`result.deferred.resume(answer)\` for that exact task. A2A without a task ID and all MCP pauses return without invoking an input handler or attaching a resume closure; use an application/protocol-specific recovery path.`
+  );
+  ln(
+    `- \`auth-required\` — Agent requires refreshed authorization. Resume only when the returned A2A pause carries an exact-task continuation; otherwise use an application/protocol-specific recovery path.`
+  );
   ln(`- \`submitted\` — Long-running. Poll via \`result.submitted.waitForCompletion()\` or use webhooks.`);
   ln(`- \`working\` — In progress (intermediate, usually not seen by callers).`);
   ln(`- \`deferred\` — Requires human decision. Token in \`result.deferred.token\`.`);
@@ -1232,7 +1244,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`interface TaskResult<T = any> {`);
   ln(`  success: boolean;`);
   ln(`  status: 'completed' | 'deferred' | 'submitted' | 'input-required'`);
-  ln(`        | 'working' | 'governance-denied';`);
+  ln(`        | 'auth-required' | 'working' | 'failed' | 'governance-denied';`);
   ln(`  data?: T;`);
   ln(`  error?: string;`);
   ln(`  deferred?: DeferredContinuation<T>;`);
@@ -1240,6 +1252,9 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  governance?: GovernanceCheckResult;`);
   ln(`  metadata: {`);
   ln(`    taskId: string;`);
+  ln(`    contextId?: string;         // Seller conversation identity`);
+  ln(`    serverTaskId?: string;      // AdCP tasks/get work handle`);
+  ln(`    a2aTaskId?: string;         // Live A2A transport Task.id for threading`);
   ln(`    taskName: string;`);
   ln(`    agent: { id: string; name: string; protocol: string };`);
   ln(`    responseTimeMs: number;`);

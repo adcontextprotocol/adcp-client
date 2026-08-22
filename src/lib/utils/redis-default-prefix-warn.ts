@@ -85,7 +85,8 @@ export function maybeWarnOnSharedRedisPrefix(options: WarnOnSharedRedisPrefixOpt
       `If this Redis db is shared with another AdCP deployment (or other apps), the per-tenant scope ` +
       `segment alone is not enough to prevent cross-deployment collision. Set a deployment-unique ` +
       `keyPrefix (e.g., "${options.defaultKeyPrefix}prod-eu:") or use a dedicated Redis db. ` +
-      `Pass { suppressDefaultPrefixWarning: true } to silence this once you've confirmed isolation.`
+      `In development/test, pass { suppressDefaultPrefixWarning: true } to silence this warning. ` +
+      `For a dedicated database outside development/test, pass { acknowledgeIsolatedDatabase: true }.`
   );
 }
 

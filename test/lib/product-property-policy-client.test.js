@@ -3,6 +3,7 @@ const assert = require('node:assert');
 
 const { AdCPClient } = require('../../dist/lib/index.js');
 const { ProtocolClient } = require('../../dist/lib/protocols');
+const { memoryBackend } = require('../../dist/lib/server/idempotency/backends/memory.js');
 
 const originalCallTool = ProtocolClient.callTool;
 
@@ -262,6 +263,28 @@ describe('client product property policy enforcement', () => {
   test('filters completed get_products webhooks using the original request property_list', async () => {
     const handlerCalls = [];
     const listCalls = [];
+    const backend = memoryBackend({ sweepIntervalMs: 0 });
+    const replaceIfPayloadHash = backend.replaceIfPayloadHash.bind(backend);
+    let releaseClaimFence;
+    let markClaimFenceEntered;
+    let claimFencePaused = false;
+    const claimFenceEntered = new Promise(resolve => {
+      markClaimFenceEntered = resolve;
+    });
+    backend.replaceIfPayloadHash = async (...args) => {
+      if (
+        !claimFencePaused &&
+        String(args[0]).endsWith('\u001fwebhook_property_event_0001') &&
+        args[2]?.response?.claimToken
+      ) {
+        claimFencePaused = true;
+        markClaimFenceEntered();
+        await new Promise(resolve => {
+          releaseClaimFence = resolve;
+        });
+      }
+      return replaceIfPayloadHash(...args);
+    };
 
     ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
       assert.strictEqual(taskName, 'get_products');
@@ -287,6 +310,7 @@ describe('client product property policy enforcement', () => {
         },
       },
       handlers: {
+        webhookDedup: { backend },
         onGetProductsStatusChange: (response, metadata) => handlerCalls.push({ response, metadata }),
       },
     });
@@ -307,22 +331,53 @@ describe('client product property policy enforcement', () => {
     assert.strictEqual(submitted.status, 'submitted');
     const retainedPolicyState = agent.client.productPolicyRequestParamsByTask.get(submitted.metadata.taskId);
     assert.strictEqual(retainedPolicyState.request.property_list.auth_token, 'list-token');
-    const handled = await agent.handleWebhook(
-      {
-        idempotency_key: 'webhook-event-1',
-        operation_id: submitted.metadata.taskId,
-        task_id: 'seller-task-1',
-        task_type: 'get_products',
-        status: 'completed',
-        timestamp: '2026-06-02T12:00:00.000Z',
-        result: {
-          products: [makeProduct('safe', 'www.example.com'), makeProduct('blocked', 'www.ladbible.com')],
-          cache_scope: 'public',
+    assert.strictEqual(
+      await agent.handleWebhook(
+        {
+          idempotency_key: 'webhook_property_working_0001',
+          operation_id: submitted.metadata.taskId,
+          task_id: 'seller-task-1',
+          task_type: 'get_products',
+          status: 'working',
+          timestamp: '2026-06-02T11:59:00.000Z',
+          result: {},
         },
-      },
-      'get_products',
-      submitted.metadata.taskId
+        'get_products',
+        submitted.metadata.taskId
+      ),
+      true
     );
+    assert.strictEqual(
+      retainedPolicyState.request.property_list.auth_token,
+      'list-token',
+      'a nonterminal event must retain policy state for the eventual completion'
+    );
+    handlerCalls.length = 0;
+    const webhook = {
+      idempotency_key: 'webhook_property_event_0001',
+      operation_id: submitted.metadata.taskId,
+      task_id: 'seller-task-1',
+      task_type: 'get_products',
+      status: 'completed',
+      timestamp: '2026-06-02T12:00:00.000Z',
+      result: {
+        products: [makeProduct('safe', 'www.example.com'), makeProduct('blocked', 'www.ladbible.com')],
+        cache_scope: 'public',
+      },
+    };
+    const winningDelivery = agent.handleWebhook(webhook, 'get_products', submitted.metadata.taskId);
+    await claimFenceEntered;
+    await assert.rejects(
+      agent.handleWebhook(webhook, 'get_products', submitted.metadata.taskId),
+      error => error?.code === 'webhook_publication_in_progress'
+    );
+    assert.strictEqual(
+      retainedPolicyState.request.property_list.auth_token,
+      'list-token',
+      'an in-progress retry must not clear the winning delivery policy context'
+    );
+    releaseClaimFence();
+    const handled = await winningDelivery;
 
     assert.strictEqual(handled, true);
     assert.strictEqual(retainedPolicyState.request, undefined);
@@ -353,6 +408,26 @@ describe('client product property policy enforcement', () => {
         authToken: 'list-token',
       },
     ]);
+
+    assert.strictEqual(await agent.handleWebhook(webhook, 'get_products', submitted.metadata.taskId), true);
+    assert.strictEqual(handlerCalls.length, 1, 'the exact sender retry must not rerun the handler');
+    assert.strictEqual(listCalls.length, 1, 'the exact sender retry must not rerun request-scoped policy resolution');
+
+    await assert.rejects(
+      agent.handleWebhook(
+        {
+          ...webhook,
+          result: {
+            ...webhook.result,
+            products: [makeProduct('changed', 'www.example.com')],
+          },
+        },
+        'get_products',
+        submitted.metadata.taskId
+      ),
+      error => error?.code === 'webhook_idempotency_conflict'
+    );
+    assert.strictEqual(handlerCalls.length, 1);
   });
 
   test('filters submitted get_products polling continuations before caller receives products', async () => {

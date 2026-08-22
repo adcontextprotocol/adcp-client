@@ -1345,7 +1345,7 @@ describe('Response Unwrapper', () => {
     test('get_products structured rejection is a successful business outcome', () => {
       const structuredRejection = {
         status: 'rejected',
-        adcp_version: '3.2-beta.4',
+        adcp_version: '3.2-beta.5',
         reason: 'No inventory matches the requested brief',
         suggestions: ['Try broadening the requested geography'],
       };
@@ -1367,8 +1367,8 @@ describe('Response Unwrapper', () => {
       );
       const versionlessRejection = { ...structuredRejection };
       delete versionlessRejection.adcp_version;
-      assert.strictEqual(isTerminalAdcpError(versionlessRejection, 'get_products', '3.2.0-beta.4'), false);
-      assert.strictEqual(isAdcpSuccess(versionlessRejection, 'get_products', '3.2.0-beta.4'), true);
+      assert.strictEqual(isTerminalAdcpError(versionlessRejection, 'get_products', '3.2.0-beta.5'), false);
+      assert.strictEqual(isAdcpSuccess(versionlessRejection, 'get_products', '3.2.0-beta.5'), true);
       assert.strictEqual(isTerminalAdcpError(versionlessRejection, 'get_products', '3.1.18'), true);
       assert.strictEqual(isTerminalAdcpError({ ...structuredRejection, suggestions: [] }, 'get_products'), true);
       assert.strictEqual(isTerminalAdcpError({ ...structuredRejection, reason: '' }, 'get_products'), true);

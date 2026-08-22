@@ -8,7 +8,12 @@ This guide helps you migrate from the old synchronous ADCP client patterns to th
 
 ### 1. Handler-Controlled Flow
 **Old**: Complex configuration objects and timeout management  
-**New**: Input handlers are mandatory for server input requests
+**New**: On A2A, when the seller supplies a task ID, input handlers continue
+server input requests while the protocol exchange is active; without one, the
+SDK returns a continuation for that exact task. A2A without a task ID and MCP
+return the pause without invoking an input handler or supplying a
+`deferred.resume` closure, so the application needs a protocol-specific
+recovery path.
 
 ```typescript
 // ❌ Old Pattern
@@ -43,7 +48,7 @@ const result = await client.agent('my-agent').getProducts({
 | **Completed** | `completed` | Task finished immediately | Use `result.data` |
 | **Working** | `working` | Server processing (≤120s) | Keep connection open |
 | **Submitted** | `submitted` | Long-running (hours/days) | Use webhook/polling |
-| **Input Required** | `input-required` | Handler mandatory | Handler provides input |
+| **Input Required** | `input-required` | Seller needs input | A2A can use a handler or resume when task identity is present; otherwise A2A and MCP return a nonresumable pause |
 
 ### 3. Type-Safe Continuations
 **Old**: Manual polling and state management  
@@ -65,7 +70,8 @@ if (result.status === 'submitted' && result.submitted) {
   // Long-running task - use webhook or polling
   const final = await result.submitted.waitForCompletion(30000);
 } else if (result.status === 'deferred' && result.deferred) {
-  // Client deferred - resume when ready
+  // A2A or client deferral - resume when ready. Do not assume this exists for
+  // a handler-less MCP input-required/auth-required response.
   const final = await result.deferred.resume(userInput);
 }
 ```
@@ -83,7 +89,6 @@ import {
   ADCPMultiAgentClient,
   createFieldHandler,
   createConditionalHandler,
-  InputRequiredError,
   type TaskResult,
   type DeferredContinuation,
   type SubmittedContinuation
@@ -208,7 +213,7 @@ if (result.status === 'submitted' && result.submitted) {
 const humanApprovalHandler = (context) => {
   if (context.inputRequest.field === 'final_approval') {
     // Defer for human approval
-    return { defer: true, token: `approval-${Date.now()}` };
+    return { defer: true, token: crypto.randomUUID() };
   }
   return 'auto-approved';
 };
@@ -216,7 +221,8 @@ const humanApprovalHandler = (context) => {
 const result = await agent.getProducts(params, humanApprovalHandler);
 
 if (result.status === 'deferred' && result.deferred) {
-  console.log(`Deferred with token: ${result.deferred.token}`);
+  await approvedContinuationStore.save(result.deferred.token);
+  console.log('Deferred; continuation stored securely.');
   console.log(`Question: ${result.deferred.question}`);
   
   // Later, when human provides input...
@@ -237,8 +243,7 @@ try {
 }
 
 // ✅ New Pattern - Specific error types
-import { 
-  InputRequiredError,
+import {
   TaskTimeoutError,
   MaxClarificationError,
   DeferredTaskError
@@ -254,18 +259,15 @@ try {
   }
   
 } catch (error) {
-  if (error instanceof InputRequiredError) {
-    console.error('Handler required but not provided:', error.message);
-    // Add a handler to your call
-  } else if (error instanceof TaskTimeoutError) {
+  if (error instanceof TaskTimeoutError) {
     console.error('Task timed out:', error.message);
     // Consider using submitted tasks for long-running operations
   } else if (error instanceof MaxClarificationError) {
     console.error('Too many clarifications:', error.message);
     // Improve your handler logic
   } else if (error instanceof DeferredTaskError) {
-    console.log('Task deferred with token:', error.token);
-    // Normal flow for deferred tasks
+    await approvedContinuationStore.save(error.token);
+    console.log('Task deferred; continuation stored securely.');
   } else {
     console.error('Unexpected error:', error.message);
   }
@@ -386,7 +388,10 @@ results.forEach((result, index) => {
 - ❌ Manual task polling without structured continuations
 
 ### New Requirements
-- ✅ Input handlers are mandatory for `input-required` status
+- ✅ Treat an MCP pause as nonresumable by the SDK; no input handler is invoked
+  and the application needs a protocol-specific recovery path
+- ✅ Handler-less A2A pauses with a seller task ID can resume that exact task
+  through `result.deferred.resume(...)`
 - ✅ Explicit handling of `working`, `submitted`, and `deferred` statuses
 - ✅ Use structured continuation objects for async operations
 - ✅ Handle specific error types for better debugging
@@ -394,7 +399,9 @@ results.forEach((result, index) => {
 ### Behavioral Changes
 - **Working tasks**: Now have a strict 120-second limit with keep-alive connections
 - **Submitted tasks**: Require webhook setup or explicit polling
-- **Input handling**: Must be provided via handlers, no default behavior
+- **Input handling**: A2A handlers continue the live exchange and handler-less
+  pauses retain an exact-task continuation only when the seller returns a task
+  ID. A2A without one and MCP invoke no handler and carry no SDK continuation.
 - **Task tracking**: Built into continuation objects, no manual ID management
 
 ## Migration Checklist

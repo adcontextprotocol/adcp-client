@@ -66,7 +66,9 @@
  * client.on('error', (err) => console.error('redis error', err));
  * await client.connect();
  *
- * const replayStore = new RedisReplayStore(client);
+ * const replayStore = new RedisReplayStore(client, {
+ *   keyPrefix: 'adcp:replay:prod-eu:',
+ * });
  *
  * app.use(createExpressVerifier({
  *   capability: { ... },
@@ -144,10 +146,11 @@ export interface RedisReplayStoreOptions {
    * to `"adcp:replay:"`.
    *
    * **Sharing a Redis db across deployments? Override this.** The
-   * default is fine for a dedicated Redis (or db index). Two verifier
-   * deployments sharing the same db with the same default prefix can
-   * collide on overlapping `keyid`s — set a deployment-unique prefix
-   * or use separate dbs.
+   * Two verifier deployments sharing the same db with the same default
+   * prefix can collide on overlapping `keyid`s — set a deployment-unique
+   * prefix or use separate dbs. Outside development and test, using the
+   * default with a dedicated database additionally requires
+   * `acknowledgeIsolatedDatabase: true`.
    */
   keyPrefix?: string;
   /**
@@ -169,8 +172,18 @@ export interface RedisReplayStoreOptions {
   /**
    * Suppress the one-time `console.warn` at construction when the
    * default `keyPrefix` is used against a node-redis client on db 0.
+   * This controls development/test warnings only; it is not a
+   * production isolation acknowledgement.
    */
   suppressDefaultPrefixWarning?: boolean;
+  /**
+   * Explicitly acknowledge that this client uses a Redis database isolated
+   * to one AdCP deployment. Outside development and test, this is required
+   * when `keyPrefix` is omitted, blank, or equal to the shared SDK default.
+   * Prefer a deployment-unique `keyPrefix`; use this only for a dedicated
+   * database whose isolation is enforced operationally.
+   */
+  acknowledgeIsolatedDatabase?: boolean;
 }
 
 /**
@@ -252,8 +265,10 @@ return 'ok'
  * Matches the Postgres backend's defensive guard so a buggy `options.now()`
  * injection can't DoS the verifier with Redis parse errors.
  */
+const MAX_UNIX_SECONDS = 253_402_300_799; // 9999-12-31T23:59:59Z
+
 function assertFiniteSeconds(label: string, value: number): void {
-  if (!Number.isFinite(value) || value < 0 || value > Number.MAX_SAFE_INTEGER) {
+  if (!Number.isFinite(value) || value < 0 || value > MAX_UNIX_SECONDS) {
     throw new TypeError(`RedisReplayStore: ${label} must be a finite non-negative number; received ${value}`);
   }
 }
@@ -266,12 +281,15 @@ export class RedisReplayStore implements ReplayStore {
 
   constructor(client: ReplayRedisBackendClient, options: RedisReplayStoreOptions = {}) {
     this.c = client as ReplayRedisLikeClient;
+    if (options.keyPrefix !== undefined && typeof options.keyPrefix !== 'string') {
+      throw new Error('RedisReplayStore: keyPrefix must be a string when provided.');
+    }
     this.keyPrefix = options.keyPrefix ?? DEFAULT_KEY_PREFIX;
     this.cap = options.cap ?? DEFAULT_CAP;
     this.setTtlGraceSeconds = options.setTtlGraceSeconds ?? DEFAULT_SET_TTL_GRACE_SECONDS;
 
-    if (!Number.isFinite(this.cap) || this.cap <= 0) {
-      throw new Error(`RedisReplayStore: cap must be a positive finite number. Got ${this.cap}.`);
+    if (!Number.isSafeInteger(this.cap) || this.cap <= 0) {
+      throw new Error(`RedisReplayStore: cap must be a positive safe integer. Got ${this.cap}.`);
     }
     if (!Number.isFinite(this.setTtlGraceSeconds) || this.setTtlGraceSeconds < 0) {
       throw new Error(
@@ -279,11 +297,21 @@ export class RedisReplayStore implements ReplayStore {
       );
     }
 
+    const usesUnsafeDefaultPrefix =
+      options.keyPrefix === undefined || this.keyPrefix.trim().length === 0 || this.keyPrefix === DEFAULT_KEY_PREFIX;
+    const isAllowlistedDevEnv = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development';
+    if (!isAllowlistedDevEnv && usesUnsafeDefaultPrefix && !options.acknowledgeIsolatedDatabase) {
+      throw new Error(
+        'RedisReplayStore: non-development environments require a deployment-unique keyPrefix. ' +
+          'Use a dedicated Redis database and pass acknowledgeIsolatedDatabase: true only as an explicit isolation acknowledgement.'
+      );
+    }
+
     maybeWarnOnSharedRedisPrefix({
       client,
       callerKeyPrefix: options.keyPrefix,
       defaultKeyPrefix: DEFAULT_KEY_PREFIX,
-      suppress: options.suppressDefaultPrefixWarning,
+      suppress: options.suppressDefaultPrefixWarning || options.acknowledgeIsolatedDatabase,
       backendName: 'RedisReplayStore',
     });
   }
@@ -344,6 +372,7 @@ export class RedisReplayStore implements ReplayStore {
     assertFiniteSeconds('now', now);
     assertFiniteSeconds('ttlSeconds', ttlSeconds);
     const expiresAt = now + ttlSeconds;
+    assertFiniteSeconds('expiresAt', expiresAt);
     // `nowMs` (ARGV[6]) is `now * 1000` rather than `Date.now()` so the
     // script's "extend forward only" branch uses the SAME clock as the
     // rest of the verifier path (`now` is the verifier-supplied second-

@@ -12,8 +12,8 @@ test('sellerAdvertises31: buildVersion is advisory and never used for negotiatio
 });
 test('sellerAdvertises31: true when supportedVersions contains a >=3.1 release', () => {
   assert.equal(sellerAdvertises31({ supportedVersions: ['3.0', '3.1'] }), true);
-  assert.equal(sellerAdvertises31({ _raw: { adcp_version: '3.2-beta.4' } }), true);
-  assert.equal(sellerAdvertises31({ supportedVersions: ['3.0'], _raw: { adcp_version: '3.2-beta.4' } }), false);
+  assert.equal(sellerAdvertises31({ _raw: { adcp_version: '3.2-beta.5' } }), true);
+  assert.equal(sellerAdvertises31({ supportedVersions: ['3.0'], _raw: { adcp_version: '3.2-beta.5' } }), false);
 });
 test('sellerAdvertises31: false for legacy 3.0-only sellers / missing fields', () => {
   assert.equal(sellerAdvertises31(undefined), false);

@@ -157,14 +157,17 @@ top-level webhook body.
 ### 4. Input Required Pattern (`status: "input-required"`)
 
 **When it happens**: Server needs clarification or approval  
-**Client action**: Handler MUST provide input  
+**Client action**: For A2A with a seller task ID, use a handler during the
+active exchange or resume that exact task through the returned closure. A2A
+without a task ID and MCP return the nonterminal pause without invoking a
+handler or attaching a closure; use an application/protocol-specific recovery
+path.
 **Use cases**: Budget approval, targeting refinement, creative approval
 
 ```typescript
 import { 
   createFieldHandler, 
-  createConditionalHandler,
-  InputRequiredError 
+  createConditionalHandler
 } from '@adcp/sdk';
 
 // Simple field-based handler
@@ -189,7 +192,7 @@ const smartHandler = createConditionalHandler([
     handler: (ctx) => {
       // Defer expensive approvals to human
       if (ctx.getPreviousResponse('budget') > 75000) {
-        return { defer: true, token: `approval-${Date.now()}` };
+        return { defer: true, token: crypto.randomUUID() };
       }
       return true;
     }
@@ -212,13 +215,13 @@ try {
     console.log('Final result:', final.data);
   }
   
-} catch (error) {
-  if (error instanceof InputRequiredError) {
-    console.error('Handler missing for required input:', error.message);
-    // This means you need to provide a handler for the call
-  }
 }
 ```
+
+Do not use an `InputRequiredError` catch as the handler-less control flow.
+Inspect the returned status instead. Only A2A can attach
+`result.deferred.resume(...)` to a server pause; MCP deliberately leaves
+`deferred` absent because the protocol defines no standard continuation call.
 
 **Handler patterns**:
 ```typescript
@@ -254,7 +257,10 @@ const handler = createValidatedHandler(75000, deferAllHandler);
 ```
 
 **Key characteristics**:
-- ⚠️ Handler is MANDATORY (throws InputRequiredError if missing)
+- ⚠️ MCP pauses do not invoke an SDK input handler and return with `deferred`
+  absent; recovery is application/protocol-specific
+- 🔁 Handler-less A2A pauses expose an exact-task `deferred.resume(...)` only
+  when the seller returned a task ID
 - 🎯 Handler has full conversation context
 - 🔄 Supports multiple clarification rounds
 - 👤 Can defer to human via `{ defer: true, token }`
@@ -276,7 +282,7 @@ async function createCampaignWithApprovals(brief: string) {
         }
         
         // Second check: defer expensive budgets
-        return { defer: true, token: `budget-approval-${Date.now()}` };
+        return { defer: true, token: crypto.randomUUID() };
       }
     },
     {
@@ -292,7 +298,7 @@ async function createCampaignWithApprovals(brief: string) {
       condition: (ctx) => ctx.inputRequest.field === 'creative_approval',
       handler: (ctx) => {
         // Always defer creative approvals
-        return { defer: true, token: `creative-${Date.now()}` };
+        return { defer: true, token: crypto.randomUUID() };
       }
     }
   ], deferAllHandler);
@@ -371,7 +377,11 @@ const executor = new TaskExecutor({
   workingTimeout: 120000,
   enableConversationStorage: true,
   webhookManager: new CustomWebhookManager(),
-  deferredStorage: new RedisStorage()
+  // Must implement atomic putIfAbsent(), replaceIfVersion(), and takeIfVersion()
+  // so a continuation stays fenced through seller dispatch and cleanup.
+  deferredStorage: new RedisDeferredTaskStorage(),
+  resolveDeferredAgent: agentId => trustedAgentRegistry.get(agentId),
+  deferredTaskTtlSeconds: 7 * 24 * 60 * 60
 });
 
 async function manageTaskLifecycle() {
@@ -402,6 +412,14 @@ async function manageTaskLifecycle() {
 }
 ```
 
+Durable snapshots redact entire secret-shaped containers and truncate
+over-depth subtrees. `SingleAgentClient.getProducts()` rejects an authenticated
+request `property_list` before seller dispatch when durable storage also needs
+buyer-side request-list verification, because the credential is intentionally
+not persisted for restart recovery. Disable that verification only when the
+seller is the intended filtering trust boundary, or use a non-durable client
+for that request.
+
 ## Best Practices
 
 ### 1. Handler Design
@@ -412,8 +430,7 @@ async function manageTaskLifecycle() {
 
 ### 2. Error Handling
 ```typescript
-import { 
-  InputRequiredError,
+import {
   TaskTimeoutError,
   MaxClarificationError 
 } from '@adcp/sdk';
@@ -424,12 +441,7 @@ async function robustTaskExecution(params, handler) {
     return handleSuccess(result);
     
   } catch (error) {
-    if (error instanceof InputRequiredError) {
-      // Handler was required but not provided
-      console.error('Missing handler:', error.message);
-      return { error: 'HANDLER_REQUIRED', message: error.message };
-      
-    } else if (error instanceof TaskTimeoutError) {
+    if (error instanceof TaskTimeoutError) {
       // Working task exceeded 120 seconds
       console.error('Task timeout:', error.message);
       return { error: 'TIMEOUT', suggestion: 'Consider using submitted tasks for long operations' };

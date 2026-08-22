@@ -14,6 +14,162 @@ const DATABASE_URL = process.env.DATABASE_URL;
 
 const TABLE = 'adcp_idempotency';
 
+test('pgBackend putIfAbsent is absent-only', async () => {
+  const queries = [];
+  const pool = {
+    query: async (sql, params) => {
+      queries.push({ sql, params });
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const { pgBackend } = require('../../dist/lib/server/index.js');
+  const claimed = await pgBackend(pool).putIfAbsent('boundary-key', {
+    payloadHash: 'new-owner',
+    response: null,
+    expiresAt: Math.floor(Date.now() / 1000) + 120,
+  });
+  assert.equal(claimed, false);
+  assert.match(queries[0].sql, /ON CONFLICT \(scoped_key\) DO NOTHING/);
+  assert.doesNotMatch(queries[0].sql, /expires_at\s*</);
+});
+
+test('pgBackend expired-owner replacement combines payload hash and database-time expiry predicates', async () => {
+  const queries = [];
+  const pool = {
+    query: async (sql, params) => {
+      queries.push({ sql, params });
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const { pgBackend } = require('../../dist/lib/server/index.js');
+  const replacement = {
+    payloadHash: 'new-owner',
+    response: { version: 2 },
+    expiresAt: 2_000_000_000,
+    retainUntil: 2_000_000_100,
+  };
+
+  assert.equal(await pgBackend(pool).replaceIfPayloadHashAndExpired('scope', 'expected-owner', replacement), false);
+  assert.match(queries[0].sql, /WHERE scoped_key = \$1 AND payload_hash = \$2/);
+  assert.match(queries[0].sql, /AND expires_at < DATE_TRUNC\('second', NOW\(\)\)/);
+  assert.deepEqual(queries[0].params, [
+    'scope',
+    'expected-owner',
+    'new-owner',
+    JSON.stringify(replacement.response),
+    replacement.expiresAt,
+    replacement.retainUntil,
+  ]);
+});
+
+test('cleanupExpiredIdempotency prunes by the physical retention horizon', async () => {
+  const queries = [];
+  const pool = {
+    query: async sql => {
+      queries.push(sql);
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const { cleanupExpiredIdempotency } = require('../../dist/lib/server/index.js');
+  await cleanupExpiredIdempotency(pool);
+  assert.match(queries[0], /retain_until IS NULL/);
+  assert.match(queries[0], /retain_until IS NOT NULL/);
+  assert.match(queries[0], /expires_at < DATE_TRUNC\('second', NOW\(\)\) - INTERVAL '120 seconds'/);
+});
+
+test('pgBackend couples legacy physical retention to the configured store skew', () => {
+  const { createIdempotencyStore, pgBackend } = require('../../dist/lib/server/index.js');
+  const pool = { query: async () => ({ rows: [], rowCount: 0 }) };
+  assert.throws(
+    () => createIdempotencyStore({ backend: pgBackend(pool), clockSkewSeconds: 121 }),
+    /legacy retention grace \(120s\) must be at least clockSkewSeconds \(121s\)/
+  );
+  assert.doesNotThrow(() =>
+    createIdempotencyStore({
+      backend: pgBackend(pool, { legacyRetentionGraceSeconds: 600 }),
+      clockSkewSeconds: 600,
+    })
+  );
+});
+
+test('pgBackend payload-hash fencing replaces and deletes only the current owner', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  let row = {
+    scoped_key: 'scope',
+    payload_hash: 'owner-a',
+    response: { version: 1 },
+    expires_at: now + 3600,
+    retain_until: now + 3700,
+  };
+  const db = {
+    query: async (sql, params) => {
+      if (/^\s*SELECT payload_hash/.test(sql)) {
+        return row
+          ? {
+              rows: [
+                {
+                  payload_hash: row.payload_hash,
+                  response: row.response,
+                  expires_at: row.expires_at,
+                  retain_until: row.retain_until,
+                },
+              ],
+              rowCount: 1,
+            }
+          : { rows: [], rowCount: 0 };
+      }
+      if (/^\s*UPDATE/.test(sql)) {
+        assert.match(sql, /WHERE scoped_key = \$1 AND payload_hash = \$2/);
+        if (!row || row.scoped_key !== params[0] || row.payload_hash !== params[1]) {
+          return { rows: [], rowCount: 0 };
+        }
+        row = {
+          scoped_key: params[0],
+          payload_hash: params[2],
+          response: JSON.parse(params[3]),
+          expires_at: params[4],
+          retain_until: params[5],
+        };
+        return { rows: [{ scoped_key: row.scoped_key }], rowCount: 1 };
+      }
+      if (/^\s*DELETE/.test(sql)) {
+        assert.match(sql, /WHERE scoped_key = \$1 AND payload_hash = \$2/);
+        if (!row || row.scoped_key !== params[0] || row.payload_hash !== params[1]) {
+          return { rows: [], rowCount: 0 };
+        }
+        const scopedKey = row.scoped_key;
+        row = undefined;
+        return { rows: [{ scoped_key: scopedKey }], rowCount: 1 };
+      }
+      assert.fail(`unexpected pgBackend query: ${sql}`);
+    },
+  };
+  const { pgBackend } = require('../../dist/lib/server/index.js');
+  const backend = pgBackend(db);
+  const replacement = {
+    payloadHash: 'owner-b',
+    response: { version: 2 },
+    expiresAt: now + 7200,
+    retainUntil: now + 7500,
+  };
+
+  assert.equal(await backend.replaceIfPayloadHash('scope', 'stale-owner', replacement), false);
+  assert.deepEqual(await backend.get('scope'), {
+    payloadHash: 'owner-a',
+    response: { version: 1 },
+    expiresAt: now + 3600,
+    retainUntil: now + 3700,
+  });
+
+  assert.equal(await backend.replaceIfPayloadHash('scope', 'owner-a', replacement), true);
+  assert.deepEqual(await backend.get('scope'), replacement);
+
+  assert.equal(await backend.deleteIfPayloadHash('scope', 'owner-a'), false);
+  assert.deepEqual(await backend.get('scope'), replacement);
+  assert.equal(await backend.deleteIfPayloadHash('scope', 'owner-b'), true);
+  assert.equal(await backend.get('scope'), null);
+});
+
 describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
   let Pool, pool;
   let pgBackend, getIdempotencyMigration, IDEMPOTENCY_MIGRATION, cleanupExpiredIdempotency;
@@ -47,21 +203,26 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
 
   test('default table name is adcp_idempotency', () => {
     assert.ok(IDEMPOTENCY_MIGRATION.includes('adcp_idempotency'));
-    assert.ok(IDEMPOTENCY_MIGRATION.includes('idx_adcp_idempotency_expires_at'));
+    assert.ok(IDEMPOTENCY_MIGRATION.includes('idx_adcp_idempotency_retain_until'));
+    assert.ok(IDEMPOTENCY_MIGRATION.includes('ON "adcp_idempotency"(retain_until, expires_at)'));
+    assert.ok(!IDEMPOTENCY_MIGRATION.includes('UPDATE'));
+    assert.ok(!IDEMPOTENCY_MIGRATION.includes('retain_until SET NOT NULL'));
   });
 
   test('getIdempotencyMigration generates custom table names', () => {
     const sql = getIdempotencyMigration({ tableName: 'my_idem' });
     assert.ok(sql.includes('CREATE TABLE IF NOT EXISTS "my_idem"'));
-    assert.ok(sql.includes('idx_my_idem_expires_at'));
+    assert.ok(sql.includes('idx_my_idem_retain_until'));
   });
 
   test('getIdempotencyMigration rejects invalid identifiers', () => {
     assert.throws(() => getIdempotencyMigration({ tableName: 'DROP TABLE; --' }), /Invalid SQL identifier/);
     assert.throws(() => getIdempotencyMigration({ tableName: '123bad' }), /Invalid SQL identifier/);
     assert.throws(() => getIdempotencyMigration({ tableName: 'MixedCase' }), /Invalid SQL identifier/);
-    assert.doesNotThrow(() => getIdempotencyMigration({ tableName: `t${'x'.repeat(47)}` }));
-    assert.throws(() => getIdempotencyMigration({ tableName: `t${'x'.repeat(48)}` }), /at most 48 characters/);
+    assert.doesNotThrow(() => getIdempotencyMigration({ tableName: `t${'x'.repeat(45)}` }));
+    assert.throws(() => getIdempotencyMigration({ tableName: `t${'x'.repeat(46)}` }), /at most 46 characters/);
+    const longestValid = `t${'x'.repeat(45)}`;
+    assert.match(getIdempotencyMigration({ tableName: longestValid }), new RegExp(`idx_${longestValid}_retain_until`));
   });
 
   test('pgBackend constructor rejects invalid table names', () => {
@@ -159,20 +320,22 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
     assert.deepEqual(got.response, { v: 1 });
   });
 
-  test('putIfAbsent reclaims an expired entry', async () => {
+  test('putIfAbsent leaves an expired entry for exact-generation reclaim', async () => {
     const backend = pgBackend(pool);
     // Manually insert an expired row
     await pool.query(
-      `INSERT INTO ${TABLE} (scoped_key, payload_hash, response, expires_at) VALUES ($1, $2, $3::jsonb, TO_TIMESTAMP($4))`,
+      `INSERT INTO ${TABLE} (scoped_key, payload_hash, response, expires_at, retain_until)
+       VALUES ($1, $2, $3::jsonb, TO_TIMESTAMP($4), TO_TIMESTAMP($4))`,
       ['p\u001fk', 'stale', JSON.stringify({ stale: true }), Math.floor(Date.now() / 1000) - 120]
     );
 
-    const claimed = await backend.putIfAbsent('p\u001fk', {
+    const replacement = {
       payloadHash: 'fresh',
       response: { fresh: true },
       expiresAt: Math.floor(Date.now() / 1000) + 120,
-    });
-    assert.equal(claimed, true);
+    };
+    assert.equal(await backend.putIfAbsent('p\u001fk', replacement), false);
+    assert.equal(await backend.replaceIfPayloadHashAndExpired('p\u001fk', 'stale', replacement), true);
 
     const got = await backend.get('p\u001fk');
     assert.equal(got.payloadHash, 'fresh');
@@ -200,6 +363,46 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
     assert.equal(await backend.get('p\u001fk'), null);
   });
 
+  test('payload-hash fencing replaces and deletes only the current pg row', async () => {
+    const backend = pgBackend(pool);
+    const now = Math.floor(Date.now() / 1000);
+    await backend.put('p\u001fcas', {
+      payloadHash: 'owner-a',
+      response: { version: 1 },
+      expiresAt: now + 3600,
+      retainUntil: now + 3700,
+    });
+    const replacement = {
+      payloadHash: 'owner-b',
+      response: { version: 2 },
+      expiresAt: now + 7200,
+      retainUntil: now + 7500,
+    };
+
+    assert.equal(await backend.replaceIfPayloadHash('p\u001fcas', 'stale-owner', replacement), false);
+    assert.equal((await backend.get('p\u001fcas')).payloadHash, 'owner-a');
+    assert.equal(await backend.replaceIfPayloadHash('p\u001fcas', 'owner-a', replacement), true);
+    assert.deepEqual(await backend.get('p\u001fcas'), replacement);
+
+    assert.equal(await backend.deleteIfPayloadHash('p\u001fcas', 'owner-a'), false);
+    assert.deepEqual(await backend.get('p\u001fcas'), replacement);
+    assert.equal(await backend.deleteIfPayloadHash('p\u001fcas', 'owner-b'), true);
+    assert.equal(await backend.get('p\u001fcas'), null);
+
+    await backend.put('p\u001fexpired-cas', {
+      payloadHash: 'expired-owner',
+      response: { version: 1 },
+      expiresAt: now - 2,
+      retainUntil: now + 3700,
+    });
+    assert.equal(await backend.replaceIfPayloadHashAndExpired('p\u001fexpired-cas', 'stale-owner', replacement), false);
+    assert.equal(
+      await backend.replaceIfPayloadHashAndExpired('p\u001fexpired-cas', 'expired-owner', replacement),
+      true
+    );
+    assert.deepEqual(await backend.get('p\u001fexpired-cas'), replacement);
+  });
+
   // ────────── store + backend end-to-end ──────────
 
   test('store check/save round-trip works against real pg', async () => {
@@ -213,6 +416,7 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
       principal: 'p',
       key: 'e2e_key_abcdefghij',
       payloadHash: miss.payloadHash,
+      claimToken: miss.claimToken,
       response: { media_buy_id: 'mb_77' },
     });
 
@@ -223,7 +427,7 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
 
   test('store returns conflict on same-key different-payload', async () => {
     const store = createIdempotencyStore({ backend: pgBackend(pool), ttlSeconds: 3600 });
-    const { payloadHash } = await store.check({
+    const { payloadHash, claimToken } = await store.check({
       principal: 'p',
       key: 'conflict_key_abcdefg',
       payload: { a: 1 },
@@ -232,6 +436,7 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
       principal: 'p',
       key: 'conflict_key_abcdefg',
       payloadHash,
+      claimToken,
       response: { ok: true },
     });
 
@@ -243,13 +448,49 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
     assert.equal(conflict.kind, 'conflict');
   });
 
+  test('store refuses stale-owner save and release after a pg claim is reclaimed', async () => {
+    const backend = pgBackend(pool);
+    const store = createIdempotencyStore({ backend, ttlSeconds: 3600 });
+    const key = 'stale_pg_owner_abcdef';
+    const payload = { a: 1 };
+    const stale = await store.check({ principal: 'p', key, payload });
+    assert.equal(stale.kind, 'miss');
+    await backend.delete(`p\u001f${key}`);
+    const current = await store.check({ principal: 'p', key, payload });
+    assert.equal(current.kind, 'miss');
+
+    await assert.rejects(
+      store.save({
+        principal: 'p',
+        key,
+        payloadHash: stale.payloadHash,
+        claimToken: stale.claimToken,
+        response: 'stale',
+      }),
+      /claim is no longer owned/
+    );
+    await assert.rejects(
+      store.release({ principal: 'p', key, claimToken: stale.claimToken }),
+      /claim is no longer owned/
+    );
+    await store.save({
+      principal: 'p',
+      key,
+      payloadHash: current.payloadHash,
+      claimToken: current.claimToken,
+      response: 'current',
+    });
+    assert.equal((await store.check({ principal: 'p', key, payload })).response, 'current');
+  });
+
   test('store returns expired when expires_at is past TTL + skew', async () => {
     const backend = pgBackend(pool);
     const store = createIdempotencyStore({ backend, ttlSeconds: 3600, clockSkewSeconds: 60 });
 
     await pool.query(
-      `INSERT INTO ${TABLE} (scoped_key, payload_hash, response, expires_at) VALUES ($1, $2, $3::jsonb, TO_TIMESTAMP($4))`,
-      ['p\u001fexp', 'h', JSON.stringify({}), Math.floor(Date.now() / 1000) - 120]
+      `INSERT INTO ${TABLE} (scoped_key, payload_hash, response, expires_at, retain_until)
+       VALUES ($1, $2, $3::jsonb, TO_TIMESTAMP($4), TO_TIMESTAMP($5))`,
+      ['p\u001fexp', 'h', JSON.stringify({}), Math.floor(Date.now() / 1000) - 120, Math.floor(Date.now() / 1000) + 60]
     );
 
     const result = await store.check({ principal: 'p', key: 'exp', payload: {} });
@@ -262,12 +503,18 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
     const now = Math.floor(Date.now() / 1000);
 
     await pool.query(
-      `INSERT INTO ${TABLE} (scoped_key, payload_hash, response, expires_at)
+      `INSERT INTO ${TABLE} (scoped_key, payload_hash, response, expires_at, retain_until)
        VALUES
-         ('e1', 'h', '{}'::jsonb, TO_TIMESTAMP($1)),
-         ('e2', 'h', '{}'::jsonb, TO_TIMESTAMP($1)),
-         ('live', 'h', '{}'::jsonb, TO_TIMESTAMP($2))`,
+         ('e1', 'h', '{}'::jsonb, TO_TIMESTAMP($1), TO_TIMESTAMP($1)),
+         ('e2', 'h', '{}'::jsonb, TO_TIMESTAMP($1), TO_TIMESTAMP($1)),
+         ('within-skew', 'h', '{}'::jsonb, TO_TIMESTAMP($1), TO_TIMESTAMP($2)),
+         ('live', 'h', '{}'::jsonb, TO_TIMESTAMP($2), TO_TIMESTAMP($2))`,
       [now - 3600, now + 3600]
+    );
+    await pool.query(
+      `INSERT INTO ${TABLE} (scoped_key, payload_hash, response, expires_at)
+       VALUES ('legacy-within-skew', 'h', '{}'::jsonb, TO_TIMESTAMP($1))`,
+      [now - 60]
     );
 
     const deleted = await cleanupExpiredIdempotency(pool);
@@ -276,7 +523,7 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
     const remaining = await pool.query(`SELECT scoped_key FROM ${TABLE} ORDER BY scoped_key`);
     assert.deepEqual(
       remaining.rows.map(r => r.scoped_key),
-      ['live']
+      ['legacy-within-skew', 'live', 'within-skew']
     );
   });
 
@@ -286,8 +533,8 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
     await pool.query(getIdempotencyMigration({ tableName: customTable }));
 
     await pool.query(
-      `INSERT INTO ${customTable} (scoped_key, payload_hash, response, expires_at)
-       VALUES ('stale', 'h', '{}'::jsonb, TO_TIMESTAMP($1))`,
+      `INSERT INTO ${customTable} (scoped_key, payload_hash, response, expires_at, retain_until)
+       VALUES ('stale', 'h', '{}'::jsonb, TO_TIMESTAMP($1), TO_TIMESTAMP($1))`,
       [Math.floor(Date.now() / 1000) - 3600]
     );
 
@@ -295,6 +542,45 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
     assert.equal(deleted, 1);
 
     await pool.query(`DROP TABLE IF EXISTS ${customTable} CASCADE`);
+  });
+
+  test('cleanup preserves a row whose expiry was advanced by an old writer', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    await pool.query(
+      `INSERT INTO ${TABLE} (scoped_key, payload_hash, response, expires_at, retain_until)
+       VALUES ('rolling-old-writer', 'old', '{}'::jsonb, TO_TIMESTAMP($1), TO_TIMESTAMP($1))`,
+      [now - 3600]
+    );
+    // Pre-retainUntil binaries update the original columns only. The stale,
+    // non-null retain_until must not override the newly live expires_at.
+    await pool.query(
+      `INSERT INTO ${TABLE} (scoped_key, payload_hash, response, expires_at)
+       VALUES ('rolling-old-writer', 'new', '{}'::jsonb, TO_TIMESTAMP($1))
+       ON CONFLICT (scoped_key) DO UPDATE SET
+         payload_hash = EXCLUDED.payload_hash,
+         response = EXCLUDED.response,
+         expires_at = EXCLUDED.expires_at`,
+      [now + 3600]
+    );
+
+    await cleanupExpiredIdempotency(pool);
+    const remaining = await pool.query(`SELECT payload_hash FROM ${TABLE} WHERE scoped_key = 'rolling-old-writer'`);
+    assert.equal(remaining.rowCount, 1);
+    assert.equal(remaining.rows[0].payload_hash, 'new');
+  });
+
+  test('custom legacy grace preserves null rows through a skew above 120 seconds', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    await pool.query(
+      `INSERT INTO ${TABLE} (scoped_key, payload_hash, response, expires_at)
+       VALUES ('legacy-large-skew', 'h', '{}'::jsonb, TO_TIMESTAMP($1))`,
+      [now - 300]
+    );
+
+    const deleted = await cleanupExpiredIdempotency(pool, { legacyRetentionGraceSeconds: 600 });
+    assert.equal(deleted, 0);
+    const entry = await pgBackend(pool, { legacyRetentionGraceSeconds: 600 }).get('legacy-large-skew');
+    assert.equal(entry.retainUntil, now + 300);
   });
 
   // ────────── JSONB edge cases ──────────
@@ -332,6 +618,20 @@ test('pgBackend probe sanitizes database errors and preserves the original cause
   });
 });
 
+test('pgBackend probe verifies the retain_until migration is installed', async () => {
+  const { pgBackend } = require('../../dist/lib/server/index.js');
+  let observedSql;
+  const backend = pgBackend({
+    query: async sql => {
+      observedSql = sql;
+      return { rows: [], rowCount: 0 };
+    },
+  });
+  await backend.probe();
+  assert.match(observedSql, /retain_until/);
+  assert.match(observedSql, /expires_at/);
+});
+
 test('pgBackend redacts driver errors from every runtime operation', async () => {
   const { pgBackend, cleanupExpiredIdempotency } = require('../../dist/lib/server/index.js');
   const driverError = new Error('postgres://secret-host/internal_idempotency_table');
@@ -346,6 +646,9 @@ test('pgBackend redacts driver errors from every runtime operation', async () =>
     () => backend.get('scoped-key'),
     () => backend.put('scoped-key', entry),
     () => backend.putIfAbsent('scoped-key', entry),
+    () => backend.replaceIfPayloadHash('scoped-key', 'hash', entry),
+    () => backend.replaceIfPayloadHashAndExpired('scoped-key', 'hash', entry),
+    () => backend.deleteIfPayloadHash('scoped-key', 'hash'),
     () => backend.delete('scoped-key'),
     () => cleanupExpiredIdempotency(db),
   ];

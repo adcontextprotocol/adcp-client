@@ -30,7 +30,7 @@ export function memoryBackend(options: MemoryBackendOptions = {}): IdempotencyBa
     sweeper = setInterval(() => {
       const nowSeconds = Math.floor(Date.now() / 1000);
       for (const [k, entry] of store) {
-        if (entry.expiresAt < nowSeconds) store.delete(k);
+        if ((entry.retainUntil ?? entry.expiresAt) < nowSeconds) store.delete(k);
       }
     }, sweepIntervalMs);
     // Don't hold the event loop open for this timer.
@@ -53,14 +53,35 @@ export function memoryBackend(options: MemoryBackendOptions = {}): IdempotencyBa
       store.set(scopedKey, cloneEntry(entry));
     },
     async putIfAbsent(scopedKey: string, entry: IdempotencyCacheEntry): Promise<boolean> {
-      const existing = store.get(scopedKey);
-      if (existing) {
-        const nowSeconds = Math.floor(Date.now() / 1000);
-        if (existing.expiresAt >= nowSeconds) return false;
-        // Expired entry — replace it (lets a stale claim be reclaimed).
-      }
+      if (store.has(scopedKey)) return false;
       store.set(scopedKey, cloneEntry(entry));
       return true;
+    },
+    async replaceIfPayloadHash(
+      scopedKey: string,
+      expectedPayloadHash: string,
+      entry: IdempotencyCacheEntry
+    ): Promise<boolean> {
+      const existing = store.get(scopedKey);
+      if (!existing || existing.payloadHash !== expectedPayloadHash) return false;
+      store.set(scopedKey, cloneEntry(entry));
+      return true;
+    },
+    async replaceIfPayloadHashAndExpired(
+      scopedKey: string,
+      expectedPayloadHash: string,
+      entry: IdempotencyCacheEntry
+    ): Promise<boolean> {
+      const existing = store.get(scopedKey);
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      if (!existing || existing.payloadHash !== expectedPayloadHash || existing.expiresAt >= nowSeconds) return false;
+      store.set(scopedKey, cloneEntry(entry));
+      return true;
+    },
+    async deleteIfPayloadHash(scopedKey: string, expectedPayloadHash: string): Promise<boolean> {
+      const existing = store.get(scopedKey);
+      if (!existing || existing.payloadHash !== expectedPayloadHash) return false;
+      return store.delete(scopedKey);
     },
     async delete(scopedKey: string): Promise<void> {
       store.delete(scopedKey);
@@ -80,5 +101,6 @@ function cloneEntry(entry: IdempotencyCacheEntry): IdempotencyCacheEntry {
     payloadHash: entry.payloadHash,
     response: entry.response == null ? entry.response : structuredClone(entry.response),
     expiresAt: entry.expiresAt,
+    retainUntil: entry.retainUntil ?? entry.expiresAt,
   };
 }

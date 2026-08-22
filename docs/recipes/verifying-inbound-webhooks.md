@@ -268,7 +268,10 @@ import { BrandJsonJwksResolver, RedisReplayStore, createWebhookVerifier } from '
 const redis = createClient({ url: process.env.REDIS_URL });
 await redis.connect();
 
-const replayStore = new RedisReplayStore(redis);
+const replayStore = new RedisReplayStore(redis, {
+  // Must be unique to this deployment when Redis is shared.
+  keyPrefix: 'adcp:replay:prod-eu:',
+});
 
 function buildVerifier(sender: SenderRecord) {
   return createWebhookVerifier({
@@ -283,7 +286,11 @@ function buildVerifier(sender: SenderRecord) {
 ```
 
 Redis handles expiry itself. Postgres needs the sweeper because it has no
-native row TTL.
+native row TTL. Outside development and test, `RedisReplayStore` rejects an
+omitted, blank, or SDK-default prefix. If the selected Redis database is
+operationally dedicated to one deployment, pass
+`acknowledgeIsolatedDatabase: true` instead; warning suppression is not an
+isolation acknowledgement.
 
 ## Legacy HMAC
 

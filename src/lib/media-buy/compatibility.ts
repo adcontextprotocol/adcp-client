@@ -9,7 +9,21 @@ import type {
   TaskResultFailure,
   TaskResultIntermediate,
 } from '../core/ConversationTypes';
-import type { BeforeProtocolDispatchContext, BeforeProtocolDispatchHookResult } from '../core/TaskExecutor';
+import {
+  acknowledgeDeferredSettlement,
+  rejectDeferredSettlement,
+  checkpointDeferredPendingSettlement,
+  DeferredSettlementOwnershipError,
+  hasCompletionHandlerAlreadyPublished,
+  hasDeferredPendingSettlement,
+  isAuthoritativePolledTerminal,
+  markCompletionHandlerAlreadyPublished,
+  transferDeferredSettlementAcknowledgement,
+  type BeforeProtocolDispatchContext,
+  type BeforeProtocolDispatchHookResult,
+  type ExternalTaskSettlementObservation,
+  type ExternalTaskStatusResult,
+} from '../core/TaskExecutor';
 import { attachMatch } from '../core/match';
 import { generateIdempotencyKey, isValidIdempotencyKey, type MutatingRequestInput } from '../utils/idempotency';
 import { canonicalize } from '../utils/jcs';
@@ -64,11 +78,17 @@ import { formatIssues, validateResponse } from '../validation/schema-validator';
 import { validateRequest } from '../validation/schema-validator';
 import {
   createInMemoryLegacyPurchaseContinuationStore,
+  LEGACY_PURCHASE_PUBLICATION_PROOF_RETENTION_MS,
+  legacyPurchaseSettlementFingerprint,
   type LegacyPurchaseClaim,
   type LegacyPurchaseBinding,
+  type LegacyPurchaseCompleteResult,
   type LegacyPurchaseContinuationRecord,
   type LegacyPurchaseContinuationStore,
   type LegacyPurchaseLoss,
+  type LegacyPurchaseOperation,
+  type LegacyPurchasePendingSettlement,
+  type LegacyPurchasePendingSettlementResult,
   type LegacyPurchaseSourceVersion,
   type LegacyPurchaseTerminalResult,
   type ReconcileLegacyPurchase,
@@ -85,6 +105,8 @@ import {
   type EstablishedProposalTransitionResult,
   type ProposalSnapshotEntry as DurableProposalSnapshotEntry,
 } from './established-proposal-store';
+
+type ActiveLegacyPurchaseOperation = Exclude<LegacyPurchaseOperation, { state: 'available' }>;
 
 export type MediaBuyLifecycle = 'compact' | 'established';
 export type MediaBuyCompatibility = 'native' | 'lossless_projection' | 'lossy_projection';
@@ -114,6 +136,8 @@ const LIST_PRODUCTS_FIELDS = new Set([
   'max_results',
   'push_notification_config',
 ]);
+
+const LEGACY_PURCHASE_PUBLICATION_LEASE_MS = 30_000;
 const REQUEST_PROPOSALS_FIELDS = new Set([
   'account',
   'adcp_major_version',
@@ -698,7 +722,11 @@ export interface MediaBuyLifecycleCoordinatorOptions {
   legacyPurchaseContinuationTtlMs?: number;
   /** Age after which an unresolved claim is reconciled instead of reported in-flight. */
   legacyPurchaseClaimTimeoutMs?: number;
-  /** Bounded deterministic-replay window after the first claim. Defaults to 24 hours. */
+  /**
+   * Maximum unresolved-operation monitoring time. Defaults to 24 hours.
+   * Terminal winners are retained for at least seven days even when this
+   * monitoring timeout is configured to a shorter value.
+   */
   legacyPurchaseOperationTtlMs?: number;
   /** Application-owned authoritative reconciliation for ambiguous legacy creates. */
   reconcileLegacyPurchase?: ReconcileLegacyPurchase;
@@ -809,7 +837,51 @@ function safeDiagnostic(value: unknown, maxLength: number): string {
 }
 
 function requestFingerprint(value: unknown): string {
+  // This is a deterministic request-equality/idempotency digest, not a
+  // password verifier or credential-storage primitive.
+  // codeql[js/insufficient-password-hash]
   return createHash('sha256').update(canonicalize(value)).digest('base64url');
+}
+
+function snapshotCompatibilityTaskOptions(options: TaskOptions | undefined): TaskOptions | undefined {
+  if (!options) return undefined;
+  return {
+    ...options,
+    ...(options.transport !== undefined && { transport: { ...options.transport } }),
+    ...(options.metadata !== undefined && { metadata: structuredClone(options.metadata) }),
+  };
+}
+
+function stripWebhookAuthenticationCredential(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+  const config = value as Record<string, unknown>;
+  const authentication = config.authentication;
+  if (authentication === null || typeof authentication !== 'object' || Array.isArray(authentication)) return value;
+  const { credentials: _credentials, ...authenticationWithoutCredentials } = authentication as Record<string, unknown>;
+  void _credentials;
+  return { ...config, authentication: authenticationWithoutCredentials };
+}
+
+/**
+ * Preserve every mutation and routing field while excluding the two
+ * write-only callback credentials from the durable replay fingerprint.
+ */
+function legacyPurchaseInputFingerprint(value: unknown): string {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return requestFingerprint(value);
+  const input = value as Record<string, unknown>;
+  const sanitized: Record<string, unknown> = { ...input };
+  for (const field of ['push_notification_config', 'reporting_webhook'] as const) {
+    if (Object.hasOwn(sanitized, field)) sanitized[field] = stripWebhookAuthenticationCredential(sanitized[field]);
+  }
+  const legacyRequest = sanitized.legacy_create_request;
+  if (legacyRequest !== null && typeof legacyRequest === 'object' && !Array.isArray(legacyRequest)) {
+    const request = { ...(legacyRequest as Record<string, unknown>) };
+    for (const field of ['push_notification_config', 'reporting_webhook'] as const) {
+      if (Object.hasOwn(request, field)) request[field] = stripWebhookAuthenticationCredential(request[field]);
+    }
+    sanitized.legacy_create_request = request;
+  }
+  return requestFingerprint(sanitized);
 }
 
 function retiredAcceptancePositions(key: string, salt: Uint8Array, bitCount: number): number[] {
@@ -1534,6 +1606,8 @@ export class MediaBuyLifecycleCoordinator {
   private readonly legacyPurchaseContinuationTtlMs: number;
   private readonly legacyPurchaseClaimTimeoutMs: number;
   private readonly legacyPurchaseOperationTtlMs: number;
+  private readonly legacyPurchaseReplayTtlMs: number;
+  private readonly legacyPurchaseCallbackRecoveryEnabled: boolean;
   private readonly reconcileLegacyPurchase?: ReconcileLegacyPurchase;
   private readonly proposalSnapshotStore: ProposalSnapshotStore;
   private readonly pendingProposalTasks = new Map<
@@ -1569,6 +1643,11 @@ export class MediaBuyLifecycleCoordinator {
   private readonly declineLeaseOwner = {};
   private readonly refinementLeaseOwner = {};
   private acceptanceTaskUnsubscribe?: () => void;
+  private legacyPurchaseSettlementRecoveryUnsubscribe?: () => void;
+  private legacyPurchaseDeferredAuthorizationUnsubscribe?: () => void;
+  private legacyPurchaseDeferredOperationRecoveryUnsubscribe?: () => void;
+  private legacyPurchaseDeferredReplacementUnsubscribe?: () => void;
+  private readonly legacyPurchaseWatchControllers = new Set<AbortController>();
   private disposed = false;
   private readonly idempotencyReplayTtlMs?: number;
   private static readonly MAX_PROPOSAL_SNAPSHOTS = 256;
@@ -1655,6 +1734,10 @@ export class MediaBuyLifecycleCoordinator {
     this.legacyPurchaseContinuationTtlMs = options.legacyPurchaseContinuationTtlMs ?? 5 * 60 * 1000;
     this.legacyPurchaseClaimTimeoutMs = options.legacyPurchaseClaimTimeoutMs ?? 30 * 1000;
     this.legacyPurchaseOperationTtlMs = options.legacyPurchaseOperationTtlMs ?? 24 * 60 * 60 * 1000;
+    // Webhook registrations are retained for seven days by default. Keep the
+    // exact terminal winner for at least that long so a legitimate callback
+    // retry cannot outlive the durable duplicate/conflict decision.
+    this.legacyPurchaseReplayTtlMs = Math.max(options.legacyPurchaseOperationTtlMs ?? 0, 7 * 24 * 60 * 60 * 1000);
     for (const [name, value] of [
       ['legacyPurchaseContinuationTtlMs', this.legacyPurchaseContinuationTtlMs],
       ['legacyPurchaseClaimTimeoutMs', this.legacyPurchaseClaimTimeoutMs],
@@ -1664,9 +1747,49 @@ export class MediaBuyLifecycleCoordinator {
         throw new TypeError(`Media-buy lifecycle ${name} must be a positive safe integer.`);
       }
     }
+    if (this.legacyPurchaseOperationTtlMs > MAX_TIMER_DELAY_MS) {
+      throw new TypeError(`Media-buy lifecycle legacyPurchaseOperationTtlMs must be <= ${MAX_TIMER_DELAY_MS}.`);
+    }
     this.reconcileLegacyPurchase = options.reconcileLegacyPurchase;
     this.lifecycle = this.selectLifecycle('list_products');
+    const canLookupCallback = typeof this.legacyPurchaseContinuationStore.getByCallbackOperationId === 'function';
+    const canQueueEarlyCallback = typeof this.legacyPurchaseContinuationStore.recordPendingSettlement === 'function';
+    const canAcknowledgeCallback =
+      typeof this.legacyPurchaseContinuationStore.acknowledgePendingSettlement === 'function';
+    const canLinkDeferredTask = typeof this.legacyPurchaseContinuationStore.recordDeferredTaskToken === 'function';
+    const canClaimPublication =
+      typeof this.legacyPurchaseContinuationStore.claimPendingSettlementPublication === 'function';
+    const canReleasePublication =
+      typeof this.legacyPurchaseContinuationStore.releasePendingSettlementPublication === 'function';
+    if (
+      canLookupCallback !== canQueueEarlyCallback ||
+      canLookupCallback !== canAcknowledgeCallback ||
+      canLookupCallback !== canLinkDeferredTask ||
+      canLookupCallback !== canClaimPublication ||
+      canLookupCallback !== canReleasePublication
+    ) {
+      throw new TypeError(
+        'A legacyPurchaseContinuationStore must implement callback lookup, pending settlement, publication lease, acknowledgement, and deferred-token methods together, or none of them.'
+      );
+    }
     this.proposalSnapshotStore = proposalSnapshotStoreFor(agent, this.principalScope);
+    this.legacyPurchaseCallbackRecoveryEnabled = canLookupCallback;
+    if (canLookupCallback) {
+      this.legacyPurchaseSettlementRecoveryUnsubscribe = this.agent.registerDurableSettlementRecovery(
+        (operationId, observation) => this.recoverLegacyPurchaseSettlement(operationId, observation)
+      );
+      this.legacyPurchaseDeferredAuthorizationUnsubscribe = this.agent.registerDurableDeferredResumeAuthorization(
+        (operationId, token) => this.authorizeLegacyDeferredResume(operationId, token)
+      );
+      this.legacyPurchaseDeferredOperationRecoveryUnsubscribe =
+        this.agent.registerDurableDeferredOperationRecoveryAuthorization((operationId, recoveryKey, purpose) =>
+          this.authorizeLegacyDeferredOperationRecovery(operationId, recoveryKey, purpose)
+        );
+      this.legacyPurchaseDeferredReplacementUnsubscribe = this.agent.registerDurableDeferredResumeTokenReplacement(
+        (operationId, currentToken, replacementToken) =>
+          this.replaceLegacyDeferredResumeToken(operationId, currentToken, replacementToken)
+      );
+    }
   }
 
   static async negotiate(
@@ -2664,9 +2787,9 @@ export class MediaBuyLifecycleCoordinator {
       principalScope: this.principalScope!,
       accountScope,
       sellerScope: requestFingerprint({ id: agent.id, uri: agent.agent_uri, protocol: agent.protocol }),
-      clientSessionScope: this.resolvedLegacyPurchaseSellerSessionScope,
+      clientSessionScope: `sha256:${requestFingerprint(this.resolvedLegacyPurchaseSellerSessionScope)}`,
       sourceAdcpVersion: this.legacyPurchaseSourceVersion(),
-      ...(contextId !== undefined && { discoveryContextId: contextId }),
+      ...(contextId !== undefined && { discoveryContextId: `sha256:${requestFingerprint(contextId)}` }),
     };
   }
 
@@ -2878,7 +3001,7 @@ export class MediaBuyLifecycleCoordinator {
 
   private accountScope(account: unknown): string | undefined {
     const value = record(account);
-    return Object.keys(value).length > 0 ? canonicalize(value) : undefined;
+    return Object.keys(value).length > 0 ? `sha256:${requestFingerprint(value)}` : undefined;
   }
 
   private queueEstablishedProposalStoreWrite(write: () => Promise<void>): void {
@@ -4536,6 +4659,18 @@ export class MediaBuyLifecycleCoordinator {
     }
     this.acceptanceTaskUnsubscribe?.();
     this.acceptanceTaskUnsubscribe = undefined;
+    this.legacyPurchaseSettlementRecoveryUnsubscribe?.();
+    this.legacyPurchaseSettlementRecoveryUnsubscribe = undefined;
+    this.legacyPurchaseDeferredAuthorizationUnsubscribe?.();
+    this.legacyPurchaseDeferredAuthorizationUnsubscribe = undefined;
+    this.legacyPurchaseDeferredOperationRecoveryUnsubscribe?.();
+    this.legacyPurchaseDeferredOperationRecoveryUnsubscribe = undefined;
+    this.legacyPurchaseDeferredReplacementUnsubscribe?.();
+    this.legacyPurchaseDeferredReplacementUnsubscribe = undefined;
+    for (const controller of this.legacyPurchaseWatchControllers) {
+      controller.abort(createAbortError('Media-buy lifecycle coordinator disposed.'));
+    }
+    this.legacyPurchaseWatchControllers.clear();
     this.proposalSnapshotStore.activeCoordinators -= 1;
   }
 
@@ -5226,13 +5361,19 @@ export class MediaBuyLifecycleCoordinator {
     options?: TaskOptions
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
     this.assertActive('continueLegacyPurchase');
+    // Own the complete caller graph before the first awaited store or
+    // reconciliation boundary. In particular, packages contain nested
+    // commercial terms whose mutation must never change the payload that is
+    // validated, fingerprinted, claimed, or dispatched.
+    const inputSnapshot = structuredClone(input);
+    const optionsSnapshot = snapshotCompatibilityTaskOptions(options);
     if (!this.principalScope) {
       throw new LegacyPurchaseContinuationError(
         'binding_mismatch',
         'Legacy purchase continuation redemption requires a stable principalScope.'
       );
     }
-    const value = record(input);
+    const value = record(inputSnapshot);
     const allowedInputFields = new Set([
       'idempotency_key',
       'continuation_token',
@@ -5255,10 +5396,10 @@ export class MediaBuyLifecycleCoordinator {
     ) {
       throw new LegacyPurchaseContinuationError('request_invalid', 'idempotency_key must be a UUID.');
     }
-    if (!token || token.length < 16) {
+    if (!token || !/^[A-Za-z0-9_-]{32}$/.test(token)) {
       throw new LegacyPurchaseContinuationError(
         'request_invalid',
-        'continuation_token must contain at least 16 characters.'
+        'continuation_token must be a 32-character base64url value.'
       );
     }
     const selectedProductIds = array(value.selected_product_ids);
@@ -5404,7 +5545,7 @@ export class MediaBuyLifecycleCoordinator {
     }
     let claim: LegacyPurchaseClaim = {
       idempotencyKey,
-      inputFingerprint: requestFingerprint(input),
+      inputFingerprint: legacyPurchaseInputFingerprint(inputSnapshot),
       operationKey: requestFingerprint({
         operation: 'continueLegacyPurchase',
         principalScope: expectedBinding.principalScope,
@@ -5414,7 +5555,7 @@ export class MediaBuyLifecycleCoordinator {
         idempotencyKey,
       }),
       claimedAt: new Date().toISOString(),
-      replayExpiresAt: new Date(Date.now() + this.legacyPurchaseOperationTtlMs).toISOString(),
+      replayExpiresAt: new Date(Date.now() + this.legacyPurchaseReplayTtlMs).toISOString(),
       selectedProductIds: selectedProductIds.map(String),
       ...(optionalString(legacyRequest.idempotency_key ?? legacyRequest.buyer_ref) !== undefined && {
         sourceMutationKey: optionalString(legacyRequest.idempotency_key ?? legacyRequest.buyer_ref),
@@ -5482,8 +5623,9 @@ export class MediaBuyLifecycleCoordinator {
       // the seller has even been dispatched.
       claim = {
         ...claim,
+        callbackOperationId: context.operationId,
         claimedAt: new Date().toISOString(),
-        replayExpiresAt: new Date(Date.now() + this.legacyPurchaseOperationTtlMs).toISOString(),
+        replayExpiresAt: new Date(Date.now() + this.legacyPurchaseReplayTtlMs).toISOString(),
       };
       let claimed;
       try {
@@ -5521,13 +5663,274 @@ export class MediaBuyLifecycleCoordinator {
           'Legacy purchase continuation does not belong to this principal, account, seller session, and source version.'
         );
       }
-      if (claimed.outcome === 'replay') return { action: 'return', result: attachMatch(claimed.result) };
-      if (claimed.outcome === 'in_flight' || claimed.outcome === 'ambiguous') {
-        const age =
-          Date.now() -
-          Date.parse(
-            claimed.record.operation.state === 'available' ? claim.claimedAt : claimed.record.operation.claimedAt
+      if (claimed.outcome === 'replay') {
+        const replayOperation = claimed.record.operation;
+        if (replayOperation.state !== 'completed') {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'The continuation store returned replay without a completed operation.'
           );
+        }
+        if (replayOperation.pendingSettlement) {
+          await this.publishPendingLegacyPurchaseSettlement(
+            token,
+            replayOperation,
+            replayOperation.pendingSettlement,
+            replayOperation.result
+          );
+          markCompletionHandlerAlreadyPublished(claimed.result);
+        }
+        this.restoreLegacyPurchasePublicationProof(replayOperation, claimed.result);
+        return { action: 'return', result: attachMatch(claimed.result) };
+      }
+      if (claimed.outcome === 'claimed') {
+        const persistedOperation = claimed.record.operation;
+        if (persistedOperation.state !== 'claimed' || persistedOperation.callbackOperationId !== context.operationId) {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'The continuation store did not preserve the newly claimed callback operation identity.'
+          );
+        }
+        // Durable stores may canonicalize timestamps with their own clock.
+        // Use the exact installed descriptor for every later CAS operation.
+        claim = persistedOperation;
+      }
+      if (claimed.outcome === 'in_flight' || claimed.outcome === 'ambiguous') {
+        const persistedOperation = claimed.record.operation;
+        if (persistedOperation.state === 'available' || persistedOperation.state === 'completed') {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'The continuation store returned a retry outcome that does not match its persisted operation state.'
+          );
+        }
+        if (
+          (claimed.outcome === 'in_flight' && persistedOperation.state !== 'claimed') ||
+          (claimed.outcome === 'ambiguous' && persistedOperation.state !== 'ambiguous')
+        ) {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'The continuation store returned a retry outcome that does not match its persisted operation state.'
+          );
+        }
+        // A retry receives a new executor callback operation ID, but all
+        // settlement must remain bound to the descriptor installed by the
+        // first successful claim. In particular, an authenticated callback
+        // may already be queued under that original operation ID.
+        const persistedClaim: LegacyPurchaseClaim = persistedOperation;
+        if (
+          claimed.outcome === 'in_flight' &&
+          persistedOperation.callbackOperationId &&
+          persistedOperation.pendingSettlement === undefined
+        ) {
+          const recoveredDeferred = await this.agent.recoverDeferredTaskForOperation<CreateMediaBuyResponse>(
+            persistedOperation.callbackOperationId,
+            token,
+            false
+          );
+          if (recoveredDeferred) {
+            // The SDK operation index is committed in the same atomic write as
+            // pause A (and atomically moves A -> B). It therefore recovers the
+            // two-store crash window before this lifecycle record learned the
+            // initial or replacement opaque token.
+            return {
+              action: 'return',
+              result: await this.trackLegacyPurchaseResult(
+                token,
+                persistedClaim,
+                recoveredDeferred.result,
+                context.publishSettledTaskStatus,
+                context.registerExternalTaskSettlement,
+                optionsSnapshot?.transport,
+                persistedOperation.deferredTaskToken
+              ),
+            };
+          }
+        }
+        if (
+          claimed.outcome === 'in_flight' &&
+          !persistedOperation.sellerTaskId &&
+          persistedOperation.pendingSettlement
+        ) {
+          const pending = persistedOperation.pendingSettlement;
+          if (
+            pending.operationId !== persistedOperation.callbackOperationId ||
+            pending.taskType !== 'create_media_buy'
+          ) {
+            await this.markLegacyPurchaseAmbiguous(token, persistedClaim, 'pushed_task_identity_mismatch');
+            throw this.legacyPurchaseAmbiguousError(
+              'The durably queued callback does not match the claimed legacy purchase operation.'
+            );
+          }
+          let task: TaskInfo;
+          try {
+            task = await this.agent.getTaskStatus(
+              pending.serverTaskId,
+              optionsSnapshot?.transport,
+              optionsSnapshot?.signal
+            );
+          } catch (error) {
+            if (isAbortOrTimeoutError(error)) throw error;
+            throw this.legacyPurchaseAmbiguousError(
+              'Could not authoritatively validate the queued legacy purchase callback task.',
+              error
+            );
+          }
+          if (task.taskId !== pending.serverTaskId || task.taskType !== 'create_media_buy') {
+            await this.markLegacyPurchaseAmbiguous(token, persistedClaim, 'pushed_task_identity_mismatch');
+            throw this.legacyPurchaseAmbiguousError(
+              'The queued callback task does not match the seller task returned by tasks/get.'
+            );
+          }
+          const agent = this.agent.getAgent();
+          const resumed = this.legacyPurchaseResultFromTask(task, {
+            taskId: pending.serverTaskId,
+            taskName: 'create_media_buy',
+            agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+            responseTimeMs: 0,
+            timestamp: new Date().toISOString(),
+            clarificationRounds: 0,
+            status: 'working',
+            serverTaskId: pending.serverTaskId,
+          });
+          if (!resumed || !['completed', 'failed', 'governance-denied'].includes(resumed.status)) {
+            if (resumed?.status === 'working' || resumed?.status === 'submitted') {
+              throw new LegacyPurchaseContinuationError(
+                'in_flight',
+                'The queued callback task is not yet terminal according to tasks/get.',
+                true
+              );
+            }
+            throw this.legacyPurchaseAmbiguousError(
+              'The queued callback task is paused or has an unrecognizable authoritative status.'
+            );
+          }
+          const authoritative = this.assertLegacyPurchaseTerminalResult(resumed, continuation.sourceAdcpVersion);
+          if (!this.sameLegacyPurchaseTerminalResult(authoritative, pending.terminal)) {
+            await this.markLegacyPurchaseAmbiguous(token, persistedClaim, 'pushed_task_result_invalid');
+            throw this.legacyPurchaseAmbiguousError(
+              'The queued callback result conflicts with the authoritative tasks/get result.'
+            );
+          }
+          let recorded: boolean;
+          try {
+            recorded = await this.legacyPurchaseContinuationStore.recordSubmittedTask(
+              token,
+              persistedClaim,
+              pending.serverTaskId
+            );
+          } catch (error) {
+            throw new LegacyPurchaseContinuationError(
+              'store_error',
+              'Could not durably bind the queued callback seller task.',
+              true,
+              undefined,
+              error
+            );
+          }
+          if (!recorded) {
+            throw this.legacyPurchaseAmbiguousError('Could not durably bind the queued callback seller task.');
+          }
+          const rebound = await this.legacyPurchaseContinuationStore.get(token);
+          if (!rebound || rebound.operation.state === 'available') {
+            throw new LegacyPurchaseContinuationError(
+              'store_error',
+              'Could not reload the queued callback seller task binding.',
+              true
+            );
+          }
+          if (rebound.operation.state === 'completed') {
+            if (!this.sameLegacyPurchaseTerminalResult(rebound.operation.result, pending.terminal)) {
+              throw this.legacyPurchaseAmbiguousError(
+                'The queued callback conflicts with the already completed legacy purchase.'
+              );
+            }
+            if (rebound.operation.pendingSettlement) {
+              await this.publishPendingLegacyPurchaseSettlement(
+                token,
+                rebound.operation,
+                rebound.operation.pendingSettlement,
+                rebound.operation.result
+              );
+            } else {
+              this.restoreLegacyPurchasePublicationProof(rebound.operation, rebound.operation.result);
+            }
+            return { action: 'return', result: attachMatch(rebound.operation.result) };
+          }
+          if (
+            rebound.operation.sellerTaskId !== pending.serverTaskId ||
+            !rebound.operation.pendingSettlement ||
+            !this.sameLegacyPurchaseTerminalResult(rebound.operation.pendingSettlement.terminal, pending.terminal)
+          ) {
+            throw this.legacyPurchaseAmbiguousError(
+              'The reloaded queued callback does not match the bound legacy purchase task.'
+            );
+          }
+          const completion = await this.persistLegacyPurchaseCompletion(
+            token,
+            rebound.operation,
+            rebound.operation.pendingSettlement.terminal
+          );
+          if (completion.pendingSettlement) {
+            await this.publishPendingLegacyPurchaseSettlement(
+              token,
+              rebound.operation,
+              completion.pendingSettlement,
+              completion.result
+            );
+          }
+          return { action: 'return', result: attachMatch(completion.result) };
+        }
+        if (persistedOperation.sellerTaskId) {
+          let task: TaskInfo;
+          try {
+            task = await this.agent.getTaskStatus(
+              persistedOperation.sellerTaskId,
+              optionsSnapshot?.transport,
+              optionsSnapshot?.signal
+            );
+          } catch (error) {
+            if (isAbortOrTimeoutError(error)) throw error;
+            throw this.legacyPurchaseAmbiguousError(
+              'Could not authoritatively resume the persisted legacy purchase task.',
+              error
+            );
+          }
+          if (task.taskId !== persistedOperation.sellerTaskId || task.taskType !== 'create_media_buy') {
+            throw this.legacyPurchaseAmbiguousError(
+              'The resumed seller task does not match the durably recorded legacy purchase task.'
+            );
+          }
+          const agent = this.agent.getAgent();
+          const resumed = this.legacyPurchaseResultFromTask(task, {
+            taskId: persistedOperation.sellerTaskId,
+            taskName: 'create_media_buy',
+            agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+            responseTimeMs: 0,
+            timestamp: new Date().toISOString(),
+            clarificationRounds: 0,
+            status: 'working',
+            serverTaskId: persistedOperation.sellerTaskId,
+          });
+          if (resumed) {
+            if (!['completed', 'failed', 'governance-denied'].includes(resumed.status)) {
+              if (resumed.status === 'input-required' || resumed.status === 'auth-required') {
+                throw this.legacyPurchaseAmbiguousError(
+                  'The persisted legacy purchase is paused without a restart-safe seller continuation.'
+                );
+              }
+              throw new LegacyPurchaseContinuationError(
+                'in_flight',
+                'The persisted legacy purchase is still in progress; retry to observe its authoritative task.',
+                true
+              );
+            }
+            return {
+              action: 'return',
+              result: await this.trackLegacyPurchaseResult(token, persistedClaim, resumed),
+            };
+          }
+        }
+        const age = Date.now() - Date.parse(persistedClaim.claimedAt);
         if (claimed.outcome === 'in_flight' && age < this.legacyPurchaseClaimTimeoutMs) {
           throw new LegacyPurchaseContinuationError(
             'in_flight',
@@ -5538,15 +5941,37 @@ export class MediaBuyLifecycleCoordinator {
         if (this.reconcileLegacyPurchase) {
           let reconciled;
           try {
-            reconciled = await this.reconcileLegacyPurchase(claimed.record, input);
+            reconciled = await this.reconcileLegacyPurchase(claimed.record, inputSnapshot);
           } catch (error) {
             throw this.legacyPurchaseAmbiguousError('Legacy create reconciliation failed without authority.', error);
           }
           if (reconciled.outcome === 'completed') {
             const terminal = this.assertLegacyPurchaseTerminalResult(reconciled.result, continuation.sourceAdcpVersion);
+            if (this.legacyPurchaseCallbackRecoveryEnabled) {
+              const durableSellerTaskId = persistedClaim.pendingSettlement?.serverTaskId ?? persistedClaim.sellerTaskId;
+              const reconciledSellerTaskId = terminal.metadata.serverTaskId;
+              if (!durableSellerTaskId && !reconciledSellerTaskId) {
+                throw this.legacyPurchaseAmbiguousError(
+                  'Callback-capable legacy purchase reconciliation requires an authoritative seller task identity.'
+                );
+              }
+              if (
+                durableSellerTaskId !== undefined &&
+                reconciledSellerTaskId !== undefined &&
+                durableSellerTaskId !== reconciledSellerTaskId
+              ) {
+                throw this.legacyPurchaseAmbiguousError(
+                  'The reconciled seller task identity conflicts with the durable purchase route.'
+                );
+              }
+            }
             return {
               action: 'return',
-              result: attachMatch(await this.completeLegacyPurchase(token, claim, terminal)),
+              // Reconciliation is another authoritative SDK observation. Run
+              // it through the normal terminal path so callback-capable
+              // operations fence completion-handler publication before the
+              // completed result can be replayed or raced by a webhook.
+              result: await this.trackLegacyPurchaseResult(token, persistedClaim, terminal),
             };
           }
         }
@@ -5560,6 +5985,8 @@ export class MediaBuyLifecycleCoordinator {
       claimedForDispatch = true;
       return {
         action: 'dispatch_committed',
+        requireDeferredSettlementResumeAuthorization: this.legacyPurchaseCallbackRecoveryEnabled,
+        persistPausedContinuation: this.legacyPurchaseCallbackRecoveryEnabled,
         onResult: async result => {
           const settled = await this.trackLegacyPurchaseResult(
             token,
@@ -5567,7 +5994,7 @@ export class MediaBuyLifecycleCoordinator {
             result,
             context.publishSettledTaskStatus,
             context.registerExternalTaskSettlement,
-            options?.transport
+            optionsSnapshot?.transport
           );
           settledInsideExecutor = true;
           return settled;
@@ -5596,7 +6023,11 @@ export class MediaBuyLifecycleCoordinator {
         claimBeforeDispatch,
         inputHandler,
         {
-          ...options,
+          ...optionsSnapshot,
+          disableWebhook:
+            optionsSnapshot?.disableWebhook === true ||
+            !this.legacyPurchaseCallbackRecoveryEnabled ||
+            continuation.operation.state !== 'available',
           skipAccountValidation: true,
           skipIdempotencyAutoInject: true,
         }
@@ -5605,7 +6036,7 @@ export class MediaBuyLifecycleCoordinator {
       if (settledInsideExecutor) return result;
       // Test doubles and older internal façades may invoke the pre-dispatch
       // hook without honoring its executor-owned settlement callbacks.
-      return this.trackLegacyPurchaseResult(token, claim, result, undefined, undefined, options?.transport);
+      return this.trackLegacyPurchaseResult(token, claim, result, undefined, undefined, optionsSnapshot?.transport);
     } catch (error) {
       if (!claimedForDispatch) throw error;
       if (settledInsideExecutor) throw error;
@@ -5625,9 +6056,48 @@ export class MediaBuyLifecycleCoordinator {
     claim: LegacyPurchaseClaim,
     result: LegacyPurchaseTerminalResult
   ): Promise<LegacyPurchaseTerminalResult> {
+    const completion = await this.persistLegacyPurchaseCompletion(token, claim, result);
+    const conflictsWithQueuedWinner = !this.sameLegacyPurchaseTerminalResult(completion.result, result);
+    if (completion.pendingSettlement) {
+      await this.publishPendingLegacyPurchaseSettlement(token, claim, completion.pendingSettlement, completion.result);
+    }
+    if (conflictsWithQueuedWinner) {
+      throw this.legacyPurchaseAmbiguousError(
+        completion.pendingSettlement
+          ? 'The inline seller result conflicts with the earlier durably acknowledged callback.'
+          : 'The continuation store returned a terminal result that conflicts with the seller observation.'
+      );
+    }
+    return completion.result;
+  }
+
+  private sameLegacyPurchaseTerminalResult(
+    first: LegacyPurchaseTerminalResult,
+    second: LegacyPurchaseTerminalResult
+  ): boolean {
+    const comparable = (result: LegacyPurchaseTerminalResult) => ({
+      success: result.success,
+      status: result.status,
+      data: result.data,
+      error: result.error,
+      adcpError: result.adcpError,
+      correlationId: result.correlationId,
+    });
+    return requestFingerprint(comparable(first)) === requestFingerprint(comparable(second));
+  }
+
+  private async persistLegacyPurchaseCompletion(
+    token: string,
+    claim: LegacyPurchaseClaim,
+    result: LegacyPurchaseTerminalResult
+  ): Promise<{
+    result: LegacyPurchaseTerminalResult;
+    installed: boolean;
+    pendingSettlement?: LegacyPurchasePendingSettlement;
+  }> {
+    let completed: LegacyPurchaseCompleteResult;
     try {
-      const completed = await this.legacyPurchaseContinuationStore.complete(token, claim, result);
-      if (completed.outcome === 'completed') return completed.result;
+      completed = await this.legacyPurchaseContinuationStore.complete(token, claim, result);
     } catch (error) {
       await this.markLegacyPurchaseAmbiguous(token, claim, 'completion_persistence_failed');
       throw new LegacyPurchaseContinuationError(
@@ -5638,6 +6108,63 @@ export class MediaBuyLifecycleCoordinator {
         error
       );
     }
+    if (
+      completed.outcome === 'completed' ||
+      completed.outcome === 'pending_completed' ||
+      completed.outcome === 'duplicate'
+    ) {
+      if (
+        completed.outcome === 'pending_completed' &&
+        (completed.pendingSettlement.operationId !== claim.callbackOperationId ||
+          completed.pendingSettlement.taskType !== 'create_media_buy' ||
+          (claim.sellerTaskId !== undefined && completed.pendingSettlement.serverTaskId !== claim.sellerTaskId) ||
+          !this.sameLegacyPurchaseTerminalResult(completed.pendingSettlement.terminal, completed.result))
+      ) {
+        await this.markLegacyPurchaseAmbiguous(token, claim, 'completion_pending_identity_mismatch');
+        throw new LegacyPurchaseContinuationError(
+          'store_error',
+          'The continuation store returned an invalid pending callback winner; the outcome is ambiguous.',
+          false,
+          'Reconcile the seller mutation by its application-owned natural key.'
+        );
+      }
+      if (
+        completed.outcome === 'duplicate' &&
+        (!('pendingSettlement' in completed) || completed.pendingSettlement === undefined)
+      ) {
+        let latest: LegacyPurchaseContinuationRecord | undefined;
+        try {
+          latest = await this.legacyPurchaseContinuationStore.get(token);
+        } catch (error) {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'Could not verify the completed legacy purchase replay state.',
+            true,
+            undefined,
+            error
+          );
+        }
+        if (
+          !latest ||
+          latest.operation.state !== 'completed' ||
+          !this.sameLegacyPurchaseTerminalResult(latest.operation.result, completed.result)
+        ) {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'The continuation store returned an unverified completed legacy purchase replay.',
+            false
+          );
+        }
+        this.restoreLegacyPurchasePublicationProof(latest.operation, completed.result);
+      }
+      return {
+        result: completed.result,
+        installed: completed.outcome !== 'duplicate',
+        ...('pendingSettlement' in completed && completed.pendingSettlement !== undefined
+          ? { pendingSettlement: completed.pendingSettlement }
+          : {}),
+      };
+    }
     await this.markLegacyPurchaseAmbiguous(token, claim, 'completion_compare_and_set_failed');
     throw new LegacyPurchaseContinuationError(
       'store_error',
@@ -5645,6 +6172,285 @@ export class MediaBuyLifecycleCoordinator {
       false,
       'Reconcile the seller mutation by its application-owned natural key.'
     );
+  }
+
+  private async acquireLegacyPurchasePublicationLease(
+    token: string,
+    claim: LegacyPurchaseClaim,
+    pending: LegacyPurchasePendingSettlement
+  ): Promise<{ acknowledge: () => Promise<void>; release: () => Promise<void> }> {
+    const acquire = this.legacyPurchaseContinuationStore.claimPendingSettlementPublication!;
+    const release = this.legacyPurchaseContinuationStore.releasePendingSettlementPublication!;
+    const ownerId = randomBytes(18).toString('base64url');
+    let stopped = false;
+    let renewal: Promise<void> | undefined;
+    let lost: Error | undefined;
+    const renew = async (): Promise<void> => {
+      const claimed = await acquire.call(this.legacyPurchaseContinuationStore, token, claim, pending, {
+        ownerId,
+        expiresAt: new Date(Date.now() + LEGACY_PURCHASE_PUBLICATION_LEASE_MS).toISOString(),
+      });
+      if (!claimed) throw new Error('Completion-handler publication is owned by another live receiver.');
+    };
+    try {
+      await renew();
+    } catch (error) {
+      throw new LegacyPurchaseContinuationError(
+        'store_error',
+        'Completion-handler publication is already durably in progress.',
+        true,
+        undefined,
+        error
+      );
+    }
+    const timer = setInterval(
+      () => {
+        if (stopped || renewal) return;
+        renewal = renew()
+          .catch(error => {
+            lost = error instanceof Error ? error : new Error('Completion-handler publication lease was lost.');
+          })
+          .finally(() => {
+            renewal = undefined;
+          });
+      },
+      Math.max(250, Math.floor(LEGACY_PURCHASE_PUBLICATION_LEASE_MS / 3))
+    );
+    timer.unref?.();
+    const stop = async (): Promise<void> => {
+      stopped = true;
+      clearInterval(timer);
+      if (renewal) await renewal;
+    };
+    return {
+      acknowledge: async () => {
+        await stop();
+        if (lost) {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'Completion-handler publication ownership was lost before acknowledgement.',
+            true,
+            undefined,
+            lost
+          );
+        }
+        await this.acknowledgePendingLegacyPurchaseSettlement(token, claim, pending, ownerId);
+      },
+      release: async () => {
+        await stop();
+        try {
+          await release.call(this.legacyPurchaseContinuationStore, token, claim, pending, ownerId);
+        } catch {
+          // Expiry remains a safe crash-recovery route when release storage is unavailable.
+        }
+      },
+    };
+  }
+
+  private async attachLegacyPurchasePublicationLease(
+    status: ExternalTaskStatusResult,
+    token: string,
+    claim: LegacyPurchaseClaim,
+    pending: LegacyPurchasePendingSettlement
+  ): Promise<ExternalTaskStatusResult> {
+    const lease = await this.acquireLegacyPurchasePublicationLease(token, claim, pending);
+    return {
+      ...status,
+      afterDispatch: async () => {
+        try {
+          await status.afterDispatch?.();
+          await lease.acknowledge();
+        } catch (error) {
+          await lease.release();
+          throw error;
+        }
+      },
+      onDispatchError: async () => {
+        try {
+          await status.onDispatchError?.();
+        } finally {
+          await lease.release();
+        }
+      },
+    };
+  }
+
+  private async publishPendingLegacyPurchaseSettlement(
+    token: string,
+    claim: LegacyPurchaseClaim,
+    pending: LegacyPurchasePendingSettlement,
+    result: LegacyPurchaseTerminalResult
+  ): Promise<void> {
+    if (
+      pending.operationId !== claim.callbackOperationId ||
+      pending.taskType !== 'create_media_buy' ||
+      (claim.sellerTaskId !== undefined && pending.serverTaskId !== claim.sellerTaskId) ||
+      !this.sameLegacyPurchaseTerminalResult(pending.terminal, result)
+    ) {
+      throw new LegacyPurchaseContinuationError(
+        'store_error',
+        'The durable callback publication entry does not match the completed purchase.',
+        false
+      );
+    }
+    const publicationLease = await this.acquireLegacyPurchasePublicationLease(token, claim, pending);
+    try {
+      await this.agent.publishDurablySettledWebhook({
+        operationId: pending.operationId,
+        serverTaskId: pending.serverTaskId,
+        taskType: pending.taskType,
+        status: result.status,
+        result: result.data,
+        ...(result.error !== undefined && { error: result.error }),
+        ...(pending.idempotencyKey !== undefined && { idempotencyKey: pending.idempotencyKey }),
+      });
+      markCompletionHandlerAlreadyPublished(result);
+      await publicationLease.acknowledge();
+    } catch (error) {
+      await publicationLease.release();
+      throw new LegacyPurchaseContinuationError(
+        'store_error',
+        'Durable callback publication failed; the completed result remains replayable and publication is pending.',
+        true,
+        undefined,
+        error
+      );
+    }
+  }
+
+  private restoreLegacyPurchasePublicationProof(
+    operation: LegacyPurchaseClaim & { state: 'completed'; result: LegacyPurchaseTerminalResult },
+    result: LegacyPurchaseTerminalResult
+  ): void {
+    if (!this.sameLegacyPurchaseTerminalResult(operation.result, result)) {
+      throw new LegacyPurchaseContinuationError(
+        'store_error',
+        'The continuation store returned replay data that conflicts with its completed operation.',
+        false
+      );
+    }
+    if (operation.acknowledgedSettlementFingerprint === undefined) return;
+    if (!operation.callbackOperationId || !operation.sellerTaskId) {
+      throw new LegacyPurchaseContinuationError(
+        'store_error',
+        'The continuation store retained a publication proof without its exact callback and seller task binding.',
+        false
+      );
+    }
+    const expected = legacyPurchaseSettlementFingerprint({
+      operationId: operation.callbackOperationId,
+      serverTaskId: operation.sellerTaskId,
+      taskType: 'create_media_buy',
+      terminal: operation.result,
+    });
+    if (operation.acknowledgedSettlementFingerprint !== expected) {
+      throw new LegacyPurchaseContinuationError(
+        'store_error',
+        'The continuation store retained an invalid completion-handler publication proof.',
+        false
+      );
+    }
+    markCompletionHandlerAlreadyPublished(result);
+  }
+
+  private async acknowledgePendingLegacyPurchaseSettlement(
+    token: string,
+    claim: LegacyPurchaseClaim,
+    pending: LegacyPurchasePendingSettlement,
+    publicationOwnerId?: string
+  ): Promise<void> {
+    const acknowledge = this.legacyPurchaseContinuationStore.acknowledgePendingSettlement;
+    if (!acknowledge) {
+      throw new LegacyPurchaseContinuationError(
+        'store_error',
+        'The continuation store cannot acknowledge durable callback publication.',
+        true
+      );
+    }
+    const minimumProofRetention =
+      pending.publicationSource === 'sdk' ? Date.now() + LEGACY_PURCHASE_PUBLICATION_PROOF_RETENTION_MS : undefined;
+    let acknowledged: boolean;
+    try {
+      acknowledged = await acknowledge.call(
+        this.legacyPurchaseContinuationStore,
+        token,
+        claim,
+        pending,
+        publicationOwnerId
+      );
+    } catch (error) {
+      throw new LegacyPurchaseContinuationError(
+        'store_error',
+        'Could not acknowledge durable callback publication.',
+        true,
+        undefined,
+        error
+      );
+    }
+    if (!acknowledged) {
+      throw new LegacyPurchaseContinuationError(
+        'store_error',
+        'Durable callback publication acknowledgement conflicted with stored state.',
+        true
+      );
+    }
+    let acknowledgedRecord: LegacyPurchaseContinuationRecord | undefined;
+    let callbackRecord: LegacyPurchaseContinuationRecord | undefined;
+    try {
+      [acknowledgedRecord, callbackRecord] = await Promise.all([
+        this.legacyPurchaseContinuationStore.get(token),
+        this.legacyPurchaseContinuationStore.getByCallbackOperationId?.(pending.operationId),
+      ]);
+    } catch (error) {
+      throw new LegacyPurchaseContinuationError(
+        'store_error',
+        'Could not verify durable callback publication acknowledgement.',
+        true,
+        undefined,
+        error
+      );
+    }
+    if (
+      acknowledgedRecord?.operation.state !== 'completed' ||
+      acknowledgedRecord.operation.pendingSettlement !== undefined ||
+      acknowledgedRecord.operation.acknowledgedSettlementFingerprint !== legacyPurchaseSettlementFingerprint(pending) ||
+      callbackRecord?.token !== token ||
+      callbackRecord.operation.state !== 'completed' ||
+      callbackRecord.operation.pendingSettlement !== undefined ||
+      callbackRecord.operation.acknowledgedSettlementFingerprint !== legacyPurchaseSettlementFingerprint(pending) ||
+      (minimumProofRetention !== undefined &&
+        [acknowledgedRecord.operation.replayExpiresAt, callbackRecord.operation.replayExpiresAt].some(value => {
+          const parsed = Date.parse(value);
+          return !Number.isFinite(parsed) || parsed < minimumProofRetention;
+        }))
+    ) {
+      throw new LegacyPurchaseContinuationError(
+        'store_error',
+        'The continuation store did not retain the exact durable callback publication proof.',
+        true
+      );
+    }
+  }
+
+  private assertLegacyPurchasePublicationRecoveryHorizon(
+    record: LegacyPurchaseContinuationRecord | undefined,
+    minimumRetainUntil: number
+  ): asserts record is LegacyPurchaseContinuationRecord & { operation: ActiveLegacyPurchaseOperation } {
+    if (!record || record.operation.state === 'available') {
+      throw new LegacyPurchaseContinuationError(
+        'store_error',
+        'The continuation store lost durable callback publication state.',
+        true
+      );
+    }
+    const replayExpiresAt = Date.parse(record.operation.replayExpiresAt);
+    if (!Number.isFinite(replayExpiresAt) || replayExpiresAt < minimumRetainUntil) {
+      throw new LegacyPurchaseContinuationError(
+        'store_error',
+        'The continuation store did not retain callback publication through the required recovery horizon.',
+        true
+      );
+    }
   }
 
   private legacyPurchaseAmbiguousError(message: string, cause?: unknown): LegacyPurchaseContinuationError {
@@ -5723,14 +6529,929 @@ export class MediaBuyLifecycleCoordinator {
     }
   }
 
+  private legacyPurchaseResultFromTask(
+    task: TaskInfo,
+    metadata: TaskResult<CreateMediaBuyResponse>['metadata']
+  ): TaskResult<CreateMediaBuyResponse> | undefined {
+    const carryDeferredSettlement = <T extends TaskResult<CreateMediaBuyResponse>>(result: T): T =>
+      transferDeferredSettlementAcknowledgement(task, result);
+    const observedMetadata = {
+      ...metadata,
+      taskName: task.taskType,
+      timestamp: new Date().toISOString(),
+    };
+    if (
+      task.status === 'completed' &&
+      task.result !== undefined &&
+      isAdcpOperationSuccess(task.result, task.taskType)
+    ) {
+      return carryDeferredSettlement(
+        attachMatch({
+          success: true,
+          status: 'completed',
+          data: task.result as CreateMediaBuyResponse,
+          metadata: { ...observedMetadata, status: 'completed' },
+        })
+      );
+    }
+    if (task.status === 'unknown') {
+      throw this.legacyPurchaseAmbiguousError(
+        'tasks/get returned an unrecognizable response for the submitted legacy purchase.'
+      );
+    }
+    if (['completed', 'failed', 'rejected', 'canceled', 'governance-denied'].includes(task.status)) {
+      const status = task.status === 'governance-denied' ? 'governance-denied' : 'failed';
+      const extracted = extractAdcpErrorInfo(task.result);
+      const adcpError = extracted?.synthetic === true ? undefined : extracted;
+      const correlationId = extractCorrelationId(task.result);
+      return carryDeferredSettlement(
+        attachMatch({
+          success: false,
+          status,
+          error: adcpError?.message ?? 'Legacy create failed.',
+          ...(adcpError !== undefined && { adcpError }),
+          ...(correlationId !== undefined && { correlationId }),
+          ...(task.result !== undefined && { data: task.result as CreateMediaBuyResponse }),
+          metadata: { ...observedMetadata, status },
+        } as TaskResult<CreateMediaBuyResponse>)
+      );
+    }
+    if (task.status === 'input-required' || task.status === 'auth-required') {
+      return carryDeferredSettlement(
+        attachMatch({
+          success: true,
+          status: task.status,
+          ...(task.result !== undefined && { data: task.result as CreateMediaBuyResponse }),
+          metadata: { ...observedMetadata, status: task.status },
+        } as TaskResult<CreateMediaBuyResponse>)
+      );
+    }
+    if (task.status === 'working' || task.status === 'submitted') {
+      return carryDeferredSettlement(
+        attachMatch({
+          success: true,
+          status: task.status,
+          ...(task.result !== undefined && { data: task.result as CreateMediaBuyResponse }),
+          metadata: { ...observedMetadata, status: task.status },
+        } as TaskResult<CreateMediaBuyResponse>)
+      );
+    }
+    return undefined;
+  }
+
+  private async authorizeLegacyDeferredResume(
+    operationId: string,
+    deferredToken: string
+  ): Promise<boolean | undefined> {
+    const findByOperationId = this.legacyPurchaseContinuationStore.getByCallbackOperationId;
+    if (!findByOperationId) return undefined;
+    const indexed = await findByOperationId.call(this.legacyPurchaseContinuationStore, operationId);
+    if (!indexed) return undefined;
+    const continuation = await this.legacyPurchaseContinuationStore.get(indexed.token);
+    if (!continuation || continuation.token !== indexed.token || continuation.operation.state !== 'claimed') {
+      return undefined;
+    }
+    const operation = continuation.operation;
+    if (operation.callbackOperationId !== operationId) return undefined;
+    const replayExpiresAt = Date.parse(operation.replayExpiresAt);
+    if (!Number.isFinite(replayExpiresAt) || replayExpiresAt <= Date.now()) return undefined;
+    const expected = this.legacyPurchaseBinding(continuation.accountScope);
+    if (
+      continuation.principalScope !== expected.principalScope ||
+      continuation.accountScope !== expected.accountScope ||
+      continuation.sellerScope !== expected.sellerScope ||
+      continuation.clientSessionScope !== expected.clientSessionScope ||
+      continuation.sourceAdcpVersion !== expected.sourceAdcpVersion
+    ) {
+      return undefined;
+    }
+    return operation.pendingSettlement === undefined && operation.deferredTaskToken === deferredToken;
+  }
+
+  private async authorizeLegacyDeferredOperationRecovery(
+    operationId: string,
+    recoveryKey: string,
+    purpose: 'pause-recovery' | 'callback-checkpoint'
+  ): Promise<boolean | undefined> {
+    const findByOperationId = this.legacyPurchaseContinuationStore.getByCallbackOperationId;
+    if (!findByOperationId) return undefined;
+    const indexed = await findByOperationId.call(this.legacyPurchaseContinuationStore, operationId);
+    if (!indexed || indexed.token !== recoveryKey) return false;
+    const continuation = await this.legacyPurchaseContinuationStore.get(recoveryKey);
+    if (!continuation || continuation.token !== recoveryKey || continuation.operation.state === 'available') {
+      return false;
+    }
+    const operation = continuation.operation;
+    const replayExpiresAt = Date.parse(operation.replayExpiresAt);
+    const expected = this.legacyPurchaseBinding(continuation.accountScope);
+    const replayIsRecoverable =
+      (Number.isFinite(replayExpiresAt) && replayExpiresAt > Date.now()) ||
+      (purpose === 'callback-checkpoint' && operation.pendingSettlement?.publicationSource === 'sdk');
+    const bound =
+      operation.callbackOperationId === operationId &&
+      replayIsRecoverable &&
+      continuation.principalScope === expected.principalScope &&
+      continuation.accountScope === expected.accountScope &&
+      continuation.sellerScope === expected.sellerScope &&
+      continuation.clientSessionScope === expected.clientSessionScope &&
+      continuation.sourceAdcpVersion === expected.sourceAdcpVersion;
+    if (!bound) return false;
+    return purpose === 'callback-checkpoint'
+      ? true
+      : operation.state === 'claimed' && operation.pendingSettlement === undefined;
+  }
+
+  private async replaceLegacyDeferredResumeToken(
+    operationId: string,
+    currentToken: string,
+    replacementToken: string
+  ): Promise<boolean | undefined> {
+    const findByOperationId = this.legacyPurchaseContinuationStore.getByCallbackOperationId;
+    const replaceToken = this.legacyPurchaseContinuationStore.recordDeferredTaskToken;
+    if (!findByOperationId || !replaceToken) return undefined;
+    const indexed = await findByOperationId.call(this.legacyPurchaseContinuationStore, operationId);
+    if (!indexed) return undefined;
+    const continuation = await this.legacyPurchaseContinuationStore.get(indexed.token);
+    if (!continuation || continuation.token !== indexed.token || continuation.operation.state !== 'claimed') {
+      return false;
+    }
+    const operation = continuation.operation;
+    const replayExpiresAt = Date.parse(operation.replayExpiresAt);
+    const expected = this.legacyPurchaseBinding(continuation.accountScope);
+    if (
+      operation.callbackOperationId !== operationId ||
+      operation.pendingSettlement !== undefined ||
+      operation.deferredTaskToken !== currentToken ||
+      !Number.isFinite(replayExpiresAt) ||
+      replayExpiresAt <= Date.now() ||
+      continuation.principalScope !== expected.principalScope ||
+      continuation.accountScope !== expected.accountScope ||
+      continuation.sellerScope !== expected.sellerScope ||
+      continuation.clientSessionScope !== expected.clientSessionScope ||
+      continuation.sourceAdcpVersion !== expected.sourceAdcpVersion
+    ) {
+      return false;
+    }
+    const replaced = await replaceToken.call(
+      this.legacyPurchaseContinuationStore,
+      continuation.token,
+      operation,
+      replacementToken,
+      currentToken
+    );
+    if (!replaced) return false;
+
+    // A custom store's successful CAS is security-sensitive: verify both its
+    // primary record and callback index expose the same replacement route
+    // before TaskExecutor consumes the old SDK checkpoint.
+    const [primary, reindexed] = await Promise.all([
+      this.legacyPurchaseContinuationStore.get(continuation.token),
+      findByOperationId.call(this.legacyPurchaseContinuationStore, operationId),
+    ]);
+    const primaryReplayExpiresAt =
+      primary?.operation.state === 'claimed' ? Date.parse(primary.operation.replayExpiresAt) : Number.NaN;
+    return (
+      primary?.operation.state === 'claimed' &&
+      primary.operation.callbackOperationId === operationId &&
+      primary.operation.pendingSettlement === undefined &&
+      primary.operation.deferredTaskToken === replacementToken &&
+      Number.isFinite(primaryReplayExpiresAt) &&
+      primaryReplayExpiresAt > Date.now() &&
+      primary.principalScope === expected.principalScope &&
+      primary.accountScope === expected.accountScope &&
+      primary.sellerScope === expected.sellerScope &&
+      primary.clientSessionScope === expected.clientSessionScope &&
+      primary.sourceAdcpVersion === expected.sourceAdcpVersion &&
+      reindexed?.token === continuation.token &&
+      reindexed.operation.state === 'claimed' &&
+      reindexed.operation.callbackOperationId === operationId &&
+      reindexed.operation.pendingSettlement === undefined &&
+      reindexed.operation.deferredTaskToken === replacementToken
+    );
+  }
+
+  private async recoverLegacyPurchaseSettlement(
+    operationId: string,
+    observation: ExternalTaskSettlementObservation
+  ): Promise<ExternalTaskStatusResult | undefined> {
+    const findByOperationId = this.legacyPurchaseContinuationStore.getByCallbackOperationId;
+    if (!findByOperationId) return undefined;
+
+    let continuation: LegacyPurchaseContinuationRecord | undefined;
+    try {
+      continuation = await findByOperationId.call(this.legacyPurchaseContinuationStore, operationId);
+      if (continuation) {
+        const primary = await this.legacyPurchaseContinuationStore.get(continuation.token);
+        if (!primary || primary.token !== continuation.token || primary.operation.state === 'available') {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'The callback lookup does not match the primary durable continuation state.',
+            true
+          );
+        }
+        continuation = primary;
+      }
+    } catch (error) {
+      if (error instanceof LegacyPurchaseContinuationError) throw error;
+      throw new LegacyPurchaseContinuationError(
+        'store_error',
+        'Could not resolve durable legacy purchase callback state.',
+        true,
+        undefined,
+        error
+      );
+    }
+    if (!continuation || continuation.operation.state === 'available') return undefined;
+    const continuationToken = continuation.token;
+    let claim = continuation.operation;
+    if (claim.callbackOperationId !== operationId) return undefined;
+    const replayExpiresAt = Date.parse(claim.replayExpiresAt);
+    const reclaimableSdkPublication = claim.pendingSettlement?.publicationSource === 'sdk';
+    if ((!Number.isFinite(replayExpiresAt) || replayExpiresAt <= Date.now()) && !reclaimableSdkPublication) {
+      throw new LegacyPurchaseContinuationError(
+        'expired',
+        'The legacy purchase callback settlement window has expired.',
+        false,
+        'Reconcile the seller mutation by its application-owned natural key.'
+      );
+    }
+
+    // A process may host several coordinators backed by different durable
+    // stores. Treat a stable-binding mismatch as "not mine" so the next
+    // registered coordinator can attempt recovery without exposing records.
+    const expected = this.legacyPurchaseBinding(continuation.accountScope);
+    if (
+      continuation.principalScope !== expected.principalScope ||
+      continuation.accountScope !== expected.accountScope ||
+      continuation.sellerScope !== expected.sellerScope ||
+      continuation.clientSessionScope !== expected.clientSessionScope ||
+      continuation.sourceAdcpVersion !== expected.sourceAdcpVersion
+    ) {
+      return undefined;
+    }
+
+    if (!observation.serverTaskId || observation.taskType !== 'create_media_buy') {
+      throw this.legacyPurchaseAmbiguousError(
+        'The pushed seller task does not carry a valid create_media_buy identity.'
+      );
+    }
+
+    const agent = this.agent.getAgent();
+    const task: TaskInfo = {
+      taskId: observation.serverTaskId,
+      taskType: 'create_media_buy',
+      status: observation.status,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      ...(observation.result !== undefined && { result: observation.result }),
+    };
+    const observed = this.legacyPurchaseResultFromTask(task, {
+      taskId: operationId,
+      taskName: 'create_media_buy',
+      agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+      responseTimeMs: 0,
+      timestamp: new Date().toISOString(),
+      clarificationRounds: 0,
+      status: observation.status,
+      serverTaskId: observation.serverTaskId,
+    });
+    if (!observed || !['completed', 'failed', 'governance-denied'].includes(observed.status)) {
+      throw this.legacyPurchaseAmbiguousError(
+        'The pushed legacy create status was not an authoritative terminal result.'
+      );
+    }
+    if (observed.status === 'failed' && (observed.adcpError === undefined || observed.adcpError.synthetic === true)) {
+      await this.markLegacyPurchaseAmbiguous(continuation.token, claim, 'pushed_task_result_invalid');
+      throw this.legacyPurchaseAmbiguousError(
+        'The pushed legacy create failure was not an authoritative structured AdCP error.'
+      );
+    }
+
+    let terminal: LegacyPurchaseTerminalResult;
+    try {
+      terminal = this.assertLegacyPurchaseTerminalResult(observed, continuation.sourceAdcpVersion);
+    } catch (error) {
+      await this.markLegacyPurchaseAmbiguous(continuation.token, claim, 'pushed_task_result_invalid');
+      throw error;
+    }
+
+    if (claim.sellerTaskId && observation.serverTaskId !== claim.sellerTaskId) {
+      throw this.legacyPurchaseAmbiguousError(
+        'The pushed seller task identity does not match the durable legacy purchase claim.'
+      );
+    }
+
+    // A legacy pending/completed winner predates this callback attempt. Bind
+    // the SDK checkpoint to that same value, and reject a conflicting retry
+    // before either durable store changes.
+    let deferredCheckpointCandidate = terminal;
+    if (claim.pendingSettlement) {
+      const pending = claim.pendingSettlement;
+      if (
+        pending.operationId !== operationId ||
+        pending.serverTaskId !== observation.serverTaskId ||
+        pending.taskType !== 'create_media_buy'
+      ) {
+        throw this.legacyPurchaseAmbiguousError(
+          'The callback conflicts with the earlier durable legacy purchase observation.'
+        );
+      }
+      // The durable inbox is already the winner. Checkpoint that exact value
+      // before publishing it; the callback-specific event/value checks below
+      // then reject a conflicting retry without allowing it to replace the
+      // earlier observation in either store.
+      deferredCheckpointCandidate = pending.terminal;
+    } else if (claim.state === 'completed') {
+      if (!this.sameLegacyPurchaseTerminalResult(claim.result, terminal)) {
+        throw this.legacyPurchaseAmbiguousError('The callback conflicts with the durably completed legacy purchase.');
+      }
+      deferredCheckpointCandidate = claim.result;
+    }
+
+    // Claim the linked SDK checkpoint before mutating the legacy inbox or
+    // terminal record. Otherwise a prior polling winner could reject this
+    // callback only after the two durable stores had committed different
+    // terminal values.
+    let linkedDeferredRoute =
+      observation.deferredCheckpointOwned === true
+        ? undefined
+        : await this.agent.checkpointExternalDeferredSettlementForOperation(
+            operationId,
+            continuationToken,
+            deferredCheckpointCandidate
+          );
+    if (
+      observation.deferredCheckpointOwned !== true &&
+      linkedDeferredRoute === undefined &&
+      claim.deferredTaskToken &&
+      (await this.agent.hasDurablyStoredDeferredTask(claim.deferredTaskToken))
+    ) {
+      const legacyCheckpoint = await this.agent.checkpointExternalDeferredSettlement(
+        claim.deferredTaskToken,
+        operationId,
+        deferredCheckpointCandidate
+      );
+      linkedDeferredRoute = {
+        token: claim.deferredTaskToken,
+        ...(legacyCheckpoint !== undefined && { result: legacyCheckpoint }),
+      };
+    }
+    if (linkedDeferredRoute && claim.deferredTaskToken !== linkedDeferredRoute.token) {
+      if (claim.state !== 'claimed') {
+        throw new LegacyPurchaseContinuationError(
+          'store_error',
+          'The completed callback route does not match the current SDK continuation generation.',
+          false
+        );
+      }
+      const rebound = await this.legacyPurchaseContinuationStore.recordDeferredTaskToken!(
+        continuationToken,
+        claim,
+        linkedDeferredRoute.token,
+        claim.deferredTaskToken
+      );
+      if (!rebound) {
+        throw new LegacyPurchaseContinuationError(
+          'store_error',
+          'Could not atomically reconcile the callback to the current SDK continuation generation.',
+          true
+        );
+      }
+      const reboundRecord = await this.legacyPurchaseContinuationStore.get(continuationToken);
+      if (
+        !reboundRecord ||
+        reboundRecord.operation.state !== 'claimed' ||
+        reboundRecord.operation.callbackOperationId !== operationId ||
+        reboundRecord.operation.deferredTaskToken !== linkedDeferredRoute.token
+      ) {
+        throw new LegacyPurchaseContinuationError(
+          'store_error',
+          'Could not verify the callback SDK continuation generation after reconciliation.',
+          true
+        );
+      }
+      claim = reboundRecord.operation;
+    }
+    const linkedDeferredCheckpoint = linkedDeferredRoute?.result;
+    const bridgeDeferredCheckpoint = (
+      status: ExternalTaskStatusResult,
+      canonical: TaskResult<CreateMediaBuyResponse>
+    ): ExternalTaskStatusResult => {
+      if (hasCompletionHandlerAlreadyPublished(canonical)) {
+        markCompletionHandlerAlreadyPublished(status);
+      }
+      if (!linkedDeferredCheckpoint) return status;
+      const checkpointed = transferDeferredSettlementAcknowledgement(linkedDeferredCheckpoint, canonical);
+      return {
+        ...status,
+        afterDispatch: async () => {
+          try {
+            // AsyncHandler invokes the adopter callback before afterDispatch.
+            // Persist that fact on NACK even if the legacy outbox ACK below
+            // fails, so a retry cannot publish the handler twice.
+            markCompletionHandlerAlreadyPublished(checkpointed);
+            await status.afterDispatch?.();
+            await acknowledgeDeferredSettlement(checkpointed);
+          } catch (error) {
+            await rejectDeferredSettlement(checkpointed);
+            throw error;
+          }
+        },
+        onDispatchError: async () => {
+          try {
+            await status.onDispatchError?.();
+          } finally {
+            await rejectDeferredSettlement(checkpointed);
+          }
+        },
+      };
+    };
+
+    try {
+      // Every durable mutation callback first enters the store-backed outbox,
+      // even when an executor-local settlement handler already exists. Handler
+      // success, not process-local task settlement, controls acknowledgement.
+      if (claim.sellerTaskId && claim.state !== 'completed' && !claim.pendingSettlement) {
+        const recordPending = this.legacyPurchaseContinuationStore.recordPendingSettlement;
+        if (!recordPending) {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'The continuation store cannot durably retain callback publication state.',
+            true
+          );
+        }
+        const minimumRetainUntil = Date.now() + LEGACY_PURCHASE_PUBLICATION_PROOF_RETENTION_MS;
+        let pendingResult;
+        try {
+          pendingResult = await recordPending.call(this.legacyPurchaseContinuationStore, continuation.token, claim, {
+            operationId,
+            serverTaskId: observation.serverTaskId,
+            taskType: 'create_media_buy',
+            ...(observation.idempotencyKey !== undefined && { idempotencyKey: observation.idempotencyKey }),
+            terminal,
+          });
+        } catch (error) {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'Could not durably retain callback publication state.',
+            true,
+            undefined,
+            error
+          );
+        }
+        if (pendingResult.outcome !== 'recorded' && pendingResult.outcome !== 'duplicate') {
+          throw this.legacyPurchaseAmbiguousError('The callback publication state could not be durably retained.');
+        }
+        const latest = await this.legacyPurchaseContinuationStore.get(continuation.token);
+        this.assertLegacyPurchasePublicationRecoveryHorizon(latest, minimumRetainUntil);
+        continuation = latest;
+        claim = latest.operation;
+      }
+
+      if (!claim.sellerTaskId) {
+        const recordPending = this.legacyPurchaseContinuationStore.recordPendingSettlement;
+        if (!recordPending) {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'The continuation store cannot durably queue a callback that arrived before seller task binding.',
+            true
+          );
+        }
+        const minimumRetainUntil = Date.now() + LEGACY_PURCHASE_PUBLICATION_PROOF_RETENTION_MS;
+        let pending;
+        try {
+          pending = await recordPending.call(this.legacyPurchaseContinuationStore, continuation.token, claim, {
+            operationId,
+            serverTaskId: observation.serverTaskId,
+            taskType: 'create_media_buy',
+            ...(observation.idempotencyKey !== undefined && { idempotencyKey: observation.idempotencyKey }),
+            terminal,
+          });
+        } catch (error) {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'Could not durably queue the legacy purchase callback before seller task binding.',
+            true,
+            undefined,
+            error
+          );
+        }
+        if (pending.outcome !== 'recorded' && pending.outcome !== 'duplicate') {
+          throw this.legacyPurchaseAmbiguousError(
+            'The terminal callback could not be durably queued before seller task binding.'
+          );
+        }
+
+        // The seller response may have bound its task concurrently with the
+        // durable inbox write. Re-read and settle here if this replica won that
+        // race; otherwise acknowledge only after the inbox commit above.
+        let latest: LegacyPurchaseContinuationRecord | undefined;
+        try {
+          latest = await this.legacyPurchaseContinuationStore.get(continuation.token);
+        } catch (error) {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'Could not reload durable legacy purchase callback state.',
+            true,
+            undefined,
+            error
+          );
+        }
+        this.assertLegacyPurchasePublicationRecoveryHorizon(latest, minimumRetainUntil);
+        if (latest.operation.state === 'completed') {
+          const completion = await this.persistLegacyPurchaseCompletion(continuation.token, latest.operation, terminal);
+          const canonical = completion.result;
+          const status = await (completion.pendingSettlement
+            ? this.attachLegacyPurchasePublicationLease(
+                {
+                  settled: true,
+                  duplicate: false,
+                  result: canonical.data,
+                  status: canonical.status,
+                  ...(canonical.error !== undefined && { error: canonical.error }),
+                },
+                continuationToken,
+                latest.operation as LegacyPurchaseClaim,
+                completion.pendingSettlement
+              )
+            : Promise.resolve({
+                settled: true,
+                duplicate: !completion.installed,
+                result: canonical.data,
+                status: canonical.status,
+                ...(canonical.error !== undefined && { error: canonical.error }),
+              }));
+          return bridgeDeferredCheckpoint(status, canonical);
+        }
+        if (latest.operation.sellerTaskId) {
+          if (latest.operation.sellerTaskId !== observation.serverTaskId) {
+            throw this.legacyPurchaseAmbiguousError(
+              'The pushed seller task ID conflicts with the concurrently bound durable seller task.'
+            );
+          }
+          const completion = await this.persistLegacyPurchaseCompletion(continuation.token, latest.operation, terminal);
+          const canonical = completion.result;
+          const status = await (completion.pendingSettlement
+            ? this.attachLegacyPurchasePublicationLease(
+                {
+                  settled: true,
+                  duplicate: false,
+                  result: canonical.data,
+                  status: canonical.status,
+                  ...(canonical.error !== undefined && { error: canonical.error }),
+                },
+                continuationToken,
+                latest.operation,
+                completion.pendingSettlement
+              )
+            : Promise.resolve({
+                settled: true,
+                duplicate: !completion.installed,
+                result: canonical.data,
+                status: canonical.status,
+                ...(canonical.error !== undefined && { error: canonical.error }),
+              }));
+          return bridgeDeferredCheckpoint(status, canonical);
+        }
+        if (linkedDeferredCheckpoint) {
+          const completion = await this.persistLegacyPurchaseCompletion(continuation.token, latest.operation, terminal);
+          const canonical = completion.result;
+          const status = await (completion.pendingSettlement
+            ? this.attachLegacyPurchasePublicationLease(
+                {
+                  settled: true,
+                  duplicate: false,
+                  result: canonical.data,
+                  status: canonical.status,
+                  ...(canonical.error !== undefined && { error: canonical.error }),
+                },
+                continuationToken,
+                latest.operation,
+                completion.pendingSettlement
+              )
+            : Promise.resolve({
+                settled: true,
+                duplicate: !completion.installed,
+                result: canonical.data,
+                status: canonical.status,
+                ...(canonical.error !== undefined && { error: canonical.error }),
+              }));
+          return bridgeDeferredCheckpoint(status, canonical);
+        }
+        return { settled: false, queued: true };
+      }
+      // A replica may crash after binding the seller task but before draining an
+      // earlier callback from the durable inbox. Preserve that first observed
+      // terminal value before considering this later callback.
+      const pendingSettlement = claim.pendingSettlement;
+      if (pendingSettlement) {
+        if (
+          pendingSettlement.operationId !== claim.callbackOperationId ||
+          pendingSettlement.serverTaskId !== claim.sellerTaskId ||
+          pendingSettlement.taskType !== 'create_media_buy'
+        ) {
+          await this.markLegacyPurchaseAmbiguous(continuation.token, claim, 'pushed_task_identity_mismatch');
+          throw this.legacyPurchaseAmbiguousError(
+            'The durably queued callback does not match the bound legacy purchase task.'
+          );
+        }
+        if (
+          observation.deferredCheckpointOwned !== true &&
+          pendingSettlement.idempotencyKey !== observation.idempotencyKey
+        ) {
+          if (pendingSettlement.publicationSource !== 'sdk') {
+            throw this.legacyPurchaseAmbiguousError(
+              'The callback event identity does not match the earlier durably queued callback.'
+            );
+          }
+        }
+        if (!this.sameLegacyPurchaseTerminalResult(pendingSettlement.terminal, terminal)) {
+          throw this.legacyPurchaseAmbiguousError(
+            'The callback conflicts with an earlier durably acknowledged callback.'
+          );
+        }
+        const pendingCompletion = await this.persistLegacyPurchaseCompletion(
+          continuation.token,
+          claim,
+          pendingSettlement.terminal
+        );
+        const canonical = pendingCompletion.result;
+        const status = await this.attachLegacyPurchasePublicationLease(
+          {
+            settled: true,
+            duplicate: false,
+            result: canonical.data,
+            status: canonical.status,
+            ...(canonical.error !== undefined && { error: canonical.error }),
+          },
+          continuationToken,
+          claim,
+          pendingSettlement
+        );
+        return bridgeDeferredCheckpoint(status, canonical);
+      }
+
+      if (continuation.operation.state === 'completed') {
+        let primaryRecord: LegacyPurchaseContinuationRecord | undefined;
+        try {
+          primaryRecord = await this.legacyPurchaseContinuationStore.get(continuationToken);
+        } catch (error) {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'Could not verify the durable callback publication proof from primary storage.',
+            true,
+            undefined,
+            error
+          );
+        }
+        if (
+          primaryRecord?.operation.state !== 'completed' ||
+          !this.sameLegacyPurchaseTerminalResult(primaryRecord.operation.result, continuation.operation.result) ||
+          primaryRecord.operation.acknowledgedSettlementFingerprint !==
+            continuation.operation.acknowledgedSettlementFingerprint
+        ) {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'The callback lookup does not match the primary durable publication proof.',
+            true
+          );
+        }
+        const completedClaim = primaryRecord.operation;
+        if (!completedClaim.sellerTaskId || completedClaim.sellerTaskId !== observation.serverTaskId) {
+          throw this.legacyPurchaseAmbiguousError(
+            'The callback seller task identity does not match the durably completed legacy purchase.'
+          );
+        }
+        if (!this.sameLegacyPurchaseTerminalResult(completedClaim.result, terminal)) {
+          throw this.legacyPurchaseAmbiguousError(
+            'The pushed terminal result conflicts with the durably completed legacy purchase.'
+          );
+        }
+        const acknowledgementSettlement: LegacyPurchasePendingSettlement = {
+          operationId,
+          serverTaskId: observation.serverTaskId,
+          taskType: 'create_media_buy',
+          ...(observation.idempotencyKey !== undefined && { idempotencyKey: observation.idempotencyKey }),
+          terminal: completedClaim.result,
+        };
+        const expectedPublicationFingerprint = legacyPurchaseSettlementFingerprint(acknowledgementSettlement);
+        if (
+          completedClaim.acknowledgedSettlementFingerprint !== undefined &&
+          completedClaim.acknowledgedSettlementFingerprint !== expectedPublicationFingerprint
+        ) {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'The continuation store retained an invalid durable callback publication proof.',
+            true
+          );
+        }
+        const publicationWasAcknowledged =
+          completedClaim.acknowledgedSettlementFingerprint === expectedPublicationFingerprint;
+        if (publicationWasAcknowledged) {
+          markCompletionHandlerAlreadyPublished(completedClaim.result);
+          return bridgeDeferredCheckpoint(
+            {
+              settled: true,
+              duplicate: true,
+              result: completedClaim.result.data,
+              status: completedClaim.result.status,
+              ...(completedClaim.result.error !== undefined && { error: completedClaim.result.error }),
+            },
+            completedClaim.result
+          );
+        }
+
+        // A completed record without an outbox or ACK proof still needs an
+        // atomic publication reservation. A post-handler ACK alone permits
+        // two replicas (or two re-emission delivery keys) to invoke the
+        // adopter handler before either one records its proof.
+        let reserved: LegacyPurchasePendingSettlementResult;
+        try {
+          reserved = await this.legacyPurchaseContinuationStore.recordPendingSettlement!(
+            continuationToken,
+            completedClaim,
+            acknowledgementSettlement
+          );
+        } catch (error) {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'Could not durably reserve completion-handler publication.',
+            true,
+            undefined,
+            error
+          );
+        }
+        if (reserved.outcome !== 'recorded' && reserved.outcome !== 'duplicate') {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'Could not atomically reserve completion-handler publication.',
+            true
+          );
+        }
+        const publicationRecord = await this.legacyPurchaseContinuationStore.get(continuationToken);
+        if (
+          !publicationRecord ||
+          publicationRecord.operation.state !== 'completed' ||
+          !this.sameLegacyPurchaseTerminalResult(publicationRecord.operation.result, completedClaim.result)
+        ) {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'Could not verify the durable completion-handler publication reservation.',
+            true
+          );
+        }
+        if (publicationRecord.operation.acknowledgedSettlementFingerprint === expectedPublicationFingerprint) {
+          markCompletionHandlerAlreadyPublished(publicationRecord.operation.result);
+          return bridgeDeferredCheckpoint(
+            {
+              settled: true,
+              duplicate: true,
+              result: publicationRecord.operation.result.data,
+              status: publicationRecord.operation.result.status,
+              ...(publicationRecord.operation.result.error !== undefined && {
+                error: publicationRecord.operation.result.error,
+              }),
+            },
+            publicationRecord.operation.result
+          );
+        }
+        const reservedSettlement = publicationRecord.operation.pendingSettlement;
+        if (
+          !reservedSettlement ||
+          legacyPurchaseSettlementFingerprint(reservedSettlement) !== expectedPublicationFingerprint
+        ) {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'The durable completion-handler publication reservation does not match the terminal winner.',
+            true
+          );
+        }
+        const reservedStatus = await this.attachLegacyPurchasePublicationLease(
+          {
+            settled: true,
+            duplicate: false,
+            result: publicationRecord.operation.result.data,
+            status: publicationRecord.operation.result.status,
+            ...(publicationRecord.operation.result.error !== undefined && {
+              error: publicationRecord.operation.result.error,
+            }),
+          },
+          continuationToken,
+          publicationRecord.operation,
+          reservedSettlement
+        );
+        return bridgeDeferredCheckpoint(reservedStatus, publicationRecord.operation.result);
+      }
+
+      const completion = await this.persistLegacyPurchaseCompletion(continuation.token, claim, terminal);
+      const canonical = completion.result;
+      return bridgeDeferredCheckpoint(
+        {
+          settled: true,
+          duplicate: !completion.installed,
+          result: canonical.data,
+          status: canonical.status,
+          ...(canonical.error !== undefined && { error: canonical.error }),
+        },
+        canonical
+      );
+    } catch (error) {
+      if (linkedDeferredCheckpoint) await rejectDeferredSettlement(linkedDeferredCheckpoint);
+      throw error;
+    }
+  }
+
   private async trackLegacyPurchaseResult(
     token: string,
     claim: LegacyPurchaseClaim,
     result: TaskResult<CreateMediaBuyResponse>,
     publishSettledTaskStatus?: BeforeProtocolDispatchContext['publishSettledTaskStatus'],
     registerExternalTaskSettlement?: BeforeProtocolDispatchContext['registerExternalTaskSettlement'],
-    settlementTransport?: TaskOptions['transport']
+    settlementTransport?: TaskOptions['transport'],
+    expectedDeferredTaskToken?: string
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
+    try {
+      const tracked = await this.trackLegacyPurchaseResultInternal(
+        token,
+        claim,
+        result,
+        publishSettledTaskStatus,
+        registerExternalTaskSettlement,
+        settlementTransport,
+        expectedDeferredTaskToken
+      );
+      return transferDeferredSettlementAcknowledgement(result, tracked);
+    } catch (error) {
+      await rejectDeferredSettlement(result);
+      throw error;
+    }
+  }
+
+  private async trackLegacyPurchaseResultInternal(
+    token: string,
+    claim: LegacyPurchaseClaim,
+    result: TaskResult<CreateMediaBuyResponse>,
+    publishSettledTaskStatus?: BeforeProtocolDispatchContext['publishSettledTaskStatus'],
+    registerExternalTaskSettlement?: BeforeProtocolDispatchContext['registerExternalTaskSettlement'],
+    settlementTransport?: TaskOptions['transport'],
+    expectedDeferredTaskToken?: string
+  ): Promise<TaskResult<CreateMediaBuyResponse>> {
+    const durablePendingSettlement = hasDeferredPendingSettlement(result);
+    let durableDeferredTaskToken = false;
+    let deferredRouteSettledDuringHandoff = false;
+    if (result.deferred && this.legacyPurchaseCallbackRecoveryEnabled) {
+      durableDeferredTaskToken = await this.agent.hasDurablyStoredDeferredTask(result.deferred.token);
+      if (!durableDeferredTaskToken) {
+        await this.markLegacyPurchaseAmbiguous(token, claim, 'deferred_task_persistence_unavailable');
+        throw this.legacyPurchaseAmbiguousError(
+          'A callback-capable committed purchase pause requires a durable deferred checkpoint.'
+        );
+      }
+      const recordedDeferredToken = await this.legacyPurchaseContinuationStore.recordDeferredTaskToken!(
+        token,
+        claim,
+        result.deferred.token,
+        expectedDeferredTaskToken
+      );
+      if (!recordedDeferredToken) {
+        // TaskExecutor installs the nested A -> B route before consuming A.
+        // A callback may terminalize that exact B-bound route while control is
+        // returning through this outer compatibility wrapper. Accept only that
+        // authoritative same-route winner; every stale/mismatched failure stays
+        // fail-closed. The normal seller-task binding path below then publishes
+        // or replays the durable winner in its established order.
+        const rebound = await this.legacyPurchaseContinuationStore.get(token);
+        const operation = rebound?.operation;
+        const sellerTaskId = result.metadata.serverTaskId ?? claim.sellerTaskId;
+        const sameClaimRoute =
+          operation !== undefined &&
+          operation.state !== 'available' &&
+          operation.idempotencyKey === claim.idempotencyKey &&
+          operation.inputFingerprint === claim.inputFingerprint &&
+          operation.operationKey === claim.operationKey &&
+          operation.callbackOperationId === claim.callbackOperationId &&
+          operation.deferredTaskToken === result.deferred.token;
+        const exactPendingRoute =
+          sameClaimRoute &&
+          operation.state === 'claimed' &&
+          operation.pendingSettlement !== undefined &&
+          sellerTaskId !== undefined &&
+          operation.pendingSettlement.operationId === operation.callbackOperationId &&
+          operation.pendingSettlement.serverTaskId === sellerTaskId &&
+          operation.pendingSettlement.taskType === 'create_media_buy' &&
+          (operation.sellerTaskId === undefined || operation.sellerTaskId === sellerTaskId);
+        const exactCompletedRoute =
+          sameClaimRoute &&
+          operation.state === 'completed' &&
+          sellerTaskId !== undefined &&
+          operation.sellerTaskId === sellerTaskId;
+        if (!exactPendingRoute && !exactCompletedRoute) {
+          await this.markLegacyPurchaseAmbiguous(token, claim, 'deferred_task_persistence_failed');
+          throw this.legacyPurchaseAmbiguousError('Could not durably bind the deferred seller continuation.');
+        }
+        deferredRouteSettledDuringHandoff = true;
+      }
+    }
     if (result.status === 'completed' || result.status === 'failed' || result.status === 'governance-denied') {
       // TaskExecutor also uses status=failed for local response-schema and
       // unknown-envelope failures. Those do not prove that the seller
@@ -5752,6 +7473,220 @@ export class MediaBuyLifecycleCoordinator {
         }
         throw error;
       }
+
+      // A callback acknowledged before the seller response is the first
+      // durable terminal observation. Bind and install that queued winner
+      // before comparing a later inline terminal response; otherwise
+      // complete() would discard pendingSettlement and silently reverse the
+      // observed result order.
+      let current: LegacyPurchaseContinuationRecord | undefined;
+      try {
+        current = await this.legacyPurchaseContinuationStore.get(token);
+      } catch (error) {
+        throw new LegacyPurchaseContinuationError(
+          'store_error',
+          'Could not inspect queued legacy purchase settlement state.',
+          true,
+          undefined,
+          error
+        );
+      }
+      if (
+        this.legacyPurchaseCallbackRecoveryEnabled &&
+        current &&
+        current.operation.state !== 'available' &&
+        current.operation.state !== 'completed'
+      ) {
+        const durableSellerTaskId = current.operation.pendingSettlement?.serverTaskId ?? current.operation.sellerTaskId;
+        const observedSellerTaskId = result.metadata.serverTaskId;
+        if (
+          durableSellerTaskId !== undefined &&
+          observedSellerTaskId !== undefined &&
+          durableSellerTaskId !== observedSellerTaskId
+        ) {
+          throw this.legacyPurchaseAmbiguousError(
+            'The terminal seller task identity conflicts with the freshly loaded durable purchase route.'
+          );
+        }
+      }
+      if (
+        this.legacyPurchaseCallbackRecoveryEnabled &&
+        current &&
+        current.operation.state !== 'available' &&
+        current.operation.state !== 'completed' &&
+        current.operation.pendingSettlement === undefined
+      ) {
+        const sellerTaskId = current.operation.sellerTaskId ?? result.metadata.serverTaskId;
+        if (current.operation.callbackOperationId && sellerTaskId) {
+          const publicationFence: LegacyPurchasePendingSettlement = {
+            operationId: current.operation.callbackOperationId,
+            serverTaskId: sellerTaskId,
+            taskType: 'create_media_buy',
+            publicationSource: 'sdk',
+            terminal,
+          };
+          const minimumRetainUntil = Date.now() + LEGACY_PURCHASE_PUBLICATION_PROOF_RETENTION_MS;
+          let fenced: import('./legacy-purchase-continuation').LegacyPurchasePendingSettlementResult;
+          try {
+            fenced = await this.legacyPurchaseContinuationStore.recordPendingSettlement!(
+              token,
+              current.operation,
+              publicationFence
+            );
+            current = await this.legacyPurchaseContinuationStore.get(token);
+          } catch (error) {
+            await this.markLegacyPurchaseAmbiguous(token, claim, 'completion_publication_fence_failed');
+            throw this.legacyPurchaseAmbiguousError(
+              'Could not durably fence completion-handler publication after seller completion.',
+              error
+            );
+          }
+          this.assertLegacyPurchasePublicationRecoveryHorizon(current, minimumRetainUntil);
+          const compatibleConcurrentWinner =
+            current.operation.state === 'completed'
+              ? this.sameLegacyPurchaseTerminalResult(current.operation.result, terminal)
+              : current.operation.pendingSettlement !== undefined &&
+                current.operation.pendingSettlement.operationId === current.operation.callbackOperationId &&
+                current.operation.pendingSettlement.serverTaskId === sellerTaskId &&
+                current.operation.pendingSettlement.taskType === 'create_media_buy' &&
+                this.sameLegacyPurchaseTerminalResult(current.operation.pendingSettlement.terminal, terminal);
+          if (!['recorded', 'duplicate'].includes(fenced.outcome) && !compatibleConcurrentWinner) {
+            await this.markLegacyPurchaseAmbiguous(token, claim, 'completion_publication_fence_failed');
+            throw this.legacyPurchaseAmbiguousError(
+              'Could not durably fence completion-handler publication after seller completion.'
+            );
+          }
+        }
+      }
+      if (current?.operation.state === 'completed') {
+        if (!this.sameLegacyPurchaseTerminalResult(current.operation.result, terminal)) {
+          throw this.legacyPurchaseAmbiguousError(
+            'The inline seller result conflicts with the durably completed legacy purchase.'
+          );
+        }
+        this.restoreLegacyPurchasePublicationProof(current.operation, current.operation.result);
+        return attachMatch(current.operation.result);
+      }
+      if (current && current.operation.state !== 'available') {
+        let pending = current.operation.pendingSettlement;
+        if (pending) {
+          if (
+            pending.operationId !== current.operation.callbackOperationId ||
+            pending.taskType !== 'create_media_buy' ||
+            (current.operation.sellerTaskId !== undefined && current.operation.sellerTaskId !== pending.serverTaskId)
+          ) {
+            await this.markLegacyPurchaseAmbiguous(token, claim, 'pushed_task_identity_mismatch');
+            throw this.legacyPurchaseAmbiguousError(
+              'The durably queued callback does not match the claimed legacy purchase operation.'
+            );
+          }
+          if (current.operation.sellerTaskId === undefined) {
+            let recorded: boolean;
+            try {
+              recorded = await this.legacyPurchaseContinuationStore.recordSubmittedTask(
+                token,
+                claim,
+                pending.serverTaskId
+              );
+            } catch (error) {
+              await this.markLegacyPurchaseAmbiguous(token, claim, 'submitted_task_persistence_failed');
+              throw this.legacyPurchaseAmbiguousError(
+                'Could not durably bind the seller task from the queued callback.',
+                error
+              );
+            }
+            let latest: LegacyPurchaseContinuationRecord | undefined;
+            try {
+              latest = await this.legacyPurchaseContinuationStore.get(token);
+            } catch (error) {
+              await this.markLegacyPurchaseAmbiguous(token, claim, 'submitted_task_persistence_failed');
+              throw this.legacyPurchaseAmbiguousError(
+                'Could not reload the seller task binding from the queued callback.',
+                error
+              );
+            }
+            if (latest?.operation.state === 'completed') {
+              if (
+                !this.sameLegacyPurchaseTerminalResult(latest.operation.result, pending.terminal) ||
+                !this.sameLegacyPurchaseTerminalResult(latest.operation.result, terminal)
+              ) {
+                throw this.legacyPurchaseAmbiguousError(
+                  'The inline seller result conflicts with the durably completed legacy purchase.'
+                );
+              }
+              this.restoreLegacyPurchasePublicationProof(latest.operation, latest.operation.result);
+              return attachMatch(latest.operation.result);
+            }
+            if (!latest || latest.operation.state === 'available') {
+              await this.markLegacyPurchaseAmbiguous(token, claim, 'submitted_task_persistence_failed');
+              throw this.legacyPurchaseAmbiguousError(
+                'Could not reload the seller task binding from the queued callback.'
+              );
+            }
+            const latestPending = latest.operation.pendingSettlement;
+            if (
+              !recorded ||
+              latest.operation.sellerTaskId !== pending.serverTaskId ||
+              !latestPending ||
+              latestPending.operationId !== pending.operationId ||
+              latestPending.serverTaskId !== pending.serverTaskId ||
+              latestPending.taskType !== pending.taskType ||
+              latestPending.idempotencyKey !== pending.idempotencyKey ||
+              latestPending.publicationSource !== pending.publicationSource ||
+              !this.sameLegacyPurchaseTerminalResult(latestPending.terminal, pending.terminal)
+            ) {
+              await this.markLegacyPurchaseAmbiguous(token, claim, 'pushed_task_identity_mismatch');
+              throw this.legacyPurchaseAmbiguousError(
+                'The reloaded queued callback does not match the durably bound legacy purchase task.'
+              );
+            }
+            const completionClaim: LegacyPurchaseClaim = latest.operation;
+            pending = latestPending;
+            const callbackCompletion = await this.persistLegacyPurchaseCompletion(
+              token,
+              completionClaim,
+              pending.terminal
+            );
+            const canonical = callbackCompletion.result;
+            publishSettledTaskStatus?.(canonical.status, canonical.data, canonical.error);
+            if (callbackCompletion.pendingSettlement) {
+              await this.publishPendingLegacyPurchaseSettlement(
+                token,
+                completionClaim,
+                callbackCompletion.pendingSettlement,
+                canonical
+              );
+            }
+            if (!this.sameLegacyPurchaseTerminalResult(canonical, terminal)) {
+              throw this.legacyPurchaseAmbiguousError(
+                'The inline seller result conflicts with the earlier durably acknowledged callback.'
+              );
+            }
+            return attachMatch(canonical);
+          }
+          const callbackCompletion = await this.persistLegacyPurchaseCompletion(
+            token,
+            current.operation,
+            pending.terminal
+          );
+          const canonical = callbackCompletion.result;
+          publishSettledTaskStatus?.(canonical.status, canonical.data, canonical.error);
+          if (callbackCompletion.pendingSettlement) {
+            await this.publishPendingLegacyPurchaseSettlement(
+              token,
+              current.operation,
+              callbackCompletion.pendingSettlement,
+              canonical
+            );
+          }
+          if (!this.sameLegacyPurchaseTerminalResult(canonical, terminal)) {
+            throw this.legacyPurchaseAmbiguousError(
+              'The inline seller result conflicts with the earlier durably acknowledged callback.'
+            );
+          }
+          return attachMatch(canonical);
+        }
+      }
       return attachMatch(await this.completeLegacyPurchase(token, claim, terminal));
     }
 
@@ -5764,70 +7699,14 @@ export class MediaBuyLifecycleCoordinator {
       clarificationRounds: result.metadata.clarificationRounds,
       status: result.metadata.status,
       ...(result.metadata.contextId !== undefined && { contextId: result.metadata.contextId }),
-      ...((result.submitted?.taskId ?? result.metadata.serverTaskId ?? claim.sellerTaskId) !== undefined && {
-        serverTaskId: result.submitted?.taskId ?? result.metadata.serverTaskId ?? claim.sellerTaskId,
+      ...((result.metadata.serverTaskId ?? claim.sellerTaskId) !== undefined && {
+        serverTaskId: result.metadata.serverTaskId ?? claim.sellerTaskId,
       }),
       ...(result.metadata.idempotency_key !== undefined && { idempotency_key: result.metadata.idempotency_key }),
       ...(result.metadata.replayed !== undefined && { replayed: result.metadata.replayed }),
       ...(result.metadata.adcpVersion !== undefined && { adcpVersion: result.metadata.adcpVersion }),
     };
-    const failureFieldsFromTask = (task: TaskInfo) => {
-      const extracted = extractAdcpErrorInfo(task.result);
-      const adcpError = extracted?.synthetic === true ? undefined : extracted;
-      const correlationId = extractCorrelationId(task.result);
-      return {
-        // tasks/get and webhook free text are not durable-safe boundaries.
-        // Preserve a structured AdCP message when present; otherwise replay a
-        // generic error while retaining the seller payload for inspection.
-        error: adcpError?.message ?? 'Legacy create failed.',
-        ...(adcpError !== undefined && { adcpError }),
-        ...(correlationId !== undefined && { correlationId }),
-      };
-    };
-    const resultFromTask = (task: TaskInfo): TaskResult<CreateMediaBuyResponse> | undefined => {
-      const metadata = {
-        ...settlementMetadata,
-        taskName: task.taskType,
-        timestamp: new Date().toISOString(),
-      };
-      if (
-        task.status === 'completed' &&
-        task.result !== undefined &&
-        isAdcpOperationSuccess(task.result, task.taskType)
-      ) {
-        return attachMatch({
-          success: true,
-          status: 'completed',
-          data: task.result as CreateMediaBuyResponse,
-          metadata: { ...metadata, status: 'completed' },
-        });
-      }
-      if (task.status === 'unknown') {
-        throw this.legacyPurchaseAmbiguousError(
-          'tasks/get returned an unrecognizable response for the submitted legacy purchase.'
-        );
-      }
-      if (['completed', 'failed', 'rejected', 'canceled', 'governance-denied'].includes(task.status)) {
-        const status = task.status === 'governance-denied' ? 'governance-denied' : 'failed';
-        return attachMatch({
-          success: false,
-          status,
-          ...failureFieldsFromTask(task),
-          ...(task.result !== undefined && { data: task.result as CreateMediaBuyResponse }),
-          metadata: { ...metadata, status },
-        } as TaskResult<CreateMediaBuyResponse>);
-      }
-      if (task.status === 'input-required' || task.status === 'auth-required') {
-        return attachMatch({
-          success: true,
-          status: task.status,
-          ...(task.result !== undefined && { data: task.result as CreateMediaBuyResponse }),
-          metadata: { ...metadata, status: task.status },
-        } as TaskResult<CreateMediaBuyResponse>);
-      }
-      return undefined;
-    };
-    const bindSellerTask = async (sellerTaskId: string) => {
+    const bindSellerTask = async (sellerTaskId: string): Promise<TaskResult<CreateMediaBuyResponse> | undefined> => {
       try {
         const recorded = await this.legacyPurchaseContinuationStore.recordSubmittedTask(token, claim, sellerTaskId);
         if (!recorded) {
@@ -5838,6 +7717,75 @@ export class MediaBuyLifecycleCoordinator {
         if (error instanceof LegacyPurchaseContinuationError) throw error;
         await this.markLegacyPurchaseAmbiguous(token, claim, 'submitted_task_persistence_failed');
         throw this.legacyPurchaseAmbiguousError('Could not durably bind the submitted seller task.', error);
+      }
+
+      let bound: LegacyPurchaseContinuationRecord | undefined;
+      try {
+        bound = await this.legacyPurchaseContinuationStore.get(token);
+      } catch (error) {
+        await this.markLegacyPurchaseAmbiguous(token, claim, 'submitted_task_persistence_failed');
+        throw this.legacyPurchaseAmbiguousError('The durably bound seller task could not be reloaded.', error);
+      }
+      if (!bound || bound.operation.state === 'available') {
+        await this.markLegacyPurchaseAmbiguous(token, claim, 'submitted_task_persistence_failed');
+        throw this.legacyPurchaseAmbiguousError('The durably bound seller task could not be reloaded.');
+      }
+      if (bound.operation.state === 'completed') {
+        if (bound.operation.pendingSettlement) {
+          await this.publishPendingLegacyPurchaseSettlement(
+            token,
+            bound.operation,
+            bound.operation.pendingSettlement,
+            bound.operation.result
+          );
+        } else {
+          this.restoreLegacyPurchasePublicationProof(bound.operation, bound.operation.result);
+        }
+        return attachMatch(bound.operation.result);
+      }
+      const pendingSettlement = bound.operation.pendingSettlement;
+      if (pendingSettlement) {
+        if (
+          pendingSettlement.operationId !== bound.operation.callbackOperationId ||
+          pendingSettlement.serverTaskId !== sellerTaskId ||
+          pendingSettlement.taskType !== 'create_media_buy'
+        ) {
+          await this.markLegacyPurchaseAmbiguous(token, claim, 'pushed_task_identity_mismatch');
+          throw this.legacyPurchaseAmbiguousError(
+            'The durably queued callback does not match the seller task returned by dispatch.'
+          );
+        }
+        const pendingTerminal = attachMatch(pendingSettlement.terminal);
+        const checkpointed = durablePendingSettlement
+          ? await checkpointDeferredPendingSettlement(result, pendingTerminal)
+          : result.deferred && this.legacyPurchaseCallbackRecoveryEnabled
+            ? await this.agent.checkpointExternalDeferredSettlement(
+                result.deferred.token,
+                bound.operation.callbackOperationId!,
+                pendingTerminal
+              )
+            : undefined;
+        try {
+          const completion = await this.persistLegacyPurchaseCompletion(
+            token,
+            bound.operation,
+            pendingSettlement.terminal
+          );
+          const canonical = attachMatch(completion.result);
+          publishSettledTaskStatus?.(canonical.status, canonical.data, canonical.error);
+          if (completion.pendingSettlement) {
+            await this.publishPendingLegacyPurchaseSettlement(
+              token,
+              bound.operation,
+              completion.pendingSettlement,
+              completion.result
+            );
+          }
+          return checkpointed ? transferDeferredSettlementAcknowledgement(checkpointed, canonical) : canonical;
+        } catch (error) {
+          if (checkpointed) await rejectDeferredSettlement(checkpointed);
+          throw error;
+        }
       }
 
       // Register only after the seller task binding is durable. A webhook may
@@ -5861,7 +7809,7 @@ export class MediaBuyLifecycleCoordinator {
             updatedAt: Date.now(),
             ...(observation.result !== undefined && { result: observation.result }),
           };
-          const observed = resultFromTask(task);
+          const observed = this.legacyPurchaseResultFromTask(task, settlementMetadata);
           if (!observed || !['completed', 'failed', 'governance-denied'].includes(observed.status)) {
             throw this.legacyPurchaseAmbiguousError(
               'The pushed legacy create status was not an authoritative terminal result.'
@@ -5882,9 +7830,24 @@ export class MediaBuyLifecycleCoordinator {
           throw error;
         }
       });
+      return undefined;
     };
 
-    if (result.status === 'working' || result.status === 'input-required' || result.status === 'auth-required') {
+    if (result.status === 'input-required' || result.status === 'auth-required') {
+      if (!result.deferred) {
+        await this.markLegacyPurchaseAmbiguous(token, claim, 'non_resumable_pause');
+        throw this.legacyPurchaseAmbiguousError(
+          'The seller paused the legacy purchase without a protocol-supported continuation.'
+        );
+      }
+    }
+
+    if (
+      result.status === 'working' ||
+      result.status === 'input-required' ||
+      result.status === 'auth-required' ||
+      (result.status === 'deferred' && deferredRouteSettledDuringHandoff)
+    ) {
       const sellerTaskId = result.metadata.serverTaskId;
       if (!sellerTaskId) {
         await this.markLegacyPurchaseAmbiguous(token, claim, 'paused_task_identity_missing');
@@ -5892,63 +7855,80 @@ export class MediaBuyLifecycleCoordinator {
           'The non-terminal legacy create response did not provide a durable seller task identity.'
         );
       }
-      await bindSellerTask(sellerTaskId);
-      if (result.status !== 'working') return attachMatch(result);
-      const watchSignal = AbortSignal.timeout(Math.min(this.legacyPurchaseOperationTtlMs, 5 * 60 * 1000));
-      const waitForWorkingPoll = () =>
-        new Promise<void>((resolve, reject) => {
-          if (watchSignal.aborted) {
-            reject(createAbortError(watchSignal.reason));
-            return;
-          }
-          const timer = setTimeout(finish, 60_000);
-          const abort = () => finish(createAbortError(watchSignal.reason));
-          watchSignal.addEventListener('abort', abort, { once: true });
-          function finish(error?: Error) {
-            clearTimeout(timer);
-            watchSignal.removeEventListener('abort', abort);
-            if (error) reject(error);
-            else resolve();
-          }
-        });
-      void new Promise<void>(resolve => setTimeout(resolve, 0))
-        .then(async () => {
-          while (!watchSignal.aborted) {
-            const task = await this.agent.getTaskStatus(sellerTaskId, settlementTransport, watchSignal);
-            if (task.taskId !== sellerTaskId || task.taskType !== 'create_media_buy') {
-              throw this.legacyPurchaseAmbiguousError(
-                'The polled working seller task does not match the durably recorded create_media_buy task.'
-              );
+      const queuedCompletion = await bindSellerTask(sellerTaskId);
+      if (queuedCompletion) return queuedCompletion;
+      if (result.status === 'working') {
+        if (durablePendingSettlement) return attachMatch(result);
+        const watchController = new AbortController();
+        this.legacyPurchaseWatchControllers.add(watchController);
+        const watchSignal = AbortSignal.any([
+          watchController.signal,
+          AbortSignal.timeout(this.legacyPurchaseOperationTtlMs),
+        ]);
+        const waitForWorkingPoll = () =>
+          new Promise<void>((resolve, reject) => {
+            if (watchSignal.aborted) {
+              reject(createAbortError(watchSignal.reason));
+              return;
             }
-            const observed = resultFromTask(task);
-            if (observed) {
-              return this.trackLegacyPurchaseResult(
-                token,
-                claim,
-                observed,
-                publishSettledTaskStatus,
-                registerExternalTaskSettlement,
-                settlementTransport
-              );
+            const timer = setTimeout(finish, 60_000);
+            const abort = () => finish(createAbortError(watchSignal.reason));
+            watchSignal.addEventListener('abort', abort, { once: true });
+            function finish(error?: Error) {
+              clearTimeout(timer);
+              watchSignal.removeEventListener('abort', abort);
+              if (error) reject(error);
+              else resolve();
             }
-            await waitForWorkingPoll();
-          }
-          throw createAbortError(watchSignal.reason);
-        })
-        .then(completion => {
-          publishSettledTaskStatus?.(completion.status, completion.data, completion.error);
-        })
-        .catch(async error => {
-          if (watchSignal.aborted || isAbortOrTimeoutError(error)) return;
-          await this.markLegacyPurchaseAmbiguous(token, claim, 'non_terminal_completion_watch_uncertain');
-          void error;
-        });
-      return attachMatch(result);
+          });
+        void new Promise<void>(resolve => setTimeout(resolve, 0))
+          .then(async () => {
+            while (!watchSignal.aborted) {
+              const task = await this.agent.getTaskStatus(sellerTaskId, settlementTransport, watchSignal);
+              if (task.taskId !== sellerTaskId || task.taskType !== 'create_media_buy') {
+                throw this.legacyPurchaseAmbiguousError(
+                  'The polled working seller task does not match the durably recorded create_media_buy task.'
+                );
+              }
+              const observed = this.legacyPurchaseResultFromTask(task, settlementMetadata);
+              if (observed && ['completed', 'failed', 'governance-denied'].includes(observed.status)) {
+                return this.trackLegacyPurchaseResult(
+                  token,
+                  claim,
+                  observed,
+                  publishSettledTaskStatus,
+                  registerExternalTaskSettlement,
+                  settlementTransport
+                );
+              }
+              await waitForWorkingPoll();
+            }
+            throw createAbortError(watchSignal.reason);
+          })
+          .then(completion => {
+            publishSettledTaskStatus?.(completion.status, completion.data, completion.error);
+          })
+          .catch(async error => {
+            if (watchSignal.aborted || isAbortOrTimeoutError(error)) return;
+            await this.markLegacyPurchaseAmbiguous(token, claim, 'non_terminal_completion_watch_uncertain');
+            void error;
+          })
+          .finally(() => this.legacyPurchaseWatchControllers.delete(watchController));
+        return attachMatch(result);
+      }
     }
 
     if (result.submitted) {
       const submitted = result.submitted;
-      await bindSellerTask(submitted.taskId);
+      const sellerTaskId = result.metadata.serverTaskId;
+      if (!sellerTaskId || submitted.taskId !== sellerTaskId) {
+        await this.markLegacyPurchaseAmbiguous(token, claim, 'submitted_task_identity_missing');
+        throw this.legacyPurchaseAmbiguousError(
+          'The submitted legacy create response did not provide one consistent durable seller task identity.'
+        );
+      }
+      const queuedCompletion = await bindSellerTask(sellerTaskId);
+      if (queuedCompletion) return queuedCompletion;
       const observeTask = async (
         transport?: import('../protocols').TransportOptions,
         observationSignal?: AbortSignal
@@ -5957,7 +7937,7 @@ export class MediaBuyLifecycleCoordinator {
           const task = observationSignal
             ? await withAbortSignal([observationSignal], undefined, () => submitted.track(transport))
             : await submitted.track(transport);
-          if (task.taskId !== submitted.taskId) {
+          if (task.taskId !== sellerTaskId) {
             throw this.legacyPurchaseAmbiguousError(
               'The tracked seller task ID does not match the durably recorded submitted task.'
             );
@@ -5965,53 +7945,9 @@ export class MediaBuyLifecycleCoordinator {
           if (task.taskType !== 'create_media_buy') {
             throw this.legacyPurchaseAmbiguousError('The tracked seller task has the wrong task identity.');
           }
-          if (['completed', 'failed', 'rejected', 'canceled', 'governance-denied'].includes(task.status)) {
-            if (task.status === 'completed' && task.result === undefined) {
-              throw this.legacyPurchaseAmbiguousError(
-                'The tracked seller task reported completion without a create_media_buy result.'
-              );
-            }
-            const completedSuccessfully =
-              task.status === 'completed' && isAdcpOperationSuccess(task.result, task.taskType);
-            if (
-              !completedSuccessfully &&
-              task.status !== 'governance-denied' &&
-              (() => {
-                const adcpError = extractAdcpErrorInfo(task.result);
-                return adcpError === undefined || adcpError.synthetic === true;
-              })()
-            ) {
-              throw this.legacyPurchaseAmbiguousError(
-                'The tracked legacy create failure was not an authoritative structured AdCP error.'
-              );
-            }
-            const terminal = this.assertLegacyPurchaseTerminalResult(
-              {
-                success: completedSuccessfully,
-                status: completedSuccessfully
-                  ? 'completed'
-                  : task.status === 'governance-denied'
-                    ? 'governance-denied'
-                    : 'failed',
-                ...(completedSuccessfully
-                  ? { data: task.result }
-                  : {
-                      ...failureFieldsFromTask(task),
-                      ...(task.result !== undefined && { data: task.result }),
-                    }),
-                metadata: {
-                  ...settlementMetadata,
-                  status: completedSuccessfully
-                    ? 'completed'
-                    : task.status === 'governance-denied'
-                      ? 'governance-denied'
-                      : 'failed',
-                  timestamp: new Date().toISOString(),
-                },
-              },
-              this.legacyPurchaseSourceVersion()
-            );
-            const canonical = await this.completeLegacyPurchase(token, claim, terminal);
+          const observed = this.legacyPurchaseResultFromTask(task, settlementMetadata);
+          if (observed && ['completed', 'failed', 'governance-denied'].includes(observed.status)) {
+            const canonical = await this.trackLegacyPurchaseResult(token, claim, observed);
             return {
               ...task,
               status: canonical.status,
@@ -6029,6 +7965,7 @@ export class MediaBuyLifecycleCoordinator {
           // flight. A late rejection belongs to that abandoned local observer;
           // it is not evidence that the seller mutation itself is ambiguous.
           if (observationSignal?.aborted) throw createAbortError(observationSignal.reason);
+          if (error instanceof DeferredSettlementOwnershipError || durablePendingSettlement) throw error;
           if (error instanceof LegacyPurchaseContinuationError) {
             if (error.code === 'ambiguous') {
               await this.markLegacyPurchaseAmbiguous(token, claim, 'tracked_task_result_invalid');
@@ -6070,8 +8007,8 @@ export class MediaBuyLifecycleCoordinator {
         while (true) {
           if (signal.aborted) throw createAbortError(signal.reason);
           const task = await observeTask(settlementTransport, signal);
-          const observed = resultFromTask(task);
-          if (observed) {
+          const observed = this.legacyPurchaseResultFromTask(task, settlementMetadata);
+          if (observed && observed.status !== 'working' && observed.status !== 'submitted') {
             return this.trackLegacyPurchaseResult(
               token,
               claim,
@@ -6148,7 +8085,11 @@ export class MediaBuyLifecycleCoordinator {
       };
       (result as { submitted?: unknown }).submitted = {
         ...submitted,
-        track: (transport?: import('../protocols').TransportOptions) => observeTask(transport),
+        track: async (transport?: import('../protocols').TransportOptions) => {
+          const task = await observeTask(transport);
+          await rejectDeferredSettlement(task as unknown as TaskResult<CreateMediaBuyResponse>);
+          return task;
+        },
         waitForCompletion: async (pollInterval?: number, signal?: AbortSignal) => {
           // Validate caller input before entering the uncertainty boundary so
           // only this local RangeError bypasses durable ambiguity handling.
@@ -6159,11 +8100,32 @@ export class MediaBuyLifecycleCoordinator {
             throw new RangeError(`pollInterval must be a finite non-negative number <= ${MAX_TIMER_DELAY_MS}`);
           }
           try {
+            if (durablePendingSettlement) {
+              const completion = await submitted.waitForCompletion(pollInterval, signal);
+              if (completion.status === 'input-required' || completion.status === 'auth-required') {
+                return completion;
+              }
+              if (
+                ['completed', 'failed', 'governance-denied'].includes(completion.status) &&
+                !isAuthoritativePolledTerminal(completion)
+              ) {
+                return completion;
+              }
+              return await this.trackLegacyPurchaseResult(
+                token,
+                claim,
+                completion,
+                publishSettledTaskStatus,
+                registerExternalTaskSettlement,
+                settlementTransport
+              );
+            }
             return await waitForSharedCompletion(pollInterval, signal);
           } catch (error) {
             // A caller stopping its own observation says nothing about the
             // seller mutation. The background observer retains ownership.
             if (isAbortOrTimeoutError(error)) throw error;
+            if (error instanceof DeferredSettlementOwnershipError || durablePendingSettlement) throw error;
             if (error instanceof LegacyPurchaseContinuationError) {
               if (error.code === 'ambiguous') {
                 await this.markLegacyPurchaseAmbiguous(token, claim, 'completion_wait_result_invalid');
@@ -6180,19 +8142,27 @@ export class MediaBuyLifecycleCoordinator {
       // its desired poll interval. If it does not, begin one bounded,
       // SDK-owned track loop on the next timer turn. The timeout races only
       // that observer subscription and never reaches the seller transport.
-      const watchSignal = AbortSignal.timeout(Math.min(this.legacyPurchaseOperationTtlMs, 5 * 60 * 1000));
-      void new Promise<void>(resolve => setTimeout(resolve, 0))
-        .then(() => waitForSharedCompletion(undefined, watchSignal))
-        .then(completion => {
-          publishSettledTaskStatus?.(completion.status, completion.data, completion.error);
-        })
-        .catch(async error => {
-          if (watchSignal.aborted || isAbortOrTimeoutError(error)) return;
-          await this.markLegacyPurchaseAmbiguous(token, claim, 'background_completion_watch_uncertain');
-          // The durable ambiguous state is the observable outcome. Avoid an
-          // unhandled rejection from this best-effort background observer.
-          void error;
-        });
+      if (!durablePendingSettlement) {
+        const watchController = new AbortController();
+        this.legacyPurchaseWatchControllers.add(watchController);
+        const watchSignal = AbortSignal.any([
+          watchController.signal,
+          AbortSignal.timeout(this.legacyPurchaseOperationTtlMs),
+        ]);
+        void new Promise<void>(resolve => setTimeout(resolve, 0))
+          .then(() => waitForSharedCompletion(undefined, watchSignal))
+          .then(completion => {
+            publishSettledTaskStatus?.(completion.status, completion.data, completion.error);
+          })
+          .catch(async error => {
+            if (watchSignal.aborted || isAbortOrTimeoutError(error)) return;
+            await this.markLegacyPurchaseAmbiguous(token, claim, 'background_completion_watch_uncertain');
+            // The durable ambiguous state is the observable outcome. Avoid an
+            // unhandled rejection from this best-effort background observer.
+            void error;
+          })
+          .finally(() => this.legacyPurchaseWatchControllers.delete(watchController));
+      }
     }
     if (result.deferred) {
       const deferred = result.deferred;
@@ -6200,15 +8170,41 @@ export class MediaBuyLifecycleCoordinator {
         ...deferred,
         resume: async (resumeInput: unknown) => {
           try {
+            this.assertActive('legacy purchase deferred resume');
+            const current = await this.legacyPurchaseContinuationStore.get(token);
+            const currentOperation = current?.operation;
+            const currentReplayExpiresAt =
+              currentOperation && currentOperation.state !== 'available'
+                ? Date.parse(currentOperation.replayExpiresAt)
+                : Number.NaN;
+            if (
+              !current ||
+              !currentOperation ||
+              currentOperation.state !== 'claimed' ||
+              currentOperation.idempotencyKey !== claim.idempotencyKey ||
+              currentOperation.inputFingerprint !== claim.inputFingerprint ||
+              currentOperation.operationKey !== claim.operationKey ||
+              currentOperation.callbackOperationId !== claim.callbackOperationId ||
+              currentOperation.pendingSettlement !== undefined ||
+              !Number.isFinite(currentReplayExpiresAt) ||
+              currentReplayExpiresAt <= Date.now() ||
+              (durableDeferredTaskToken && currentOperation.deferredTaskToken !== deferred.token)
+            ) {
+              throw this.legacyPurchaseAmbiguousError(
+                'The deferred seller continuation is no longer the current claimed purchase route.'
+              );
+            }
             return await this.trackLegacyPurchaseResult(
               token,
               claim,
               await deferred.resume(resumeInput),
               publishSettledTaskStatus,
               registerExternalTaskSettlement,
-              settlementTransport
+              settlementTransport,
+              deferred.token
             );
           } catch (error) {
+            if (error instanceof DeferredSettlementOwnershipError) throw error;
             if (error instanceof LegacyPurchaseContinuationError) {
               if (error.code === 'ambiguous') {
                 await this.markLegacyPurchaseAmbiguous(token, claim, 'deferred_resume_result_invalid');

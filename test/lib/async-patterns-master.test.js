@@ -107,14 +107,26 @@ describe.skip('TaskExecutor Async Patterns - Master Test Suite', () => {
         }
 
         // Input required pattern benchmark
-        ProtocolClient.callTool = async (agent, taskName) => {
-          if (taskName === 'continue_task') {
+        ProtocolClient.callTool = async (agent, taskName, params) => {
+          if (Object.hasOwn(params, 'input')) {
             return { status: 'completed', result: { benchmark: 'input-required' } };
           } else {
             return {
-              status: 'input-required',
-              question: 'Benchmark input?',
-              field: 'benchmark',
+              result: {
+                kind: 'task',
+                id: 'benchmark-a2a-task',
+                contextId: 'benchmark-a2a-context',
+                status: {
+                  state: 'input-required',
+                  message: {
+                    kind: 'message',
+                    messageId: 'benchmark-question',
+                    role: 'agent',
+                    parts: [{ kind: 'data', data: { question: 'Benchmark input?', field: 'benchmark' } }],
+                  },
+                },
+                artifacts: [],
+              },
             };
           }
         };
@@ -124,7 +136,7 @@ describe.skip('TaskExecutor Async Patterns - Master Test Suite', () => {
         for (let i = 0; i < 10; i++) {
           const startTime = Date.now();
           const executor = new TaskExecutor();
-          await executor.executeTask(mockAgent, 'benchmarkInput', {}, quickHandler);
+          await executor.executeTask({ ...mockAgent, protocol: 'a2a' }, 'benchmarkInput', {}, quickHandler);
           benchmarks.inputRequired.totalTime += Date.now() - startTime;
           benchmarks.inputRequired.executions++;
         }
@@ -153,7 +165,7 @@ describe.skip('TaskExecutor Async Patterns - Master Test Suite', () => {
       id: 'integration-agent',
       name: 'Integration Agent',
       agent_uri: 'https://integration.test.com',
-      protocol: 'mcp',
+      protocol: 'a2a',
     };
 
     // Complex integration scenario that uses multiple patterns
@@ -164,27 +176,38 @@ describe.skip('TaskExecutor Async Patterns - Master Test Suite', () => {
       ProtocolClient.callTool = async (agent, taskName, params) => {
         stepCount++;
 
-        if (taskName === 'continue_task') {
-          // After input, go to working state
-          return { status: 'working' };
-        } else if (taskName === 'tasks/get' || taskName === 'tasks_get') {
-          // After working, complete
+        if (Object.hasOwn(params, 'input')) {
+          assert.equal(taskName, 'integrationTest');
           return {
-            task: {
-              status: 'completed',
-              result: {
-                integrated: true,
-                steps: stepCount,
-                finalValue: 'integration-success',
-              },
+            status: 'completed',
+            result: {
+              integrated: true,
+              steps: stepCount,
+              finalValue: 'integration-success',
             },
           };
         } else {
-          // Initial call - needs input
           return {
-            status: 'input-required',
-            question: 'Integration test input?',
-            field: 'integration_value',
+            result: {
+              kind: 'task',
+              id: 'integration-a2a-task',
+              contextId: 'integration-a2a-context',
+              status: {
+                state: 'input-required',
+                message: {
+                  kind: 'message',
+                  messageId: 'integration-question',
+                  role: 'agent',
+                  parts: [
+                    {
+                      kind: 'data',
+                      data: { question: 'Integration test input?', field: 'integration_value' },
+                    },
+                  ],
+                },
+              },
+              artifacts: [],
+            },
           };
         }
       };
@@ -209,7 +232,7 @@ describe.skip('TaskExecutor Async Patterns - Master Test Suite', () => {
       assert.strictEqual(result.success, true);
       assert.strictEqual(result.data.integrated, true);
       assert.strictEqual(result.data.finalValue, 'integration-success');
-      assert(stepCount >= 3, 'Should have gone through multiple steps');
+      assert.strictEqual(stepCount, 2, 'Should resume the same live A2A task exactly once');
 
       console.log('✅ Integration test passed through multiple async patterns');
     } finally {
@@ -256,7 +279,7 @@ describe.skip('TaskExecutor Async Patterns - Master Test Suite', () => {
         'Validate type safety across async continuations',
       ],
       integration: [
-        'Test pattern transitions (working -> input-required -> completed)',
+        'Test live-A2A continuation separately from nonresumable pauses observed through polling',
         'Verify conversation history is maintained across patterns',
         'Test complex handler scenarios with real-world workflows',
         'Validate concurrent execution and resource management',

@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.2.0-beta.4
-// Generated at: 2026-08-21T05:16:23.707Z
+// Generated AdCP core types from official schemas v3.2.0-beta.5
+// Generated at: 2026-08-22T15:18:18.201Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -10111,7 +10111,7 @@ export interface Error {
   sdk_id?: string;
 }
 /**
- * Push notification configuration for async task updates (A2A and REST protocols). Echoed from the request to confirm webhook settings. Specifies URL, authentication scheme (Bearer or HMAC-SHA256), and credentials. MCP uses progress notifications instead of webhooks.
+ * AdCP application-layer webhook configuration for async task updates over MCP, A2A, or REST. Echoed from the request to confirm webhook settings. It is distinct from transport-native progress or A2A TaskPushNotificationConfig delivery and can outlive the originating transport session.
  */
 export interface PushNotificationConfig {
   /**
@@ -10119,7 +10119,7 @@ export interface PushNotificationConfig {
    */
   url: string;
   /**
-   * Buyer-supplied correlation identifier for the operation that will produce webhooks against this registration. The seller MUST echo this value verbatim into every webhook payload's `operation_id` field (see [`mcp-webhook-payload.json`](/schemas/core/mcp-webhook-payload.json) and [Webhooks — Operation IDs](/docs/building/by-layer/L3/webhooks#operation-ids-and-url-templates)). Buyers SHOULD generate a unique value per task invocation (UUID recommended). This field is the canonical registration channel for `operation_id`; buyers MAY additionally embed routing values in the URL path or query as an aid for their own HTTP server, but the URL is opaque to the seller and the wire-level source of truth is this field. Sellers MUST NOT parse the URL to recover `operation_id`. Sellers that receive a webhook registration without `operation_id` MAY reject the task with `INVALID_REQUEST`.
+   * Buyer-supplied correlation identifier for the operation that will produce webhooks against this registration. The seller MUST echo this value verbatim into every webhook payload's `operation_id` field (see [`mcp-webhook-payload.json`](/schemas/core/mcp-webhook-payload.json) and [Webhooks — Operation IDs](/docs/building/by-layer/L3/webhooks#operation-ids-and-url-templates)). Buyers SHOULD generate a unique value per task invocation (UUID recommended). This field is the canonical registration channel for `operation_id`; buyers MAY additionally embed routing values in the URL path or query as an aid for their own HTTP server, but the URL is opaque to the seller and the wire-level source of truth is this field. Sellers MUST NOT parse the URL to recover `operation_id`. For 3.x schema compatibility the member remains optional, but a seller MUST reject a task that registers an AdCP webhook without it using `INVALID_REQUEST`; otherwise the required webhook envelope cannot be emitted.
    */
   operation_id?: string;
   /**
@@ -16884,6 +16884,15 @@ export type CanonicalProposal = {
    */
   terms_digest: string;
   insertion_order?: InsertionOrder;
+  /**
+   * Optional budget guidance for this proposal — the planning answer to criteria.outcome_target and to open-budget briefs. commercial_terms.total_budget remains the concrete figure the plan is priced at; this band expresses the seller's recommended range around it.
+   */
+  total_budget_guidance?: {
+  };
+  /**
+   * Aggregate forecasted delivery for the proposal. For outcome_target requests, points carry the goal's metric or event key in metrics.
+   */
+  forecast?: CanonicalDeliveryForecast;
 };
 /**
  * Resolved selected pricing terms. Optional on buy_products input, where pricing_option_id plus the versioned feed identifies the offer; required inside accepted commercial_terms. Its pricing_option_id MUST match the sibling field.
@@ -18398,14 +18407,14 @@ export type SyncCatalogsError = {
  */
 export interface MCPWebhookPayload {
   /**
-   * Sender-generated key stable across retries of the same webhook event. Publishers MUST generate a cryptographically random value (UUID v4 recommended) per distinct event and reuse the same key on every retry of that event. Receivers MUST dedupe by this key, scoped to the authenticated sender identity (HMAC secret or Bearer credential) — keys from different publishers are independent. This is the canonical dedup field — the (task_id, status, timestamp) tuple is insufficient when a single transition is retried with unchanged timestamp or when two transitions share a timestamp.
+   * Sender-generated delivery key stable across RFC 8785 JCS-equivalent retries of the complete authenticated webhook payload. Publishers MUST generate a cryptographically random value (UUID v4 recommended), bind it immutably to the first canonical payload for the advertised delivery retry horizon, and use a fresh key for a changed payload or distinct delivery. Receivers scope the binding to the authenticated sender identity. Same key plus identical payload while active returns retryable 503; after durable acknowledgement it returns 2xx; same key plus a different canonical payload returns non-retryable 409. This is the transport delivery identity, not request idempotency or stable logical notification identity.
    * @minLength 16
    * @maxLength 255
    * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   /**
-   * Event-layer identifier for one logical notification. Stable across re-emissions of the same logical event and distinct from the per-fire `idempotency_key` issued at the transport layer. Receivers MUST track both when this field is present: `idempotency_key` suppresses transport retries, while `notification_id` recognizes a repeated logical event. Seeing the same `notification_id` under two different `idempotency_key` values is a re-emission signal, not a transport retry. Population and the separate resource key used for repair are event-shape-dependent (see notification-type.json enumDescriptions): impairment aliases `impairment_id`, creative and account notifications use transition identifiers and repair by `creative_id` or `account_id`, wholesale events alias `event.event_id` and repair by feed scope/version, and capability changes use a revision-event identifier and repair against `capabilities_version`. Point-in-time delivery events (`scheduled`, `final`, `delayed`, `adjusted`, `window_update`) omit this field and dedupe only by `idempotency_key`. Future notification types declare their identity and repair-key semantics in notification-type.json. Charset is constrained to `[A-Za-z0-9_.:-]` — the same safe-to-log/safe-to-concat character class as `idempotency_key` — so receivers can write this value into log lines, dashboard URLs, and LLM prompts without escaping.
+   * Optional event-layer identifier for one logical notification. Stable across re-emissions of the same logical event and distinct from the per-delivery `idempotency_key`. For terminal task webhooks, the authoritative terminal identity remains the authenticated seller plus the bound task_id; when notification_id is present, different delivery keys carrying the same value are re-emissions and MUST NOT republish terminal effects. For other event families, population and repair identity remain event-shape-dependent (see notification-type.json enumDescriptions): impairment aliases impairment_id, creative and account notifications use transition identifiers, wholesale events alias event.event_id, and capability changes use a revision-event identifier. Point-in-time delivery events (scheduled, final, delayed, adjusted, window_update) omit this field and dedupe by idempotency_key plus their delivery-report identity. Charset is constrained to `[A-Za-z0-9_.:-]`.
    * @minLength 1
    * @maxLength 255
    * @pattern ^[A-Za-z0-9_.:-]{1,255}$
@@ -18423,7 +18432,7 @@ export interface MCPWebhookPayload {
   protocol?: AdCPProtocol;
   status: TaskStatus;
   /**
-   * ISO 8601 timestamp when this webhook was generated.
+   * ISO 8601 timestamp when this logical webhook delivery was first generated. Every retry under the same idempotency_key MUST repeat this exact body value, along with every other payload member; only transport/signature metadata such as a fresh RFC 9421 nonce or created parameter may change between attempts.
    * @format date-time
    */
   timestamp: string;
@@ -18432,7 +18441,7 @@ export interface MCPWebhookPayload {
    */
   message?: string;
   /**
-   * Session/conversation identifier. Use this to continue the conversation if input-required status needs clarification or additional parameters.
+   * Session/conversation correlation identifier. This value alone is not continuation authority and MUST NOT be used to resume input-required or auth-required work without the verified native transport identity required by that transport.
    */
   context_id?: string;
   /**
@@ -18931,6 +18940,59 @@ export interface CanonicalMetricQualifier {
   lift_dimension?: LiftDimension;
 }
 /**
+ * Compact product forecast without legacy BrandRef or creative dependencies.
+ */
+export interface CanonicalDeliveryForecast {
+  /**
+   * @minItems 1
+   */
+  points: [CanonicalForecastPoint, ...CanonicalForecastPoint[]];
+  forecast_range_unit?: ForecastRangeUnit;
+  method: ForecastMethod;
+  currency: string;
+  demographic_system?: DemographicSystem;
+  demographic?: string;
+  measurement_source?: string;
+  reach_unit?: ReachUnit;
+  generated_at?: string;
+  valid_until?: string;
+  ext?: ExtensionObject;
+}
+/**
+ * Compact forecast row with numeric ranges and identity-only measurement-vendor references.
+ */
+export interface CanonicalForecastPoint {
+  label?: string;
+  budget?: number;
+  product_id?: string;
+  dimensions?: ForecastPointDimensions;
+  availability_status?: AvailabilityStatus;
+  metrics: {
+    [k: string]: ForecastRange | undefined;
+  };
+  viewability?: {
+    vendor?: BrandKey;
+    measurable_impressions?: ForecastRange;
+    viewable_impressions?: ForecastRange;
+    viewable_rate?: ForecastRange;
+    viewed_seconds?: ForecastRange;
+    standard?: ViewabilityStandard;
+  };
+  vendor_metric_values?: CanonicalForecastVendorMetricValue[];
+}
+/**
+ * Compact forecasted vendor metric with a BrandKey vendor pointer and no embedded brand assets.
+ */
+export interface CanonicalForecastVendorMetricValue {
+  vendor: BrandKey;
+  metric_id: VendorMetricID;
+  value: ForecastRange;
+  unit?: string;
+  measurable_impressions?: ForecastRange;
+  breakdown?: {
+  };
+}
+/**
  * Standalone compact Product view for the AdCP 3.2 lifecycle. product_id and name are the only always-returned fields; requested detail fields are optional. Legacy named formats, coarse MediaBuy actions, and the legacy Product inheritance graph are absent.
  */
 export interface CanonicalProduct {
@@ -19011,59 +19073,6 @@ export interface CanonicalProduct {
   expires_at?: string;
   allowed_actions?: CanonicalProductAction[];
   ext?: ExtensionObject;
-}
-/**
- * Compact product forecast without legacy BrandRef or creative dependencies.
- */
-export interface CanonicalDeliveryForecast {
-  /**
-   * @minItems 1
-   */
-  points: [CanonicalForecastPoint, ...CanonicalForecastPoint[]];
-  forecast_range_unit?: ForecastRangeUnit;
-  method: ForecastMethod;
-  currency: string;
-  demographic_system?: DemographicSystem;
-  demographic?: string;
-  measurement_source?: string;
-  reach_unit?: ReachUnit;
-  generated_at?: string;
-  valid_until?: string;
-  ext?: ExtensionObject;
-}
-/**
- * Compact forecast row with numeric ranges and identity-only measurement-vendor references.
- */
-export interface CanonicalForecastPoint {
-  label?: string;
-  budget?: number;
-  product_id?: string;
-  dimensions?: ForecastPointDimensions;
-  availability_status?: AvailabilityStatus;
-  metrics: {
-    [k: string]: ForecastRange | undefined;
-  };
-  viewability?: {
-    vendor?: BrandKey;
-    measurable_impressions?: ForecastRange;
-    viewable_impressions?: ForecastRange;
-    viewable_rate?: ForecastRange;
-    viewed_seconds?: ForecastRange;
-    standard?: ViewabilityStandard;
-  };
-  vendor_metric_values?: CanonicalForecastVendorMetricValue[];
-}
-/**
- * Compact forecasted vendor metric with a BrandKey vendor pointer and no embedded brand assets.
- */
-export interface CanonicalForecastVendorMetricValue {
-  vendor: BrandKey;
-  metric_id: VendorMetricID;
-  value: ForecastRange;
-  unit?: string;
-  measurable_impressions?: ForecastRange;
-  breakdown?: {
-  };
 }
 /**
  * Compact product reporting contract. Vendor metrics use identity-only BrandKey references and do not inline brand or creative assets.
@@ -30667,7 +30676,7 @@ export interface TasksGetRequest {
    */
   include_history?: boolean;
   /**
-   * Include the task's result payload when status is completed. Defaults to false for lightweight status-only polls. When true, sellers MUST include result on the response when status is completed.
+   * Include the task's canonical terminal result payload when one exists. Defaults to false for lightweight status-only polls. When true, sellers MUST include result for completed, failed, or rejected terminal tasks when that task produced a terminal artifact; canceled tasks may have no result. The legacy singular error field remains a convenience for failed tasks but does not replace the canonical terminal result.
    */
   include_result?: boolean;
   context?: ContextObject;
@@ -30771,7 +30780,7 @@ export interface TasksGetResponse {
     step_number?: number;
   };
   /**
-   * Error details for failed tasks
+   * Convenience summary for failed tasks. When include_result was true and the canonical terminal result is also present, this error MUST agree with the canonical fatal error in result. A legacy poll carrying only this singular summary proves failure status but not equivalence to a richer terminal webhook artifact.
    */
   error?: {
     /**
@@ -30816,7 +30825,7 @@ export interface TasksGetResponse {
     data: {};
   }[];
   /**
-   * Task-specific terminal payload. Present when include_result was true and the task has a result; absent otherwise. For failed tasks, use the error field instead. Consumers and sellers MUST resolve and validate the exact schema through manifest.task_result_resolution: use terminal_schema_overrides[task_type] when present, otherwise tools[task_type].response_schema. The polling envelope keeps this field generic so tasks/get does not embed every task response schema.
+   * Canonical task-specific terminal payload. Present when include_result was true and a completed, failed, or rejected task produced a terminal artifact; canceled tasks may omit it. For failed tasks, the singular error field is a convenience summary and MUST agree with the canonical fatal error represented here. Consumers and sellers MUST resolve and validate the exact schema through manifest.task_result_resolution: use terminal_schema_overrides[task_type] when present, otherwise tools[task_type].response_schema. The polling envelope keeps this field generic so tasks/get does not embed every task response schema.
    */
   result?: {};
   ext?: ExtensionObject;

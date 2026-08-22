@@ -42,6 +42,9 @@ interface ApprovalWorkflow {
   approver: string;
   approvalLimit: number;
   autoApprove: boolean;
+  continuationStore: {
+    save(approvalRequestId: string, token: string): Promise<void>;
+  };
 }
 
 class CampaignPlanningService {
@@ -56,7 +59,7 @@ class CampaignPlanningService {
     targeting: any[];
     estimatedReach: any[];
     requiresApproval: boolean;
-    approvalToken?: string;
+    approvalRequestIds: string[];
   }> {
     console.log(`🚀 Planning campaign: ${campaign.name}`);
     
@@ -83,7 +86,10 @@ class CampaignPlanningService {
         targeting: targetingAnalysis.recommendations,
         estimatedReach: reachEstimation.estimates,
         requiresApproval: productDiscovery.requiresApproval || formatDiscovery.requiresApproval,
-        approvalToken: productDiscovery.approvalToken || formatDiscovery.approvalToken
+        approvalRequestIds: [
+          productDiscovery.approvalRequestId,
+          formatDiscovery.approvalRequestId
+        ].filter((id): id is string => id !== undefined)
       };
       
     } catch (error) {
@@ -156,7 +162,7 @@ class CampaignPlanningService {
           // Defer for human approval
           return { 
             defer: true, 
-            token: `campaign-approval-${Date.now()}-${this.approvalWorkflow.approver}` 
+            token: crypto.randomUUID()
           };
         }
       }
@@ -189,11 +195,19 @@ class CampaignPlanningService {
       console.log(`⏳ ${submitted.length} networks submitted for long-running discovery`);
       // Could implement webhook handling here
     }
+
+    const approvalRequestId = deferred[0]?.deferred ? crypto.randomUUID() : undefined;
+    if (approvalRequestId && deferred[0].deferred) {
+      await this.approvalWorkflow.continuationStore.save(
+        approvalRequestId,
+        deferred[0].deferred.token
+      );
+    }
     
     return {
       allProducts,
       requiresApproval: deferred.length > 0,
-      approvalToken: deferred[0]?.deferred?.token,
+      approvalRequestId,
       pendingNetworks: submitted.length
     };
   }
@@ -215,11 +229,19 @@ class CampaignPlanningService {
         network: r.metadata.agent.name
       })) || []
     );
+
+    const approvalRequestId = deferred[0]?.deferred ? crypto.randomUUID() : undefined;
+    if (approvalRequestId && deferred[0].deferred) {
+      await this.approvalWorkflow.continuationStore.save(
+        approvalRequestId,
+        deferred[0].deferred.token
+      );
+    }
     
     return {
       allFormats,
       requiresApproval: deferred.length > 0,
-      approvalToken: deferred[0]?.deferred?.token
+      approvalRequestId
     };
   }
 
@@ -291,13 +313,14 @@ class CampaignPlanningService {
 }
 
 // Usage Example
-async function main() {
+async function main(continuationStore: ApprovalWorkflow['continuationStore']) {
   const client = ADCPMultiAgentClient.fromConfig();
   
   const approvalWorkflow = {
     approver: 'marketing-director',
     approvalLimit: 50000,
-    autoApprove: true
+    autoApprove: true,
+    continuationStore
   };
   
   const planningService = new CampaignPlanningService(client, approvalWorkflow);
@@ -322,8 +345,9 @@ async function main() {
     console.log(`Networks analyzed: ${plan.targeting.length}`);
     
     if (plan.requiresApproval) {
-      console.log(`⚠️  Requires approval (token: ${plan.approvalToken})`);
-      // Implement approval workflow UI
+      console.log(`⚠️  Requires approval (requests: ${plan.approvalRequestIds.join(', ')})`);
+      // The UI receives only this non-secret reference. The continuation token
+      // remains in the approved secret-bearing store.
     }
     
   } catch (error) {
@@ -752,7 +776,7 @@ class AutomatedMediaBuyingPipeline {
           // Defer expensive approvals
           return { 
             defer: true, 
-            token: `budget_approval_${Date.now()}` 
+            token: crypto.randomUUID()
           };
         }
       },
@@ -792,7 +816,7 @@ class AutomatedMediaBuyingPipeline {
           // Defer for manual review
           return {
             defer: true,
-            token: `compliance_review_${Date.now()}`
+            token: crypto.randomUUID()
           };
         }
       }

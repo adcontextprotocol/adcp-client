@@ -218,7 +218,7 @@ describe('capabilities.overrides — per-domain merge (#654)', () => {
     });
     const caps = await callCapabilities(server);
     assert.strictEqual(caps.request_signing.covers_content_digest, 'required');
-    assert.strictEqual(caps.adcp_version, '3.2-beta.4');
+    assert.strictEqual(caps.adcp_version, '3.2-beta.5');
   });
 
   it('undefined overrides are no-ops', async () => {

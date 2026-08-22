@@ -13,6 +13,33 @@ const { ProtocolResponseParser, ADCP_STATUS, TaskExecutor, ProtocolClient } = re
 
 const parser = new ProtocolResponseParser();
 
+describe('ProtocolResponseParser.parseInputRequest — MCP structuredContent', () => {
+  for (const status of [ADCP_STATUS.INPUT_REQUIRED, ADCP_STATUS.AUTH_REQUIRED]) {
+    test(`reads ${status} details from structuredContent`, () => {
+      const response = {
+        structuredContent: {
+          status,
+          message: status === ADCP_STATUS.INPUT_REQUIRED ? 'Provide the approved budget' : 'Authorize the account',
+          field: status === ADCP_STATUS.INPUT_REQUIRED ? 'budget' : 'authorization',
+          options: status === ADCP_STATUS.INPUT_REQUIRED ? [50_000, 75_000] : ['continue'],
+          required: true,
+        },
+      };
+
+      assert.strictEqual(parser.getStatus(response), status);
+      assert.deepStrictEqual(parser.parseInputRequest(response), {
+        question: response.structuredContent.message,
+        field: response.structuredContent.field,
+        expectedType: undefined,
+        suggestions: response.structuredContent.options,
+        required: true,
+        validation: undefined,
+        context: undefined,
+      });
+    });
+  }
+});
+
 describe('ProtocolResponseParser.getStatus — enum collision (issue #646)', () => {
   describe('shared-literal status + domain payload → falls through to COMPLETED', () => {
     test('cancel_media_buy envelope with status="canceled" + media_buy payload', () => {

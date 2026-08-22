@@ -426,6 +426,7 @@ export {
   redisBackend,
   createLazyBackend,
   hashPayload,
+  IdempotencyClaimOwnershipError,
 } from './idempotency';
 export type {
   IdempotencyStore,
@@ -451,7 +452,7 @@ export type {
   ExpressAppLike,
 } from './a2a-adapter';
 
-export { createWebhookEmitter, memoryWebhookKeyStore } from './webhook-emitter';
+export { createWebhookEmitter, memoryWebhookDeliveryStore, memoryWebhookKeyStore } from './webhook-emitter';
 export type {
   WebhookEmitter,
   WebhookEmitterOptions,
@@ -459,6 +460,14 @@ export type {
   WebhookEmitResult,
   WebhookEmitAttempt,
   WebhookEmitAttemptResult,
+  WebhookDeliveryBinding,
+  WebhookDeliveryRetired,
+  WebhookDeliveryRecord,
+  WebhookDeliveryKey,
+  WebhookDeliveryProposal,
+  WebhookDeliverySnapshot,
+  WebhookDeliveryRecovery,
+  WebhookDeliveryStore,
   WebhookIdempotencyKeyStore,
   WebhookRetryOptions,
   WebhookAuthentication,

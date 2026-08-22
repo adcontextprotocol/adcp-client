@@ -512,10 +512,29 @@ createAdcpServerFromPlatform(myPlatform, {
   version: '1.0.0',
   webhooks: {
     signerKey: { /* ... */ },
+    deliveryStore: durableWebhookDeliveryStore,
+    deliveryRecovery: durableWebhookOutbox,
     fetch: createPinAndBindFetch(),
   },
 });
 ```
+
+`deliveryStore` must be shared and durable in production. Its atomic `claim()`
+binds the trusted publisher/tenant namespace plus one SDK-local delivery ID to
+the delivery key and canonical payload fingerprint. The backend supplies its
+authoritative first-attempt time and retains the full binding through the
+advertised retry horizon; the first later claim atomically replaces the binding
+with a permanent un-rebindable tombstone. The in-memory reference store is for
+development and tests only.
+
+`deliveryRecovery` is the corresponding durable outbox. Its `checkpoint()`
+runs before binding or network delivery and must retain the exact destination,
+payload (including its original timestamp), authentication reference, and
+retry policy. It must arrange replay of unsettled entries after process
+restart; `settle()` runs only after 2xx delivery or a non-retryable outcome.
+Encrypt authentication material at rest and store a key reference where your
+implementation can do so. This recovery seam is required in production so the
+advertised retry horizon represents actual recoverable state.
 
 The default in 5.x is still `globalThis.fetch` because pin-and-bind blocks loopback http URLs (the storyboard runner's `createWebhookReceiver` listens on `http://127.0.0.1:port`); flipping the default would break in-process storyboard runs without a migration. In v6 the default flips to `createPinAndBindFetch()`. Adopters whose tests run against the storyboard runner should pass `LOOPBACK_OK_WEBHOOK_SSRF_POLICY` for those runs — it relaxes only the loopback + http rules and keeps every other CIDR / metadata-host deny in place:
 

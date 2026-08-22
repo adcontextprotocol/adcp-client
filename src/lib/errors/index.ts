@@ -61,9 +61,16 @@ export class MaxClarificationError extends ADCPError {
  */
 export class DeferredTaskError extends ADCPError {
   readonly code = 'TASK_DEFERRED';
+  readonly token!: string;
 
-  constructor(public readonly token: string) {
-    super(`Task deferred with token: ${token}`);
+  constructor(token: string) {
+    super('Task deferred with an opaque continuation token.');
+    Object.defineProperty(this, 'token', {
+      value: token,
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
   }
 }
 

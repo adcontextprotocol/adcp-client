@@ -9,6 +9,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const { createAdcpServerFromPlatform, InMemoryProposalStore } = require('../../dist/lib/server/index.js');
+const { createIdempotencyStore, memoryBackend } = require('../../dist/lib/server/idempotency/index.js');
 
 function buildPlatform({ proposalManager, sales, capabilities = {} }) {
   return {
@@ -403,6 +404,8 @@ test('e2e: finalize HITL — TaskHandoff commits proposal on completion + emits 
     name: 'e2e-hitl',
     version: '1.0',
     proposalStore: store,
+    idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
+    resolveSessionKey: () => 'proposal-hitl',
     validation: { requests: 'off', responses: 'off' },
   });
   await server.dispatchTestRequest(
@@ -489,6 +492,8 @@ test('e2e: HITL handoff result strips ctx_metadata + implementation_config befor
     name: 'e2e-hitl-strip',
     version: '1.0',
     proposalStore: store,
+    idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
+    resolveSessionKey: () => 'proposal-hitl-strip',
     validation: { requests: 'off', responses: 'off' },
   });
   const submitted = await server.dispatchTestRequest(
