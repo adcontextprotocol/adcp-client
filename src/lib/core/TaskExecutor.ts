@@ -2337,6 +2337,7 @@ export class TaskExecutor {
         return task;
       },
       waitForCompletion: async (pollInterval = 60000, signal?: AbortSignal, requireExactTaskIdentity = false) => {
+        void requireExactTaskIdentity;
         const completed = await this.pollTaskCompletion<T>(
           agent,
           serverTaskId,
@@ -2344,7 +2345,7 @@ export class TaskExecutor {
           pollingTransport,
           signal,
           metadata.a2aTaskId,
-          requireExactTaskIdentity ? taskName : undefined,
+          taskName,
           taskId,
           serverVersion
         );
