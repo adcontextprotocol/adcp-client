@@ -840,6 +840,20 @@ export class AgentClient {
     return result;
   }
 
+  /** @internal Run final legacy get_products adaptation before an application-owned atomic mutation claim. */
+  async getProductsLegacyWithPreDispatch(
+    params: GetProductsRequest,
+    beforeDispatch: BeforeProtocolDispatchHook<GetProductsResponse>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<GetProductsResponse>> {
+    const result = await this.client.getProductsLegacyWithPreDispatch(params, beforeDispatch, inputHandler, {
+      ...this.withSession('get_products', options),
+    });
+    this.retainSession(result);
+    return result;
+  }
+
   /** @deprecated Migration-only access to a legacy named-format catalog. */
   async listCreativeFormatsLegacy(
     params: ListCreativeFormatsRequest,

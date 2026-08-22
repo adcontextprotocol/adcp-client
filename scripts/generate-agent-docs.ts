@@ -1101,6 +1101,9 @@ function generateLlmsTxt(
   ln(`| \`Targeting\` | Audience criteria (geo, demo, behavioral, contextual, device) |`);
   ln(`| \`PricingOption\` | Price model (CPM, vCPM, CPC, CPCV, CPV, CPP, CPA, FlatRate, Time) |`);
   ln(`| \`GovernanceConfig\` | Buyer-side governance middleware config |`);
+  ln(
+    `| \`EstablishedProposalStore\` | Durable 3.0/3.1 proposal snapshots, atomic mutation fences, and submitted-task reconciliation |`
+  );
   ln();
 
   // --- Task statuses ---
@@ -1290,6 +1293,72 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  deferToHuman(): Promise<{ defer: true; token: string }>;`);
   ln(`  abort(reason?: string): never;`);
   ln(`}`);
+  ln();
+  ln(
+    `interface EstablishedProposalScope { principalScope: string; sellerScope: string; sourceAdcpVersion: '3.0' | '3.1'; }`
+  );
+  ln(`interface EstablishedProposalTaskScope extends EstablishedProposalScope { accountScope: string; }`);
+  ln(`interface EstablishedProposalBinding extends EstablishedProposalTaskScope { proposalId: string; }`);
+  ln(
+    `interface EstablishedProposalMutationBinding extends EstablishedProposalBinding { snapshotFingerprint: string; }`
+  );
+  ln(
+    `interface ProposalSnapshotEntry extends EstablishedProposalBinding { proposal: Record<string, unknown>; expiresAt?: string; canonicalTermsDigest?: string; snapshotFingerprint: string; capturedAt: string; }`
+  );
+  ln(
+    `type EstablishedProposalOperation = { state: 'available' } | { state: 'reserved' | 'retryable'; operation: 'accept' | 'refine' | 'decline'; operationKey: string; requestFingerprint: string; idempotencyKey?: string; reservedAt: string; retryExpiresAt?: string; sellerTaskId?: string; ambiguity?: 'paused' | 'commit-uncertain' } | { state: 'terminal'; disposition: 'accepted' | 'refined' | 'declined' | 'commit-uncertain'; terminalResultFingerprint?: string; operation: 'accept' | 'refine' | 'decline'; operationKey: string; requestFingerprint: string; idempotencyKey?: string; reservedAt: string; retryExpiresAt?: string; sellerTaskId?: string; };`
+  );
+  ln(
+    `interface EstablishedProposalRecord { snapshot: ProposalSnapshotEntry; operation: EstablishedProposalOperation; }`
+  );
+  ln(
+    `interface EstablishedProposalReserveRequest { bindings: readonly EstablishedProposalMutationBinding[]; claim: { operation: 'accept' | 'refine' | 'decline'; operationKey: string; requestFingerprint: string; idempotencyKey?: string; retryTtlMs?: number; }; }`
+  );
+  ln(
+    `type EstablishedProposalPutResult = { outcome: 'stored' | 'unchanged' | 'fenced'; record: EstablishedProposalRecord } | { outcome: 'missing' | 'capacity' };`
+  );
+  ln(
+    `type EstablishedProposalReserveResult = { outcome: 'reserved'; records: EstablishedProposalRecord[]; retry: boolean } | { outcome: 'missing' | 'expired' | 'in_flight' | 'ambiguous' | 'terminal' | 'conflict' | 'capacity'; records: EstablishedProposalRecord[] };`
+  );
+  ln(
+    `type EstablishedProposalTransitionResult = { outcome: 'updated'; records: EstablishedProposalRecord[] } | { outcome: 'missing' | 'conflict' | 'capacity'; records: EstablishedProposalRecord[] };`
+  );
+  ln(
+    `interface EstablishedProposalSubmittedOperation { request: EstablishedProposalReserveRequest; records: EstablishedProposalRecord[]; sellerTaskId: string; settled?: boolean; }`
+  );
+  ln();
+  ln(`interface EstablishedProposalStore {`);
+  ln(
+    `  putSnapshot(snapshot: ProposalSnapshotEntry, expectedSnapshotFingerprint?: string): Promise<EstablishedProposalPutResult>;`
+  );
+  ln(
+    `  discardSnapshot(binding: EstablishedProposalBinding, expectedSnapshotFingerprint: string): Promise<'discarded' | 'missing' | 'fenced'>;`
+  );
+  ln(`  get(binding: EstablishedProposalBinding): Promise<EstablishedProposalRecord | undefined>;`);
+  ln(`  find(scope: EstablishedProposalScope, proposalIds: readonly string[]): Promise<EstablishedProposalRecord[]>;`);
+  ln(
+    `  findSubmittedTask(scope: EstablishedProposalTaskScope, sellerTaskId: string): Promise<EstablishedProposalSubmittedOperation | undefined>;`
+  );
+  ln(`  reserveMutation(request: EstablishedProposalReserveRequest): Promise<EstablishedProposalReserveResult>;`);
+  ln(
+    `  completeMutation(request: EstablishedProposalReserveRequest, disposition: 'accepted', terminalResultFingerprint: string): Promise<EstablishedProposalTransitionResult>;`
+  );
+  ln(
+    `  completeRefinement(request: EstablishedProposalReserveRequest, replacements: readonly ProposalSnapshotEntry[], retainedBindings?: readonly EstablishedProposalMutationBinding[]): Promise<EstablishedProposalTransitionResult>;`
+  );
+  ln(
+    `  completeDecline(request: EstablishedProposalReserveRequest, retainedBindings?: readonly EstablishedProposalMutationBinding[]): Promise<EstablishedProposalTransitionResult>;`
+  );
+  ln(`  releaseMutation(request: EstablishedProposalReserveRequest): Promise<EstablishedProposalTransitionResult>;`);
+  ln(
+    `  recordSubmittedTask(request: EstablishedProposalReserveRequest, sellerTaskId: string): Promise<EstablishedProposalTransitionResult>;`
+  );
+  ln(
+    `  markAmbiguous(request: EstablishedProposalReserveRequest, ambiguity: 'paused' | 'commit-uncertain'): Promise<EstablishedProposalTransitionResult>;`
+  );
+  ln(`}`);
+  ln();
+  ln(`// After restart: lifecycle.reconcileEstablishedProposalTask({ account, sellerTaskId })`);
   ln('```');
   ln();
 

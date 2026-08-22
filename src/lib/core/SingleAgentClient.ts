@@ -4948,6 +4948,24 @@ export class SingleAgentClient {
     return this.executeTaskUnprojected<GetProductsResponse>('get_products', params, inputHandler, options);
   }
 
+  /** @internal Run final legacy get_products adaptation before an application-owned atomic mutation claim. */
+  async getProductsLegacyWithPreDispatch(
+    params: GetProductsRequest,
+    beforeDispatch: UnprojectedPreDispatchHook<GetProductsResponse>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<GetProductsResponse>> {
+    const requestSnapshot = structuredClone(params);
+    return this.executeTaskUnprojected<GetProductsResponse>(
+      'get_products',
+      requestSnapshot,
+      inputHandler,
+      options,
+      undefined,
+      beforeDispatch
+    );
+  }
+
   /**
    * List a legacy named-format catalog for migration tooling.
    *

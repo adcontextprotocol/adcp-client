@@ -80,4 +80,5 @@ export type { UpdateFieldEntry } from './update-fields.generated';
 export { ACTIONS_BY_FIELD, UPDATE_FIELDS_BY_ACTION } from './update-fields.generated';
 
 export * from './compatibility';
+export * from './established-proposal-store';
 export * from './legacy-purchase-continuation';

@@ -29,6 +29,7 @@ import type {
   CreateMediaBuyRequest,
   DeclineProposalsRequest,
   DeclineProposalsResponse,
+  GetProductsRequest,
   GetProductsResponse,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
@@ -56,7 +57,7 @@ import {
   proposalTermsDigest,
   validateRefineProposalsResponseShape,
 } from '../negotiation/verification';
-import { isAdcpOperationSuccess } from '../utils/response-unwrapper';
+import { isAdcpOperationSuccess, isTerminalAdcpError } from '../utils/response-unwrapper';
 import { ConfigurationError } from '../errors';
 import { createAbortError, isAbortOrTimeoutError, MAX_TIMER_DELAY_MS, withAbortSignal } from '../protocols/abort';
 import { formatIssues, validateResponse } from '../validation/schema-validator';
@@ -72,6 +73,18 @@ import {
   type LegacyPurchaseTerminalResult,
   type ReconcileLegacyPurchase,
 } from './legacy-purchase-continuation';
+import {
+  type EstablishedProposalBinding,
+  type EstablishedProposalMutationIntent,
+  type EstablishedProposalMutationBinding,
+  type EstablishedProposalReserveRequest,
+  type EstablishedProposalRecord,
+  type EstablishedProposalScope,
+  type EstablishedProposalSubmittedOperation,
+  type EstablishedProposalStore,
+  type EstablishedProposalTransitionResult,
+  type ProposalSnapshotEntry as DurableProposalSnapshotEntry,
+} from './established-proposal-store';
 
 export type MediaBuyLifecycle = 'compact' | 'established';
 export type MediaBuyCompatibility = 'native' | 'lossless_projection' | 'lossy_projection';
@@ -669,12 +682,18 @@ export interface MediaBuyLifecycleCoordinatorOptions {
   principalScope?: string;
   /**
    * Stable, non-secret identity for the authenticated seller/account session.
-   * Persist and reuse it when a coordinator is rehydrated. It is required for
-   * every established 2.5, 3.0, or 3.1 seller that provides no server context ID.
+   * Persist and reuse it when a coordinator is rehydrated. It is required
+   * whenever `establishedProposalStore` is configured, and for established
+   * 2.5, 3.0, or 3.1 sellers that provide no server context ID.
    */
   legacyPurchaseSellerSessionScope?: string;
   /** Durable storage for products-only legacy purchase continuations. */
   legacyPurchaseContinuationStore?: LegacyPurchaseContinuationStore;
+  /**
+   * Durable storage for established 3.0/3.1 proposal evidence and mutation
+   * fences. Supply the same implementation to every buyer worker.
+   */
+  establishedProposalStore?: EstablishedProposalStore;
   /** Lifetime of a projected continuation. Defaults to five minutes. */
   legacyPurchaseContinuationTtlMs?: number;
   /** Age after which an unresolved claim is reconciled instead of reported in-flight. */
@@ -683,6 +702,11 @@ export interface MediaBuyLifecycleCoordinatorOptions {
   legacyPurchaseOperationTtlMs?: number;
   /** Application-owned authoritative reconciliation for ambiguous legacy creates. */
   reconcileLegacyPurchase?: ReconcileLegacyPurchase;
+}
+
+export interface EstablishedProposalTaskReconciliationInput {
+  account: AcceptProposalRequest['account'];
+  sellerTaskId: string;
 }
 
 export type LegacyPurchaseContinuationErrorCode =
@@ -799,6 +823,14 @@ function array(value: unknown): unknown[] {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function exactStringSet(left: readonly string[], right: readonly string[]): boolean {
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  return leftSet.size === left.length && rightSet.size === right.length && leftSet.size === rightSet.size
+    ? [...leftSet].every(value => rightSet.has(value))
+    : false;
 }
 
 const CREDENTIAL_SHAPED_KEYS = new Set([
@@ -950,6 +982,7 @@ function negotiatedVersion(capabilities: AdcpCapabilities, clientVersion: string
 
 const MAX_PROPOSAL_TRAVERSAL_NODES = 4096;
 const LEGACY_PROPOSAL_RAW = Symbol('legacyProposalRaw');
+const PROJECTED_RESPONSE_RAW = Symbol('projectedResponseRaw');
 const COMPACT_REQUEST_PROPOSALS_RESPONSE_FIELDS = new Set([
   'adcp_version',
   'outcome',
@@ -1113,7 +1146,7 @@ function projectRequestProposals(
     nativeOutcome ??
     (projectedProductsAvailable ? 'products_available' : undefined) ??
     (lifecycle === 'established' && (base.proposals?.length ?? 0) > 0 ? 'proposed' : 'legacy_unavailable');
-  return {
+  const projected: CompatibleRequestProposalsResponse = {
     ...base,
     operation: 'request',
     outcome,
@@ -1129,6 +1162,8 @@ function projectRequestProposals(
       | RequestProposalsResponse
       | EstablishedProductsWireResponse,
   } as CompatibleRequestProposalsResponse;
+  Object.defineProperty(projected, PROJECTED_RESPONSE_RAW, { value: source, enumerable: false });
+  return projected;
 }
 
 function projectRefineProposals(
@@ -1190,7 +1225,7 @@ function projectRefineProposals(
       : (base.proposals?.length ?? 0) > 0
         ? 'legacy_projected'
         : 'legacy_unavailable';
-  return {
+  const projected: CompatibleRefineProposalsResponse = {
     ...base,
     operation: 'refine',
     outcome,
@@ -1199,6 +1234,8 @@ function projectRefineProposals(
     ...(Array.isArray(source.suggestions) && { suggestions: source.suggestions as string[] }),
     raw: source as RefineProposalsResponse | EstablishedProductsWireResponse,
   };
+  Object.defineProperty(projected, PROJECTED_RESPONSE_RAW, { value: source, enumerable: false });
+  return projected;
 }
 
 function projectDeclineProposals(
@@ -1264,14 +1301,29 @@ function projectDeclineProposals(
           }
           throw new TypeError(`decline_proposals result ${index} contained an invalid outcome.`);
         })
-      : proposalIds.map(proposal_id => ({ proposal_id, outcome: 'unconfirmed' as const }));
-  return {
+      : proposalIds.map(proposal_id => {
+          const unable = array(source.refinement_applied)
+            .map(value => record(value))
+            .find(
+              value => value.scope === 'proposal' && value.proposal_id === proposal_id && value.status === 'unable'
+            );
+          return unable
+            ? {
+                proposal_id,
+                outcome: 'unable' as const,
+                reason: optionalString(unable.notes) ?? 'The established seller could not apply the decline.',
+              }
+            : { proposal_id, outcome: 'unconfirmed' as const };
+        });
+  const projected: CompatibleDeclineProposalsResponse = {
     ...base,
     operation: 'decline',
     outcome: lifecycle === 'compact' ? 'native_results' : 'legacy_unconfirmed',
     results,
     raw: source as DeclineProposalsResponse | EstablishedProductsWireResponse,
   };
+  Object.defineProperty(projected, PROJECTED_RESPONSE_RAW, { value: source, enumerable: false });
+  return projected;
 }
 
 interface AcceptanceReservation {
@@ -1477,6 +1529,8 @@ export class MediaBuyLifecycleCoordinator {
   private readonly configuredLegacyPurchaseSellerSessionScope?: string;
   private resolvedLegacyPurchaseSellerSessionScope?: string;
   private readonly legacyPurchaseContinuationStore: LegacyPurchaseContinuationStore;
+  private readonly establishedProposalStore?: EstablishedProposalStore;
+  private readonly establishedProposalScope?: EstablishedProposalScope;
   private readonly legacyPurchaseContinuationTtlMs: number;
   private readonly legacyPurchaseClaimTimeoutMs: number;
   private readonly legacyPurchaseOperationTtlMs: number;
@@ -1488,6 +1542,7 @@ export class MediaBuyLifecycleCoordinator {
       accountScope?: string;
       project?: (data: unknown) => unknown;
       retainProposals: boolean;
+      persistEstablishedProposals: boolean;
       onPause?: () => void;
       onAuthoritativeFailure?: () => void;
       authoritativeTaskNames?: ReadonlySet<string>;
@@ -1508,6 +1563,9 @@ export class MediaBuyLifecycleCoordinator {
   private readonly pendingAcceptanceTaskTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly acceptanceRetryExpiryTimers = new Map<AcceptanceReservation, ReturnType<typeof setTimeout>>();
   private readonly proposalDispatchUnsubscribes = new Set<() => void>();
+  private readonly pendingEstablishedProposalStoreWrites = new Set<Promise<void>>();
+  private establishedProposalStoreWriteTail: Promise<void> = Promise.resolve();
+  private establishedProposalStoreFailure?: unknown;
   private readonly declineLeaseOwner = {};
   private readonly refinementLeaseOwner = {};
   private acceptanceTaskUnsubscribe?: () => void;
@@ -1566,6 +1624,34 @@ export class MediaBuyLifecycleCoordinator {
     this.configuredLegacyPurchaseSellerSessionScope = options.legacyPurchaseSellerSessionScope?.trim();
     this.legacyPurchaseContinuationStore =
       options.legacyPurchaseContinuationStore ?? createInMemoryLegacyPurchaseContinuationStore();
+    this.establishedProposalStore = options.establishedProposalStore;
+    const usesEstablishedProposalCompatibility =
+      compareRelease(this.negotiated_version, '3.0') >= 0 && compareRelease(this.negotiated_version, '3.2') < 0;
+    if (this.establishedProposalStore && usesEstablishedProposalCompatibility && !this.principalScope) {
+      throw new ConfigurationError(
+        'Durable established proposal state requires principalScope to bind records to the authenticated buyer principal.',
+        'mediaBuy.principalScope'
+      );
+    }
+    if (this.principalScope && this.establishedProposalStore && usesEstablishedProposalCompatibility) {
+      if (!this.configuredLegacyPurchaseSellerSessionScope) {
+        throw new ConfigurationError(
+          'Durable established proposal state requires legacyPurchaseSellerSessionScope to bind records to the authenticated seller session.',
+          'mediaBuy.legacyPurchaseSellerSessionScope'
+        );
+      }
+      const configuredAgent = agent.getAgent();
+      this.establishedProposalScope = {
+        principalScope: this.principalScope,
+        sellerScope: requestFingerprint({
+          id: configuredAgent.id,
+          uri: configuredAgent.agent_uri,
+          protocol: configuredAgent.protocol,
+          authenticatedSessionScope: this.configuredLegacyPurchaseSellerSessionScope,
+        }),
+        sourceAdcpVersion: compareRelease(this.negotiated_version, '3.1') >= 0 ? '3.1' : '3.0',
+      };
+    }
     this.legacyPurchaseContinuationTtlMs = options.legacyPurchaseContinuationTtlMs ?? 5 * 60 * 1000;
     this.legacyPurchaseClaimTimeoutMs = options.legacyPurchaseClaimTimeoutMs ?? 30 * 1000;
     this.legacyPurchaseOperationTtlMs = options.legacyPurchaseOperationTtlMs ?? 24 * 60 * 60 * 1000;
@@ -1593,6 +1679,133 @@ export class MediaBuyLifecycleCoordinator {
   /** Initial negotiation report. Operation calls return their own exact tool report. */
   report(): MediaBuyCompatibilityReport {
     return this.makeReport(this.lifecycle, [], []);
+  }
+
+  /** Poll and durably settle one established proposal mutation after a process restart. */
+  async reconcileEstablishedProposalTask(
+    input: EstablishedProposalTaskReconciliationInput,
+    transport?: import('../protocols').TransportOptions,
+    signal?: AbortSignal
+  ): Promise<TaskInfo> {
+    this.assertActive('reconcileEstablishedProposalTask');
+    if (!this.establishedProposalStore || !this.establishedProposalScope) {
+      throw new ConfigurationError(
+        'Established proposal task reconciliation requires a configured durable establishedProposalStore.',
+        'mediaBuy.establishedProposalStore'
+      );
+    }
+    const accountScope = this.accountScope(input.account);
+    if (!accountScope || typeof input.sellerTaskId !== 'string' || input.sellerTaskId.length === 0) {
+      throw new TypeError('Established proposal task reconciliation requires an account and sellerTaskId.');
+    }
+    const recovered = await this.callEstablishedProposalStore(() =>
+      this.establishedProposalStore!.findSubmittedTask(
+        { ...this.establishedProposalScope!, accountScope },
+        input.sellerTaskId
+      )
+    );
+    if (!recovered) {
+      throw new ConfigurationError(
+        'No submitted established proposal mutation exists in the requested principal, seller session, account, and version scope.',
+        'mediaBuy.establishedProposalStore'
+      );
+    }
+    this.assertRecoveredEstablishedProposalTask(recovered, accountScope, input.sellerTaskId);
+    if (recovered.settled) {
+      const now = Date.now();
+      return {
+        taskId: input.sellerTaskId,
+        status: 'completed',
+        taskType: recovered.request.claim.operation === 'accept' ? 'create_media_buy' : 'get_products',
+        createdAt: now,
+        updatedAt: now,
+      };
+    }
+    if (!recovered.settled && recovered.records.every(record => record.operation.state === 'retryable')) {
+      const reacquired = await this.callEstablishedProposalStore(() =>
+        this.establishedProposalStore!.reserveMutation(recovered.request)
+      );
+      // Seller-task reconciliation remains safe after the redispatch window:
+      // an expired exact claim is still proposal-wide fenced, so it may be
+      // polled and authoritatively settled but never sent again.
+      if (reacquired.outcome !== 'reserved' && reacquired.outcome !== 'expired') {
+        throw new ConfigurationError(
+          'The submitted proposal mutation changed while reconciliation was acquiring its durable reservation.',
+          'mediaBuy.establishedProposalStore'
+        );
+      }
+    }
+    const expectedTaskType = recovered.request.claim.operation === 'accept' ? 'create_media_buy' : 'get_products';
+    const task = await this.agent.getTaskStatus(input.sellerTaskId, transport, signal);
+    if (task.taskId !== input.sellerTaskId || task.taskType !== expectedTaskType) {
+      await this.requireEstablishedTransition(() =>
+        this.establishedProposalStore!.markAmbiguous(recovered.request, 'commit-uncertain')
+      );
+      throw new ConfigurationError(
+        'The polled seller task did not match the durably recorded proposal mutation task.',
+        'mediaBuy.establishedProposalStore'
+      );
+    }
+    if (['pending', 'running', 'working', 'submitted'].includes(task.status)) return task;
+    if (['input-required', 'auth-required', 'needs_input', 'deferred'].includes(task.status)) {
+      await this.requireEstablishedTransition(() =>
+        this.establishedProposalStore!.markAmbiguous(recovered.request, 'paused')
+      );
+      return task;
+    }
+    if (['failed', 'rejected', 'canceled', 'governance-denied'].includes(task.status)) {
+      if (this.isAuthoritativeEstablishedError(task.result, expectedTaskType)) {
+        await this.requireEstablishedTransition(() =>
+          this.establishedProposalStore!.releaseMutation(recovered.request)
+        );
+        return task;
+      }
+      await this.requireEstablishedTransition(() =>
+        this.establishedProposalStore!.markAmbiguous(recovered.request, 'commit-uncertain')
+      );
+      throw new ConfigurationError(
+        'The seller task failure was not an authoritative structured AdCP error.',
+        'mediaBuy.establishedProposalStore'
+      );
+    }
+    const completionAuthority =
+      task.status === 'completed' && task.result !== undefined
+        ? this.establishedCompletionAuthority(recovered.request, task.result)
+        : 'uncertain';
+    const completedSuccess =
+      task.status === 'completed' && task.result !== undefined && completionAuthority === 'success';
+    const completedError = task.status === 'completed' && completionAuthority === 'error';
+    if (!completedSuccess && !completedError) {
+      await this.requireEstablishedTransition(() =>
+        this.establishedProposalStore!.markAmbiguous(recovered.request, 'commit-uncertain')
+      );
+      throw new ConfigurationError(
+        'The seller task result was not authoritative enough to settle the durable proposal mutation.',
+        'mediaBuy.establishedProposalStore'
+      );
+    }
+    if (completedError) {
+      await this.requireEstablishedTransition(() => this.establishedProposalStore!.releaseMutation(recovered.request));
+      return task;
+    }
+    const agent = this.agent.getAgent();
+    const result = {
+      success: true,
+      status: 'completed',
+      data: task.result,
+      metadata: {
+        taskId: input.sellerTaskId,
+        serverTaskId: input.sellerTaskId,
+        taskName: expectedTaskType,
+        agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+        responseTimeMs: 0,
+        timestamp: new Date().toISOString(),
+        clarificationRounds: 0,
+        status: 'completed',
+      },
+    } as unknown as TaskResult<unknown>;
+    await this.transitionEstablishedMutationResult(recovered.request, result);
+    return task;
   }
 
   private assertActive(operation: string): void {
@@ -1741,6 +1954,19 @@ export class MediaBuyLifecycleCoordinator {
     };
   }
 
+  private assertPendingDeclineCapacity(proposalIds: readonly string[]): void {
+    if (
+      this.proposalSnapshotStore.pendingDeclines.size >= MediaBuyLifecycleCoordinator.MAX_PENDING_DECLINES ||
+      this.proposalSnapshotStore.pendingDeclineProposalIdCount + new Set(proposalIds).size >
+        MediaBuyLifecycleCoordinator.MAX_PENDING_DECLINE_PROPOSAL_IDS
+    ) {
+      throw new ConfigurationError(
+        'Too many media-buy proposal declines are still pending. Complete, cancel, or dispose outstanding decline tasks before dispatching another.',
+        'mediaBuy.pendingDeclines'
+      );
+    }
+  }
+
   private beginPendingDecline(
     proposalIds: readonly string[],
     requestFingerprintValue: string,
@@ -1820,16 +2046,7 @@ export class MediaBuyLifecycleCoordinator {
         'A requested proposal has an unresolved refinement in this principal scope. Wait for that refinement to finish before declining it.'
       );
     }
-    if (
-      this.proposalSnapshotStore.pendingDeclines.size >= MediaBuyLifecycleCoordinator.MAX_PENDING_DECLINES ||
-      this.proposalSnapshotStore.pendingDeclineProposalIdCount + retainedProposalIds.length >
-        MediaBuyLifecycleCoordinator.MAX_PENDING_DECLINE_PROPOSAL_IDS
-    ) {
-      throw new ConfigurationError(
-        'Too many media-buy proposal declines are still pending. Complete, cancel, or dispose outstanding decline tasks before dispatching another.',
-        'mediaBuy.pendingDeclines'
-      );
-    }
+    this.assertPendingDeclineCapacity(retainedProposalIds);
     const lease: PendingDeclineLease = {
       operation: 'decline',
       proposalIds: retainedProposalIds,
@@ -2054,22 +2271,24 @@ export class MediaBuyLifecycleCoordinator {
   private settlePendingRefinement(
     lease: PendingRefinementLease,
     response: CompatibleRefineProposalsResponse,
-    attemptEpoch = lease.attemptEpoch
+    attemptEpoch = lease.attemptEpoch,
+    persistEstablishedProposals = true
   ): void {
-    this.preparePendingRefinementSettlement(lease, response, attemptEpoch)();
+    this.preparePendingRefinementSettlement(lease, response, attemptEpoch, persistEstablishedProposals)();
   }
 
   private preparePendingRefinementSettlement(
     lease: PendingRefinementLease,
     response: CompatibleRefineProposalsResponse,
-    attemptEpoch = lease.attemptEpoch
+    attemptEpoch = lease.attemptEpoch,
+    persistEstablishedProposals = true
   ): () => void {
     const unableProposalIds = new Set(
       response.outcome === 'native_results'
         ? (response.results ?? [])
             .filter(result => result.outcome === 'unable')
             .map(result => result.source_proposal_id)
-        : []
+        : [...this.establishedUnableRefinementIds(response)]
     );
     const replacementProposalIds = new Set(
       response.outcome === 'legacy_projected'
@@ -2089,8 +2308,14 @@ export class MediaBuyLifecycleCoordinator {
       // that a same-ID proposal row is a fresh immutable source rather than
       // the already-consumed pre-mutation snapshot. Keep that source retired;
       // distinct child proposal IDs returned by the replay are still cached.
-      this.invalidateProposalSnapshots(replacementSourceIds, undefined, false, attemptEpoch > 1);
-      this.invalidateProposalSnapshots(terminalProposalIds, undefined, false, true);
+      this.invalidateProposalSnapshots(
+        replacementSourceIds,
+        undefined,
+        false,
+        attemptEpoch > 1,
+        persistEstablishedProposals
+      );
+      this.invalidateProposalSnapshots(terminalProposalIds, undefined, false, true, persistEstablishedProposals);
       for (const { key, entry } of lease.sources) {
         const proposalId = String(entry.proposal.proposal_id);
         if (
@@ -2656,6 +2881,683 @@ export class MediaBuyLifecycleCoordinator {
     return Object.keys(value).length > 0 ? canonicalize(value) : undefined;
   }
 
+  private queueEstablishedProposalStoreWrite(write: () => Promise<void>): void {
+    const guarded = this.establishedProposalStoreWriteTail
+      .then(write)
+      .catch(error => {
+        this.establishedProposalStoreFailure ??= error;
+      })
+      .finally(() => this.pendingEstablishedProposalStoreWrites.delete(guarded));
+    this.establishedProposalStoreWriteTail = guarded;
+    this.pendingEstablishedProposalStoreWrites.add(guarded);
+  }
+
+  private async flushEstablishedProposalStoreWrites(): Promise<void> {
+    while (this.pendingEstablishedProposalStoreWrites.size > 0) {
+      await Promise.all([...this.pendingEstablishedProposalStoreWrites]);
+    }
+    if (this.establishedProposalStoreFailure !== undefined) {
+      const cause = this.establishedProposalStoreFailure;
+      this.establishedProposalStoreFailure = undefined;
+      throw new ConfigurationError(
+        'The established proposal store failed closed. Inspect the backing store through the application diagnostic channel.',
+        'mediaBuy.establishedProposalStore',
+        cause
+      );
+    }
+  }
+
+  private async callEstablishedProposalStore<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (cause) {
+      throw new ConfigurationError(
+        'The established proposal store operation failed closed. Inspect the backing store through the application diagnostic channel.',
+        'mediaBuy.establishedProposalStore',
+        cause
+      );
+    }
+  }
+
+  private async requireEstablishedTransition(
+    operation: () => Promise<EstablishedProposalTransitionResult>
+  ): Promise<void> {
+    const transition = await this.callEstablishedProposalStore(operation);
+    if (transition.outcome !== 'updated') {
+      throw new ConfigurationError(
+        `The established proposal store could not persist the state transition (${transition.outcome}). Reconcile before retrying.`,
+        'mediaBuy.establishedProposalStore'
+      );
+    }
+  }
+
+  private durableProposalBinding(accountScope: string, proposalId: string): EstablishedProposalBinding | undefined {
+    return this.establishedProposalScope ? { ...this.establishedProposalScope, accountScope, proposalId } : undefined;
+  }
+
+  private isExactDurableProposalSnapshot(snapshot: DurableProposalSnapshotEntry): boolean {
+    const safe = safeProposalSnapshot(snapshot.proposal);
+    const normalizedExpiry = optionalString(snapshot.proposal.expires_at);
+    try {
+      return (
+        safe !== null &&
+        canonicalize(safe.proposal) === canonicalize(snapshot.proposal) &&
+        snapshot.expiresAt === normalizedExpiry &&
+        requestFingerprint({
+          proposal: snapshot.proposal,
+          ...(snapshot.canonicalTermsDigest && { canonicalTermsDigest: snapshot.canonicalTermsDigest }),
+        }) === snapshot.snapshotFingerprint
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private assertRecoveredEstablishedProposalTask(
+    recovered: EstablishedProposalSubmittedOperation,
+    accountScope: string,
+    sellerTaskId: string
+  ): void {
+    const scope = this.establishedProposalScope!;
+    const fail = (): never => {
+      throw new ConfigurationError(
+        'The established proposal store returned a submitted operation outside the requested principal, seller session, account, version, task, or snapshot scope.',
+        'mediaBuy.establishedProposalStore'
+      );
+    };
+    if (
+      recovered.sellerTaskId !== sellerTaskId ||
+      recovered.request.bindings.length === 0 ||
+      !recovered.request.bindings.every(binding => binding.accountScope === accountScope)
+    ) {
+      fail();
+    }
+    const bindingKeys = new Set<string>();
+    for (const binding of recovered.request.bindings) {
+      const bindingKey = `${binding.accountScope}\u0000${binding.proposalId}`;
+      if (
+        binding.principalScope !== scope.principalScope ||
+        binding.sellerScope !== scope.sellerScope ||
+        binding.sourceAdcpVersion !== scope.sourceAdcpVersion ||
+        bindingKeys.has(bindingKey)
+      ) {
+        fail();
+      }
+      bindingKeys.add(bindingKey);
+    }
+    if (!recovered.settled && recovered.records.length !== recovered.request.bindings.length) fail();
+    for (const durable of recovered.records) {
+      const snapshot = durable.snapshot;
+      const binding = recovered.request.bindings.find(
+        candidate =>
+          candidate.accountScope === snapshot.accountScope &&
+          candidate.proposalId === snapshot.proposalId &&
+          candidate.snapshotFingerprint === snapshot.snapshotFingerprint
+      );
+      if (
+        snapshot.principalScope !== scope.principalScope ||
+        snapshot.sellerScope !== scope.sellerScope ||
+        snapshot.sourceAdcpVersion !== scope.sourceAdcpVersion ||
+        snapshot.accountScope !== accountScope ||
+        optionalString(snapshot.proposal.proposal_id) !== snapshot.proposalId ||
+        !this.isExactDurableProposalSnapshot(snapshot) ||
+        (!recovered.settled && binding === undefined)
+      ) {
+        fail();
+      }
+      if (!recovered.settled) {
+        const operation = durable.operation;
+        if (
+          operation.state === 'available' ||
+          operation.sellerTaskId !== sellerTaskId ||
+          operation.operation !== recovered.request.claim.operation ||
+          operation.operationKey !== recovered.request.claim.operationKey ||
+          operation.requestFingerprint !== recovered.request.claim.requestFingerprint ||
+          operation.idempotencyKey !== recovered.request.claim.idempotencyKey
+        ) {
+          fail();
+        }
+      }
+    }
+  }
+
+  private async hydrateEstablishedProposals(
+    proposalIds: readonly string[],
+    accountScope?: string
+  ): Promise<EstablishedProposalRecord[]> {
+    await this.flushEstablishedProposalStoreWrites();
+    if (!this.establishedProposalScope || !this.establishedProposalStore || proposalIds.length === 0) return [];
+    const records = await this.callEstablishedProposalStore(() =>
+      accountScope
+        ? Promise.all(
+            proposalIds.map(proposalId =>
+              this.establishedProposalStore!.get({ ...this.establishedProposalScope!, accountScope, proposalId })
+            )
+          ).then(values => values.filter((value): value is NonNullable<typeof value> => value !== undefined))
+        : this.establishedProposalStore!.find(this.establishedProposalScope!, proposalIds)
+    );
+    const requestedIds = new Set(proposalIds);
+    const returnedBindings = new Set<string>();
+    for (const durable of records) {
+      const snapshot = durable.snapshot;
+      const returnedBinding = `${snapshot.accountScope}\u0000${snapshot.proposalId}`;
+      const bindingMatches =
+        snapshot.principalScope === this.establishedProposalScope.principalScope &&
+        snapshot.sellerScope === this.establishedProposalScope.sellerScope &&
+        snapshot.sourceAdcpVersion === this.establishedProposalScope.sourceAdcpVersion &&
+        requestedIds.has(snapshot.proposalId) &&
+        optionalString(snapshot.proposal.proposal_id) === snapshot.proposalId &&
+        !returnedBindings.has(returnedBinding) &&
+        (accountScope === undefined || snapshot.accountScope === accountScope);
+      if (!bindingMatches) {
+        throw new ConfigurationError(
+          'The established proposal store returned a record outside the requested principal, seller session, account, version, or proposal scope.',
+          'mediaBuy.establishedProposalStore'
+        );
+      }
+      returnedBindings.add(returnedBinding);
+      if (!this.isExactDurableProposalSnapshot(snapshot)) {
+        throw new ConfigurationError(
+          'The established proposal store returned corrupted or non-reduced proposal evidence.',
+          'mediaBuy.establishedProposalStore'
+        );
+      }
+    }
+    for (const durable of records) {
+      const { snapshot, operation } = durable;
+      if (operation.state === 'terminal') {
+        this.markTerminalProposal(snapshot.proposalId);
+        if (operation.disposition === 'accepted') this.markAcceptedProposal(snapshot.proposalId);
+        if (operation.disposition === 'commit-uncertain') this.markCommitUncertainProposalMutation(snapshot.proposalId);
+        continue;
+      }
+      const snapshotKey = this.snapshotKey(snapshot.proposalId, snapshot.accountScope);
+      if (this.proposalSnapshotStore.entries.get(snapshotKey)?.acceptance) continue;
+      this.removeProposalSnapshot(snapshotKey);
+      const retained = structuredClone(snapshot);
+      const bytes = new TextEncoder().encode(`${snapshotKey}${JSON.stringify(retained.proposal)}`).byteLength;
+      if (bytes > MediaBuyLifecycleCoordinator.MAX_PROPOSAL_SNAPSHOT_BYTES) continue;
+      this.retainProposalSnapshot(snapshotKey, {
+        proposal: retained.proposal,
+        bytes,
+        principalScope: retained.principalScope,
+        executable: true,
+        accountScope: retained.accountScope,
+        ...(retained.canonicalTermsDigest && { canonicalTermsDigest: retained.canonicalTermsDigest }),
+      });
+    }
+    this.enforceProposalSnapshotLimits();
+    return records;
+  }
+
+  private establishedMutationBindings(
+    records: readonly EstablishedProposalRecord[]
+  ): EstablishedProposalMutationBinding[] {
+    return records.map(record => ({
+      principalScope: record.snapshot.principalScope,
+      sellerScope: record.snapshot.sellerScope,
+      sourceAdcpVersion: record.snapshot.sourceAdcpVersion,
+      accountScope: record.snapshot.accountScope,
+      proposalId: record.snapshot.proposalId,
+      snapshotFingerprint: record.snapshot.snapshotFingerprint,
+    }));
+  }
+
+  private establishedMutationRequest(
+    operation: EstablishedProposalMutationIntent['operation'],
+    bindings: readonly EstablishedProposalMutationBinding[],
+    requestFingerprintValue: string,
+    idempotencyKey: string | undefined
+  ): EstablishedProposalReserveRequest {
+    const operationKey = requestFingerprint({
+      operation,
+      bindings: bindings
+        .map(binding => ({
+          principalScope: binding.principalScope,
+          sellerScope: binding.sellerScope,
+          sourceAdcpVersion: binding.sourceAdcpVersion,
+          accountScope: binding.accountScope,
+          proposalId: binding.proposalId,
+          snapshotFingerprint: binding.snapshotFingerprint,
+        }))
+        .sort((left, right) =>
+          `${left.accountScope}\u0000${left.proposalId}`.localeCompare(`${right.accountScope}\u0000${right.proposalId}`)
+        ),
+      requestFingerprint: requestFingerprintValue,
+      ...(idempotencyKey && { idempotencyKey }),
+    });
+    return {
+      bindings,
+      claim: {
+        operation,
+        operationKey,
+        requestFingerprint: requestFingerprintValue,
+        ...(idempotencyKey && { idempotencyKey }),
+        ...(this.idempotencyReplayTtlMs !== undefined && {
+          retryTtlMs: this.idempotencyReplayTtlMs,
+        }),
+      },
+    };
+  }
+
+  private assertDurableBindingsCover(
+    operation: 'acceptProposal' | 'refineProposals' | 'declineProposals',
+    proposalIds: readonly string[],
+    bindings: readonly EstablishedProposalMutationBinding[]
+  ): void {
+    if (!this.establishedProposalScope) return;
+    const retained = new Set(bindings.map(binding => binding.proposalId));
+    const accountScopes = new Set(bindings.map(binding => binding.accountScope));
+    if (proposalIds.every(proposalId => retained.has(proposalId)) && accountScopes.size <= 1) return;
+    throw this.unsupported(
+      operation,
+      'proposal_snapshot/account_scope',
+      'The durable established proposal store has no scoped snapshot set within a single account for the requested proposals. No mutation was sent.'
+    );
+  }
+
+  private async reserveEstablishedMutation(request: EstablishedProposalReserveRequest): Promise<void> {
+    const reserved = await this.callEstablishedProposalStore(() =>
+      this.establishedProposalStore!.reserveMutation(request)
+    );
+    if (reserved.outcome === 'reserved') return;
+    const feature =
+      reserved.outcome === 'expired'
+        ? 'proposal_mutation_retry_window'
+        : reserved.outcome === 'terminal'
+          ? 'proposal_terminal'
+          : reserved.outcome === 'missing'
+            ? 'proposal_snapshot/account_scope'
+            : reserved.outcome === 'in_flight'
+              ? 'proposal_mutation_pending'
+              : reserved.outcome === 'ambiguous'
+                ? 'proposal_mutation_commit_uncertain'
+                : 'proposal_mutation_conflict';
+    throw this.unsupported(
+      request.claim.operation === 'accept'
+        ? 'acceptProposal'
+        : request.claim.operation === 'refine'
+          ? 'refineProposals'
+          : 'declineProposals',
+      feature,
+      `The durable established proposal reservation was ${reserved.outcome}; no mutation was sent.`
+    );
+  }
+
+  private assertEstablishedFinalDispatch(
+    operation: EstablishedProposalMutationIntent['operation'],
+    effectiveParams: unknown,
+    context: BeforeProtocolDispatchContext,
+    proposalIds: readonly string[],
+    idempotencyKey: string | undefined,
+    accountScope?: string
+  ): void {
+    const operationName =
+      operation === 'accept' ? 'acceptProposal' : operation === 'refine' ? 'refineProposals' : 'declineProposals';
+    if (context.governanceAdjusted) {
+      throw this.unsupported(
+        operationName,
+        'governance_adjustment',
+        'Governance cannot rewrite an established proposal mutation after the proposal evidence was bound. No mutation was sent.'
+      );
+    }
+    const finalRequest = record(effectiveParams);
+    if (optionalString(finalRequest.idempotency_key) !== idempotencyKey) {
+      throw this.unsupported(
+        operationName,
+        'idempotency_key',
+        'The final seller payload must preserve the proposal mutation idempotency key. No mutation was sent.'
+      );
+    }
+    if (operation === 'accept') {
+      if (
+        optionalString(finalRequest.proposal_id) !== proposalIds[0] ||
+        this.accountScope(finalRequest.account) !== accountScope
+      ) {
+        throw this.unsupported(
+          operationName,
+          'proposal_id/account',
+          'The final seller payload must preserve the proposal and account bindings. No mutation was sent.'
+        );
+      }
+      return;
+    }
+    const refinements = array(finalRequest.refine);
+    const finalProposalIds = refinements
+      .map(value => record(value))
+      .filter(value => value.scope === 'proposal')
+      .map(value => optionalString(value.proposal_id));
+    const invalidDecline =
+      operation === 'decline' &&
+      (refinements.length !== finalProposalIds.length || refinements.some(value => record(value).action !== 'omit'));
+    if (
+      finalRequest.buying_mode !== 'refine' ||
+      finalProposalIds.some(value => value === undefined) ||
+      !exactStringSet(finalProposalIds as string[], proposalIds) ||
+      invalidDecline
+    ) {
+      throw this.unsupported(
+        operationName,
+        'proposal_binding',
+        'The final seller payload must preserve the proposal mutation bindings. No mutation was sent.'
+      );
+    }
+  }
+
+  private establishedMutationWireData(request: EstablishedProposalReserveRequest, data: unknown): unknown {
+    if (request.claim.operation === 'accept') return data;
+    const projected = record(data);
+    return (projected as Record<PropertyKey, unknown>)[PROJECTED_RESPONSE_RAW] ?? data;
+  }
+
+  private establishedWireValidation(taskName: string, data: unknown): ReturnType<typeof validateResponse> {
+    return validateResponse(
+      taskName,
+      data,
+      this.establishedProposalScope?.sourceAdcpVersion ?? this.negotiated_version
+    );
+  }
+
+  private isAuthoritativeEstablishedError(data: unknown, taskName: string): boolean {
+    if (data === undefined) return false;
+    const extracted = extractAdcpErrorInfo(data);
+    const validation = this.establishedWireValidation(taskName, data);
+    return (
+      extracted !== undefined &&
+      extracted.synthetic !== true &&
+      isTerminalAdcpError(data, taskName, this.establishedProposalScope?.sourceAdcpVersion) &&
+      validation.valid &&
+      validation.variant !== 'skipped' &&
+      validation.variant_fallback_applied !== true
+    );
+  }
+
+  private establishedCompletionAuthority(
+    request: EstablishedProposalReserveRequest,
+    data: unknown
+  ): 'success' | 'error' | 'uncertain' {
+    const taskName = request.claim.operation === 'accept' ? 'create_media_buy' : 'get_products';
+    const wire = this.establishedMutationWireData(request, data);
+    const validation = this.establishedWireValidation(taskName, wire);
+    if (this.isAuthoritativeEstablishedError(wire, taskName) && validation.valid && validation.variant !== 'skipped') {
+      return 'error';
+    }
+    return isAdcpOperationSuccess(wire, taskName) &&
+      validation.valid &&
+      validation.variant !== 'skipped' &&
+      validation.variant_fallback_applied !== true
+      ? 'success'
+      : 'uncertain';
+  }
+
+  private async transitionEstablishedMutationResult<T>(
+    request: EstablishedProposalReserveRequest,
+    result: TaskResult<T>
+  ): Promise<void> {
+    let transition;
+    let commitUncertain = false;
+    if (result.status === 'completed') {
+      const authority =
+        result.data === undefined ? 'uncertain' : this.establishedCompletionAuthority(request, result.data);
+      if (authority === 'success' && request.claim.operation === 'refine') {
+        const replacements = this.establishedRefinementReplacements(request, result.data);
+        const unableIds = this.establishedUnableRefinementIds(result.data);
+        const retainedBindings = request.bindings.filter(binding => unableIds.has(binding.proposalId));
+        await this.flushEstablishedProposalStoreWrites();
+        transition = await this.callEstablishedProposalStore(() =>
+          this.establishedProposalStore!.completeRefinement(request, replacements, retainedBindings)
+        );
+        if (transition.outcome === 'updated' && replacements.length > 0) {
+          await this.hydrateEstablishedProposals(replacements.map(replacement => replacement.proposalId));
+        }
+      } else if (authority === 'success' && request.claim.operation === 'decline') {
+        const unableIds = this.establishedUnableRefinementIds(result.data);
+        const retainedBindings = request.bindings.filter(binding => unableIds.has(binding.proposalId));
+        transition = await this.callEstablishedProposalStore(() =>
+          this.establishedProposalStore!.completeDecline(request, retainedBindings)
+        );
+      } else if (authority === 'success') {
+        const terminalResultFingerprint = requestFingerprint({
+          taskName: 'create_media_buy',
+          result: this.establishedMutationWireData(request, result.data),
+        });
+        transition = await this.callEstablishedProposalStore(() =>
+          this.establishedProposalStore!.completeMutation(request, 'accepted', terminalResultFingerprint)
+        );
+      } else if (authority === 'error') {
+        transition = await this.callEstablishedProposalStore(() =>
+          this.establishedProposalStore!.releaseMutation(request)
+        );
+      } else {
+        commitUncertain = true;
+        transition = await this.callEstablishedProposalStore(() =>
+          this.establishedProposalStore!.markAmbiguous(request, 'commit-uncertain')
+        );
+      }
+    } else if (result.status === 'working' || result.status === 'submitted') {
+      const sellerTaskId = result.submitted?.taskId ?? result.metadata.serverTaskId;
+      transition = await this.callEstablishedProposalStore(() =>
+        sellerTaskId
+          ? this.establishedProposalStore!.recordSubmittedTask(request, sellerTaskId)
+          : ((commitUncertain = true), this.establishedProposalStore!.markAmbiguous(request, 'commit-uncertain'))
+      );
+    } else if (
+      result.status === 'input-required' ||
+      result.status === 'auth-required' ||
+      result.status === 'deferred'
+    ) {
+      transition = await this.callEstablishedProposalStore(() =>
+        this.establishedProposalStore!.markAmbiguous(request, 'paused')
+      );
+    } else if (
+      !result.success &&
+      (result.metadata.taskName === 'unknown' ||
+        !this.isAuthoritativeEstablishedError(result.data, result.metadata.taskName))
+    ) {
+      commitUncertain = true;
+      transition = await this.callEstablishedProposalStore(() =>
+        this.establishedProposalStore!.markAmbiguous(request, 'commit-uncertain')
+      );
+    } else {
+      transition = await this.callEstablishedProposalStore(() =>
+        this.establishedProposalStore!.releaseMutation(request)
+      );
+    }
+    if (transition.outcome !== 'updated') {
+      throw new ConfigurationError(
+        `The established proposal store could not persist the seller result (${transition.outcome}). Reconcile before retrying.`,
+        'mediaBuy.establishedProposalStore'
+      );
+    }
+    if (commitUncertain) {
+      throw new ConfigurationError(
+        'The seller result was not authoritative enough to settle the durable proposal mutation; the operation remains commit-uncertain.',
+        'mediaBuy.establishedProposalStore'
+      );
+    }
+  }
+
+  private async settleEstablishedDispatchResult<T>(
+    request: EstablishedProposalReserveRequest,
+    result: TaskResult<T>,
+    context: BeforeProtocolDispatchContext
+  ): Promise<TaskResult<T>> {
+    await this.transitionEstablishedMutationResult(request, result);
+    const sellerTaskId = result.submitted?.taskId ?? result.metadata.serverTaskId;
+    if ((result.status === 'submitted' || result.status === 'working') && sellerTaskId) {
+      const expectedTaskType = result.metadata.taskName;
+      context.registerExternalTaskSettlement(async observation => {
+        if (observation.serverTaskId !== sellerTaskId || observation.taskType !== expectedTaskType) {
+          await this.requireEstablishedTransition(() =>
+            this.establishedProposalStore!.markAmbiguous(request, 'commit-uncertain')
+          );
+          throw new ConfigurationError(
+            'The pushed seller task did not match the durably recorded proposal mutation task.',
+            'mediaBuy.establishedProposalStore'
+          );
+        }
+        const agent = this.agent.getAgent();
+        const observed = attachMatch({
+          success: observation.status === 'completed',
+          status: observation.status,
+          ...(observation.result !== undefined && { data: observation.result }),
+          ...(observation.status !== 'completed' && { error: 'Seller task did not complete successfully.' }),
+          metadata: {
+            taskId: sellerTaskId,
+            serverTaskId: sellerTaskId,
+            taskName: expectedTaskType,
+            agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+            responseTimeMs: 0,
+            timestamp: new Date().toISOString(),
+            clarificationRounds: 0,
+            status: observation.status,
+          },
+        } as TaskResult<unknown>);
+        await this.transitionEstablishedMutationResult(request, observed);
+        return observed;
+      });
+    }
+    return this.attachEstablishedMutationTransitions(result, request) as TaskResult<T>;
+  }
+
+  private establishedRefinementReplacements(
+    request: EstablishedProposalReserveRequest,
+    data: unknown
+  ): DurableProposalSnapshotEntry[] {
+    const candidates = proposalRows(compactWirePayload(data)) ?? [];
+    const replacements: DurableProposalSnapshotEntry[] = [];
+    for (const candidate of candidates) {
+      const safe = safeProposalSnapshot(record(candidate));
+      const proposalId = safe ? optionalString(safe.proposal.proposal_id) : undefined;
+      if (!safe || !proposalId) continue;
+      const matchingSources = request.bindings.filter(binding => binding.proposalId === proposalId);
+      const scopes = matchingSources.length > 0 ? matchingSources : request.bindings;
+      const seenAccounts = new Set<string>();
+      for (const scope of scopes) {
+        if (seenAccounts.has(scope.accountScope)) continue;
+        seenAccounts.add(scope.accountScope);
+        replacements.push({
+          principalScope: scope.principalScope,
+          sellerScope: scope.sellerScope,
+          sourceAdcpVersion: scope.sourceAdcpVersion,
+          accountScope: scope.accountScope,
+          proposalId,
+          proposal: safe.proposal,
+          ...(optionalString(safe.proposal.expires_at) && { expiresAt: String(safe.proposal.expires_at) }),
+          ...(safe.canonicalTermsDigest && { canonicalTermsDigest: safe.canonicalTermsDigest }),
+          snapshotFingerprint: requestFingerprint(safe),
+          capturedAt: new Date().toISOString(),
+        });
+      }
+    }
+    return replacements;
+  }
+
+  private establishedUnableRefinementIds(data: unknown): Set<string> {
+    const projected = record(data);
+    const source = record((projected as Record<PropertyKey, unknown>)[PROJECTED_RESPONSE_RAW] ?? data);
+    return new Set(
+      array(source.refinement_applied)
+        .map(value => record(value))
+        .filter(value => value.scope === 'proposal' && value.status === 'unable')
+        .map(value => optionalString(value.proposal_id))
+        .filter((value): value is string => value !== undefined)
+    );
+  }
+
+  private attachEstablishedMutationTransitions<TResult extends TaskResult<unknown>>(
+    result: TResult,
+    request: EstablishedProposalReserveRequest
+  ): TResult {
+    if (result.submitted) {
+      const submitted = result.submitted;
+      const expectedTaskId = submitted.taskId;
+      const expectedTaskType = result.metadata.taskName;
+      (result as { submitted?: unknown }).submitted = {
+        ...submitted,
+        track: async (transport?: import('../protocols').TransportOptions) => {
+          const task = await submitted.track(transport);
+          await this.flushEstablishedProposalStoreWrites();
+          if (task.taskId !== expectedTaskId || task.taskType !== expectedTaskType) {
+            await this.requireEstablishedTransition(() =>
+              this.establishedProposalStore!.markAmbiguous(request, 'commit-uncertain')
+            );
+            throw new ConfigurationError(
+              'The tracked seller task did not match the durably recorded proposal mutation task.',
+              'mediaBuy.establishedProposalStore'
+            );
+          }
+          if (task.status === 'completed' && task.result !== undefined) {
+            const completed = {
+              ...result,
+              status: 'completed',
+              success: true,
+              data: task.result,
+            } as unknown as TaskResult<unknown>;
+            await this.transitionEstablishedMutationResult(request, completed);
+          } else if (['failed', 'rejected', 'canceled', 'governance-denied'].includes(task.status)) {
+            if (this.isAuthoritativeEstablishedError(task.result, expectedTaskType)) {
+              await this.requireEstablishedTransition(() => this.establishedProposalStore!.releaseMutation(request));
+            } else {
+              await this.requireEstablishedTransition(() =>
+                this.establishedProposalStore!.markAmbiguous(request, 'commit-uncertain')
+              );
+              throw new ConfigurationError(
+                'The tracked seller task failure was not an authoritative structured AdCP error.',
+                'mediaBuy.establishedProposalStore'
+              );
+            }
+          } else if (['input-required', 'auth-required', 'needs_input', 'deferred'].includes(task.status)) {
+            await this.requireEstablishedTransition(() =>
+              this.establishedProposalStore!.markAmbiguous(request, 'paused')
+            );
+          } else if (!['pending', 'running', 'working', 'submitted'].includes(task.status)) {
+            await this.requireEstablishedTransition(() =>
+              this.establishedProposalStore!.markAmbiguous(request, 'commit-uncertain')
+            );
+            throw new ConfigurationError(
+              'The tracked seller task was not authoritative enough to settle the durable proposal mutation.',
+              'mediaBuy.establishedProposalStore'
+            );
+          }
+          return task;
+        },
+        waitForCompletion: async (pollInterval?: number, signal?: AbortSignal) => {
+          const strictWaitForCompletion = submitted.waitForCompletion as (
+            pollInterval?: number,
+            signal?: AbortSignal,
+            requireExactTaskIdentity?: boolean
+          ) => ReturnType<typeof submitted.waitForCompletion>;
+          const completed = await strictWaitForCompletion(pollInterval, signal, true);
+          await this.flushEstablishedProposalStoreWrites();
+          await this.transitionEstablishedMutationResult(request, completed);
+          return completed;
+        },
+      };
+    }
+    if (result.deferred) {
+      const deferred = result.deferred;
+      (result as { deferred?: unknown }).deferred = {
+        ...deferred,
+        resume: async (input: unknown) => {
+          await this.reserveEstablishedMutation(request);
+          try {
+            const resumed = await deferred.resume(input);
+            await this.flushEstablishedProposalStoreWrites();
+            await this.transitionEstablishedMutationResult(request, resumed);
+            return this.attachEstablishedMutationTransitions(resumed, request);
+          } catch (error) {
+            await this.requireEstablishedTransition(() =>
+              this.establishedProposalStore!.markAmbiguous(request, 'commit-uncertain')
+            );
+            throw error;
+          }
+        },
+      };
+    }
+    return result;
+  }
+
   private snapshotKey(proposalId: string, accountScope: string | undefined): string {
     return `${this.principalScope ?? 'missing-principal-scope'}\u0000${accountScope ?? 'unscoped'}\u0000${proposalId}`;
   }
@@ -2810,8 +3712,40 @@ export class MediaBuyLifecycleCoordinator {
     proposalIds: readonly string[],
     accountScope?: string,
     preserveScope = false,
-    retireAcceptances = false
+    retireAcceptances = false,
+    persistEstablishedProposals = true
   ): void {
+    if (
+      persistEstablishedProposals &&
+      this.lifecycle === 'established' &&
+      this.establishedProposalScope &&
+      !retireAcceptances
+    ) {
+      const wanted = [...new Set(proposalIds)];
+      this.queueEstablishedProposalStoreWrite(async () => {
+        const records = accountScope
+          ? await Promise.all(
+              wanted.map(proposalId =>
+                this.establishedProposalStore!.get({ ...this.establishedProposalScope!, accountScope, proposalId })
+              )
+            ).then(values => values.filter((value): value is NonNullable<typeof value> => value !== undefined))
+          : await this.establishedProposalStore!.find(this.establishedProposalScope!, wanted);
+        await Promise.all(
+          records.map(record =>
+            this.establishedProposalStore!.discardSnapshot(
+              {
+                principalScope: record.snapshot.principalScope,
+                sellerScope: record.snapshot.sellerScope,
+                sourceAdcpVersion: record.snapshot.sourceAdcpVersion,
+                accountScope: record.snapshot.accountScope,
+                proposalId: record.snapshot.proposalId,
+              },
+              record.snapshot.snapshotFingerprint
+            )
+          )
+        );
+      });
+    }
     if (retireAcceptances) proposalIds.forEach(proposalId => this.markTerminalProposal(proposalId));
     const wanted = new Set(proposalIds);
     for (const [key, entry] of [...this.proposalSnapshotStore.entries]) {
@@ -2981,7 +3915,8 @@ export class MediaBuyLifecycleCoordinator {
     onCompletionFailure?: () => void,
     retainCompletionProposals = true,
     prepareMatchedCompletion?: (projected: unknown) => () => void,
-    onAuthoritativeFailure?: () => void
+    onAuthoritativeFailure?: () => void,
+    persistEstablishedProposals = true
   ): Promise<U> {
     const captured = new Map<
       string,
@@ -3098,7 +4033,7 @@ export class MediaBuyLifecycleCoordinator {
             this.invalidateProposalSnapshots(racedCompletion.proposalIds, accountScope);
             if (racedCompletion.payload) {
               for (const snapshot of racedCompletion.payload.snapshots) {
-                this.rememberSafeProposalSnapshot(snapshot, accountScope);
+                this.rememberSafeProposalSnapshot(snapshot, accountScope, persistEstablishedProposals);
               }
             }
           } else if (racedCompletion?.kind === 'failure') {
@@ -3119,10 +4054,11 @@ export class MediaBuyLifecycleCoordinator {
           // adaptProjectedResult installs the long-lived watcher, when needed,
           // before this pre-dispatch listener is released.
           const output = await adapt(result);
+          await this.flushEstablishedProposalStoreWrites();
           if (racedCompletion || captureOverflowed) this.forgetProposalTask(result.metadata.taskId);
           return output;
         },
-        error => {
+        async error => {
           if (this.disposed) throw error;
           // A terminal event can beat a transport failure. Without the
           // dispatch result there is no trustworthy task ID for correlation,
@@ -3132,6 +4068,7 @@ export class MediaBuyLifecycleCoordinator {
             this.invalidateProposalSnapshots(this.cachedProposalIds(accountScope), accountScope);
             onCompletionFailure?.();
           }
+          await this.flushEstablishedProposalStoreWrites();
           throw error;
         }
       )
@@ -3147,7 +4084,8 @@ export class MediaBuyLifecycleCoordinator {
     onTerminalFailure?: () => void,
     onAuthoritativeFailure?: () => void,
     preserveAuthoritativeProposals = false,
-    authoritativeTaskNames: ReadonlySet<string> = new Set()
+    authoritativeTaskNames: ReadonlySet<string> = new Set(),
+    persistEstablishedProposals = true
   ): void {
     if (!taskId) return;
     this.pendingProposalTasks.delete(taskId);
@@ -3155,6 +4093,7 @@ export class MediaBuyLifecycleCoordinator {
       accountScope,
       ...(project && { project }),
       retainProposals,
+      persistEstablishedProposals,
       ...(onPause && { onPause }),
       ...(onAuthoritativeFailure && { onAuthoritativeFailure }),
       authoritativeTaskNames,
@@ -3188,7 +4127,9 @@ export class MediaBuyLifecycleCoordinator {
       ) {
         try {
           const projected = pending.project ? pending.project(task.result) : task.result;
-          if (pending.retainProposals) this.rememberProposals(projected, pending.accountScope);
+          if (pending.retainProposals) {
+            this.rememberProposals(projected, pending.accountScope, pending.persistEstablishedProposals);
+          }
         } catch {
           this.invalidateProposalSnapshots(this.proposalIdsIn(task.result), pending.accountScope);
           pending.onTerminalFailure?.();
@@ -3598,7 +4539,7 @@ export class MediaBuyLifecycleCoordinator {
     this.proposalSnapshotStore.activeCoordinators -= 1;
   }
 
-  private rememberProposals(data: unknown, accountScope?: string): void {
+  private rememberProposals(data: unknown, accountScope?: string, persistEstablishedProposals = true): void {
     if (this.disposed || !this.principalScope) return;
     const seen = new WeakSet<object>();
     const stack = [data];
@@ -3609,12 +4550,24 @@ export class MediaBuyLifecycleCoordinator {
       seen.add(value);
       visited += 1;
       if (visited > MAX_PROPOSAL_TRAVERSAL_NODES) {
-        this.invalidateProposalSnapshots(this.cachedProposalIds(accountScope), accountScope);
+        this.invalidateProposalSnapshots(
+          this.cachedProposalIds(accountScope),
+          accountScope,
+          false,
+          false,
+          persistEstablishedProposals
+        );
         return;
       }
       if (Array.isArray(value)) {
         if (stack.length + value.length > MAX_PROPOSAL_TRAVERSAL_NODES) {
-          this.invalidateProposalSnapshots(this.cachedProposalIds(accountScope), accountScope);
+          this.invalidateProposalSnapshots(
+            this.cachedProposalIds(accountScope),
+            accountScope,
+            false,
+            false,
+            persistEstablishedProposals
+          );
           return;
         }
         for (let index = value.length - 1; index >= 0; index -= 1) stack.push(value[index]);
@@ -3633,11 +4586,31 @@ export class MediaBuyLifecycleCoordinator {
         this.removeProposalSnapshot(key);
         try {
           const safeSnapshot = safeProposalSnapshot(candidate);
-          if (!safeSnapshot) continue;
-          this.rememberSafeProposalSnapshot(safeSnapshot, accountScope);
+          if (!safeSnapshot) {
+            const binding = accountScope ? this.durableProposalBinding(accountScope, proposalId) : undefined;
+            if (persistEstablishedProposals && this.lifecycle === 'established' && binding) {
+              this.queueEstablishedProposalStoreWrite(async () => {
+                const current = await this.establishedProposalStore!.get(binding);
+                if (current) {
+                  await this.establishedProposalStore!.discardSnapshot(binding, current.snapshot.snapshotFingerprint);
+                }
+              });
+            }
+            continue;
+          }
+          this.rememberSafeProposalSnapshot(safeSnapshot, accountScope, persistEstablishedProposals);
         } catch {
           // Seller responses must be JSON. An unserializable proposal is not a
           // safe immutable acceptance snapshot, so leave it out of the cache.
+          const binding = accountScope ? this.durableProposalBinding(accountScope, proposalId) : undefined;
+          if (persistEstablishedProposals && this.lifecycle === 'established' && binding) {
+            this.queueEstablishedProposalStoreWrite(async () => {
+              const current = await this.establishedProposalStore!.get(binding);
+              if (current) {
+                await this.establishedProposalStore!.discardSnapshot(binding, current.snapshot.snapshotFingerprint);
+              }
+            });
+          }
         }
       }
       if (candidate.results !== undefined) stack.push(candidate.results);
@@ -3646,7 +4619,11 @@ export class MediaBuyLifecycleCoordinator {
     }
   }
 
-  private rememberSafeProposalSnapshot(snapshot: SafeProposalSnapshot, accountScope?: string): void {
+  private rememberSafeProposalSnapshot(
+    snapshot: SafeProposalSnapshot,
+    accountScope?: string,
+    persistEstablishedProposals = true
+  ): void {
     if (this.disposed || !this.principalScope) return;
     const proposalId = optionalString(snapshot.proposal.proposal_id);
     if (!proposalId) return;
@@ -3671,6 +4648,30 @@ export class MediaBuyLifecycleCoordinator {
       ...(accountScope && { accountScope }),
       ...(retained.canonicalTermsDigest && { canonicalTermsDigest: retained.canonicalTermsDigest }),
     });
+    const binding = accountScope ? this.durableProposalBinding(accountScope, proposalId) : undefined;
+    if (persistEstablishedProposals && this.lifecycle === 'established' && binding) {
+      const durableSnapshot: DurableProposalSnapshotEntry = {
+        ...binding,
+        proposal: retained.proposal,
+        ...(optionalString(retained.proposal.expires_at) && { expiresAt: String(retained.proposal.expires_at) }),
+        ...(retained.canonicalTermsDigest && { canonicalTermsDigest: retained.canonicalTermsDigest }),
+        snapshotFingerprint: requestFingerprint(retained),
+        capturedAt: new Date().toISOString(),
+      };
+      this.queueEstablishedProposalStoreWrite(async () => {
+        const current = await this.establishedProposalStore!.get(binding);
+        const stored = await this.establishedProposalStore!.putSnapshot(
+          durableSnapshot,
+          current?.snapshot.snapshotFingerprint
+        );
+        if (stored.outcome === 'capacity') {
+          throw new Error('capacity exhausted while retaining proposal evidence');
+        }
+        if (stored.outcome === 'fenced' || stored.outcome === 'missing') {
+          this.removeProposalSnapshot(key);
+        }
+      });
+    }
     this.enforceProposalSnapshotLimits();
   }
 
@@ -3682,7 +4683,8 @@ export class MediaBuyLifecycleCoordinator {
     retainProposals = false,
     pendingDecline?: PendingDeclineLease,
     pendingRefinement?: PendingRefinementLease,
-    mutationAttemptEpoch?: number
+    mutationAttemptEpoch?: number,
+    persistEstablishedProposals = true
   ): CompatibilityTaskResult<U, T> {
     const localTaskId = result.metadata.taskId;
     const mutationReservation = pendingDecline ?? pendingRefinement;
@@ -3712,11 +4714,19 @@ export class MediaBuyLifecycleCoordinator {
             // A malformed replacement is still authoritative evidence that
             // the seller re-used this proposal ID. Revoke any older executable
             // snapshot before surfacing the projection error.
-            this.invalidateProposalSnapshots(this.proposalIdsIn(current.data), accountScope);
+            this.invalidateProposalSnapshots(
+              this.proposalIdsIn(current.data),
+              accountScope,
+              false,
+              false,
+              persistEstablishedProposals
+            );
           }
           throw error;
         }
-        if (retainProposals && attemptWasCurrent) this.rememberProposals(projected, accountScope);
+        if (retainProposals && attemptWasCurrent) {
+          this.rememberProposals(projected, accountScope, persistEstablishedProposals);
+        }
         (current as TaskResult<unknown>).data = projected;
       } else if (
         retainProposals &&
@@ -3724,7 +4734,13 @@ export class MediaBuyLifecycleCoordinator {
         current.data !== undefined &&
         !(pendingRefinement && currentAuthoritativeFailure)
       ) {
-        this.invalidateProposalSnapshots(this.proposalIdsIn(current.data), accountScope);
+        this.invalidateProposalSnapshots(
+          this.proposalIdsIn(current.data),
+          accountScope,
+          false,
+          false,
+          persistEstablishedProposals
+        );
       }
       if (
         mutationAttemptIsCurrent() &&
@@ -3753,7 +4769,8 @@ export class MediaBuyLifecycleCoordinator {
             if (pendingRefinement && !this.disposed) this.restorePendingRefinement(pendingRefinement, attemptEpoch);
           },
           pendingRefinement !== undefined,
-          new Set(report.tools_used)
+          new Set(report.tools_used),
+          persistEstablishedProposals
         );
       } else if (mutationAttemptIsCurrent() && (retainProposals || pendingDecline || pendingRefinement)) {
         this.forgetProposalTask(localTaskId);
@@ -3788,11 +4805,19 @@ export class MediaBuyLifecycleCoordinator {
                   projected = project(task.result as T);
                 } catch (error) {
                   if (retainProposals && continuationWasCurrent) {
-                    this.invalidateProposalSnapshots(this.proposalIdsIn(task.result), accountScope);
+                    this.invalidateProposalSnapshots(
+                      this.proposalIdsIn(task.result),
+                      accountScope,
+                      false,
+                      false,
+                      persistEstablishedProposals
+                    );
                   }
                   throw error;
                 }
-                if (retainProposals && continuationWasCurrent) this.rememberProposals(projected, accountScope);
+                if (retainProposals && continuationWasCurrent) {
+                  this.rememberProposals(projected, accountScope, persistEstablishedProposals);
+                }
                 task.result = projected;
                 if (retainProposals && continuationWasCurrent) this.forgetProposalTask(localTaskId);
               } else if (
@@ -3802,7 +4827,13 @@ export class MediaBuyLifecycleCoordinator {
                 !['pending', 'running', 'working', 'submitted'].includes(task.status)
               ) {
                 if (task.result !== undefined) {
-                  this.invalidateProposalSnapshots(this.proposalIdsIn(task.result), accountScope);
+                  this.invalidateProposalSnapshots(
+                    this.proposalIdsIn(task.result),
+                    accountScope,
+                    false,
+                    false,
+                    persistEstablishedProposals
+                  );
                 }
                 if (mutationAttemptIsCurrent()) this.forgetProposalTask(localTaskId);
               }
@@ -3836,6 +4867,7 @@ export class MediaBuyLifecycleCoordinator {
                 }
                 this.forgetProposalTask(localTaskId);
               }
+              await this.flushEstablishedProposalStoreWrites();
               return task;
             } catch (error) {
               if (attemptEpoch !== undefined) {
@@ -3847,10 +4879,17 @@ export class MediaBuyLifecycleCoordinator {
               throw error;
             }
           },
-          waitForCompletion: async (pollInterval?: number, signal?: AbortSignal) => {
+          waitForCompletion: async (pollInterval?: number, signal?: AbortSignal, requireExactTaskIdentity = false) => {
             try {
               this.assertActive('lifecycle completion continuation');
-              return adapt(await submitted.waitForCompletion(pollInterval, signal));
+              const projectedWaitForCompletion = submitted.waitForCompletion as (
+                pollInterval?: number,
+                signal?: AbortSignal,
+                requireExactTaskIdentity?: boolean
+              ) => ReturnType<typeof submitted.waitForCompletion>;
+              const adapted = adapt(await projectedWaitForCompletion(pollInterval, signal, requireExactTaskIdentity));
+              await this.flushEstablishedProposalStoreWrites();
+              return adapted;
             } catch (error) {
               if (attemptEpoch !== undefined) {
                 if (pendingDecline && !this.disposed)
@@ -3889,8 +4928,12 @@ export class MediaBuyLifecycleCoordinator {
                 resumedEpoch = mutationReservation.attemptEpoch;
               }
               const resumed = await deferred.resume(input);
-              if (!mutationReservation) return adapt(resumed);
-              return this.adaptProjectedResult(
+              if (!mutationReservation) {
+                const adapted = adapt(resumed);
+                await this.flushEstablishedProposalStoreWrites();
+                return adapted;
+              }
+              const adapted = this.adaptProjectedResult(
                 resumed,
                 report,
                 project,
@@ -3898,8 +4941,11 @@ export class MediaBuyLifecycleCoordinator {
                 retainProposals,
                 pendingDecline,
                 pendingRefinement,
-                resumedEpoch
+                resumedEpoch,
+                persistEstablishedProposals
               );
+              await this.flushEstablishedProposalStoreWrites();
+              return adapted;
             } catch (error) {
               if (resumedEpoch !== undefined) {
                 if (pendingDecline && !this.disposed)
@@ -5352,6 +6398,9 @@ export class MediaBuyLifecycleCoordinator {
       }
     }
     const proposalIds = params.refinements.map(refinement => refinement.proposal_id);
+    const durableRecords = await this.hydrateEstablishedProposals(proposalIds);
+    const durableBindings = this.establishedMutationBindings(durableRecords);
+    this.assertDurableBindingsCover('refineProposals', proposalIds, durableBindings);
     const retry = this.pendingRefinementRetryCandidate(proposalIds);
     const identity = this.proposalMutationIdempotency(
       params.idempotency_key,
@@ -5368,15 +6417,23 @@ export class MediaBuyLifecycleCoordinator {
       }),
       ...(params.context !== undefined && { context: params.context as CanonicalGetProductsRequest['context'] }),
     };
+    let durableMutation: EstablishedProposalReserveRequest | undefined;
+    let durableClaimedForDispatch = false;
+    let durableSettledInsideExecutor = false;
     const scopes = this.proposalScopes(proposalIds);
     const accountScope = scopes.length === 1 ? scopes[0] : undefined;
-    const pendingRefinement = this.beginPendingRefinement(
-      proposalIds,
-      true,
-      requestFingerprint(request),
-      identity.idempotencyKey,
-      identity.skipIdempotencyAutoInject
-    );
+    let pendingRefinement: PendingRefinementLease;
+    try {
+      pendingRefinement = this.beginPendingRefinement(
+        proposalIds,
+        true,
+        requestFingerprint(request),
+        identity.idempotencyKey,
+        identity.skipIdempotencyAutoInject
+      );
+    } catch (error) {
+      throw error;
+    }
     const attemptEpoch = pendingRefinement.attemptEpoch;
     const dispatchOptions = retry
       ? { ...options, skipIdempotencyAutoInject: retry.skipIdempotencyAutoInject }
@@ -5386,7 +6443,7 @@ export class MediaBuyLifecycleCoordinator {
     const projectAndSettle = (data: CompatibleRefineProposalsWireResponse) => {
       try {
         const projected = projectOnly(data);
-        this.settlePendingRefinement(pendingRefinement, projected, attemptEpoch);
+        this.settlePendingRefinement(pendingRefinement, projected, attemptEpoch, durableBindings.length === 0);
         return projected;
       } catch (error) {
         if (!this.disposed) this.preserveAmbiguousProposalMutation(pendingRefinement, attemptEpoch);
@@ -5396,9 +6453,49 @@ export class MediaBuyLifecycleCoordinator {
     try {
       return await this.captureProposalDispatch(
         accountScope,
-        () => this.agent.getProducts(request, inputHandler, dispatchOptions),
-        result =>
-          this.adaptProjectedResult(
+        () =>
+          (durableBindings.length === 0
+            ? this.agent.getProducts(request, inputHandler, dispatchOptions)
+            : this.agent.getProductsLegacyWithPreDispatch(
+                request as GetProductsRequest,
+                async (effectiveParams, context) => {
+                  this.assertEstablishedFinalDispatch(
+                    'refine',
+                    effectiveParams,
+                    context,
+                    proposalIds,
+                    identity.idempotencyKey
+                  );
+                  const finalIdempotencyKey = optionalString(record(effectiveParams).idempotency_key);
+                  durableMutation = this.establishedMutationRequest(
+                    'refine',
+                    durableBindings,
+                    requestFingerprint(effectiveParams),
+                    finalIdempotencyKey
+                  );
+                  await this.reserveEstablishedMutation(durableMutation);
+                  durableClaimedForDispatch = true;
+                  return {
+                    action: 'dispatch_committed',
+                    onResult: async result => {
+                      const settled = await this.settleEstablishedDispatchResult(durableMutation!, result, context);
+                      durableSettledInsideExecutor = true;
+                      return settled;
+                    },
+                    onError: async error => {
+                      await this.requireEstablishedTransition(() =>
+                        this.establishedProposalStore!.markAmbiguous(durableMutation!, 'commit-uncertain')
+                      );
+                      durableSettledInsideExecutor = true;
+                      throw error;
+                    },
+                  };
+                },
+                inputHandler,
+                { ...dispatchOptions, skipIdempotencyAutoInject: true }
+              )) as Promise<TaskResult<CompatibleRefineProposalsWireResponse>>,
+        async result => {
+          const adapted = this.adaptProjectedResult(
             result,
             this.makeReport(lifecycle, ['get_products'], []),
             projectAndSettle,
@@ -5406,8 +6503,14 @@ export class MediaBuyLifecycleCoordinator {
             true,
             undefined,
             pendingRefinement,
-            attemptEpoch
-          ),
+            attemptEpoch,
+            false
+          );
+          if (!durableMutation) return adapted;
+          if (durableSettledInsideExecutor) return adapted;
+          await this.transitionEstablishedMutationResult(durableMutation, result);
+          return this.attachEstablishedMutationTransitions(adapted, durableMutation);
+        },
         projectOnly,
         () => this.preserveAmbiguousProposalMutation(pendingRefinement, attemptEpoch),
         true,
@@ -5415,12 +6518,24 @@ export class MediaBuyLifecycleCoordinator {
           this.preparePendingRefinementSettlement(
             pendingRefinement,
             projected as CompatibleRefineProposalsResponse,
-            attemptEpoch
+            attemptEpoch,
+            durableBindings.length === 0
           ),
-        () => this.restorePendingRefinement(pendingRefinement, attemptEpoch)
+        () => this.restorePendingRefinement(pendingRefinement, attemptEpoch),
+        false
       );
     } catch (error) {
-      if (!this.disposed) this.preserveAmbiguousProposalMutation(pendingRefinement, attemptEpoch);
+      if (!this.disposed) {
+        if (durableBindings.length === 0 || durableClaimedForDispatch)
+          this.preserveAmbiguousProposalMutation(pendingRefinement, attemptEpoch);
+        else this.restorePendingRefinement(pendingRefinement, attemptEpoch);
+      }
+      if (durableMutation && durableClaimedForDispatch && !durableSettledInsideExecutor) {
+        const claimedMutation = durableMutation;
+        await this.requireEstablishedTransition(() =>
+          this.establishedProposalStore!.markAmbiguous(claimedMutation, 'commit-uncertain')
+        );
+      }
       throw error;
     }
   }
@@ -5433,7 +6548,7 @@ export class MediaBuyLifecycleCoordinator {
     this.assertActive('declineProposals');
     const input = record(params);
     const lifecycle = this.selectLifecycle('decline_proposals');
-    const projectOnly = (data: unknown, proposalIds: readonly string[]) =>
+    const projectOnly = (data: CompatibleDeclineProposalsWireResponse, proposalIds: readonly string[]) =>
       projectDeclineProposals(data, lifecycle, proposalIds, this.negotiated_version);
     if (lifecycle === 'compact') {
       this.assertValidCompactRequest('decline_proposals', params, lifecycle, true);
@@ -5457,7 +6572,7 @@ export class MediaBuyLifecycleCoordinator {
       const dispatchOptions = retry
         ? { ...options, skipIdempotencyAutoInject: retry.skipIdempotencyAutoInject }
         : options;
-      const projectAndSettle = (data: unknown) => {
+      const projectAndSettle = (data: CompatibleDeclineProposalsWireResponse) => {
         try {
           const projected = projectOnly(data, proposalIds);
           this.preparePendingDeclineSettlement(pendingDecline, projected, attemptEpoch)();
@@ -5527,12 +6642,17 @@ export class MediaBuyLifecycleCoordinator {
         `The negotiated ${this.negotiated_version} get_products request cannot carry push_notification_config.`
       );
     }
+    this.assertValidCompactRequest('decline_proposals', params, lifecycle, true);
     const declines = array(input.declines).map(item => {
       const decline = record(item);
       return { scope: 'proposal', proposal_id: decline.proposal_id, action: 'omit' };
     });
     const proposalIds = declines.map(decline => String(decline.proposal_id));
     const retry = this.pendingDeclineRetryCandidate(proposalIds);
+    if (!retry) this.assertPendingDeclineCapacity(proposalIds);
+    const durableRecords = await this.hydrateEstablishedProposals(proposalIds);
+    const durableBindings = this.establishedMutationBindings(durableRecords);
+    this.assertDurableBindingsCover('declineProposals', proposalIds, durableBindings);
     const identity = this.proposalMutationIdempotency(
       input.idempotency_key,
       retry,
@@ -5548,18 +6668,25 @@ export class MediaBuyLifecycleCoordinator {
       }),
       ...(input.context !== undefined && { context: input.context as CanonicalGetProductsRequest['context'] }),
     };
-    this.assertValidCompactRequest('decline_proposals', params, lifecycle, true);
-    const pendingDecline = this.beginPendingDecline(
-      proposalIds,
-      requestFingerprint(request),
-      identity.idempotencyKey,
-      identity.skipIdempotencyAutoInject
-    );
+    let durableMutation: EstablishedProposalReserveRequest | undefined;
+    let durableClaimedForDispatch = false;
+    let durableSettledInsideExecutor = false;
+    let pendingDecline: PendingDeclineLease;
+    try {
+      pendingDecline = this.beginPendingDecline(
+        proposalIds,
+        requestFingerprint(request),
+        identity.idempotencyKey,
+        identity.skipIdempotencyAutoInject
+      );
+    } catch (error) {
+      throw error;
+    }
     const attemptEpoch = pendingDecline.attemptEpoch;
     const dispatchOptions = retry
       ? { ...options, skipIdempotencyAutoInject: retry.skipIdempotencyAutoInject }
       : options;
-    const projectAndSettle = (data: unknown) => {
+    const projectAndSettle = (data: CompatibleDeclineProposalsWireResponse) => {
       try {
         const projected = projectOnly(data, proposalIds);
         this.preparePendingDeclineSettlement(pendingDecline, projected, attemptEpoch)();
@@ -5572,9 +6699,49 @@ export class MediaBuyLifecycleCoordinator {
     try {
       return await this.captureProposalDispatch(
         undefined,
-        () => this.agent.getProducts(request, inputHandler, dispatchOptions),
-        result =>
-          this.adaptProjectedResult(
+        () =>
+          (durableBindings.length === 0
+            ? this.agent.getProducts(request, inputHandler, dispatchOptions)
+            : this.agent.getProductsLegacyWithPreDispatch(
+                request as GetProductsRequest,
+                async (effectiveParams, context) => {
+                  this.assertEstablishedFinalDispatch(
+                    'decline',
+                    effectiveParams,
+                    context,
+                    proposalIds,
+                    identity.idempotencyKey
+                  );
+                  const finalIdempotencyKey = optionalString(record(effectiveParams).idempotency_key);
+                  durableMutation = this.establishedMutationRequest(
+                    'decline',
+                    durableBindings,
+                    requestFingerprint(effectiveParams),
+                    finalIdempotencyKey
+                  );
+                  await this.reserveEstablishedMutation(durableMutation);
+                  durableClaimedForDispatch = true;
+                  return {
+                    action: 'dispatch_committed',
+                    onResult: async result => {
+                      const settled = await this.settleEstablishedDispatchResult(durableMutation!, result, context);
+                      durableSettledInsideExecutor = true;
+                      return settled;
+                    },
+                    onError: async error => {
+                      await this.requireEstablishedTransition(() =>
+                        this.establishedProposalStore!.markAmbiguous(durableMutation!, 'commit-uncertain')
+                      );
+                      durableSettledInsideExecutor = true;
+                      throw error;
+                    },
+                  };
+                },
+                inputHandler,
+                { ...dispatchOptions, skipIdempotencyAutoInject: true }
+              )) as Promise<TaskResult<CompatibleDeclineProposalsWireResponse>>,
+        async result => {
+          const adapted = this.adaptProjectedResult(
             result,
             this.makeReport(lifecycle, ['get_products'], losses, [
               'Legacy proposal omit is not a seller-confirmed terminal decline.',
@@ -5586,7 +6753,12 @@ export class MediaBuyLifecycleCoordinator {
             pendingDecline,
             undefined,
             attemptEpoch
-          ),
+          );
+          if (!durableMutation) return adapted;
+          if (durableSettledInsideExecutor) return adapted;
+          await this.transitionEstablishedMutationResult(durableMutation, result);
+          return this.attachEstablishedMutationTransitions(adapted, durableMutation);
+        },
         data => projectOnly(data, proposalIds),
         () => this.preserveAmbiguousProposalMutation(pendingDecline, attemptEpoch),
         false,
@@ -5598,7 +6770,17 @@ export class MediaBuyLifecycleCoordinator {
           )
       );
     } catch (error) {
-      if (!this.disposed) this.preserveAmbiguousProposalMutation(pendingDecline, attemptEpoch);
+      if (!this.disposed) {
+        if (durableBindings.length === 0 || durableClaimedForDispatch)
+          this.preserveAmbiguousProposalMutation(pendingDecline, attemptEpoch);
+        else this.finishPendingDecline(pendingDecline, attemptEpoch);
+      }
+      if (durableMutation && durableClaimedForDispatch && !durableSettledInsideExecutor) {
+        const claimedMutation = durableMutation;
+        await this.requireEstablishedTransition(() =>
+          this.establishedProposalStore!.markAmbiguous(claimedMutation, 'commit-uncertain')
+        );
+      }
       throw error;
     }
   }
@@ -5962,6 +7144,16 @@ export class MediaBuyLifecycleCoordinator {
       );
     }
     const accountScope = this.accountScope(input.account);
+    const durableRecords = accountScope ? await this.hydrateEstablishedProposals([proposalId], accountScope) : [];
+    const durableBindings = this.establishedMutationBindings(durableRecords);
+    this.assertDurableBindingsCover('acceptProposal', [proposalId], durableBindings);
+    if (durableBindings.length > 0 && this.isTerminalProposal(proposalId)) {
+      throw this.unsupported(
+        'acceptProposal',
+        'proposal_terminal',
+        'The durable established proposal record is terminal. No acceptance was sent.'
+      );
+    }
     const snapshotKey = accountScope ? this.snapshotKey(proposalId, accountScope) : undefined;
     const globalAcceptance = this.proposalSnapshotStore.proposalAcceptances.get(proposalId);
     if (globalAcceptance && globalAcceptance.snapshotKey !== snapshotKey) {
@@ -6018,7 +7210,8 @@ export class MediaBuyLifecycleCoordinator {
         );
       }
       const expiry = Date.parse(expiresAt);
-      if (!retryableAcceptance && expiry <= Date.now()) {
+      const durableRetry = durableRecords.some(record => record.operation.state === 'retryable');
+      if (!retryableAcceptance && !durableRetry && expiry <= Date.now()) {
         throw this.unsupported('acceptProposal', 'expires_at', 'The proposal is expired. No mutation was sent.');
       }
     }
@@ -6154,6 +7347,9 @@ export class MediaBuyLifecycleCoordinator {
       );
     }
     if (retryableAcceptance) this.assertAcceptanceRetryWindow(snapshotKey!, snapshot, retryableAcceptance);
+    let durableMutation: EstablishedProposalReserveRequest | undefined;
+    let durableClaimedForDispatch = false;
+    let durableSettledInsideExecutor = false;
     if (retryableAcceptance?.taskId) {
       this.forgetAcceptanceTask(retryableAcceptance.taskId, retryableAcceptance);
     }
@@ -6195,13 +7391,62 @@ export class MediaBuyLifecycleCoordinator {
       : options;
     let result: TaskResult<CreateMediaBuyResponse>;
     try {
-      result = await this.agent.createMediaBuy(request, inputHandler, dispatchOptions);
+      result =
+        durableBindings.length === 0
+          ? await this.agent.createMediaBuy(request, inputHandler, dispatchOptions)
+          : await this.agent.createMediaBuyLegacyWithPreDispatch(
+              request as CreateMediaBuyRequest,
+              async (effectiveParams, context) => {
+                this.assertEstablishedFinalDispatch(
+                  'accept',
+                  effectiveParams,
+                  context,
+                  [proposalId],
+                  acceptanceIdempotencyKey,
+                  accountScope
+                );
+                const finalIdempotencyKey = optionalString(record(effectiveParams).idempotency_key);
+                durableMutation = this.establishedMutationRequest(
+                  'accept',
+                  durableBindings,
+                  requestFingerprint(effectiveParams),
+                  finalIdempotencyKey
+                );
+                await this.reserveEstablishedMutation(durableMutation);
+                durableClaimedForDispatch = true;
+                return {
+                  action: 'dispatch_committed',
+                  onResult: async sellerResult => {
+                    const settled = await this.settleEstablishedDispatchResult(durableMutation!, sellerResult, context);
+                    durableSettledInsideExecutor = true;
+                    return settled;
+                  },
+                  onError: async error => {
+                    await this.requireEstablishedTransition(() =>
+                      this.establishedProposalStore!.markAmbiguous(durableMutation!, 'commit-uncertain')
+                    );
+                    durableSettledInsideExecutor = true;
+                    throw error;
+                  },
+                };
+              },
+              inputHandler,
+              { ...dispatchOptions, skipIdempotencyAutoInject: true }
+            );
     } catch (error) {
-      this.preserveAmbiguousAcceptance(snapshotKey!, snapshot, reservation);
+      if (durableBindings.length === 0 || durableClaimedForDispatch)
+        this.preserveAmbiguousAcceptance(snapshotKey!, snapshot, reservation);
+      else this.restoreAcceptance(snapshotKey!, snapshot, reservation);
+      if (durableMutation && durableClaimedForDispatch && !durableSettledInsideExecutor) {
+        const claimedMutation = durableMutation;
+        await this.requireEstablishedTransition(() =>
+          this.establishedProposalStore!.markAmbiguous(claimedMutation, 'commit-uncertain')
+        );
+      }
       throw error;
     }
     const transitioned = this.attachAcceptanceTransitions(result, snapshotKey!, snapshot, reservation);
-    return this.adaptProjectedResult(
+    const adapted = this.adaptProjectedResult(
       transitioned,
       this.makeReport(lifecycle, ['create_media_buy'], losses, [
         'The established seller accepted its ordinary proposal_id mutation without compact digest enforcement.',
@@ -6213,6 +7458,10 @@ export class MediaBuyLifecycleCoordinator {
       ]),
       data => data
     );
+    if (!durableMutation) return adapted;
+    if (durableSettledInsideExecutor) return adapted;
+    await this.transitionEstablishedMutationResult(durableMutation, result);
+    return this.attachEstablishedMutationTransitions(adapted, durableMutation);
   }
 
   async controlMediaBuy(

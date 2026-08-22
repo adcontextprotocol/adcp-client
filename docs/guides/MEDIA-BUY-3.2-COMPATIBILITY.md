@@ -155,6 +155,100 @@ result arms are runtime-validated and correlated in request order; the coordinat
 accepts both rows that echo `proposal_id` and ordered rows that omit it, while
 rejecting a conflicting echoed ID.
 
+### Durable established proposal state
+
+Established 3.0/3.1 proposal snapshots are process-local unless the coordinator
+is given an `EstablishedProposalStore`. Production buyers that discover and
+mutate proposals in separate HTTP requests should supply the same durable store
+to every worker:
+
+```ts
+const lifecycle = await agent.negotiateMediaBuyLifecycle({
+  principalScope: authenticatedPrincipalId,
+  legacyPurchaseSellerSessionScope: authenticatedSellerSessionId,
+  establishedProposalStore: proposalLedger,
+  allowedLosses: ['proposal_terms_digest_not_enforced'],
+});
+```
+
+The interface is intentionally compatible with an application-owned proposal
+ledger. It stores only the SDK's reduced immutable proposal evidence plus
+principal, seller, account, version, normalized `expiresAt`, digest, mutation reservation, task,
+ambiguity, and terminal-fence fields. It never receives the raw seller response,
+credentials, presigned URLs, timers, listeners, or live coordinator objects.
+
+`legacyPurchaseSellerSessionScope` must be a stable, non-secret identity for the
+authenticated seller session; it prevents proposals from one credential or
+seller account session being reused by another. `reserveMutation()` is an
+atomic multi-record compare-and-swap. Durable SQL or Redis implementations must
+use the backing service's clock in the same transaction to turn `retryTtlMs`
+into the persisted first reservation and retry deadline, compare every supplied
+`snapshotFingerprint` with the stored evidence, admit only one worker, permit
+only an exact same-key retry inside that deadline, and never make a terminal
+record available again. The mutation fence is proposal-wide within the same
+principal, seller session, and protocol version, even when two requests spell
+the account scope differently, but one mutation and its restart reconciliation
+must contain bindings from exactly one normalized account scope.
+`InMemoryEstablishedProposalStore` is bounded;
+it is suitable for tests and local development, including simulating fresh
+`AgentClient` instances, but not for multiple processes.
+
+`completeRefinement()` is also one transaction. It consumes every reserved
+source generation, installs each distinct successor snapshot, and restores
+only bindings named in `retainedBindings` (the seller's authoritative
+`refinement_applied.status: "unable"` sources). A same-ID successor is
+available only when its fingerprint differs from the consumed generation; an
+identical row remains terminal so an ambiguity replay cannot resurrect the
+source. Implementations must retain a bounded completion tombstone keyed by
+`operationKey`, including source, successor, and retained fingerprints. An
+exact repeated completion returns `updated`, while conflicting completion
+evidence fails closed. Tombstones count toward the configured record and byte
+limits. `putSnapshot(snapshot, expectedSnapshotFingerprint)` may replace a
+different generation only when that exact generation is still available in
+the same atomic transaction; concurrent, reserved, and terminal generations
+win. `discardSnapshot()` must likewise compare the expected fingerprint in the
+delete transaction.
+
+The remaining transitions are equally fail-closed: `recordSubmittedTask()` may
+set a seller task ID once, must conflict on a different ID, and must reject
+reuse of a task ID already held by a live record or completion tombstone in the
+same principal, seller-session, protocol-version, and account scope;
+`releaseMutation()` changes only the exact reserved/retryable claim back to
+available, except that exact seller-task reconciliation may also release a
+terminal `commit-uncertain` claim after an authoritative terminal error;
+`markAmbiguous()` preserves the first store-clock retry deadline and
+otherwise writes a permanent commit-uncertain fence; `completeMutation()` is
+only accept→accepted and compares a hash of the authoritative reduced terminal
+evidence so conflicting successful observations fail closed; and
+`completeDecline()` atomically terminalizes successful
+rows while restoring seller-confirmed unable bindings. Authoritatively settled
+terminal records and completion tombstones are permanent authorization fences:
+a bounded store
+must return capacity rather than evict them and reauthorize a proposal. An
+exact operation already represented by a completion tombstone must not be
+reserved or dispatched again. The tombstone must also service the scoped
+`findSubmittedTask(..., sellerTaskId)` lookup so reconciliation remains
+idempotent after the caller loses a completion response.
+
+After restart, call
+`lifecycle.reconcileEstablishedProposalTask({ account, sellerTaskId })`. The
+coordinator uses `findSubmittedTask()` in buyer-principal, seller-session,
+protocol-version, and account scope, polls through the official client,
+validates the task ID and tool, rebuilds reduced successor evidence, and applies
+the correct accept/refine/decline transition. An already-settled operation is
+reported from its tombstone without polling an evicted or stale seller task.
+Seller-task reconciliation remains available after a redispatch retry deadline
+expires, and a permanent `commit-uncertain` fence is not reported as settled;
+an exact authoritative seller observation may still complete or release it.
+Seller task IDs are not globally
+unique, so a store must never offer an unscoped lookup. When seller success is
+observed but the completion transition cannot be committed,
+the coordinator fails closed. Reconcile the seller mutation through the
+application's natural key and apply the matching accept, decline, or refinement
+completion with the retained claim before allowing another lifecycle request. Submitted seller task
+IDs are retained through `recordSubmittedTask()` so the same ledger can drive
+authoritative completion reconciliation after restart.
+
 ### Products-only legacy continuations
 
 An established 2.5, 3.0, or 3.1 seller may answer a brief with products but no

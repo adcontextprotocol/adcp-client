@@ -1114,7 +1114,7 @@ export class TaskExecutor {
             await this.config.onDurableSettlementRequired?.(taskId);
             throwIfAborted(options.signal);
           }
-          decision = await beforeProtocolDispatch(dispatchParams, {
+          decision = await beforeProtocolDispatch(preparedCall.args, {
             governanceAdjusted,
             publishSettledTaskStatus: (status, data, error) =>
               this.publishSettledTaskStatus(taskId, status, data, error),
@@ -1891,8 +1891,15 @@ export class TaskExecutor {
         }
         return task;
       },
-      waitForCompletion: async (pollInterval = 60000, signal?: AbortSignal) => {
-        const completed = await this.pollTaskCompletion<T>(agent, serverTaskId, pollInterval, pollingTransport, signal);
+      waitForCompletion: async (pollInterval = 60000, signal?: AbortSignal, requireExactTaskIdentity = false) => {
+        const completed = await this.pollTaskCompletion<T>(
+          agent,
+          serverTaskId,
+          pollInterval,
+          pollingTransport,
+          signal,
+          requireExactTaskIdentity ? taskName : undefined
+        );
         // `pollTaskCompletion` also returns paused input-required/auth-required
         // states. Preserve that status so callers can resume the seller task;
         // only genuinely terminal statuses trigger delayed state eviction.
@@ -2477,7 +2484,8 @@ export class TaskExecutor {
     taskId: string,
     pollInterval = 60000,
     transport?: import('../protocols').TransportOptions,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    expectedTaskType?: string
   ): Promise<TaskResult<T>> {
     const pollStartTime = Date.now();
     while (true) {
@@ -2565,6 +2573,21 @@ export class TaskExecutor {
           });
         }
         throw err;
+      }
+
+      if (expectedTaskType !== undefined && (status.taskId !== taskId || status.taskType !== expectedTaskType)) {
+        return attachMatch({
+          success: false as const,
+          status: 'failed' as const,
+          error: 'The seller returned a task outside the requested durable task identity.',
+          metadata: this.buildMetadata({
+            taskId,
+            taskName: 'unknown',
+            agent,
+            startTime: pollStartTime,
+            status: 'failed',
+          }),
+        });
       }
 
       if (status.status === ADCP_STATUS.COMPLETED) {

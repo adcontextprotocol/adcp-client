@@ -179,10 +179,14 @@ export class ConfigurationError extends ADCPError {
 
   constructor(
     message: string,
-    public readonly configField?: string
+    public readonly configField?: string,
+    cause?: unknown
   ) {
     super(`Configuration error: ${message}`);
     this.details = { configField };
+    if (cause !== undefined) {
+      Object.defineProperty(this, 'cause', { value: cause, configurable: true });
+    }
   }
 }
 
