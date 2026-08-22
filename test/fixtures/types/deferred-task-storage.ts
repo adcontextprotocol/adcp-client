@@ -7,6 +7,7 @@ import type {
 } from '../../../dist/lib/index.js';
 
 const states = new Map<string, DeferredTaskState>();
+const operationRoutes = new Map<string, string>();
 
 const storage: DeferredTaskStorage = {
   async get(key) {
@@ -36,6 +37,38 @@ const storage: DeferredTaskStorage = {
     if (value?.continuationVersion !== expectedVersion) return undefined;
     states.delete(key);
     return value;
+  },
+  async putForSettlementOperationIfAbsent(operationId, key, value) {
+    if (operationRoutes.has(operationId) || states.has(key) || value.settlementOperationId !== operationId) {
+      return false;
+    }
+    states.set(key, value);
+    operationRoutes.set(operationId, key);
+    return true;
+  },
+  async getBySettlementOperationId(operationId) {
+    const token = operationRoutes.get(operationId);
+    const state = token ? states.get(token) : undefined;
+    return token && state ? { token, state } : undefined;
+  },
+  async replaceForSettlementOperationIfVersion(
+    operationId,
+    currentKey,
+    expectedVersion,
+    replacementKey,
+    replacementValue
+  ) {
+    if (
+      operationRoutes.get(operationId) !== currentKey ||
+      states.get(currentKey)?.continuationVersion !== expectedVersion ||
+      (replacementKey !== currentKey && states.has(replacementKey)) ||
+      replacementValue.settlementOperationId !== operationId
+    ) {
+      return false;
+    }
+    states.set(replacementKey, replacementValue);
+    operationRoutes.set(operationId, replacementKey);
+    return true;
   },
 };
 

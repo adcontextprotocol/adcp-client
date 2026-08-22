@@ -155,10 +155,16 @@ export interface DeferredTaskState {
   params: any;
   /** Message history through the response that caused the pause. */
   messages: Message[];
+  /** Exact resumable pause status retained for crash-safe route discovery. */
+  pauseStatus?: 'input-required' | 'auth-required' | 'deferred';
+  /** Human-facing prompt retained for crash-safe route discovery. */
+  pauseQuestion?: string;
   /** Opaque, serializable owner context. Storage adapters must round-trip it unchanged. */
   clientContext?: unknown;
   /** Trusted committed-mutation route that must durably settle any terminal resume. */
   settlementOperationId?: string;
+  /** New-format records whose operation index must fence every state transition. */
+  settlementOperationRouteRequired?: true;
   /** Require the owning durable coordinator to authorize this token before sending seller continuation input. */
   settlementResumeAuthorizationRequired?: boolean;
   /** Seller work handle bound by the durable mutation owner before the pause. */
@@ -195,6 +201,34 @@ export interface DeferredTaskStorage extends Storage<DeferredTaskState> {
   replaceIfVersion(key: string, expectedVersion: string, value: DeferredTaskState, ttl?: number): Promise<boolean>;
   /** Atomically return and remove only the exact record generation currently stored. */
   takeIfVersion(key: string, expectedVersion: string): Promise<DeferredTaskState | undefined>;
+  /**
+   * Atomically create a committed continuation and its operation route. The
+   * route is the crash-recovery source of truth when the owning coordinator
+   * has not yet recorded the opaque token.
+   */
+  putForSettlementOperationIfAbsent(
+    operationId: string,
+    key: string,
+    value: DeferredTaskState,
+    ttl?: number
+  ): Promise<boolean>;
+  /** Atomically resolve the current committed continuation generation. */
+  getBySettlementOperationId(operationId: string): Promise<{ token: string; state: DeferredTaskState } | undefined>;
+  /**
+   * Atomically replace the exact routed generation. With a distinct
+   * replacement key this installs a nested generation and moves the route,
+   * retaining the predecessor as a dispatch fence. With the same key it
+   * performs an in-place route-fenced state transition (for example, terminal
+   * callback checkpointing).
+   */
+  replaceForSettlementOperationIfVersion(
+    operationId: string,
+    currentKey: string,
+    expectedVersion: string,
+    replacementKey: string,
+    replacementValue: DeferredTaskState,
+    ttl?: number
+  ): Promise<boolean>;
 }
 
 /**

@@ -873,8 +873,11 @@ interface DeferredTaskState {
   taskName: string;
   params: unknown;
   messages: Message[];
+  pauseStatus?: 'input-required' | 'auth-required' | 'deferred'; // Exact public pause arm
+  pauseQuestion?: string; // Prompt returned when an interrupted handoff is rediscovered
   clientContext?: unknown; // Opaque SDK context; round-trip unchanged
   settlementOperationId?: string; // Trusted committed-mutation recovery route
+  settlementOperationRouteRequired?: true; // New-format routed record; preserve on every successor
   settlementResumeAuthorizationRequired?: boolean; // Owning coordinator must authorize seller-input dispatch
   settlementServerTaskId?: string; // Durably bound seller work handle
   settlementPendingTaskId?: string; // Nonterminal seller work retained for restart polling
@@ -895,14 +898,35 @@ interface DeferredTaskStorage extends Storage<DeferredTaskState> {
     ttl?: number,
   ): Promise<boolean>;
   takeIfVersion(key: string, expectedVersion: string): Promise<DeferredTaskState | undefined>;
+  putForSettlementOperationIfAbsent(
+    operationId: string,
+    key: string,
+    value: DeferredTaskState,
+    ttl?: number,
+  ): Promise<boolean>;
+  getBySettlementOperationId(
+    operationId: string,
+  ): Promise<{ token: string; state: DeferredTaskState } | undefined>;
+  replaceForSettlementOperationIfVersion(
+    operationId: string,
+    currentKey: string,
+    expectedVersion: string,
+    replacementKey: string,
+    replacementValue: DeferredTaskState,
+    ttl?: number,
+  ): Promise<boolean>;
 }
 ```
 
 `putIfAbsent()` must atomically reject an existing unexpired key.
-`replaceIfVersion()` is the exclusive seller-dispatch claim: it must replace
-only the exact generation and keep the key present under the SDK-supplied
-internal safety TTL. This safety horizon is independent of the configurable
-human-input token lifetime and expands for configured transport/working waits.
+For ordinary and marker-absent legacy records, `replaceIfVersion()` is the
+exclusive seller-dispatch claim: it must replace only the exact generation and
+keep the key present under the SDK-supplied internal safety TTL. New
+`settlementOperationRouteRequired: true` records use same-key
+`replaceForSettlementOperationIfVersion()` for that claim and every later
+transition so token and route remain one linearizable unit. This safety horizon
+is independent of the configurable human-input token lifetime and expands for
+configured transport/working waits.
 Committed continuations first hold a renewable `admission` lease while current
 route authorization and trusted-agent resolution run. The SDK then performs an
 exact generation CAS to `dispatch-committed` immediately before calling the
@@ -913,6 +937,22 @@ redispatch the human input. Authoritative callbacks may replace either phase.
 generation is still current. If trusted agent resolution fails before
 dispatch, the SDK generation-conditionally restores the original state with
 its remaining human-input TTL.
+
+The three settlement-operation methods form a second atomic index over
+committed continuations. Initial pause creation writes the opaque token and
+operation route together. A nested pause writes B and moves the route from the
+exact dispatch-committed generation A in one transaction while retaining A as
+a dispatch fence. `getBySettlementOperationId()` returns that exact current
+token/state pair. Passing the same current and replacement key performs an
+in-place route-fenced state CAS; callback terminal checkpointing uses this mode
+so it competes atomically with A→B. New atomically indexed records carry
+`settlementOperationRouteRequired: true`; adapters and record reconstruction
+MUST preserve that discriminator on every successor so generic state updates
+cannot detach the record TTL from its operation route. Marker-absent records
+written by earlier prereleases retain exact-token compatibility behavior. An
+exact purchase retry can therefore rediscover B after a
+crash between SDK checkpointing, coordinator binding, and returning the token
+to the caller, without resending A's human input.
 
 When a pause crossed a committed mutation boundary, the SDK persists its
 trusted settlement operation identity. A terminal restart resume is returned

@@ -56,6 +56,7 @@ loading; keep using `requires_capability` for a singular predicate.
 8. If a legacy brief may return products without a proposal, configure a durable `LegacyPurchaseContinuationStore`, stable `principalScope`, and application-owned `reconcileLegacyPurchase(record, exactInput)` callback before offering `continueLegacyPurchase()`. Keep reverse compact-seller → older-buyer handlers application-owned.
 9. If established 3.0/3.1 proposal discovery and mutation can land on different processes, configure the same durable `EstablishedProposalStore`, stable `principalScope`, and stable non-secret `legacyPurchaseSellerSessionScope` on every coordinator. Recover submitted work with `reconcileEstablishedProposalTask({ account, sellerTaskId })`; see [Media-buy compatibility: durable established proposal state](./guides/MEDIA-BUY-3.2-COMPATIBILITY.md#durable-established-proposal-state). The bundled in-memory store is a non-durable reference implementation.
 10. Upgrade durable idempotency storage before application traffic: add the nullable PostgreSQL `retain_until` column/index, preserve `IdempotencyCacheEntry.retainUntil`, and add atomic `putIfAbsent()`, `replaceIfPayloadHash()`, `replaceIfPayloadHashAndExpired()`, and `deleteIfPayloadHash()` to every custom backend.
+11. Upgrade custom deferred-task storage with `putForSettlementOperationIfAbsent()`, `getBySettlementOperationId()`, and `replaceForSettlementOperationIfVersion()`. The initial token/index write and nested A→B index move must each be atomic.
 
 ### Legacy continuation store upgrade
 
@@ -79,6 +80,18 @@ correct terminal checkpoint after restart. Its fourth argument is the expected
 prior deferred token: initial binding expects no prior token, nested pauses
 compare-and-swap the exact prior token, stale writers return `false`, and an
 exact already-installed retry returns `true` without overwriting it.
+The deferred store independently indexes the current token by committed
+operation ID. That index is the recovery source of truth if a process exits
+after persisting an initial or nested pause but before this continuation-store
+binding completes. An exact operation retry reconciles the continuation-store
+token to the indexed generation and returns the current pause without
+redispatching already-consumed input.
+New atomically indexed records carry
+`settlementOperationRouteRequired: true`. Custom stores and serializers must
+preserve that discriminator on every replacement so routed same-key updates
+renew and fence the operation index together with the token. Records written by
+earlier prereleases without the marker remain readable through the legacy
+exact-token path.
 For callback-capable operations, only the exact current deferred token on an
 unexpired claimed operation can dispatch seller continuation input. Ambiguous,
 completed, expired, stale, unlinked, or coordinator-less routes fail closed;

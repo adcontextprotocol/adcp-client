@@ -844,6 +844,12 @@ export class TaskExecutor {
       canRecoverDeferredSettlement?: (operationId: string) => boolean | Promise<boolean>;
       /** Verify that this is still the coordinator's current committed continuation token. */
       authorizeDeferredSettlementResume?: (operationId: string, token: string) => boolean | Promise<boolean>;
+      /** Verify a separate owner capability before revealing a route's opaque continuation token. */
+      authorizeDeferredSettlementOperationRecovery?: (
+        operationId: string,
+        recoveryKey: string,
+        purpose: 'pause-recovery' | 'callback-checkpoint'
+      ) => boolean | Promise<boolean>;
       /** Atomically hand a committed coordinator route from one persisted token generation to the next. */
       replaceDeferredSettlementResumeToken?: (
         operationId: string,
@@ -1454,6 +1460,12 @@ export class TaskExecutor {
             registerExternalTaskSettlement: handler => this.registerExternalTaskSettlement(taskId, handler),
           });
           if (decision.action === 'dispatch_committed') {
+            if (
+              decision.requireDeferredSettlementResumeAuthorization === true &&
+              this.config.deferredStorage !== undefined
+            ) {
+              this.requireDeferredSettlementOperationRouting(this.config.deferredStorage);
+            }
             this.deferredTerminalPublicationTaskIds.add(taskId);
             this.retainExternalTaskSettlementState(taskId);
           }
@@ -2747,32 +2759,37 @@ export class TaskExecutor {
         const ttlSeconds = this.config.deferredTaskTtlSeconds ?? DEFAULT_DEFERRED_TASK_TTL_SECONDS;
         const continuationVersion = randomUUID();
         this.deferredAgents.set(agent.id, agent);
-        const stored = await deferredStorage.putIfAbsent(
-          token,
-          {
-            continuationVersion,
-            taskId,
-            ...(serverContextId !== undefined && { contextId: serverContextId }),
-            a2aTaskId,
-            serverVersion,
-            agentId: agent.id,
-            taskName,
-            params: durableDeferredSnapshot(params),
-            messages: durableDeferredSnapshot(messages),
-            ...(deferredClientContext !== undefined && {
-              clientContext: durableDeferredSnapshot(deferredClientContext),
+        const deferredState: DeferredTaskState = {
+          continuationVersion,
+          taskId,
+          ...(serverContextId !== undefined && { contextId: serverContextId }),
+          a2aTaskId,
+          serverVersion,
+          agentId: agent.id,
+          taskName,
+          params: durableDeferredSnapshot(params),
+          messages: durableDeferredSnapshot(messages),
+          pauseStatus,
+          pauseQuestion: inputRequest.question,
+          ...(deferredClientContext !== undefined && {
+            clientContext: durableDeferredSnapshot(deferredClientContext),
+          }),
+          ...(deferTerminalTaskStatus && {
+            settlementOperationId: taskId,
+            settlementOperationRouteRequired: true as const,
+          }),
+          ...(deferTerminalTaskStatus &&
+            requireDeferredSettlementResumeAuthorization && {
+              settlementResumeAuthorizationRequired: true,
             }),
-            ...(deferTerminalTaskStatus && { settlementOperationId: taskId }),
-            ...(deferTerminalTaskStatus &&
-              requireDeferredSettlementResumeAuthorization && {
-                settlementResumeAuthorizationRequired: true,
-              }),
-            ...(settlementServerTaskId !== undefined && { settlementServerTaskId }),
-            createdAt,
-            expiresAt: createdAt + ttlSeconds * 1000,
-          },
-          ttlSeconds
-        );
+          ...(settlementServerTaskId !== undefined && { settlementServerTaskId }),
+          createdAt,
+          expiresAt: createdAt + ttlSeconds * 1000,
+        };
+        if (deferTerminalTaskStatus) this.requireDeferredSettlementOperationRouting(deferredStorage);
+        const stored = deferTerminalTaskStatus
+          ? await deferredStorage.putForSettlementOperationIfAbsent(taskId, token, deferredState, ttlSeconds)
+          : await deferredStorage.putIfAbsent(token, deferredState, ttlSeconds);
         if (!stored) {
           throw new Error('Deferred continuation token already exists; refusing to replace another task.');
         }
@@ -2883,32 +2900,37 @@ export class TaskExecutor {
         const ttlSeconds = this.config.deferredTaskTtlSeconds ?? DEFAULT_DEFERRED_TASK_TTL_SECONDS;
         const continuationVersion = randomUUID();
         this.deferredAgents.set(agent.id, agent);
-        const stored = await deferredStorage.putIfAbsent(
-          token,
-          {
-            continuationVersion,
-            taskId,
-            ...(serverContextId !== undefined && { contextId: serverContextId }),
-            a2aTaskId,
-            serverVersion,
-            agentId: agent.id,
-            taskName,
-            params: durableDeferredSnapshot(params),
-            messages: durableDeferredSnapshot(messages),
-            ...(deferredClientContext !== undefined && {
-              clientContext: durableDeferredSnapshot(deferredClientContext),
+        const deferredState: DeferredTaskState = {
+          continuationVersion,
+          taskId,
+          ...(serverContextId !== undefined && { contextId: serverContextId }),
+          a2aTaskId,
+          serverVersion,
+          agentId: agent.id,
+          taskName,
+          params: durableDeferredSnapshot(params),
+          messages: durableDeferredSnapshot(messages),
+          pauseStatus: 'deferred',
+          pauseQuestion: inputRequest.question,
+          ...(deferredClientContext !== undefined && {
+            clientContext: durableDeferredSnapshot(deferredClientContext),
+          }),
+          ...(deferTerminalTaskStatus && {
+            settlementOperationId: taskId,
+            settlementOperationRouteRequired: true as const,
+          }),
+          ...(deferTerminalTaskStatus &&
+            requireDeferredSettlementResumeAuthorization && {
+              settlementResumeAuthorizationRequired: true,
             }),
-            ...(deferTerminalTaskStatus && { settlementOperationId: taskId }),
-            ...(deferTerminalTaskStatus &&
-              requireDeferredSettlementResumeAuthorization && {
-                settlementResumeAuthorizationRequired: true,
-              }),
-            ...(settlementServerTaskId !== undefined && { settlementServerTaskId }),
-            createdAt,
-            expiresAt: createdAt + ttlSeconds * 1000,
-          },
-          ttlSeconds
-        );
+          ...(settlementServerTaskId !== undefined && { settlementServerTaskId }),
+          createdAt,
+          expiresAt: createdAt + ttlSeconds * 1000,
+        };
+        if (deferTerminalTaskStatus) this.requireDeferredSettlementOperationRouting(deferredStorage);
+        const stored = deferTerminalTaskStatus
+          ? await deferredStorage.putForSettlementOperationIfAbsent(taskId, token, deferredState, ttlSeconds)
+          : await deferredStorage.putIfAbsent(token, deferredState, ttlSeconds);
         if (!stored) {
           throw new Error('Deferred continuation token already exists; refusing to replace another task.');
         }
@@ -3451,6 +3473,153 @@ export class TaskExecutor {
     return (await this.config.deferredStorage.has(token)) === true;
   }
 
+  private requireDeferredSettlementOperationRouting(storage: DeferredTaskStorage): void {
+    if (
+      typeof storage.putForSettlementOperationIfAbsent !== 'function' ||
+      typeof storage.getBySettlementOperationId !== 'function' ||
+      typeof storage.replaceForSettlementOperationIfVersion !== 'function'
+    ) {
+      throw new ConfigurationError(
+        'Committed deferred settlement requires atomic operation routing so paused mutations remain discoverable across crashes. ' +
+          'Use MemoryStorage or implement the DeferredTaskStorage operation-route contract.'
+      );
+    }
+  }
+
+  private async loadDeferredSettlementOperationRoute(
+    storage: DeferredTaskStorage,
+    operationId: string
+  ): Promise<{ token: string; state: DeferredTaskState } | undefined> {
+    try {
+      return await storage.getBySettlementOperationId(operationId);
+    } catch (error) {
+      throw new DeferredSettlementOwnershipError(
+        'Committed continuation operation routing could not be loaded safely.',
+        { cause: error }
+      );
+    }
+  }
+
+  private replaceDeferredState(
+    storage: DeferredTaskStorage,
+    token: string,
+    expectedVersion: string,
+    state: DeferredTaskState,
+    ttlSeconds: number
+  ): Promise<boolean> {
+    if (state.settlementOperationId === undefined || state.settlementOperationRouteRequired !== true) {
+      return storage.replaceIfVersion(token, expectedVersion, state, ttlSeconds);
+    }
+    this.requireDeferredSettlementOperationRouting(storage);
+    return storage.replaceForSettlementOperationIfVersion(
+      state.settlementOperationId,
+      token,
+      expectedVersion,
+      token,
+      state,
+      ttlSeconds
+    );
+  }
+
+  /** Recover the current pause generation through its committed operation route. @internal */
+  async recoverDeferredTaskForOperation<T>(
+    operationId: string,
+    recoveryKey: string,
+    publishTerminalTaskStatus = true
+  ): Promise<{ token: string; result: TaskResult<T> } | undefined> {
+    const storage = this.config.deferredStorage;
+    if (!storage) return undefined;
+    this.requireDeferredSettlementOperationRouting(storage);
+    let authorized = false;
+    try {
+      authorized =
+        (await this.config.authorizeDeferredSettlementOperationRecovery?.(
+          operationId,
+          recoveryKey,
+          'pause-recovery'
+        )) === true;
+    } catch (error) {
+      throw new DeferredSettlementOwnershipError(
+        'Committed continuation operation recovery could not be authorized safely.',
+        { cause: error }
+      );
+    }
+    if (!authorized) {
+      throw new DeferredSettlementOwnershipError('Committed continuation operation recovery is not authorized.');
+    }
+    const routed = await this.loadDeferredSettlementOperationRoute(storage, operationId);
+    if (!routed) return undefined;
+    return this.recoverRoutedDeferredTask<T>(operationId, routed, publishTerminalTaskStatus);
+  }
+
+  private async recoverRoutedDeferredTask<T>(
+    operationId: string,
+    routed: { token: string; state: DeferredTaskState },
+    publishTerminalTaskStatus: boolean
+  ): Promise<{ token: string; result: TaskResult<T> } | undefined> {
+    const { token, state } = routed;
+    if (
+      state.settlementOperationId !== operationId ||
+      state.settlementOperationRouteRequired !== true ||
+      state.expiresAt <= Date.now()
+    ) {
+      return undefined;
+    }
+
+    // Terminal/pending checkpoints already have exact replay logic and never
+    // consume the supplied input before reaching it.
+    if (
+      state.settlementFinalizedResult !== undefined ||
+      state.settlementTerminalResult !== undefined ||
+      state.settlementPendingTaskId !== undefined
+    ) {
+      return {
+        token,
+        result: (await this.resumeDeferredTaskCore<T>(token, undefined, publishTerminalTaskStatus, false)).result,
+      };
+    }
+    if (state.continuationClaimed) {
+      return undefined;
+    }
+    if (!state.pauseStatus || !state.pauseQuestion) {
+      throw new DeferredSettlementOwnershipError(
+        'The current committed continuation is missing its durable pause descriptor.'
+      );
+    }
+    const agent = this.deferredAgents.get(state.agentId) ?? (await this.config.resolveDeferredAgent?.(state.agentId));
+    if (!agent || agent.id !== state.agentId || agent.protocol !== 'a2a') {
+      throw new DeferredSettlementOwnershipError(
+        'The trusted agent for the current committed continuation could not be resolved safely.'
+      );
+    }
+    this.deferredAgents.set(agent.id, agent);
+    const status = state.pauseStatus;
+    const result = attachMatch({
+      success: true,
+      status,
+      deferred: {
+        token,
+        question: state.pauseQuestion,
+        resume: (input: unknown) =>
+          this.resumeDeferredTaskFromClientClosure<T>(token, input, publishTerminalTaskStatus),
+      },
+      metadata: {
+        taskId: state.taskId,
+        taskName: state.taskName,
+        agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+        responseTimeMs: 0,
+        timestamp: new Date().toISOString(),
+        clarificationRounds: 0,
+        status,
+        a2aTaskId: state.a2aTaskId,
+        ...(state.contextId !== undefined && { contextId: state.contextId }),
+        ...(state.settlementServerTaskId !== undefined && { serverTaskId: state.settlementServerTaskId }),
+      },
+      conversation: durableDeferredSnapshot(state.messages),
+    } as TaskResult<T>);
+    return { token, result };
+  }
+
   /** Bridge a store-recovered callback into the same deferred terminal checkpoint. @internal */
   async checkpointExternalDeferredSettlement<T>(
     token: string,
@@ -3471,6 +3640,15 @@ export class TaskExecutor {
     if (!state) throw new Error('The linked deferred callback checkpoint is unavailable.');
     if (state.settlementOperationId !== operationId) {
       throw new Error('The deferred callback token is bound to a different committed operation.');
+    }
+    if (state.settlementOperationRouteRequired === true) {
+      this.requireDeferredSettlementOperationRouting(storage);
+      const currentRoute = await this.loadDeferredSettlementOperationRoute(storage, operationId);
+      if (!currentRoute || currentRoute.token !== token) {
+        throw new DeferredSettlementOwnershipError(
+          'The deferred callback token is not the current generation for its committed operation.'
+        );
+      }
     }
     const trustedServerTaskId = trustedDeferredServerTaskId(state);
     const normalizedTerminal = normalizeDeferredTerminalServerTaskId(terminalResult, trustedServerTaskId);
@@ -3522,6 +3700,41 @@ export class TaskExecutor {
       finalized => lease.finalize(finalized),
       () => lease.release()
     );
+  }
+
+  /** Resolve and checkpoint the current generation using a separate owner capability. @internal */
+  async checkpointExternalDeferredSettlementForOperation<T>(
+    operationId: string,
+    recoveryKey: string,
+    terminalResult: TaskResult<T>
+  ): Promise<{ token: string; result?: TaskResult<T> } | undefined> {
+    const storage = this.config.deferredStorage;
+    if (!storage) return undefined;
+    this.requireDeferredSettlementOperationRouting(storage);
+    let authorized = false;
+    try {
+      authorized =
+        (await this.config.authorizeDeferredSettlementOperationRecovery?.(
+          operationId,
+          recoveryKey,
+          'callback-checkpoint'
+        )) === true;
+    } catch (error) {
+      throw new DeferredSettlementOwnershipError(
+        'Committed callback operation recovery could not be authorized safely.',
+        { cause: error }
+      );
+    }
+    if (!authorized) {
+      throw new DeferredSettlementOwnershipError('Committed callback operation recovery is not authorized.');
+    }
+    const currentRoute = await this.loadDeferredSettlementOperationRoute(storage, operationId);
+    if (!currentRoute) return undefined;
+    if (currentRoute.state.settlementOperationRouteRequired !== true) {
+      throw new DeferredSettlementOwnershipError('The callback operation route is not a current-format checkpoint.');
+    }
+    const result = await this.checkpointExternalDeferredSettlement(currentRoute.token, operationId, terminalResult);
+    return { token: currentRoute.token, ...(result !== undefined && { result }) };
   }
 
   /** A live owner closure may carry its committed settlement wrapper in process. */
@@ -3597,6 +3810,9 @@ export class TaskExecutor {
     const committedOperationId = state.settlementOperationId;
     const requiresSettlement = committedOperationId !== undefined;
     const requiresRecoveredSettlement = requiresSettlement && !liveSettlementOwner;
+    if (requiresSettlement && state.settlementOperationRouteRequired === true) {
+      this.requireDeferredSettlementOperationRouting(this.config.deferredStorage);
+    }
     // Once durable settlement and public-client finalization both succeeded,
     // replay the exact finalized value without re-running application handlers
     // or settlement recovery.
@@ -3634,6 +3850,64 @@ export class TaskExecutor {
         throw new Error(
           'This deferred task crossed a committed mutation boundary, but durable settlement recovery is unavailable.'
         );
+      }
+    }
+
+    // A crash may occur after the seller consumed input for A and the atomic
+    // SDK operation route moved to pause B, but before the coordinator CAS or
+    // caller response completed. Possession of A plus the matching committed
+    // operation is sufficient to recover B; never redispatch A's input.
+    if (requiresSettlement && state.settlementOperationRouteRequired === true) {
+      const currentRoute = await this.loadDeferredSettlementOperationRoute(
+        this.config.deferredStorage,
+        committedOperationId
+      );
+      if (currentRoute && currentRoute.token !== token) {
+        if (currentRoute.state.settlementOperationId !== committedOperationId) {
+          throw new DeferredSettlementOwnershipError(
+            'The committed continuation operation route does not match its stored generation.'
+          );
+        }
+        if (state.settlementResumeAuthorizationRequired === true) {
+          let replacementAuthorized =
+            (await this.config.authorizeDeferredSettlementResume?.(committedOperationId, currentRoute.token)) === true;
+          if (!replacementAuthorized) {
+            const replaced = await this.config.replaceDeferredSettlementResumeToken?.(
+              committedOperationId,
+              token,
+              currentRoute.token
+            );
+            replacementAuthorized =
+              replaced === true ||
+              (await this.config.authorizeDeferredSettlementResume?.(committedOperationId, currentRoute.token)) ===
+                true;
+          }
+          if (!replacementAuthorized) {
+            throw new DeferredSettlementOwnershipError(
+              'The recovered continuation generation could not be linked to its durable coordinator.'
+            );
+          }
+        }
+        const recovered = await this.recoverRoutedDeferredTask<T>(
+          committedOperationId,
+          currentRoute,
+          publishTerminalTaskStatus
+        );
+        if (!recovered || recovered.token !== currentRoute.token) {
+          throw new DeferredSettlementOwnershipError(
+            'The recovered continuation generation changed before it could be returned safely.'
+          );
+        }
+        return {
+          result: recovered.result,
+          ...(currentRoute.state.clientContext !== undefined && {
+            clientContext: structuredClone(currentRoute.state.clientContext),
+          }),
+          settlementOperationId: committedOperationId,
+          ...(currentRoute.state.settlementServerTaskId !== undefined && {
+            settlementServerTaskId: currentRoute.state.settlementServerTaskId,
+          }),
+        };
       }
     }
 
@@ -3779,7 +4053,8 @@ export class TaskExecutor {
     };
     let claimed: boolean;
     try {
-      claimed = await this.config.deferredStorage.replaceIfVersion(
+      claimed = await this.replaceDeferredState(
+        this.config.deferredStorage,
         token,
         state.continuationVersion,
         claimedState,
@@ -3865,7 +4140,8 @@ export class TaskExecutor {
         };
         let committed: boolean;
         try {
-          committed = await this.config.deferredStorage.replaceIfVersion(
+          committed = await this.replaceDeferredState(
+            this.config.deferredStorage,
             token,
             owned.version,
             dispatchState,
@@ -3944,40 +4220,64 @@ export class TaskExecutor {
           : resumed.metadata.serverTaskId;
         const createdAt = Date.now();
         const ttlSeconds = this.config.deferredTaskTtlSeconds ?? DEFAULT_DEFERRED_TASK_TTL_SECONDS;
-        const stored = await this.config.deferredStorage.putIfAbsent(
-          nextToken,
-          {
-            continuationVersion: randomUUID(),
-            taskId: state.taskId,
-            ...(resumed.metadata.contextId !== undefined
-              ? { contextId: resumed.metadata.contextId }
-              : state.contextId !== undefined
-                ? { contextId: state.contextId }
-                : {}),
-            a2aTaskId: nextA2ATaskId,
-            serverVersion: state.serverVersion,
-            agentId: state.agentId,
-            taskName: state.taskName,
-            params: durableDeferredSnapshot(state.params),
-            messages: durableDeferredSnapshot(resumed.conversation ?? state.messages),
-            ...(state.clientContext !== undefined && {
-              clientContext: durableDeferredSnapshot(state.clientContext),
-            }),
-            ...(state.settlementOperationId !== undefined && {
-              settlementOperationId: state.settlementOperationId,
-            }),
-            ...(state.settlementResumeAuthorizationRequired === true && {
-              settlementResumeAuthorizationRequired: true,
-            }),
-            ...(replacementServerTaskId !== undefined && {
-              settlementServerTaskId: replacementServerTaskId,
-            }),
-            createdAt,
-            expiresAt: createdAt + ttlSeconds * 1000,
-          },
-          ttlSeconds
-        );
+        const replacementState: DeferredTaskState = {
+          continuationVersion: randomUUID(),
+          taskId: state.taskId,
+          ...(resumed.metadata.contextId !== undefined
+            ? { contextId: resumed.metadata.contextId }
+            : state.contextId !== undefined
+              ? { contextId: state.contextId }
+              : {}),
+          a2aTaskId: nextA2ATaskId,
+          serverVersion: state.serverVersion,
+          agentId: state.agentId,
+          taskName: state.taskName,
+          params: durableDeferredSnapshot(state.params),
+          messages: durableDeferredSnapshot(resumed.conversation ?? state.messages),
+          pauseStatus: resumed.status as 'input-required' | 'auth-required' | 'deferred',
+          pauseQuestion: resumed.deferred.question,
+          ...(state.clientContext !== undefined && {
+            clientContext: durableDeferredSnapshot(state.clientContext),
+          }),
+          ...(state.settlementOperationId !== undefined && {
+            settlementOperationId: state.settlementOperationId,
+          }),
+          ...(state.settlementOperationRouteRequired === true && {
+            settlementOperationRouteRequired: true as const,
+          }),
+          ...(state.settlementResumeAuthorizationRequired === true && {
+            settlementResumeAuthorizationRequired: true,
+          }),
+          ...(replacementServerTaskId !== undefined && {
+            settlementServerTaskId: replacementServerTaskId,
+          }),
+          createdAt,
+          expiresAt: createdAt + ttlSeconds * 1000,
+        };
+        const stored =
+          requiresSettlement && state.settlementOperationRouteRequired === true
+            ? await this.config.deferredStorage.replaceForSettlementOperationIfVersion(
+                committedOperationId,
+                token,
+                dispatchVersion,
+                nextToken,
+                replacementState,
+                ttlSeconds
+              )
+            : await this.config.deferredStorage.putIfAbsent(nextToken, replacementState, ttlSeconds);
         if (!stored) {
+          if (requiresSettlement) {
+            const winner = await this.resumeExactDeferredSettlementWinner<T>(
+              token,
+              state,
+              replacementServerTaskId ?? trustedDeferredServerTaskId(state),
+              undefined,
+              inputSnapshot,
+              publishTerminalTaskStatus,
+              liveSettlementOwner
+            );
+            if (winner) return winner;
+          }
           throw new Error('Replacement deferred continuation token already exists; refusing unsafe overwrite.');
         }
         if (requiresSettlement && state.settlementResumeAuthorizationRequired === true) {
@@ -3987,10 +4287,23 @@ export class TaskExecutor {
             nextToken
           );
           if (replaced !== true) {
-            // Seller input has already advanced A to B, so A must remain claimed
-            // and B must remain inaccessible. Removing/restoring either side
-            // would permit redispatch or an uncoordinated continuation.
-            throw new Error('The committed deferred continuation replacement could not be durably linked.');
+            // A terminal callback may have won after the SDK atomically moved
+            // the operation route to B but before the coordinator completed
+            // its A -> B CAS. Replay that exact B winner instead of reporting
+            // an ownership failure to the originating resume.
+            const winner = await this.resumeExactDeferredSettlementWinner<T>(
+              nextToken,
+              replacementState,
+              replacementServerTaskId ?? trustedDeferredServerTaskId(state),
+              undefined,
+              inputSnapshot,
+              publishTerminalTaskStatus,
+              liveSettlementOwner
+            );
+            if (winner) return winner;
+            throw new DeferredSettlementOwnershipError(
+              'The committed deferred continuation advanced, but its coordinator route still needs recovery.'
+            );
           }
         }
         resumed.deferred.resume = nextInput =>
@@ -4036,7 +4349,8 @@ export class TaskExecutor {
             createdAt: checkpointCreatedAt,
             expiresAt: checkpointCreatedAt + checkpointTtlSeconds * 1000,
           };
-          const saved = await this.config.deferredStorage.replaceIfVersion(
+          const saved = await this.replaceDeferredState(
+            this.config.deferredStorage,
             token,
             dispatchVersion,
             checkpointState,
@@ -4113,7 +4427,8 @@ export class TaskExecutor {
             createdAt: pendingCreatedAt,
             expiresAt: pendingCreatedAt + pendingTtlSeconds * 1000,
           };
-          const saved = await this.config.deferredStorage.replaceIfVersion(
+          const saved = await this.replaceDeferredState(
+            this.config.deferredStorage,
             token,
             dispatchVersion,
             pendingState,
@@ -4466,7 +4781,23 @@ export class TaskExecutor {
       createdAt: checkpointCreatedAt,
       expiresAt: checkpointCreatedAt + ttlSeconds * 1000,
     };
-    const saved = await storage.replaceIfVersion(token, pendingState.continuationVersion, checkpointState, ttlSeconds);
+    const saved =
+      pendingState.settlementOperationId && pendingState.settlementOperationRouteRequired === true
+        ? await storage.replaceForSettlementOperationIfVersion(
+            pendingState.settlementOperationId,
+            token,
+            pendingState.continuationVersion,
+            token,
+            checkpointState,
+            ttlSeconds
+          )
+        : await this.replaceDeferredState(
+            storage,
+            token,
+            pendingState.continuationVersion,
+            checkpointState,
+            ttlSeconds
+          );
     if (!saved) {
       throw new DeferredSettlementOwnershipError(
         'Committed deferred terminal observation could not replace its pending checkpoint.'
@@ -4508,7 +4839,13 @@ export class TaskExecutor {
               },
               expiresAt: renewedAt + safetyTtlSeconds * 1000,
             };
-            const renewed = await storage.replaceIfVersion(token, currentVersion, nextState, safetyTtlSeconds);
+            const renewed = await this.replaceDeferredState(
+              storage,
+              token,
+              currentVersion,
+              nextState,
+              safetyTtlSeconds
+            );
             if (!renewed) {
               lostError = new DeferredSettlementOwnershipError(
                 'Deferred dispatch admission ownership changed before seller dispatch.'
@@ -4590,7 +4927,13 @@ export class TaskExecutor {
     };
     let acquired: boolean;
     try {
-      acquired = await storage.replaceIfVersion(token, checkpoint.continuationVersion, currentState, safetyTtlSeconds);
+      acquired = await this.replaceDeferredState(
+        storage,
+        token,
+        checkpoint.continuationVersion,
+        currentState,
+        safetyTtlSeconds
+      );
     } catch (error) {
       throw new DeferredSettlementOwnershipError('Deferred settlement finalization could not be claimed safely.', {
         cause: error,
@@ -4621,7 +4964,13 @@ export class TaskExecutor {
               },
               expiresAt: renewedAt + safetyTtlSeconds * 1000,
             };
-            const renewed = await storage.replaceIfVersion(token, currentVersion, nextState, safetyTtlSeconds);
+            const renewed = await this.replaceDeferredState(
+              storage,
+              token,
+              currentVersion,
+              nextState,
+              safetyTtlSeconds
+            );
             if (!renewed) {
               lostError = new DeferredSettlementOwnershipError('Deferred settlement finalization lease was lost.');
               return;
@@ -4666,7 +5015,8 @@ export class TaskExecutor {
         const releasedAt = Date.now();
         let released: boolean;
         try {
-          released = await storage.replaceIfVersion(
+          released = await this.replaceDeferredState(
+            storage,
             token,
             currentVersion,
             {
@@ -4841,7 +5191,8 @@ export class TaskExecutor {
     void _lease;
     let saved: boolean;
     try {
-      saved = await storage.replaceIfVersion(
+      saved = await this.replaceDeferredState(
+        storage,
         token,
         expectedVersion,
         {
@@ -4926,7 +5277,7 @@ export class TaskExecutor {
     }
     let restored: boolean;
     try {
-      restored = await storage.replaceIfVersion(token, claimedVersion, state, remainingTtlSeconds);
+      restored = await this.replaceDeferredState(storage, token, claimedVersion, state, remainingTtlSeconds);
     } catch (error) {
       throw new DeferredSettlementOwnershipError('Deferred continuation state could not be restored safely.', {
         cause: error,

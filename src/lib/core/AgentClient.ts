@@ -439,6 +439,17 @@ export class AgentClient {
     return this.client.registerDurableDeferredResumeAuthorization(authorizer);
   }
 
+  /** Register owner-capability authorization for committed operation route discovery. @internal */
+  registerDurableDeferredOperationRecoveryAuthorization(
+    authorizer: (
+      operationId: string,
+      recoveryKey: string,
+      purpose: 'pause-recovery' | 'callback-checkpoint'
+    ) => boolean | undefined | Promise<boolean | undefined>
+  ): () => void {
+    return this.client.registerDurableDeferredOperationRecoveryAuthorization(authorizer);
+  }
+
   /** Register a generation-fenced handoff for a nested committed continuation. @internal */
   registerDurableDeferredResumeTokenReplacement(
     replacer: (
@@ -455,6 +466,15 @@ export class AgentClient {
     return this.client.hasDurablyStoredDeferredTask(token);
   }
 
+  /** Recover the current committed pause when its opaque token handoff was interrupted. @internal */
+  recoverDeferredTaskForOperation<T>(
+    operationId: string,
+    recoveryKey: string,
+    publishTerminalTaskStatus = true
+  ): Promise<{ token: string; result: TaskResult<T> } | undefined> {
+    return this.client.recoverDeferredTaskForOperation(operationId, recoveryKey, publishTerminalTaskStatus);
+  }
+
   /** Bridge a store-recovered callback into the deferred terminal checkpoint. @internal */
   checkpointExternalDeferredSettlement<T>(
     token: string,
@@ -462,6 +482,15 @@ export class AgentClient {
     terminalResult: TaskResult<T>
   ): Promise<TaskResult<T> | undefined> {
     return this.client.checkpointExternalDeferredSettlement(token, operationId, terminalResult);
+  }
+
+  /** Resolve and checkpoint the current generation using a separate owner capability. @internal */
+  checkpointExternalDeferredSettlementForOperation<T>(
+    operationId: string,
+    recoveryKey: string,
+    terminalResult: TaskResult<T>
+  ): Promise<{ token: string; result?: TaskResult<T> } | undefined> {
+    return this.client.checkpointExternalDeferredSettlementForOperation(operationId, recoveryKey, terminalResult);
   }
 
   /** Publish a callback only after a compatibility store has durably bound and settled it. @internal */

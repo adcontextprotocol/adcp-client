@@ -11,8 +11,9 @@ Migration checklist:
 
 - Custom legacy-purchase stores: implement the six callback/publication methods
   together, including owner-fenced publication and retained acknowledgement proof.
-- Custom deferred stores: implement atomic `putIfAbsent`, `replaceIfVersion`, and
-  `takeIfVersion` with the documented TTL and generation semantics.
+- Custom deferred stores: implement atomic `putIfAbsent`, `replaceIfVersion`,
+  `takeIfVersion`, and the three committed-operation route methods with the
+  documented TTL, generation, and crash-recovery semantics.
 - Idempotency backends: provide owner-fenced replace/delete, retain records through
   clock skew, and configure replica-safe key/table namespaces.
 - Buyer clients: persist deferred state for callback-capable committed purchases
@@ -58,7 +59,8 @@ the exact prior token rather than allowing a stale continuation to overwrite
 the callback recovery route. Restarted/public resumes persist the replacement
 checkpoint, atomically rebind that exact coordinator route, and only then
 consume the prior checkpoint or return the replacement; a failed handoff leaves
-both generations fail-closed without redispatch. Callback-capable committed deferred records also
+A fenced and B operation-indexed so an exact retry can finish linking B without
+redispatch. Callback-capable committed deferred records also
 require the owning durable coordinator to authorize the exact current,
 unexpired claimed token before sending seller continuation input. Already
 pending or terminal checkpoints remain recoverable without redispatch.
@@ -108,7 +110,11 @@ read preserves completed fences but does not coordinate mixed-version claims.
 
 Custom deferred-task storage is now typed as `DeferredTaskStorage` and must
 provide atomic `putIfAbsent()` and generation-fenced `replaceIfVersion()` and
-`takeIfVersion()` operations. `StorageFactory.createStorage('tokens')` now
+`takeIfVersion()` operations. It must also atomically create and resolve an
+initial committed operation route and move that route from exact generation A
+to nested generation B. This closes process-exit windows before the lifecycle
+store binds or returns the opaque token: exact operation retries rediscover the
+current generation without resending seller input. `StorageFactory.createStorage('tokens')` now
 exposes that exact contract instead of the weaker generic storage surface.
 Resume atomically
 transitions the stored generation to a claimed fence with a fresh dispatch

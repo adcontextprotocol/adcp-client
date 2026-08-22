@@ -1563,6 +1563,13 @@ export class SingleAgentClient {
   private readonly durableDeferredResumeAuthorizers = new Set<
     (operationId: string, token: string) => boolean | undefined | Promise<boolean | undefined>
   >();
+  private readonly durableDeferredOperationRecoveryAuthorizers = new Set<
+    (
+      operationId: string,
+      recoveryKey: string,
+      purpose: 'pause-recovery' | 'callback-checkpoint'
+    ) => boolean | undefined | Promise<boolean | undefined>
+  >();
   private readonly durableDeferredResumeTokenReplacers = new Set<
     (
       operationId: string,
@@ -1623,6 +1630,12 @@ export class SingleAgentClient {
       authorizeDeferredSettlementResume: async (operationId, token) => {
         for (const authorize of this.durableDeferredResumeAuthorizers) {
           if ((await authorize(operationId, token)) === true) return true;
+        }
+        return false;
+      },
+      authorizeDeferredSettlementOperationRecovery: async (operationId, recoveryKey, purpose) => {
+        for (const authorize of this.durableDeferredOperationRecoveryAuthorizers) {
+          if ((await authorize(operationId, recoveryKey, purpose)) === true) return true;
         }
         return false;
       },
@@ -2194,6 +2207,18 @@ export class SingleAgentClient {
     return () => this.durableDeferredResumeAuthorizers.delete(authorizer);
   }
 
+  /** Register owner-capability authorization for committed operation route discovery. @internal */
+  registerDurableDeferredOperationRecoveryAuthorization(
+    authorizer: (
+      operationId: string,
+      recoveryKey: string,
+      purpose: 'pause-recovery' | 'callback-checkpoint'
+    ) => boolean | undefined | Promise<boolean | undefined>
+  ): () => void {
+    this.durableDeferredOperationRecoveryAuthorizers.add(authorizer);
+    return () => this.durableDeferredOperationRecoveryAuthorizers.delete(authorizer);
+  }
+
   /** Register an atomic committed-route handoff for a nested durable pause. @internal */
   registerDurableDeferredResumeTokenReplacement(
     replacer: (
@@ -2211,6 +2236,15 @@ export class SingleAgentClient {
     return this.executor.hasDurablyStoredDeferredTask(token);
   }
 
+  /** Recover the current committed pause when its opaque token handoff was interrupted. @internal */
+  recoverDeferredTaskForOperation<T>(
+    operationId: string,
+    recoveryKey: string,
+    publishTerminalTaskStatus = true
+  ): Promise<{ token: string; result: TaskResult<T> } | undefined> {
+    return this.executor.recoverDeferredTaskForOperation(operationId, recoveryKey, publishTerminalTaskStatus);
+  }
+
   /** Bridge a store-recovered callback into the deferred terminal checkpoint. @internal */
   checkpointExternalDeferredSettlement<T>(
     token: string,
@@ -2218,6 +2252,15 @@ export class SingleAgentClient {
     terminalResult: TaskResult<T>
   ): Promise<TaskResult<T> | undefined> {
     return this.executor.checkpointExternalDeferredSettlement(token, operationId, terminalResult);
+  }
+
+  /** Resolve and checkpoint the current generation using a separate owner capability. @internal */
+  checkpointExternalDeferredSettlementForOperation<T>(
+    operationId: string,
+    recoveryKey: string,
+    terminalResult: TaskResult<T>
+  ): Promise<{ token: string; result?: TaskResult<T> } | undefined> {
+    return this.executor.checkpointExternalDeferredSettlementForOperation(operationId, recoveryKey, terminalResult);
   }
 
   /** Publish a callback only after an external durable inbox has bound and settled it. @internal */

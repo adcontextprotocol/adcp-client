@@ -39,6 +39,7 @@ function a2aPause({ question, field, contextId, taskId, serverTaskId }) {
 }
 
 function deferredStorage(records) {
+  const operationRoutes = new Map();
   return {
     set: async (token, state) => records.set(token, state),
     putIfAbsent: async (token, state) => {
@@ -51,10 +52,51 @@ function deferredStorage(records) {
       records.set(token, state);
       return true;
     },
+    putForSettlementOperationIfAbsent: async (operationId, token, state) => {
+      if (
+        operationRoutes.has(operationId) ||
+        records.has(token) ||
+        state.settlementOperationId !== operationId ||
+        state.settlementOperationRouteRequired !== true
+      ) {
+        return false;
+      }
+      records.set(token, state);
+      operationRoutes.set(operationId, token);
+      return true;
+    },
+    getBySettlementOperationId: async operationId => {
+      const token = operationRoutes.get(operationId);
+      const state = token === undefined ? undefined : records.get(token);
+      return token === undefined || state === undefined ? undefined : { token, state };
+    },
+    replaceForSettlementOperationIfVersion: async (
+      operationId,
+      currentToken,
+      expectedVersion,
+      replacementToken,
+      replacementState
+    ) => {
+      if (
+        operationRoutes.get(operationId) !== currentToken ||
+        records.get(currentToken)?.continuationVersion !== expectedVersion ||
+        replacementState.settlementOperationId !== operationId ||
+        replacementState.settlementOperationRouteRequired !== true ||
+        (replacementToken !== currentToken && records.has(replacementToken))
+      ) {
+        return false;
+      }
+      records.set(replacementToken, replacementState);
+      operationRoutes.set(operationId, replacementToken);
+      return true;
+    },
     takeIfVersion: async (token, expectedVersion) => {
       const state = records.get(token);
       if (state?.continuationVersion !== expectedVersion) return undefined;
       records.delete(token);
+      if (state.settlementOperationId && operationRoutes.get(state.settlementOperationId) === token) {
+        operationRoutes.delete(state.settlementOperationId);
+      }
       return state;
     },
     get: async token => records.get(token),
@@ -63,7 +105,13 @@ function deferredStorage(records) {
       records.delete(token);
       return state;
     },
-    delete: async token => records.delete(token),
+    delete: async token => {
+      const state = records.get(token);
+      records.delete(token);
+      if (state?.settlementOperationId && operationRoutes.get(state.settlementOperationId) === token) {
+        operationRoutes.delete(state.settlementOperationId);
+      }
+    },
     has: async token => records.has(token),
   };
 }

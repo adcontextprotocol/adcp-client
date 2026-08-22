@@ -6812,6 +6812,16 @@ describe('legacy products-only purchase continuations', () => {
       set: (...args) => deferredBackend.set(...args),
       delete: (...args) => deferredBackend.delete(...args),
       putIfAbsent: (...args) => deferredBackend.putIfAbsent(...args),
+      putForSettlementOperationIfAbsent: (...args) => deferredBackend.putForSettlementOperationIfAbsent(...args),
+      getBySettlementOperationId: (...args) => deferredBackend.getBySettlementOperationId(...args),
+      replaceForSettlementOperationIfVersion: (...args) => {
+        const replacementValue = args[4];
+        if (failNextDeferredFinalization && replacementValue.settlementFinalizedResult !== undefined) {
+          failNextDeferredFinalization = false;
+          return Promise.resolve(false);
+        }
+        return deferredBackend.replaceForSettlementOperationIfVersion(...args);
+      },
       takeIfVersion: (...args) => deferredBackend.takeIfVersion(...args),
       replaceIfVersion: (key, expectedVersion, value, ttl) => {
         if (failNextDeferredFinalization && value.settlementFinalizedResult !== undefined) {
@@ -6897,7 +6907,8 @@ describe('legacy products-only purchase continuations', () => {
     assert.notEqual(deferredToken, token);
     assert.equal(await store.recordDeferredTaskToken(token, claimed.operation, deferredToken), true);
     const deferredNow = Date.now();
-    await deferredStorage.putIfAbsent(
+    await deferredStorage.putForSettlementOperationIfAbsent(
+      operationId,
       deferredToken,
       {
         continuationVersion: 'durable-handler-retry-deferred-version',
@@ -6917,6 +6928,7 @@ describe('legacy products-only purchase continuations', () => {
           productPolicyRequest: {},
         },
         settlementOperationId: operationId,
+        settlementOperationRouteRequired: true,
         settlementResumeAuthorizationRequired: true,
         settlementServerTaskId: sellerTaskId,
         settlementPendingTaskId: sellerTaskId,
@@ -7277,7 +7289,9 @@ describe('legacy products-only purchase continuations', () => {
       const operationId = claimed.operation.callbackOperationId;
 
       const initialState = await deferredStorage.get(initialDeferredToken);
-      await deferredStorage.set(
+      await deferredStorage.delete(initialDeferredToken);
+      await deferredStorage.putForSettlementOperationIfAbsent(
+        operationId,
         initialDeferredToken,
         {
           ...initialState,
@@ -7289,6 +7303,7 @@ describe('legacy products-only purchase continuations', () => {
             productPolicyRequest: {},
           },
           settlementOperationId: operationId,
+          settlementOperationRouteRequired: true,
           settlementResumeAuthorizationRequired: true,
           settlementServerTaskId: sellerTaskId,
         },
@@ -7436,7 +7451,8 @@ describe('legacy products-only purchase continuations', () => {
       const operationId = claimed.operation.callbackOperationId;
       const createdAt = Date.now();
       assert.equal(
-        await deferredStorage.putIfAbsent(
+        await deferredStorage.putForSettlementOperationIfAbsent(
+          operationId,
           deferredToken,
           {
             continuationVersion: 'resolution-callback-winner-version',
@@ -7449,6 +7465,7 @@ describe('legacy products-only purchase continuations', () => {
             params: {},
             messages: [],
             settlementOperationId: operationId,
+            settlementOperationRouteRequired: true,
             settlementResumeAuthorizationRequired: true,
             settlementServerTaskId: sellerTaskId,
             createdAt,
@@ -7618,7 +7635,8 @@ describe('legacy products-only purchase continuations', () => {
       const operationId = claimed.operation.callbackOperationId;
       const createdAt = Date.now();
       assert.equal(
-        await deferredStorage.putIfAbsent(
+        await deferredStorage.putForSettlementOperationIfAbsent(
+          operationId,
           deferredToken,
           {
             continuationVersion: 'pending-resolution-retry-version',
@@ -7632,6 +7650,7 @@ describe('legacy products-only purchase continuations', () => {
             params: {},
             messages: [],
             settlementOperationId: operationId,
+            settlementOperationRouteRequired: true,
             settlementResumeAuthorizationRequired: true,
             settlementServerTaskId: sellerTaskId,
             settlementPendingTaskId: sellerTaskId,
@@ -7771,7 +7790,8 @@ describe('legacy products-only purchase continuations', () => {
       const operationId = claimed.operation.callbackOperationId;
       const createdAt = Date.now();
       assert.equal(
-        await deferredStorage.putIfAbsent(
+        await deferredStorage.putForSettlementOperationIfAbsent(
+          operationId,
           initialDeferredToken,
           {
             continuationVersion: 'live-nested-version-a',
@@ -7784,6 +7804,7 @@ describe('legacy products-only purchase continuations', () => {
             params: {},
             messages: [],
             settlementOperationId: operationId,
+            settlementOperationRouteRequired: true,
             settlementResumeAuthorizationRequired: true,
             settlementServerTaskId: sellerTaskId,
             createdAt,
@@ -7855,8 +7876,7 @@ describe('legacy products-only purchase continuations', () => {
     const registerReplacement = agent.registerDurableDeferredResumeTokenReplacement.bind(agent);
     agent.registerDurableDeferredResumeTokenReplacement = replacer =>
       registerReplacement(async (operationId, currentToken, replacementToken) => {
-        const replaced = await replacer(operationId, currentToken, replacementToken);
-        if (replaced === true && !injectedCallback) {
+        if (!injectedCallback) {
           injectedCallback = true;
           const callback = await recoverCallback(operationId, {
             status: 'completed',
@@ -7868,7 +7888,7 @@ describe('legacy products-only purchase continuations', () => {
           assert.equal(callback.settled, true);
           await callback.afterDispatch?.();
         }
-        return replaced;
+        return replacer(operationId, currentToken, replacementToken);
       });
     let coordinator;
     try {
@@ -7923,15 +7943,18 @@ describe('legacy products-only purchase continuations', () => {
       assert.equal(completedDuringHandoff.data.media_buy_id, 'buy-live-nested-callback');
       const replacementToken = handoffObservations[0].replacementToken;
       assert.notEqual(replacementToken, initialDeferredToken);
-      assert.equal(handoffObservations.length, 2, 'inner CAS and outer idempotent binding must both execute');
+      assert.equal(handoffObservations.length, 1, 'the callback must bind B before the original coordinator CAS');
       assert.deepEqual(handoffObservations[0], {
         expectedToken: initialDeferredToken,
         replacementToken,
         oldCheckpointPresent: true,
         replacementCheckpointPresent: true,
       });
-      assert.equal(handoffObservations[1].oldCheckpointPresent, false);
-      assert.equal(handoffObservations[1].replacementCheckpointPresent, true);
+      const deferredWinner = await deferredStorage.getBySettlementOperationId(
+        (await store.get(continuationToken)).operation.callbackOperationId
+      );
+      assert.equal(deferredWinner.token, replacementToken);
+      assert.equal(deferredWinner.state.settlementTerminalResult.data.media_buy_id, 'buy-live-nested-callback');
       const completed = await store.get(continuationToken);
       assert.equal(completed.operation.state, 'completed');
       assert.equal(completed.operation.deferredTaskToken, replacementToken);

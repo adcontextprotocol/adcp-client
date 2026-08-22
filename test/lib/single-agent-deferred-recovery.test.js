@@ -19,7 +19,14 @@ const agent = {
   protocol: 'a2a',
 };
 
-function committedContinuationState({ operationId, sellerWorkId, version, now = Date.now(), dispatchLease }) {
+function committedContinuationState({
+  operationId,
+  sellerWorkId,
+  version,
+  now = Date.now(),
+  dispatchLease,
+  routeRequired = true,
+}) {
   return {
     continuationVersion: version,
     ...(dispatchLease !== undefined && {
@@ -35,11 +42,20 @@ function committedContinuationState({ operationId, sellerWorkId, version, now = 
     params: {},
     messages: [],
     settlementOperationId: operationId,
+    ...(routeRequired && { settlementOperationRouteRequired: true }),
     settlementResumeAuthorizationRequired: true,
     settlementServerTaskId: sellerWorkId,
     createdAt: now,
     expiresAt: now + 60_000,
   };
+}
+
+async function storeDeferredState(storage, token, state, ttl) {
+  const stored = await (state.settlementOperationRouteRequired === true
+    ? storage.putForSettlementOperationIfAbsent(state.settlementOperationId, token, state, ttl)
+    : storage.putIfAbsent(token, state, ttl));
+  assert.strictEqual(stored, true, 'deferred fixture must be stored');
+  return stored;
 }
 
 function committedTerminalResult(operationId, sellerWorkId, mediaBuyId) {
@@ -81,13 +97,69 @@ test('MemoryStorage rejects non-positive atomic continuation TTLs', async () => 
   }
 });
 
+test('MemoryStorage atomically indexes and supersedes one committed continuation generation', async () => {
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const operationId = 'memory-operation-route';
+  const tokenA = testDurableToken('memory-operation-route-a');
+  const tokenB = testDurableToken('memory-operation-route-b');
+  const tokenC = testDurableToken('memory-operation-route-c');
+  const stateA = committedContinuationState({
+    operationId,
+    sellerWorkId: 'memory-operation-work',
+    version: 'memory-operation-version-a',
+  });
+  try {
+    const competing = await Promise.all([
+      storage.putForSettlementOperationIfAbsent(operationId, tokenA, stateA, 60),
+      storage.putForSettlementOperationIfAbsent(operationId, tokenB, { ...stateA, continuationVersion: 'loser' }, 60),
+    ]);
+    assert.deepEqual(competing.slice().sort(), [false, true]);
+    assert.equal((await storage.getBySettlementOperationId(operationId)).token, tokenA);
+
+    const replacementBase = {
+      ...stateA,
+      continuationVersion: 'memory-operation-version-b',
+      pauseStatus: 'input-required',
+      pauseQuestion: 'Approve again?',
+    };
+    const replacements = await Promise.all([
+      storage.replaceForSettlementOperationIfVersion(
+        operationId,
+        tokenA,
+        stateA.continuationVersion,
+        tokenB,
+        replacementBase,
+        60
+      ),
+      storage.replaceForSettlementOperationIfVersion(
+        operationId,
+        tokenA,
+        stateA.continuationVersion,
+        tokenC,
+        { ...replacementBase, continuationVersion: 'memory-operation-version-c' },
+        60
+      ),
+    ]);
+    assert.deepEqual(replacements.slice().sort(), [false, true]);
+    assert.equal((await storage.getBySettlementOperationId(operationId)).token, tokenB);
+    assert.equal(
+      (await storage.takeIfVersion(tokenA, stateA.continuationVersion)).continuationVersion,
+      stateA.continuationVersion
+    );
+    assert.equal((await storage.getBySettlementOperationId(operationId)).token, tokenB);
+  } finally {
+    storage.destroy();
+  }
+});
+
 test('callback wins during trusted-agent resolution before deferred input dispatch', async () => {
   const originalCallTool = ProtocolClient.callTool;
   const storage = new MemoryStorage({ autoCleanup: false });
   const token = testDurableToken('callback-wins-during-agent-resolution-token');
   const operationId = 'callback-wins-during-agent-resolution-operation';
   const sellerWorkId = 'callback-wins-during-agent-resolution-work';
-  await storage.putIfAbsent(
+  await storage.putForSettlementOperationIfAbsent(
+    operationId,
     token,
     committedContinuationState({
       operationId,
@@ -157,7 +229,8 @@ test('deferred storage read outage is typed ownership and a later retry dispatch
   const token = testDurableToken('deferred-read-outage-retry-token');
   const operationId = 'deferred-read-outage-retry-operation';
   const sellerWorkId = 'deferred-read-outage-retry-work';
-  await storage.putIfAbsent(
+  await storage.putForSettlementOperationIfAbsent(
+    operationId,
     token,
     committedContinuationState({
       operationId,
@@ -214,6 +287,38 @@ test('deferred storage read outage is typed ownership and a later retry dispatch
   }
 });
 
+test('committed operation route read outages are typed and sanitized', async () => {
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const storageFailure = new Error('redis://secret-host operation route outage');
+  const originalGetRoute = storage.getBySettlementOperationId.bind(storage);
+  storage.getBySettlementOperationId = async () => {
+    throw storageFailure;
+  };
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    authorizeDeferredSettlementOperationRecovery: async () => true,
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    await assert.rejects(
+      executor.recoverDeferredTaskForOperation(
+        'operation-route-read-outage',
+        testDurableToken('operation-route-read-outage-recovery')
+      ),
+      error => {
+        assert.ok(error instanceof DeferredSettlementOwnershipError);
+        assert.strictEqual(error.cause, storageFailure);
+        assert.doesNotMatch(error.message, /secret-host/);
+        return true;
+      }
+    );
+  } finally {
+    storage.getBySettlementOperationId = originalGetRoute;
+    storage.destroy();
+  }
+});
+
 test('external callback checkpoint storage outage is sanitized ownership and leaves state retryable', async () => {
   const storage = new MemoryStorage({ autoCleanup: false });
   const token = testDurableToken('external-checkpoint-read-outage-token');
@@ -224,7 +329,7 @@ test('external callback checkpoint storage outage is sanitized ownership and lea
     sellerWorkId,
     version: 'external-checkpoint-read-outage-version',
   });
-  await storage.putIfAbsent(token, initialState, 60);
+  await storeDeferredState(storage, token, initialState, 60);
 
   const storageFailure = new Error('redis://secret-host callback read outage');
   const originalGet = storage.get.bind(storage);
@@ -269,7 +374,7 @@ test('expiry during trusted-agent resolution is typed ownership after generation
     version: 'expiry-during-resolution-version',
   });
   expiringState.expiresAt = Date.now() + 50;
-  await storage.putIfAbsent(token, expiringState, 60);
+  await storeDeferredState(storage, token, expiringState, 60);
 
   let protocolCalls = 0;
   ProtocolClient.callTool = async () => {
@@ -314,7 +419,7 @@ test('deferred resume reauthorizes the durable route immediately before dispatch
     sellerWorkId,
     version: 'deferred-route-changes-before-dispatch-version',
   });
-  await storage.putIfAbsent(token, originalState, 60);
+  await storeDeferredState(storage, token, originalState, 60);
 
   let authorizationChecks = 0;
   let protocolCalls = 0;
@@ -363,7 +468,7 @@ test('authorization loss after the original deadline removes admission instead o
     version: 'expired-auth-loss-removes-admission-version',
   });
   expiringState.expiresAt = Date.now() + 150;
-  await storage.putIfAbsent(token, expiringState, 60);
+  await storeDeferredState(storage, token, expiringState, 60);
 
   let authorizationChecks = 0;
   let protocolCalls = 0;
@@ -407,7 +512,8 @@ test('pre-dispatch restore storage failure remains typed ownership with the adap
   const token = testDurableToken('pre-dispatch-restore-storage-failure-token');
   const operationId = 'pre-dispatch-restore-storage-failure-operation';
   const sellerWorkId = 'pre-dispatch-restore-storage-failure-work';
-  await storage.putIfAbsent(
+  await storage.putForSettlementOperationIfAbsent(
+    operationId,
     token,
     committedContinuationState({
       operationId,
@@ -417,10 +523,10 @@ test('pre-dispatch restore storage failure remains typed ownership with the adap
     60
   );
   const storageFailure = new Error('injected pre-dispatch restore storage failure');
-  const originalReplace = storage.replaceIfVersion.bind(storage);
-  storage.replaceIfVersion = async (key, version, value, ttl) => {
+  const originalReplace = storage.replaceForSettlementOperationIfVersion.bind(storage);
+  storage.replaceForSettlementOperationIfVersion = async (operation, key, version, replacementKey, value, ttl) => {
     if (value.continuationClaimed !== true) throw storageFailure;
-    return originalReplace(key, version, value, ttl);
+    return originalReplace(operation, key, version, replacementKey, value, ttl);
   };
   const executor = new TaskExecutor({
     deferredStorage: storage,
@@ -436,7 +542,7 @@ test('pre-dispatch restore storage failure remains typed ownership with the adap
       error => error instanceof DeferredSettlementOwnershipError && error.cause === storageFailure
     );
   } finally {
-    storage.replaceIfVersion = originalReplace;
+    storage.replaceForSettlementOperationIfVersion = originalReplace;
     storage.destroy();
   }
 });
@@ -447,7 +553,8 @@ test('expired deferred dispatch admission is reclaimable exactly once', async ()
   const token = testDurableToken('expired-dispatch-admission-token');
   const operationId = 'expired-dispatch-admission-operation';
   const sellerWorkId = 'expired-dispatch-admission-work';
-  await storage.putIfAbsent(
+  await storage.putForSettlementOperationIfAbsent(
+    operationId,
     token,
     committedContinuationState({
       operationId,
@@ -500,7 +607,8 @@ test('dispatch-committed deferred continuation never redispatches and accepts a 
   const token = testDurableToken('dispatch-committed-no-redispatch-token');
   const operationId = 'dispatch-committed-no-redispatch-operation';
   const sellerWorkId = 'dispatch-committed-no-redispatch-work';
-  await storage.putIfAbsent(
+  await storage.putForSettlementOperationIfAbsent(
+    operationId,
     token,
     committedContinuationState({
       operationId,
@@ -557,7 +665,8 @@ test('immediate deferred callback can finalize after dispatch commit without dea
   const token = testDurableToken('immediate-callback-after-dispatch-commit-token');
   const operationId = 'immediate-callback-after-dispatch-commit-operation';
   const sellerWorkId = 'immediate-callback-after-dispatch-commit-work';
-  await storage.putIfAbsent(
+  await storage.putForSettlementOperationIfAbsent(
+    operationId,
     token,
     committedContinuationState({
       operationId,
@@ -614,7 +723,8 @@ for (const responseStatus of ['submitted', 'working']) {
     const token = testDurableToken(`webhook-first-${responseStatus}-response-token`);
     const operationId = `webhook-first-${responseStatus}-response-operation`;
     const sellerWorkId = `webhook-first-${responseStatus}-response-work`;
-    await storage.putIfAbsent(
+    await storage.putForSettlementOperationIfAbsent(
+      operationId,
       token,
       committedContinuationState({
         operationId,
@@ -664,7 +774,8 @@ test('active callback finalization remains typed contention and replays after ac
   const token = testDurableToken('active-callback-finalizer-contention-token');
   const operationId = 'active-callback-finalizer-contention-operation';
   const sellerWorkId = 'active-callback-finalizer-contention-work';
-  await storage.putIfAbsent(
+  await storage.putForSettlementOperationIfAbsent(
+    operationId,
     token,
     committedContinuationState({
       operationId,
@@ -719,7 +830,8 @@ test('finalized acknowledgement rejects handler-mutated seller identity and leav
   const operationId = 'finalized-handler-mutated-seller-id-operation';
   const sellerWorkId = 'finalized-handler-mutated-seller-id-work';
   const exactTerminal = committedTerminalResult(operationId, sellerWorkId, 'finalized-handler-mutated-seller-id-buy');
-  await storage.putIfAbsent(
+  await storage.putForSettlementOperationIfAbsent(
+    operationId,
     token,
     committedContinuationState({
       operationId,
@@ -771,7 +883,8 @@ test('finalization acknowledgement storage failures are typed and preserve a ret
     const operationId = `finalization-${failurePoint}-failure-operation`;
     const sellerWorkId = `finalization-${failurePoint}-failure-work`;
     const terminal = committedTerminalResult(operationId, sellerWorkId, `finalization-${failurePoint}-failure-buy`);
-    await storage.putIfAbsent(
+    await storage.putForSettlementOperationIfAbsent(
+      operationId,
       token,
       committedContinuationState({
         operationId,
@@ -792,7 +905,7 @@ test('finalization acknowledgement storage failures are typed and preserve a ret
     assert.ok(checkpointed);
     const storageFailure = new Error(`injected finalization ${failurePoint} failure`);
     const originalGet = storage.get.bind(storage);
-    const originalReplace = storage.replaceIfVersion.bind(storage);
+    const originalReplace = storage.replaceForSettlementOperationIfVersion.bind(storage);
     if (failurePoint === 'get') {
       let failNextGet = true;
       storage.get = async key => {
@@ -804,12 +917,12 @@ test('finalization acknowledgement storage failures are typed and preserve a ret
       };
     } else {
       let failNextFinalizedCas = true;
-      storage.replaceIfVersion = async (key, version, value, ttl) => {
+      storage.replaceForSettlementOperationIfVersion = async (operation, key, version, replacementKey, value, ttl) => {
         if (failNextFinalizedCas && value.settlementFinalizedResult !== undefined) {
           failNextFinalizedCas = false;
           return false;
         }
-        return originalReplace(key, version, value, ttl);
+        return originalReplace(operation, key, version, replacementKey, value, ttl);
       };
     }
 
@@ -826,14 +939,14 @@ test('finalization acknowledgement storage failures are typed and preserve a ret
       assert.equal(retryable.settlementFinalizedResult, undefined);
 
       storage.get = originalGet;
-      storage.replaceIfVersion = originalReplace;
+      storage.replaceForSettlementOperationIfVersion = originalReplace;
       const retry = await executor.checkpointExternalDeferredSettlement(token, operationId, structuredClone(terminal));
       assert.ok(retry);
       await acknowledgeDeferredSettlement(retry);
       assert.equal((await originalGet(token)).settlementFinalizedResult.data.media_buy_id, terminal.data.media_buy_id);
     } finally {
       storage.get = originalGet;
-      storage.replaceIfVersion = originalReplace;
+      storage.replaceForSettlementOperationIfVersion = originalReplace;
       storage.destroy();
     }
   }
@@ -845,7 +958,8 @@ test('finalization lease release storage failure is typed with the adapter error
   const operationId = 'finalization-release-storage-failure-operation';
   const sellerWorkId = 'finalization-release-storage-failure-work';
   const terminal = committedTerminalResult(operationId, sellerWorkId, 'finalization-release-storage-failure-buy');
-  await storage.putIfAbsent(
+  await storage.putForSettlementOperationIfAbsent(
+    operationId,
     token,
     committedContinuationState({
       operationId,
@@ -865,12 +979,12 @@ test('finalization lease release storage failure is typed with the adapter error
   );
   assert.ok(checkpointed);
   const storageFailure = new Error('injected finalization release storage failure');
-  const originalReplace = storage.replaceIfVersion.bind(storage);
-  storage.replaceIfVersion = async (key, version, value, ttl) => {
+  const originalReplace = storage.replaceForSettlementOperationIfVersion.bind(storage);
+  storage.replaceForSettlementOperationIfVersion = async (operation, key, version, replacementKey, value, ttl) => {
     if (value.settlementFinalizationLease === undefined && value.settlementFinalizedResult === undefined) {
       throw storageFailure;
     }
-    return originalReplace(key, version, value, ttl);
+    return originalReplace(operation, key, version, replacementKey, value, ttl);
   };
 
   try {
@@ -879,7 +993,7 @@ test('finalization lease release storage failure is typed with the adapter error
       error => error instanceof DeferredSettlementOwnershipError && error.cause === storageFailure
     );
   } finally {
-    storage.replaceIfVersion = originalReplace;
+    storage.replaceForSettlementOperationIfVersion = originalReplace;
     storage.destroy();
   }
 });
@@ -891,7 +1005,8 @@ test('terminal continuation binds trusted seller work identity independently of 
   const operationId = 'trusted-terminal-task-binding-operation';
   const sellerWorkId = 'trusted-terminal-seller-work';
   const a2aTaskId = `${operationId}-a2a-task`;
-  await storage.putIfAbsent(
+  await storage.putForSettlementOperationIfAbsent(
+    operationId,
     token,
     committedContinuationState({
       operationId,
@@ -957,7 +1072,8 @@ test('replacement pause cannot change the committed seller work identity', async
   const operationId = 'replacement-pause-seller-id-conflict-operation';
   const sellerWorkId = 'replacement-pause-seller-id-conflict-work';
   const conflictingWorkId = 'replacement-pause-conflicting-work';
-  await storage.putIfAbsent(
+  await storage.putForSettlementOperationIfAbsent(
+    operationId,
     token,
     committedContinuationState({
       operationId,
@@ -1018,7 +1134,8 @@ test('nested committed pause without a repeated work ID retains the trusted sell
   const token = testDurableToken('nested-pause-omitted-seller-id-token');
   const operationId = 'nested-pause-omitted-seller-id-operation';
   const sellerWorkId = 'nested-pause-omitted-seller-id-work';
-  await storage.putIfAbsent(
+  await storage.putForSettlementOperationIfAbsent(
+    operationId,
     token,
     committedContinuationState({
       operationId,
@@ -1075,7 +1192,8 @@ for (const responseStatus of ['working', 'submitted']) {
     const token = testDurableToken(`${responseStatus}-omitted-seller-id-token`);
     const operationId = `${responseStatus}-omitted-seller-id-operation`;
     const sellerWorkId = `${responseStatus}-omitted-seller-id-work`;
-    await storage.putIfAbsent(
+    await storage.putForSettlementOperationIfAbsent(
+      operationId,
       token,
       committedContinuationState({
         operationId,
@@ -1139,7 +1257,8 @@ for (const responseStatus of ['working', 'submitted']) {
     const operationId = `${responseStatus}-seller-id-conflict-operation`;
     const sellerWorkId = `${responseStatus}-seller-id-conflict-work`;
     const conflictingWorkId = `${responseStatus}-conflicting-work`;
-    await storage.putIfAbsent(
+    await storage.putForSettlementOperationIfAbsent(
+      operationId,
       token,
       committedContinuationState({
         operationId,
@@ -1179,7 +1298,8 @@ test('submitted fallback correlation ID is never persisted as seller work identi
   const storage = new MemoryStorage({ autoCleanup: false });
   const token = testDurableToken('submitted-local-fallback-not-seller-work-token');
   const operationId = 'submitted-local-fallback-not-seller-work-operation';
-  await storage.putIfAbsent(
+  await storage.putForSettlementOperationIfAbsent(
+    operationId,
     token,
     committedContinuationState({
       operationId,
@@ -1219,7 +1339,8 @@ test('transport uncertainty retains the dispatch-committed fence for callback re
   const token = testDurableToken('transport-uncertainty-dispatch-fence-token');
   const operationId = 'transport-uncertainty-dispatch-fence-operation';
   const sellerWorkId = 'transport-uncertainty-dispatch-fence-work';
-  await storage.putIfAbsent(
+  await storage.putForSettlementOperationIfAbsent(
+    operationId,
     token,
     committedContinuationState({
       operationId,
@@ -1360,7 +1481,8 @@ test('SingleAgentClient discovers the current MCP endpoint before resuming persi
     agent_uri: 'https://seller.example',
     protocol: 'mcp',
   };
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     token,
     {
       continuationVersion: 'mcp-discovered-version',
@@ -1741,7 +1863,8 @@ test('resumed v2 submitted continuations keep v2 polling semantics', async () =>
   const storage = new MemoryStorage({ autoCleanup: false });
   const token = testDurableToken('v2-resumed-submitted-token');
   const now = Date.now();
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     token,
     {
       continuationVersion: 'v2-submitted-version',
@@ -2009,7 +2132,8 @@ test('restart resume routes a committed terminal result through durable settleme
   const storage = new MemoryStorage({ autoCleanup: false });
   const token = testDurableToken('committed-restart-settlement-token');
   const now = Date.now();
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     token,
     {
       continuationVersion: 'committed-restart-version',
@@ -2089,7 +2213,8 @@ test('low-level committed resume refuses before seller dispatch and retains the 
   const storage = new MemoryStorage({ autoCleanup: false });
   const token = testDurableToken('low-level-committed-token');
   const now = Date.now();
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     token,
     {
       continuationVersion: 'low-level-version',
@@ -2133,7 +2258,8 @@ test('owning client without a recoverer refuses committed resume before dispatch
   const storage = new MemoryStorage({ autoCleanup: false });
   const token = testDurableToken('missing-recoverer-token');
   const now = Date.now();
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     token,
     {
       continuationVersion: 'missing-recoverer-version',
@@ -2178,7 +2304,8 @@ test('an unlinked committed continuation cannot resume even when settlement reco
   const token = testDurableToken('unlinked-committed-token');
   const operationId = 'unlinked-committed-operation';
   const now = Date.now();
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     token,
     {
       continuationVersion: 'unlinked-committed-version',
@@ -2227,7 +2354,8 @@ test('failed committed recovery retains the terminal observation and retries wit
   const token = testDurableToken('retryable-terminal-settlement-token');
   const operationId = 'retryable-terminal-operation';
   const now = Date.now();
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     token,
     {
       continuationVersion: 'retryable-terminal-version',
@@ -2340,7 +2468,8 @@ test('transport failure retains a claimed fence without aliasing raw resume inpu
   const storage = new MemoryStorage({ autoCleanup: false });
   const token = testDurableToken('transport-failure-resume-secret-token');
   const now = Date.now();
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     token,
     {
       continuationVersion: 'transport-failure-resume-secret-version',
@@ -2393,7 +2522,8 @@ test('committed submitted resume reconstructs polling after restart without redi
   const operationId = 'restart-pending-settlement-operation';
   const sellerWorkId = 'restart-pending-seller-work';
   const now = Date.now();
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     token,
     {
       continuationVersion: 'restart-pending-version',
@@ -2488,7 +2618,8 @@ test('pending terminal polling checkpoints before one replica enters durable rec
   const operationId = 'concurrent-pending-settlement-operation';
   const sellerWorkId = 'concurrent-pending-seller-work';
   const now = Date.now();
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     token,
     {
       continuationVersion: 'concurrent-pending-version',
@@ -2591,7 +2722,8 @@ test('local pending-poll failures retain the seller work handle until an authori
   const operationId = 'retryable-pending-observer-operation';
   const sellerWorkId = 'retryable-pending-observer-work';
   const now = Date.now();
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     token,
     {
       continuationVersion: 'retryable-pending-observer-version',
@@ -2682,7 +2814,8 @@ test('pending polling keeps input and auth pauses nonresumable without an A2A co
       const operationId = `pending-${pauseStatus}-operation`;
       const sellerWorkId = `pending-${pauseStatus}-seller-work`;
       const now = Date.now();
-      await storage.putIfAbsent(
+      await storeDeferredState(
+        storage,
         token,
         {
           continuationVersion: `pending-${pauseStatus}-version`,
@@ -2779,7 +2912,8 @@ test('terminal track checkpoints raw seller output for public token finalization
   const operationId = 'track-checkpoint-operation';
   const sellerWorkId = 'track-checkpoint-seller-work';
   const now = Date.now();
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     token,
     {
       continuationVersion: 'track-checkpoint-version',
@@ -2891,7 +3025,8 @@ test('external callbacks cannot replace an existing deferred terminal winner', a
     ...terminalWinner,
     data: { media_buy_id: 'conflicting-callback-buy', packages: [] },
   };
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     token,
     {
       continuationVersion: 'external-terminal-conflict-version',
@@ -2988,7 +3123,8 @@ test('finalized deferred callbacks compare the raw seller observation while publ
     expiresAt: now + 60_000,
   };
   await storage.putIfAbsent(token, { ...baseState, settlementTerminalResult: rawSellerResult }, 60);
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     malformedToken,
     { ...baseState, continuationVersion: 'finalized-external-callback-missing-raw-version' },
     60
@@ -3022,7 +3158,8 @@ test('old terminal checkpoint restores trusted seller task identity before recov
   const rawTerminal = committedTerminalResult(operationId, sellerWorkId, 'old-terminal-trusted-buy');
   delete rawTerminal.metadata.serverTaskId;
   const now = Date.now();
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     token,
     {
       ...committedContinuationState({
@@ -3030,6 +3167,7 @@ test('old terminal checkpoint restores trusted seller task identity before recov
         sellerWorkId,
         version: 'old-terminal-missing-server-task-version',
         now,
+        routeRequired: false,
       }),
       continuationClaimed: true,
       settlementTerminalResult: rawTerminal,
@@ -3090,7 +3228,8 @@ test('terminal resume binds a newly observed seller task ID for finalized callba
     expiresAt: now + 60_000,
   };
   await storage.putIfAbsent(token, baseState, 60);
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     mismatchToken,
     {
       ...baseState,
@@ -3168,7 +3307,8 @@ test('pending restart refuses protocol drift before polling or recovery', async 
   const token = testDurableToken('pending-protocol-drift-token');
   const operationId = 'pending-protocol-drift-operation';
   const now = Date.now();
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     token,
     {
       continuationVersion: 'pending-protocol-drift-version',
@@ -3224,7 +3364,8 @@ test('failed completion handler retains the checkpoint and retries finalization 
   const token = testDurableToken('retryable-finalizer-token');
   const operationId = 'retryable-finalizer-operation';
   const now = Date.now();
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     token,
     {
       continuationVersion: 'retryable-finalizer-version',
@@ -3307,7 +3448,8 @@ test('an active terminal checkpoint lease excludes concurrent clients', async ()
   const token = testDurableToken('concurrent-finalizer-token');
   const operationId = 'concurrent-finalizer-operation';
   const now = Date.now();
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     token,
     {
       continuationVersion: 'concurrent-finalizer-version',
@@ -3421,7 +3563,8 @@ test('terminal checkpoint receives a fresh recovery horizon when seller continua
   const operationId = 'cross-expiry-operation';
   const now = Date.now();
   const originalExpiry = now + 50;
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     token,
     {
       continuationVersion: 'cross-expiry-version',
@@ -3482,7 +3625,8 @@ test('ordinary deferred cleanup stays generation-fenced when seller work crosses
   const storage = new MemoryStorage({ autoCleanup: false });
   const token = testDurableToken('cross-expiry-ordinary-token');
   const now = Date.now();
-  await storage.putIfAbsent(
+  await storeDeferredState(
+    storage,
     token,
     {
       continuationVersion: 'cross-expiry-ordinary-version',

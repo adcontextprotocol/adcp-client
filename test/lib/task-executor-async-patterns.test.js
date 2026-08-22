@@ -28,6 +28,10 @@ function a2aPausedTask({ state = 'input-required', question, field, contextId, t
 }
 
 function atomicDeferredStorage(states = new Map()) {
+  const operationRoutes = new Map();
+  for (const [token, state] of states) {
+    if (state.settlementOperationId) operationRoutes.set(state.settlementOperationId, token);
+  }
   return {
     set: mock.fn(async (token, state) => states.set(token, state)),
     putIfAbsent: mock.fn(async (token, state) => {
@@ -46,6 +50,34 @@ function atomicDeferredStorage(states = new Map()) {
       states.delete(token);
       return state;
     }),
+    putForSettlementOperationIfAbsent: mock.fn(async (operationId, token, state) => {
+      if (operationRoutes.has(operationId) || states.has(token) || state.settlementOperationId !== operationId) {
+        return false;
+      }
+      states.set(token, state);
+      operationRoutes.set(operationId, token);
+      return true;
+    }),
+    getBySettlementOperationId: mock.fn(async operationId => {
+      const token = operationRoutes.get(operationId);
+      const state = token ? states.get(token) : undefined;
+      return token && state ? { token, state } : undefined;
+    }),
+    replaceForSettlementOperationIfVersion: mock.fn(
+      async (operationId, currentToken, expectedVersion, replacementToken, replacementState) => {
+        if (
+          operationRoutes.get(operationId) !== currentToken ||
+          states.get(currentToken)?.continuationVersion !== expectedVersion ||
+          (replacementToken !== currentToken && states.has(replacementToken)) ||
+          replacementState.settlementOperationId !== operationId
+        ) {
+          return false;
+        }
+        states.set(replacementToken, replacementState);
+        operationRoutes.set(operationId, replacementToken);
+        return true;
+      }
+    ),
     get: mock.fn(async token => states.get(token)),
     take: mock.fn(async token => {
       const state = states.get(token);
@@ -746,6 +778,32 @@ describe(
         );
       });
 
+      test('rejects committed pause storage without operation routing before seller dispatch', async () => {
+        const storage = atomicDeferredStorage();
+        delete storage.putForSettlementOperationIfAbsent;
+        delete storage.getBySettlementOperationId;
+        delete storage.replaceForSettlementOperationIfVersion;
+        ProtocolClient.callTool = mock.fn(async () =>
+          a2aPausedTask({ question: 'Must not dispatch', taskId: 'missing-operation-route-task' })
+        );
+        const executor = new TaskExecutor({ deferredStorage: storage, strictSchemaValidation: false });
+        await assert.rejects(
+          executor.executeTask(mockAgent, 'approvalTask', {}, undefined, {}, 'v3', undefined, async () => ({
+            action: 'dispatch_committed',
+            requireDeferredSettlementResumeAuthorization: true,
+            onResult: async result => result,
+            onError: async error => {
+              throw error;
+            },
+          })),
+          error => {
+            assert.match(error.cause?.message ?? '', /operation routing/);
+            return true;
+          }
+        );
+        assert.strictEqual(ProtocolClient.callTool.mock.callCount(), 0);
+      });
+
       test('rejects weak durable bearer tokens before storage access', async () => {
         const storage = atomicDeferredStorage();
         const executor = new TaskExecutor({ deferredStorage: storage });
@@ -906,6 +964,61 @@ describe(
         assert.deepStrictEqual(state.params, { data: 'important' });
         assert.strictEqual(state.agentId, 'test-agent');
         assert.doesNotMatch(JSON.stringify(state), /must-not-persist-agent-token/);
+      });
+
+      test('rediscovers an initial committed pause by operation after a pre-handoff crash', async () => {
+        const states = new Map();
+        const storage = atomicDeferredStorage(states);
+        const token = testDurableToken('initial-operation-route-token');
+        let calls = 0;
+        ProtocolClient.callTool = mock.fn(async () => {
+          calls += 1;
+          return a2aPausedTask({
+            question: 'Approve the committed purchase?',
+            contextId: 'initial-operation-route-context',
+            taskId: 'initial-operation-route-task',
+          });
+        });
+        const original = new TaskExecutor({ deferredStorage: storage, strictSchemaValidation: false });
+        const paused = await original.executeTask(
+          mockAgent,
+          'approvalTask',
+          {},
+          async () => ({ defer: true, token }),
+          {},
+          'v3',
+          undefined,
+          async () => ({
+            action: 'dispatch_committed',
+            requireDeferredSettlementResumeAuthorization: true,
+            onResult: async result => result,
+            onError: async error => {
+              throw error;
+            },
+          })
+        );
+
+        const restarted = new TaskExecutor({
+          deferredStorage: storage,
+          resolveDeferredAgent: async () => mockAgent,
+          authorizeDeferredSettlementOperationRecovery: async (_operationId, recoveryKey) =>
+            recoveryKey === 'initial-operation-owner-capability',
+          strictSchemaValidation: false,
+        });
+        await assert.rejects(
+          restarted.recoverDeferredTaskForOperation(paused.metadata.taskId, 'wrong-owner-capability', false),
+          /not authorized/
+        );
+        const recovered = await restarted.recoverDeferredTaskForOperation(
+          paused.metadata.taskId,
+          'initial-operation-owner-capability',
+          false
+        );
+        assert.strictEqual(recovered.token, token);
+        assert.strictEqual(recovered.result.status, 'deferred');
+        assert.strictEqual(recovered.result.deferred.token, token);
+        assert.strictEqual(recovered.result.deferred.question, 'Approve the committed purchase?');
+        assert.strictEqual(calls, 1, 'route discovery must not redispatch the original mutation');
       });
 
       test('persists and resumes an A2A deferral without inventing a seller context ID', async () => {
@@ -1239,10 +1352,12 @@ describe(
         assert.strictEqual(calls, 2);
       });
 
-      test('fences both generations when committed nested-token handoff fails after seller dispatch', async () => {
+      test('recovers the indexed replacement when coordinator handoff fails after seller dispatch', async () => {
         const states = new Map();
         const storage = atomicDeferredStorage(states);
         const initialToken = testDurableToken('failed-handoff-token-a');
+        let currentToken = initialToken;
+        let failReplacement = true;
         let calls = 0;
         ProtocolClient.callTool = mock.fn(async () => {
           calls += 1;
@@ -1254,8 +1369,12 @@ describe(
         });
         const executor = new TaskExecutor({
           deferredStorage: storage,
-          authorizeDeferredSettlementResume: async (_operationId, token) => token === initialToken,
-          replaceDeferredSettlementResumeToken: async () => false,
+          authorizeDeferredSettlementResume: async (_operationId, token) => token === currentToken,
+          replaceDeferredSettlementResumeToken: async (_operationId, expectedToken, replacementToken) => {
+            if (failReplacement || currentToken !== expectedToken) return false;
+            currentToken = replacementToken;
+            return true;
+          },
           canRecoverDeferredSettlement: async () => true,
           recoverDeferredSettlement: async result => ({ result }),
           strictSchemaValidation: false,
@@ -1280,7 +1399,7 @@ describe(
 
         await assert.rejects(
           executor.resumeDeferredTask(initial.deferred.token, { approved: true }),
-          /replacement could not be durably linked/
+          /coordinator route still needs recovery/
         );
         const replacementToken = [...states.keys()].find(token => token !== initialToken);
         assert.ok(replacementToken, 'the seller-issued replacement stays durably fenced');
@@ -1288,8 +1407,12 @@ describe(
           executor.resumeDeferredTask(replacementToken, { confirmed: true }),
           /not the current durable route/
         );
-        await assert.rejects(executor.resumeDeferredTask(initialToken, { approved: true }), /already being resumed/);
-        assert.strictEqual(calls, 2, 'neither generation may redispatch seller input after handoff failure');
+        failReplacement = false;
+        const recovered = await executor.resumeDeferredTask(initialToken, { approved: true });
+        assert.strictEqual(recovered.status, 'input-required');
+        assert.strictEqual(recovered.deferred.token, replacementToken);
+        assert.strictEqual(currentToken, replacementToken);
+        assert.strictEqual(calls, 2, 'recovering B must not redispatch the already-consumed input for A');
       });
 
       test('keeps polling-only committed pauses out of public durable-token recovery', async () => {

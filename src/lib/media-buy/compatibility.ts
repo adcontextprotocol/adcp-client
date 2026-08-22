@@ -1642,6 +1642,7 @@ export class MediaBuyLifecycleCoordinator {
   private acceptanceTaskUnsubscribe?: () => void;
   private legacyPurchaseSettlementRecoveryUnsubscribe?: () => void;
   private legacyPurchaseDeferredAuthorizationUnsubscribe?: () => void;
+  private legacyPurchaseDeferredOperationRecoveryUnsubscribe?: () => void;
   private legacyPurchaseDeferredReplacementUnsubscribe?: () => void;
   private readonly legacyPurchaseWatchControllers = new Set<AbortController>();
   private disposed = false;
@@ -1777,6 +1778,10 @@ export class MediaBuyLifecycleCoordinator {
       this.legacyPurchaseDeferredAuthorizationUnsubscribe = this.agent.registerDurableDeferredResumeAuthorization(
         (operationId, token) => this.authorizeLegacyDeferredResume(operationId, token)
       );
+      this.legacyPurchaseDeferredOperationRecoveryUnsubscribe =
+        this.agent.registerDurableDeferredOperationRecoveryAuthorization((operationId, recoveryKey, purpose) =>
+          this.authorizeLegacyDeferredOperationRecovery(operationId, recoveryKey, purpose)
+        );
       this.legacyPurchaseDeferredReplacementUnsubscribe = this.agent.registerDurableDeferredResumeTokenReplacement(
         (operationId, currentToken, replacementToken) =>
           this.replaceLegacyDeferredResumeToken(operationId, currentToken, replacementToken)
@@ -4655,6 +4660,8 @@ export class MediaBuyLifecycleCoordinator {
     this.legacyPurchaseSettlementRecoveryUnsubscribe = undefined;
     this.legacyPurchaseDeferredAuthorizationUnsubscribe?.();
     this.legacyPurchaseDeferredAuthorizationUnsubscribe = undefined;
+    this.legacyPurchaseDeferredOperationRecoveryUnsubscribe?.();
+    this.legacyPurchaseDeferredOperationRecoveryUnsubscribe = undefined;
     this.legacyPurchaseDeferredReplacementUnsubscribe?.();
     this.legacyPurchaseDeferredReplacementUnsubscribe = undefined;
     for (const controller of this.legacyPurchaseWatchControllers) {
@@ -5709,6 +5716,35 @@ export class MediaBuyLifecycleCoordinator {
         const persistedClaim: LegacyPurchaseClaim = persistedOperation;
         if (
           claimed.outcome === 'in_flight' &&
+          persistedOperation.callbackOperationId &&
+          persistedOperation.pendingSettlement === undefined
+        ) {
+          const recoveredDeferred = await this.agent.recoverDeferredTaskForOperation<CreateMediaBuyResponse>(
+            persistedOperation.callbackOperationId,
+            token,
+            false
+          );
+          if (recoveredDeferred) {
+            // The SDK operation index is committed in the same atomic write as
+            // pause A (and atomically moves A -> B). It therefore recovers the
+            // two-store crash window before this lifecycle record learned the
+            // initial or replacement opaque token.
+            return {
+              action: 'return',
+              result: await this.trackLegacyPurchaseResult(
+                token,
+                persistedClaim,
+                recoveredDeferred.result,
+                context.publishSettledTaskStatus,
+                context.registerExternalTaskSettlement,
+                optionsSnapshot?.transport,
+                persistedOperation.deferredTaskToken
+              ),
+            };
+          }
+        }
+        if (
+          claimed.outcome === 'in_flight' &&
           !persistedOperation.sellerTaskId &&
           persistedOperation.pendingSettlement
         ) {
@@ -6589,6 +6625,39 @@ export class MediaBuyLifecycleCoordinator {
     return operation.pendingSettlement === undefined && operation.deferredTaskToken === deferredToken;
   }
 
+  private async authorizeLegacyDeferredOperationRecovery(
+    operationId: string,
+    recoveryKey: string,
+    purpose: 'pause-recovery' | 'callback-checkpoint'
+  ): Promise<boolean | undefined> {
+    const findByOperationId = this.legacyPurchaseContinuationStore.getByCallbackOperationId;
+    if (!findByOperationId) return undefined;
+    const indexed = await findByOperationId.call(this.legacyPurchaseContinuationStore, operationId);
+    if (!indexed || indexed.token !== recoveryKey) return false;
+    const continuation = await this.legacyPurchaseContinuationStore.get(recoveryKey);
+    if (!continuation || continuation.token !== recoveryKey || continuation.operation.state === 'available') {
+      return false;
+    }
+    const operation = continuation.operation;
+    const replayExpiresAt = Date.parse(operation.replayExpiresAt);
+    const expected = this.legacyPurchaseBinding(continuation.accountScope);
+    const replayIsRecoverable =
+      (Number.isFinite(replayExpiresAt) && replayExpiresAt > Date.now()) ||
+      (purpose === 'callback-checkpoint' && operation.pendingSettlement?.publicationSource === 'sdk');
+    const bound =
+      operation.callbackOperationId === operationId &&
+      replayIsRecoverable &&
+      continuation.principalScope === expected.principalScope &&
+      continuation.accountScope === expected.accountScope &&
+      continuation.sellerScope === expected.sellerScope &&
+      continuation.clientSessionScope === expected.clientSessionScope &&
+      continuation.sourceAdcpVersion === expected.sourceAdcpVersion;
+    if (!bound) return false;
+    return purpose === 'callback-checkpoint'
+      ? true
+      : operation.state === 'claimed' && operation.pendingSettlement === undefined;
+  }
+
   private async replaceLegacyDeferredResumeToken(
     operationId: string,
     currentToken: string,
@@ -6800,14 +6869,67 @@ export class MediaBuyLifecycleCoordinator {
     // terminal record. Otherwise a prior polling winner could reject this
     // callback only after the two durable stores had committed different
     // terminal values.
-    const linkedDeferredCheckpoint =
-      observation.deferredCheckpointOwned === true || !claim.deferredTaskToken
+    let linkedDeferredRoute =
+      observation.deferredCheckpointOwned === true
         ? undefined
-        : await this.agent.checkpointExternalDeferredSettlement(
-            claim.deferredTaskToken,
+        : await this.agent.checkpointExternalDeferredSettlementForOperation(
             operationId,
+            continuationToken,
             deferredCheckpointCandidate
           );
+    if (
+      observation.deferredCheckpointOwned !== true &&
+      linkedDeferredRoute === undefined &&
+      claim.deferredTaskToken &&
+      (await this.agent.hasDurablyStoredDeferredTask(claim.deferredTaskToken))
+    ) {
+      const legacyCheckpoint = await this.agent.checkpointExternalDeferredSettlement(
+        claim.deferredTaskToken,
+        operationId,
+        deferredCheckpointCandidate
+      );
+      linkedDeferredRoute = {
+        token: claim.deferredTaskToken,
+        ...(legacyCheckpoint !== undefined && { result: legacyCheckpoint }),
+      };
+    }
+    if (linkedDeferredRoute && claim.deferredTaskToken !== linkedDeferredRoute.token) {
+      if (claim.state !== 'claimed') {
+        throw new LegacyPurchaseContinuationError(
+          'store_error',
+          'The completed callback route does not match the current SDK continuation generation.',
+          false
+        );
+      }
+      const rebound = await this.legacyPurchaseContinuationStore.recordDeferredTaskToken!(
+        continuationToken,
+        claim,
+        linkedDeferredRoute.token,
+        claim.deferredTaskToken
+      );
+      if (!rebound) {
+        throw new LegacyPurchaseContinuationError(
+          'store_error',
+          'Could not atomically reconcile the callback to the current SDK continuation generation.',
+          true
+        );
+      }
+      const reboundRecord = await this.legacyPurchaseContinuationStore.get(continuationToken);
+      if (
+        !reboundRecord ||
+        reboundRecord.operation.state !== 'claimed' ||
+        reboundRecord.operation.callbackOperationId !== operationId ||
+        reboundRecord.operation.deferredTaskToken !== linkedDeferredRoute.token
+      ) {
+        throw new LegacyPurchaseContinuationError(
+          'store_error',
+          'Could not verify the callback SDK continuation generation after reconciliation.',
+          true
+        );
+      }
+      claim = reboundRecord.operation;
+    }
+    const linkedDeferredCheckpoint = linkedDeferredRoute?.result;
     const bridgeDeferredCheckpoint = (
       status: ExternalTaskStatusResult,
       canonical: TaskResult<CreateMediaBuyResponse>
