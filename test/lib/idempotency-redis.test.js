@@ -288,6 +288,64 @@ test('redisBackend assigns configured retention to legacy serialized entries', a
   assert.equal(entry.retainUntil, 1_090);
 });
 
+test('redisBackend payload-hash fencing replaces and deletes only the current owner', async () => {
+  const values = new Map();
+  const client = {
+    get: async key => values.get(key) ?? null,
+    set: async (key, value) => {
+      values.set(key, value);
+      return 'OK';
+    },
+    del: async key => (values.delete(key) ? 1 : 0),
+    eval: async (script, options) => {
+      assert.match(script, /if current\.payloadHash ~= ARGV\[1\] then return 0 end/);
+      const key = options.keys[0];
+      const raw = values.get(key);
+      if (raw === undefined) return 0;
+      const current = JSON.parse(raw);
+      if (current.payloadHash !== options.arguments[0]) return 0;
+      if (/redis\.call\('SET'/.test(script)) {
+        values.set(key, options.arguments[1]);
+        return 1;
+      }
+      assert.match(script, /redis\.call\('DEL'/);
+      return values.delete(key) ? 1 : 0;
+    },
+    ping: async () => 'PONG',
+  };
+  const { redisBackend } = require('../../dist/lib/server/index.js');
+  const backend = redisBackend(client, { keyPrefix: 'cas-test:' });
+  const now = Math.floor(Date.now() / 1000);
+  await backend.put('scope', {
+    payloadHash: 'owner-a',
+    response: { version: 1 },
+    expiresAt: now + 3600,
+    retainUntil: now + 3700,
+  });
+  const replacement = {
+    payloadHash: 'owner-b',
+    response: { version: 2 },
+    expiresAt: now + 7200,
+    retainUntil: now + 7500,
+  };
+
+  assert.equal(await backend.replaceIfPayloadHash('scope', 'stale-owner', replacement), false);
+  assert.deepEqual(await backend.get('scope'), {
+    payloadHash: 'owner-a',
+    response: { version: 1 },
+    expiresAt: now + 3600,
+    retainUntil: now + 3700,
+  });
+
+  assert.equal(await backend.replaceIfPayloadHash('scope', 'owner-a', replacement), true);
+  assert.deepEqual(await backend.get('scope'), replacement);
+
+  assert.equal(await backend.deleteIfPayloadHash('scope', 'owner-a'), false);
+  assert.deepEqual(await backend.get('scope'), replacement);
+  assert.equal(await backend.deleteIfPayloadHash('scope', 'owner-b'), true);
+  assert.equal(await backend.get('scope'), null);
+});
+
 describe('redisBackend', { skip: !REDIS_URL && 'REDIS_URL not set' }, () => {
   let client;
   let redisBackend, createIdempotencyStore;
@@ -453,6 +511,33 @@ describe('redisBackend', { skip: !REDIS_URL && 'REDIS_URL not set' }, () => {
     await backend.put('pk', { payloadHash: 'h', response: {}, expiresAt });
     await backend.delete('pk');
     assert.equal(await backend.get('pk'), null);
+  });
+
+  test('payload-hash fencing replaces and deletes only the current Redis value', async () => {
+    const backend = redisBackend(client);
+    const now = Math.floor(Date.now() / 1000);
+    await backend.put('pcas', {
+      payloadHash: 'owner-a',
+      response: { version: 1 },
+      expiresAt: now + 3600,
+      retainUntil: now + 3700,
+    });
+    const replacement = {
+      payloadHash: 'owner-b',
+      response: { version: 2 },
+      expiresAt: now + 7200,
+      retainUntil: now + 7500,
+    };
+
+    assert.equal(await backend.replaceIfPayloadHash('pcas', 'stale-owner', replacement), false);
+    assert.equal((await backend.get('pcas')).payloadHash, 'owner-a');
+    assert.equal(await backend.replaceIfPayloadHash('pcas', 'owner-a', replacement), true);
+    assert.deepEqual(await backend.get('pcas'), replacement);
+
+    assert.equal(await backend.deleteIfPayloadHash('pcas', 'owner-a'), false);
+    assert.deepEqual(await backend.get('pcas'), replacement);
+    assert.equal(await backend.deleteIfPayloadHash('pcas', 'owner-b'), true);
+    assert.equal(await backend.get('pcas'), null);
   });
 
   test('keyPrefix isolates writes from other apps on the same db', async () => {

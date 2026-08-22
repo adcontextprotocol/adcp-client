@@ -148,8 +148,10 @@ export interface IdempotencyBackend {
    */
   probe?(): Promise<void>;
   /**
-   * Optional hook for implementations that need to release resources
-   * (close pools, clear timers). Called by `store.close()`.
+   * Optional hook for implementations that need to release resources they
+   * created and own (for example internal timers or an internally constructed
+   * client). Called by `store.close()`. Backends must not close caller-owned
+   * pools or clients that were passed into the backend constructor.
    */
   close?(): Promise<void>;
   /**

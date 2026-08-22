@@ -62,6 +62,84 @@ test('pgBackend couples legacy physical retention to the configured store skew',
   );
 });
 
+test('pgBackend payload-hash fencing replaces and deletes only the current owner', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  let row = {
+    scoped_key: 'scope',
+    payload_hash: 'owner-a',
+    response: { version: 1 },
+    expires_at: now + 3600,
+    retain_until: now + 3700,
+  };
+  const db = {
+    query: async (sql, params) => {
+      if (/^\s*SELECT payload_hash/.test(sql)) {
+        return row
+          ? {
+              rows: [
+                {
+                  payload_hash: row.payload_hash,
+                  response: row.response,
+                  expires_at: row.expires_at,
+                  retain_until: row.retain_until,
+                },
+              ],
+              rowCount: 1,
+            }
+          : { rows: [], rowCount: 0 };
+      }
+      if (/^\s*UPDATE/.test(sql)) {
+        assert.match(sql, /WHERE scoped_key = \$1 AND payload_hash = \$2/);
+        if (!row || row.scoped_key !== params[0] || row.payload_hash !== params[1]) {
+          return { rows: [], rowCount: 0 };
+        }
+        row = {
+          scoped_key: params[0],
+          payload_hash: params[2],
+          response: JSON.parse(params[3]),
+          expires_at: params[4],
+          retain_until: params[5],
+        };
+        return { rows: [{ scoped_key: row.scoped_key }], rowCount: 1 };
+      }
+      if (/^\s*DELETE/.test(sql)) {
+        assert.match(sql, /WHERE scoped_key = \$1 AND payload_hash = \$2/);
+        if (!row || row.scoped_key !== params[0] || row.payload_hash !== params[1]) {
+          return { rows: [], rowCount: 0 };
+        }
+        const scopedKey = row.scoped_key;
+        row = undefined;
+        return { rows: [{ scoped_key: scopedKey }], rowCount: 1 };
+      }
+      assert.fail(`unexpected pgBackend query: ${sql}`);
+    },
+  };
+  const { pgBackend } = require('../../dist/lib/server/index.js');
+  const backend = pgBackend(db);
+  const replacement = {
+    payloadHash: 'owner-b',
+    response: { version: 2 },
+    expiresAt: now + 7200,
+    retainUntil: now + 7500,
+  };
+
+  assert.equal(await backend.replaceIfPayloadHash('scope', 'stale-owner', replacement), false);
+  assert.deepEqual(await backend.get('scope'), {
+    payloadHash: 'owner-a',
+    response: { version: 1 },
+    expiresAt: now + 3600,
+    retainUntil: now + 3700,
+  });
+
+  assert.equal(await backend.replaceIfPayloadHash('scope', 'owner-a', replacement), true);
+  assert.deepEqual(await backend.get('scope'), replacement);
+
+  assert.equal(await backend.deleteIfPayloadHash('scope', 'owner-a'), false);
+  assert.deepEqual(await backend.get('scope'), replacement);
+  assert.equal(await backend.deleteIfPayloadHash('scope', 'owner-b'), true);
+  assert.equal(await backend.get('scope'), null);
+});
+
 describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
   let Pool, pool;
   let pgBackend, getIdempotencyMigration, IDEMPOTENCY_MIGRATION, cleanupExpiredIdempotency;
@@ -252,6 +330,33 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
     await backend.put('p\u001fk', { payloadHash: 'h', response: {}, expiresAt });
     await backend.delete('p\u001fk');
     assert.equal(await backend.get('p\u001fk'), null);
+  });
+
+  test('payload-hash fencing replaces and deletes only the current pg row', async () => {
+    const backend = pgBackend(pool);
+    const now = Math.floor(Date.now() / 1000);
+    await backend.put('p\u001fcas', {
+      payloadHash: 'owner-a',
+      response: { version: 1 },
+      expiresAt: now + 3600,
+      retainUntil: now + 3700,
+    });
+    const replacement = {
+      payloadHash: 'owner-b',
+      response: { version: 2 },
+      expiresAt: now + 7200,
+      retainUntil: now + 7500,
+    };
+
+    assert.equal(await backend.replaceIfPayloadHash('p\u001fcas', 'stale-owner', replacement), false);
+    assert.equal((await backend.get('p\u001fcas')).payloadHash, 'owner-a');
+    assert.equal(await backend.replaceIfPayloadHash('p\u001fcas', 'owner-a', replacement), true);
+    assert.deepEqual(await backend.get('p\u001fcas'), replacement);
+
+    assert.equal(await backend.deleteIfPayloadHash('p\u001fcas', 'owner-a'), false);
+    assert.deepEqual(await backend.get('p\u001fcas'), replacement);
+    assert.equal(await backend.deleteIfPayloadHash('p\u001fcas', 'owner-b'), true);
+    assert.equal(await backend.get('p\u001fcas'), null);
   });
 
   // ────────── store + backend end-to-end ──────────
@@ -497,6 +602,8 @@ test('pgBackend redacts driver errors from every runtime operation', async () =>
     () => backend.get('scoped-key'),
     () => backend.put('scoped-key', entry),
     () => backend.putIfAbsent('scoped-key', entry),
+    () => backend.replaceIfPayloadHash('scoped-key', 'hash', entry),
+    () => backend.deleteIfPayloadHash('scoped-key', 'hash'),
     () => backend.delete('scoped-key'),
     () => cleanupExpiredIdempotency(db),
   ];
