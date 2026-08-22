@@ -271,7 +271,7 @@ describe('comply() exact-version capability refusal', () => {
 
       assert.strictEqual(result.overall_status, 'unreachable');
       assert.match(result.summary.headline, /VERSION_UNSUPPORTED/);
-      assert.match(result.summary.headline, /requested "3\.2-beta\.4"/);
+      assert.match(result.summary.headline, /requested "3\.2-beta\.5"/);
       assert.match(result.summary.headline, /seller supports "3\.2-beta\.2"/);
       assert.deepStrictEqual(result.storyboards_executed, []);
       assert.deepStrictEqual(result.tracks, []);

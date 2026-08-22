@@ -154,7 +154,7 @@ describe('discoverAgentProfile: AbortSignal honored (#1612)', () => {
     const { profile, step } = await discoverAgentProfile(client);
     assert.strictEqual(step.passed, false);
     assert.match(step.error, /^VERSION_UNSUPPORTED:/);
-    assert.match(step.error, /3\.2-beta\.4/);
+    assert.match(step.error, /3\.2-beta\.5/);
     assert.match(step.error, /3\.2-beta\.2/);
     assert.strictEqual(profile.capabilities_probe_error, step.error);
     assert.strictEqual(profile.adcp_version, undefined, 'must not synthesize a v2 capability profile');
