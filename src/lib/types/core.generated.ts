@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.2.0-beta.5
-// Generated at: 2026-08-22T15:18:18.201Z
+// Generated at: 2026-08-22T21:13:17.326Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -10233,6 +10233,94 @@ export interface AuthorizationResult {
     message: string;
   };
 }
+// CANONICALPROPOSAL PRIORITY EXTRACTED TYPE
+/**
+ * Compact immutable proposal for the AdCP 3.2 lifecycle. commercial_terms is the sole authoritative commercial envelope; narrative fields do not duplicate legacy allocation or creative graphs.
+ */
+export interface CanonicalProposal {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  proposal_id: string;
+  proposal_kind: 'new_media_buy' | 'media_buy_update' | 'media_buy_cancellation';
+  /**
+   * Immediate predecessor this snapshot was forked from. Every proposal produced by refine_proposals carries it, equal to the request's source proposal_id, so negotiation lineage is reconstructible from proposals alone.
+   * @minLength 1
+   * @maxLength 255
+   */
+  parent_proposal_id?: string;
+  /**
+   * @minLength 1
+   */
+  media_buy_id?: string;
+  /**
+   * Buyer planning cycle associated with this proposal. Revisions inherit it; it does not participate in proposal identity.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  opportunity_id?: string;
+  /**
+   * @minimum 1
+   */
+  base_media_buy_revision?: number;
+  proposal_status: ProposalStatus;
+  /**
+   * @format date-time
+   */
+  accepted_at?: string;
+  /**
+   * For a draft, the indicative-terms freshness deadline. For a committed proposal, the inventory-hold deadline.
+   * @format date-time
+   */
+  expires_at?: string;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  name: string;
+  /**
+   * @maxLength 2000
+   */
+  description?: string;
+  /**
+   * @maxLength 2000
+   */
+  brief_alignment?: string;
+  commercial_terms: CommercialTerms;
+  /**
+   * Base64url SHA-256 digest of the RFC 8785 JCS serialization of commercial_terms, prefixed with sha256:.
+   * @pattern ^sha256:[A-Za-z0-9_-]{43}$
+   */
+  terms_digest: string;
+  insertion_order?: InsertionOrder;
+  /**
+   * Optional budget guidance for this proposal — the planning answer to criteria.outcome_target and to open-budget briefs. commercial_terms.total_budget remains the concrete figure the plan is priced at; this band expresses the seller's recommended range around it.
+   */
+  total_budget_guidance?: {
+    /**
+     * @minimum 0
+     */
+    min?: number;
+    /**
+     * @minimum 0
+     */
+    recommended?: number;
+    /**
+     * @minimum 0
+     */
+    max?: number;
+    /**
+     * @pattern ^[A-Z]{3}$
+     */
+    currency: string;
+  };
+  /**
+   * Aggregate forecasted delivery for the proposal. For outcome_target requests, points carry the goal's metric or event key in metrics.
+   */
+  forecast?: CanonicalDeliveryForecast;
+}
 // REQUESTPROPOSALSRESPONSE PRIORITY EXTRACTED TYPE
 /**
  * One or more immutable draft media-plan proposals and compact canonical products referenced by their purchases. Products always carry product_id and name and never carry legacy named-format identifiers. During the AdCP 3.x compatibility window, an SDK projecting a valid products-only get_products brief result may instead return the deprecated products_available outcome with an explicit purchase continuation. Native 3.2 sellers MUST NOT use that compatibility outcome, and adapters MUST NOT fabricate a proposal, terms digest, or feed version.
@@ -16852,48 +16940,6 @@ export type GetProductsRejected = AdCPVersionEnvelope &
     context?: ContextObject;
     ext?: ExtensionObject;
   };
-/**
- * Compact immutable proposal for the AdCP 3.2 lifecycle. commercial_terms is the sole authoritative commercial envelope; narrative fields do not duplicate legacy allocation or creative graphs.
- */
-export type CanonicalProposal = {
-} & {
-  proposal_id: string;
-  proposal_kind: 'new_media_buy' | 'media_buy_update' | 'media_buy_cancellation';
-  /**
-   * Immediate predecessor this snapshot was forked from. Every proposal produced by refine_proposals carries it, equal to the request's source proposal_id, so negotiation lineage is reconstructible from proposals alone.
-   */
-  parent_proposal_id?: string;
-  media_buy_id?: string;
-  /**
-   * Buyer planning cycle associated with this proposal. Revisions inherit it; it does not participate in proposal identity.
-   */
-  opportunity_id?: string;
-  base_media_buy_revision?: number;
-  proposal_status: ProposalStatus;
-  accepted_at?: string;
-  /**
-   * For a draft, the indicative-terms freshness deadline. For a committed proposal, the inventory-hold deadline.
-   */
-  expires_at?: string;
-  name: string;
-  description?: string;
-  brief_alignment?: string;
-  commercial_terms: CommercialTerms;
-  /**
-   * Base64url SHA-256 digest of the RFC 8785 JCS serialization of commercial_terms, prefixed with sha256:.
-   */
-  terms_digest: string;
-  insertion_order?: InsertionOrder;
-  /**
-   * Optional budget guidance for this proposal — the planning answer to criteria.outcome_target and to open-budget briefs. commercial_terms.total_budget remains the concrete figure the plan is priced at; this band expresses the seller's recommended range around it.
-   */
-  total_budget_guidance?: {
-  };
-  /**
-   * Aggregate forecasted delivery for the proposal. For outcome_target requests, points carry the goal's metric or event key in metrics.
-   */
-  forecast?: CanonicalDeliveryForecast;
-};
 /**
  * Resolved selected pricing terms. Optional on buy_products input, where pricing_option_id plus the versioned feed identifies the offer; required inside accepted commercial_terms. Its pricing_option_id MUST match the sibling field.
  */
