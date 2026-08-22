@@ -4745,6 +4745,33 @@ describe('durable established proposal compatibility', () => {
     }
   });
 
+  test('projected continuations forward the internal exact-task-identity requirement', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.1' }));
+    const coordinator = await agent.negotiateMediaBuyLifecycle();
+    const terminal = durableCreateSuccess('mb-projected-identity');
+    const source = submitted('create_media_buy', terminal, { sellerTaskId: 'seller-projected-identity' });
+    let requireExactTaskIdentity;
+    source.submitted.waitForCompletion = async (_pollInterval, _signal, requireExactIdentity) => {
+      requireExactTaskIdentity = requireExactIdentity;
+      return terminal;
+    };
+    const projected = coordinator.adaptProjectedResult(
+      source,
+      {
+        negotiated_version: '3.1',
+        lifecycle: 'established',
+        tools_used: ['create_media_buy'],
+        compatibility: 'native',
+        warnings: [],
+        losses: [],
+      },
+      data => data
+    );
+
+    await projected.submitted.waitForCompletion(undefined, undefined, true);
+    assert.equal(requireExactTaskIdentity, true);
+  });
+
   test('fresh coordinators reconcile submitted refine and unable-decline results', async () => {
     for (const operation of ['refine', 'decline']) {
       const store = createInMemoryEstablishedProposalStore();

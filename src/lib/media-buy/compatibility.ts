@@ -4879,10 +4879,15 @@ export class MediaBuyLifecycleCoordinator {
               throw error;
             }
           },
-          waitForCompletion: async (pollInterval?: number, signal?: AbortSignal) => {
+          waitForCompletion: async (pollInterval?: number, signal?: AbortSignal, requireExactTaskIdentity = false) => {
             try {
               this.assertActive('lifecycle completion continuation');
-              const adapted = adapt(await submitted.waitForCompletion(pollInterval, signal));
+              const projectedWaitForCompletion = submitted.waitForCompletion as (
+                pollInterval?: number,
+                signal?: AbortSignal,
+                requireExactTaskIdentity?: boolean
+              ) => ReturnType<typeof submitted.waitForCompletion>;
+              const adapted = adapt(await projectedWaitForCompletion(pollInterval, signal, requireExactTaskIdentity));
               await this.flushEstablishedProposalStoreWrites();
               return adapted;
             } catch (error) {
