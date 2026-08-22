@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-08-21
+> Generated at: 2026-08-22
 > Library: @adcp/sdk v14.0.0-beta.6
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -1813,6 +1813,7 @@ See docs/TYPE-SUMMARY.md for field-level detail. Key types at a glance:
 | `Targeting` | Audience criteria (geo, demo, behavioral, contextual, device) |
 | `PricingOption` | Price model (CPM, vCPM, CPC, CPCV, CPV, CPP, CPA, FlatRate, Time) |
 | `GovernanceConfig` | Buyer-side governance middleware config |
+| `EstablishedProposalStore` | Durable 3.0/3.1 proposal snapshots, atomic mutation fences, and submitted-task reconciliation |
 
 ## Task Statuses
 

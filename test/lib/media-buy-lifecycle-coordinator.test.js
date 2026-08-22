@@ -6,6 +6,7 @@ const path = require('node:path');
 const {
   AgentClient,
   MediaBuyLifecycleCompatibilityError,
+  createInMemoryEstablishedProposalStore,
   createInMemoryLegacyPurchaseContinuationStore,
   proposalTermsDigest,
 } = require('../../dist/lib/index.js');
@@ -120,12 +121,12 @@ function failed(taskName) {
   };
 }
 
-function submitted(taskName, terminal) {
+function submitted(taskName, terminal, { localTaskId = `${taskName}-task`, sellerTaskId = `${taskName}-task` } = {}) {
   return {
     success: true,
     status: 'submitted',
     metadata: {
-      taskId: `${taskName}-task`,
+      taskId: localTaskId,
       taskName,
       agent: { id: AGENT.id, name: AGENT.name, protocol: AGENT.protocol },
       responseTimeMs: 1,
@@ -134,9 +135,9 @@ function submitted(taskName, terminal) {
       status: 'submitted',
     },
     submitted: {
-      taskId: `${taskName}-task`,
+      taskId: sellerTaskId,
       track: async () => ({
-        taskId: `${taskName}-task`,
+        taskId: sellerTaskId,
         status: terminal.status,
         taskType: taskName,
         createdAt: Date.now(),
@@ -171,6 +172,26 @@ function clientWithCaps(caps, adcpVersion) {
   const negotiate = agent.negotiateMediaBuyLifecycle.bind(agent);
   agent.negotiateMediaBuyLifecycle = options =>
     negotiate({ legacyPurchaseSellerSessionScope: 'test-authenticated-seller-session', ...options });
+  agent.getProductsLegacyWithPreDispatch = async (params, beforeDispatch, inputHandler, options) => {
+    const decision = await beforeDispatch(params, {
+      governanceAdjusted: false,
+      publishSettledTaskStatus: (status, data, error) => {
+        agent.lastSettledTaskStatus = { status, data, error };
+      },
+      registerExternalTaskSettlement: handler => {
+        agent.externalTaskSettlementHandler = handler;
+      },
+    });
+    if (decision.action === 'return') return decision.result;
+    let result;
+    try {
+      result = await agent.getProducts(params, inputHandler, options);
+    } catch (error) {
+      if (decision.onError) return decision.onError(error);
+      throw error;
+    }
+    return decision.onResult ? decision.onResult(result) : result;
+  };
   agent.createMediaBuyLegacyWithPreDispatch = async (params, beforeDispatch, inputHandler, options) => {
     const decision = await beforeDispatch(params, {
       governanceAdjusted: false,
@@ -184,7 +205,9 @@ function clientWithCaps(caps, adcpVersion) {
     if (decision.action === 'return') return decision.result;
     let result;
     try {
-      result = await agent.createMediaBuyLegacy(params, inputHandler, options);
+      result = Object.hasOwn(agent, 'createMediaBuy')
+        ? await agent.createMediaBuy(params, inputHandler, options)
+        : await agent.createMediaBuyLegacy(params, inputHandler, options);
     } catch (error) {
       if (decision.onError) return decision.onError(error);
       throw error;
@@ -3750,6 +3773,1160 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
     assert.equal(coordinator.negotiated_version, '3.0');
     assert.equal(coordinator.lifecycle, 'established');
+  });
+});
+
+describe('durable established proposal compatibility', () => {
+  const durableCreateSuccess = mediaBuyId =>
+    completed('create_media_buy', {
+      media_buy_id: mediaBuyId,
+      confirmed_at: '2099-01-01T00:00:00Z',
+      revision: 1,
+      packages: [],
+    });
+
+  for (const version of ['3.0', '3.1']) {
+    test(`${version} discovery can be accepted through a fresh AgentClient`, async () => {
+      const store = createInMemoryEstablishedProposalStore();
+      const terms = {
+        brand: { domain: 'example.com' },
+        start_time: '2027-01-01T00:00:00Z',
+        end_time: '2027-02-01T00:00:00Z',
+        purchases: [{ product_id: 'product-1', quantity: 1 }],
+      };
+      const proposal = {
+        proposal_id: `durable-accept-${version}`,
+        proposal_kind: 'new_media_buy',
+        proposal_status: 'committed',
+        expires_at: '2099-12-31T23:59:59Z',
+        commercial_terms: terms,
+        terms_digest: proposalTermsDigest(terms),
+      };
+      const firstAgent = clientWithCaps(capabilities({ version }));
+      firstAgent.getProducts = async () => completed('get_products', { proposals: [proposal] });
+      const first = await firstAgent.negotiateMediaBuyLifecycle({
+        principalScope: 'durable-buyer',
+        establishedProposalStore: store,
+      });
+      await first.requestProposals({ brief: 'durable proposal', account: { account_id: 'account-1' } });
+      first.dispose();
+
+      const calls = [];
+      const secondAgent = clientWithCaps(capabilities({ version }));
+      secondAgent.createMediaBuy = async input => {
+        calls.push(input);
+        return durableCreateSuccess(`mb-${version}`);
+      };
+      const second = await secondAgent.negotiateMediaBuyLifecycle({
+        principalScope: 'durable-buyer',
+        establishedProposalStore: store,
+        allowedLosses: ['proposal_terms_digest_not_enforced'],
+      });
+      const result = await second.acceptProposal({
+        idempotency_key: `durable-accept-${version}-key-0001`,
+        account: { account_id: 'account-1' },
+        proposal_id: proposal.proposal_id,
+        proposal_terms_digest: proposal.terms_digest,
+      });
+      assert.equal(result.status, 'completed');
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].proposal_id, proposal.proposal_id);
+    });
+  }
+
+  test('fresh workers refine and decline snapshots retained by another process', async () => {
+    for (const version of ['3.0', '3.1']) {
+      for (const operation of ['refine', 'decline']) {
+        const store = createInMemoryEstablishedProposalStore();
+        const proposal = {
+          proposal_id: `durable-${version}-${operation}-proposal`,
+          name: `${version} ${operation} proposal`,
+          proposal_status: 'committed',
+          expires_at: '2099-12-31T23:59:59Z',
+          allocations: [{ product_id: 'product-1', pricing_option_id: 'option-1', allocation_percentage: 100 }],
+        };
+        const firstAgent = clientWithCaps(capabilities({ version }));
+        firstAgent.getProducts = async () => completed('get_products', { proposals: [proposal] });
+        const first = await firstAgent.negotiateMediaBuyLifecycle({
+          principalScope: `durable-${operation}-buyer`,
+          establishedProposalStore: store,
+        });
+        await first.requestProposals({ brief: operation, account: { account_id: 'account-1' } });
+        first.dispose();
+
+        const secondAgent = clientWithCaps(capabilities({ version }));
+        let dispatches = 0;
+        secondAgent.getProducts = async () => {
+          dispatches += 1;
+          return completed('get_products', {
+            products: [],
+            cache_scope: 'account',
+            proposals: operation === 'refine' ? [{ ...proposal, proposal_id: 'child' }] : [],
+            refinement_applied: [{ scope: 'proposal', proposal_id: proposal.proposal_id, status: 'applied' }],
+          });
+        };
+        const second = await secondAgent.negotiateMediaBuyLifecycle({
+          principalScope: `durable-${operation}-buyer`,
+          establishedProposalStore: store,
+          allowedLosses:
+            operation === 'decline' ? ['proposal_decline_not_terminal', 'proposal_decline_reason_not_forwarded'] : [],
+        });
+        const result =
+          operation === 'refine'
+            ? await second.refineProposals({
+                idempotency_key: 'durable-refine-key-0001',
+                refinements: [{ proposal_id: proposal.proposal_id, action: 'revise', ask: 'less expensive' }],
+              })
+            : await second.declineProposals({
+                idempotency_key: 'durable-decline-key-0001',
+                declines: [{ proposal_id: proposal.proposal_id, reason: 'other' }],
+              });
+        assert.equal(result.status, 'completed');
+        assert.equal(dispatches, 1);
+      }
+    }
+  });
+
+  test('invalid established declines fail before durable hydration', async () => {
+    const backing = createInMemoryEstablishedProposalStore();
+    let durableFinds = 0;
+    const store = new Proxy(backing, {
+      get(target, property, receiver) {
+        if (property === 'find') {
+          return async (...args) => {
+            durableFinds += 1;
+            return target.find(...args);
+          };
+        }
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const agent = clientWithCaps(capabilities({ version: '3.1' }));
+    const lifecycle = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'durable-invalid-decline-buyer',
+      establishedProposalStore: store,
+      allowedLosses: ['proposal_decline_not_terminal', 'proposal_decline_reason_not_forwarded'],
+    });
+
+    await assert.rejects(
+      lifecycle.declineProposals({ declines: [{ proposal_id: 'invalid-decline' }] }),
+      /compact decline_proposals intent is invalid/
+    );
+    assert.equal(durableFinds, 0);
+  });
+
+  test('same-ID refinement installs a successor that a fresh worker can accept', async () => {
+    const store = createInMemoryEstablishedProposalStore();
+    const sourceTerms = {
+      brand: { domain: 'example.com' },
+      start_time: '2027-01-01T00:00:00Z',
+      end_time: '2027-02-01T00:00:00Z',
+    };
+    const source = {
+      proposal_id: 'durable-same-id-refinement',
+      name: 'Durable same-ID refinement',
+      proposal_kind: 'new_media_buy',
+      proposal_status: 'committed',
+      expires_at: '2099-12-31T23:59:59Z',
+      allocations: [{ product_id: 'product-1', pricing_option_id: 'option-1', allocation_percentage: 100 }],
+      commercial_terms: sourceTerms,
+      terms_digest: proposalTermsDigest(sourceTerms),
+    };
+    const successorTerms = { ...sourceTerms, end_time: '2027-03-01T00:00:00Z' };
+    const successor = {
+      ...source,
+      commercial_terms: successorTerms,
+      terms_digest: proposalTermsDigest(successorTerms),
+    };
+    const agent = clientWithCaps(capabilities({ version: '3.1' }));
+    let call = 0;
+    agent.getProducts = async () => {
+      call += 1;
+      return completed(
+        'get_products',
+        call === 1
+          ? { proposals: [source] }
+          : {
+              products: [],
+              cache_scope: 'account',
+              proposals: [successor],
+              refinement_applied: [{ scope: 'proposal', proposal_id: source.proposal_id, status: 'applied' }],
+            }
+      );
+    };
+    const options = { principalScope: 'durable-same-id-buyer', establishedProposalStore: store };
+    const coordinator = await agent.negotiateMediaBuyLifecycle(options);
+    await coordinator.requestProposals({ brief: 'same ID', account: { account_id: 'account-1' } });
+    await coordinator.refineProposals({
+      idempotency_key: 'same-id-refine-key-0001',
+      refinements: [{ proposal_id: source.proposal_id, action: 'finalize' }],
+    });
+
+    let dispatches = 0;
+    const freshAgent = clientWithCaps(capabilities({ version: '3.1' }));
+    freshAgent.createMediaBuy = async () => {
+      dispatches += 1;
+      return durableCreateSuccess('mb-same-id');
+    };
+    const fresh = await freshAgent.negotiateMediaBuyLifecycle({
+      ...options,
+      allowedLosses: ['proposal_terms_digest_not_enforced'],
+    });
+    const accepted = await fresh.acceptProposal({
+      account: { account_id: 'account-1' },
+      proposal_id: successor.proposal_id,
+      proposal_terms_digest: successor.terms_digest,
+      idempotency_key: 'same-id-accept-key-0001',
+    });
+    assert.equal(accepted.status, 'completed');
+    assert.equal(dispatches, 1);
+  });
+
+  test('rediscovery atomically replaces an older available durable generation', async () => {
+    const store = createInMemoryEstablishedProposalStore();
+    const firstTerms = {
+      brand: { domain: 'example.com' },
+      start_time: '2027-01-01T00:00:00Z',
+      end_time: '2027-02-01T00:00:00Z',
+    };
+    const first = {
+      proposal_id: 'durable-rediscovery-generation',
+      proposal_kind: 'new_media_buy',
+      proposal_status: 'committed',
+      expires_at: '2099-12-31T23:59:59Z',
+      commercial_terms: firstTerms,
+      terms_digest: proposalTermsDigest(firstTerms),
+    };
+    const secondTerms = { ...firstTerms, end_time: '2027-03-01T00:00:00Z' };
+    const second = {
+      ...first,
+      commercial_terms: secondTerms,
+      terms_digest: proposalTermsDigest(secondTerms),
+    };
+    const discoveryAgent = clientWithCaps(capabilities({ version: '3.1' }));
+    let generation = first;
+    discoveryAgent.getProducts = async () => completed('get_products', { proposals: [generation] });
+    const options = { principalScope: 'durable-rediscovery-buyer', establishedProposalStore: store };
+    const discovery = await discoveryAgent.negotiateMediaBuyLifecycle(options);
+    await discovery.requestProposals({ brief: 'first', account: { account_id: 'account-1' } });
+    generation = second;
+    await discovery.requestProposals({ brief: 'second', account: { account_id: 'account-1' } });
+    discovery.dispose();
+
+    const freshAgent = clientWithCaps(capabilities({ version: '3.1' }));
+    freshAgent.createMediaBuy = async () => durableCreateSuccess('mb-rediscovered');
+    const fresh = await freshAgent.negotiateMediaBuyLifecycle({
+      ...options,
+      allowedLosses: ['proposal_terms_digest_not_enforced'],
+    });
+    assert.equal(
+      (
+        await fresh.acceptProposal({
+          account: { account_id: 'account-1' },
+          proposal_id: second.proposal_id,
+          proposal_terms_digest: second.terms_digest,
+          idempotency_key: 'rediscovered-accept-key-0001',
+        })
+      ).status,
+      'completed'
+    );
+  });
+
+  test('configured durable acceptance never falls back to a shared process-local snapshot', async () => {
+    const populated = createInMemoryEstablishedProposalStore();
+    const empty = createInMemoryEstablishedProposalStore();
+    const terms = {
+      brand: { domain: 'example.com' },
+      start_time: '2027-01-01T00:00:00Z',
+      end_time: '2027-02-01T00:00:00Z',
+    };
+    const proposal = {
+      proposal_id: 'durable-store-miss',
+      proposal_kind: 'new_media_buy',
+      proposal_status: 'committed',
+      expires_at: '2099-12-31T23:59:59Z',
+      commercial_terms: terms,
+      terms_digest: proposalTermsDigest(terms),
+    };
+    const agent = clientWithCaps(capabilities({ version: '3.1' }));
+    agent.getProducts = async () => completed('get_products', { proposals: [proposal] });
+    const discovery = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'durable-store-miss-buyer',
+      establishedProposalStore: populated,
+    });
+    await discovery.requestProposals({ brief: 'store miss', account: { account_id: 'account-1' } });
+    let dispatches = 0;
+    agent.createMediaBuy = async () => {
+      dispatches += 1;
+      return completed('create_media_buy', {});
+    };
+    const mutation = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'durable-store-miss-buyer',
+      establishedProposalStore: empty,
+      allowedLosses: ['proposal_terms_digest_not_enforced'],
+    });
+    await assert.rejects(
+      mutation.acceptProposal({
+        account: { account_id: 'account-1' },
+        proposal_id: proposal.proposal_id,
+        proposal_terms_digest: proposal.terms_digest,
+        idempotency_key: 'store-miss-accept-key-0001',
+      }),
+      /durable established proposal store has no scoped snapshot/
+    );
+    assert.equal(dispatches, 0);
+  });
+
+  test('an established unable refinement keeps the durable source executable', async () => {
+    const store = createInMemoryEstablishedProposalStore();
+    const terms = {
+      brand: { domain: 'example.com' },
+      start_time: '2027-01-01T00:00:00Z',
+      end_time: '2027-02-01T00:00:00Z',
+    };
+    const proposal = {
+      proposal_id: 'durable-unable-refinement',
+      name: 'Durable unable refinement',
+      proposal_kind: 'new_media_buy',
+      proposal_status: 'committed',
+      expires_at: '2099-12-31T23:59:59Z',
+      allocations: [{ product_id: 'product-1', pricing_option_id: 'option-1', allocation_percentage: 100 }],
+      commercial_terms: terms,
+      terms_digest: proposalTermsDigest(terms),
+    };
+    const agent = clientWithCaps(capabilities({ version: '3.1' }));
+    let calls = 0;
+    agent.getProducts = async () =>
+      completed(
+        'get_products',
+        calls++ === 0
+          ? { proposals: [proposal] }
+          : {
+              products: [],
+              cache_scope: 'account',
+              proposals: [],
+              refinement_applied: [
+                { scope: 'proposal', proposal_id: proposal.proposal_id, status: 'unable', notes: 'unchanged' },
+              ],
+            }
+      );
+    const options = { principalScope: 'durable-unable-buyer', establishedProposalStore: store };
+    const coordinator = await agent.negotiateMediaBuyLifecycle(options);
+    await coordinator.requestProposals({ brief: 'unable', account: { account_id: 'account-1' } });
+    await coordinator.refineProposals({
+      idempotency_key: 'unable-refine-key-0001',
+      refinements: [{ proposal_id: proposal.proposal_id, action: 'revise', ask: 'impossible' }],
+    });
+
+    const freshAgent = clientWithCaps(capabilities({ version: '3.1' }));
+    freshAgent.createMediaBuy = async () => durableCreateSuccess('mb-unable');
+    const fresh = await freshAgent.negotiateMediaBuyLifecycle({
+      ...options,
+      allowedLosses: ['proposal_terms_digest_not_enforced'],
+    });
+    assert.equal(
+      (
+        await fresh.acceptProposal({
+          account: { account_id: 'account-1' },
+          proposal_id: proposal.proposal_id,
+          proposal_terms_digest: proposal.terms_digest,
+          idempotency_key: 'unable-accept-key-0001',
+        })
+      ).status,
+      'completed'
+    );
+  });
+
+  test('concurrent fresh acceptance workers share one atomic reservation', async () => {
+    const store = createInMemoryEstablishedProposalStore();
+    const terms = {
+      brand: { domain: 'example.com' },
+      start_time: '2027-01-01T00:00:00Z',
+      end_time: '2027-02-01T00:00:00Z',
+    };
+    const proposal = {
+      proposal_id: 'durable-concurrent-accept',
+      proposal_kind: 'new_media_buy',
+      proposal_status: 'committed',
+      expires_at: '2099-12-31T23:59:59Z',
+      commercial_terms: terms,
+      terms_digest: proposalTermsDigest(terms),
+    };
+    const discoveryAgent = clientWithCaps(capabilities({ version: '3.1' }));
+    discoveryAgent.getProducts = async () => completed('get_products', { proposals: [proposal] });
+    const discovery = await discoveryAgent.negotiateMediaBuyLifecycle({
+      principalScope: 'durable-concurrent-buyer',
+      establishedProposalStore: store,
+    });
+    await discovery.requestProposals({ brief: 'concurrent', account: { account_id: 'account-1' } });
+
+    let release;
+    let dispatches = 0;
+    const gate = new Promise(resolve => (release = resolve));
+    const worker = async () => {
+      const agent = clientWithCaps(capabilities({ version: '3.1' }));
+      agent.createMediaBuy = async () => {
+        dispatches += 1;
+        await gate;
+        return durableCreateSuccess('mb-concurrent');
+      };
+      return agent.negotiateMediaBuyLifecycle({
+        principalScope: 'durable-concurrent-buyer',
+        establishedProposalStore: store,
+        allowedLosses: ['proposal_terms_digest_not_enforced'],
+      });
+    };
+    const [left, right] = await Promise.all([worker(), worker()]);
+    const acceptance = {
+      idempotency_key: 'durable-concurrent-key-0001',
+      account: { account_id: 'account-1' },
+      proposal_id: proposal.proposal_id,
+      proposal_terms_digest: proposal.terms_digest,
+    };
+    const first = left.acceptProposal(acceptance);
+    await new Promise(resolve => setImmediate(resolve));
+    await assert.rejects(right.acceptProposal(acceptance), /durable established proposal reservation was in_flight/);
+    release();
+    assert.equal((await first).status, 'completed');
+    assert.equal(dispatches, 1);
+  });
+
+  test('transport ambiguity permits only an exact retry from a fresh worker', async () => {
+    const store = createInMemoryEstablishedProposalStore();
+    const terms = {
+      brand: { domain: 'example.com' },
+      start_time: '2027-01-01T00:00:00Z',
+      end_time: '2027-02-01T00:00:00Z',
+    };
+    const proposal = {
+      proposal_id: 'durable-ambiguous-accept',
+      proposal_kind: 'new_media_buy',
+      proposal_status: 'committed',
+      expires_at: '2099-12-31T23:59:59Z',
+      commercial_terms: terms,
+      terms_digest: proposalTermsDigest(terms),
+    };
+    const discoveryAgent = clientWithCaps(capabilities({ version: '3.1' }));
+    discoveryAgent.getProducts = async () => completed('get_products', { proposals: [proposal] });
+    const discovery = await discoveryAgent.negotiateMediaBuyLifecycle({
+      principalScope: 'durable-ambiguous-buyer',
+      establishedProposalStore: store,
+    });
+    await discovery.requestProposals({ brief: 'ambiguous', account: { account_id: 'account-1' } });
+
+    const acceptance = {
+      idempotency_key: 'durable-ambiguous-key-0001',
+      account: { account_id: 'account-1' },
+      proposal_id: proposal.proposal_id,
+      proposal_terms_digest: proposal.terms_digest,
+    };
+    const uncertainAgent = clientWithCaps(capabilities({ version: '3.1' }));
+    uncertainAgent.createMediaBuy = async () => {
+      throw new Error('connection closed after dispatch');
+    };
+    const uncertain = await uncertainAgent.negotiateMediaBuyLifecycle({
+      principalScope: 'durable-ambiguous-buyer',
+      establishedProposalStore: store,
+      allowedLosses: ['proposal_terms_digest_not_enforced'],
+    });
+    await assert.rejects(uncertain.acceptProposal(acceptance), /connection closed/);
+
+    let dispatches = 0;
+    const retryAgent = clientWithCaps(capabilities({ version: '3.1' }));
+    retryAgent.createMediaBuy = async () => {
+      dispatches += 1;
+      return durableCreateSuccess('mb-ambiguous');
+    };
+    const retry = await retryAgent.negotiateMediaBuyLifecycle({
+      principalScope: 'durable-ambiguous-buyer',
+      establishedProposalStore: store,
+      allowedLosses: ['proposal_terms_digest_not_enforced'],
+    });
+    await assert.rejects(
+      retry.acceptProposal({ ...acceptance, idempotency_key: 'durable-ambiguous-key-0002' }),
+      /durable established proposal reservation was conflict/
+    );
+    assert.equal((await retry.acceptProposal(acceptance)).status, 'completed');
+    assert.equal(dispatches, 1);
+  });
+
+  test('submitted acceptance task identity and terminal fence survive a restart', async () => {
+    const store = createInMemoryEstablishedProposalStore();
+    const recordSubmittedTask = store.recordSubmittedTask.bind(store);
+    let recordedSellerTaskId;
+    store.recordSubmittedTask = (request, sellerTaskId) => {
+      recordedSellerTaskId = sellerTaskId;
+      return recordSubmittedTask(request, sellerTaskId);
+    };
+    const terms = {
+      brand: { domain: 'example.com' },
+      start_time: '2027-01-01T00:00:00Z',
+      end_time: '2027-02-01T00:00:00Z',
+    };
+    const proposal = {
+      proposal_id: 'durable-submitted-accept',
+      proposal_kind: 'new_media_buy',
+      proposal_status: 'committed',
+      expires_at: '2099-12-31T23:59:59Z',
+      commercial_terms: terms,
+      terms_digest: proposalTermsDigest(terms),
+    };
+    const firstAgent = clientWithCaps(capabilities({ version: '3.1' }));
+    firstAgent.getProducts = async () => completed('get_products', { proposals: [proposal] });
+    const terminal = durableCreateSuccess('mb-submitted');
+    firstAgent.createMediaBuy = async () =>
+      submitted('create_media_buy', terminal, {
+        localTaskId: 'local-runner-task-123',
+        sellerTaskId: 'seller-task-456',
+      });
+    const options = {
+      principalScope: 'durable-submitted-buyer',
+      establishedProposalStore: store,
+      allowedLosses: ['proposal_terms_digest_not_enforced'],
+    };
+    const first = await firstAgent.negotiateMediaBuyLifecycle(options);
+    await first.requestProposals({ brief: 'submitted', account: { account_id: 'account-1' } });
+    const acceptance = {
+      idempotency_key: 'durable-submitted-key-0001',
+      account: { account_id: 'account-1' },
+      proposal_id: proposal.proposal_id,
+      proposal_terms_digest: proposal.terms_digest,
+    };
+    const pending = await first.acceptProposal(acceptance);
+    assert.equal(pending.status, 'submitted');
+    assert.equal(recordedSellerTaskId, 'seller-task-456');
+
+    const secondAgent = clientWithCaps(capabilities({ version: '3.1' }));
+    secondAgent.getTaskStatus = async taskId => ({
+      taskId,
+      taskType: 'create_media_buy',
+      status: 'completed',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      result: terminal.data,
+    });
+    let redispatches = 0;
+    secondAgent.createMediaBuy = async () => {
+      redispatches += 1;
+      return terminal;
+    };
+    const second = await secondAgent.negotiateMediaBuyLifecycle(options);
+    await assert.rejects(second.acceptProposal(acceptance), /durable established proposal reservation was in_flight/);
+    first.dispose();
+    assert.equal(
+      (
+        await second.reconcileEstablishedProposalTask({
+          account: acceptance.account,
+          sellerTaskId: 'seller-task-456',
+        })
+      ).status,
+      'completed'
+    );
+    secondAgent.getTaskStatus = async () => assert.fail('settled reconciliation must not poll an evicted seller task');
+    assert.equal(
+      (
+        await second.reconcileEstablishedProposalTask({
+          account: acceptance.account,
+          sellerTaskId: 'seller-task-456',
+        })
+      ).status,
+      'completed'
+    );
+
+    const thirdAgent = clientWithCaps(capabilities({ version: '3.1' }));
+    const third = await thirdAgent.negotiateMediaBuyLifecycle(options);
+    await assert.rejects(third.acceptProposal(acceptance), /durable established proposal record is terminal/);
+    assert.equal(redispatches, 0);
+  });
+
+  test('submitted webhook settlement commits the durable fence before exposing completion', async () => {
+    const store = createInMemoryEstablishedProposalStore();
+    const terms = {
+      brand: { domain: 'example.com' },
+      start_time: '2027-01-01T00:00:00Z',
+      end_time: '2027-02-01T00:00:00Z',
+    };
+    const proposal = {
+      proposal_id: 'durable-push-proposal',
+      proposal_kind: 'new_media_buy',
+      proposal_status: 'committed',
+      expires_at: '2099-12-31T23:59:59Z',
+      commercial_terms: terms,
+      terms_digest: proposalTermsDigest(terms),
+    };
+    const agent = clientWithCaps(capabilities({ version: '3.1' }));
+    agent.getProducts = async () => completed('get_products', { proposals: [proposal] });
+    agent.createMediaBuy = async () =>
+      submitted('create_media_buy', durableCreateSuccess('mb-push'), { sellerTaskId: 'seller-push-task' });
+    const options = {
+      principalScope: 'durable-push-buyer',
+      establishedProposalStore: store,
+      allowedLosses: ['proposal_terms_digest_not_enforced'],
+    };
+    const lifecycle = await agent.negotiateMediaBuyLifecycle(options);
+    await lifecycle.requestProposals({ brief: 'push', account: { account_id: 'account-1' } });
+    await lifecycle.acceptProposal({
+      account: { account_id: 'account-1' },
+      proposal_id: proposal.proposal_id,
+      proposal_terms_digest: proposal.terms_digest,
+      idempotency_key: 'durable-push-key-0001',
+    });
+    assert.equal(typeof agent.externalTaskSettlementHandler, 'function');
+    const pushed = await agent.externalTaskSettlementHandler({
+      status: 'completed',
+      result: durableCreateSuccess('mb-push').data,
+      serverTaskId: 'seller-push-task',
+      taskType: 'create_media_buy',
+    });
+    assert.equal(pushed.status, 'completed');
+
+    const freshAgent = clientWithCaps(capabilities({ version: '3.1' }));
+    freshAgent.createMediaBuy = async () => assert.fail('terminal push settlement must prevent redispatch');
+    const fresh = await freshAgent.negotiateMediaBuyLifecycle(options);
+    await assert.rejects(
+      fresh.acceptProposal({
+        account: { account_id: 'account-1' },
+        proposal_id: proposal.proposal_id,
+        proposal_terms_digest: proposal.terms_digest,
+        idempotency_key: 'durable-push-key-0002',
+      }),
+      /durable established proposal record is terminal/
+    );
+  });
+
+  test('governance rewrites fail before an established durable claim or seller dispatch', async () => {
+    const store = createInMemoryEstablishedProposalStore();
+    const terms = {
+      brand: { domain: 'example.com' },
+      start_time: '2027-01-01T00:00:00Z',
+      end_time: '2027-02-01T00:00:00Z',
+    };
+    const proposal = {
+      proposal_id: 'durable-governance-proposal',
+      proposal_kind: 'new_media_buy',
+      proposal_status: 'committed',
+      expires_at: '2099-12-31T23:59:59Z',
+      commercial_terms: terms,
+      terms_digest: proposalTermsDigest(terms),
+    };
+    const agent = clientWithCaps(capabilities({ version: '3.1' }));
+    agent.getProducts = async () => completed('get_products', { proposals: [proposal] });
+    let dispatches = 0;
+    agent.createMediaBuy = async () => {
+      dispatches += 1;
+      return durableCreateSuccess('mb-governance');
+    };
+    const options = {
+      principalScope: 'durable-governance-buyer',
+      establishedProposalStore: store,
+      allowedLosses: ['proposal_terms_digest_not_enforced'],
+    };
+    const lifecycle = await agent.negotiateMediaBuyLifecycle(options);
+    await lifecycle.requestProposals({ brief: 'governance', account: { account_id: 'account-1' } });
+    const normalPreDispatch = agent.createMediaBuyLegacyWithPreDispatch;
+    agent.createMediaBuyLegacyWithPreDispatch = async (params, beforeDispatch) =>
+      beforeDispatch(
+        { ...params, proposal_id: 'rewritten-proposal' },
+        {
+          governanceAdjusted: true,
+          publishSettledTaskStatus: () => {},
+          registerExternalTaskSettlement: () => {},
+        }
+      );
+    const acceptance = {
+      account: { account_id: 'account-1' },
+      proposal_id: proposal.proposal_id,
+      proposal_terms_digest: proposal.terms_digest,
+      idempotency_key: 'durable-governance-key-0001',
+    };
+    await assert.rejects(
+      lifecycle.acceptProposal(acceptance),
+      error => error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'governance_adjustment'
+    );
+    assert.equal(dispatches, 0);
+
+    agent.createMediaBuyLegacyWithPreDispatch = normalPreDispatch;
+    assert.equal((await lifecycle.acceptProposal(acceptance)).status, 'completed');
+    assert.equal(dispatches, 1);
+  });
+
+  test('restart reconciliation preserves the fence for paused and non-authoritative task observations', async () => {
+    const observations = [
+      { name: 'paused', status: 'needs_input', result: undefined, rejects: false },
+      {
+        name: 'unknown-status',
+        status: 'seller-specific-state',
+        result: undefined,
+        rejects: /not authoritative enough/,
+      },
+      {
+        name: 'malformed-completion',
+        status: 'completed',
+        result: { media_buy_id: 'incomplete' },
+        rejects: /not authoritative enough/,
+      },
+      {
+        name: 'unstructured-failure',
+        status: 'failed',
+        result: undefined,
+        rejects: /not an authoritative structured AdCP error/,
+      },
+    ];
+    for (const observation of observations) {
+      const store = createInMemoryEstablishedProposalStore();
+      const terms = {
+        brand: { domain: 'example.com' },
+        start_time: '2027-01-01T00:00:00Z',
+        end_time: '2027-02-01T00:00:00Z',
+      };
+      const proposal = {
+        proposal_id: `durable-reconcile-${observation.name}`,
+        proposal_kind: 'new_media_buy',
+        proposal_status: 'committed',
+        expires_at: '2099-12-31T23:59:59Z',
+        commercial_terms: terms,
+        terms_digest: proposalTermsDigest(terms),
+      };
+      const sellerTaskId = `seller-${observation.name}-task`;
+      const firstAgent = clientWithCaps(capabilities({ version: '3.1' }));
+      firstAgent.getProducts = async () => completed('get_products', { proposals: [proposal] });
+      firstAgent.createMediaBuy = async () =>
+        submitted('create_media_buy', durableCreateSuccess(`mb-${observation.name}`), { sellerTaskId });
+      const options = {
+        principalScope: `durable-reconcile-${observation.name}-buyer`,
+        establishedProposalStore: store,
+        allowedLosses: ['proposal_terms_digest_not_enforced'],
+      };
+      const first = await firstAgent.negotiateMediaBuyLifecycle(options);
+      await first.requestProposals({ brief: observation.name, account: { account_id: 'account-1' } });
+      const acceptance = {
+        idempotency_key: `durable-${observation.name}-key-0001`,
+        account: { account_id: 'account-1' },
+        proposal_id: proposal.proposal_id,
+        proposal_terms_digest: proposal.terms_digest,
+      };
+      await first.acceptProposal(acceptance);
+      first.dispose();
+
+      const recoveryAgent = clientWithCaps(capabilities({ version: '3.1' }));
+      recoveryAgent.getTaskStatus = async taskId => ({
+        taskId,
+        taskType: 'create_media_buy',
+        status: observation.status,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        ...(observation.result !== undefined && { result: observation.result }),
+      });
+      const recovery = await recoveryAgent.negotiateMediaBuyLifecycle(options);
+      const reconcile = recovery.reconcileEstablishedProposalTask({
+        account: acceptance.account,
+        sellerTaskId,
+      });
+      if (observation.rejects) {
+        await assert.rejects(reconcile, observation.rejects);
+      } else {
+        assert.equal((await reconcile).status, observation.status);
+      }
+      await assert.rejects(
+        recovery.acceptProposal({ ...acceptance, idempotency_key: `durable-${observation.name}-key-0002` }),
+        /durable established proposal reservation was conflict/
+      );
+    }
+  });
+
+  test('restart reconciliation settles permanent and replay-expired uncertainty fences', async () => {
+    for (const mode of ['no-replay-ttl', 'expired-replay-ttl']) {
+      let now = Date.parse('2026-08-22T00:00:00.000Z');
+      const store = createInMemoryEstablishedProposalStore({ clock: () => new Date(now) });
+      const terms = {
+        brand: { domain: 'example.com' },
+        start_time: '2027-01-01T00:00:00Z',
+        end_time: '2027-02-01T00:00:00Z',
+      };
+      const proposal = {
+        proposal_id: `durable-${mode}-proposal`,
+        proposal_kind: 'new_media_buy',
+        proposal_status: 'committed',
+        expires_at: '2099-12-31T23:59:59Z',
+        commercial_terms: terms,
+        terms_digest: proposalTermsDigest(terms),
+      };
+      const caps = capabilities({ version: '3.1', replayTtlSeconds: 3_600 });
+      if (mode === 'no-replay-ttl') delete caps.idempotency;
+      const sellerTaskId = `seller-${mode}-task`;
+      const firstAgent = clientWithCaps(caps);
+      firstAgent.getProducts = async () => completed('get_products', { proposals: [proposal] });
+      firstAgent.createMediaBuy = async () =>
+        submitted('create_media_buy', completed('create_media_buy', { media_buy_id: 'malformed' }), {
+          sellerTaskId,
+        });
+      const options = {
+        principalScope: `durable-${mode}-buyer`,
+        establishedProposalStore: store,
+        allowedLosses: ['proposal_terms_digest_not_enforced'],
+      };
+      const first = await firstAgent.negotiateMediaBuyLifecycle(options);
+      await first.requestProposals({ brief: mode, account: { account_id: 'account-1' } });
+      const acceptance = {
+        account: { account_id: 'account-1' },
+        proposal_id: proposal.proposal_id,
+        proposal_terms_digest: proposal.terms_digest,
+        idempotency_key: `durable-${mode}-key-0001`,
+      };
+      const pending = await first.acceptProposal(acceptance);
+      await assert.rejects(pending.submitted.track(), /not authoritative enough/);
+      if (mode === 'expired-replay-ttl') now += 3_600_001;
+      first.dispose();
+
+      const recoveryAgent = clientWithCaps(caps);
+      recoveryAgent.getTaskStatus = async taskId => ({
+        taskId,
+        taskType: 'create_media_buy',
+        status: 'completed',
+        createdAt: now,
+        updatedAt: now,
+        result: durableCreateSuccess(`mb-${mode}`).data,
+      });
+      const recovery = await recoveryAgent.negotiateMediaBuyLifecycle(options);
+      assert.equal(
+        (
+          await recovery.reconcileEstablishedProposalTask({
+            account: acceptance.account,
+            sellerTaskId,
+          })
+        ).status,
+        'completed'
+      );
+      await assert.rejects(recovery.acceptProposal(acceptance), /durable established proposal record is terminal/);
+    }
+  });
+
+  test('restart reconciliation validates ledger scope and reacquires paused claims before polling', async () => {
+    for (const mode of ['corrupt-scope', 'lost-reacquire-race']) {
+      const backing = createInMemoryEstablishedProposalStore();
+      let submittedRequest;
+      let corruptScope = false;
+      let raceReacquire = false;
+      const store = {
+        putSnapshot: (value, expected) => backing.putSnapshot(value, expected),
+        discardSnapshot: (value, fingerprint) => backing.discardSnapshot(value, fingerprint),
+        get: value => backing.get(value),
+        find: (scope, ids) => backing.find(scope, ids),
+        findSubmittedTask: async (scope, taskId) => {
+          const recovered = await backing.findSubmittedTask(scope, taskId);
+          if (recovered && corruptScope) recovered.request.bindings[0].principalScope = 'different-buyer';
+          return recovered;
+        },
+        reserveMutation: async value => {
+          if (raceReacquire) {
+            raceReacquire = false;
+            await backing.reserveMutation(value);
+            return backing.reserveMutation(value);
+          }
+          return backing.reserveMutation(value);
+        },
+        completeMutation: (value, disposition, fingerprint) =>
+          backing.completeMutation(value, disposition, fingerprint),
+        completeRefinement: (value, replacements, retained) =>
+          backing.completeRefinement(value, replacements, retained),
+        completeDecline: (value, retained) => backing.completeDecline(value, retained),
+        releaseMutation: value => backing.releaseMutation(value),
+        recordSubmittedTask: (value, taskId) => {
+          submittedRequest = value;
+          return backing.recordSubmittedTask(value, taskId);
+        },
+        markAmbiguous: (value, ambiguity) => backing.markAmbiguous(value, ambiguity),
+      };
+      const terms = {
+        brand: { domain: 'example.com' },
+        start_time: '2027-01-01T00:00:00Z',
+        end_time: '2027-02-01T00:00:00Z',
+      };
+      const proposal = {
+        proposal_id: `durable-recovery-${mode}`,
+        proposal_kind: 'new_media_buy',
+        proposal_status: 'committed',
+        expires_at: '2099-12-31T23:59:59Z',
+        commercial_terms: terms,
+        terms_digest: proposalTermsDigest(terms),
+      };
+      const sellerTaskId = `durable-recovery-${mode}-task`;
+      const options = {
+        principalScope: `durable-recovery-${mode}-buyer`,
+        establishedProposalStore: store,
+        allowedLosses: ['proposal_terms_digest_not_enforced'],
+      };
+      const firstAgent = clientWithCaps(capabilities({ version: '3.1' }));
+      firstAgent.getProducts = async () => completed('get_products', { proposals: [proposal] });
+      firstAgent.createMediaBuy = async () =>
+        submitted('create_media_buy', durableCreateSuccess(`mb-${mode}`), { sellerTaskId });
+      const first = await firstAgent.negotiateMediaBuyLifecycle(options);
+      await first.requestProposals({ brief: mode, account: { account_id: 'account-1' } });
+      await first.acceptProposal({
+        account: { account_id: 'account-1' },
+        proposal_id: proposal.proposal_id,
+        proposal_terms_digest: proposal.terms_digest,
+        idempotency_key: `durable-recovery-${mode}-key-0001`,
+      });
+      first.dispose();
+
+      if (mode === 'corrupt-scope') corruptScope = true;
+      else {
+        await backing.markAmbiguous(submittedRequest, 'paused');
+        raceReacquire = true;
+      }
+      let polls = 0;
+      const recoveryAgent = clientWithCaps(capabilities({ version: '3.1' }));
+      recoveryAgent.getTaskStatus = async () => {
+        polls += 1;
+        return assert.fail('invalid or unowned recovery must fail before polling');
+      };
+      const recovery = await recoveryAgent.negotiateMediaBuyLifecycle(options);
+      await assert.rejects(
+        recovery.reconcileEstablishedProposalTask({ account: { account_id: 'account-1' }, sellerTaskId }),
+        mode === 'corrupt-scope' ? /outside the requested/ : /changed while reconciliation was acquiring/
+      );
+      assert.equal(polls, 0);
+    }
+  });
+
+  test('live submitted observers keep malformed completions commit-uncertain on 3.0 and 3.1', async () => {
+    for (const version of ['3.0', '3.1']) {
+      for (const observer of ['track', 'wait']) {
+        const store = createInMemoryEstablishedProposalStore();
+        const terms = {
+          brand: { domain: 'example.com' },
+          start_time: '2027-01-01T00:00:00Z',
+          end_time: '2027-02-01T00:00:00Z',
+        };
+        const proposal = {
+          proposal_id: `durable-malformed-${version}-${observer}`,
+          proposal_kind: 'new_media_buy',
+          proposal_status: 'committed',
+          expires_at: '2099-12-31T23:59:59Z',
+          commercial_terms: terms,
+          terms_digest: proposalTermsDigest(terms),
+        };
+        const agent = clientWithCaps(capabilities({ version }));
+        agent.getProducts = async () => completed('get_products', { proposals: [proposal] });
+        agent.createMediaBuy = async () =>
+          submitted('create_media_buy', completed('create_media_buy', { media_buy_id: 'incomplete' }), {
+            sellerTaskId: `malformed-${version}-${observer}-task`,
+          });
+        const options = {
+          principalScope: `durable-malformed-${version}-${observer}-buyer`,
+          establishedProposalStore: store,
+          allowedLosses: ['proposal_terms_digest_not_enforced'],
+        };
+        const coordinator = await agent.negotiateMediaBuyLifecycle(options);
+        await coordinator.requestProposals({ brief: observer, account: { account_id: 'account-1' } });
+        const acceptance = {
+          account: { account_id: 'account-1' },
+          proposal_id: proposal.proposal_id,
+          proposal_terms_digest: proposal.terms_digest,
+          idempotency_key: `malformed-${version}-${observer}-key-0001`,
+        };
+        const pending = await coordinator.acceptProposal(acceptance);
+        await assert.rejects(
+          observer === 'track' ? pending.submitted.track() : pending.submitted.waitForCompletion(),
+          /not authoritative enough/
+        );
+        coordinator.dispose();
+
+        const freshAgent = clientWithCaps(capabilities({ version }));
+        freshAgent.createMediaBuy = async () => assert.fail('a competing mutation must remain fenced');
+        const fresh = await freshAgent.negotiateMediaBuyLifecycle(options);
+        await assert.rejects(
+          fresh.acceptProposal({ ...acceptance, idempotency_key: `malformed-${version}-${observer}-key-0002` }),
+          /durable established proposal reservation was conflict/
+        );
+      }
+    }
+  });
+
+  test('fresh coordinators reconcile submitted refine and unable-decline results', async () => {
+    for (const operation of ['refine', 'decline']) {
+      const store = createInMemoryEstablishedProposalStore();
+      const terms = {
+        brand: { domain: 'example.com' },
+        start_time: '2027-01-01T00:00:00Z',
+        end_time: '2027-02-01T00:00:00Z',
+      };
+      const proposal = {
+        proposal_id: `restart-${operation}-proposal`,
+        name: `Restart ${operation} proposal`,
+        proposal_kind: 'new_media_buy',
+        proposal_status: 'committed',
+        expires_at: '2099-12-31T23:59:59Z',
+        allocations: [{ product_id: 'product-1', pricing_option_id: 'option-1', allocation_percentage: 100 }],
+        commercial_terms: terms,
+        terms_digest: proposalTermsDigest(terms),
+      };
+      const successorTerms = { ...terms, end_time: '2027-03-01T00:00:00Z' };
+      const executableProposal =
+        operation === 'refine'
+          ? {
+              ...proposal,
+              commercial_terms: successorTerms,
+              terms_digest: proposalTermsDigest(successorTerms),
+            }
+          : proposal;
+      const completionData =
+        operation === 'refine'
+          ? {
+              products: [],
+              cache_scope: 'account',
+              proposals: [executableProposal],
+              refinement_applied: [{ scope: 'proposal', proposal_id: proposal.proposal_id, status: 'applied' }],
+            }
+          : {
+              products: [],
+              cache_scope: 'account',
+              proposals: [],
+              refinement_applied: [
+                { scope: 'proposal', proposal_id: proposal.proposal_id, status: 'unable', notes: 'unchanged' },
+              ],
+            };
+      const agent = clientWithCaps(capabilities({ version: '3.1' }));
+      agent.getProducts = async input =>
+        input.buying_mode === 'brief'
+          ? completed('get_products', { proposals: [proposal] })
+          : submitted('get_products', completed('get_products', completionData), {
+              sellerTaskId: `seller-${operation}-task`,
+            });
+      const options = {
+        principalScope: `restart-${operation}-buyer`,
+        establishedProposalStore: store,
+        ...(operation === 'decline' && {
+          allowedLosses: ['proposal_decline_not_terminal', 'proposal_decline_reason_not_forwarded'],
+        }),
+      };
+      const first = await agent.negotiateMediaBuyLifecycle(options);
+      await first.requestProposals({ brief: operation, account: { account_id: 'account-1' } });
+      if (operation === 'refine') {
+        await first.refineProposals({
+          idempotency_key: 'restart-refine-key-0001',
+          refinements: [{ proposal_id: proposal.proposal_id, action: 'finalize' }],
+        });
+      } else {
+        await first.declineProposals({
+          idempotency_key: 'restart-decline-key-0001',
+          declines: [{ proposal_id: proposal.proposal_id, reason: 'other' }],
+        });
+      }
+      first.dispose();
+
+      const recoveryAgent = clientWithCaps(capabilities({ version: '3.1' }));
+      recoveryAgent.getTaskStatus = async taskId => ({
+        taskId,
+        taskType: 'get_products',
+        status: 'completed',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        result: completionData,
+      });
+      const recovery = await recoveryAgent.negotiateMediaBuyLifecycle(options);
+      assert.equal(
+        (
+          await recovery.reconcileEstablishedProposalTask({
+            account: { account_id: 'account-1' },
+            sellerTaskId: `seller-${operation}-task`,
+          })
+        ).status,
+        'completed'
+      );
+
+      const acceptAgent = clientWithCaps(capabilities({ version: '3.1' }));
+      acceptAgent.createMediaBuy = async () => durableCreateSuccess(`mb-${operation}`);
+      const accept = await acceptAgent.negotiateMediaBuyLifecycle({
+        ...options,
+        allowedLosses: [...(options.allowedLosses ?? []), 'proposal_terms_digest_not_enforced'],
+      });
+      assert.equal(
+        (
+          await accept.acceptProposal({
+            account: { account_id: 'account-1' },
+            proposal_id: proposal.proposal_id,
+            proposal_terms_digest: executableProposal.terms_digest,
+            idempotency_key: `restart-${operation}-accept-key-0001`,
+          })
+        ).status,
+        'completed'
+      );
+    }
+  });
+
+  test('an adopter ledger can reconcile seller success after local completion fails', async () => {
+    const backing = createInMemoryEstablishedProposalStore();
+    let interruptedRequest;
+    const store = {
+      putSnapshot: value => backing.putSnapshot(value),
+      discardSnapshot: (value, fingerprint) => backing.discardSnapshot(value, fingerprint),
+      get: value => backing.get(value),
+      find: (scope, ids) => backing.find(scope, ids),
+      findSubmittedTask: (scope, taskId) => backing.findSubmittedTask(scope, taskId),
+      reserveMutation: value => backing.reserveMutation(value),
+      completeMutation: async (value, disposition, fingerprint) => {
+        interruptedRequest = { value, disposition, fingerprint };
+        return { outcome: 'conflict', records: await backing.find(value.bindings[0], [value.bindings[0].proposalId]) };
+      },
+      completeRefinement: (value, replacements, retainedBindings) =>
+        backing.completeRefinement(value, replacements, retainedBindings),
+      completeDecline: (value, retainedBindings) => backing.completeDecline(value, retainedBindings),
+      releaseMutation: value => backing.releaseMutation(value),
+      recordSubmittedTask: (value, taskId) => backing.recordSubmittedTask(value, taskId),
+      markAmbiguous: (value, ambiguity) => backing.markAmbiguous(value, ambiguity),
+    };
+    const terms = {
+      brand: { domain: 'example.com' },
+      start_time: '2027-01-01T00:00:00Z',
+      end_time: '2027-02-01T00:00:00Z',
+    };
+    const proposal = {
+      proposal_id: 'durable-reconciled-accept',
+      proposal_kind: 'new_media_buy',
+      proposal_status: 'committed',
+      expires_at: '2099-12-31T23:59:59Z',
+      commercial_terms: terms,
+      terms_digest: proposalTermsDigest(terms),
+    };
+    const agent = clientWithCaps(capabilities({ version: '3.1' }));
+    agent.getProducts = async () => completed('get_products', { proposals: [proposal] });
+    let dispatches = 0;
+    agent.createMediaBuy = async () => {
+      dispatches += 1;
+      return durableCreateSuccess('mb-reconciled');
+    };
+    const options = {
+      principalScope: 'durable-reconciled-buyer',
+      establishedProposalStore: store,
+      allowedLosses: ['proposal_terms_digest_not_enforced'],
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle(options);
+    await coordinator.requestProposals({ brief: 'reconcile', account: { account_id: 'account-1' } });
+    const acceptance = {
+      idempotency_key: 'durable-reconciled-key-0001',
+      account: { account_id: 'account-1' },
+      proposal_id: proposal.proposal_id,
+      proposal_terms_digest: proposal.terms_digest,
+    };
+    await assert.rejects(coordinator.acceptProposal(acceptance), /store could not persist the seller result/);
+    assert.equal(dispatches, 1);
+
+    await backing.completeMutation(
+      interruptedRequest.value,
+      interruptedRequest.disposition,
+      interruptedRequest.fingerprint
+    );
+    const freshAgent = clientWithCaps(capabilities({ version: '3.1' }));
+    freshAgent.createMediaBuy = async () => {
+      dispatches += 1;
+      return completed('create_media_buy', {});
+    };
+    const fresh = await freshAgent.negotiateMediaBuyLifecycle(options);
+    await assert.rejects(fresh.acceptProposal(acceptance), /durable established proposal record is terminal/);
+    assert.equal(dispatches, 1);
   });
 });
 
