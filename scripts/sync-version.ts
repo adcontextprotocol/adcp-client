@@ -2,6 +2,7 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import path from 'path';
+import { inc as incrementSemver, parse as parseSemver, type SemVer } from 'semver';
 
 // Write file only if content differs (excluding generated timestamp)
 function writeFileIfChanged(filePath: string, newContent: string): boolean {
@@ -58,6 +59,55 @@ function getCurrentPackageVersion(): { version: string; adcpVersion?: string } {
     console.error(`❌ Failed to read package.json:`, error.message);
     process.exit(1);
   }
+}
+
+function requireSemver(value: string, source: string): SemVer {
+  const parsed = parseSemver(value);
+  if (!parsed) {
+    throw new Error(`${source} must be a valid semantic version; received ${JSON.stringify(value)}`);
+  }
+  return parsed;
+}
+
+/**
+ * Calculate the library version used by the legacy `--auto-update` path.
+ *
+ * Changesets normally owns package versions, but the scheduled schema-sync
+ * workflow still uses this path when the AdCP pin changes. Preserve an active
+ * prerelease train instead of parsing the `0-beta` component as a number and
+ * producing an invalid version such as `14.0.NaN`.
+ */
+function nextLibraryVersion(
+  currentLibraryVersion: string,
+  currentAdcpVersion: string | undefined,
+  nextAdcpVersion: string
+): string {
+  const library = requireSemver(currentLibraryVersion, 'package.json version');
+  const currentAdcp = requireSemver(currentAdcpVersion || '0.0.0', 'current adcp_version');
+  const nextAdcp = requireSemver(nextAdcpVersion, 'next adcp_version');
+  const prereleaseTag = typeof library.prerelease[0] === 'string' ? library.prerelease[0] : undefined;
+
+  let nextRelease: string | undefined;
+  if (nextAdcp.major > currentAdcp.major) {
+    nextRelease = `${library.major + 1}.0.0`;
+  } else if (nextAdcp.major === currentAdcp.major && nextAdcp.minor > currentAdcp.minor) {
+    nextRelease = `${library.major}.${library.minor + 1}.0`;
+  }
+
+  if (nextRelease) {
+    if (library.prerelease.length === 0) return nextRelease;
+    return prereleaseTag ? `${nextRelease}-${prereleaseTag}.0` : `${nextRelease}-0`;
+  }
+
+  if (library.prerelease.length > 0) {
+    const incremented = incrementSemver(library.version, 'prerelease', prereleaseTag);
+    if (!incremented) {
+      throw new Error(`Could not increment prerelease version ${JSON.stringify(currentLibraryVersion)}`);
+    }
+    return incremented;
+  }
+
+  return `${library.major}.${library.minor}.${library.patch + 1}`;
 }
 
 // Accept only the characters that appear in legitimate semver / AdCP
@@ -420,32 +470,7 @@ function updatePackageJsonVersion(adcpVersion: string, autoUpdate: boolean = fal
   packageJson.adcp_version = adcpVersion;
 
   if (autoUpdate) {
-    // Auto-increment library version when AdCP version changes
-    const [major, minor, patch] = currentLibraryVersion.split('.').map(Number);
-
-    // Determine version bump strategy based on AdCP version change.
-    // Note: `'3.1.0-beta.5'.split('.').map(Number)` produces
-    // `[3, 1, NaN, NaN, 3]` for prerelease versions because `'0-beta'`
-    // and `'beta'` aren't numeric. We only destructure `[major, minor]`,
-    // so the NaN at index 2 is intentionally discarded. If a future
-    // edit adds `newPatch` here, it will be `NaN` for prereleases and
-    // needs explicit prerelease handling (see semverMatch above) — do
-    // NOT extend this destructure without that fix.
-    const [currentMajor, currentMinor] = (currentAdcpVersion || '0.0.0').split('.').map(Number);
-    const [newMajor, newMinor] = adcpVersion.split('.').map(Number);
-
-    let newLibraryVersion: string;
-
-    if (newMajor > currentMajor) {
-      // Major AdCP version change -> bump major library version
-      newLibraryVersion = `${major + 1}.0.0`;
-    } else if (newMinor > currentMinor) {
-      // Minor AdCP version change -> bump minor library version
-      newLibraryVersion = `${major}.${minor + 1}.0`;
-    } else {
-      // Patch AdCP version change -> bump patch library version
-      newLibraryVersion = `${major}.${minor}.${patch + 1}`;
-    }
+    const newLibraryVersion = nextLibraryVersion(currentLibraryVersion, currentAdcpVersion, adcpVersion);
 
     packageJson.version = newLibraryVersion;
     console.log(`📈 Auto-updating library version: ${currentLibraryVersion} -> ${newLibraryVersion}`);
@@ -509,4 +534,4 @@ if (require.main === module) {
   });
 }
 
-export { syncVersion, getTargetAdCPVersion };
+export { syncVersion, getTargetAdCPVersion, nextLibraryVersion };
