@@ -21,11 +21,14 @@ import {
   createLazyBackend,
   ensureGetProductsCacheScope,
   getFormatAssets,
+  LEGACY_PURCHASE_PUBLICATION_PROOF_RETENTION_MS,
+  legacyPurchaseSettlementFingerprint,
   resolveTaskState,
   type CanonicalFormatParams,
   type EffectiveTaskState,
   type FormatAssetsInput,
   type GetProductsResponse,
+  type LegacyPurchasePublicationLease,
   type ManagerRevalidationRequest,
   type ManagerRevalidationResponse,
   type Placement,
@@ -94,6 +97,32 @@ const idempotencyErrors = [
   new IdempotencyClaimOwnershipError('save'),
   new ServerIdempotencyClaimOwnershipError('release'),
 ];
+const settlementFingerprint: string = legacyPurchaseSettlementFingerprint({
+  operationId: 'operation-1',
+  serverTaskId: 'seller-task-1',
+  taskType: 'create_media_buy',
+  terminal: {
+    success: false,
+    status: 'failed',
+    error: 'seller failed',
+    metadata: {
+      taskId: 'client-task-1',
+      taskName: 'create_media_buy',
+      agent: { id: 'agent-1', name: 'Agent', protocol: 'a2a' },
+      responseTimeMs: 1,
+      timestamp: '2026-08-22T00:00:00Z',
+      clarificationRounds: 0,
+      status: 'failed',
+    },
+  },
+});
+const publicationProofRetentionMs: number = LEGACY_PURCHASE_PUBLICATION_PROOF_RETENTION_MS;
+void publicationProofRetentionMs;
+const publicationLease: LegacyPurchasePublicationLease = {
+  ownerId: 'public-barrel-owner',
+  expiresAt: new Date(Date.now() + 60_000).toISOString(),
+};
+void publicationLease;
 
 const lazyBackendFactory: LazyBackendFactory = async () => ({
   async get() { return null; },
@@ -173,6 +202,7 @@ void mediaBuyShape;
 void inspectedAssets;
 void serverSyncError;
 void authErrors;
+void settlementFingerprint;
 void lazyBackend;
 void lazyBackendOptions;
 void serverLazyBackend;

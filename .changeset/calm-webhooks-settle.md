@@ -13,10 +13,51 @@ They must atomically cross-check pending callback and bound seller task IDs, and
 promote an earlier pending terminal winner from `complete()` without replacing it.
 That promotion must atomically install the pending callback's `serverTaskId` as
 the completed operation's seller-task binding when one was not already present.
-Implement the callback lookup, pending-settlement inbox, and publication
-acknowledgement methods together for replica-safe webhooks, or none of them for
-the polling-only fallback. Completed-operation replay retention now defaults to
-seven days. Handler-less A2A pauses retain an exact-task resume closure only
+Implement the callback lookup, pending-settlement inbox, publication
+acknowledgement, and deferred-task-token binding methods together for
+replica-safe webhooks, or none of them for the polling-only fallback.
+Publication acknowledgement must atomically replace the pending entry with a
+stable, nonempty `acknowledgedSettlementFingerprint`, retain that proof through
+the operation replay fence, and return it from both callback-capable lookup
+methods. Exact acknowledgement retries must validate the same proof. This
+prevents duplicate completion-handler publication when the legacy ACK succeeds
+but deferred-checkpoint finalization must be retried. When an exact completed
+result has no pending outbox entry, acknowledgement installs the proof after
+successful publication. Custom stores should use the exported
+`legacyPurchaseSettlementFingerprint()` helper for the enforced canonical
+proof.
+Callback-capable stores also implement renewable, owner-fenced
+`claimPendingSettlementPublication` and
+`releasePendingSettlementPublication` operations. They make SDK-observed
+polling completion reclaimable after a crash while excluding healthy
+concurrent publishers; pending acknowledgement requires the exact owner and
+handlers remain idempotent across lease expiry.
+Sender callback writes still stop at the operation replay deadline, while an
+SDK-owned polling/inline publication fence may be installed later for already
+dispatched seller work and remains retained until exact-owner acknowledgement.
+Every accepted sender or SDK terminal outbox starts a fresh seven-day recovery
+horizon so handler retry and cross-store finalization cannot outlive the
+durable callback route.
+That acknowledgement extends the completed replay fence by at least seven days
+so a crash before a separate deferred-checkpoint ACK can still recover the
+publication proof.
+Deferred-token binding is generation-fenced: nested pauses compare-and-swap
+the exact prior token rather than allowing a stale continuation to overwrite
+the callback recovery route. Callback-capable committed deferred records also
+require the owning durable coordinator to authorize the exact current,
+unexpired claimed token before sending seller continuation input. Already
+pending or terminal checkpoints remain recoverable without redispatch.
+Because the default reference continuation store is callback-capable, a
+committed A2A pause now also requires configured deferred storage. Without it,
+the pause fails closed instead of exposing a callback-racy in-process resume.
+Polling-only stores that omit all six callback methods retain live in-process
+pause behavior.
+Durably stored deferred tokens are bearer capabilities and must be generated
+with a cryptographically secure random source. The SDK accepts UUIDv4 tokens
+or 43–256 character URL-safe opaque tokens and rejects weaker or malformed
+tokens before any storage read or write.
+Completed-operation replay retention now has a seven-day minimum, independent
+of shorter unresolved-operation monitoring settings. Handler-less A2A pauses retain an exact-task resume closure only
 for a live paused A2A transport Task; MCP and terminal/identity-less A2A pauses are
 returned without one. Durable account and seller-session bindings are stored as
 hashes, and continuation redemption accepts only the SDK's fixed base64url token
@@ -69,6 +110,15 @@ concurrent replicas from the same checkpoint; failed finalization releases the
 checkpoint and crashed-owner leases expire. Recovery callbacks and completion
 handlers must remain idempotent because a replacement owner cannot stop a
 partitioned or event-loop-stalled former owner after its lease expires.
+Committed resumes that remain working/submitted retain their seller work handle
+under the same durable token, so restart reconstructs polling without sending
+the human input again. Only seller-authoritative terminal polling results can
+replace that pending route; local observation failures remain retryable, and a
+terminal `track()` observation is checkpointed for token-based finalization.
+Seller-authoritative `input-required` and `auth-required` polling transitions
+remain explicit but nonresumable because an AdCP polling handle is not an A2A
+transport task ID. The pending route remains available for later polling
+without fabricating a fresh mutation or a false continuation.
 Admitted claims and terminal checkpoints receive an
 independent safety horizon that cannot be shortened by the human continuation
 TTL; they remain as exact-replay fences through that safety horizon, avoiding
@@ -94,6 +144,11 @@ webhook and request claim completion/release across replicas. Request-side
 missing MCP idempotency keys and every malformed present key fail closed before
 handler dispatch. Configured dedup now also requires the key on A2A deliveries;
 older A2A senders must leave receiver dedup disabled.
+Canonical request equivalence now excludes the write-only
+`authentication.credentials` value from both `push_notification_config` and
+`reporting_webhook`, so secret rotation does not false-conflict. URL, scheme,
+token, reporting frequency, requested metrics, and every other routing or
+request-semantic field remain hashed.
 `putIfAbsent()` must atomically insert when physically absent or replace a
 logically expired record using backend time (strictly expired; equality stays
 live). Read-then-CAS expiry takeover is not conforming because it permits

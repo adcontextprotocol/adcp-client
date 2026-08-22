@@ -1,6 +1,9 @@
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
+const { createHash } = require('node:crypto');
+
+const testDurableToken = label => createHash('sha256').update(label).digest('base64url');
 
 const { AgentClient } = require('../dist/lib/core/AgentClient');
 const { TaskExecutor, TaskTimeoutError: ExecutorTaskTimeoutError } = require('../dist/lib/core/TaskExecutor');
@@ -1005,30 +1008,28 @@ describe('read-path cancellation and timeout', () => {
         has: async token => stored.has(token),
       };
       const executor = new TaskExecutor({ deferredStorage: storage });
+      const token = testDurableToken('abort-cleanup-token');
       const execution = executor.executeTask(
         { id: 'abort-cleanup', name: 'test', protocol: 'a2a', agent_uri: 'http://example.test/a2a' },
         'custom_input_task',
         {},
-        async () => ({ defer: true, token: 'abort-cleanup-token' }),
+        async () => ({ defer: true, token }),
         { timeout: 20 }
       );
       const rejected = assert.rejects(execution, error => error instanceof TaskTimeoutError);
       await putAnnounced;
       await new Promise(resolve => setTimeout(resolve, 30));
-      const originalState = stored.get('abort-cleanup-token');
+      const originalState = stored.get(token);
       const claimedState = {
         ...originalState,
         continuationVersion: 'concurrent-claimed-version',
         continuationClaimed: true,
       };
-      assert.equal(
-        await storage.replaceIfVersion('abort-cleanup-token', originalState.continuationVersion, claimedState),
-        true
-      );
+      assert.equal(await storage.replaceIfVersion(token, originalState.continuationVersion, claimedState), true);
       releasePut();
       await rejected;
       await new Promise(resolve => setTimeout(resolve, 10));
-      assert.equal(stored.get('abort-cleanup-token')?.continuationVersion, 'concurrent-claimed-version');
+      assert.equal(stored.get(token)?.continuationVersion, 'concurrent-claimed-version');
     } finally {
       ProtocolClient.callTool = originalCallTool;
     }

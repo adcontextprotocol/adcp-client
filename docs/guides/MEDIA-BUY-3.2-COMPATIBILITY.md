@@ -291,23 +291,65 @@ clusters should implement `LegacyPurchaseContinuationStore` with durable,
 atomic issuance, binding verification, operation-wide idempotency indexing,
 and claim operations. To accept mutation callbacks after a restart or on a
 different replica, a custom store must also implement
-`getByCallbackOperationId`, `recordPendingSettlement`, and
-`acknowledgePendingSettlement`; implementing only part of that durable inbox/outbox
-contract is rejected during coordinator negotiation. The pending-settlement write
+`getByCallbackOperationId`, `recordPendingSettlement`,
+`claimPendingSettlementPublication`, `releasePendingSettlementPublication`,
+`acknowledgePendingSettlement`, and `recordDeferredTaskToken`; implementing only
+part of that durable inbox/outbox contract is rejected during coordinator
+negotiation. The pending-settlement write
 must atomically compare exact callback identity and terminal content, and must
 be retained through `operation.replayExpiresAt`. A pending callback task ID and
-the write-once seller task binding must match in either write order. Existing stores may omit all three
+the write-once seller task binding must match in either write order.
+`recordDeferredTaskToken` is a compare-and-swap: initial binding expects no
+prior token, a nested pause supplies the exact prior token as its fourth
+argument, stale writers return `false`, and an exact installed-token retry
+returns `true`. That exact token is also the only callback-capable claimed route
+allowed to send seller continuation input; ambiguous, completed, expired,
+stale, unlinked, or coordinator-less routes fail closed.
+`acknowledgePendingSettlement` must atomically clear the exact pending entry and
+retain its stable, nonempty `acknowledgedSettlementFingerprint` through
+`operation.replayExpiresAt`. `get` and `getByCallbackOperationId` must return
+that proof, and exact ACK retries must validate it; this is the durable evidence
+that application publication already occurred if a later deferred-checkpoint
+write fails. If the exact terminal result was completed without a pending
+outbox entry, ACK installs the same proof after publication succeeds. Use the
+exported `legacyPurchaseSettlementFingerprint()` helper to compute the enforced
+canonical proof. It binds the operation, seller task, task type, and terminal
+value while intentionally excluding the webhook delivery event key.
+`claimPendingSettlementPublication` and
+`releasePendingSettlementPublication` are an atomic renewable lease over the
+exact outbox entry. A live different owner returns `false`, the same owner may
+renew, an expired owner may be replaced, release removes only the exact owner,
+and pending acknowledgement requires that owner. Publication callbacks must
+remain idempotent across lease loss. Existing stores may omit all six
 methods and continue polling-only operation; the coordinator suppresses push
 notifications for those stores so no callback can be acknowledged only in
-process memory. The reference store is bounded to 256 records / 4 MiB
+process memory. The default reference store implements callback recovery, so a
+committed A2A pause requires configured `deferredStorage`; without it the pause
+fails closed. A polling-only store that omits all six callback methods can
+still use an in-process pause continuation without deferred storage.
+Sender callback inbox writes stop at `operation.replayExpiresAt`, but an
+already-dispatched seller task may finish later. A pending settlement marked
+`publicationSource: 'sdk'` may therefore be installed after that time and must
+remain retained until exact-owner acknowledgement; cleanup must not delete an
+expired completed record while that SDK outbox is pending. Its successful ACK
+extends completed replay retention by at least seven days so a crash before a
+separate deferred-checkpoint ACK can still recover the publication proof.
+Every accepted sender or SDK terminal outbox also starts a fresh seven-day
+recovery horizon at admission; a callback admitted just before the old deadline
+therefore remains retryable while its handler and cross-store finalization run.
+No pending outbox is cleanup-eligible while its publication lease is
+unexpired. An expired sender-owned outbox may be reclaimed only after both the
+replay deadline and any active lease end.
+
+The reference store is bounded to 256 records / 4 MiB
 and prunes expired unused or completed records; it deliberately does not evict
 ambiguous mutations. Tokens are principal-, account-, seller-session-,
 source-version-, expiry-, product-, discovery-request-, and full
 observed-response-bound. Re-observing the same discovery returns the same
 token. A claim is consumed at the first mutation; exact retries replay the
-recorded terminal `TaskResult` during a seven-day replay window by default;
-explicit `legacyPurchaseOperationTtlMs` values configure both monitoring and
-replay retention.
+recorded terminal `TaskResult` during a replay window of at least seven days.
+`legacyPurchaseOperationTtlMs` configures unresolved-operation monitoring and
+may lengthen, but never shorten, that terminal replay retention.
 
 Custom stores must also implement the terminal CAS outcome precisely:
 `complete()` returns `completed` only when it installs the caller's candidate,
@@ -366,7 +408,11 @@ durable, secret-safe mutation descriptor (`sourceMutationKey`, selected product
 IDs, and a submitted seller task ID when available) plus the exact retry input.
 It must return a schema-valid terminal `create_media_buy` result found by an
 application-owned natural key. The SDK never blindly repeats an ambiguous
-legacy create or persists webhook credentials from the request.
+legacy create or persists webhook credentials from the request. For a
+callback-capable continuation store, the reconciled result must include the
+authoritative seller identity in `metadata.serverTaskId` unless the claim
+already durably records it; otherwise the SDK cannot fence later callback
+publication against the reconciled winner and fails closed.
 
 Native 3.2 sellers cannot return `products_available`. A dual-surface 3.2
 server can serve older buyers through explicit legacy `sales` handlers: the

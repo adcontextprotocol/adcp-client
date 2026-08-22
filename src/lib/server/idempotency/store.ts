@@ -53,8 +53,13 @@ import { canonicalJsonSha256 } from '../../utils/jcs';
  *   IDEMPOTENCY_CONFLICT.
  * - `governance_context` — may be a refreshed signed token on retry
  * - `push_notification_config.authentication.credentials` — may be a rotated
- *   bearer/HMAC credential. The URL and scheme stay in the hash; only the
- *   credential value is excluded.
+ *   bearer/HMAC credential.
+ * - `reporting_webhook.authentication.credentials` — same write-only
+ *   credential semantics for reporting delivery.
+ *
+ * For both webhook registrations, URL, scheme, token, reporting frequency,
+ * requested metrics, and every other routing/semantic field stay in the hash;
+ * only the credential value is excluded.
  */
 const HASH_EXCLUSION_FIELDS = ['idempotency_key', 'governance_context'] as const;
 
@@ -207,8 +212,10 @@ export type IdempotencyCheckResult =
  * `JSON.stringify`-s it into the configured backend for the declared
  * `ttlSeconds` (default 24h, max 7d). The hash-exclusion list strips
  * `idempotency_key`, `governance_context`, and
- * `push_notification_config.authentication.credentials` from the
- * **hash** so a rotated credential on retry doesn't false-conflict,
+ * `authentication.credentials` from both `push_notification_config`
+ * and `reporting_webhook` from the **hash** so a rotated credential on
+ * retry doesn't false-conflict. URL, scheme, token, frequency, metrics,
+ * and all other routing/semantic fields remain hashed,
  * but the **stored response** is the handler's verbatim output.
  *
  * If a handler returns a response that includes:
@@ -219,6 +226,8 @@ export type IdempotencyCheckResult =
  *   supplied write-only secret — the contract is that sellers MUST
  *   NOT echo it back; receipt correlation uses
  *   `push_notification_config.token` instead),
+ * - `reporting_webhook.authentication.credentials` (the equivalent
+ *   write-only reporting-delivery secret),
  * - any other secret material,
  *
  * those secrets sit at rest in the backend for `ttlSeconds`. On Redis
@@ -698,8 +707,8 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
  *
  * Strips the closed exclusion list (`idempotency_key`, `context` when
  * it's the echo-back object, `governance_context`, and
- * `push_notification_config.authentication.credentials`) before hashing
- * with RFC 8785 JCS + SHA-256.
+ * `authentication.credentials` from both `push_notification_config` and
+ * `reporting_webhook`) before hashing with RFC 8785 JCS + SHA-256.
  */
 export function hashPayload(payload: unknown): string {
   return canonicalJsonSha256(stripExclusions(payload));
@@ -719,8 +728,13 @@ function stripExclusions(payload: unknown): unknown {
     // MUST stay in the hash so a retry with different text is correctly
     // rejected as IDEMPOTENCY_CONFLICT.
     if (k === 'context' && v !== null && typeof v === 'object' && !Array.isArray(v)) continue;
-    if (k === 'push_notification_config' && v && typeof v === 'object' && !Array.isArray(v)) {
-      out[k] = stripPushNotificationCredentials(v as Record<string, unknown>);
+    if (
+      (k === 'push_notification_config' || k === 'reporting_webhook') &&
+      v &&
+      typeof v === 'object' &&
+      !Array.isArray(v)
+    ) {
+      out[k] = stripWebhookAuthenticationCredentials(v as Record<string, unknown>);
     } else {
       out[k] = v;
     }
@@ -728,14 +742,14 @@ function stripExclusions(payload: unknown): unknown {
   return out;
 }
 
-function stripPushNotificationCredentials(pnc: Record<string, unknown>): Record<string, unknown> {
-  const auth = pnc.authentication;
-  if (!auth || typeof auth !== 'object' || Array.isArray(auth)) return pnc;
+function stripWebhookAuthenticationCredentials(config: Record<string, unknown>): Record<string, unknown> {
+  const auth = config.authentication;
+  if (!auth || typeof auth !== 'object' || Array.isArray(auth)) return config;
   const authCopy: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(auth as Record<string, unknown>)) {
     if (k !== 'credentials') authCopy[k] = v;
   }
-  return { ...pnc, authentication: authCopy };
+  return { ...config, authentication: authCopy };
 }
 
 // ASCII unit separator (U+001F). Used to join scope segments without

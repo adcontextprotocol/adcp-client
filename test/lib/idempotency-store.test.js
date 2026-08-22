@@ -248,6 +248,34 @@ describe('createIdempotencyStore', () => {
       };
       assert.equal((await store.check({ principal: 'p', key: 'k', payload: p3 })).kind, 'conflict');
     });
+
+    it('ignores reporting_webhook.authentication.credentials but keeps routing fields', async () => {
+      const store = makeStore();
+      const p1 = {
+        budget: 5000,
+        reporting_webhook: {
+          url: 'https://reports.example/hook',
+          reporting_frequency: 'daily',
+          authentication: { scheme: 'HMAC-SHA256', credentials: 'secret_v1' },
+        },
+      };
+      const p2 = {
+        ...p1,
+        reporting_webhook: {
+          ...p1.reporting_webhook,
+          authentication: { scheme: 'HMAC-SHA256', credentials: 'secret_v2' },
+        },
+      };
+      const { payloadHash, claimToken } = await store.check({ principal: 'p', key: 'k', payload: p1 });
+      await store.save({ principal: 'p', key: 'k', payloadHash, claimToken, response: 'cached' });
+      assert.equal((await store.check({ principal: 'p', key: 'k', payload: p2 })).kind, 'replay');
+
+      const differentFrequency = {
+        ...p2,
+        reporting_webhook: { ...p2.reporting_webhook, reporting_frequency: 'hourly' },
+      };
+      assert.equal((await store.check({ principal: 'p', key: 'k', payload: differentFrequency })).kind, 'conflict');
+    });
   });
 
   describe('expired entries', () => {

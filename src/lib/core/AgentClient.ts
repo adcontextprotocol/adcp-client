@@ -432,6 +432,27 @@ export class AgentClient {
     return this.client.registerDurableSettlementRecovery(recoverer);
   }
 
+  /** Register exact-token authorization for committed deferred continuation recovery. @internal */
+  registerDurableDeferredResumeAuthorization(
+    authorizer: (operationId: string, token: string) => boolean | undefined | Promise<boolean | undefined>
+  ): () => void {
+    return this.client.registerDurableDeferredResumeAuthorization(authorizer);
+  }
+
+  /** Whether this exact continuation currently has a durable SDK checkpoint. @internal */
+  hasDurablyStoredDeferredTask(token: string): Promise<boolean> {
+    return this.client.hasDurablyStoredDeferredTask(token);
+  }
+
+  /** Bridge a store-recovered callback into the deferred terminal checkpoint. @internal */
+  checkpointExternalDeferredSettlement<T>(
+    token: string,
+    operationId: string,
+    terminalResult: TaskResult<T>
+  ): Promise<TaskResult<T> | undefined> {
+    return this.client.checkpointExternalDeferredSettlement(token, operationId, terminalResult);
+  }
+
   /** Publish a callback only after a compatibility store has durably bound and settled it. @internal */
   publishDurablySettledWebhook(args: {
     operationId: string;

@@ -69,15 +69,66 @@ returns that earlier terminal winner as `pending_completed` with required
 settlement metadata instead of the caller's stale candidate.
 
 Replica-safe callback recovery requires implementing
-`getByCallbackOperationId()`, `recordPendingSettlement()`, and
-`acknowledgePendingSettlement()` together; partial implementations are rejected.
-The acknowledgement is an atomic outbox clear after application handler dispatch,
-so a transient handler failure remains retryable. Stores that implement none of
+`getByCallbackOperationId()`, `recordPendingSettlement()`,
+`claimPendingSettlementPublication()`, `releasePendingSettlementPublication()`,
+`acknowledgePendingSettlement()`, and `recordDeferredTaskToken()` together;
+partial implementations are rejected. The token binding links the purchase
+record to the SDK's distinct deferred-state token so a callback can advance the
+correct terminal checkpoint after restart. Its fourth argument is the expected
+prior deferred token: initial binding expects no prior token, nested pauses
+compare-and-swap the exact prior token, stale writers return `false`, and an
+exact already-installed retry returns `true` without overwriting it.
+For callback-capable operations, only the exact current deferred token on an
+unexpired claimed operation can dispatch seller continuation input. Ambiguous,
+completed, expired, stale, unlinked, or coordinator-less routes fail closed;
+pending and terminal checkpoints can still be recovered without redispatch.
+The default reference store implements callback recovery, so a committed A2A
+pause requires `SingleAgentClient.deferredStorage`. Without deferred storage,
+the SDK fails that pause closed rather than exposing an in-process continuation
+that could race a callback. To retain in-process pause behavior without durable
+storage, use a polling-only continuation store that omits all six callback
+methods.
+The publication claim is an atomic renewable lease over the exact pending
+settlement. A live different owner returns `false`, the same owner may renew,
+an expired owner may be replaced, and release removes only the exact owner.
+Acknowledgement of a pending entry requires that exact owner. This lets a
+replica reclaim an SDK polling-completion outbox after a crash without racing a
+healthy publisher. Publication handlers remain idempotent because a stalled or
+partitioned owner cannot revoke side effects after lease expiry.
+Sender callback inbox writes still stop at `replayExpiresAt`. An already
+dispatched seller task may finish later, so an SDK-owned polling/inline
+publication fence may be installed after that time and must remain retained
+until exact-owner acknowledgement; expired completed records with a pending
+SDK outbox are not cleanup-eligible.
+Every accepted sender- or SDK-owned terminal outbox extends `replayExpiresAt`
+by at least `LEGACY_PURCHASE_PUBLICATION_PROOF_RETENTION_MS` from admission.
+This keeps a callback admitted near the former deadline retryable through
+handler execution and cross-store finalization.
+Acknowledging an SDK-owned outbox must extend `replayExpiresAt` by at least
+`LEGACY_PURCHASE_PUBLICATION_PROOF_RETENTION_MS` from acknowledgement. The SDK
+verifies that extension through both primary and callback lookups so a crash
+before deferred-checkpoint finalization remains recoverable.
+Cleanup also must not remove any pending outbox while its publication lease is
+unexpired; an expired sender-owned outbox becomes reclaimable only after both
+its replay deadline and active lease end.
+The acknowledgement atomically replaces the outbox entry after application
+handler dispatch: it clears `pendingSettlement` and retains a stable, nonempty
+`acknowledgedSettlementFingerprint` for that exact settlement through
+`replayExpiresAt`. Both lookup methods must return that proof, and exact ACK
+retries must validate it. This publication proof prevents a handler from being
+invoked again if the legacy-store ACK succeeds but deferred-checkpoint ACK
+fails. When the exact completed result has no pending outbox entry, ACK installs
+the same proof after successful publication. Implementers should call the
+exported `legacyPurchaseSettlementFingerprint()` helper rather than reproduce
+its canonicalization. The proof binds the operation, seller task, task type,
+and terminal value; it intentionally excludes the webhook delivery event key
+so authenticated redelivery may rotate that identity. A transient handler failure remains retryable. Stores that implement none of
 these methods remain polling-only, and the
 SDK suppresses task webhooks for those operations. Share the durable webhook
 registration store between replicas (and the replay store for RFC 9421).
-Default completed-operation replay retention is seven days; an explicit
-`legacyPurchaseOperationTtlMs` configures both monitoring and replay retention.
+Completed-operation replay retention is at least seven days.
+`legacyPurchaseOperationTtlMs` configures unresolved-operation monitoring and
+may lengthen, but never shorten, that replay retention.
 
 Seller pauses are now protocol-specific. A2A can invoke an input handler or
 return a resume closure only for a live `input-required`/`auth-required` A2A

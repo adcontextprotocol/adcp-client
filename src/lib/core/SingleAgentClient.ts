@@ -100,6 +100,8 @@ import {
   DEFERRED_SETTLEMENT_ACK,
   acknowledgeDeferredSettlement,
   rejectDeferredSettlement,
+  hasCompletionHandlerAlreadyPublished,
+  markCompletionHandlerAlreadyPublished,
   AfterProtocolDispatchHookError,
   BeforeProtocolDispatchHookError,
   type BeforeProtocolDispatchHook,
@@ -1552,6 +1554,9 @@ export class SingleAgentClient {
       observation: ExternalTaskSettlementObservation
     ) => Promise<ExternalTaskStatusResult | undefined>
   >();
+  private readonly durableDeferredResumeAuthorizers = new Set<
+    (operationId: string, token: string) => boolean | undefined | Promise<boolean | undefined>
+  >();
 
   constructor(
     private agent: AgentConfig,
@@ -1598,6 +1603,12 @@ export class SingleAgentClient {
         }),
       deferredTaskTtlSeconds: config.deferredTaskTtlSeconds,
       canRecoverDeferredSettlement: () => this.durableSettlementRecoverers.size > 0,
+      authorizeDeferredSettlementResume: async (operationId, token) => {
+        for (const authorize of this.durableDeferredResumeAuthorizers) {
+          if ((await authorize(operationId, token)) === true) return true;
+        }
+        return false;
+      },
       recoverDeferredSettlement: async (result, operationId, serverTaskId) => {
         const settlement = await this.wrapPersistedDeferredSettlement(result, operationId, serverTaskId);
         return {
@@ -2148,6 +2159,28 @@ export class SingleAgentClient {
     return () => this.durableSettlementRecoverers.delete(recoverer);
   }
 
+  /** Register exact-token authorization for committed deferred continuation recovery. @internal */
+  registerDurableDeferredResumeAuthorization(
+    authorizer: (operationId: string, token: string) => boolean | undefined | Promise<boolean | undefined>
+  ): () => void {
+    this.durableDeferredResumeAuthorizers.add(authorizer);
+    return () => this.durableDeferredResumeAuthorizers.delete(authorizer);
+  }
+
+  /** Whether this exact continuation currently has a durable SDK checkpoint. @internal */
+  hasDurablyStoredDeferredTask(token: string): Promise<boolean> {
+    return this.executor.hasDurablyStoredDeferredTask(token);
+  }
+
+  /** Bridge a store-recovered callback into the deferred terminal checkpoint. @internal */
+  checkpointExternalDeferredSettlement<T>(
+    token: string,
+    operationId: string,
+    terminalResult: TaskResult<T>
+  ): Promise<TaskResult<T> | undefined> {
+    return this.executor.checkpointExternalDeferredSettlement(token, operationId, terminalResult);
+  }
+
   /** Publish a callback only after an external durable inbox has bound and settled it. @internal */
   async publishDurablySettledWebhook(args: {
     operationId: string;
@@ -2179,16 +2212,10 @@ export class SingleAgentClient {
       payload: args.result,
       timestamp: metadata.timestamp,
     });
-    const outcome = await this.asyncHandler?.handleWebhook({
+    await this.asyncHandler?.handleDurablySettledResult({
       result: args.result as AdCPAsyncResponseData | undefined,
       metadata,
     });
-    if (outcome === 'in_progress') {
-      throw new WebhookDispatchError(
-        'webhook_publication_in_progress',
-        'A matching callback publication is still in progress.'
-      );
-    }
   }
 
   private async recoverDurableSettlement(
@@ -2219,6 +2246,7 @@ export class SingleAgentClient {
       serverTaskId,
       taskType,
       ...(idempotencyKey !== undefined && { idempotencyKey }),
+      deferredCheckpointOwned: true,
     });
     if (
       !recovered ||
@@ -2249,7 +2277,11 @@ export class SingleAgentClient {
     else settled.data = recovered.result as T;
     if (recovered.error === undefined) delete settled.error;
     else settled.error = recovered.error;
-    return attachMatch(settled as TaskResult<T>) as TaskResult<T>;
+    const recoveredResult = attachMatch(settled as TaskResult<T>) as TaskResult<T>;
+    if (hasCompletionHandlerAlreadyPublished(recovered)) {
+      markCompletionHandlerAlreadyPublished(recoveredResult);
+    }
+    return recoveredResult;
   }
 
   private async wrapPersistedDeferredSettlement<T>(
@@ -3389,6 +3421,7 @@ export class SingleAgentClient {
       throw error;
     }
     this.rememberCanonicalCreativeWebhookContext(metadata);
+    let externalStatus: ExternalTaskStatusResult | undefined;
     try {
       const canonicalResult = this.canonicalizeWebhookCreativeResult(metadata, parsed.result, canonicalCreativeTask);
       const policyDispatch = await this.applyProductPropertyPolicyToWebhookResult(
@@ -3409,7 +3442,6 @@ export class SingleAgentClient {
         taskType: metadata.task_type,
         ...(metadata.idempotency_key !== undefined && { idempotencyKey: metadata.idempotency_key }),
       };
-      let externalStatus: ExternalTaskStatusResult;
       if (parsed.metadata.requiresDurableSettlement === true) {
         const recovered = await this.recoverDurableSettlement(metadata.operation_id, observation);
         if (recovered) {
@@ -3454,6 +3486,7 @@ export class SingleAgentClient {
           { serverTaskId: observation.serverTaskId, taskType: observation.taskType }
         );
       }
+      if (!externalStatus) throw new Error('Webhook settlement did not produce an observable status.');
       if (externalStatus.queued) return true;
       if (externalStatus.duplicate) {
         metadata = {
@@ -3474,6 +3507,7 @@ export class SingleAgentClient {
         };
         await this.config.onActivity?.(canonicalCreativeActivity(duplicateActivity));
         await this.asyncHandler?.handleDurableSettlementDuplicate(metadata);
+        await externalStatus.afterDispatch?.();
         return true;
       }
       if (externalStatus.settled) {
@@ -3532,6 +3566,9 @@ export class SingleAgentClient {
 
       await externalStatus.afterDispatch?.();
       return false;
+    } catch (error) {
+      await externalStatus?.onDispatchError?.();
+      throw error;
     } finally {
       this.forgetProductPolicyRequestParams(metadata);
     }
@@ -4215,6 +4252,7 @@ export class SingleAgentClient {
     transformCompletedResponse?: (data: T) => T,
     legacyFormatConverter?: LegacyFormatConverter
   ): Promise<TaskResult<T>> {
+    const completionHandlerAlreadyPublished = hasCompletionHandlerAlreadyPublished(result);
     const settlementAcknowledger = (
       result as TaskResult<T> & {
         [DEFERRED_SETTLEMENT_ACK]?: (finalizedResult?: TaskResult<T>) => Promise<void>;
@@ -4227,6 +4265,7 @@ export class SingleAgentClient {
       ...(context.optionContextId !== undefined && { contextId: context.optionContextId }),
     };
     const rawDeferredResume = result.deferred?.resume;
+    const rawSubmittedWaitForCompletion = result.submitted?.waitForCompletion;
     const finalizerLegacyFormatConverter =
       legacyFormatConverter ?? this.resolveLegacyFormatConverter(undefined, context.projectionCatalogs);
 
@@ -4280,7 +4319,10 @@ export class SingleAgentClient {
 
     if (context.handlerName) {
       this.rememberPreviewCreativeHandler(result, taskType, context.handlerName, resumedOptions);
-      await this.notifyCompletedStatusHandler(result, taskType, context.handlerName, resumedOptions);
+      if (!completionHandlerAlreadyPublished) {
+        await this.notifyCompletedStatusHandler(result, taskType, context.handlerName, resumedOptions);
+        markCompletionHandlerAlreadyPublished(result);
+      }
     }
 
     // Replace the canonical wrapper's recursive closure with the shared
@@ -4292,6 +4334,19 @@ export class SingleAgentClient {
         resume: input =>
           rawDeferredResume(input).then(next =>
             this.finalizeTaskResult(next, context, options, transformCompletedResponse, finalizerLegacyFormatConverter)
+          ),
+      };
+    }
+    if (result.submitted && rawSubmittedWaitForCompletion) {
+      result.submitted = {
+        ...result.submitted,
+        waitForCompletion: async (pollInterval, signal) =>
+          this.finalizeTaskResult(
+            await rawSubmittedWaitForCompletion(pollInterval, signal),
+            context,
+            options,
+            transformCompletedResponse,
+            finalizerLegacyFormatConverter
           ),
       };
     }

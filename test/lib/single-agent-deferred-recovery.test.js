@@ -1,8 +1,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 
 const { SingleAgentClient, TaskExecutor, MemoryStorage } = require('../../dist/lib/index.js');
+const { acknowledgeDeferredSettlement } = require('../../dist/lib/core/TaskExecutor.js');
 const { ProtocolClient } = require('../../dist/lib/protocols/index.js');
+
+const testDurableToken = label => createHash('sha256').update(label).digest('base64url');
 
 const agent = {
   id: 'durable-resume-agent',
@@ -15,6 +19,11 @@ test('MemoryStorage rejects non-positive atomic continuation TTLs', async () => 
   const storage = new MemoryStorage({ autoCleanup: false });
   try {
     await assert.rejects(storage.putIfAbsent('invalid-put', { continuationVersion: 'v1' }, 0), /positive finite/);
+    await assert.rejects(storage.set('invalid-set', { continuationVersion: 'v1' }, 0), /positive finite/);
+    await assert.rejects(
+      storage.mset([{ key: 'invalid-mset', value: { continuationVersion: 'v1' }, ttl: Number.NaN }]),
+      /positive finite/
+    );
     await storage.set('replace', { continuationVersion: 'v1' });
     await assert.rejects(
       storage.replaceIfVersion('replace', 'v1', { continuationVersion: 'v2' }, -1),
@@ -75,7 +84,7 @@ test('SingleAgentClient resolves the canonical A2A endpoint before resuming afte
       },
       async () => ({
         defer: true,
-        token: 'single-agent-durable-token',
+        token: testDurableToken('single-agent-durable-token'),
       }),
       { skipIdempotencyAutoInject: true, skipAccountValidation: true }
     );
@@ -104,7 +113,7 @@ test('SingleAgentClient resolves the canonical A2A endpoint before resuming afte
 test('SingleAgentClient discovers the current MCP endpoint before resuming persisted state', async () => {
   const originalCallTool = ProtocolClient.callTool;
   const storage = new MemoryStorage({ autoCleanup: false });
-  const token = 'mcp-discovered-durable-token';
+  const token = testDurableToken('mcp-discovered-durable-token');
   const now = Date.now();
   const mcpAgent = {
     id: 'mcp-durable-resume-agent',
@@ -284,7 +293,7 @@ test('restart resume preserves v2 wire identity and re-enters canonical policy a
       },
       async () => ({
         defer: true,
-        token: 'v2-canonical-resume-token',
+        token: testDurableToken('v2-canonical-resume-token'),
       }),
       { projectionCatalogs: perCallProjectionCatalogs }
     );
@@ -469,7 +478,7 @@ test('durable property-list requests own nested input before asynchronous prefli
       request,
       async () => ({
         defer: true,
-        token: 'nested-request-snapshot-token',
+        token: testDurableToken('nested-request-snapshot-token'),
       }),
       taskOptions
     );
@@ -491,7 +500,7 @@ test('durable property-list requests own nested input before asynchronous prefli
 test('resumed v2 submitted continuations keep v2 polling semantics', async () => {
   const originalCallTool = ProtocolClient.callTool;
   const storage = new MemoryStorage({ autoCleanup: false });
-  const token = 'v2-resumed-submitted-token';
+  const token = testDurableToken('v2-resumed-submitted-token');
   const now = Date.now();
   await storage.putIfAbsent(
     token,
@@ -759,7 +768,7 @@ test('sync creatives snapshots nested selector options at its public boundary', 
 test('restart resume routes a committed terminal result through durable settlement exactly once', async () => {
   const originalCallTool = ProtocolClient.callTool;
   const storage = new MemoryStorage({ autoCleanup: false });
-  const token = 'committed-restart-settlement-token';
+  const token = testDurableToken('committed-restart-settlement-token');
   const now = Date.now();
   await storage.putIfAbsent(
     token,
@@ -839,7 +848,7 @@ test('restart resume routes a committed terminal result through durable settleme
 test('low-level committed resume refuses before seller dispatch and retains the token', async () => {
   const originalCallTool = ProtocolClient.callTool;
   const storage = new MemoryStorage({ autoCleanup: false });
-  const token = 'low-level-committed-token';
+  const token = testDurableToken('low-level-committed-token');
   const now = Date.now();
   await storage.putIfAbsent(
     token,
@@ -883,7 +892,7 @@ test('low-level committed resume refuses before seller dispatch and retains the 
 test('owning client without a recoverer refuses committed resume before dispatch', async () => {
   const originalCallTool = ProtocolClient.callTool;
   const storage = new MemoryStorage({ autoCleanup: false });
-  const token = 'missing-recoverer-token';
+  const token = testDurableToken('missing-recoverer-token');
   const now = Date.now();
   await storage.putIfAbsent(
     token,
@@ -924,10 +933,59 @@ test('owning client without a recoverer refuses committed resume before dispatch
   }
 });
 
+test('an unlinked committed continuation cannot resume even when settlement recovery exists', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('unlinked-committed-token');
+  const operationId = 'unlinked-committed-operation';
+  const now = Date.now();
+  await storage.putIfAbsent(
+    token,
+    {
+      continuationVersion: 'unlinked-committed-version',
+      taskId: operationId,
+      a2aTaskId: 'unlinked-committed-a2a-task',
+      serverVersion: 'v3',
+      agentId: agent.id,
+      taskName: 'create_media_buy',
+      params: {},
+      messages: [],
+      settlementOperationId: operationId,
+      settlementResumeAuthorizationRequired: true,
+      settlementServerTaskId: 'unlinked-committed-seller-task',
+      createdAt: now,
+      expiresAt: now + 60_000,
+    },
+    60
+  );
+  let protocolCalls = 0;
+  ProtocolClient.callTool = async () => {
+    protocolCalls += 1;
+    return { status: 'completed' };
+  };
+
+  try {
+    const client = new SingleAgentClient(agent, {
+      deferredStorage: storage,
+      validateFeatures: false,
+      validation: { requests: 'off', responses: 'off' },
+    });
+    client.registerDurableSettlementRecovery(async () => {
+      assert.fail('An unlinked continuation must fail before settlement recovery.');
+    });
+    await assert.rejects(client.resumeDeferredTask(token, { approved: true }), /not the current durable route/);
+    assert.equal(protocolCalls, 0);
+    assert.equal(await storage.has(token), true);
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
 test('failed committed recovery retains the terminal observation and retries without seller redispatch', async () => {
   const originalCallTool = ProtocolClient.callTool;
   const storage = new MemoryStorage({ autoCleanup: false });
-  const token = 'retryable-terminal-settlement-token';
+  const token = testDurableToken('retryable-terminal-settlement-token');
   const operationId = 'retryable-terminal-operation';
   const now = Date.now();
   await storage.putIfAbsent(
@@ -1038,10 +1096,618 @@ test('failed committed recovery retains the terminal observation and retries wit
   }
 });
 
+test('committed submitted resume reconstructs polling after restart without redispatching input', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('restart-pending-settlement-token');
+  const operationId = 'restart-pending-settlement-operation';
+  const sellerWorkId = 'restart-pending-seller-work';
+  const now = Date.now();
+  await storage.putIfAbsent(
+    token,
+    {
+      continuationVersion: 'restart-pending-version',
+      taskId: operationId,
+      a2aTaskId: 'restart-pending-a2a-task',
+      serverVersion: 'v3',
+      agentId: agent.id,
+      taskName: 'create_media_buy',
+      params: {},
+      messages: [],
+      clientContext: {
+        kind: 'single-agent',
+        taskType: 'create_media_buy',
+        canonical: false,
+        productPolicyRequest: {},
+      },
+      settlementOperationId: operationId,
+      settlementServerTaskId: sellerWorkId,
+      createdAt: now,
+      expiresAt: now + 60_000,
+    },
+    60
+  );
+
+  let continuationCalls = 0;
+  let pollCalls = 0;
+  let recoveryCalls = 0;
+  ProtocolClient.callTool = async (_resolvedAgent, taskName) => {
+    if (taskName === 'create_media_buy') {
+      continuationCalls += 1;
+      return { status: 'submitted', task_id: sellerWorkId };
+    }
+    assert.equal(taskName, 'tasks/get');
+    pollCalls += 1;
+    return {
+      task_id: sellerWorkId,
+      task_type: 'create_media_buy',
+      status: 'completed',
+      result: { media_buy_id: 'restart-pending-buy', packages: [] },
+      created_at: now,
+      updated_at: Date.now(),
+    };
+  };
+  const recover = async (_recoveredOperationId, observation) => {
+    recoveryCalls += 1;
+    return {
+      settled: true,
+      status: 'completed',
+      result: observation.result,
+    };
+  };
+
+  try {
+    const firstClient = new SingleAgentClient(agent, {
+      deferredStorage: storage,
+      validateFeatures: false,
+      validation: { requests: 'off', responses: 'off' },
+    });
+    firstClient.ensureCanonicalUrlResolved = async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' });
+    firstClient.registerDurableSettlementRecovery(recover);
+    const submitted = await firstClient.resumeDeferredTask(token, { approved: true });
+    assert.equal(submitted.status, 'submitted');
+    const pendingState = await storage.get(token);
+    assert.equal(pendingState.settlementPendingTaskId, sellerWorkId);
+
+    const restarted = new SingleAgentClient(agent, {
+      deferredStorage: storage,
+      validateFeatures: false,
+      validation: { requests: 'off', responses: 'off' },
+    });
+    restarted.ensureCanonicalUrlResolved = async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' });
+    restarted.registerDurableSettlementRecovery(recover);
+    const reconstructed = await restarted.resumeDeferredTask(token, { approved: 'must-not-redispatch' });
+    assert.equal(reconstructed.status, 'submitted');
+    const completed = await reconstructed.submitted.waitForCompletion(0);
+    assert.equal(completed.status, 'completed');
+    assert.equal(completed.data.media_buy_id, 'restart-pending-buy');
+    assert.equal(continuationCalls, 1);
+    assert.equal(pollCalls, 1);
+    assert.equal(recoveryCalls, 1);
+    assert.equal(await storage.has(token), true);
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
+test('pending terminal polling checkpoints before one replica enters durable recovery', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('concurrent-pending-settlement-token');
+  const operationId = 'concurrent-pending-settlement-operation';
+  const sellerWorkId = 'concurrent-pending-seller-work';
+  const now = Date.now();
+  await storage.putIfAbsent(
+    token,
+    {
+      continuationVersion: 'concurrent-pending-version',
+      continuationClaimed: true,
+      taskId: operationId,
+      a2aTaskId: 'concurrent-pending-a2a-task',
+      serverVersion: 'v3',
+      agentId: agent.id,
+      taskName: 'create_media_buy',
+      params: {},
+      messages: [],
+      clientContext: {
+        kind: 'single-agent',
+        taskType: 'create_media_buy',
+        canonical: false,
+        productPolicyRequest: {},
+      },
+      settlementOperationId: operationId,
+      settlementServerTaskId: sellerWorkId,
+      settlementPendingTaskId: sellerWorkId,
+      createdAt: now,
+      expiresAt: now + 60_000,
+    },
+    60
+  );
+
+  let pollCalls = 0;
+  ProtocolClient.callTool = async (_resolvedAgent, taskName) => {
+    assert.equal(taskName, 'tasks/get');
+    pollCalls += 1;
+    return {
+      task_id: sellerWorkId,
+      task_type: 'create_media_buy',
+      status: 'completed',
+      result: { media_buy_id: 'concurrent-pending-buy', packages: [] },
+      created_at: now,
+      updated_at: Date.now(),
+    };
+  };
+
+  let releaseRecovery;
+  let recoveryEntered;
+  const recoveryGate = new Promise(resolve => {
+    releaseRecovery = resolve;
+  });
+  const recoveryStarted = new Promise(resolve => {
+    recoveryEntered = resolve;
+  });
+  let recoveryCalls = 0;
+  const recover = async (_recoveredOperationId, observation) => {
+    recoveryCalls += 1;
+    recoveryEntered();
+    await recoveryGate;
+    return { settled: true, status: 'completed', result: observation.result };
+  };
+
+  const createClient = () => {
+    const client = new SingleAgentClient(agent, {
+      deferredStorage: storage,
+      validateFeatures: false,
+      validation: { requests: 'off', responses: 'off' },
+    });
+    client.ensureCanonicalUrlResolved = async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' });
+    client.registerDurableSettlementRecovery(recover);
+    return client;
+  };
+
+  try {
+    const first = await createClient().resumeDeferredTask(token, { ignored: 'first' });
+    const second = await createClient().resumeDeferredTask(token, { ignored: 'second' });
+    const firstCompletion = first.submitted.waitForCompletion(0);
+    await recoveryStarted;
+
+    const checkpoint = await storage.get(token);
+    assert.equal(checkpoint.settlementPendingTaskId, undefined);
+    assert.equal(checkpoint.settlementTerminalResult.data.media_buy_id, 'concurrent-pending-buy');
+    assert.equal(checkpoint.settlementFinalizedResult, undefined);
+
+    await assert.rejects(
+      second.submitted.waitForCompletion(0),
+      /could not replace its pending checkpoint|finalization was claimed/
+    );
+    assert.equal(recoveryCalls, 1);
+    releaseRecovery();
+    const completed = await firstCompletion;
+    assert.equal(completed.status, 'completed');
+    assert.equal(recoveryCalls, 1);
+    assert.equal(pollCalls, 2);
+  } finally {
+    releaseRecovery?.();
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
+test('local pending-poll failures retain the seller work handle until an authoritative terminal result', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('retryable-pending-observer-token');
+  const operationId = 'retryable-pending-observer-operation';
+  const sellerWorkId = 'retryable-pending-observer-work';
+  const now = Date.now();
+  await storage.putIfAbsent(
+    token,
+    {
+      continuationVersion: 'retryable-pending-observer-version',
+      continuationClaimed: true,
+      taskId: operationId,
+      a2aTaskId: 'retryable-pending-observer-a2a-task',
+      serverVersion: 'v3',
+      agentId: agent.id,
+      taskName: 'create_media_buy',
+      params: {},
+      messages: [],
+      clientContext: {
+        kind: 'single-agent',
+        taskType: 'create_media_buy',
+        canonical: false,
+        productPolicyRequest: {},
+      },
+      settlementOperationId: operationId,
+      settlementServerTaskId: sellerWorkId,
+      settlementPendingTaskId: sellerWorkId,
+      createdAt: now,
+      expiresAt: now + 60_000,
+    },
+    60
+  );
+
+  let pollCalls = 0;
+  ProtocolClient.callTool = async (_resolvedAgent, taskName) => {
+    assert.equal(taskName, 'tasks/get');
+    pollCalls += 1;
+    if (pollCalls === 1) throw new Error(`Task ${sellerWorkId} not found`);
+    return {
+      task_id: sellerWorkId,
+      task_type: 'create_media_buy',
+      status: 'completed',
+      result: { media_buy_id: 'retryable-pending-observer-buy', packages: [] },
+      created_at: now,
+      updated_at: Date.now(),
+    };
+  };
+  let recoveryCalls = 0;
+
+  try {
+    const client = new SingleAgentClient(agent, {
+      deferredStorage: storage,
+      validateFeatures: false,
+      validation: { requests: 'off', responses: 'off' },
+    });
+    client.ensureCanonicalUrlResolved = async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' });
+    client.registerDurableSettlementRecovery(async (_recoveredOperationId, observation) => {
+      recoveryCalls += 1;
+      return { settled: true, status: 'completed', result: observation.result };
+    });
+
+    const aborted = await client.resumeDeferredTask(token, { ignored: 'abort' });
+    const controller = new AbortController();
+    controller.abort(new Error('local observer stopped'));
+    const abortedResult = await aborted.submitted.waitForCompletion(0, controller.signal);
+    assert.equal(abortedResult.status, 'failed');
+    assert.equal(recoveryCalls, 0);
+    assert.equal((await storage.get(token)).settlementPendingTaskId, sellerWorkId);
+
+    const evicted = await client.resumeDeferredTask(token, { ignored: 'not-found' });
+    const evictedResult = await evicted.submitted.waitForCompletion(0);
+    assert.equal(evictedResult.status, 'failed');
+    assert.equal(recoveryCalls, 0);
+    assert.equal((await storage.get(token)).settlementPendingTaskId, sellerWorkId);
+
+    const retry = await client.resumeDeferredTask(token, { ignored: 'success' });
+    const completed = await retry.submitted.waitForCompletion(0);
+    assert.equal(completed.status, 'completed');
+    assert.equal(completed.data.media_buy_id, 'retryable-pending-observer-buy');
+    assert.equal(recoveryCalls, 1);
+    assert.equal(pollCalls, 2);
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
+test('pending polling keeps input and auth pauses nonresumable without an A2A continuation identity', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+
+  try {
+    for (const pauseStatus of ['input-required', 'auth-required']) {
+      const storage = new MemoryStorage({ autoCleanup: false });
+      const token = testDurableToken(`pending-${pauseStatus}-token`);
+      const operationId = `pending-${pauseStatus}-operation`;
+      const sellerWorkId = `pending-${pauseStatus}-seller-work`;
+      const now = Date.now();
+      await storage.putIfAbsent(
+        token,
+        {
+          continuationVersion: `pending-${pauseStatus}-version`,
+          continuationClaimed: true,
+          taskId: operationId,
+          a2aTaskId: sellerWorkId,
+          serverVersion: 'v3',
+          agentId: agent.id,
+          taskName: 'create_media_buy',
+          params: {},
+          messages: [],
+          clientContext: {
+            kind: 'single-agent',
+            taskType: 'create_media_buy',
+            canonical: false,
+            productPolicyRequest: {},
+          },
+          settlementOperationId: operationId,
+          settlementServerTaskId: sellerWorkId,
+          settlementPendingTaskId: sellerWorkId,
+          createdAt: now,
+          expiresAt: now + 60_000,
+        },
+        60
+      );
+
+      let pollCalls = 0;
+      let recoveryCalls = 0;
+      ProtocolClient.callTool = async (_resolvedAgent, taskName) => {
+        if (taskName === 'tasks/get') {
+          pollCalls += 1;
+          if (pollCalls > 1) {
+            return {
+              task_id: sellerWorkId,
+              task_type: 'create_media_buy',
+              status: 'completed',
+              result: { media_buy_id: `pending-${pauseStatus}-buy`, packages: [] },
+              created_at: now,
+              updated_at: Date.now(),
+            };
+          }
+          return {
+            task_id: sellerWorkId,
+            task_type: 'create_media_buy',
+            status: pauseStatus,
+            result: { question: `Provide ${pauseStatus} input` },
+            created_at: now,
+            updated_at: Date.now(),
+          };
+        }
+        assert.fail(`polling pause must not invent a ${taskName} continuation call`);
+      };
+
+      try {
+        const client = new SingleAgentClient(agent, {
+          deferredStorage: storage,
+          validateFeatures: false,
+          validation: { requests: 'off', responses: 'off' },
+        });
+        client.ensureCanonicalUrlResolved = async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' });
+        client.registerDurableSettlementRecovery(async (_recoveredOperationId, observation) => {
+          recoveryCalls += 1;
+          return { settled: true, status: 'completed', result: observation.result };
+        });
+
+        const submitted = await client.resumeDeferredTask(token, { ignored: true });
+        const paused = await submitted.submitted.waitForCompletion(0);
+        assert.equal(paused.status, pauseStatus);
+        assert.equal(paused.deferred, undefined);
+        assert.equal(recoveryCalls, 0);
+        const pausedState = await storage.get(token);
+        assert.equal(pausedState.settlementPendingTaskId, sellerWorkId);
+        assert.equal(pausedState.continuationClaimed, true);
+
+        const retry = await client.resumeDeferredTask(token, { ignored: 'poll-only' });
+        const completed = await retry.submitted.waitForCompletion(0);
+        assert.equal(completed.status, 'completed');
+        assert.equal(completed.data.media_buy_id, `pending-${pauseStatus}-buy`);
+        assert.equal(pollCalls, 2);
+        assert.equal(recoveryCalls, 1);
+      } finally {
+        storage.destroy();
+      }
+    }
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+  }
+});
+
+test('terminal track checkpoints raw seller output for public token finalization', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('track-checkpoint-token');
+  const operationId = 'track-checkpoint-operation';
+  const sellerWorkId = 'track-checkpoint-seller-work';
+  const now = Date.now();
+  await storage.putIfAbsent(
+    token,
+    {
+      continuationVersion: 'track-checkpoint-version',
+      continuationClaimed: true,
+      taskId: operationId,
+      a2aTaskId: 'track-checkpoint-a2a-task',
+      serverVersion: 'v3',
+      agentId: agent.id,
+      taskName: 'create_media_buy',
+      params: {},
+      messages: [],
+      clientContext: {
+        kind: 'single-agent',
+        taskType: 'create_media_buy',
+        handlerName: 'onCreateMediaBuyStatusChange',
+        canonical: false,
+        productPolicyRequest: {},
+      },
+      settlementOperationId: operationId,
+      settlementServerTaskId: sellerWorkId,
+      settlementPendingTaskId: sellerWorkId,
+      createdAt: now,
+      expiresAt: now + 60_000,
+    },
+    60
+  );
+
+  let pollCalls = 0;
+  let recoveryCalls = 0;
+  let handlerCalls = 0;
+  ProtocolClient.callTool = async (_resolvedAgent, taskName) => {
+    assert.equal(taskName, 'tasks/get');
+    pollCalls += 1;
+    return {
+      task_id: sellerWorkId,
+      task_type: 'create_media_buy',
+      status: 'completed',
+      result: { media_buy_id: 'track-checkpoint-buy', packages: [] },
+      created_at: now,
+      updated_at: Date.now(),
+    };
+  };
+
+  try {
+    const client = new SingleAgentClient(agent, {
+      deferredStorage: storage,
+      validateFeatures: false,
+      validation: { requests: 'off', responses: 'off' },
+      handlers: {
+        onCreateMediaBuyStatusChange: async () => {
+          handlerCalls += 1;
+        },
+      },
+    });
+    client.ensureCanonicalUrlResolved = async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' });
+    client.registerDurableSettlementRecovery(async (_recoveredOperationId, observation) => {
+      recoveryCalls += 1;
+      return { settled: true, status: 'completed', result: observation.result };
+    });
+
+    const submitted = await client.resumeDeferredTask(token, { ignored: true });
+    await assert.rejects(
+      submitted.submitted.track(),
+      /terminal seller observation was saved.*resume the durable token/
+    );
+    const checkpoint = await storage.get(token);
+    assert.equal(checkpoint.settlementTerminalResult.data.media_buy_id, 'track-checkpoint-buy');
+    assert.equal(checkpoint.settlementFinalizedResult, undefined);
+    assert.equal(recoveryCalls, 0);
+    assert.equal(handlerCalls, 0);
+
+    const completed = await client.resumeDeferredTask(token, { ignored: 'checkpointed' });
+    assert.equal(completed.status, 'completed');
+    assert.equal(completed.data.media_buy_id, 'track-checkpoint-buy');
+    assert.equal(recoveryCalls, 1);
+    assert.equal(handlerCalls, 1);
+    assert.equal(pollCalls, 1);
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
+test('external callbacks cannot replace an existing deferred terminal winner', async () => {
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('external-terminal-conflict-token');
+  const operationId = 'external-terminal-conflict-operation';
+  const sellerWorkId = 'external-terminal-conflict-seller-work';
+  const now = Date.now();
+  const metadata = {
+    taskId: operationId,
+    serverTaskId: sellerWorkId,
+    taskName: 'create_media_buy',
+    agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+    responseTimeMs: 1,
+    timestamp: new Date().toISOString(),
+    clarificationRounds: 0,
+    status: 'completed',
+  };
+  const terminalWinner = {
+    success: true,
+    status: 'completed',
+    data: { media_buy_id: 'poll-winner-buy', packages: [] },
+    metadata,
+    conversation: [],
+    debug_logs: [],
+  };
+  const conflictingCallback = {
+    ...terminalWinner,
+    data: { media_buy_id: 'conflicting-callback-buy', packages: [] },
+  };
+  await storage.putIfAbsent(
+    token,
+    {
+      continuationVersion: 'external-terminal-conflict-version',
+      continuationClaimed: true,
+      taskId: operationId,
+      a2aTaskId: 'external-terminal-conflict-a2a-task',
+      serverVersion: 'v3',
+      agentId: agent.id,
+      taskName: 'create_media_buy',
+      params: {},
+      messages: [],
+      settlementOperationId: operationId,
+      settlementServerTaskId: sellerWorkId,
+      settlementTerminalResult: terminalWinner,
+      createdAt: now,
+      expiresAt: now + 60_000,
+    },
+    60
+  );
+
+  try {
+    const client = new SingleAgentClient(agent, {
+      deferredStorage: storage,
+      validateFeatures: false,
+      validation: { requests: 'off', responses: 'off' },
+    });
+    await assert.rejects(
+      client.checkpointExternalDeferredSettlement(token, operationId, conflictingCallback),
+      /conflicts with the saved deferred terminal observation/
+    );
+    const afterConflict = await storage.get(token);
+    assert.equal(afterConflict.settlementFinalizationLease, undefined);
+    assert.equal(afterConflict.settlementFinalizedResult, undefined);
+    assert.equal(afterConflict.settlementTerminalResult.data.media_buy_id, 'poll-winner-buy');
+
+    const exactRetry = await client.checkpointExternalDeferredSettlement(token, operationId, terminalWinner);
+    assert.ok(exactRetry);
+    await acknowledgeDeferredSettlement(exactRetry);
+    const finalized = await storage.get(token);
+    assert.equal(finalized.settlementTerminalResult.data.media_buy_id, 'poll-winner-buy');
+    assert.equal(finalized.settlementFinalizedResult.data.media_buy_id, 'poll-winner-buy');
+  } finally {
+    storage.destroy();
+  }
+});
+
+test('pending restart refuses protocol drift before polling or recovery', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('pending-protocol-drift-token');
+  const operationId = 'pending-protocol-drift-operation';
+  const now = Date.now();
+  await storage.putIfAbsent(
+    token,
+    {
+      continuationVersion: 'pending-protocol-drift-version',
+      continuationClaimed: true,
+      taskId: operationId,
+      a2aTaskId: 'pending-protocol-drift-a2a-task',
+      serverVersion: 'v3',
+      agentId: agent.id,
+      taskName: 'create_media_buy',
+      params: {},
+      messages: [],
+      settlementOperationId: operationId,
+      settlementServerTaskId: 'pending-protocol-drift-work',
+      settlementPendingTaskId: 'pending-protocol-drift-work',
+      createdAt: now,
+      expiresAt: now + 60_000,
+    },
+    60
+  );
+
+  let protocolCalls = 0;
+  let recoveryCalls = 0;
+  ProtocolClient.callTool = async () => {
+    protocolCalls += 1;
+    return { status: 'completed' };
+  };
+
+  try {
+    const driftedAgent = { ...agent, protocol: 'mcp', agent_uri: 'https://seller.example/mcp' };
+    const client = new SingleAgentClient(driftedAgent, {
+      deferredStorage: storage,
+      validateFeatures: false,
+      validation: { requests: 'off', responses: 'off' },
+    });
+    client.ensureEndpointDiscovered = async () => driftedAgent;
+    client.registerDurableSettlementRecovery(async () => {
+      recoveryCalls += 1;
+      return undefined;
+    });
+    await assert.rejects(client.resumeDeferredTask(token, { ignored: true }), /only poll its exact A2A seller task/);
+    assert.equal(protocolCalls, 0);
+    assert.equal(recoveryCalls, 0);
+    assert.equal((await storage.get(token)).settlementPendingTaskId, 'pending-protocol-drift-work');
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
 test('failed completion handler retains the checkpoint and retries finalization without seller redispatch', async () => {
   const originalCallTool = ProtocolClient.callTool;
   const storage = new MemoryStorage({ autoCleanup: false });
-  const token = 'retryable-finalizer-token';
+  const token = testDurableToken('retryable-finalizer-token');
   const operationId = 'retryable-finalizer-operation';
   const now = Date.now();
   await storage.putIfAbsent(
@@ -1124,7 +1790,7 @@ test('failed completion handler retains the checkpoint and retries finalization 
 
 test('an active terminal checkpoint lease excludes concurrent clients', async () => {
   const storage = new MemoryStorage({ autoCleanup: false });
-  const token = 'concurrent-finalizer-token';
+  const token = testDurableToken('concurrent-finalizer-token');
   const operationId = 'concurrent-finalizer-operation';
   const now = Date.now();
   await storage.putIfAbsent(
@@ -1237,7 +1903,7 @@ test('an active terminal checkpoint lease excludes concurrent clients', async ()
 test('terminal checkpoint receives a fresh recovery horizon when seller continuation crosses token expiry', async () => {
   const originalCallTool = ProtocolClient.callTool;
   const storage = new MemoryStorage({ autoCleanup: false });
-  const token = 'cross-expiry-terminal-token';
+  const token = testDurableToken('cross-expiry-terminal-token');
   const operationId = 'cross-expiry-operation';
   const now = Date.now();
   const originalExpiry = now + 50;
@@ -1300,7 +1966,7 @@ test('terminal checkpoint receives a fresh recovery horizon when seller continua
 test('ordinary deferred cleanup stays generation-fenced when seller work crosses token expiry', async () => {
   const originalCallTool = ProtocolClient.callTool;
   const storage = new MemoryStorage({ autoCleanup: false });
-  const token = 'cross-expiry-ordinary-token';
+  const token = testDurableToken('cross-expiry-ordinary-token');
   const now = Date.now();
   await storage.putIfAbsent(
     token,

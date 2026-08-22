@@ -64,7 +64,7 @@ export class MemoryStorage<T> implements AtomicTakeStorage<T>, BatchStorage<T>, 
     }
 
     // Check if expired
-    if (item.expiresAt && Date.now() > item.expiresAt) {
+    if (item.expiresAt && Date.now() >= item.expiresAt) {
       this.store.delete(key);
       return undefined;
     }
@@ -78,7 +78,7 @@ export class MemoryStorage<T> implements AtomicTakeStorage<T>, BatchStorage<T>, 
 
     // Consume expired entries too, but never return their value.
     this.store.delete(key);
-    if (item.expiresAt && Date.now() > item.expiresAt) return undefined;
+    if (item.expiresAt && Date.now() >= item.expiresAt) return undefined;
     return item.value;
   }
 
@@ -88,7 +88,7 @@ export class MemoryStorage<T> implements AtomicTakeStorage<T>, BatchStorage<T>, 
     }
     const existing = this.store.get(key);
     const now = Date.now();
-    if (existing && (!existing.expiresAt || now <= existing.expiresAt)) return false;
+    if (existing && (!existing.expiresAt || now < existing.expiresAt)) return false;
     if (existing) this.store.delete(key);
     await this.set(key, value, ttl);
     return true;
@@ -100,7 +100,7 @@ export class MemoryStorage<T> implements AtomicTakeStorage<T>, BatchStorage<T>, 
     }
     const existing = this.store.get(key);
     const now = Date.now();
-    if (!existing || (existing.expiresAt !== undefined && now > existing.expiresAt)) {
+    if (!existing || (existing.expiresAt !== undefined && now >= existing.expiresAt)) {
       if (existing) this.store.delete(key);
       return false;
     }
@@ -117,7 +117,7 @@ export class MemoryStorage<T> implements AtomicTakeStorage<T>, BatchStorage<T>, 
   async takeIfVersion(key: string, expectedVersion: string): Promise<T | undefined> {
     const existing = this.store.get(key);
     const now = Date.now();
-    if (!existing || (existing.expiresAt !== undefined && now > existing.expiresAt)) {
+    if (!existing || (existing.expiresAt !== undefined && now >= existing.expiresAt)) {
       if (existing) this.store.delete(key);
       return undefined;
     }
@@ -128,8 +128,11 @@ export class MemoryStorage<T> implements AtomicTakeStorage<T>, BatchStorage<T>, 
   }
 
   async set(key: string, value: T, ttl?: number): Promise<void> {
+    if (ttl !== undefined && (!Number.isFinite(ttl) || ttl <= 0)) {
+      throw new Error('MemoryStorage TTL must be a positive finite number.');
+    }
     const now = Date.now();
-    const expiresAt = ttl ? now + ttl * 1000 : undefined;
+    const expiresAt = ttl !== undefined ? now + ttl * 1000 : undefined;
 
     this.store.set(key, {
       value,
@@ -163,7 +166,7 @@ export class MemoryStorage<T> implements AtomicTakeStorage<T>, BatchStorage<T>, 
     const now = Date.now();
 
     for (const [key, item] of this.store) {
-      if (!item.expiresAt || now <= item.expiresAt) {
+      if (!item.expiresAt || now < item.expiresAt) {
         keys.push(key);
       }
     }
@@ -223,7 +226,7 @@ export class MemoryStorage<T> implements AtomicTakeStorage<T>, BatchStorage<T>, 
     let cleaned = 0;
 
     for (const [key, item] of this.store) {
-      if (item.expiresAt && now > item.expiresAt) {
+      if (item.expiresAt && now >= item.expiresAt) {
         this.store.delete(key);
         cleaned++;
       }
@@ -250,7 +253,7 @@ export class MemoryStorage<T> implements AtomicTakeStorage<T>, BatchStorage<T>, 
     let newestItem: number | undefined;
 
     for (const [, item] of this.store) {
-      if (item.expiresAt && now > item.expiresAt) {
+      if (item.expiresAt && now >= item.expiresAt) {
         expiredItems++;
       }
 

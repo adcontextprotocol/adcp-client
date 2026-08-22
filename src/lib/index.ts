@@ -344,6 +344,8 @@ export {
 export {
   InMemoryLegacyPurchaseContinuationStore,
   createInMemoryLegacyPurchaseContinuationStore,
+  LEGACY_PURCHASE_PUBLICATION_PROOF_RETENTION_MS,
+  legacyPurchaseSettlementFingerprint,
   type InMemoryLegacyPurchaseContinuationStoreOptions,
   type LegacyPurchaseBinding,
   type LegacyPurchaseClaim,
@@ -357,6 +359,7 @@ export {
   type LegacyPurchaseOperation,
   type LegacyPurchasePendingSettlement,
   type LegacyPurchasePendingSettlementResult,
+  type LegacyPurchasePublicationLease,
   type LegacyPurchaseReconciliationResult,
   type LegacyPurchaseSourceVersion,
   type LegacyPurchaseTerminalResult,

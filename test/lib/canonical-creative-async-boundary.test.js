@@ -1,9 +1,12 @@
 const { describe, test, mock } = require('node:test');
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 
 const { SingleAgentClient } = require('../../dist/lib/core/SingleAgentClient.js');
 const { TaskExecutor, ProtocolClient } = require('../../dist/lib/index.js');
 const { packageRefsForFormatOptions, toCanonicalOnlyResponse } = require('../../dist/lib/v2/projection');
+
+const testDurableToken = label => createHash('sha256').update(label).digest('base64url');
 
 const agentConfig = {
   id: 'legacy-seller',
@@ -817,7 +820,7 @@ describe('canonical creative asynchronous boundaries', () => {
         pauseAgent,
         'create_media_buy',
         request,
-        async () => ({ defer: true, token: 'deferred-token' }),
+        async () => ({ defer: true, token: testDurableToken('deferred-token') }),
         {},
         'v3',
         undefined,
@@ -828,21 +831,22 @@ describe('canonical creative asynchronous boundaries', () => {
         }
       );
       assert.equal(deferred.status, 'deferred');
-      assert.equal(stored.has('deferred-token'), true);
-      assert.doesNotMatch(JSON.stringify(stored.get('deferred-token')), /deferred-webhook-secret/);
-      assert.doesNotMatch(JSON.stringify(stored.get('deferred-token')), /deferred-property-token/);
-      assert.doesNotMatch(JSON.stringify(stored.get('deferred-token')), /deferred-client-context-token/);
+      const durableToken = testDurableToken('deferred-token');
+      assert.equal(stored.has(durableToken), true);
+      assert.doesNotMatch(JSON.stringify(stored.get(durableToken)), /deferred-webhook-secret/);
+      assert.doesNotMatch(JSON.stringify(stored.get(durableToken)), /deferred-property-token/);
+      assert.doesNotMatch(JSON.stringify(stored.get(durableToken)), /deferred-client-context-token/);
       assert.doesNotMatch(
-        JSON.stringify(stored.get('deferred-token')),
+        JSON.stringify(stored.get(durableToken)),
         /params-private-key|params-aws-secret|message-private-key|client-context-private-key|over-depth-deferred-secret/
       );
-      assert.match(JSON.stringify(stored.get('deferred-token')), /\[redacted\]/);
-      assert.match(JSON.stringify(stored.get('deferred-token')), /\[Truncated\]/);
+      assert.match(JSON.stringify(stored.get(durableToken)), /\[redacted\]/);
+      assert.match(JSON.stringify(stored.get(durableToken)), /\[Truncated\]/);
 
       const resumed = await deferred.deferred.resume('approved');
       assert.equal(continuing, true);
       assert.equal(resumed.status, 'completed');
-      assert.equal(stored.has('deferred-token'), false);
+      assert.equal(stored.has(durableToken), false);
       const active = executor.getActiveTasks()[0];
       assert.equal(active.status, 'completed');
       assert.equal(active.params, undefined);
@@ -880,7 +884,7 @@ describe('canonical creative asynchronous boundaries', () => {
         pauseAgent,
         'create_media_buy',
         request,
-        async () => ({ defer: true, token: 'rejecting-deferred-token' })
+        async () => ({ defer: true, token: testDurableToken('rejecting-deferred-token') })
       );
       await assert.rejects(rejectingDeferred.deferred.resume('approved'), /deferred delete failed/);
       const rejectingActive = rejectingExecutor.getActiveTasks()[0];

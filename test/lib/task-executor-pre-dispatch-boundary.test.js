@@ -1,8 +1,12 @@
 const { describe, test, afterEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 
 const { SingleAgentClient, TaskExecutor, ProtocolClient } = require('../../dist/lib/index.js');
+const { markCompletionHandlerAlreadyPublished } = require('../../dist/lib/core/TaskExecutor.js');
 const { memoryBackend } = require('../../dist/lib/server/idempotency/backends/memory.js');
+
+const testDurableToken = label => createHash('sha256').update(label).digest('base64url');
 
 const AGENT = {
   id: 'dispatch-boundary-seller',
@@ -289,7 +293,7 @@ describe('TaskExecutor pre-dispatch boundary', () => {
       })
     );
 
-    assert.equal(result.status, 'completed');
+    assert.equal(result.status, 'completed', result.error);
     assert.equal(ProtocolClient.callTool.mock.callCount(), 0);
   });
 
@@ -853,7 +857,7 @@ describe('TaskExecutor pre-dispatch boundary', () => {
       pauseAgent,
       'create_media_buy',
       { idempotency_key: 'deferred-settlement-order' },
-      async () => ({ defer: true, token: 'legacy-create-deferred-token' }),
+      async () => ({ defer: true, token: testDurableToken('legacy-create-deferred-token') }),
       {},
       'v3',
       undefined,
@@ -938,7 +942,7 @@ describe('TaskExecutor pre-dispatch boundary', () => {
           throw error;
         },
       }),
-      async () => ({ defer: true, token: 'committed-resume-wrapper-token' })
+      async () => ({ defer: true, token: testDurableToken('committed-resume-wrapper-token') })
     );
 
     assert.equal(paused.status, 'deferred', paused.error);
@@ -1023,7 +1027,7 @@ describe('TaskExecutor pre-dispatch boundary', () => {
       pauseAgent,
       'create_media_buy',
       { idempotency_key: 'deferred-submitted-settlement-order' },
-      async () => ({ defer: true, token: 'legacy-create-deferred-submitted-token' }),
+      async () => ({ defer: true, token: testDurableToken('legacy-create-deferred-submitted-token') }),
       {},
       'v3',
       undefined,
@@ -1045,6 +1049,89 @@ describe('TaskExecutor pre-dispatch boundary', () => {
     const completion = await completionPromise;
     assert.equal(completion.status, 'completed');
     assert.equal(observedStatuses.at(-1), 'completed');
+  });
+
+  test('live committed deferred-to-submitted track composes after the raw terminal checkpoint', async () => {
+    const pauseAgent = { ...AGENT, protocol: 'a2a' };
+    const deferredRecords = new Map();
+    let createCalls = 0;
+    let settlementTrackCalls = 0;
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+      if (taskName === 'create_media_buy' && ++createCalls > 1) {
+        return { status: 'submitted', task_id: 'live-track-seller-task' };
+      }
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
+        return {
+          task: {
+            taskId: 'live-track-seller-task',
+            status: 'completed',
+            taskType: 'create_media_buy',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            result: { media_buy_id: 'live-track-buy', packages: [] },
+          },
+        };
+      }
+      return a2aPause({
+        question: 'Approve the tracked legacy purchase?',
+        field: 'approval',
+        contextId: 'live-track-context',
+        taskId: 'live-track-a2a-task',
+      });
+    });
+    const executor = new TaskExecutor({
+      strictSchemaValidation: false,
+      deferredStorage: deferredStorage(deferredRecords),
+    });
+    const wrapSettlementOwner = result => {
+      if (result.deferred) {
+        const deferred = result.deferred;
+        result.deferred = {
+          ...deferred,
+          resume: async input => wrapSettlementOwner(await deferred.resume(input)),
+        };
+      }
+      if (result.submitted) {
+        const submitted = result.submitted;
+        result.submitted = {
+          ...submitted,
+          track: async transport => {
+            const task = await submitted.track(transport);
+            settlementTrackCalls += 1;
+            return task;
+          },
+        };
+      }
+      return result;
+    };
+
+    const paused = await executor.executeTask(
+      pauseAgent,
+      'create_media_buy',
+      { idempotency_key: 'live-track-checkpoint-order' },
+      async () => ({ defer: true, token: testDurableToken('live-track-checkpoint-token') }),
+      {},
+      'v3',
+      undefined,
+      async () => ({
+        action: 'dispatch_committed',
+        onResult: async result => wrapSettlementOwner(result),
+        onError: async error => {
+          throw error;
+        },
+      })
+    );
+
+    const submitted = await paused.deferred.resume({ approved: true });
+    assert.equal(submitted.status, 'submitted');
+    const task = await submitted.submitted.track();
+    assert.equal(task.status, 'completed');
+    assert.equal(task.result.media_buy_id, 'live-track-buy');
+    assert.equal(settlementTrackCalls, 1);
+    const checkpoint = deferredRecords.get(testDurableToken('live-track-checkpoint-token'));
+    assert.equal(checkpoint.settlementTerminalResult.data.media_buy_id, 'live-track-buy');
+    assert.equal(checkpoint.settlementFinalizedResult, undefined);
+    assert.equal(checkpoint.settlementFinalizationLease, undefined);
   });
 
   test('does not publish a submitted webhook completion when durable settlement fails', async () => {
@@ -1756,6 +1843,55 @@ describe('TaskExecutor pre-dispatch boundary', () => {
     assert.equal(handlerCalls.length, 1);
     assert.deepEqual(handlerCalls[0].result, { media_buy_id: 'queued-durable-buy' });
     assert.equal(handlerCalls[0].metadata.task_id, 'queued-seller-task');
+  });
+
+  test('does not invoke a completion handler twice after durable callback publication', async () => {
+    const handlerCalls = [];
+    ProtocolClient.callTool = mock.fn(async () => ({
+      status: 'completed',
+      data: { media_buy_id: 'published-before-return', packages: [] },
+    }));
+    const client = new SingleAgentClient(AGENT, {
+      validateFeatures: false,
+      validation: { requests: 'off', responses: 'off' },
+      handlers: {
+        onCreateMediaBuyStatusChange: (result, metadata) => handlerCalls.push({ result, metadata }),
+      },
+    });
+    client.ensureEndpointDiscovered = async () => AGENT;
+    client.detectServerVersion = async () => 'v3';
+    client.getEarlyResultForUnsupportedFeatures = async () => null;
+
+    const result = await client.createMediaBuyLegacyWithPreDispatch(
+      {
+        idempotency_key: 'published-before-return-key',
+        account: { account_id: 'account-1' },
+        brand: { domain: 'buyer.example' },
+        start_time: 'asap',
+        end_time: '2027-12-31T00:00:00Z',
+        packages: [],
+      },
+      async (_params, context) => ({
+        action: 'dispatch_committed',
+        onResult: async sellerResult => {
+          await client.publishDurablySettledWebhook({
+            operationId: context.operationId,
+            serverTaskId: 'published-before-return-seller-task',
+            taskType: 'create_media_buy',
+            status: 'completed',
+            result: sellerResult.data,
+          });
+          return markCompletionHandlerAlreadyPublished(sellerResult);
+        },
+        onError: async error => {
+          throw error;
+        },
+      })
+    );
+
+    assert.equal(result.status, 'completed', result.error);
+    assert.equal(handlerCalls.length, 1);
+    assert.deepEqual(handlerCalls[0].result.data, { media_buy_id: 'published-before-return', packages: [] });
   });
 
   test('does not republish a callback when inbox binding wins the completion race', async () => {

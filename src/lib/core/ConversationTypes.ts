@@ -57,7 +57,15 @@ export interface InputRequest {
 export type InputHandlerResponse =
   | any // Direct answer
   | Promise<any> // Async answer
-  | { defer: true; token: string } // Defer to human
+  | {
+      defer: true;
+      /**
+       * Opaque bearer capability. Durable clients require a CSPRNG-generated
+       * UUIDv4 or 43-256 character URL-safe value. Prefer
+       * `context.deferToHuman()`, which mints a UUIDv4.
+       */
+      token: string;
+    } // Defer to human
   | { abort: true; reason?: string } // Abort task
   | never; // For control flow (abort() helper)
 

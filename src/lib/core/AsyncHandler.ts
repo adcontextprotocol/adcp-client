@@ -428,6 +428,24 @@ export class AsyncHandler {
   }
 
   /**
+   * Publish a result whose single-winner ownership is already enforced by an
+   * SDK durable outbox. This is not a sender webhook event, so it must not
+   * enter sender-key webhook deduplication or require an `idempotency_key`.
+   * @internal
+   */
+  async handleDurablySettledResult({
+    result,
+    metadata,
+    previewHandler,
+  }: {
+    result: AdCPAsyncResponseData | undefined;
+    metadata: WebhookMetadata;
+    previewHandler?: 'canonical' | 'legacy';
+  }): Promise<void> {
+    await this.handleCompletion(metadata.task_type, result, metadata, previewHandler);
+  }
+
+  /**
    * Validate sender-controlled dedup identity before callers mutate durable
    * settlement state. `handleWebhook()` repeats this check for direct users;
    * `SingleAgentClient` invokes it earlier because durable recovery must run

@@ -3,6 +3,9 @@
 
 const { test, describe, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert');
+const { createHash } = require('node:crypto');
+
+const testDurableToken = label => createHash('sha256').update(label).digest('base64url');
 
 function a2aPausedTask({ state = 'input-required', question, field, contextId, taskId }) {
   return {
@@ -743,8 +746,16 @@ describe(
         );
       });
 
+      test('rejects weak durable bearer tokens before storage access', async () => {
+        const storage = atomicDeferredStorage();
+        const executor = new TaskExecutor({ deferredStorage: storage });
+
+        await assert.rejects(executor.resumeDeferredTask('guessable-token', {}), /invalid shape/);
+        assert.strictEqual(storage.get.mock.callCount(), 0);
+      });
+
       test('does not echo bearer-style continuation tokens in resume errors', async () => {
-        const secretToken = 'resume-capability-do-not-log';
+        const secretToken = testDurableToken('resume-capability-do-not-log');
         const executor = new TaskExecutor({ deferredStorage: atomicDeferredStorage() });
         await assert.rejects(executor.resumeDeferredTask(secretToken, {}), error => {
           assert.doesNotMatch(error.message, new RegExp(secretToken));
@@ -759,7 +770,7 @@ describe(
       test('rejects a persisted A2A deferral that lacks seller task identity', async () => {
         const states = new Map([
           [
-            'legacy-identity-less-token',
+            testDurableToken('legacy-identity-less-token'),
             {
               continuationVersion: 'legacy-identity-less-version',
               taskId: 'local-legacy-deferred-task',
@@ -782,7 +793,7 @@ describe(
         });
 
         await assert.rejects(
-          executor.resumeDeferredTask('legacy-identity-less-token', { approved: true }),
+          executor.resumeDeferredTask(testDurableToken('legacy-identity-less-token'), { approved: true }),
           /requires a seller task ID/
         );
         assert.strictEqual(ProtocolClient.callTool.mock.callCount(), 0);
@@ -793,7 +804,7 @@ describe(
       test('should handle handler deferral with resume capability', async () => {
         const mockHandler = mock.fn(async context => {
           if (context.inputRequest.field === 'approval') {
-            return { defer: true, token: 'TEST_DEFER_TOKEN_PLACEHOLDER' };
+            return { defer: true, token: testDurableToken('TEST_DEFER_TOKEN_PLACEHOLDER') };
           }
           return 'auto-approve';
         });
@@ -821,7 +832,7 @@ describe(
         assert.strictEqual(result.success, true);
         assert.strictEqual(result.status, 'deferred');
         assert(result.deferred);
-        assert.strictEqual(result.deferred.token, 'TEST_DEFER_TOKEN_PLACEHOLDER');
+        assert.strictEqual(result.deferred.token, testDurableToken('TEST_DEFER_TOKEN_PLACEHOLDER'));
         assert.strictEqual(result.deferred.question, 'Do you approve this action?');
         assert.strictEqual(typeof result.deferred.resume, 'function');
 
@@ -864,7 +875,7 @@ describe(
       });
 
       test('should save deferred state to storage', async () => {
-        const mockHandler = mock.fn(async () => ({ defer: true, token: 'save-token' }));
+        const mockHandler = mock.fn(async () => ({ defer: true, token: testDurableToken('save-token') }));
         const mockStorage = atomicDeferredStorage();
 
         ProtocolClient.callTool = mock.fn(async () =>
@@ -888,7 +899,7 @@ describe(
 
         assert.strictEqual(mockStorage.putIfAbsent.mock.callCount(), 1);
         const [token, state] = mockStorage.putIfAbsent.mock.calls[0].arguments;
-        assert.strictEqual(token, 'save-token');
+        assert.strictEqual(token, testDurableToken('save-token'));
         assert.strictEqual(state.taskName, 'saveTask');
         assert.deepStrictEqual(state.params, { data: 'important' });
         assert.strictEqual(state.agentId, 'test-agent');
@@ -920,10 +931,10 @@ describe(
         const executor = new TaskExecutor({ deferredStorage: storage, strictSchemaValidation: false });
         const result = await executor.executeTask(mockAgent, 'approvalTask', {}, async () => ({
           defer: true,
-          token: 'context-free-token',
+          token: testDurableToken('context-free-token'),
         }));
 
-        const state = states.get('context-free-token');
+        const state = states.get(testDurableToken('context-free-token'));
         assert.strictEqual(Object.hasOwn(state, 'contextId'), false);
         assert.strictEqual(state.a2aTaskId, 'seller-task-without-context');
         const resumed = await result.deferred.resume('APPROVED');
@@ -933,7 +944,7 @@ describe(
       test('deletes a stored continuation when resumption returns a nonresumable pause', async () => {
         const states = new Map([
           [
-            'stale-resume-token',
+            testDurableToken('stale-resume-token'),
             {
               continuationVersion: 'stale-resume-version',
               taskId: 'local-deferred-task',
@@ -959,12 +970,12 @@ describe(
           strictSchemaValidation: false,
         });
 
-        const resumed = await executor.resumeDeferredTask('stale-resume-token', { approved: true });
+        const resumed = await executor.resumeDeferredTask(testDurableToken('stale-resume-token'), { approved: true });
         assert.strictEqual(resumed.status, 'input-required');
         assert.strictEqual(resumed.deferred, undefined);
         assert.strictEqual(storage.takeIfVersion.mock.callCount(), 1);
         await assert.rejects(
-          executor.resumeDeferredTask('stale-resume-token', { approved: true }),
+          executor.resumeDeferredTask(testDurableToken('stale-resume-token'), { approved: true }),
           /Deferred task not found/
         );
       });
@@ -983,7 +994,7 @@ describe(
         const firstExecutor = new TaskExecutor({ deferredStorage: storage, strictSchemaValidation: false });
         const deferred = await firstExecutor.executeTask(mockAgent, 'approvalTask', {}, async () => ({
           defer: true,
-          token: 'atomic-resume-token',
+          token: testDurableToken('atomic-resume-token'),
         }));
         const secondExecutor = new TaskExecutor({
           deferredStorage: storage,
@@ -992,8 +1003,8 @@ describe(
         });
 
         const results = await Promise.allSettled([
-          firstExecutor.resumeDeferredTask('atomic-resume-token', { choice: 'first' }),
-          secondExecutor.resumeDeferredTask('atomic-resume-token', { choice: 'second' }),
+          firstExecutor.resumeDeferredTask(testDurableToken('atomic-resume-token'), { choice: 'first' }),
+          secondExecutor.resumeDeferredTask(testDurableToken('atomic-resume-token'), { choice: 'second' }),
         ]);
 
         assert.strictEqual(results.filter(result => result.status === 'fulfilled').length, 1);
@@ -1002,7 +1013,7 @@ describe(
       });
 
       test('a delayed resolver cannot consume a replacement state that reuses the same token', async () => {
-        const token = 'resolver-aba-token';
+        const token = testDurableToken('resolver-aba-token');
         const stateA = {
           continuationVersion: 'resolver-state-a-version',
           taskId: 'local-task-a',
@@ -1078,13 +1089,13 @@ describe(
         const firstExecutor = new TaskExecutor({ deferredStorage: storage, strictSchemaValidation: false });
         const initial = await firstExecutor.executeTask(mockAgent, 'approvalTask', {}, async () => ({
           defer: true,
-          token: 'initial-durable-token',
+          token: testDurableToken('initial-durable-token'),
         }));
         const pausedAgain = await initial.deferred.resume({ approved: true });
         assert.strictEqual(pausedAgain.status, 'input-required');
         assert.ok(pausedAgain.deferred);
-        assert.notStrictEqual(pausedAgain.deferred.token, 'initial-durable-token');
-        assert.strictEqual(states.has('initial-durable-token'), false);
+        assert.notStrictEqual(pausedAgain.deferred.token, testDurableToken('initial-durable-token'));
+        assert.strictEqual(states.has(testDurableToken('initial-durable-token')), false);
         const replacement = states.get(pausedAgain.deferred.token);
         assert.strictEqual(replacement.a2aTaskId, 'seller-task-two');
         assert.strictEqual(replacement.contextId, 'seller-context-two');
@@ -1100,8 +1111,119 @@ describe(
         assert.strictEqual(calls, 3);
       });
 
+      test('preserves exact-route authorization across a nested committed pause', async () => {
+        const states = new Map();
+        const storage = atomicDeferredStorage(states);
+        let currentToken = testDurableToken('committed-token-a');
+        let calls = 0;
+        ProtocolClient.callTool = mock.fn(async () => {
+          calls += 1;
+          return a2aPausedTask({
+            question: calls === 1 ? 'First approval?' : calls === 2 ? 'Second approval?' : 'Final approval?',
+            contextId: `committed-context-${calls}`,
+            taskId: `committed-seller-task-${calls}`,
+          });
+        });
+        const executor = new TaskExecutor({
+          deferredStorage: storage,
+          authorizeDeferredSettlementResume: async (_operationId, token) => token === currentToken,
+          canRecoverDeferredSettlement: async () => true,
+          recoverDeferredSettlement: async result => ({ result }),
+          strictSchemaValidation: false,
+        });
+        const initial = await executor.executeTask(
+          mockAgent,
+          'approvalTask',
+          {},
+          async () => ({ defer: true, token: currentToken }),
+          {},
+          'v3',
+          undefined,
+          async () => ({
+            action: 'dispatch_committed',
+            requireDeferredSettlementResumeAuthorization: true,
+            onResult: async result => result,
+            onError: async error => {
+              throw error;
+            },
+          })
+        );
+
+        const pausedAgain = await initial.deferred.resume({ approved: true });
+        const replacementToken = pausedAgain.deferred.token;
+        assert.notStrictEqual(replacementToken, currentToken);
+        assert.strictEqual(states.get(replacementToken).settlementResumeAuthorizationRequired, true);
+
+        await assert.rejects(
+          executor.resumeDeferredTask(replacementToken, { confirmed: true }),
+          /not the current durable route/
+        );
+        assert.strictEqual(calls, 2, 'a stale nested token must fail before seller dispatch');
+
+        currentToken = replacementToken;
+        const pausedThirdTime = await pausedAgain.deferred.resume({ confirmed: true });
+        assert.strictEqual(pausedThirdTime.status, 'input-required');
+        assert.strictEqual(calls, 3, 'the current live nested route may continue exactly once');
+
+        currentToken = testDurableToken('coordinator-disposed-or-ambiguous');
+        await assert.rejects(pausedThirdTime.deferred.resume({ final: true }), /not the current durable route/);
+        assert.strictEqual(calls, 3, 'a held live closure must fail after its durable owner stops authorizing it');
+      });
+
+      test('keeps polling-only committed pauses out of public durable-token recovery', async () => {
+        const states = new Map();
+        const storage = atomicDeferredStorage(states);
+        let calls = 0;
+        ProtocolClient.callTool = mock.fn(async () => {
+          calls += 1;
+          return calls <= 2
+            ? a2aPausedTask({
+                question: calls === 1 ? 'Approve through the guarded live owner?' : 'Confirm once more?',
+                contextId: `polling-only-context-${calls}`,
+                taskId: `polling-only-seller-task-${calls}`,
+              })
+            : { status: ADCP_STATUS.COMPLETED, data: { approved: true } };
+        });
+        const executor = new TaskExecutor({ deferredStorage: storage, strictSchemaValidation: false });
+        const paused = await executor.executeTask(
+          mockAgent,
+          'approvalTask',
+          {},
+          async () => ({ defer: true, token: testDurableToken('polling-only-live-token') }),
+          {},
+          'v3',
+          undefined,
+          async () => ({
+            action: 'dispatch_committed',
+            persistPausedContinuation: false,
+            onResult: async result => result,
+            onError: async error => {
+              throw error;
+            },
+          })
+        );
+
+        assert.strictEqual(states.has(paused.deferred.token), false);
+        await assert.rejects(
+          executor.resumeDeferredTask(paused.deferred.token, { approved: true }),
+          /Deferred task not found/
+        );
+        assert.strictEqual(calls, 1);
+        const pausedAgain = await paused.deferred.resume({ approved: true });
+        assert.strictEqual(pausedAgain.status, 'input-required');
+        assert.strictEqual(states.has(pausedAgain.deferred.token), false);
+        await assert.rejects(
+          executor.resumeDeferredTask(pausedAgain.deferred.token, { confirmed: true }),
+          /Deferred task not found/
+        );
+        assert.strictEqual(calls, 2);
+        const completed = await pausedAgain.deferred.resume({ confirmed: true });
+        assert.strictEqual(completed.status, 'completed');
+        assert.strictEqual(calls, 3);
+      });
+
       test('snapshots nested resume input before awaiting durable storage', async () => {
-        const token = 'resume-input-snapshot-token';
+        const token = testDurableToken('resume-input-snapshot-token');
         const states = new Map([
           [
             token,

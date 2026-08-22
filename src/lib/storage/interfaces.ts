@@ -148,8 +148,12 @@ export interface DeferredTaskState {
   clientContext?: unknown;
   /** Trusted committed-mutation route that must durably settle any terminal resume. */
   settlementOperationId?: string;
+  /** Require the owning durable coordinator to authorize this token before sending seller continuation input. */
+  settlementResumeAuthorizationRequired?: boolean;
   /** Seller work handle bound by the durable mutation owner before the pause. */
   settlementServerTaskId?: string;
+  /** Seller work handle retained while a committed resume remains nonterminal. */
+  settlementPendingTaskId?: string;
   /**
    * Opaque terminal observation retained when seller continuation succeeded but
    * committed-mutation settlement has not yet been acknowledged. Storage
@@ -164,6 +168,8 @@ export interface DeferredTaskState {
   };
   /** Exact public result after settlement and completion handlers succeeded. */
   settlementFinalizedResult?: unknown;
+  /** Internal fence proving callback publication already invoked the configured completion handler. */
+  settlementCompletionHandlerPublished?: boolean;
   /** Epoch milliseconds when this resumable state was stored. */
   createdAt: number;
   /** Epoch milliseconds after which this token must not be resumed. */

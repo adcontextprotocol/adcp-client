@@ -3,6 +3,9 @@
 
 const { test, describe, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert');
+const { createHash } = require('node:crypto');
+
+const testDurableToken = label => createHash('sha256').update(label).digest('base64url');
 
 function a2aPause(question, field, taskId) {
   return {
@@ -268,7 +271,7 @@ describe(
 
         const mockHandler = mock.fn(async context => {
           if (context.inputRequest.field === 'approval') {
-            return { defer: true, token: 'TEST_DEFER_TOKEN_PLACEHOLDER' };
+            return { defer: true, token: testDurableToken('TEST_DEFER_TOKEN_PLACEHOLDER') };
           }
           return 'auto-approve';
         });
@@ -370,7 +373,7 @@ describe(
          * @property {string} [creative.imageUrl]
          */
 
-        const mockHandler = mock.fn(async () => ({ defer: true, token: 'campaign-defer' }));
+        const mockHandler = mock.fn(async () => ({ defer: true, token: testDurableToken('campaign-defer') }));
         const mockStorage = new Map();
         const storageInterface = {
           set: mock.fn(async (key, value) => mockStorage.set(key, value)),

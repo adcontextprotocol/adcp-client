@@ -4,6 +4,9 @@
 const { test, describe, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert');
 const { EventEmitter } = require('events');
+const { createHash } = require('node:crypto');
+
+const testDurableToken = label => createHash('sha256').update(label).digest('base64url');
 
 function a2aPause(question, field, taskId, contextId) {
   return {
@@ -308,7 +311,10 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
         size: mock.fn(() => mockStorage.size),
       };
 
-      const mockHandler = mock.fn(async () => ({ defer: true, token: 'TEST_STORAGE_TOKEN_PLACEHOLDER' }));
+      const mockHandler = mock.fn(async () => ({
+        defer: true,
+        token: testDurableToken('TEST_STORAGE_TOKEN_PLACEHOLDER'),
+      }));
 
       ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
         if (Object.hasOwn(params, 'input')) {
@@ -353,7 +359,7 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
 
       // Verify stored data structure
       const [token, storedState] = storageInterface.putIfAbsent.mock.calls[0].arguments;
-      assert.strictEqual(token, 'TEST_STORAGE_TOKEN_PLACEHOLDER');
+      assert.strictEqual(token, testDurableToken('TEST_STORAGE_TOKEN_PLACEHOLDER'));
       assert.strictEqual(storedState.taskName, 'storageTask');
       assert.deepStrictEqual(storedState.params, { testData: 'storage-test' });
       assert.strictEqual(storedState.agentId, 'mock-agent');
@@ -391,7 +397,7 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
         }),
       };
 
-      const mockHandler = mock.fn(async () => ({ defer: true, token: 'fail-token' }));
+      const mockHandler = mock.fn(async () => ({ defer: true, token: testDurableToken('fail-token') }));
 
       ProtocolClient.callTool = mock.fn(async () =>
         a2aPause('Test failing storage?', 'storage', 'seller-failing-storage-task', 'ctx-failing-storage')

@@ -3,6 +3,9 @@
 
 const { test, describe, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert');
+const { createHash } = require('node:crypto');
+
+const testDurableToken = label => createHash('sha256').update(label).digest('base64url');
 
 function a2aPause(question, field, taskId, contextId, extra = {}) {
   return {
@@ -521,7 +524,10 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
         }),
       };
 
-      const deferHandler = mock.fn(async () => ({ defer: true, token: 'TEST_STORAGE_FAIL_TOKEN_PLACEHOLDER' }));
+      const deferHandler = mock.fn(async () => ({
+        defer: true,
+        token: testDurableToken('TEST_STORAGE_FAIL_TOKEN_PLACEHOLDER'),
+      }));
 
       ProtocolClient.callTool = mock.fn(async () =>
         a2aPause('This will fail storage', 'storage', 'seller-storage-failure-task', 'ctx-storage-failure')
