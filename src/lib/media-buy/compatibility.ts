@@ -837,6 +837,9 @@ function safeDiagnostic(value: unknown, maxLength: number): string {
 }
 
 function requestFingerprint(value: unknown): string {
+  // This is a deterministic request-equality/idempotency digest, not a
+  // password verifier or credential-storage primitive.
+  // codeql[js/insufficient-password-hash]
   return createHash('sha256').update(canonicalize(value)).digest('base64url');
 }
 
