@@ -495,6 +495,26 @@ describe('createLazyBackend', () => {
     );
   });
 
+  it('rejects a resolved backend without atomic first-owner claiming', async () => {
+    const backend = createLazyBackend(async () => {
+      const inner = memoryBackend({ sweepIntervalMs: 0 });
+      return {
+        get: inner.get,
+        put: inner.put,
+        replaceIfPayloadHash: inner.replaceIfPayloadHash,
+        deleteIfPayloadHash: inner.deleteIfPayloadHash,
+        delete: inner.delete,
+      };
+    });
+
+    await assert.rejects(
+      () => backend.get('p\u001fk'),
+      error =>
+        error?.cause?.message ===
+        'createLazyBackend: resolved backend must support atomic putIfAbsent, replaceIfPayloadHash, and deleteIfPayloadHash fencing.'
+    );
+  });
+
   it('retains the largest skew required by stores sharing one unresolved backend', async () => {
     const backend = createLazyBackend(async () => ({
       ...memoryBackend({ sweepIntervalMs: 0 }),

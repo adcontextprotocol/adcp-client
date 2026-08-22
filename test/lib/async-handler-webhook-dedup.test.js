@@ -93,6 +93,15 @@ test('webhookDedup rejects invalid retention and lease TTLs at construction', ()
       /inFlightTtlSeconds must be a positive safe integer/
     );
   }
+  assert.doesNotThrow(() => new AsyncHandler({ webhookDedup: { backend, ttlSeconds: 60, inFlightTtlSeconds: 60 } }));
+  assert.throws(
+    () => new AsyncHandler({ webhookDedup: { backend, ttlSeconds: 60, inFlightTtlSeconds: 61 } }),
+    /inFlightTtlSeconds must be less than or equal to webhookDedup\.ttlSeconds/
+  );
+  assert.throws(
+    () => new AsyncHandler({ webhookDedup: { backend, inFlightTtlSeconds: 86_401 } }),
+    /inFlightTtlSeconds must be less than or equal to webhookDedup\.ttlSeconds/
+  );
 });
 
 test('webhookDedup fails before handler execution when a lazy backend resolves without fencing', async () => {

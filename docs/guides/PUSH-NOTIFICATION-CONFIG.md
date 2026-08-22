@@ -223,13 +223,14 @@ until the active handler finishes. By default, processing claims use the full
 `ttlSeconds` retention window (24 hours by default), preventing automatic
 reclaim while an unconstrained application handler might still be applying
 side effects. Setting a shorter `inFlightTtlSeconds` explicitly trades that
-fence for faster crash recovery. Because the SDK cannot cancel or
+fence for faster crash recovery. It must not exceed `ttlSeconds` (24 hours by
+default); invalid configurations fail at handler construction. Because the SDK cannot cancel or
 transactionally fence a generic handler, handlers using the shorter lease must
 durably deduplicate `(agent_id, idempotency_key, event fingerprint)` or make
 their side effects idempotent. Webhook delivery remains at-least-once.
 
 Custom idempotency backends used for webhook dedup must implement the atomic
-`replaceIfPayloadHash()` and `deleteIfPayloadHash()` methods. The built-in
+`putIfAbsent()`, `replaceIfPayloadHash()`, and `deleteIfPayloadHash()` methods. The built-in
 memory, PostgreSQL, Redis, and lazy backends provide them. These operations
 prevent a stale replica from renewing or releasing a newer replica's claim.
 

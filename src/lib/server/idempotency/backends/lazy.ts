@@ -82,11 +82,12 @@ export function createLazyBackend(factory: LazyBackendFactory, options: LazyBack
             throw new Error('createLazyBackend: factory must resolve to an IdempotencyBackend.');
           }
           if (
+            typeof resolved.putIfAbsent !== 'function' ||
             typeof resolved.replaceIfPayloadHash !== 'function' ||
             typeof resolved.deleteIfPayloadHash !== 'function'
           ) {
             throw new Error(
-              'createLazyBackend: resolved backend must support atomic replaceIfPayloadHash and deleteIfPayloadHash fencing.'
+              'createLazyBackend: resolved backend must support atomic putIfAbsent, replaceIfPayloadHash, and deleteIfPayloadHash fencing.'
             );
           }
           validateResolvedRetention(resolved);

@@ -383,6 +383,8 @@ export interface AsyncHandlerConfig {
      * crash recovery after that lease. Because generic handlers cannot be
      * cancelled or transactionally fenced by this SDK, handlers used with a
      * shorter lease MUST make their own side effects idempotent.
+     * Must not exceed `ttlSeconds` (or its 86,400-second default), because a
+     * processing claim cannot outlive the webhook's deduplication fence.
      */
     inFlightTtlSeconds?: number;
   };
@@ -419,6 +421,12 @@ export class AsyncHandler {
       (!Number.isSafeInteger(dedup.inFlightTtlSeconds) || dedup.inFlightTtlSeconds <= 0)
     ) {
       throw new Error('handlers.webhookDedup.inFlightTtlSeconds must be a positive safe integer.');
+    }
+    const effectiveTtlSeconds = dedup?.ttlSeconds ?? 86_400;
+    if (dedup?.inFlightTtlSeconds !== undefined && dedup.inFlightTtlSeconds > effectiveTtlSeconds) {
+      throw new Error(
+        'handlers.webhookDedup.inFlightTtlSeconds must be less than or equal to webhookDedup.ttlSeconds.'
+      );
     }
   }
 

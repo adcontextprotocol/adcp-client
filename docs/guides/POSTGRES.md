@@ -138,7 +138,11 @@ Each request does at most 2 PG queries (idempotency check + write). HITL request
 pool.on('error', (err) => console.error('pg pool error', err));
 ```
 
-The framework's PG backends emit no-op SELECTs (`SELECT 1 FROM ${table} LIMIT 0`) via `probe()` to surface bad credentials at boot rather than first-mutating-request.
+The framework's PG backends issue zero-row shape probes via `probe()` to
+surface bad credentials and stale migrations at boot rather than on the first
+mutating request. The idempotency probe names every runtime-required column,
+including `retain_until`; a reachable table with an older column shape therefore
+fails readiness instead of advertising idempotency that cannot be persisted.
 
 ## Statement timeout
 
