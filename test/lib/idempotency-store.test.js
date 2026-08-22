@@ -185,7 +185,64 @@ describe('createIdempotencyStore', () => {
         /Invalid idempotency/
       );
     }
+    for (const key of ['', `scope\u001fkey`, 'x'.repeat(4097)]) {
+      await assert.rejects(store.check({ principal: 'tenant', key, payload: {} }), /Invalid idempotency/);
+    }
     assert.equal(backendReads, 0);
+  });
+
+  it('rejects a crafted key that aliases an extra-scope entry across every public lifecycle method', async () => {
+    const store = makeStore();
+    const principal = 'tenant';
+    const extraScope = 'session';
+    const key = 'legitimate-key';
+    const craftedKey = `${extraScope}\u001f${key}`;
+    const payload = { budget: 100 };
+    const claim = await store.check({ principal, key, payload, extraScope });
+    assert.equal(claim.kind, 'miss');
+
+    await assert.rejects(store.check({ principal, key: craftedKey, payload }), /Invalid idempotency key/);
+    await assert.rejects(
+      store.renew({ principal, key: craftedKey, claimToken: claim.claimToken }),
+      /Invalid idempotency key/
+    );
+    await assert.rejects(
+      store.save({
+        principal,
+        key: craftedKey,
+        payloadHash: claim.payloadHash,
+        claimToken: claim.claimToken,
+        response: 'poisoned',
+      }),
+      /Invalid idempotency key/
+    );
+    await assert.rejects(
+      store.release({ principal, key: craftedKey, claimToken: claim.claimToken }),
+      /Invalid idempotency key/
+    );
+    await assert.rejects(
+      store.saveTransientError({
+        principal,
+        key: craftedKey,
+        payloadHash: claim.payloadHash,
+        claimToken: claim.claimToken,
+        response: 'poisoned',
+      }),
+      /Invalid idempotency key/
+    );
+
+    await store.save({
+      principal,
+      key,
+      payloadHash: claim.payloadHash,
+      claimToken: claim.claimToken,
+      response: 'scoped-result',
+      extraScope,
+    });
+    assert.deepEqual(await store.check({ principal, key, payload, extraScope }), {
+      kind: 'replay',
+      response: 'scoped-result',
+    });
   });
 
   describe('exclusion list (hash only)', () => {

@@ -92,9 +92,9 @@ export class IdempotencyClaimOwnershipError extends Error {
  * scope segments for per-session tools) before reaching the backend —
  * backends don't need to know about scoping. The separator is U+001F
  * (unit separator) rather than NUL because Postgres TEXT columns reject
- * NUL bytes; either way the middleware's key-pattern validation
- * (`^[A-Za-z0-9_.:-]{16,255}$`) guarantees the separator cannot appear
- * in a legitimate key.
+ * NUL bytes. The store rejects this separator in principals, keys, and
+ * extra-scope segments before backend access; protocol middleware additionally
+ * enforces the narrower wire key pattern (`^[A-Za-z0-9_.:-]{16,255}$`).
  *
  * **Object-identity contract.** Implementations MUST NOT return the same
  * object reference on subsequent `get` calls — the middleware injects
@@ -754,9 +754,9 @@ function stripWebhookAuthenticationCredentials(config: Record<string, unknown>):
 }
 
 // ASCII unit separator (U+001F). Used to join scope segments without
-// risking ambiguity — the middleware's key-pattern validation bans
-// control characters in the key, while `scope()` rejects this byte in
-// principal and extra-scope segments before any backend access.
+// risking ambiguity. `scope()` rejects this byte in every segment before
+// backend access; protocol middleware separately enforces its narrower
+// idempotency-key pattern.
 // NUL bytes (U+0000) would be simpler but Postgres TEXT columns reject
 // them, so we pick the next-safest non-printable separator.
 const SCOPE_SEPARATOR = '\u001f';
@@ -764,13 +764,14 @@ const MAX_SCOPE_SEGMENT_LENGTH = 4096;
 
 function scope(principal: string, key: string, extraScope?: string): string {
   validateScopeSegment(principal, 'principal');
+  validateScopeSegment(key, 'key');
   if (extraScope !== undefined) validateScopeSegment(extraScope, 'extraScope');
   return extraScope
     ? `${principal}${SCOPE_SEPARATOR}${extraScope}${SCOPE_SEPARATOR}${key}`
     : `${principal}${SCOPE_SEPARATOR}${key}`;
 }
 
-function validateScopeSegment(value: string, label: 'principal' | 'extraScope'): void {
+function validateScopeSegment(value: string, label: 'principal' | 'key' | 'extraScope'): void {
   if (typeof value !== 'string' || value.length === 0 || value.length > MAX_SCOPE_SEGMENT_LENGTH) {
     throw new TypeError(
       `Invalid idempotency ${label}: must be a non-empty string no longer than ${MAX_SCOPE_SEGMENT_LENGTH} characters.`

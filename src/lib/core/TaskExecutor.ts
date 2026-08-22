@@ -106,8 +106,8 @@ const COMPLETION_HANDLER_ALREADY_PUBLISHED = Symbol('adcp.completionHandlerAlrea
 const EXTERNAL_TASK_OBSERVATION_HMAC_KEY = randomBytes(32);
 
 export class DeferredSettlementOwnershipError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'DeferredSettlementOwnershipError';
   }
 }
@@ -654,6 +654,8 @@ const DEFAULT_DEFERRED_SAFETY_RETENTION_SECONDS = 7 * 24 * 60 * 60;
 const DEFERRED_SAFETY_MARGIN_SECONDS = 60;
 const DEFERRED_FINALIZATION_LEASE_MS = 30_000;
 const DEFERRED_FINALIZATION_RENEW_MS = 10_000;
+const DEFERRED_DISPATCH_ADMISSION_LEASE_MS = 30_000;
+const DEFERRED_DISPATCH_ADMISSION_RENEW_MS = 10_000;
 const DEFERRED_SECRET_KEY_PATTERN = new RegExp(
   `(?:${SECRET_KEY_PATTERN.source})|^(?:auth|oauth)[_-]?token$`,
   SECRET_KEY_PATTERN.flags
@@ -731,9 +733,62 @@ function sameDeferredTerminal(left: unknown, right: unknown): boolean {
   return canonicalize(comparableDeferredTerminal(left)) === canonicalize(comparableDeferredTerminal(right));
 }
 
+function reconcileDeferredServerTaskId(
+  trustedServerTaskId: string | undefined,
+  observedServerTaskIds: readonly (string | undefined)[],
+  mismatchMessage = 'The committed deferred continuation changed its bound seller task identity.'
+): string | undefined {
+  const identities = [trustedServerTaskId, ...observedServerTaskIds].filter(
+    (identity): identity is string => identity !== undefined
+  );
+  for (const identity of identities) {
+    if (identity.length === 0) {
+      throw new Error('The committed deferred continuation contains an invalid empty seller task identity.');
+    }
+  }
+  const serverTaskId = trustedServerTaskId ?? observedServerTaskIds.find(identity => identity !== undefined);
+  if (serverTaskId !== undefined && identities.some(identity => identity !== serverTaskId)) {
+    throw new Error(mismatchMessage);
+  }
+  return serverTaskId;
+}
+
+function normalizeDeferredTerminalServerTaskId<T>(
+  result: TaskResult<T>,
+  trustedServerTaskId?: string
+): { result: TaskResult<T>; serverTaskId?: string } {
+  const observedServerTaskId = result.metadata?.serverTaskId;
+  const serverTaskId = reconcileDeferredServerTaskId(trustedServerTaskId, [observedServerTaskId]);
+  if (serverTaskId === undefined || observedServerTaskId === serverTaskId) {
+    return { result, ...(serverTaskId !== undefined && { serverTaskId }) };
+  }
+  return {
+    result: {
+      ...result,
+      metadata: {
+        ...result.metadata,
+        serverTaskId,
+      },
+    },
+    serverTaskId,
+  };
+}
+
+function trustedDeferredServerTaskId(state: DeferredTaskState): string | undefined {
+  return reconcileDeferredServerTaskId(
+    state.settlementServerTaskId,
+    [state.settlementPendingTaskId],
+    'The durable deferred checkpoint contains conflicting seller task identities.'
+  );
+}
+
 interface DeferredFinalizationLease {
   finalize<T>(result: TaskResult<T>): Promise<void>;
   release(completionHandlerPublished?: boolean): Promise<void>;
+}
+
+interface DeferredDispatchAdmissionLease {
+  stop(): Promise<{ version: string; state: DeferredTaskState }>;
 }
 
 /**
@@ -2204,7 +2259,44 @@ export class TaskExecutor {
       });
     }
 
-    const submitted: SubmittedContinuation<T> = {
+    const submitted = this.createSubmittedContinuation<T>(
+      agent,
+      taskId,
+      taskName,
+      serverTaskId,
+      webhookUrl,
+      pollingTransport,
+      metadata,
+      deferTerminalTaskStatus,
+      serverVersion
+    );
+
+    this.compactIntermediateTaskState(taskId, 'submitted');
+
+    return {
+      success: true, // The task is progressing, not failed
+      status: 'submitted',
+      submitted,
+      data: partialData,
+      metadata,
+      conversation: messages,
+      debug_logs: debugLogs,
+    };
+  }
+
+  /** Build polling closures around one authoritative seller work handle. */
+  private createSubmittedContinuation<T>(
+    agent: AgentConfig,
+    taskId: string,
+    taskName: string,
+    serverTaskId: string,
+    webhookUrl: string | undefined,
+    pollingTransport: import('../protocols').TransportOptions | undefined,
+    metadata: TaskResultMetadata,
+    deferTerminalTaskStatus: boolean,
+    serverVersion: 'v2' | 'v3'
+  ): SubmittedContinuation<T> {
+    return {
       taskId: serverTaskId,
       webhookUrl,
       track: async (transport?: import('../protocols').TransportOptions) => {
@@ -2245,18 +2337,6 @@ export class TaskExecutor {
         }
         return completed;
       },
-    };
-
-    this.compactIntermediateTaskState(taskId, 'submitted');
-
-    return {
-      success: true, // The task is progressing, not failed
-      status: 'submitted',
-      submitted,
-      data: partialData,
-      metadata,
-      conversation: messages,
-      debug_logs: debugLogs,
     };
   }
 
@@ -3377,12 +3457,21 @@ export class TaskExecutor {
     if (state.settlementOperationId !== operationId) {
       throw new Error('The deferred callback token is bound to a different committed operation.');
     }
+    const trustedServerTaskId = trustedDeferredServerTaskId(state);
+    const normalizedTerminal = normalizeDeferredTerminalServerTaskId(terminalResult, trustedServerTaskId);
+    const normalizedSavedTerminal =
+      state.settlementTerminalResult === undefined
+        ? undefined
+        : normalizeDeferredTerminalServerTaskId(
+            state.settlementTerminalResult as TaskResult<unknown>,
+            trustedServerTaskId
+          ).result;
     if (state.settlementFinalizedResult !== undefined) {
       if (
-        state.settlementTerminalResult === undefined ||
-        !terminalResult.metadata.serverTaskId ||
-        terminalResult.metadata.serverTaskId !== state.settlementServerTaskId ||
-        !sameDeferredTerminal(state.settlementTerminalResult, terminalResult)
+        normalizedSavedTerminal === undefined ||
+        normalizedTerminal.serverTaskId === undefined ||
+        normalizedTerminal.serverTaskId !== trustedServerTaskId ||
+        !sameDeferredTerminal(normalizedSavedTerminal, normalizedTerminal.result)
       ) {
         throw new Error('The durable callback conflicts with the finalized deferred settlement.');
       }
@@ -3390,28 +3479,28 @@ export class TaskExecutor {
     }
 
     let lease: DeferredFinalizationLease;
-    if (state.settlementTerminalResult !== undefined) {
+    if (normalizedSavedTerminal !== undefined) {
       if (
-        !terminalResult.metadata.serverTaskId ||
-        terminalResult.metadata.serverTaskId !== state.settlementServerTaskId ||
-        !sameDeferredTerminal(state.settlementTerminalResult, terminalResult)
+        normalizedTerminal.serverTaskId === undefined ||
+        normalizedTerminal.serverTaskId !== trustedServerTaskId ||
+        !sameDeferredTerminal(normalizedSavedTerminal, normalizedTerminal.result)
       ) {
         throw new Error('The durable callback conflicts with the saved deferred terminal observation.');
       }
       lease = await this.acquireDeferredFinalizationLease(token, state);
     } else {
-      const expectedTaskId = state.settlementPendingTaskId ?? state.settlementServerTaskId;
-      const observedTaskId = terminalResult.metadata.serverTaskId;
+      const expectedTaskId = trustedServerTaskId;
+      const observedTaskId = normalizedTerminal.serverTaskId;
       if (!expectedTaskId || !observedTaskId || observedTaskId !== expectedTaskId) {
         throw new Error('The durable callback task identity does not match the linked deferred seller task.');
       }
-      const acquired = await this.checkpointDeferredPendingTerminal(token, state, terminalResult, true);
+      const acquired = await this.checkpointDeferredPendingTerminal(token, state, normalizedTerminal.result, true);
       if (!acquired) throw new Error('Committed deferred callback finalization lease was not acquired.');
       lease = acquired;
     }
 
     return this.attachDeferredSettlementAcknowledgement(
-      terminalResult,
+      normalizedTerminal.result,
       state.taskId,
       true,
       undefined,
@@ -3475,7 +3564,14 @@ export class TaskExecutor {
     // claimed fence below. The key is never physically absent during seller
     // dispatch, so neither a replica nor a reused handler token can create an
     // ABA replacement while settlement is pending.
-    const state = await this.config.deferredStorage.get(token);
+    let state: DeferredTaskState | undefined;
+    try {
+      state = await this.config.deferredStorage.get(token);
+    } catch (error) {
+      throw new DeferredSettlementOwnershipError('Deferred continuation state could not be loaded safely.', {
+        cause: error,
+      });
+    }
     if (!state) {
       throw new Error('Deferred task not found.');
     }
@@ -3490,7 +3586,14 @@ export class TaskExecutor {
     // replay the exact finalized value without re-running application handlers
     // or settlement recovery.
     if (requiresSettlement && state.settlementFinalizedResult !== undefined) {
-      const finalized = attachMatch(structuredClone(state.settlementFinalizedResult) as TaskResult<T>);
+      const normalizedFinalized = normalizeDeferredTerminalServerTaskId(
+        structuredClone(state.settlementFinalizedResult) as TaskResult<T>,
+        trustedDeferredServerTaskId(state)
+      );
+      if (normalizedFinalized.serverTaskId === undefined) {
+        throw new Error('The finalized deferred settlement does not contain its trusted seller task identity.');
+      }
+      const finalized = attachMatch(normalizedFinalized.result);
       if (state.settlementCompletionHandlerPublished === true) {
         markCompletionHandlerAlreadyPublished(finalized);
       }
@@ -3523,8 +3626,17 @@ export class TaskExecutor {
     // state. Reconstruct polling from the durable seller work handle instead
     // of redispatching the human input after a process restart.
     if (requiresSettlement && state.settlementPendingTaskId !== undefined) {
-      const pendingAgent =
-        this.deferredAgents.get(state.agentId) ?? (await this.config.resolveDeferredAgent?.(state.agentId));
+      let pendingAgent = this.deferredAgents.get(state.agentId);
+      if (!pendingAgent) {
+        try {
+          pendingAgent = await this.config.resolveDeferredAgent?.(state.agentId);
+        } catch (error) {
+          throw new DeferredSettlementOwnershipError(
+            'The trusted agent for a pending deferred settlement could not be resolved safely.',
+            { cause: error }
+          );
+        }
+      }
       if (!pendingAgent || pendingAgent.id !== state.agentId) {
         throw new Error('Deferred task agent could not be resolved from trusted configuration.');
       }
@@ -3567,12 +3679,19 @@ export class TaskExecutor {
     if (requiresSettlement && state.settlementTerminalResult !== undefined) {
       const finalizationLease = await this.acquireDeferredFinalizationLease(token, state);
       try {
-        const checkpointed = attachMatch(structuredClone(state.settlementTerminalResult) as TaskResult<T>);
+        const normalizedCheckpoint = normalizeDeferredTerminalServerTaskId(
+          structuredClone(state.settlementTerminalResult) as TaskResult<T>,
+          trustedDeferredServerTaskId(state)
+        );
+        if (normalizedCheckpoint.serverTaskId === undefined) {
+          throw new Error('The deferred terminal checkpoint does not contain its trusted seller task identity.');
+        }
+        const checkpointed = attachMatch(normalizedCheckpoint.result);
         const settlement = requiresRecoveredSettlement
           ? await this.config.recoverDeferredSettlement!(
               checkpointed,
               committedOperationId,
-              state.settlementServerTaskId
+              normalizedCheckpoint.serverTaskId
             )
           : { result: checkpointed };
         const recovered = this.attachDeferredSettlementAcknowledgement(
@@ -3595,24 +3714,20 @@ export class TaskExecutor {
           }),
         };
       } catch (error) {
-        await finalizationLease.release();
-        throw error;
-      }
-    }
-
-    // Pending/terminal states above only observe or recover already-dispatched
-    // seller work. An ordinary continuation is about to send new human input,
-    // so both public redemption and an already-held live closure must still be
-    // the coordinator's current claimed route.
-    if (requiresSettlement && state.settlementResumeAuthorizationRequired) {
-      const authorized = await this.config.authorizeDeferredSettlementResume?.(committedOperationId, token);
-      if (authorized !== true) {
-        throw new Error('This deferred continuation is not the current durable route for its committed operation.');
+        throw await this.releaseDeferredFinalizationAfterFailure(finalizationLease, error);
       }
     }
 
     if (state.continuationClaimed) {
-      throw new Error('Deferred task is already being resumed.');
+      const dispatchLease = state.settlementResumeDispatchLease;
+      const reclaimableAdmission =
+        requiresSettlement &&
+        dispatchLease?.phase === 'admission' &&
+        Number.isFinite(dispatchLease.expiresAt) &&
+        dispatchLease.expiresAt <= Date.now();
+      if (!reclaimableAdmission) {
+        throw new DeferredSettlementOwnershipError('Deferred task is already being resumed.');
+      }
     }
     if (typeof state.continuationVersion !== 'string' || state.continuationVersion.length === 0) {
       throw new Error('Deferred task state does not contain the atomic continuation version required for resumption.');
@@ -3626,59 +3741,153 @@ export class TaskExecutor {
     const claimTtlSeconds = this.deferredSafetyRetentionSeconds();
     const claimedVersion = randomUUID();
     const claimedAt = Date.now();
+    const dispatchOwnerId = requiresSettlement ? randomUUID() : undefined;
     // MemoryStorage retains object references. Keep the durable claim and the
     // mutable in-flight conversation on independent sanitized graphs so a
     // transport failure cannot leave raw resume input in the retained fence.
     const claimedMessages = durableDeferredSnapshot(state.messages);
     const resumedMessages = durableDeferredSnapshot(state.messages);
-    const claimed = await this.config.deferredStorage.replaceIfVersion(
-      token,
-      state.continuationVersion,
-      {
-        ...state,
-        continuationVersion: claimedVersion,
-        continuationClaimed: true,
-        messages: claimedMessages,
-        createdAt: claimedAt,
-        expiresAt: claimedAt + claimTtlSeconds * 1000,
-      },
-      claimTtlSeconds
-    );
+    const claimedState: DeferredTaskState = {
+      ...state,
+      continuationVersion: claimedVersion,
+      continuationClaimed: true,
+      messages: claimedMessages,
+      ...(dispatchOwnerId !== undefined && {
+        settlementResumeDispatchLease: {
+          ownerId: dispatchOwnerId,
+          phase: 'admission' as const,
+          expiresAt: claimedAt + DEFERRED_DISPATCH_ADMISSION_LEASE_MS,
+        },
+      }),
+      createdAt: claimedAt,
+      expiresAt: claimedAt + claimTtlSeconds * 1000,
+    };
+    let claimed: boolean;
+    try {
+      claimed = await this.config.deferredStorage.replaceIfVersion(
+        token,
+        state.continuationVersion,
+        claimedState,
+        claimTtlSeconds
+      );
+    } catch (error) {
+      throw new DeferredSettlementOwnershipError('Deferred dispatch admission could not be claimed safely.', {
+        cause: error,
+      });
+    }
     if (!claimed) {
-      throw new Error('Deferred task was already consumed or replaced.');
+      throw new DeferredSettlementOwnershipError('Deferred task was already consumed or replaced.');
     }
 
+    const admissionLease =
+      dispatchOwnerId === undefined
+        ? undefined
+        : this.startDeferredDispatchAdmissionLease(token, claimedVersion, claimedState, dispatchOwnerId);
+    let dispatchVersion = claimedVersion;
+    let dispatchCommitted = false;
+    let preDispatchStateConsumed = false;
     let agent: AgentConfig | undefined;
     let terminalObservationPersisted = false;
     let finalizationLease: DeferredFinalizationLease | undefined;
     let pendingCheckpointState: DeferredTaskState | undefined;
     try {
+      // Authorization belongs after the atomic claim. A callback that wins the
+      // previous generation makes this owner lose its final dispatch CAS.
+      if (requiresSettlement && state.settlementResumeAuthorizationRequired) {
+        await this.requireDeferredDispatchAuthorization(
+          committedOperationId,
+          token,
+          'This deferred continuation is not the current durable route for its committed operation.'
+        );
+      }
       agent = this.deferredAgents.get(state.agentId) ?? (await this.config.resolveDeferredAgent?.(state.agentId));
+      if (!agent || agent.id !== state.agentId) {
+        throw new Error('Deferred task agent could not be resolved from trusted configuration.');
+      }
+      if (state.expiresAt <= Date.now()) {
+        const owned = admissionLease ? await admissionLease.stop() : { version: dispatchVersion, state: claimedState };
+        const removed = await this.config.deferredStorage.takeIfVersion(token, owned.version);
+        if (!removed) {
+          throw new DeferredSettlementOwnershipError(
+            'Deferred continuation ownership changed while its trusted agent was being resolved.'
+          );
+        }
+        preDispatchStateConsumed = true;
+        throw new DeferredSettlementOwnershipError('Deferred task expired during trusted-agent resolution.');
+      }
+      if (agent.protocol !== 'a2a') {
+        throw new Error('A persisted deferred task can only resume an exact A2A seller task.');
+      }
+      if (!state.a2aTaskId) {
+        throw new Error('A persisted A2A deferred task requires a seller task ID.');
+      }
+      this.deferredAgents.set(agent.id, agent);
+
+      // Re-authorize at the last await boundary, then atomically publish the
+      // dispatch linearization point. A callback may still win authoritatively;
+      // if it does, this CAS fails and no protocol call is issued.
+      if (requiresSettlement && state.settlementResumeAuthorizationRequired) {
+        await this.requireDeferredDispatchAuthorization(
+          committedOperationId,
+          token,
+          'This deferred continuation is no longer the current route for its committed operation.'
+        );
+      }
+      if (admissionLease) {
+        const owned = await admissionLease.stop();
+        const committedAt = Date.now();
+        dispatchVersion = randomUUID();
+        const dispatchState: DeferredTaskState = {
+          ...owned.state,
+          continuationVersion: dispatchVersion,
+          settlementResumeDispatchLease: {
+            ownerId: dispatchOwnerId!,
+            phase: 'dispatch-committed',
+            expiresAt: committedAt + claimTtlSeconds * 1000,
+          },
+          createdAt: committedAt,
+          expiresAt: committedAt + claimTtlSeconds * 1000,
+        };
+        let committed: boolean;
+        try {
+          committed = await this.config.deferredStorage.replaceIfVersion(
+            token,
+            owned.version,
+            dispatchState,
+            claimTtlSeconds
+          );
+        } catch (error) {
+          throw new DeferredSettlementOwnershipError(
+            'Deferred dispatch admission could not be committed safely before seller dispatch.',
+            { cause: error }
+          );
+        }
+        if (!committed) {
+          throw new DeferredSettlementOwnershipError(
+            'Deferred continuation ownership changed before seller dispatch; no input was sent.'
+          );
+        }
+      }
+      dispatchCommitted = true;
     } catch (error) {
-      await this.restoreUnadvancedDeferredState(token, claimedVersion, state);
+      if (!dispatchCommitted && !preDispatchStateConsumed) {
+        const owned = admissionLease ? await admissionLease.stop() : { version: dispatchVersion, state: claimedState };
+        await this.restoreUnadvancedDeferredState(token, owned.version, state);
+        if (!(error instanceof DeferredSettlementOwnershipError)) {
+          throw new DeferredSettlementOwnershipError(
+            error instanceof Error ? error.message : 'Deferred continuation failed safely before seller dispatch.',
+            { cause: error }
+          );
+        }
+      }
       throw error;
     }
-    if (!agent || agent.id !== state.agentId) {
-      await this.restoreUnadvancedDeferredState(token, claimedVersion, state);
-      throw new Error('Deferred task agent could not be resolved from trusted configuration.');
-    }
-    if (state.expiresAt <= Date.now()) {
-      await this.config.deferredStorage.takeIfVersion(token, claimedVersion);
-      throw new Error('Deferred task expired during trusted-agent resolution.');
-    }
-    if (agent.protocol !== 'a2a') {
-      await this.restoreUnadvancedDeferredState(token, claimedVersion, state);
-      throw new Error('A persisted deferred task can only resume an exact A2A seller task.');
-    }
-    if (!state.a2aTaskId) {
-      await this.restoreUnadvancedDeferredState(token, claimedVersion, state);
-      throw new Error('A persisted A2A deferred task requires a seller task ID.');
-    }
-    this.deferredAgents.set(agent.id, agent);
 
+    const { settlementResumeDispatchLease: _dispatchLease, ...checkpointBaseState } = state;
+    void _dispatchLease;
     try {
       // Continue task with the provided input (no handler for resumed deferred tasks)
-      const resumed = await this.continueTaskWithInput<T>(
+      let resumed = await this.continueTaskWithInput<T>(
         agent,
         state.taskId,
         state.taskName,
@@ -3697,6 +3906,12 @@ export class TaskExecutor {
         state.clientContext,
         state.settlementResumeAuthorizationRequired === true
       );
+      const observedResumedServerTaskId = resumed.metadata.serverTaskId;
+      if (requiresSettlement && !TERMINAL_TASK_STATUSES.has(resumed.status as TaskStatus)) {
+        resumed = attachMatch(
+          normalizeDeferredTerminalServerTaskId(resumed, trustedDeferredServerTaskId(state)).result
+        );
+      }
       const remainsPaused = ['input-required', 'auth-required', 'deferred'].includes(resumed.status);
       // A resumed seller may pause again with a replacement continuation.
       // Persist that exact new task identity before returning it; otherwise
@@ -3709,6 +3924,9 @@ export class TaskExecutor {
         }
         const nextToken = resumed.deferred.token;
         assertDeferredContinuationToken(nextToken);
+        const replacementServerTaskId = requiresSettlement
+          ? reconcileDeferredServerTaskId(trustedDeferredServerTaskId(state), [resumed.metadata.serverTaskId])
+          : resumed.metadata.serverTaskId;
         const createdAt = Date.now();
         const ttlSeconds = this.config.deferredTaskTtlSeconds ?? DEFAULT_DEFERRED_TASK_TTL_SECONDS;
         const stored = await this.config.deferredStorage.putIfAbsent(
@@ -3736,8 +3954,8 @@ export class TaskExecutor {
             ...(state.settlementResumeAuthorizationRequired === true && {
               settlementResumeAuthorizationRequired: true,
             }),
-            ...((resumed.metadata.serverTaskId ?? state.settlementServerTaskId) !== undefined && {
-              settlementServerTaskId: resumed.metadata.serverTaskId ?? state.settlementServerTaskId,
+            ...(replacementServerTaskId !== undefined && {
+              settlementServerTaskId: replacementServerTaskId,
             }),
             createdAt,
             expiresAt: createdAt + ttlSeconds * 1000,
@@ -3767,28 +3985,32 @@ export class TaskExecutor {
       }
 
       let settledResult = attachMatch(resumed) as TaskResult<T>;
+      let settledServerTaskId = trustedDeferredServerTaskId(state);
       let afterFinalize: (() => Promise<void>) | undefined;
       if (requiresSettlement) {
         if (TERMINAL_TASK_STATUSES.has(resumed.status as TaskStatus)) {
-          const observedSettlementServerTaskId = resumed.metadata.serverTaskId;
-          if (
-            state.settlementServerTaskId !== undefined &&
-            observedSettlementServerTaskId !== undefined &&
-            state.settlementServerTaskId !== observedSettlementServerTaskId
-          ) {
-            throw new Error('The committed deferred continuation changed its bound seller task identity.');
+          const normalizedTerminal = normalizeDeferredTerminalServerTaskId(resumed, trustedDeferredServerTaskId(state));
+          if (normalizedTerminal.serverTaskId === undefined) {
+            throw new Error('The committed deferred terminal response did not provide a seller task identity.');
           }
-          const terminalSettlementServerTaskId = state.settlementServerTaskId ?? observedSettlementServerTaskId;
-          const { match: _match, submitted: _submitted, deferred: _deferred, ...serializableResult } = resumed as any;
+          settledResult = attachMatch(normalizedTerminal.result);
+          const terminalSettlementServerTaskId = normalizedTerminal.serverTaskId;
+          settledServerTaskId = terminalSettlementServerTaskId;
+          const {
+            match: _match,
+            submitted: _submitted,
+            deferred: _deferred,
+            ...serializableResult
+          } = normalizedTerminal.result as any;
           const checkpointCreatedAt = Date.now();
           const checkpointTtlSeconds = this.deferredSafetyRetentionSeconds();
           const checkpointVersion = randomUUID();
           const checkpointState: DeferredTaskState = {
-            ...state,
+            ...checkpointBaseState,
             continuationVersion: checkpointVersion,
             continuationClaimed: true,
             params: durableDeferredSnapshot(state.params),
-            messages: durableDeferredSnapshot(resumed.conversation ?? state.messages),
+            messages: durableDeferredSnapshot(normalizedTerminal.result.conversation ?? state.messages),
             ...(state.clientContext !== undefined && {
               clientContext: durableDeferredSnapshot(state.clientContext),
             }),
@@ -3801,27 +4023,69 @@ export class TaskExecutor {
           };
           const saved = await this.config.deferredStorage.replaceIfVersion(
             token,
-            claimedVersion,
+            dispatchVersion,
             checkpointState,
             checkpointTtlSeconds
           );
           if (!saved) {
+            const winner = await this.resumeExactDeferredSettlementWinner<T>(
+              token,
+              state,
+              terminalSettlementServerTaskId,
+              normalizedTerminal.result,
+              inputSnapshot,
+              publishTerminalTaskStatus,
+              liveSettlementOwner
+            );
+            if (winner) {
+              // An immediate authoritative callback may finish while the seller
+              // holds its response for webhook acknowledgement. Re-enter the
+              // durable terminal/finalized route; never redispatch the input.
+              return winner;
+            }
             throw new Error('Committed deferred terminal observation could not be saved without overwriting state.');
           }
           terminalObservationPersisted = true;
           finalizationLease = await this.acquireDeferredFinalizationLease(token, checkpointState);
         } else if (!remainsPaused) {
-          const pendingTaskId =
-            resumed.submitted?.taskId ?? resumed.metadata.serverTaskId ?? state.settlementServerTaskId;
+          // `setupSubmittedTask()` exposes the runner correlation ID as a
+          // compatibility fallback when the seller omitted task_id. That value
+          // is useful to callers but is never authoritative durable seller
+          // identity. Treat a submitted handle as observed only when metadata
+          // proves it came from the seller, or when it differs from the local
+          // operation ID used by the fallback.
+          const observedSubmittedTaskId =
+            resumed.submitted?.taskId !== undefined &&
+            (observedResumedServerTaskId !== undefined || resumed.submitted.taskId !== state.taskId)
+              ? resumed.submitted.taskId
+              : undefined;
+          const pendingTaskId = reconcileDeferredServerTaskId(trustedDeferredServerTaskId(state), [
+            observedResumedServerTaskId,
+            observedSubmittedTaskId,
+          ]);
           if (!pendingTaskId) {
             throw new Error(
               'A committed deferred continuation became nonterminal without the seller work handle required for recovery.'
             );
           }
+          if (resumed.submitted) {
+            resumed.submitted = this.createSubmittedContinuation<T>(
+              agent,
+              state.taskId,
+              state.taskName,
+              pendingTaskId,
+              resumed.submitted.webhookUrl,
+              undefined,
+              resumed.metadata,
+              true,
+              state.serverVersion
+            );
+            settledResult = resumed;
+          }
           const pendingCreatedAt = Date.now();
           const pendingTtlSeconds = this.deferredSafetyRetentionSeconds();
           const pendingState: DeferredTaskState = {
-            ...state,
+            ...checkpointBaseState,
             continuationVersion: randomUUID(),
             continuationClaimed: true,
             settlementPendingTaskId: pendingTaskId,
@@ -3836,21 +4100,32 @@ export class TaskExecutor {
           };
           const saved = await this.config.deferredStorage.replaceIfVersion(
             token,
-            claimedVersion,
+            dispatchVersion,
             pendingState,
             pendingTtlSeconds
           );
           if (!saved) {
+            const winner = await this.resumeExactDeferredSettlementWinner<T>(
+              token,
+              state,
+              pendingTaskId,
+              undefined,
+              inputSnapshot,
+              publishTerminalTaskStatus,
+              liveSettlementOwner
+            );
+            if (winner) return winner;
             throw new Error('Committed deferred pending task could not be saved without overwriting state.');
           }
           terminalObservationPersisted = true;
           pendingCheckpointState = pendingState;
+          settledServerTaskId = pendingTaskId;
         }
         if (requiresRecoveredSettlement && !pendingCheckpointState) {
           const settlement = await this.config.recoverDeferredSettlement!(
             settledResult,
             committedOperationId,
-            state.settlementServerTaskId
+            settledServerTaskId
           );
           settledResult = settlement.result as TaskResult<T>;
           afterFinalize = settlement.afterFinalize;
@@ -3890,8 +4165,20 @@ export class TaskExecutor {
         );
       }
       if (!terminalObservationPersisted) {
-        const consumedFence = await this.config.deferredStorage.takeIfVersion(token, claimedVersion);
+        const consumedFence = await this.config.deferredStorage.takeIfVersion(token, dispatchVersion);
         if (!consumedFence) {
+          if (requiresSettlement) {
+            const winner = await this.resumeExactDeferredSettlementWinner<T>(
+              token,
+              state,
+              settledServerTaskId,
+              undefined,
+              inputSnapshot,
+              publishTerminalTaskStatus,
+              liveSettlementOwner
+            );
+            if (winner) return winner;
+          }
           throw new Error('Deferred continuation claim was replaced before version-fenced completion.');
         }
       }
@@ -3901,29 +4188,34 @@ export class TaskExecutor {
         ...(state.settlementOperationId !== undefined && {
           settlementOperationId: state.settlementOperationId,
         }),
-        ...(state.settlementServerTaskId !== undefined && {
-          settlementServerTaskId: state.settlementServerTaskId,
+        ...(settledServerTaskId !== undefined && {
+          settlementServerTaskId: settledServerTaskId,
         }),
       };
     } catch (error) {
+      let propagatedError = error;
       if (finalizationLease) {
-        await finalizationLease.release();
+        propagatedError = await this.releaseDeferredFinalizationAfterFailure(finalizationLease, error);
       }
       // A thrown continuation failure is terminal for this deferred token.
       // Release both persistence and the in-memory request payload before the
       // error escapes to the caller.
-      if (publishTerminalTaskStatus && !terminalObservationPersisted) {
+      if (
+        publishTerminalTaskStatus &&
+        !terminalObservationPersisted &&
+        !(propagatedError instanceof DeferredSettlementOwnershipError)
+      ) {
         this.updateTaskStatus(
           state.taskId,
           'failed',
           undefined,
-          error instanceof Error ? error.message : String(error)
+          propagatedError instanceof Error ? propagatedError.message : String(propagatedError)
         );
       }
       // The versioned claim fence stays in storage after uncertain dispatch:
       // the seller may have advanced even when its response did not reach
       // this process, so the human continuation must not become resumable.
-      throw error;
+      throw propagatedError;
     }
   }
 
@@ -3937,16 +4229,25 @@ export class TaskExecutor {
     const markPendingSettlement = (marked: TaskResult<T>): TaskResult<T> => {
       Object.defineProperty(marked, DEFERRED_PENDING_SETTLEMENT, {
         value: async (terminal: TaskResult<T>) => {
-          const lease = await this.checkpointDeferredPendingTerminal(token, pendingState, terminal, true);
+          const normalizedTerminal = normalizeDeferredTerminalServerTaskId(
+            terminal,
+            trustedDeferredServerTaskId(pendingState)
+          );
+          const lease = await this.checkpointDeferredPendingTerminal(
+            token,
+            pendingState,
+            normalizedTerminal.result,
+            true
+          );
           if (!lease) throw new Error('Committed deferred terminal finalization lease was not acquired.');
-          let checkpointed = terminal;
+          let checkpointed = normalizedTerminal.result;
           let afterFinalize: (() => Promise<void>) | undefined;
           try {
             if (recoverTerminal) {
               const settlement = await this.config.recoverDeferredSettlement!(
-                terminal,
+                normalizedTerminal.result,
                 pendingState.settlementOperationId!,
-                pendingState.settlementPendingTaskId
+                normalizedTerminal.serverTaskId
               );
               checkpointed = settlement.result as TaskResult<T>;
               afterFinalize = settlement.afterFinalize;
@@ -3960,8 +4261,7 @@ export class TaskExecutor {
               () => lease.release()
             );
           } catch (error) {
-            await lease.release();
-            throw error;
+            throw await this.releaseDeferredFinalizationAfterFailure(lease, error);
           }
           if (pendingState.clientContext === undefined) await acknowledgeDeferredSettlement(checkpointed);
           return checkpointed;
@@ -4014,16 +4314,25 @@ export class TaskExecutor {
           ) {
             return completion;
           }
-          const lease = await this.checkpointDeferredPendingTerminal(token, pendingState, completion, true);
+          const normalizedCompletion = normalizeDeferredTerminalServerTaskId(
+            completion,
+            trustedDeferredServerTaskId(pendingState)
+          );
+          const lease = await this.checkpointDeferredPendingTerminal(
+            token,
+            pendingState,
+            normalizedCompletion.result,
+            true
+          );
           if (!lease) throw new Error('Committed deferred terminal finalization lease was not acquired.');
-          let checkpointed: TaskResult<T> = completion;
+          let checkpointed: TaskResult<T> = normalizedCompletion.result;
           let afterFinalize: (() => Promise<void>) | undefined;
           try {
             if (recoverTerminal) {
               const settlement = await this.config.recoverDeferredSettlement!(
-                completion,
+                normalizedCompletion.result,
                 pendingState.settlementOperationId!,
-                pendingState.settlementPendingTaskId
+                normalizedCompletion.serverTaskId
               );
               checkpointed = settlement.result as TaskResult<T>;
               afterFinalize = settlement.afterFinalize;
@@ -4037,8 +4346,7 @@ export class TaskExecutor {
               () => lease.release()
             );
           } catch (error) {
-            await lease.release();
-            throw error;
+            throw await this.releaseDeferredFinalizationAfterFailure(lease, error);
           }
           if (pendingState.clientContext === undefined) {
             await acknowledgeDeferredSettlement(checkpointed);
@@ -4050,6 +4358,58 @@ export class TaskExecutor {
     return markPendingSettlement(wrapped);
   }
 
+  private async resumeExactDeferredSettlementWinner<T>(
+    token: string,
+    expectedState: DeferredTaskState,
+    expectedServerTaskId: string | undefined,
+    expectedTerminal: TaskResult<T> | undefined,
+    inputSnapshot: unknown,
+    publishTerminalTaskStatus: boolean,
+    liveSettlementOwner: boolean
+  ): Promise<
+    | {
+        result: TaskResult<T>;
+        clientContext?: unknown;
+        settlementOperationId?: string;
+        settlementServerTaskId?: string;
+      }
+    | undefined
+  > {
+    const winner = await this.config.deferredStorage?.get(token);
+    if (
+      !winner ||
+      winner.settlementOperationId === undefined ||
+      winner.settlementOperationId !== expectedState.settlementOperationId ||
+      expectedServerTaskId === undefined ||
+      winner.settlementServerTaskId !== expectedServerTaskId ||
+      (winner.settlementTerminalResult === undefined && winner.settlementFinalizedResult === undefined)
+    ) {
+      return undefined;
+    }
+
+    if (winner.settlementTerminalResult !== undefined) {
+      const normalizedWinner = normalizeDeferredTerminalServerTaskId(
+        winner.settlementTerminalResult as TaskResult<unknown>,
+        winner.settlementServerTaskId
+      ).result;
+      if (expectedTerminal !== undefined) {
+        const normalizedExpected = normalizeDeferredTerminalServerTaskId(expectedTerminal, expectedServerTaskId).result;
+        if (!sameDeferredTerminal(normalizedWinner, normalizedExpected)) return undefined;
+      }
+    } else if (expectedTerminal !== undefined) {
+      // A direct terminal response needs the raw seller observation to prove
+      // equality; a finalized-only legacy record is not enough.
+      return undefined;
+    } else {
+      normalizeDeferredTerminalServerTaskId(
+        winner.settlementFinalizedResult as TaskResult<unknown>,
+        winner.settlementServerTaskId
+      );
+    }
+
+    return this.resumeDeferredTaskCore<T>(token, inputSnapshot, publishTerminalTaskStatus, liveSettlementOwner);
+  }
+
   private async checkpointDeferredPendingTerminal<T>(
     token: string,
     pendingState: DeferredTaskState,
@@ -4058,18 +4418,35 @@ export class TaskExecutor {
   ): Promise<DeferredFinalizationLease | undefined> {
     const storage = this.config.deferredStorage;
     if (!storage) throw new Error('Deferred storage not configured');
-    const { match: _match, submitted: _submitted, deferred: _deferred, ...serializableResult } = terminalResult as any;
+    const normalizedTerminal = normalizeDeferredTerminalServerTaskId(
+      terminalResult,
+      trustedDeferredServerTaskId(pendingState)
+    );
+    const {
+      match: _match,
+      submitted: _submitted,
+      deferred: _deferred,
+      ...serializableResult
+    } = normalizedTerminal.result as any;
     void _match;
     void _submitted;
     void _deferred;
-    const { settlementPendingTaskId: _pending, ...checkpointBase } = pendingState;
+    const {
+      settlementPendingTaskId: _pending,
+      settlementResumeDispatchLease: _dispatchLease,
+      ...checkpointBase
+    } = pendingState;
     void _pending;
+    void _dispatchLease;
     const checkpointCreatedAt = Date.now();
     const ttlSeconds = this.deferredSafetyRetentionSeconds();
     const checkpointState: DeferredTaskState = {
       ...checkpointBase,
       continuationVersion: randomUUID(),
       continuationClaimed: true,
+      ...(normalizedTerminal.serverTaskId !== undefined && {
+        settlementServerTaskId: normalizedTerminal.serverTaskId,
+      }),
       settlementTerminalResult: durableDeferredSnapshot(serializableResult),
       createdAt: checkpointCreatedAt,
       expiresAt: checkpointCreatedAt + ttlSeconds * 1000,
@@ -4083,15 +4460,105 @@ export class TaskExecutor {
     return acquireLease ? this.acquireDeferredFinalizationLease(token, checkpointState) : undefined;
   }
 
+  private startDeferredDispatchAdmissionLease(
+    token: string,
+    initialVersion: string,
+    initialState: DeferredTaskState,
+    ownerId: string
+  ): DeferredDispatchAdmissionLease {
+    const storage = this.config.deferredStorage!;
+    const safetyTtlSeconds = this.deferredSafetyRetentionSeconds();
+    let currentVersion = initialVersion;
+    let currentState = initialState;
+    let stopped = false;
+    let lostError: Error | undefined;
+    let renewal = Promise.resolve();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const scheduleRenewal = (): void => {
+      if (stopped || lostError) return;
+      timer = setTimeout(() => {
+        renewal = renewal.then(async () => {
+          if (stopped || lostError) return;
+          try {
+            const renewedAt = Date.now();
+            const nextVersion = randomUUID();
+            const nextState: DeferredTaskState = {
+              ...currentState,
+              continuationVersion: nextVersion,
+              settlementResumeDispatchLease: {
+                ownerId,
+                phase: 'admission',
+                expiresAt: renewedAt + DEFERRED_DISPATCH_ADMISSION_LEASE_MS,
+              },
+              expiresAt: renewedAt + safetyTtlSeconds * 1000,
+            };
+            const renewed = await storage.replaceIfVersion(token, currentVersion, nextState, safetyTtlSeconds);
+            if (!renewed) {
+              lostError = new DeferredSettlementOwnershipError(
+                'Deferred dispatch admission ownership changed before seller dispatch.'
+              );
+              return;
+            }
+            currentVersion = nextVersion;
+            currentState = nextState;
+            scheduleRenewal();
+          } catch (error) {
+            lostError = new DeferredSettlementOwnershipError(
+              'Deferred dispatch admission lease could not be renewed safely before seller dispatch.',
+              { cause: error }
+            );
+          }
+        });
+      }, DEFERRED_DISPATCH_ADMISSION_RENEW_MS);
+      timer.unref?.();
+    };
+    scheduleRenewal();
+
+    let stoppedState: { version: string; state: DeferredTaskState } | undefined;
+    return {
+      stop: async () => {
+        if (stoppedState) return stoppedState;
+        if (!stopped) {
+          stopped = true;
+          if (timer) clearTimeout(timer);
+        }
+        await renewal;
+        if (lostError) throw lostError;
+        stoppedState = { version: currentVersion, state: currentState };
+        return stoppedState;
+      },
+    };
+  }
+
+  private async requireDeferredDispatchAuthorization(
+    operationId: string,
+    token: string,
+    message: string
+  ): Promise<void> {
+    try {
+      if ((await this.config.authorizeDeferredSettlementResume?.(operationId, token)) !== true) {
+        throw new DeferredSettlementOwnershipError(message);
+      }
+    } catch (error) {
+      if (error instanceof DeferredSettlementOwnershipError) throw error;
+      throw new DeferredSettlementOwnershipError(message, { cause: error });
+    }
+  }
+
   private async acquireDeferredFinalizationLease(
     token: string,
     checkpoint: DeferredTaskState
   ): Promise<DeferredFinalizationLease> {
     const storage = this.config.deferredStorage;
-    if (!storage) throw new Error('Deferred storage not configured');
+    if (!storage) {
+      throw new DeferredSettlementOwnershipError(
+        'Deferred settlement finalization could not be claimed because deferred storage is unavailable.'
+      );
+    }
     const now = Date.now();
     if (checkpoint.settlementFinalizationLease && checkpoint.settlementFinalizationLease.expiresAt > now) {
-      throw new Error('Deferred settlement finalization is already in progress.');
+      throw new DeferredSettlementOwnershipError('Deferred settlement finalization is already in progress.');
     }
 
     const ownerId = randomUUID();
@@ -4106,13 +4573,17 @@ export class TaskExecutor {
       },
       expiresAt: now + safetyTtlSeconds * 1000,
     };
-    const acquired = await storage.replaceIfVersion(
-      token,
-      checkpoint.continuationVersion,
-      currentState,
-      safetyTtlSeconds
-    );
-    if (!acquired) throw new Error('Deferred settlement finalization was claimed by another replica.');
+    let acquired: boolean;
+    try {
+      acquired = await storage.replaceIfVersion(token, checkpoint.continuationVersion, currentState, safetyTtlSeconds);
+    } catch (error) {
+      throw new DeferredSettlementOwnershipError('Deferred settlement finalization could not be claimed safely.', {
+        cause: error,
+      });
+    }
+    if (!acquired) {
+      throw new DeferredSettlementOwnershipError('Deferred settlement finalization was claimed by another replica.');
+    }
 
     let stopped = false;
     let lostError: Error | undefined;
@@ -4137,14 +4608,17 @@ export class TaskExecutor {
             };
             const renewed = await storage.replaceIfVersion(token, currentVersion, nextState, safetyTtlSeconds);
             if (!renewed) {
-              lostError = new Error('Deferred settlement finalization lease was lost.');
+              lostError = new DeferredSettlementOwnershipError('Deferred settlement finalization lease was lost.');
               return;
             }
             currentVersion = nextVersion;
             currentState = nextState;
             scheduleRenewal();
           } catch (error) {
-            lostError = new Error('Deferred settlement finalization lease could not be renewed.', { cause: error });
+            lostError = new DeferredSettlementOwnershipError(
+              'Deferred settlement finalization lease could not be renewed.',
+              { cause: error }
+            );
           }
         });
       }, DEFERRED_FINALIZATION_RENEW_MS);
@@ -4175,24 +4649,56 @@ export class TaskExecutor {
         const { settlementFinalizationLease: _lease, ...retryableCheckpoint } = currentState;
         void _lease;
         const releasedAt = Date.now();
-        const released = await storage.replaceIfVersion(
-          token,
-          currentVersion,
-          {
-            ...retryableCheckpoint,
-            continuationVersion: randomUUID(),
-            ...((retryableCheckpoint.settlementCompletionHandlerPublished === true || completionHandlerPublished) && {
-              settlementCompletionHandlerPublished: true,
-            }),
-            createdAt: releasedAt,
-            expiresAt: releasedAt + safetyTtlSeconds * 1000,
-          },
-          safetyTtlSeconds
-        );
-        if (!released) throw new Error('Deferred settlement finalization lease could not be released safely.');
+        let released: boolean;
+        try {
+          released = await storage.replaceIfVersion(
+            token,
+            currentVersion,
+            {
+              ...retryableCheckpoint,
+              continuationVersion: randomUUID(),
+              ...((retryableCheckpoint.settlementCompletionHandlerPublished === true || completionHandlerPublished) && {
+                settlementCompletionHandlerPublished: true,
+              }),
+              createdAt: releasedAt,
+              expiresAt: releasedAt + safetyTtlSeconds * 1000,
+            },
+            safetyTtlSeconds
+          );
+        } catch (error) {
+          throw new DeferredSettlementOwnershipError(
+            'Deferred settlement finalization lease could not be released safely.',
+            { cause: error }
+          );
+        }
+        if (!released) {
+          throw new DeferredSettlementOwnershipError(
+            'Deferred settlement finalization lease ownership changed before it could be released.'
+          );
+        }
         completed = true;
       },
     };
+  }
+
+  private async releaseDeferredFinalizationAfterFailure(
+    lease: DeferredFinalizationLease,
+    originalFailure: unknown
+  ): Promise<unknown> {
+    try {
+      await lease.release();
+      return originalFailure;
+    } catch (releaseFailure) {
+      return new DeferredSettlementOwnershipError(
+        'Deferred settlement failed and its finalization lease could not be released safely.',
+        {
+          cause: new AggregateError(
+            [originalFailure, releaseFailure],
+            'Deferred settlement failure and finalization lease release both failed.'
+          ),
+        }
+      );
+    }
   }
 
   private attachDeferredSettlementAcknowledgement<T>(
@@ -4207,6 +4713,11 @@ export class TaskExecutor {
     let rejected = false;
     const acknowledge = async (finalizedResult: TaskResult<T> = result): Promise<void> => {
       if (acknowledged) return;
+      if (rejected) {
+        throw new DeferredSettlementOwnershipError(
+          'Deferred settlement finalization was released; reacquire the durable checkpoint before acknowledging.'
+        );
+      }
       try {
         await afterFinalize?.();
         await persistFinalized?.(finalizedResult);
@@ -4225,10 +4736,23 @@ export class TaskExecutor {
         acknowledged = true;
       } catch (error) {
         if (!rejected) {
-          await rejectFinalization?.(
-            hasCompletionHandlerAlreadyPublished(finalizedResult) || hasCompletionHandlerAlreadyPublished(result)
-          );
-          rejected = true;
+          try {
+            await rejectFinalization?.(
+              hasCompletionHandlerAlreadyPublished(finalizedResult) || hasCompletionHandlerAlreadyPublished(result)
+            );
+            rejected = true;
+          } catch (releaseFailure) {
+            rejected = true;
+            throw new DeferredSettlementOwnershipError(
+              'Deferred settlement acknowledgement failed and its finalization lease could not be released safely.',
+              {
+                cause: new AggregateError(
+                  [error, releaseFailure],
+                  'Deferred settlement acknowledgement and finalization lease release both failed.'
+                ),
+              }
+            );
+          }
         }
         throw error;
       }
@@ -4259,12 +4783,40 @@ export class TaskExecutor {
     finalizedResult: TaskResult<T>
   ): Promise<void> {
     const storage = this.config.deferredStorage;
-    if (!storage) throw new Error('Deferred storage not configured');
-    const current = await storage.get(token);
-    if (!current || current.continuationVersion !== expectedVersion) {
-      throw new Error('Committed deferred completion could not be durably acknowledged.');
+    if (!storage) {
+      throw new DeferredSettlementOwnershipError(
+        'Committed deferred completion could not be durably acknowledged because deferred storage is unavailable.'
+      );
     }
-    const { match: _match, submitted: _submitted, deferred: _deferred, ...serializableResult } = finalizedResult as any;
+    let current: DeferredTaskState | undefined;
+    try {
+      current = await storage.get(token);
+    } catch (error) {
+      throw new DeferredSettlementOwnershipError('Committed deferred completion ownership could not be verified.', {
+        cause: error,
+      });
+    }
+    if (!current || current.continuationVersion !== expectedVersion) {
+      throw new DeferredSettlementOwnershipError(
+        'Committed deferred completion could not be durably acknowledged because ownership changed.'
+      );
+    }
+    const normalizedFinalized = normalizeDeferredTerminalServerTaskId(
+      finalizedResult,
+      trustedDeferredServerTaskId(current)
+    );
+    if (normalizedFinalized.serverTaskId === undefined) {
+      throw new Error('The finalized deferred settlement does not contain its trusted seller task identity.');
+    }
+    if (normalizedFinalized.result !== finalizedResult) {
+      finalizedResult.metadata = normalizedFinalized.result.metadata;
+    }
+    const {
+      match: _match,
+      submitted: _submitted,
+      deferred: _deferred,
+      ...serializableResult
+    } = normalizedFinalized.result as any;
     void _match;
     void _submitted;
     void _deferred;
@@ -4272,29 +4824,40 @@ export class TaskExecutor {
     const ttlSeconds = this.deferredSafetyRetentionSeconds();
     const { settlementFinalizationLease: _lease, ...finalizedCheckpoint } = current;
     void _lease;
-    const saved = await storage.replaceIfVersion(
-      token,
-      expectedVersion,
-      {
-        ...finalizedCheckpoint,
-        continuationVersion: randomUUID(),
-        continuationClaimed: true,
-        params: durableDeferredSnapshot(current.params),
-        messages: durableDeferredSnapshot(current.messages),
-        ...(current.clientContext !== undefined && {
-          clientContext: durableDeferredSnapshot(current.clientContext),
-        }),
-        settlementFinalizedResult: durableDeferredSnapshot(serializableResult),
-        ...((current.settlementCompletionHandlerPublished === true ||
-          hasCompletionHandlerAlreadyPublished(finalizedResult)) && {
-          settlementCompletionHandlerPublished: true,
-        }),
-        createdAt: acknowledgedAt,
-        expiresAt: acknowledgedAt + ttlSeconds * 1000,
-      },
-      ttlSeconds
-    );
-    if (!saved) throw new Error('Committed deferred completion could not be durably acknowledged.');
+    let saved: boolean;
+    try {
+      saved = await storage.replaceIfVersion(
+        token,
+        expectedVersion,
+        {
+          ...finalizedCheckpoint,
+          continuationVersion: randomUUID(),
+          continuationClaimed: true,
+          params: durableDeferredSnapshot(current.params),
+          messages: durableDeferredSnapshot(current.messages),
+          ...(current.clientContext !== undefined && {
+            clientContext: durableDeferredSnapshot(current.clientContext),
+          }),
+          settlementFinalizedResult: durableDeferredSnapshot(serializableResult),
+          ...((current.settlementCompletionHandlerPublished === true ||
+            hasCompletionHandlerAlreadyPublished(finalizedResult)) && {
+            settlementCompletionHandlerPublished: true,
+          }),
+          createdAt: acknowledgedAt,
+          expiresAt: acknowledgedAt + ttlSeconds * 1000,
+        },
+        ttlSeconds
+      );
+    } catch (error) {
+      throw new DeferredSettlementOwnershipError('Committed deferred completion could not be durably acknowledged.', {
+        cause: error,
+      });
+    }
+    if (!saved) {
+      throw new DeferredSettlementOwnershipError(
+        'Committed deferred completion could not be durably acknowledged because ownership changed.'
+      );
+    }
   }
 
   private deferredSafetyRetentionSeconds(): number {
@@ -4326,15 +4889,36 @@ export class TaskExecutor {
     state: DeferredTaskState
   ): Promise<void> {
     const remainingTtlSeconds = Math.ceil((state.expiresAt - Date.now()) / 1000);
-    if (remainingTtlSeconds < 1) return;
-    const restored = await this.config.deferredStorage?.replaceIfVersion(
-      token,
-      claimedVersion,
-      state,
-      remainingTtlSeconds
-    );
+    const storage = this.config.deferredStorage;
+    if (!storage) {
+      throw new DeferredSettlementOwnershipError('Deferred continuation state could not be restored safely.');
+    }
+    if (remainingTtlSeconds < 1) {
+      let removed: DeferredTaskState | undefined;
+      try {
+        removed = await storage.takeIfVersion(token, claimedVersion);
+      } catch (error) {
+        throw new DeferredSettlementOwnershipError('Expired deferred dispatch admission could not be removed safely.', {
+          cause: error,
+        });
+      }
+      if (!removed) {
+        throw new DeferredSettlementOwnershipError(
+          'Expired deferred dispatch admission ownership changed before cleanup.'
+        );
+      }
+      return;
+    }
+    let restored: boolean;
+    try {
+      restored = await storage.replaceIfVersion(token, claimedVersion, state, remainingTtlSeconds);
+    } catch (error) {
+      throw new DeferredSettlementOwnershipError('Deferred continuation state could not be restored safely.', {
+        cause: error,
+      });
+    }
     if (!restored) {
-      throw new Error(
+      throw new DeferredSettlementOwnershipError(
         'Deferred continuation token was reused during trusted-agent resolution; original state was not restored.'
       );
     }

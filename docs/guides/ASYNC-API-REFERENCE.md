@@ -856,6 +856,11 @@ resume the same seller task or create a token-reuse ABA gap.
 interface DeferredTaskState {
   continuationVersion: string; // Opaque atomic record generation
   continuationClaimed?: boolean; // Seller continuation dispatch is fenced
+  settlementResumeDispatchLease?: {
+    ownerId: string;
+    phase: 'admission' | 'dispatch-committed';
+    expiresAt: number;
+  }; // Renewable admission owner or permanent uncertain-dispatch fence
   taskId: string; // Client correlation ID
   contextId?: string; // Seller A2A context ID
   a2aTaskId: string; // Exact seller A2A Task.id
@@ -894,6 +899,12 @@ interface DeferredTaskStorage extends Storage<DeferredTaskState> {
 only the exact generation and keep the key present under the SDK-supplied
 internal safety TTL. This safety horizon is independent of the configurable
 human-input token lifetime and expands for configured transport/working waits.
+Committed continuations first hold a renewable `admission` lease while current
+route authorization and trusted-agent resolution run. The SDK then performs an
+exact generation CAS to `dispatch-committed` immediately before calling the
+seller. Only an expired `admission` lease is reclaimable; a
+`dispatch-committed` record represents uncertain seller dispatch and must never
+redispatch the human input. Authoritative callbacks may replace either phase.
 `takeIfVersion()` performs post-completion cleanup only when that claimed
 generation is still current. If trusted agent resolution fails before
 dispatch, the SDK generation-conditionally restores the original state with

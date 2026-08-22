@@ -3,7 +3,11 @@ const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
 
 const { SingleAgentClient, TaskExecutor, MemoryStorage } = require('../../dist/lib/index.js');
-const { acknowledgeDeferredSettlement } = require('../../dist/lib/core/TaskExecutor.js');
+const {
+  DeferredSettlementOwnershipError,
+  acknowledgeDeferredSettlement,
+  rejectDeferredSettlement,
+} = require('../../dist/lib/core/TaskExecutor.js');
 const { ProtocolClient } = require('../../dist/lib/protocols/index.js');
 
 const testDurableToken = label => createHash('sha256').update(label).digest('base64url');
@@ -14,6 +18,49 @@ const agent = {
   agent_uri: 'https://seller.example/.well-known/agent-card.json',
   protocol: 'a2a',
 };
+
+function committedContinuationState({ operationId, sellerWorkId, version, now = Date.now(), dispatchLease }) {
+  return {
+    continuationVersion: version,
+    ...(dispatchLease !== undefined && {
+      continuationClaimed: true,
+      settlementResumeDispatchLease: dispatchLease,
+    }),
+    taskId: operationId,
+    contextId: `${operationId}-context`,
+    a2aTaskId: `${operationId}-a2a-task`,
+    serverVersion: 'v3',
+    agentId: agent.id,
+    taskName: 'create_media_buy',
+    params: {},
+    messages: [],
+    settlementOperationId: operationId,
+    settlementResumeAuthorizationRequired: true,
+    settlementServerTaskId: sellerWorkId,
+    createdAt: now,
+    expiresAt: now + 60_000,
+  };
+}
+
+function committedTerminalResult(operationId, sellerWorkId, mediaBuyId) {
+  return {
+    success: true,
+    status: 'completed',
+    data: { media_buy_id: mediaBuyId, packages: [] },
+    metadata: {
+      taskId: operationId,
+      serverTaskId: sellerWorkId,
+      taskName: 'create_media_buy',
+      agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+      responseTimeMs: 1,
+      timestamp: new Date().toISOString(),
+      clarificationRounds: 0,
+      status: 'completed',
+    },
+    conversation: [],
+    debug_logs: [],
+  };
+}
 
 test('MemoryStorage rejects non-positive atomic continuation TTLs', async () => {
   const storage = new MemoryStorage({ autoCleanup: false });
@@ -30,6 +77,1155 @@ test('MemoryStorage rejects non-positive atomic continuation TTLs', async () => 
       /positive finite/
     );
   } finally {
+    storage.destroy();
+  }
+});
+
+test('callback wins during trusted-agent resolution before deferred input dispatch', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('callback-wins-during-agent-resolution-token');
+  const operationId = 'callback-wins-during-agent-resolution-operation';
+  const sellerWorkId = 'callback-wins-during-agent-resolution-work';
+  await storage.putIfAbsent(
+    token,
+    committedContinuationState({
+      operationId,
+      sellerWorkId,
+      version: 'callback-wins-during-agent-resolution-version',
+    }),
+    60
+  );
+
+  let releaseResolution;
+  const resolutionGate = new Promise(resolve => {
+    releaseResolution = resolve;
+  });
+  let markResolutionEntered;
+  const resolutionEntered = new Promise(resolve => {
+    markResolutionEntered = resolve;
+  });
+  let protocolCalls = 0;
+  ProtocolClient.callTool = async () => {
+    protocolCalls += 1;
+    assert.fail('a callback winner before dispatch commit must prevent the seller call');
+  };
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    resolveDeferredAgent: async () => {
+      markResolutionEntered();
+      await resolutionGate;
+      return { ...agent, agent_uri: 'https://seller.example/a2a' };
+    },
+    authorizeDeferredSettlementResume: async () => true,
+    canRecoverDeferredSettlement: async () => true,
+    recoverDeferredSettlement: async result => ({ result }),
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    const resume = executor.resumeDeferredTask(token, { approved: true });
+    await resolutionEntered;
+    const callback = await executor.checkpointExternalDeferredSettlement(
+      token,
+      operationId,
+      committedTerminalResult(operationId, sellerWorkId, 'callback-resolution-winner-buy')
+    );
+    assert.ok(callback);
+    await acknowledgeDeferredSettlement(callback);
+    releaseResolution();
+    await assert.rejects(
+      resume,
+      error =>
+        error instanceof DeferredSettlementOwnershipError && /original state was not restored/.test(error.message)
+    );
+    assert.equal(protocolCalls, 0);
+
+    const replay = await executor.resumeDeferredTask(token, { ignored: 'already-finalized' });
+    assert.equal(replay.data.media_buy_id, 'callback-resolution-winner-buy');
+    assert.equal(protocolCalls, 0);
+  } finally {
+    releaseResolution?.();
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
+test('deferred storage read outage is typed ownership and a later retry dispatches exactly once', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('deferred-read-outage-retry-token');
+  const operationId = 'deferred-read-outage-retry-operation';
+  const sellerWorkId = 'deferred-read-outage-retry-work';
+  await storage.putIfAbsent(
+    token,
+    committedContinuationState({
+      operationId,
+      sellerWorkId,
+      version: 'deferred-read-outage-retry-version',
+    }),
+    60
+  );
+
+  const storageFailure = new Error('injected deferred storage read outage');
+  const originalGet = storage.get.bind(storage);
+  let failRead = true;
+  storage.get = async key => {
+    if (failRead) {
+      failRead = false;
+      throw storageFailure;
+    }
+    return originalGet(key);
+  };
+  let protocolCalls = 0;
+  ProtocolClient.callTool = async () => {
+    protocolCalls += 1;
+    return {
+      status: 'completed',
+      task_id: sellerWorkId,
+      media_buy_id: 'deferred-read-outage-retry-buy',
+      packages: [],
+    };
+  };
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    resolveDeferredAgent: async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' }),
+    authorizeDeferredSettlementResume: async () => true,
+    canRecoverDeferredSettlement: async () => true,
+    recoverDeferredSettlement: async result => ({ result }),
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    await assert.rejects(
+      executor.resumeDeferredTask(token, { approved: true }),
+      error => error instanceof DeferredSettlementOwnershipError && error.cause === storageFailure
+    );
+    assert.equal(protocolCalls, 0);
+    assert.equal((await originalGet(token)).continuationClaimed, undefined);
+
+    const completed = await executor.resumeDeferredTask(token, { approved: true });
+    assert.equal(completed.data.media_buy_id, 'deferred-read-outage-retry-buy');
+    assert.equal(protocolCalls, 1);
+  } finally {
+    storage.get = originalGet;
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
+test('expiry during trusted-agent resolution is typed ownership after generation-fenced removal', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('expiry-during-resolution-token');
+  const operationId = 'expiry-during-resolution-operation';
+  const sellerWorkId = 'expiry-during-resolution-work';
+  const expiringState = committedContinuationState({
+    operationId,
+    sellerWorkId,
+    version: 'expiry-during-resolution-version',
+  });
+  expiringState.expiresAt = Date.now() + 50;
+  await storage.putIfAbsent(token, expiringState, 60);
+
+  let protocolCalls = 0;
+  ProtocolClient.callTool = async () => {
+    protocolCalls += 1;
+    assert.fail('an expired admitted continuation must not reach the seller');
+  };
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    resolveDeferredAgent: async () => {
+      await new Promise(resolve => setTimeout(resolve, 80));
+      return { ...agent, agent_uri: 'https://seller.example/a2a' };
+    },
+    authorizeDeferredSettlementResume: async () => true,
+    canRecoverDeferredSettlement: async () => true,
+    recoverDeferredSettlement: async result => ({ result }),
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    await assert.rejects(
+      executor.resumeDeferredTask(token, { approved: true }),
+      error =>
+        error instanceof DeferredSettlementOwnershipError &&
+        /expired during trusted-agent resolution/.test(error.message)
+    );
+    assert.equal(protocolCalls, 0);
+    assert.equal(await storage.get(token), undefined);
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
+test('deferred resume reauthorizes the durable route immediately before dispatch commit', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('deferred-route-changes-before-dispatch-token');
+  const operationId = 'deferred-route-changes-before-dispatch-operation';
+  const sellerWorkId = 'deferred-route-changes-before-dispatch-work';
+  const originalState = committedContinuationState({
+    operationId,
+    sellerWorkId,
+    version: 'deferred-route-changes-before-dispatch-version',
+  });
+  await storage.putIfAbsent(token, originalState, 60);
+
+  let authorizationChecks = 0;
+  let protocolCalls = 0;
+  ProtocolClient.callTool = async () => {
+    protocolCalls += 1;
+    assert.fail('route revocation before dispatch commit must prevent the seller call');
+  };
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    resolveDeferredAgent: async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' }),
+    authorizeDeferredSettlementResume: async () => {
+      const admitted = await storage.get(token);
+      assert.equal(admitted.continuationClaimed, true);
+      assert.equal(admitted.settlementResumeDispatchLease.phase, 'admission');
+      authorizationChecks += 1;
+      return authorizationChecks === 1;
+    },
+    canRecoverDeferredSettlement: async () => true,
+    recoverDeferredSettlement: async result => ({ result }),
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    await assert.rejects(executor.resumeDeferredTask(token, { approved: true }), /no longer the current route/);
+    assert.equal(authorizationChecks, 2);
+    assert.equal(protocolCalls, 0);
+    const restored = await storage.get(token);
+    assert.equal(restored.continuationVersion, originalState.continuationVersion);
+    assert.equal(restored.continuationClaimed, undefined);
+    assert.equal(restored.settlementResumeDispatchLease, undefined);
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
+test('authorization loss after the original deadline removes admission instead of extending resume eligibility', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('expired-auth-loss-removes-admission-token');
+  const operationId = 'expired-auth-loss-removes-admission-operation';
+  const sellerWorkId = 'expired-auth-loss-removes-admission-work';
+  const expiringState = committedContinuationState({
+    operationId,
+    sellerWorkId,
+    version: 'expired-auth-loss-removes-admission-version',
+  });
+  expiringState.expiresAt = Date.now() + 150;
+  await storage.putIfAbsent(token, expiringState, 60);
+
+  let authorizationChecks = 0;
+  let protocolCalls = 0;
+  ProtocolClient.callTool = async () => {
+    protocolCalls += 1;
+    assert.fail('an expired original continuation must never be reclaimed from the safety-retention fence');
+  };
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    resolveDeferredAgent: async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' }),
+    authorizeDeferredSettlementResume: async () => {
+      authorizationChecks += 1;
+      if (authorizationChecks === 2) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+        return false;
+      }
+      return true;
+    },
+    canRecoverDeferredSettlement: async () => true,
+    recoverDeferredSettlement: async result => ({ result }),
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    await assert.rejects(
+      executor.resumeDeferredTask(token, { approved: true }),
+      error => error instanceof DeferredSettlementOwnershipError && /no longer the current route/.test(error.message)
+    );
+    assert.equal(protocolCalls, 0);
+    assert.equal(await storage.get(token), undefined);
+    await assert.rejects(executor.resumeDeferredTask(token, { approved: 'must-not-reclaim' }), /not found/);
+    assert.equal(protocolCalls, 0);
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
+test('pre-dispatch restore storage failure remains typed ownership with the adapter error as cause', async () => {
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('pre-dispatch-restore-storage-failure-token');
+  const operationId = 'pre-dispatch-restore-storage-failure-operation';
+  const sellerWorkId = 'pre-dispatch-restore-storage-failure-work';
+  await storage.putIfAbsent(
+    token,
+    committedContinuationState({
+      operationId,
+      sellerWorkId,
+      version: 'pre-dispatch-restore-storage-failure-version',
+    }),
+    60
+  );
+  const storageFailure = new Error('injected pre-dispatch restore storage failure');
+  const originalReplace = storage.replaceIfVersion.bind(storage);
+  storage.replaceIfVersion = async (key, version, value, ttl) => {
+    if (value.continuationClaimed !== true) throw storageFailure;
+    return originalReplace(key, version, value, ttl);
+  };
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    authorizeDeferredSettlementResume: async () => false,
+    canRecoverDeferredSettlement: async () => true,
+    recoverDeferredSettlement: async result => ({ result }),
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    await assert.rejects(
+      executor.resumeDeferredTask(token, { approved: true }),
+      error => error instanceof DeferredSettlementOwnershipError && error.cause === storageFailure
+    );
+  } finally {
+    storage.replaceIfVersion = originalReplace;
+    storage.destroy();
+  }
+});
+
+test('expired deferred dispatch admission is reclaimable exactly once', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('expired-dispatch-admission-token');
+  const operationId = 'expired-dispatch-admission-operation';
+  const sellerWorkId = 'expired-dispatch-admission-work';
+  await storage.putIfAbsent(
+    token,
+    committedContinuationState({
+      operationId,
+      sellerWorkId,
+      version: 'expired-dispatch-admission-version',
+      dispatchLease: {
+        ownerId: 'crashed-admission-owner',
+        phase: 'admission',
+        expiresAt: Date.now() - 1,
+      },
+    }),
+    60
+  );
+
+  let protocolCalls = 0;
+  ProtocolClient.callTool = async () => {
+    protocolCalls += 1;
+    return {
+      status: 'completed',
+      task_id: sellerWorkId,
+      media_buy_id: 'reclaimed-admission-buy',
+      packages: [],
+    };
+  };
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    resolveDeferredAgent: async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' }),
+    authorizeDeferredSettlementResume: async () => true,
+    canRecoverDeferredSettlement: async () => true,
+    recoverDeferredSettlement: async result => ({ result }),
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    const completed = await executor.resumeDeferredTask(token, { approved: true });
+    assert.equal(completed.data.media_buy_id, 'reclaimed-admission-buy');
+    assert.equal(protocolCalls, 1);
+    const replay = await executor.resumeDeferredTask(token, { ignored: 'finalized' });
+    assert.equal(replay.data.media_buy_id, 'reclaimed-admission-buy');
+    assert.equal(protocolCalls, 1);
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
+test('dispatch-committed deferred continuation never redispatches and accepts a later callback', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('dispatch-committed-no-redispatch-token');
+  const operationId = 'dispatch-committed-no-redispatch-operation';
+  const sellerWorkId = 'dispatch-committed-no-redispatch-work';
+  await storage.putIfAbsent(
+    token,
+    committedContinuationState({
+      operationId,
+      sellerWorkId,
+      version: 'dispatch-committed-no-redispatch-version',
+      dispatchLease: {
+        ownerId: 'uncertain-dispatch-owner',
+        phase: 'dispatch-committed',
+        expiresAt: Date.now() - 1,
+      },
+    }),
+    60
+  );
+
+  let protocolCalls = 0;
+  ProtocolClient.callTool = async () => {
+    protocolCalls += 1;
+    assert.fail('dispatch-committed input must never be sent a second time');
+  };
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    resolveDeferredAgent: async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' }),
+    authorizeDeferredSettlementResume: async () => true,
+    canRecoverDeferredSettlement: async () => true,
+    recoverDeferredSettlement: async result => ({ result }),
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    await assert.rejects(
+      executor.resumeDeferredTask(token, { approved: true }),
+      error => error instanceof DeferredSettlementOwnershipError && /already being resumed/.test(error.message)
+    );
+    assert.equal(protocolCalls, 0);
+    const callback = await executor.checkpointExternalDeferredSettlement(
+      token,
+      operationId,
+      committedTerminalResult(operationId, sellerWorkId, 'uncertain-dispatch-callback-buy')
+    );
+    assert.ok(callback);
+    await acknowledgeDeferredSettlement(callback);
+    const replay = await executor.resumeDeferredTask(token, { ignored: 'callback-finalized' });
+    assert.equal(replay.data.media_buy_id, 'uncertain-dispatch-callback-buy');
+    assert.equal(protocolCalls, 0);
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
+test('immediate deferred callback can finalize after dispatch commit without deadlocking the seller response', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('immediate-callback-after-dispatch-commit-token');
+  const operationId = 'immediate-callback-after-dispatch-commit-operation';
+  const sellerWorkId = 'immediate-callback-after-dispatch-commit-work';
+  await storage.putIfAbsent(
+    token,
+    committedContinuationState({
+      operationId,
+      sellerWorkId,
+      version: 'immediate-callback-after-dispatch-commit-version',
+    }),
+    60
+  );
+
+  let executor;
+  let protocolCalls = 0;
+  ProtocolClient.callTool = async () => {
+    protocolCalls += 1;
+    const terminal = committedTerminalResult(operationId, sellerWorkId, 'immediate-callback-buy');
+    terminal.data = {
+      status: 'completed',
+      task_id: sellerWorkId,
+      media_buy_id: 'immediate-callback-buy',
+      packages: [],
+    };
+    const callback = await executor.checkpointExternalDeferredSettlement(token, operationId, terminal);
+    assert.ok(callback);
+    await acknowledgeDeferredSettlement(callback);
+    return {
+      status: 'completed',
+      task_id: sellerWorkId,
+      media_buy_id: 'immediate-callback-buy',
+      packages: [],
+    };
+  };
+  executor = new TaskExecutor({
+    deferredStorage: storage,
+    resolveDeferredAgent: async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' }),
+    authorizeDeferredSettlementResume: async () => true,
+    canRecoverDeferredSettlement: async () => true,
+    recoverDeferredSettlement: async result => ({ result }),
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    const completed = await executor.resumeDeferredTask(token, { approved: true });
+    assert.equal(completed.data.media_buy_id, 'immediate-callback-buy');
+    assert.equal(protocolCalls, 1);
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
+for (const responseStatus of ['submitted', 'working']) {
+  test(`webhook-first deferred completion converges when the seller response is ${responseStatus}`, async () => {
+    const originalCallTool = ProtocolClient.callTool;
+    const storage = new MemoryStorage({ autoCleanup: false });
+    const token = testDurableToken(`webhook-first-${responseStatus}-response-token`);
+    const operationId = `webhook-first-${responseStatus}-response-operation`;
+    const sellerWorkId = `webhook-first-${responseStatus}-response-work`;
+    await storage.putIfAbsent(
+      token,
+      committedContinuationState({
+        operationId,
+        sellerWorkId,
+        version: `webhook-first-${responseStatus}-response-version`,
+      }),
+      60
+    );
+
+    let executor;
+    let protocolCalls = 0;
+    ProtocolClient.callTool = async () => {
+      protocolCalls += 1;
+      const callback = await executor.checkpointExternalDeferredSettlement(
+        token,
+        operationId,
+        committedTerminalResult(operationId, sellerWorkId, `webhook-first-${responseStatus}-buy`)
+      );
+      assert.ok(callback);
+      await acknowledgeDeferredSettlement(callback);
+      return { status: responseStatus, task_id: sellerWorkId };
+    };
+    executor = new TaskExecutor({
+      deferredStorage: storage,
+      resolveDeferredAgent: async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' }),
+      authorizeDeferredSettlementResume: async () => true,
+      canRecoverDeferredSettlement: async () => true,
+      recoverDeferredSettlement: async result => ({ result }),
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    try {
+      const completed = await executor.resumeDeferredTask(token, { approved: true });
+      assert.equal(completed.status, 'completed');
+      assert.equal(completed.data.media_buy_id, `webhook-first-${responseStatus}-buy`);
+      assert.equal(protocolCalls, 1);
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+      storage.destroy();
+    }
+  });
+}
+
+test('active callback finalization remains typed contention and replays after acknowledgement', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('active-callback-finalizer-contention-token');
+  const operationId = 'active-callback-finalizer-contention-operation';
+  const sellerWorkId = 'active-callback-finalizer-contention-work';
+  await storage.putIfAbsent(
+    token,
+    committedContinuationState({
+      operationId,
+      sellerWorkId,
+      version: 'active-callback-finalizer-contention-version',
+    }),
+    60
+  );
+
+  let executor;
+  let callback;
+  let protocolCalls = 0;
+  ProtocolClient.callTool = async () => {
+    protocolCalls += 1;
+    callback = await executor.checkpointExternalDeferredSettlement(
+      token,
+      operationId,
+      committedTerminalResult(operationId, sellerWorkId, 'active-callback-finalizer-buy')
+    );
+    assert.ok(callback);
+    return { status: 'submitted', task_id: sellerWorkId };
+  };
+  executor = new TaskExecutor({
+    deferredStorage: storage,
+    resolveDeferredAgent: async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' }),
+    authorizeDeferredSettlementResume: async () => true,
+    canRecoverDeferredSettlement: async () => true,
+    recoverDeferredSettlement: async result => ({ result }),
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    await assert.rejects(
+      executor.resumeDeferredTask(token, { approved: true }),
+      error =>
+        error instanceof DeferredSettlementOwnershipError && /finalization is already in progress/.test(error.message)
+    );
+    assert.equal(protocolCalls, 1);
+    await acknowledgeDeferredSettlement(callback);
+    const replay = await executor.resumeDeferredTask(token, { ignored: 'finalized' });
+    assert.equal(replay.data.media_buy_id, 'active-callback-finalizer-buy');
+    assert.equal(protocolCalls, 1);
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
+test('finalized acknowledgement rejects handler-mutated seller identity and leaves an exact retry', async () => {
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('finalized-handler-mutated-seller-id-token');
+  const operationId = 'finalized-handler-mutated-seller-id-operation';
+  const sellerWorkId = 'finalized-handler-mutated-seller-id-work';
+  const exactTerminal = committedTerminalResult(operationId, sellerWorkId, 'finalized-handler-mutated-seller-id-buy');
+  await storage.putIfAbsent(
+    token,
+    committedContinuationState({
+      operationId,
+      sellerWorkId,
+      version: 'finalized-handler-mutated-seller-id-version',
+    }),
+    60
+  );
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    const mutated = await executor.checkpointExternalDeferredSettlement(
+      token,
+      operationId,
+      structuredClone(exactTerminal)
+    );
+    assert.ok(mutated);
+    mutated.metadata.serverTaskId = 'handler-mutated-conflicting-work';
+    await assert.rejects(acknowledgeDeferredSettlement(mutated), /changed its bound seller task identity/);
+    const retryable = await storage.get(token);
+    assert.equal(retryable.settlementFinalizedResult, undefined);
+    assert.equal(retryable.settlementFinalizationLease, undefined);
+    assert.equal(retryable.settlementTerminalResult.metadata.serverTaskId, sellerWorkId);
+
+    const retry = await executor.checkpointExternalDeferredSettlement(
+      token,
+      operationId,
+      structuredClone(exactTerminal)
+    );
+    assert.ok(retry);
+    delete retry.metadata.serverTaskId;
+    await acknowledgeDeferredSettlement(retry);
+    assert.equal(retry.metadata.serverTaskId, sellerWorkId);
+    const replay = await executor.resumeDeferredTask(token, { ignored: true });
+    assert.equal(replay.metadata.serverTaskId, sellerWorkId);
+    assert.equal(replay.data.media_buy_id, 'finalized-handler-mutated-seller-id-buy');
+  } finally {
+    storage.destroy();
+  }
+});
+
+test('finalization acknowledgement storage failures are typed and preserve a retryable terminal checkpoint', async () => {
+  for (const failurePoint of ['get', 'cas']) {
+    const storage = new MemoryStorage({ autoCleanup: false });
+    const token = testDurableToken(`finalization-${failurePoint}-failure-token`);
+    const operationId = `finalization-${failurePoint}-failure-operation`;
+    const sellerWorkId = `finalization-${failurePoint}-failure-work`;
+    const terminal = committedTerminalResult(operationId, sellerWorkId, `finalization-${failurePoint}-failure-buy`);
+    await storage.putIfAbsent(
+      token,
+      committedContinuationState({
+        operationId,
+        sellerWorkId,
+        version: `finalization-${failurePoint}-failure-version`,
+      }),
+      60
+    );
+    const executor = new TaskExecutor({
+      deferredStorage: storage,
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const checkpointed = await executor.checkpointExternalDeferredSettlement(
+      token,
+      operationId,
+      structuredClone(terminal)
+    );
+    assert.ok(checkpointed);
+    const storageFailure = new Error(`injected finalization ${failurePoint} failure`);
+    const originalGet = storage.get.bind(storage);
+    const originalReplace = storage.replaceIfVersion.bind(storage);
+    if (failurePoint === 'get') {
+      let failNextGet = true;
+      storage.get = async key => {
+        if (failNextGet) {
+          failNextGet = false;
+          throw storageFailure;
+        }
+        return originalGet(key);
+      };
+    } else {
+      let failNextFinalizedCas = true;
+      storage.replaceIfVersion = async (key, version, value, ttl) => {
+        if (failNextFinalizedCas && value.settlementFinalizedResult !== undefined) {
+          failNextFinalizedCas = false;
+          return false;
+        }
+        return originalReplace(key, version, value, ttl);
+      };
+    }
+
+    try {
+      await assert.rejects(
+        acknowledgeDeferredSettlement(checkpointed),
+        error =>
+          error instanceof DeferredSettlementOwnershipError &&
+          (failurePoint === 'get' ? error.cause === storageFailure : /ownership changed/.test(error.message))
+      );
+      const retryable = await originalGet(token);
+      assert.equal(retryable.settlementTerminalResult.data.media_buy_id, `finalization-${failurePoint}-failure-buy`);
+      assert.equal(retryable.settlementFinalizationLease, undefined);
+      assert.equal(retryable.settlementFinalizedResult, undefined);
+
+      storage.get = originalGet;
+      storage.replaceIfVersion = originalReplace;
+      const retry = await executor.checkpointExternalDeferredSettlement(token, operationId, structuredClone(terminal));
+      assert.ok(retry);
+      await acknowledgeDeferredSettlement(retry);
+      assert.equal((await originalGet(token)).settlementFinalizedResult.data.media_buy_id, terminal.data.media_buy_id);
+    } finally {
+      storage.get = originalGet;
+      storage.replaceIfVersion = originalReplace;
+      storage.destroy();
+    }
+  }
+});
+
+test('finalization lease release storage failure is typed with the adapter error as its cause', async () => {
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('finalization-release-storage-failure-token');
+  const operationId = 'finalization-release-storage-failure-operation';
+  const sellerWorkId = 'finalization-release-storage-failure-work';
+  const terminal = committedTerminalResult(operationId, sellerWorkId, 'finalization-release-storage-failure-buy');
+  await storage.putIfAbsent(
+    token,
+    committedContinuationState({
+      operationId,
+      sellerWorkId,
+      version: 'finalization-release-storage-failure-version',
+    }),
+    60
+  );
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    validation: { requests: 'off', responses: 'off' },
+  });
+  const checkpointed = await executor.checkpointExternalDeferredSettlement(
+    token,
+    operationId,
+    structuredClone(terminal)
+  );
+  assert.ok(checkpointed);
+  const storageFailure = new Error('injected finalization release storage failure');
+  const originalReplace = storage.replaceIfVersion.bind(storage);
+  storage.replaceIfVersion = async (key, version, value, ttl) => {
+    if (value.settlementFinalizationLease === undefined && value.settlementFinalizedResult === undefined) {
+      throw storageFailure;
+    }
+    return originalReplace(key, version, value, ttl);
+  };
+
+  try {
+    await assert.rejects(
+      rejectDeferredSettlement(checkpointed),
+      error => error instanceof DeferredSettlementOwnershipError && error.cause === storageFailure
+    );
+  } finally {
+    storage.replaceIfVersion = originalReplace;
+    storage.destroy();
+  }
+});
+
+test('terminal continuation binds trusted seller work identity independently of its A2A task ID', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('trusted-terminal-task-binding-token');
+  const operationId = 'trusted-terminal-task-binding-operation';
+  const sellerWorkId = 'trusted-terminal-seller-work';
+  const a2aTaskId = `${operationId}-a2a-task`;
+  await storage.putIfAbsent(
+    token,
+    committedContinuationState({
+      operationId,
+      sellerWorkId,
+      version: 'trusted-terminal-task-binding-version',
+    }),
+    60
+  );
+
+  let recoveredServerTaskId;
+  let recoveredMetadataServerTaskId;
+  ProtocolClient.callTool = async (_resolvedAgent, _taskName, _params, options) => {
+    assert.equal(options.session.taskId, a2aTaskId);
+    return {
+      status: 'completed',
+      media_buy_id: 'trusted-terminal-task-binding-buy',
+      packages: [],
+    };
+  };
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    resolveDeferredAgent: async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' }),
+    authorizeDeferredSettlementResume: async () => true,
+    canRecoverDeferredSettlement: async () => true,
+    recoverDeferredSettlement: async (result, _recoveredOperationId, serverTaskId) => {
+      recoveredServerTaskId = serverTaskId;
+      recoveredMetadataServerTaskId = result.metadata.serverTaskId;
+      return { result };
+    },
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    const completed = await executor.resumeDeferredTask(token, { approved: true });
+    assert.equal(completed.metadata.serverTaskId, sellerWorkId);
+    assert.equal(recoveredServerTaskId, sellerWorkId);
+    assert.equal(recoveredMetadataServerTaskId, sellerWorkId);
+    const finalized = await storage.get(token);
+    assert.equal(finalized.settlementTerminalResult.metadata.serverTaskId, sellerWorkId);
+    assert.equal(finalized.settlementFinalizedResult.metadata.serverTaskId, sellerWorkId);
+
+    const exactCallback = structuredClone(finalized.settlementTerminalResult);
+    assert.equal(await executor.checkpointExternalDeferredSettlement(token, operationId, exactCallback), undefined);
+    const replay = await executor.resumeDeferredTask(token, { ignored: 'exact-replay' });
+    assert.equal(replay.metadata.serverTaskId, sellerWorkId);
+    await assert.rejects(
+      executor.checkpointExternalDeferredSettlement(token, operationId, {
+        ...exactCallback,
+        metadata: { ...exactCallback.metadata, serverTaskId: a2aTaskId },
+      }),
+      /changed its bound seller task identity/
+    );
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
+test('replacement pause cannot change the committed seller work identity', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('replacement-pause-seller-id-conflict-token');
+  const operationId = 'replacement-pause-seller-id-conflict-operation';
+  const sellerWorkId = 'replacement-pause-seller-id-conflict-work';
+  const conflictingWorkId = 'replacement-pause-conflicting-work';
+  await storage.putIfAbsent(
+    token,
+    committedContinuationState({
+      operationId,
+      sellerWorkId,
+      version: 'replacement-pause-seller-id-conflict-version',
+    }),
+    60
+  );
+  ProtocolClient.callTool = async () => ({
+    result: {
+      kind: 'task',
+      id: 'replacement-pause-next-a2a-task',
+      contextId: 'replacement-pause-next-context',
+      status: {
+        state: 'input-required',
+        message: {
+          kind: 'message',
+          messageId: 'replacement-pause-question',
+          role: 'agent',
+          parts: [{ kind: 'data', data: { status: 'input-required', question: 'Approve again?' } }],
+        },
+      },
+      artifacts: [
+        {
+          artifactId: 'replacement-pause-artifact',
+          metadata: { adcp_task_id: conflictingWorkId },
+          parts: [],
+        },
+      ],
+    },
+  });
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    resolveDeferredAgent: async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' }),
+    authorizeDeferredSettlementResume: async () => true,
+    canRecoverDeferredSettlement: async () => true,
+    recoverDeferredSettlement: async result => ({ result }),
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    await assert.rejects(
+      executor.resumeDeferredTask(token, { approved: true }),
+      /changed its bound seller task identity/
+    );
+    const retained = await storage.get(token);
+    assert.equal(retained.settlementServerTaskId, sellerWorkId);
+    assert.equal(retained.settlementResumeDispatchLease.phase, 'dispatch-committed');
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
+test('nested committed pause without a repeated work ID retains the trusted seller identity', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('nested-pause-omitted-seller-id-token');
+  const operationId = 'nested-pause-omitted-seller-id-operation';
+  const sellerWorkId = 'nested-pause-omitted-seller-id-work';
+  await storage.putIfAbsent(
+    token,
+    committedContinuationState({
+      operationId,
+      sellerWorkId,
+      version: 'nested-pause-omitted-seller-id-version',
+    }),
+    60
+  );
+  ProtocolClient.callTool = async () => ({
+    result: {
+      kind: 'task',
+      id: 'nested-pause-next-a2a-task',
+      contextId: 'nested-pause-next-context',
+      status: {
+        state: 'input-required',
+        message: {
+          kind: 'message',
+          messageId: 'nested-pause-next-question',
+          role: 'agent',
+          parts: [{ kind: 'data', data: { status: 'input-required', question: 'Approve again?' } }],
+        },
+      },
+      artifacts: [],
+    },
+  });
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    resolveDeferredAgent: async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' }),
+    authorizeDeferredSettlementResume: async () => true,
+    replaceDeferredSettlementResumeToken: async () => true,
+    canRecoverDeferredSettlement: async () => true,
+    recoverDeferredSettlement: async result => ({ result }),
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    const paused = await executor.resumeDeferredTask(token, { approved: true });
+    assert.equal(paused.status, 'input-required');
+    assert.equal(paused.metadata.serverTaskId, sellerWorkId);
+    assert.ok(paused.deferred);
+    const replacement = await storage.get(paused.deferred.token);
+    assert.equal(replacement.settlementServerTaskId, sellerWorkId);
+    assert.equal(replacement.a2aTaskId, 'nested-pause-next-a2a-task');
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
+for (const responseStatus of ['working', 'submitted']) {
+  test(`committed ${responseStatus} response without a repeated work ID exposes the trusted seller identity`, async () => {
+    const originalCallTool = ProtocolClient.callTool;
+    const storage = new MemoryStorage({ autoCleanup: false });
+    const token = testDurableToken(`${responseStatus}-omitted-seller-id-token`);
+    const operationId = `${responseStatus}-omitted-seller-id-operation`;
+    const sellerWorkId = `${responseStatus}-omitted-seller-id-work`;
+    await storage.putIfAbsent(
+      token,
+      committedContinuationState({
+        operationId,
+        sellerWorkId,
+        version: `${responseStatus}-omitted-seller-id-version`,
+      }),
+      60
+    );
+
+    const calls = [];
+    ProtocolClient.callTool = async (_resolvedAgent, taskName, params) => {
+      calls.push({ taskName, params });
+      if (calls.length === 1) return { status: responseStatus };
+      assert.equal(taskName, 'tasks/get');
+      assert.deepEqual(params, { task_id: sellerWorkId, include_result: true });
+      return {
+        task_id: sellerWorkId,
+        task_type: 'create_media_buy',
+        status: 'completed',
+        result: { media_buy_id: `${responseStatus}-omitted-seller-id-buy`, packages: [] },
+      };
+    };
+    const executor = new TaskExecutor({
+      deferredStorage: storage,
+      resolveDeferredAgent: async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' }),
+      authorizeDeferredSettlementResume: async () => true,
+      canRecoverDeferredSettlement: async () => true,
+      recoverDeferredSettlement: async result => ({ result }),
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    try {
+      const pending = await executor.resumeDeferredTaskFromLiveClosure(token, { approved: true }, false);
+      assert.equal(pending.status, responseStatus);
+      assert.equal(pending.metadata.serverTaskId, sellerWorkId);
+      const checkpoint = await storage.get(token);
+      assert.equal(checkpoint.settlementPendingTaskId, sellerWorkId);
+      assert.equal(checkpoint.settlementServerTaskId, sellerWorkId);
+
+      if (responseStatus === 'submitted') {
+        assert.equal(pending.submitted.taskId, sellerWorkId);
+        const tracked = await pending.submitted.track();
+        assert.equal(tracked.taskId, sellerWorkId);
+        assert.equal(calls.length, 2);
+        assert.equal((await storage.get(token)).settlementTerminalResult.metadata.serverTaskId, sellerWorkId);
+      } else {
+        assert.equal(calls.length, 1);
+      }
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+      storage.destroy();
+    }
+  });
+}
+
+for (const responseStatus of ['working', 'submitted']) {
+  test(`committed ${responseStatus} response cannot replace the trusted seller work identity`, async () => {
+    const originalCallTool = ProtocolClient.callTool;
+    const storage = new MemoryStorage({ autoCleanup: false });
+    const token = testDurableToken(`${responseStatus}-seller-id-conflict-token`);
+    const operationId = `${responseStatus}-seller-id-conflict-operation`;
+    const sellerWorkId = `${responseStatus}-seller-id-conflict-work`;
+    const conflictingWorkId = `${responseStatus}-conflicting-work`;
+    await storage.putIfAbsent(
+      token,
+      committedContinuationState({
+        operationId,
+        sellerWorkId,
+        version: `${responseStatus}-seller-id-conflict-version`,
+      }),
+      60
+    );
+    ProtocolClient.callTool = async () => ({ status: responseStatus, task_id: conflictingWorkId });
+    const executor = new TaskExecutor({
+      deferredStorage: storage,
+      resolveDeferredAgent: async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' }),
+      authorizeDeferredSettlementResume: async () => true,
+      canRecoverDeferredSettlement: async () => true,
+      recoverDeferredSettlement: async result => ({ result }),
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    try {
+      await assert.rejects(
+        executor.resumeDeferredTask(token, { approved: true }),
+        /changed its bound seller task identity/
+      );
+      const retained = await storage.get(token);
+      assert.equal(retained.settlementServerTaskId, sellerWorkId);
+      assert.equal(retained.settlementPendingTaskId, undefined);
+      assert.equal(retained.settlementResumeDispatchLease.phase, 'dispatch-committed');
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+      storage.destroy();
+    }
+  });
+}
+
+test('submitted fallback correlation ID is never persisted as seller work identity', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('submitted-local-fallback-not-seller-work-token');
+  const operationId = 'submitted-local-fallback-not-seller-work-operation';
+  await storage.putIfAbsent(
+    token,
+    committedContinuationState({
+      operationId,
+      sellerWorkId: undefined,
+      version: 'submitted-local-fallback-not-seller-work-version',
+    }),
+    60
+  );
+  ProtocolClient.callTool = async () => ({ status: 'submitted' });
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    resolveDeferredAgent: async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' }),
+    authorizeDeferredSettlementResume: async () => true,
+    canRecoverDeferredSettlement: async () => true,
+    recoverDeferredSettlement: async result => ({ result }),
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    await assert.rejects(
+      executor.resumeDeferredTask(token, { approved: true }),
+      /without the seller work handle required for recovery/
+    );
+    const retained = await storage.get(token);
+    assert.equal(retained.settlementServerTaskId, undefined);
+    assert.equal(retained.settlementPendingTaskId, undefined);
+    assert.equal(retained.settlementResumeDispatchLease.phase, 'dispatch-committed');
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
+test('transport uncertainty retains the dispatch-committed fence for callback recovery', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('transport-uncertainty-dispatch-fence-token');
+  const operationId = 'transport-uncertainty-dispatch-fence-operation';
+  const sellerWorkId = 'transport-uncertainty-dispatch-fence-work';
+  await storage.putIfAbsent(
+    token,
+    committedContinuationState({
+      operationId,
+      sellerWorkId,
+      version: 'transport-uncertainty-dispatch-fence-version',
+    }),
+    60
+  );
+
+  let protocolCalls = 0;
+  ProtocolClient.callTool = async () => {
+    protocolCalls += 1;
+    throw new Error('transport response lost after seller dispatch');
+  };
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    resolveDeferredAgent: async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' }),
+    authorizeDeferredSettlementResume: async () => true,
+    canRecoverDeferredSettlement: async () => true,
+    recoverDeferredSettlement: async result => ({ result }),
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    await assert.rejects(
+      executor.resumeDeferredTask(token, { approved: true }),
+      /transport response lost after seller dispatch/
+    );
+    const uncertain = await storage.get(token);
+    assert.equal(uncertain.continuationClaimed, true);
+    assert.equal(uncertain.settlementResumeDispatchLease.phase, 'dispatch-committed');
+    await assert.rejects(
+      executor.resumeDeferredTask(token, { approved: 'must-not-repeat' }),
+      error => error instanceof DeferredSettlementOwnershipError && /already being resumed/.test(error.message)
+    );
+    assert.equal(protocolCalls, 1);
+
+    const callback = await executor.checkpointExternalDeferredSettlement(
+      token,
+      operationId,
+      committedTerminalResult(operationId, sellerWorkId, 'transport-uncertainty-callback-buy')
+    );
+    assert.ok(callback);
+    await acknowledgeDeferredSettlement(callback);
+    const replay = await executor.resumeDeferredTask(token, { ignored: 'finalized' });
+    assert.equal(replay.data.media_buy_id, 'transport-uncertainty-callback-buy');
+    assert.equal(protocolCalls, 1);
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
     storage.destroy();
   }
 });
@@ -1775,6 +2971,57 @@ test('finalized deferred callbacks compare the raw seller observation while publ
   }
 });
 
+test('old terminal checkpoint restores trusted seller task identity before recovery and duplicate comparison', async () => {
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('old-terminal-missing-server-task-token');
+  const operationId = 'old-terminal-missing-server-task-operation';
+  const sellerWorkId = 'old-terminal-trusted-seller-work';
+  const rawTerminal = committedTerminalResult(operationId, sellerWorkId, 'old-terminal-trusted-buy');
+  delete rawTerminal.metadata.serverTaskId;
+  const now = Date.now();
+  await storage.putIfAbsent(
+    token,
+    {
+      ...committedContinuationState({
+        operationId,
+        sellerWorkId,
+        version: 'old-terminal-missing-server-task-version',
+        now,
+      }),
+      continuationClaimed: true,
+      settlementTerminalResult: rawTerminal,
+    },
+    60
+  );
+
+  let recoveryServerTaskId;
+  let recoveryMetadataServerTaskId;
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    canRecoverDeferredSettlement: async () => true,
+    recoverDeferredSettlement: async (result, _recoveredOperationId, serverTaskId) => {
+      recoveryServerTaskId = serverTaskId;
+      recoveryMetadataServerTaskId = result.metadata.serverTaskId;
+      return { result };
+    },
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    const completed = await executor.resumeDeferredTask(token, { ignored: true });
+    assert.equal(completed.metadata.serverTaskId, sellerWorkId);
+    assert.equal(recoveryServerTaskId, sellerWorkId);
+    assert.equal(recoveryMetadataServerTaskId, sellerWorkId);
+    const finalized = await storage.get(token);
+    assert.equal(finalized.settlementTerminalResult.metadata.serverTaskId, undefined);
+    assert.equal(finalized.settlementFinalizedResult.metadata.serverTaskId, sellerWorkId);
+    const exactCallback = committedTerminalResult(operationId, sellerWorkId, 'old-terminal-trusted-buy');
+    assert.equal(await executor.checkpointExternalDeferredSettlement(token, operationId, exactCallback), undefined);
+  } finally {
+    storage.destroy();
+  }
+});
+
 test('terminal resume binds a newly observed seller task ID for finalized callback duplicates', async () => {
   const originalCallTool = ProtocolClient.callTool;
   const storage = new MemoryStorage({ autoCleanup: false });
@@ -1855,7 +3102,7 @@ test('terminal resume binds a newly observed seller task ID for finalized callba
         ...exactCallback,
         metadata: { ...exactCallback.metadata, serverTaskId: conflictingWorkId },
       }),
-      /conflicts with the finalized deferred settlement/
+      /changed its bound seller task identity/
     );
 
     await assert.rejects(

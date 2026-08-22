@@ -128,6 +128,17 @@ export interface DeferredTaskState {
   continuationVersion: string;
   /** True after the human continuation has been claimed for seller dispatch. */
   continuationClaimed?: boolean;
+  /**
+   * Renewable owner fence for a committed continuation between human-input
+   * admission and the seller protocol call. Only an expired `admission` phase
+   * may be reclaimed; `dispatch-committed` is an uncertain-dispatch fence and
+   * must never permit the input to be sent again.
+   */
+  settlementResumeDispatchLease?: {
+    ownerId: string;
+    phase: 'admission' | 'dispatch-committed';
+    expiresAt: number;
+  };
   /** Client-minted correlation ID for the original request. */
   taskId: string;
   /** Seller-issued A2A conversation identity, when one was supplied. */

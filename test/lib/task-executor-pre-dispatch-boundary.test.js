@@ -15,7 +15,7 @@ const AGENT = {
   protocol: 'mcp',
 };
 
-function a2aPause({ question, field, contextId, taskId }) {
+function a2aPause({ question, field, contextId, taskId, serverTaskId }) {
   return {
     result: {
       kind: 'task',
@@ -30,7 +30,10 @@ function a2aPause({ question, field, contextId, taskId }) {
           parts: [{ kind: 'data', data: { question, field } }],
         },
       },
-      artifacts: [],
+      artifacts:
+        serverTaskId === undefined
+          ? []
+          : [{ artifactId: `${taskId}-work`, metadata: { adcp_task_id: serverTaskId }, parts: [] }],
     },
   };
 }
@@ -1177,13 +1180,18 @@ describe('TaskExecutor pre-dispatch boundary', () => {
     let createCalls = 0;
     ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
       if (taskName === 'create_media_buy' && ++createCalls > 1) {
-        return { status: 'completed', data: { media_buy_id: 'seller-created-buy' } };
+        return {
+          status: 'completed',
+          task_id: 'legacy-create-seller-work',
+          data: { media_buy_id: 'seller-created-buy' },
+        };
       }
       return a2aPause({
         question: 'Approve the legacy purchase?',
         field: 'approval',
         contextId: 'legacy-create-context',
         taskId: 'legacy-create-seller-task',
+        serverTaskId: 'legacy-create-seller-work',
       });
     });
     const executor = new TaskExecutor({
@@ -1241,9 +1249,14 @@ describe('TaskExecutor pre-dispatch boundary', () => {
           field: 'approval',
           contextId: 'committed-resume-context',
           taskId: 'committed-resume-task',
+          serverTaskId: 'committed-resume-work',
         });
       }
-      return { status: 'completed', data: { media_buy_id: 'committed-resumed-buy', packages: [] } };
+      return {
+        status: 'completed',
+        task_id: 'committed-resume-work',
+        data: { media_buy_id: 'committed-resumed-buy', packages: [] },
+      };
     });
     const client = new SingleAgentClient(pauseAgent, {
       deferredStorage: deferredStorage(records),
@@ -1331,6 +1344,7 @@ describe('TaskExecutor pre-dispatch boundary', () => {
         field: 'approval',
         contextId: 'legacy-create-context',
         taskId: 'legacy-create-seller-task',
+        serverTaskId: 'resumed-seller-task',
       });
     });
     const executor = new TaskExecutor({
@@ -1417,6 +1431,7 @@ describe('TaskExecutor pre-dispatch boundary', () => {
         field: 'approval',
         contextId: 'live-track-context',
         taskId: 'live-track-a2a-task',
+        serverTaskId: 'live-track-seller-task',
       });
     });
     const executor = new TaskExecutor({

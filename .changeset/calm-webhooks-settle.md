@@ -108,7 +108,14 @@ provide atomic `putIfAbsent()` and generation-fenced `replaceIfVersion()` and
 `takeIfVersion()` operations. Resume atomically
 transitions the stored generation to a claimed fence with a fresh dispatch
 lease without making the token physically absent; cleanup removes only that
-exact claimed generation. A
+exact claimed generation. Committed continuations use a renewable admission
+lease during route authorization and trusted-agent resolution, then atomically
+enter a non-reclaimable dispatch-committed phase immediately before the seller
+call. This lets a callback win before dispatch while preventing input replay
+after an uncertain dispatch. Callback-first terminal winners also converge
+when the seller's direct continuation response is still working or submitted,
+and retained terminal observations recover a missing metadata task ID from the
+checkpoint's validated seller-work binding. A
 seller that pauses again publishes a fresh persisted continuation before it is
 returned. `DeferredTaskState` now
 matches the durable runtime shape, including required A2A task identity,

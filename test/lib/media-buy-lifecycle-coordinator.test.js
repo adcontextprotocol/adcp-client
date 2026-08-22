@@ -21,6 +21,7 @@ const {
 const { normalizeGetProductsResponse } = require('../../dist/lib/utils/pricing-adapter.js');
 const {
   DEFERRED_SETTLEMENT_ACK,
+  DeferredSettlementOwnershipError,
   hasCompletionHandlerAlreadyPublished,
 } = require('../../dist/lib/core/TaskExecutor.js');
 
@@ -7309,7 +7310,18 @@ describe('legacy products-only purchase continuations', () => {
       });
 
       let sellerCalls = 0;
+      let pollCalls = 0;
       ProtocolClient.callTool = async (_agent, taskName, params, options) => {
+        if (taskName === 'tasks/get') {
+          pollCalls += 1;
+          assert.deepEqual(params, { task_id: sellerTaskId, include_result: true });
+          return {
+            task_id: sellerTaskId,
+            task_type: 'create_media_buy',
+            status: 'completed',
+            result: { media_buy_id: 'buy-restart-nested', packages: [] },
+          };
+        }
         assert.equal(taskName, 'create_media_buy');
         sellerCalls += 1;
         if (sellerCalls === 1) {
@@ -7329,42 +7341,18 @@ describe('legacy products-only purchase continuations', () => {
                   parts: [{ kind: 'data', data: { status: 'input-required', question: 'Confirm again?' } }],
                 },
               },
-              artifacts: [
-                {
-                  artifactId: 'restart-nested-work-binding',
-                  metadata: { adcp_task_id: sellerTaskId },
-                  parts: [],
-                },
-              ],
+              artifacts: [],
             },
           };
         }
         assert.deepEqual(params, { input: { confirmed: true } });
         assert.equal(options.session.taskId, 'restart-nested-a2a-b');
-        return {
-          result: {
-            kind: 'task',
-            id: 'restart-nested-a2a-b',
-            contextId: 'restart-nested-context-b',
-            status: { state: 'completed' },
-            artifacts: [
-              {
-                artifactId: 'restart-nested-terminal',
-                metadata: { adcp_task_id: sellerTaskId },
-                parts: [
-                  {
-                    kind: 'data',
-                    data: { media_buy_id: 'buy-restart-nested', packages: [] },
-                  },
-                ],
-              },
-            ],
-          },
-        };
+        return { status: 'submitted' };
       };
 
       const pausedAgain = await restarted.resumeDeferredTask(initialDeferredToken, { approved: true });
       assert.equal(pausedAgain.status, 'input-required');
+      assert.equal(pausedAgain.metadata.serverTaskId, sellerTaskId);
       const replacementToken = pausedAgain.deferred.token;
       assert.notEqual(replacementToken, initialDeferredToken);
       assert.equal(await deferredStorage.has(initialDeferredToken), false);
@@ -7373,11 +7361,17 @@ describe('legacy products-only purchase continuations', () => {
       assert.equal(rebound.operation.state, 'claimed');
       assert.equal(rebound.operation.deferredTaskToken, replacementToken);
       assert.equal((await store.getByCallbackOperationId(operationId)).operation.deferredTaskToken, replacementToken);
+      assert.equal((await deferredStorage.get(replacementToken)).settlementServerTaskId, sellerTaskId);
 
-      const completedResult = await restarted.resumeDeferredTask(replacementToken, { confirmed: true });
+      const pendingResult = await restarted.resumeDeferredTask(replacementToken, { confirmed: true });
+      assert.equal(pendingResult.status, 'submitted');
+      assert.equal(pendingResult.metadata.serverTaskId, sellerTaskId);
+      assert.equal(pendingResult.submitted.taskId, sellerTaskId);
+      const completedResult = await pendingResult.submitted.waitForCompletion(0);
       assert.equal(completedResult.status, 'completed');
       assert.equal(completedResult.data.media_buy_id, 'buy-restart-nested');
       assert.equal(sellerCalls, 2);
+      assert.equal(pollCalls, 1);
 
       const laterCallback = await recoverCallback(operationId, {
         status: 'completed',
@@ -7393,6 +7387,355 @@ describe('legacy products-only purchase continuations', () => {
       ProtocolClient.callTool = originalCallTool;
       firstCoordinator?.dispose();
       restartedCoordinator?.dispose();
+      deferredStorage.destroy();
+    }
+  });
+
+  test('callback winning during deferred agent resolution does not poison the completed coordinator route', async () => {
+    const originalCallTool = ProtocolClient.callTool;
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const deferredStorage = new MemoryStorage({ autoCleanup: false });
+    const deferredToken = testDurableToken('resolution-callback-winner-deferred-token');
+    const sellerTaskId = 'resolution-callback-winner-seller-work';
+    const a2aAgent = {
+      id: 'resolution-callback-winner-seller',
+      name: 'Resolution callback winner seller',
+      agent_uri: 'https://seller.example/a2a',
+      protocol: 'a2a',
+    };
+    let releaseResolution;
+    const resolutionGate = new Promise(resolve => {
+      releaseResolution = resolve;
+    });
+    let markResolutionEntered;
+    const resolutionEntered = new Promise(resolve => {
+      markResolutionEntered = resolve;
+    });
+    const agent = clientWithCaps(
+      capabilities({ version: '3.0' }),
+      '3.0',
+      {
+        deferredStorage,
+        resolveDeferredAgent: async agentId => {
+          assert.equal(agentId, a2aAgent.id);
+          markResolutionEntered();
+          await resolutionGate;
+          return a2aAgent;
+        },
+        validation: { requests: 'off', responses: 'off' },
+      },
+      a2aAgent
+    );
+    agent.getProducts = async () =>
+      completed('get_products', {
+        products: [legacyListedProduct('p-resolution-callback-winner', 'Resolution callback winner')],
+      });
+    let continuationToken;
+    agent.createMediaBuyLegacy = async () => {
+      const claimed = await store.get(continuationToken);
+      const operationId = claimed.operation.callbackOperationId;
+      const createdAt = Date.now();
+      assert.equal(
+        await deferredStorage.putIfAbsent(
+          deferredToken,
+          {
+            continuationVersion: 'resolution-callback-winner-version',
+            taskId: operationId,
+            contextId: 'resolution-callback-winner-context',
+            a2aTaskId: 'resolution-callback-winner-a2a-task',
+            serverVersion: 'v3',
+            agentId: a2aAgent.id,
+            taskName: 'create_media_buy',
+            params: {},
+            messages: [],
+            settlementOperationId: operationId,
+            settlementResumeAuthorizationRequired: true,
+            settlementServerTaskId: sellerTaskId,
+            createdAt,
+            expiresAt: createdAt + 500,
+          },
+          60
+        ),
+        true
+      );
+      return {
+        success: true,
+        status: 'input-required',
+        metadata: {
+          taskId: operationId,
+          serverTaskId: sellerTaskId,
+          a2aTaskId: 'resolution-callback-winner-a2a-task',
+          contextId: 'resolution-callback-winner-context',
+          taskName: 'create_media_buy',
+          agent: { id: a2aAgent.id, name: a2aAgent.name, protocol: 'a2a' },
+          responseTimeMs: 1,
+          timestamp: new Date().toISOString(),
+          clarificationRounds: 0,
+          status: 'input-required',
+        },
+        deferred: {
+          token: deferredToken,
+          resume: input => agent.client.executor.resumeDeferredTaskFromLiveClosure(deferredToken, input, false),
+        },
+      };
+    };
+
+    let recoverCallback;
+    const registerRecovery = agent.registerDurableSettlementRecovery.bind(agent);
+    agent.registerDurableSettlementRecovery = recoverer => {
+      recoverCallback = recoverer;
+      return registerRecovery(recoverer);
+    };
+    let coordinator;
+    let sellerCalls = 0;
+    ProtocolClient.callTool = async () => {
+      sellerCalls += 1;
+      assert.fail('the callback winner must prevent deferred seller input dispatch');
+    };
+    try {
+      coordinator = await agent.negotiateMediaBuyLifecycle({
+        principalScope: 'buyer-resolution-callback-winner',
+        legacyPurchaseContinuationStore: store,
+      });
+      const discovery = await coordinator.requestProposals({
+        idempotency_key: 'request-proposals-resolution-callback-winner-0001',
+        account: { account_id: 'account-resolution-callback-winner' },
+        brand: { domain: 'example.com' },
+        brief: 'Let an authoritative callback win during trusted resolution',
+      });
+      continuationToken = discovery.data.purchase_continuation.continuation_token;
+      const input = {
+        idempotency_key: '9658de0d-c377-4247-b722-ab39bc04559f',
+        continuation_token: continuationToken,
+        account: { account_id: 'account-resolution-callback-winner' },
+        selected_product_ids: ['p-resolution-callback-winner'],
+        accepted_losses: discovery.data.purchase_continuation.losses,
+        legacy_create_request: {
+          idempotency_key: 'legacy-resolution-callback-winner-create-0001',
+          account: { account_id: 'account-resolution-callback-winner' },
+          brand: { domain: 'example.com' },
+          packages: [{ product_id: 'p-resolution-callback-winner', budget: 10, pricing_option_id: 'fixed-cpm' }],
+          start_time: '2099-01-01T00:00:00Z',
+          end_time: '2099-02-01T00:00:00Z',
+        },
+      };
+      const paused = await coordinator.continueLegacyPurchase(input);
+      assert.equal(paused.status, 'input-required');
+      assert.equal(paused.deferred.token, deferredToken);
+      const operationId = (await store.get(continuationToken)).operation.callbackOperationId;
+
+      const deferredReadFailure = new Error('injected compatibility deferred storage read outage');
+      const originalDeferredGet = deferredStorage.get.bind(deferredStorage);
+      let failDeferredRead = true;
+      deferredStorage.get = async key => {
+        if (failDeferredRead) {
+          failDeferredRead = false;
+          throw deferredReadFailure;
+        }
+        return originalDeferredGet(key);
+      };
+      await assert.rejects(
+        paused.deferred.resume({ approved: 'retry-after-storage-outage' }),
+        error => error instanceof DeferredSettlementOwnershipError && error.cause === deferredReadFailure
+      );
+      const retainedAfterOutage = await store.get(continuationToken);
+      assert.equal(retainedAfterOutage.operation.state, 'claimed');
+      assert.equal(retainedAfterOutage.operation.deferredTaskToken, deferredToken);
+      assert.equal(sellerCalls, 0);
+      deferredStorage.get = originalDeferredGet;
+
+      const resume = paused.deferred.resume({ approved: true });
+      await resolutionEntered;
+      await new Promise(resolve => setTimeout(resolve, 550));
+      await assert.rejects(
+        paused.deferred.resume({ approved: 'duplicate-must-not-dispatch' }),
+        error => error instanceof DeferredSettlementOwnershipError
+      );
+      assert.equal((await store.get(continuationToken)).operation.state, 'claimed');
+      const callback = await recoverCallback(operationId, {
+        status: 'completed',
+        result: { media_buy_id: 'buy-resolution-callback-winner', packages: [] },
+        serverTaskId: sellerTaskId,
+        taskType: 'create_media_buy',
+        idempotencyKey: 'resolution-callback-winner-event',
+      });
+      assert.equal(callback.settled, true);
+      await callback.afterDispatch?.();
+      releaseResolution();
+
+      await assert.rejects(resume, error => error instanceof DeferredSettlementOwnershipError);
+      assert.equal(sellerCalls, 0);
+      const completedRecord = await store.get(continuationToken);
+      assert.equal(completedRecord.operation.state, 'completed');
+      assert.equal(completedRecord.operation.result.data.media_buy_id, 'buy-resolution-callback-winner');
+      const replay = await coordinator.continueLegacyPurchase(input);
+      assert.equal(replay.status, 'completed');
+      assert.equal(replay.data.media_buy_id, 'buy-resolution-callback-winner');
+    } finally {
+      releaseResolution?.();
+      ProtocolClient.callTool = originalCallTool;
+      coordinator?.dispose();
+      deferredStorage.destroy();
+    }
+  });
+
+  test('pending deferred agent resolution outage preserves a retryable coordinator claim', async () => {
+    const originalCallTool = ProtocolClient.callTool;
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const deferredStorage = new MemoryStorage({ autoCleanup: false });
+    const deferredToken = testDurableToken('pending-resolution-retry-deferred-token');
+    const sellerTaskId = 'pending-resolution-retry-seller-work';
+    const a2aAgent = {
+      id: 'pending-resolution-retry-seller',
+      name: 'Pending resolution retry seller',
+      agent_uri: 'https://seller.example/a2a',
+      protocol: 'a2a',
+    };
+    const resolverFailure = new Error('injected trusted-agent resolver outage');
+    let resolveCalls = 0;
+    const agent = clientWithCaps(
+      capabilities({ version: '3.0' }),
+      '3.0',
+      {
+        deferredStorage,
+        resolveDeferredAgent: async agentId => {
+          assert.equal(agentId, a2aAgent.id);
+          resolveCalls += 1;
+          if (resolveCalls === 1) throw resolverFailure;
+          return a2aAgent;
+        },
+        validation: { requests: 'off', responses: 'off' },
+      },
+      a2aAgent
+    );
+    agent.getProducts = async () =>
+      completed('get_products', {
+        products: [legacyListedProduct('p-pending-resolution-retry', 'Pending resolution retry')],
+      });
+    let continuationToken;
+    agent.createMediaBuyLegacy = async () => {
+      const claimed = await store.get(continuationToken);
+      const operationId = claimed.operation.callbackOperationId;
+      const createdAt = Date.now();
+      assert.equal(
+        await deferredStorage.putIfAbsent(
+          deferredToken,
+          {
+            continuationVersion: 'pending-resolution-retry-version',
+            continuationClaimed: true,
+            taskId: operationId,
+            contextId: 'pending-resolution-retry-context',
+            a2aTaskId: 'pending-resolution-retry-a2a-task',
+            serverVersion: 'v3',
+            agentId: a2aAgent.id,
+            taskName: 'create_media_buy',
+            params: {},
+            messages: [],
+            settlementOperationId: operationId,
+            settlementResumeAuthorizationRequired: true,
+            settlementServerTaskId: sellerTaskId,
+            settlementPendingTaskId: sellerTaskId,
+            createdAt,
+            expiresAt: createdAt + 60_000,
+          },
+          60
+        ),
+        true
+      );
+      return {
+        success: true,
+        status: 'input-required',
+        metadata: {
+          taskId: operationId,
+          serverTaskId: sellerTaskId,
+          a2aTaskId: 'pending-resolution-retry-a2a-task',
+          contextId: 'pending-resolution-retry-context',
+          taskName: 'create_media_buy',
+          agent: { id: a2aAgent.id, name: a2aAgent.name, protocol: 'a2a' },
+          responseTimeMs: 1,
+          timestamp: new Date().toISOString(),
+          clarificationRounds: 0,
+          status: 'input-required',
+        },
+        deferred: {
+          token: deferredToken,
+          resume: input => agent.client.executor.resumeDeferredTaskFromLiveClosure(deferredToken, input, false),
+        },
+      };
+    };
+
+    let coordinator;
+    let pollCalls = 0;
+    ProtocolClient.callTool = async (_agent, taskName, params) => {
+      assert.equal(taskName, 'tasks/get', 'pending recovery must never redispatch continuation input');
+      pollCalls += 1;
+      assert.deepEqual(params, { task_id: sellerTaskId, include_result: true });
+      return {
+        task_id: sellerTaskId,
+        task_type: 'create_media_buy',
+        status: 'completed',
+        result: { media_buy_id: 'buy-pending-resolution-retry', packages: [] },
+      };
+    };
+    try {
+      coordinator = await agent.negotiateMediaBuyLifecycle({
+        principalScope: 'buyer-pending-resolution-retry',
+        legacyPurchaseContinuationStore: store,
+      });
+      const discovery = await coordinator.requestProposals({
+        idempotency_key: 'request-proposals-pending-resolution-retry-0001',
+        account: { account_id: 'account-pending-resolution-retry' },
+        brand: { domain: 'example.com' },
+        brief: 'Retry trusted agent resolution without redispatching seller input',
+      });
+      continuationToken = discovery.data.purchase_continuation.continuation_token;
+      const input = {
+        idempotency_key: 'bf4a4312-e791-4fb3-ad49-d9f30ed2a92f',
+        continuation_token: continuationToken,
+        account: { account_id: 'account-pending-resolution-retry' },
+        selected_product_ids: ['p-pending-resolution-retry'],
+        accepted_losses: discovery.data.purchase_continuation.losses,
+        legacy_create_request: {
+          idempotency_key: 'legacy-pending-resolution-retry-create-0001',
+          account: { account_id: 'account-pending-resolution-retry' },
+          brand: { domain: 'example.com' },
+          packages: [{ product_id: 'p-pending-resolution-retry', budget: 10, pricing_option_id: 'fixed-cpm' }],
+          start_time: '2099-01-01T00:00:00Z',
+          end_time: '2099-02-01T00:00:00Z',
+        },
+      };
+      const paused = await coordinator.continueLegacyPurchase(input);
+      assert.equal(paused.status, 'input-required');
+      assert.equal(paused.deferred.token, deferredToken);
+      const checkpointBeforeOutage = await deferredStorage.get(deferredToken);
+
+      await assert.rejects(
+        paused.deferred.resume({ approved: 'retry-after-resolver-outage' }),
+        error => error instanceof DeferredSettlementOwnershipError && error.cause === resolverFailure
+      );
+
+      assert.equal(resolveCalls, 1);
+      assert.equal(pollCalls, 0);
+      assert.deepEqual(await deferredStorage.get(deferredToken), checkpointBeforeOutage);
+      const retained = await store.get(continuationToken);
+      assert.equal(retained.operation.state, 'claimed');
+      assert.equal(retained.operation.deferredTaskToken, deferredToken);
+      assert.equal(retained.operation.pendingSettlement, undefined);
+      assert.equal(retained.operation.result, undefined);
+
+      const pending = await paused.deferred.resume({ approved: true });
+      assert.equal(pending.status, 'submitted');
+      assert.equal(pending.metadata.serverTaskId, sellerTaskId);
+      assert.equal(pending.submitted.taskId, sellerTaskId);
+      const result = await pending.submitted.waitForCompletion(0);
+      assert.equal(result.status, 'completed');
+      assert.equal(result.data.media_buy_id, 'buy-pending-resolution-retry');
+      assert.equal(resolveCalls, 2);
+      assert.equal(pollCalls, 1);
+      assert.equal((await store.get(continuationToken)).operation.state, 'completed');
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+      coordinator?.dispose();
       deferredStorage.destroy();
     }
   });
