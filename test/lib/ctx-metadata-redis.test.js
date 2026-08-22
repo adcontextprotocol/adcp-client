@@ -79,6 +79,70 @@ describe('redisCtxMetadataStore — default-prefix-on-db-0 warning', () => {
     });
     assert.equal(warnings.length, 0);
   });
+
+  test('non-development environments require an explicit deployment prefix or isolation acknowledgement', () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    try {
+      for (const env of [undefined, 'staging', 'production']) {
+        if (env === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = env;
+
+        assert.throws(() => redisCtxMetadataStore(stubClient({ database: 0 })), /deployment-unique keyPrefix/);
+        assert.throws(
+          () => redisCtxMetadataStore(stubClient({ database: 0 }), { keyPrefix: '' }),
+          /deployment-unique keyPrefix/
+        );
+        assert.throws(
+          () => redisCtxMetadataStore(stubClient({ database: 0 }), { keyPrefix: 'adcp:ctx_meta:' }),
+          /deployment-unique keyPrefix/
+        );
+        assert.throws(
+          () => redisCtxMetadataStore(stubClient({ database: 0 }), { suppressDefaultPrefixWarning: true }),
+          /deployment-unique keyPrefix/
+        );
+        assert.doesNotThrow(() =>
+          redisCtxMetadataStore(stubClient({ database: 0 }), { keyPrefix: 'adcp:ctx_meta:prod-eu:' })
+        );
+        assert.doesNotThrow(() =>
+          redisCtxMetadataStore(stubClient({ database: 0 }), { acknowledgeIsolatedDatabase: true })
+        );
+        assert.throws(
+          () =>
+            redisCtxMetadataStore(
+              {
+                get: async () => null,
+                mGet: async () => [],
+                set: async () => null,
+                del: async () => 0,
+                ping: async () => 'PONG',
+              },
+              { suppressDefaultPrefixWarning: true }
+            ),
+          /deployment-unique keyPrefix/
+        );
+      }
+    } finally {
+      if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalNodeEnv;
+    }
+  });
+
+  test('development retains the default-prefix warning and accepts explicit suppression', () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    try {
+      process.env.NODE_ENV = 'development';
+      redisCtxMetadataStore(stubClient({ database: 0 }));
+      assert.equal(warnings.length, 1);
+
+      warnings.length = 0;
+      __resetDefaultPrefixWarningForTests();
+      redisCtxMetadataStore(stubClient({ database: 0 }), { suppressDefaultPrefixWarning: true });
+      assert.equal(warnings.length, 0);
+    } finally {
+      if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalNodeEnv;
+    }
+  });
 });
 
 describe('redisCtxMetadataStore', { skip: !REDIS_URL && 'REDIS_URL not set' }, () => {

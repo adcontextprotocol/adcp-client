@@ -1036,31 +1036,18 @@ export class ADCPMultiAgentClient {
    *
    * @example
    * ```typescript
-   * import { verifyWebhookRequest } from '@adcp/sdk/webhooks';
-   *
-   * app.post('/webhook', async (req, res) => {
-   *   try {
-   *     const check = verifyWebhookRequest({
-   *       rawBody: req.rawBody,
-   *       headers: req.headers,
-   *       globalSecret: process.env.WEBHOOK_SECRET,
-   *     });
-   *     if (!check.ok) return res.status(401).json({ error: check.reason });
-   *
-   *     const handled = await client.handleWebhook(
-   *       req.body,
-   *       req.params.taskType,
-   *       req.params.operationId,
-   *       check.signature,
-   *       check.timestamp,
-   *       req.rawBody
-   *     );
-   *     res.status(200).json({ received: handled });
-   *   } catch (error) {
-   *     res.status(401).json({ error: error.message });
-   *   }
-   * });
+   * app.post(
+   *   '/webhook/:task_type/:agent_id/:operation_id',
+   *   express.raw({ type: 'application/json' }),
+   *   client.createWebhookHandler({
+   *     getRequestUrl: req => `https://buyer.example${req.originalUrl}`,
+   *   }),
+   * );
    * ```
+   *
+   * `createWebhookHandler()` preserves the SDK's typed HTTP mapping, including
+   * retryable 503 responses for transient verification, storage, and publication
+   * failures. Do not map every `handleWebhook()` exception to 401.
    */
   async handleWebhook(
     payload: any,

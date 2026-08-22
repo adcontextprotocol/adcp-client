@@ -517,3 +517,10 @@ on `IdempotencyStoreConfig` carries the full version of this warning
 at the read site.
 
 See also [GitHub #1856](https://github.com/adcontextprotocol/adcp-client/issues/1856) — the SDK does not ship a built-in response scrubber because it would change the wire shape of legitimate adopter responses without warning. The track-record-of-shipped-credentials-in-responses issue is rare enough that opting into a scrubber per-deployment is the right shape.
+
+When `ctx_metadata` uses `redisCtxMetadataStore`, configure a
+deployment-unique `keyPrefix`. Outside development and test, the SDK rejects an
+omitted, blank, or SDK-default prefix because it can collide with another AdCP
+deployment in the same Redis database. A database dedicated to one deployment
+may instead use `acknowledgeIsolatedDatabase: true`;
+`suppressDefaultPrefixWarning` only controls development/test warnings.

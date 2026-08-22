@@ -392,7 +392,12 @@ import type { AdcpProtocol, MediaBuyFeatures, AccountCapabilities, CreativeCapab
 import type { MediaChannel } from '../types/tools.generated';
 import type { RequireCacheScopeWhenProducts, ServerPayload } from '../types/server-payload';
 import type { CreateMediaBuyPayload as CreateMediaBuyServerPayload } from '../types/server-payload-aliases';
-import { STANDARD_ERROR_CODES, isStandardErrorCode } from '../types/error-codes';
+import {
+  DEFAULT_UNKNOWN_ERROR_RECOVERY,
+  STANDARD_ERROR_CODES,
+  isStandardErrorCode,
+  type ErrorRecovery,
+} from '../types/error-codes';
 import {
   MEDIA_BUY_TOOLS,
   SIGNALS_TOOLS,
@@ -2463,6 +2468,17 @@ function isThrownAdcpError(value: unknown): value is McpToolResponse {
   if (typeof (env as { code?: unknown }).code !== 'string') return false;
   if (typeof (env as { message?: unknown }).message !== 'string') return false;
   return Array.isArray((value as { content?: unknown }).content) && (value as { isError?: unknown }).isError === true;
+}
+
+function thrownAdcpErrorRecovery(response: McpToolResponse): ErrorRecovery {
+  const error = (response.structuredContent as { adcp_error: { code: string; recovery?: unknown } }).adcp_error;
+  if (isStandardErrorCode(error.code)) {
+    return STANDARD_ERROR_CODES[error.code].recovery;
+  }
+  if (error.recovery === 'transient' || error.recovery === 'correctable' || error.recovery === 'terminal') {
+    return error.recovery;
+  }
+  return DEFAULT_UNKNOWN_ERROR_RECOVERY;
 }
 
 /**
@@ -7081,54 +7097,96 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
           return formatted;
         } catch (err) {
-          if (mutationHandlerCompleted && idempotencyCheck && idempotency) {
-            // The application handler returned, so its mutation may already
-            // be committed. A later framework failure (wrapping,
-            // normalization, policy, or validation) must never release the
-            // owner claim and let an exact retry execute the side effect
-            // again. Publish a full-window ambiguous replay marker when the
-            // backend is reachable; every exact retry then receives the same
-            // fail-closed response and must reconcile by natural key.
-            const ambiguousEnvelope = adcpError('SERVICE_UNAVAILABLE', {
-              message:
-                'The handler completed but its response could not be safely published. Reconcile the operation by natural key before retrying.',
-            });
+          if (idempotencyCheck && idempotency && (toolIsMutating || requestIsStateChanging)) {
+            // Once a mutating application handler has been invoked, a thrown
+            // exception cannot prove that no side effect committed. Never
+            // release that claim for blind re-execution. Stable typed errors
+            // are cached as the handler outcome; unknown exceptions and
+            // post-handler framework failures become a full-window ambiguity
+            // fence that requires natural-key reconciliation.
+            let thrownTypedEnvelope: McpToolResponse | undefined;
+            if (isThrownAdcpError(err)) {
+              const env = (err.structuredContent as { adcp_error: { code: string; message: string } }).adcp_error;
+              logger.warn('Handler threw an adcpError envelope — prefer `return` over `throw` for typed errors', {
+                tool: toolName,
+                handler: handlerKey,
+                code: env.code,
+                message: env.message,
+                stack: err instanceof Error ? err.stack : undefined,
+              });
+              thrownTypedEnvelope = err;
+            } else if (err instanceof AdcpError) {
+              logger.warn('Handler threw an AdcpError', {
+                tool: toolName,
+                handler: handlerKey,
+                code: err.code,
+                message: err.message,
+                stack: err.stack,
+              });
+              thrownTypedEnvelope = projectThrownAdcpError(err);
+            }
+
+            const thrownRecovery = thrownTypedEnvelope ? thrownAdcpErrorRecovery(thrownTypedEnvelope) : undefined;
+            let replayEnvelope: McpToolResponse;
+            if (!mutationHandlerCompleted && thrownTypedEnvelope && thrownRecovery !== 'transient') {
+              // A terminal typed rejection thrown directly by the handler is
+              // a stable outcome. Cache it so exact retry cannot re-enter the
+              // mutation. Transient typed errors are intentionally not
+              // replayed as retryable for the full window: after handler
+              // admission they are indistinguishable from commit-then-throw.
+              replayEnvelope = thrownTypedEnvelope;
+            } else {
+              const reason = err instanceof Error ? err.message : String(err);
+              logger.error('Mutating handler outcome is uncertain and requires reconciliation', {
+                tool: toolName,
+                handler: handlerKey,
+                error: reason,
+                stack: err instanceof Error ? err.stack : undefined,
+              });
+              replayEnvelope = adcpError('SERVICE_UNAVAILABLE', {
+                message:
+                  'The mutating handler did not produce a safely publishable response. Reconcile the operation by natural key before retrying.',
+              });
+            }
+
+            try {
+              replayEnvelope = finalize(replayEnvelope);
+            } catch (finalizeErr) {
+              const finalizeReason = finalizeErr instanceof Error ? finalizeErr.message : String(finalizeErr);
+              logger.error('Response processing failed while formatting a fenced mutation outcome', {
+                tool: toolName,
+                error: finalizeReason,
+              });
+              replayEnvelope = adcpError('SERVICE_UNAVAILABLE', {
+                message:
+                  'The mutating handler did not produce a safely publishable response. Reconcile the operation by natural key before retrying.',
+              });
+            }
+
             try {
               await idempotency.save({
                 principal: idempotencyCheck.principal,
                 key: idempotencyCheck.key,
                 payloadHash: idempotencyCheck.payloadHash,
                 claimToken: idempotencyCheck.claimToken,
-                response: stripEnvelopeEcho(ambiguousEnvelope),
+                response: stripEnvelopeEcho(replayEnvelope),
                 extraScope: idempotencyCheck.extraScope,
               });
             } catch (saveErr) {
               const saveReason = saveErr instanceof Error ? saveErr.message : String(saveErr);
-              logger.error('Idempotency ambiguity marker publication failed; retaining the live owner claim', {
+              logger.error('Idempotency mutation-outcome publication failed; retaining the live owner claim', {
                 tool: toolName,
                 error: saveReason,
               });
-            }
-            try {
-              return finalize(ambiguousEnvelope);
-            } catch (finalizeErr) {
-              // A throwing responseEnhancer may be the original
-              // post-handler failure. `finalize` performs protocol
-              // sanitization/context/version stamping before invoking it,
-              // so return the now-normalized envelope without calling the
-              // broken adopter hook a second time.
-              const finalizeReason = finalizeErr instanceof Error ? finalizeErr.message : String(finalizeErr);
-              logger.error('Response enhancer failed while formatting idempotency ambiguity response', {
-                tool: toolName,
-                error: finalizeReason,
+              return adcpError('SERVICE_UNAVAILABLE', {
+                message:
+                  'The mutating handler outcome could not be published to the idempotency store. Reconcile by natural key before retrying.',
               });
-              return ambiguousEnvelope;
             }
+            return replayEnvelope;
           }
-          // Release the idempotency claim on any thrown path — whether
-          // we unwrap a typed envelope or fall through to SERVICE_UNAVAILABLE,
-          // the handler did not produce a cached response and the next retry
-          // should proceed normally.
+          // Non-mutating thrown paths may release their optional claim: no
+          // state-changing handler was invoked, so exact retry is safe.
           let idempotencyReleaseError: unknown;
           if (idempotencyCheck && idempotency) {
             try {

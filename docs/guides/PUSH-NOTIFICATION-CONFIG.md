@@ -136,31 +136,25 @@ When `webhookSecret` is configured, the legacy webhook authentication path uses 
 
 HMAC registration provenance never stores the credential or a secret-derived fingerprint. The configured global `webhookSecret` remains the verification key. Recordless fallback is limited to an explicit set of read-only tasks; mutations, unknown extensions, and `get_products` (which has a state-changing legacy finalization variant) require a live trusted registration and fail closed when registration state is missing or unavailable. RFC 9421 always fails closed without seller-pinned provenance.
 
-Capture the raw request body before JSON parsing and verify it with the SDK helper:
+Capture the raw request body before JSON parsing and use the SDK's HTTP handler,
+which verifies the signature and preserves typed failure status codes:
 
 ```typescript
-import { verifyWebhookRequest } from '@adcp/sdk/webhooks';
-
-app.post('/adcp/webhook/:task_type/:agent_id/:operation_id', async (req, res) => {
-  const check = verifyWebhookRequest({
-    rawBody: req.rawBody,
-    headers: req.headers,
-    globalSecret: process.env.WEBHOOK_SECRET,
-  });
-
-  if (!check.ok) {
-    return res.status(401).json({ error: check.reason });
-  }
-
-  const handled = await client
-    .agent(req.params.agent_id)
-    .handleWebhook(req.body, req.params.task_type, req.params.operation_id, check.signature, check.timestamp, req.rawBody);
-
-  res.status(200).json({ received: handled });
-});
+app.post(
+  '/adcp/webhook/:task_type/:agent_id/:operation_id',
+  express.raw({ type: 'application/json' }),
+  client.createWebhookHandler({
+    getRequestUrl: req => `https://buyer.example${req.originalUrl}`,
+  }),
+);
 ```
 
-`verifyWebhookRequest` normalizes header casing, rejects missing or ambiguous signature headers, enforces a 300s timestamp freshness window by default, and compares signatures in constant time. It does not maintain a replay cache; use `webhookDedup` below to drop duplicate webhook events by `idempotency_key`.
+The handler normalizes header casing, rejects missing or ambiguous signature
+headers, enforces the freshness/replay checks, and compares signatures in
+constant time. It returns 401 only for authentication failures; invalid or
+conflicting deliveries use 400/409, rate abuse uses 429, and transient
+verification, storage, or publication failures use 503 so the seller retries.
+Use `webhookDedup` below to drop duplicate webhook events by `idempotency_key`.
 
 The mode recorded at registration is authoritative. The receiver never tries RFC 9421 and falls back to HMAC (or vice versa), and mixed-mode headers fail with `webhook_mode_mismatch`.
 
@@ -228,11 +222,22 @@ default); invalid configurations fail at handler construction. Because the SDK c
 transactionally fence a generic handler, handlers using the shorter lease must
 durably deduplicate `(agent_id, idempotency_key, event fingerprint)` or make
 their side effects idempotent. Webhook delivery remains at-least-once.
+The SDK retains the active event fingerprint for the full `ttlSeconds` even
+when a shorter processing lease expires. Only an exact-payload retry may
+reclaim that expired lease; reusing the sender key for a changed payload remains
+a typed conflict throughout the dedup window.
 
 Custom idempotency backends used for webhook dedup must implement the atomic
-`putIfAbsent()`, `replaceIfPayloadHash()`, and `deleteIfPayloadHash()` methods. The built-in
+`putIfAbsent()`, `replaceIfPayloadHash()`, `replaceIfPayloadHashAndExpired()`,
+and `deleteIfPayloadHash()` methods. The built-in
 memory, PostgreSQL, Redis, and lazy backends provide them. These operations
 prevent a stale replica from renewing or releasing a newer replica's claim.
+The expired-owner replacement must atomically test both the expected payload
+hash and backend-time logical expiry; an entry expiring in the current second
+is still live. Do not implement it as a read followed by ordinary replacement,
+because a same-token renewal creates an ABA takeover race.
+`putIfAbsent()` is absent-only and must not replace a retained expired entry;
+all expired-generation reclaim goes through the exact-owner method.
 
 SDK 14 writes webhook fences under a hashed sender scope. During the upgrade it
 also reads an unexpired marker written by the previous receiver version under

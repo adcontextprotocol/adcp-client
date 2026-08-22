@@ -131,6 +131,7 @@ const lazyBackendFactory: LazyBackendFactory = async () => ({
   async get() { return null; },
   async putIfAbsent() { return true; },
   async replaceIfPayloadHash() { return true; },
+  async replaceIfPayloadHashAndExpired() { return true; },
   async deleteIfPayloadHash() { return true; },
   async put() {},
   async delete() {},

@@ -156,6 +156,8 @@ describe('ADCP Conversation Client Library', { skip: process.env.CI ? 'Slow test
 
     const deferredError = new DeferredTaskError('token-789');
     assert(deferredError.token === 'token-789', 'Should have correct token');
+    assert(!JSON.stringify(deferredError).includes('token-789'), 'Should not serialize the bearer token');
+    assert.strictEqual(Object.getOwnPropertyDescriptor(deferredError, 'token').enumerable, false);
     assert(isADCPError(deferredError), 'Should be recognized as ADCP error');
 
     const agentError = new AgentNotFoundError('missing-agent', ['agent1', 'agent2']);

@@ -14,7 +14,7 @@ const DATABASE_URL = process.env.DATABASE_URL;
 
 const TABLE = 'adcp_idempotency';
 
-test('pgBackend keeps an entry live through its exact expiry second', async () => {
+test('pgBackend putIfAbsent is absent-only', async () => {
   const queries = [];
   const pool = {
     query: async (sql, params) => {
@@ -29,7 +29,37 @@ test('pgBackend keeps an entry live through its exact expiry second', async () =
     expiresAt: Math.floor(Date.now() / 1000) + 120,
   });
   assert.equal(claimed, false);
-  assert.match(queries[0].sql, /expires_at < DATE_TRUNC\('second', NOW\(\)\)/);
+  assert.match(queries[0].sql, /ON CONFLICT \(scoped_key\) DO NOTHING/);
+  assert.doesNotMatch(queries[0].sql, /expires_at\s*</);
+});
+
+test('pgBackend expired-owner replacement combines payload hash and database-time expiry predicates', async () => {
+  const queries = [];
+  const pool = {
+    query: async (sql, params) => {
+      queries.push({ sql, params });
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const { pgBackend } = require('../../dist/lib/server/index.js');
+  const replacement = {
+    payloadHash: 'new-owner',
+    response: { version: 2 },
+    expiresAt: 2_000_000_000,
+    retainUntil: 2_000_000_100,
+  };
+
+  assert.equal(await pgBackend(pool).replaceIfPayloadHashAndExpired('scope', 'expected-owner', replacement), false);
+  assert.match(queries[0].sql, /WHERE scoped_key = \$1 AND payload_hash = \$2/);
+  assert.match(queries[0].sql, /AND expires_at < DATE_TRUNC\('second', NOW\(\)\)/);
+  assert.deepEqual(queries[0].params, [
+    'scope',
+    'expected-owner',
+    'new-owner',
+    JSON.stringify(replacement.response),
+    replacement.expiresAt,
+    replacement.retainUntil,
+  ]);
 });
 
 test('cleanupExpiredIdempotency prunes by the physical retention horizon', async () => {
@@ -290,7 +320,7 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
     assert.deepEqual(got.response, { v: 1 });
   });
 
-  test('putIfAbsent reclaims an expired entry', async () => {
+  test('putIfAbsent leaves an expired entry for exact-generation reclaim', async () => {
     const backend = pgBackend(pool);
     // Manually insert an expired row
     await pool.query(
@@ -299,12 +329,13 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
       ['p\u001fk', 'stale', JSON.stringify({ stale: true }), Math.floor(Date.now() / 1000) - 120]
     );
 
-    const claimed = await backend.putIfAbsent('p\u001fk', {
+    const replacement = {
       payloadHash: 'fresh',
       response: { fresh: true },
       expiresAt: Math.floor(Date.now() / 1000) + 120,
-    });
-    assert.equal(claimed, true);
+    };
+    assert.equal(await backend.putIfAbsent('p\u001fk', replacement), false);
+    assert.equal(await backend.replaceIfPayloadHashAndExpired('p\u001fk', 'stale', replacement), true);
 
     const got = await backend.get('p\u001fk');
     assert.equal(got.payloadHash, 'fresh');
@@ -357,6 +388,19 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
     assert.deepEqual(await backend.get('p\u001fcas'), replacement);
     assert.equal(await backend.deleteIfPayloadHash('p\u001fcas', 'owner-b'), true);
     assert.equal(await backend.get('p\u001fcas'), null);
+
+    await backend.put('p\u001fexpired-cas', {
+      payloadHash: 'expired-owner',
+      response: { version: 1 },
+      expiresAt: now - 2,
+      retainUntil: now + 3700,
+    });
+    assert.equal(await backend.replaceIfPayloadHashAndExpired('p\u001fexpired-cas', 'stale-owner', replacement), false);
+    assert.equal(
+      await backend.replaceIfPayloadHashAndExpired('p\u001fexpired-cas', 'expired-owner', replacement),
+      true
+    );
+    assert.deepEqual(await backend.get('p\u001fexpired-cas'), replacement);
   });
 
   // ────────── store + backend end-to-end ──────────
@@ -603,6 +647,7 @@ test('pgBackend redacts driver errors from every runtime operation', async () =>
     () => backend.put('scoped-key', entry),
     () => backend.putIfAbsent('scoped-key', entry),
     () => backend.replaceIfPayloadHash('scoped-key', 'hash', entry),
+    () => backend.replaceIfPayloadHashAndExpired('scoped-key', 'hash', entry),
     () => backend.deleteIfPayloadHash('scoped-key', 'hash'),
     () => backend.delete('scoped-key'),
     () => cleanupExpiredIdempotency(db),

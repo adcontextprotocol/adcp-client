@@ -765,6 +765,8 @@ describe(
         const deferredError = new DeferredTaskError(secretToken);
         assert.doesNotMatch(deferredError.message, new RegExp(secretToken));
         assert.equal(deferredError.token, secretToken);
+        assert.doesNotMatch(JSON.stringify(deferredError), new RegExp(secretToken));
+        assert.strictEqual(Object.getOwnPropertyDescriptor(deferredError, 'token').enumerable, false);
       });
 
       test('rejects a persisted A2A deferral that lacks seller task identity', async () => {
@@ -1138,7 +1140,7 @@ describe(
           recoverDeferredSettlement: async result => ({ result }),
           strictSchemaValidation: false,
         });
-        const initial = await executor.executeTask(
+        await executor.executeTask(
           mockAgent,
           'approvalTask',
           {},

@@ -203,7 +203,7 @@ export class ProtocolResponseParser {
   parseInputRequest(response: any): InputRequest {
     const statusMessageData = getLatestDataPartFromParts(response?.result?.status?.message?.parts);
     const artifactData = getLatestA2ADataPartFromTask(response?.result)?.data;
-    const source = statusMessageData ?? artifactData ?? response;
+    const source = statusMessageData ?? artifactData ?? response?.structuredContent ?? response;
     const question = source.message || source.question || source.prompt || 'Please provide input';
     const field = source.field || source.parameter;
     const suggestions = source.options || source.choices || source.suggestions;

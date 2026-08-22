@@ -5,9 +5,10 @@
  * payload `{ payloadHash, response, expiresAt }`. Expiry is enforced by
  * Redis itself via the key TTL — no sweeper job required.
  *
- * **Reclaim semantics.** `putIfAbsent` uses one Lua operation to insert a
- * missing value or replace a logically expired one. This is necessary because
- * the Redis key itself retains an expiry grace window for buyer-facing
+ * **Reclaim semantics.** `putIfAbsent` inserts only when the physical key is
+ * absent. Retained logical expiry is reclaimed by
+ * `replaceIfPayloadHashAndExpired`, which atomically checks the exact owner and
+ * Redis server time. The key itself retains a grace window for buyer-facing
  * `IDEMPOTENCY_EXPIRED` responses; claim ownership still ends at `expiresAt`.
  *
  * **`expired` vs `miss` parity.** The store layer distinguishes `expired`
@@ -58,9 +59,8 @@ import type { RedisClientType } from 'redis';
  * Escape-hatch interface for adopters not using the official `redis`
  * client (node-redis v4/v5) — e.g., `ioredis`, Upstash, a test double.
  *
- * Mirrors the five methods this backend actually calls. The `set`
- * signature follows node-redis's options-object form; `ioredis` users
- * pass a thin shim that maps to its positional API.
+ * Mirrors the four methods this backend actually calls. All writes use
+ * Lua so ownership checks and absolute retention updates stay atomic.
  *
  * @example ioredis adapter
  * ```typescript
@@ -69,10 +69,6 @@ import type { RedisClientType } from 'redis';
  *
  * const client: RedisLikeClient = {
  *   get: (k) => ioredis.get(k),
- *   set: (k, v, { EX, NX }) =>
- *     NX
- *       ? ioredis.set(k, v, 'EX', EX, 'NX').then(r => (r === 'OK' ? 'OK' : null))
- *       : ioredis.set(k, v, 'EX', EX),
  *   del: (k) => ioredis.del(k as string),
  *   eval: (script, { keys, arguments: args }) =>
  *     ioredis.eval(script, keys.length, ...keys, ...args),
@@ -82,7 +78,6 @@ import type { RedisClientType } from 'redis';
  */
 export interface RedisLikeClient {
   get(key: string): Promise<string | null>;
-  set(key: string, value: string, options: { EX: number; NX?: boolean }): Promise<string | null>;
   del(key: string | string[]): Promise<number>;
   eval(script: string, options: { keys: string[]; arguments: string[] }): Promise<unknown>;
   ping(): Promise<string>;
@@ -137,10 +132,13 @@ export interface RedisBackendOptions {
    * the store layer can still read it during the clock-skew window and
    * return `IDEMPOTENCY_EXPIRED` (rather than treating it as a fresh
    * miss). Defaults to 120s — covers the store's default 60s skew with
-   * margin. This is additive to the store-supplied `retainUntil` safety
-   * horizon, so setting it to 0 cannot undercut the configured clock-skew
-   * window; it only removes any extra Redis-specific linger beyond that
-   * horizon.
+   * margin. When this backend is passed to `createIdempotencyStore`, the
+   * value must be at least that store's `clockSkewSeconds`; construction
+   * fails rather than allowing Redis to evict legacy entries before the
+   * advertised skew window. For newly written entries, the physical TTL
+   * also never precedes the store-supplied `retainUntil` safety horizon.
+   * Setting this to `0` is therefore supported only with a zero-skew store
+   * (or when using the backend directly) and removes the extra Redis linger.
    */
   expiredGraceSeconds?: number;
 }
@@ -246,16 +244,16 @@ export function __resetDefaultPrefixWarningForTests(): void {
  * `VALIDATION_ERROR` should be zero.
  */
 export function redisBackend(client: RedisBackendClient, options: RedisBackendOptions = {}): IdempotencyBackend {
-  // The function calls only the five methods on RedisLikeClient. The
+  // The function calls only the four methods on RedisLikeClient. The
   // wider RedisClientType union covers the node-redis happy path without
   // forcing a cast at the call site; internally we narrow.
   const c = client as RedisLikeClient;
 
-  for (const method of ['get', 'set', 'del', 'eval', 'ping'] as const) {
+  for (const method of ['get', 'del', 'eval', 'ping'] as const) {
     if (typeof c?.[method] !== 'function') {
       throw new Error(
         `redisBackend: client must implement ${method}(). ` +
-          'Pass a node-redis compatible client or an adapter implementing get/set/del/eval/ping; atomic replay fencing depends on these methods.'
+          'Pass a node-redis compatible client or an adapter implementing get/del/eval/ping; atomic replay fencing depends on these methods.'
       );
     }
   }
@@ -318,34 +316,13 @@ export function redisBackend(client: RedisBackendClient, options: RedisBackendOp
     }
   }
 
-  /**
-   * Compute the Redis TTL for an entry. The store records absolute
-   * `expiresAt`; Redis wants relative seconds. Add `expiredGraceSeconds`
-   * so the value lingers through the store's clock-skew window.
-   *
-   * Throws if the resulting TTL is non-positive — that would mean a
-   * caller is writing an entry whose `expiresAt` is already past, which
-   * is a logic bug, not a substrate-papering case. A silent `EX 1`
-   * clamp would let the entry vanish in 1s and the next caller would
-   * see `miss` and re-execute the side effect.
-   */
-  function ttlFor(entry: Pick<IdempotencyCacheEntry, 'expiresAt' | 'retainUntil'>): number {
-    const nowSeconds = Math.floor(Date.now() / 1000);
+  /** Resolve the absolute physical-retention horizon passed into Redis Lua. */
+  function physicalExpiryFor(entry: Pick<IdempotencyCacheEntry, 'expiresAt' | 'retainUntil'>): number {
     const physicalExpiry = Math.max(entry.retainUntil ?? entry.expiresAt, entry.expiresAt + expiredGraceSeconds);
     if (!Number.isSafeInteger(physicalExpiry)) {
       throw new Error('redisBackend: refusing to write an entry with an invalid retention horizon.');
     }
-    // Logical store and SQL/memory cleanup use strict `<` boundaries, so the
-    // equality second remains live. Redis must retain through that complete
-    // second as well instead of evicting exactly at `physicalExpiry`.
-    const ttl = Math.floor(physicalExpiry - nowSeconds) + 1;
-    if (!Number.isSafeInteger(ttl) || ttl <= 0) {
-      throw new Error(
-        `redisBackend: refusing to write an entry whose retention horizon (${physicalExpiry}) is already past — ` +
-          `the substrate-level TTL would be ${ttl}s. Caller logic error.`
-      );
-    }
-    return ttl;
+    return physicalExpiry;
   }
 
   return {
@@ -394,28 +371,36 @@ export function redisBackend(client: RedisBackendClient, options: RedisBackendOp
     },
 
     async put(scopedKey: string, entry: IdempotencyCacheEntry): Promise<void> {
-      await runtimeCall('put', () => c.set(prefixed(scopedKey), JSON.stringify(entry), { EX: ttlFor(entry) }));
-    },
-
-    async putIfAbsent(scopedKey: string, entry: IdempotencyCacheEntry): Promise<boolean> {
-      // The substrate TTL includes a grace window so completed entries can
-      // surface IDEMPOTENCY_EXPIRED. Claims must still be reclaimable at
-      // their logical expiresAt, so atomically replace a missing or expired
-      // value instead of relying on SET NX alone.
-      const result = await runtimeCall('putIfAbsent', () =>
+      await runtimeCall('put', () =>
         c.eval(
-          `local raw = redis.call('GET', KEYS[1])
-         if raw then
-           local current = cjson.decode(raw)
-           local redis_time = redis.call('TIME')
-           local now = tonumber(redis_time[1])
-           if tonumber(current.expiresAt) >= now then return 0 end
-         end
-         redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+          `local redis_time = redis.call('TIME')
+         local now = tonumber(redis_time[1])
+         local ttl = tonumber(ARGV[2]) - now + 1
+         if ttl <= 0 then return redis.error_reply('retention horizon is already past') end
+         redis.call('SET', KEYS[1], ARGV[1], 'EX', ttl)
          return 1`,
           {
             keys: [prefixed(scopedKey)],
-            arguments: [JSON.stringify(entry), String(ttlFor(entry))],
+            arguments: [JSON.stringify(entry), String(physicalExpiryFor(entry))],
+          }
+        )
+      );
+    },
+
+    async putIfAbsent(scopedKey: string, entry: IdempotencyCacheEntry): Promise<boolean> {
+      const result = await runtimeCall('putIfAbsent', () =>
+        c.eval(
+          `local raw = redis.call('GET', KEYS[1])
+         if raw then return 0 end
+         local redis_time = redis.call('TIME')
+         local now = tonumber(redis_time[1])
+         local ttl = tonumber(ARGV[2]) - now + 1
+         if ttl <= 0 then return redis.error_reply('retention horizon is already past') end
+         redis.call('SET', KEYS[1], ARGV[1], 'EX', ttl)
+         return 1`,
+          {
+            keys: [prefixed(scopedKey)],
+            arguments: [JSON.stringify(entry), String(physicalExpiryFor(entry))],
           }
         )
       );
@@ -433,11 +418,42 @@ export function redisBackend(client: RedisBackendClient, options: RedisBackendOp
          if not raw then return 0 end
          local current = cjson.decode(raw)
          if current.payloadHash ~= ARGV[1] then return 0 end
-         redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+         local redis_time = redis.call('TIME')
+         local now = tonumber(redis_time[1])
+         local ttl = tonumber(ARGV[3]) - now + 1
+         if ttl <= 0 then return redis.error_reply('retention horizon is already past') end
+         redis.call('SET', KEYS[1], ARGV[2], 'EX', ttl)
          return 1`,
           {
             keys: [prefixed(scopedKey)],
-            arguments: [expectedPayloadHash, JSON.stringify(entry), String(ttlFor(entry))],
+            arguments: [expectedPayloadHash, JSON.stringify(entry), String(physicalExpiryFor(entry))],
+          }
+        )
+      );
+      return Number(result) === 1;
+    },
+
+    async replaceIfPayloadHashAndExpired(
+      scopedKey: string,
+      expectedPayloadHash: string,
+      entry: IdempotencyCacheEntry
+    ): Promise<boolean> {
+      const result = await runtimeCall('replaceIfPayloadHashAndExpired', () =>
+        c.eval(
+          `local raw = redis.call('GET', KEYS[1])
+         if not raw then return 0 end
+         local current = cjson.decode(raw)
+         if current.payloadHash ~= ARGV[1] then return 0 end
+         local redis_time = redis.call('TIME')
+         local now = tonumber(redis_time[1])
+         if tonumber(current.expiresAt) >= now then return 0 end
+         local ttl = tonumber(ARGV[3]) - now + 1
+         if ttl <= 0 then return redis.error_reply('retention horizon is already past') end
+         redis.call('SET', KEYS[1], ARGV[2], 'EX', ttl)
+         return 1`,
+          {
+            keys: [prefixed(scopedKey)],
+            arguments: [expectedPayloadHash, JSON.stringify(entry), String(physicalExpiryFor(entry))],
           }
         )
       );

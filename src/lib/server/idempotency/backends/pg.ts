@@ -226,18 +226,11 @@ export function pgBackend(db: PgQueryable, options: PgBackendOptions = {}): Idem
     },
 
     async putIfAbsent(scopedKey: string, entry: IdempotencyCacheEntry): Promise<boolean> {
-      // Insert only if absent OR the existing row is expired — this lets a
-      // stale claim from a crashed handler be reclaimed on retry.
       const result = await query(
         'putIfAbsent',
         `INSERT INTO ${table} (scoped_key, payload_hash, response, expires_at, retain_until)
          VALUES ($1, $2, $3::jsonb, TO_TIMESTAMP($4), TO_TIMESTAMP($5))
-         ON CONFLICT (scoped_key) DO UPDATE SET
-           payload_hash = EXCLUDED.payload_hash,
-           response = EXCLUDED.response,
-           expires_at = EXCLUDED.expires_at,
-           retain_until = EXCLUDED.retain_until
-         WHERE ${table}.expires_at < DATE_TRUNC('second', NOW())
+         ON CONFLICT (scoped_key) DO NOTHING
          RETURNING scoped_key`,
         [
           scopedKey,
@@ -261,6 +254,31 @@ export function pgBackend(db: PgQueryable, options: PgBackendOptions = {}): Idem
          SET payload_hash = $3, response = $4::jsonb, expires_at = TO_TIMESTAMP($5)
              , retain_until = TO_TIMESTAMP($6)
          WHERE scoped_key = $1 AND payload_hash = $2
+         RETURNING scoped_key`,
+        [
+          scopedKey,
+          expectedPayloadHash,
+          entry.payloadHash,
+          JSON.stringify(entry.response),
+          entry.expiresAt,
+          entry.retainUntil ?? entry.expiresAt,
+        ]
+      );
+      return (result.rowCount ?? 0) > 0;
+    },
+
+    async replaceIfPayloadHashAndExpired(
+      scopedKey: string,
+      expectedPayloadHash: string,
+      entry: IdempotencyCacheEntry
+    ): Promise<boolean> {
+      const result = await query(
+        'replaceIfPayloadHashAndExpired',
+        `UPDATE ${table}
+         SET payload_hash = $3, response = $4::jsonb, expires_at = TO_TIMESTAMP($5)
+             , retain_until = TO_TIMESTAMP($6)
+         WHERE scoped_key = $1 AND payload_hash = $2
+           AND expires_at < DATE_TRUNC('second', NOW())
          RETURNING scoped_key`,
         [
           scopedKey,

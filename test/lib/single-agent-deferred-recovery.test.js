@@ -214,6 +214,49 @@ test('deferred storage read outage is typed ownership and a later retry dispatch
   }
 });
 
+test('external callback checkpoint storage outage is sanitized ownership and leaves state retryable', async () => {
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('external-checkpoint-read-outage-token');
+  const operationId = 'external-checkpoint-read-outage-operation';
+  const sellerWorkId = 'external-checkpoint-read-outage-work';
+  const initialState = committedContinuationState({
+    operationId,
+    sellerWorkId,
+    version: 'external-checkpoint-read-outage-version',
+  });
+  await storage.putIfAbsent(token, initialState, 60);
+
+  const storageFailure = new Error('redis://secret-host callback read outage');
+  const originalGet = storage.get.bind(storage);
+  storage.get = async () => {
+    throw storageFailure;
+  };
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    await assert.rejects(
+      executor.checkpointExternalDeferredSettlement(
+        token,
+        operationId,
+        committedTerminalResult(operationId, sellerWorkId, 'external-checkpoint-read-outage-buy')
+      ),
+      error => {
+        assert.ok(error instanceof DeferredSettlementOwnershipError);
+        assert.strictEqual(error.cause, storageFailure);
+        assert.doesNotMatch(error.message, /secret-host/);
+        return true;
+      }
+    );
+    assert.deepEqual(await originalGet(token), initialState);
+  } finally {
+    storage.get = originalGet;
+    storage.destroy();
+  }
+});
+
 test('expiry during trusted-agent resolution is typed ownership after generation-fenced removal', async () => {
   const originalCallTool = ProtocolClient.callTool;
   const storage = new MemoryStorage({ autoCleanup: false });

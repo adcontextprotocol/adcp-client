@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const { createHash } = require('node:crypto');
 const { AsyncHandler, WebhookDedupConflictError } = require('../../dist/lib/core/AsyncHandler');
 const { memoryBackend } = require('../../dist/lib/server/idempotency/backends/memory');
+const { redisBackend } = require('../../dist/lib/server/idempotency/backends/redis');
 const { AdCPClient, createLazyBackend } = require('../../dist/lib/index.js');
 const { canonicalize } = require('../../dist/lib/utils/jcs.js');
 
@@ -57,7 +58,7 @@ test('webhookDedup fails closed when a custom backend lacks atomic fencing', () 
           },
         },
       }),
-    /must implement atomic putIfAbsent\(\), replaceIfPayloadHash\(\), and deleteIfPayloadHash\(\)/
+    /must implement atomic putIfAbsent\(\), replaceIfPayloadHash\(\), replaceIfPayloadHashAndExpired\(\), and deleteIfPayloadHash\(\)/
   );
 });
 
@@ -70,12 +71,21 @@ test('webhookDedup fails closed when a custom backend lacks atomic first-owner c
             get: async () => null,
             put: async () => {},
             replaceIfPayloadHash: async () => true,
+            replaceIfPayloadHashAndExpired: async () => true,
             deleteIfPayloadHash: async () => true,
             delete: async () => {},
           },
         },
       }),
     /must implement atomic putIfAbsent\(\)/
+  );
+});
+
+test('webhookDedup fails closed when a custom backend lacks atomic expired-owner replacement', () => {
+  const { replaceIfPayloadHashAndExpired: _omitted, ...backend } = memoryBackend({ sweepIntervalMs: 0 });
+  assert.throws(
+    () => new AsyncHandler({ webhookDedup: { backend } }),
+    /must implement atomic putIfAbsent\(\), replaceIfPayloadHash\(\), replaceIfPayloadHashAndExpired\(\), and deleteIfPayloadHash\(\)/
   );
 });
 
@@ -142,6 +152,41 @@ test('memory backend payload-hash fencing rejects stale replace and delete', asy
   assert.strictEqual(await backend.deleteIfPayloadHash('fenced-key', 'owner-a'), false);
   assert.strictEqual(await backend.deleteIfPayloadHash('fenced-key', 'owner-b'), true);
   assert.strictEqual(await backend.get('fenced-key'), null);
+});
+
+test('memory backend expired replacement requires the exact owner and backend-time expiry', async () => {
+  const backend = memoryBackend({ sweepIntervalMs: 0 });
+  const now = Math.floor(Date.now() / 1000);
+  const replacement = {
+    payloadHash: 'owner-b',
+    response: { owner: 'b' },
+    expiresAt: now + 300,
+    retainUntil: now + 600,
+  };
+  await backend.put('expiry-fenced-key', {
+    payloadHash: 'owner-a',
+    response: { owner: 'a' },
+    expiresAt: now,
+    retainUntil: now + 600,
+  });
+
+  assert.strictEqual(
+    await backend.replaceIfPayloadHashAndExpired('expiry-fenced-key', 'owner-a', replacement),
+    false,
+    'an entry expiring in the current second remains live'
+  );
+  await backend.put('expiry-fenced-key', {
+    payloadHash: 'owner-a',
+    response: { owner: 'a' },
+    expiresAt: now - 1,
+    retainUntil: now + 600,
+  });
+  assert.strictEqual(
+    await backend.replaceIfPayloadHashAndExpired('expiry-fenced-key', 'stale-owner', replacement),
+    false
+  );
+  assert.strictEqual(await backend.replaceIfPayloadHashAndExpired('expiry-fenced-key', 'owner-a', replacement), true);
+  assert.deepStrictEqual(await backend.get('expiry-fenced-key'), replacement);
 });
 
 test('webhookDedup drops duplicate delivery by idempotency_key', async () => {
@@ -828,19 +873,26 @@ test('webhookDedup stale completed-marker read cannot overwrite a fresh same-eve
   assert.strictEqual(calls, 1);
 });
 
-test('webhookDedup reclaims an expired claim through atomic putIfAbsent expiry replacement', async () => {
+test('webhookDedup reclaims an expired claim through an exact-generation payload-hash CAS', async () => {
   const entries = new Map();
   const backend = {
     get: async key => structuredClone(entries.get(key) ?? null),
     put: async (key, entry) => entries.set(key, structuredClone(entry)),
     putIfAbsent: async (key, entry) => {
-      const current = entries.get(key);
-      if (current && current.expiresAt >= Math.floor(Date.now() / 1000)) return false;
+      if (entries.has(key)) return false;
       entries.set(key, structuredClone(entry));
       return true;
     },
     replaceIfPayloadHash: async (key, expected, entry) => {
       if (entries.get(key)?.payloadHash !== expected) return false;
+      entries.set(key, structuredClone(entry));
+      return true;
+    },
+    replaceIfPayloadHashAndExpired: async (key, expected, entry) => {
+      const current = entries.get(key);
+      if (current?.payloadHash !== expected || current.expiresAt >= Math.floor(Date.now() / 1000)) {
+        return false;
+      }
       entries.set(key, structuredClone(entry));
       return true;
     },
@@ -853,10 +905,12 @@ test('webhookDedup reclaims an expired claim through atomic putIfAbsent expiry r
   };
   const metadata = baseMetadata({ idempotency_key: 'custom_expired_claim_0001' });
   const key = dedupStorageKey(metadata);
+  const result = { media_buy_id: 'mb_1' };
   entries.set(key, {
     payloadHash: 'stale-owner',
-    response: { claimToken: 'stale-owner', eventFingerprint: 'stale' },
+    response: { claimToken: 'stale-owner', eventFingerprint: dedupEventFingerprint(metadata, result) },
     expiresAt: Math.floor(Date.now() / 1000) - 1,
+    retainUntil: Math.floor(Date.now() / 1000) + 300,
   });
   let calls = 0;
   const handler = new AsyncHandler({
@@ -865,8 +919,206 @@ test('webhookDedup reclaims an expired claim through atomic putIfAbsent expiry r
       calls += 1;
     },
   });
-  assert.equal(await handler.handleWebhook({ result: { media_buy_id: 'mb_1' }, metadata }), 'handled');
+  assert.equal(await handler.handleWebhook({ result, metadata }), 'handled');
   assert.equal(calls, 1);
+});
+
+test('webhookDedup stale expired-claim read cannot overwrite a newer expired payload generation', async () => {
+  const delegate = memoryBackend({ sweepIntervalMs: 0 });
+  const metadata = baseMetadata({ idempotency_key: 'expired_claim_aba_0001' });
+  const originalResult = { media_buy_id: 'mb_original' };
+  const changedResult = { media_buy_id: 'mb_changed' };
+  const key = dedupStorageKey(metadata);
+  const oldOwner = 'old-expired-owner';
+  await delegate.put(key, {
+    payloadHash: oldOwner,
+    response: { claimToken: oldOwner, eventFingerprint: dedupEventFingerprint(metadata, originalResult) },
+    expiresAt: Math.floor(Date.now() / 1000) - 1,
+    retainUntil: Math.floor(Date.now() / 1000) + 300,
+  });
+
+  let releaseTakeover;
+  let markTakeover;
+  const takeoverReached = new Promise(resolve => {
+    markTakeover = resolve;
+  });
+  const takeoverGate = new Promise(resolve => {
+    releaseTakeover = resolve;
+  });
+  const replaceIfPayloadHashAndExpired = delegate.replaceIfPayloadHashAndExpired.bind(delegate);
+  const backend = {
+    ...delegate,
+    replaceIfPayloadHashAndExpired: async (...args) => {
+      if (args[1] === oldOwner && args[2]?.response?.claimToken) {
+        markTakeover();
+        await takeoverGate;
+      }
+      return replaceIfPayloadHashAndExpired(...args);
+    },
+  };
+  let calls = 0;
+  const handler = new AsyncHandler({
+    webhookDedup: { backend, ttlSeconds: 300, inFlightTtlSeconds: 1 },
+    onCreateMediaBuyStatusChange: () => {
+      calls += 1;
+    },
+  });
+
+  const staleAttempt = handler.handleWebhook({ result: originalResult, metadata });
+  await takeoverReached;
+  const newOwner = 'new-expired-owner';
+  await delegate.put(key, {
+    payloadHash: newOwner,
+    response: { claimToken: newOwner, eventFingerprint: dedupEventFingerprint(metadata, changedResult) },
+    expiresAt: Math.floor(Date.now() / 1000) - 1,
+    retainUntil: Math.floor(Date.now() / 1000) + 300,
+  });
+  releaseTakeover();
+
+  await assert.rejects(staleAttempt, error => error instanceof WebhookDedupConflictError);
+  assert.equal(calls, 0);
+  assert.equal((await delegate.get(key)).payloadHash, newOwner);
+});
+
+test('webhookDedup stale absent read cannot overwrite a newly expired payload generation', async () => {
+  const delegate = memoryBackend({ sweepIntervalMs: 0 });
+  const metadata = baseMetadata({ idempotency_key: 'absent_claim_aba_0001' });
+  const staleResult = { media_buy_id: 'mb_stale' };
+  const newerResult = { media_buy_id: 'mb_newer' };
+  const key = dedupStorageKey(metadata);
+  const legacyKey = legacyDedupStorageKey(metadata);
+
+  let releaseLegacyRead;
+  let markLegacyRead;
+  const legacyReadReached = new Promise(resolve => {
+    markLegacyRead = resolve;
+  });
+  const legacyReadGate = new Promise(resolve => {
+    releaseLegacyRead = resolve;
+  });
+  let blockLegacyRead = true;
+  const backend = {
+    ...delegate,
+    get: async scopedKey => {
+      if (scopedKey === legacyKey && blockLegacyRead) {
+        blockLegacyRead = false;
+        markLegacyRead();
+        await legacyReadGate;
+      }
+      return delegate.get(scopedKey);
+    },
+  };
+  let calls = 0;
+  const handler = new AsyncHandler({
+    webhookDedup: { backend, ttlSeconds: 300, inFlightTtlSeconds: 1 },
+    onCreateMediaBuyStatusChange: () => {
+      calls += 1;
+    },
+  });
+
+  const staleAttempt = handler.handleWebhook({ result: staleResult, metadata });
+  await legacyReadReached;
+  const newerOwner = 'newer-expired-owner';
+  await delegate.put(key, {
+    payloadHash: newerOwner,
+    response: { claimToken: newerOwner, eventFingerprint: dedupEventFingerprint(metadata, newerResult) },
+    expiresAt: Math.floor(Date.now() / 1000) - 1,
+    retainUntil: Math.floor(Date.now() / 1000) + 300,
+  });
+  releaseLegacyRead();
+
+  await assert.rejects(staleAttempt, error => error instanceof WebhookDedupConflictError);
+  assert.equal(calls, 0);
+  assert.equal((await delegate.get(key)).payloadHash, newerOwner);
+});
+
+test('webhookDedup rejects a changed payload after an active lease expires inside the retained window', async () => {
+  const backend = memoryBackend({ sweepIntervalMs: 0 });
+  const metadata = baseMetadata({ idempotency_key: 'retained_expired_claim_0001' });
+  const originalResult = { media_buy_id: 'mb_original' };
+  const owner = 'expired-owner';
+  await backend.put(dedupStorageKey(metadata), {
+    payloadHash: owner,
+    response: { claimToken: owner, eventFingerprint: dedupEventFingerprint(metadata, originalResult) },
+    expiresAt: Math.floor(Date.now() / 1000) - 1,
+    retainUntil: Math.floor(Date.now() / 1000) + 300,
+  });
+  let calls = 0;
+  const handler = new AsyncHandler({
+    webhookDedup: { backend, ttlSeconds: 300, inFlightTtlSeconds: 1 },
+    onCreateMediaBuyStatusChange: () => {
+      calls += 1;
+    },
+  });
+
+  await assert.rejects(
+    handler.handleWebhook({ result: { media_buy_id: 'mb_changed' }, metadata }),
+    error => error instanceof WebhookDedupConflictError
+  );
+  assert.equal(calls, 0);
+});
+
+test('webhookDedup preserves expired-lease payload conflicts through the Redis adapter', async () => {
+  const values = new Map();
+  const prefix = 'webhook-expiry:';
+  const metadata = baseMetadata({ idempotency_key: 'redis_expired_claim_0001' });
+  const originalResult = { media_buy_id: 'mb_original' };
+  const owner = 'expired-owner';
+  values.set(
+    `${prefix}${dedupStorageKey(metadata)}`,
+    JSON.stringify({
+      payloadHash: owner,
+      response: { claimToken: owner, eventFingerprint: dedupEventFingerprint(metadata, originalResult) },
+      expiresAt: Math.floor(Date.now() / 1000) - 1,
+      retainUntil: Math.floor(Date.now() / 1000) + 300,
+    })
+  );
+  const backend = redisBackend(
+    {
+      get: async key => values.get(key) ?? null,
+      set: async () => 'OK',
+      del: async () => 0,
+      eval: async () => {
+        throw new Error('changed payload must conflict before Redis takeover');
+      },
+      ping: async () => 'PONG',
+    },
+    { keyPrefix: prefix }
+  );
+  let calls = 0;
+  const handler = new AsyncHandler({
+    webhookDedup: { backend, ttlSeconds: 300, inFlightTtlSeconds: 1 },
+    onCreateMediaBuyStatusChange: () => {
+      calls += 1;
+    },
+  });
+
+  await assert.rejects(
+    handler.handleWebhook({ result: { media_buy_id: 'mb_changed' }, metadata }),
+    error => error instanceof WebhookDedupConflictError
+  );
+  assert.equal(calls, 0);
+});
+
+test('webhookDedup fails closed on an unknown expired entry inside its retention window', async () => {
+  const backend = memoryBackend({ sweepIntervalMs: 0 });
+  const metadata = baseMetadata({ idempotency_key: 'retained_unknown_claim_0001' });
+  await backend.put(dedupStorageKey(metadata), {
+    payloadHash: 'unknown-owner',
+    response: { unexpected: true },
+    expiresAt: Math.floor(Date.now() / 1000) - 1,
+    retainUntil: Math.floor(Date.now() / 1000) + 300,
+  });
+  let calls = 0;
+  const handler = new AsyncHandler({
+    webhookDedup: { backend, ttlSeconds: 300, inFlightTtlSeconds: 1 },
+    onCreateMediaBuyStatusChange: () => {
+      calls += 1;
+    },
+  });
+
+  assert.equal(await handler.handleWebhook({ result: { media_buy_id: 'mb_1' }, metadata }), 'in_progress');
+  assert.equal(calls, 0);
 });
 
 test('webhookDedup: handler exception releases the claim for an exact retry', async () => {
@@ -884,6 +1136,10 @@ test('webhookDedup: handler exception releases the claim for an exact retry', as
 
     const args = { result: { media_buy_id: 'mb_1' }, metadata: baseMetadata() };
     await assert.rejects(handler.handleWebhook(args), /downstream db write failed/);
+    await assert.rejects(
+      handler.handleWebhook({ ...args, result: { media_buy_id: 'mb_changed' } }),
+      error => error instanceof WebhookDedupConflictError
+    );
     await assert.rejects(handler.handleWebhook(args), /downstream db write failed/);
   } finally {
     console.error = originalError;
@@ -894,16 +1150,13 @@ test('webhookDedup: handler exception releases the claim for an exact retry', as
 
 test('webhookDedup keeps the claim when handled-marker publication fails after callback success', async () => {
   const delegate = memoryBackend({ sweepIntervalMs: 0 });
-  let deleteCalls = 0;
+  let releaseCalls = 0;
   const backend = {
     ...delegate,
     replaceIfPayloadHash: async (key, expected, entry) => {
       if (entry.response?.state === 'adcp_webhook_handled_v1') throw new Error('publish backend outage');
+      if (entry.response?.claimToken && entry.expiresAt < Math.floor(Date.now() / 1000)) releaseCalls += 1;
       return delegate.replaceIfPayloadHash(key, expected, entry);
-    },
-    deleteIfPayloadHash: async (...args) => {
-      deleteCalls += 1;
-      return delegate.deleteIfPayloadHash(...args);
     },
   };
   let calls = 0;
@@ -918,7 +1171,7 @@ test('webhookDedup keeps the claim when handled-marker publication fails after c
   await assert.rejects(handler.handleWebhook(args), /publish backend outage/);
   assert.strictEqual(await handler.handleWebhook(args), 'in_progress');
   assert.strictEqual(calls, 1);
-  assert.strictEqual(deleteCalls, 0, 'post-callback publication failure must not release the side-effect fence');
+  assert.strictEqual(releaseCalls, 0, 'post-callback publication failure must not release the side-effect fence');
 });
 
 test('webhookDedup observes handled state when publication commits and then throws', async () => {

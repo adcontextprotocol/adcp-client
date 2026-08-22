@@ -55,6 +55,7 @@ loading; keep using `requires_capability` for a singular predicate.
 7. Exercise mixed-version tests before rollout: 14→3.0, 14→3.1, 14→3.2 beta, and older buyer→14 server where applicable.
 8. If a legacy brief may return products without a proposal, configure a durable `LegacyPurchaseContinuationStore`, stable `principalScope`, and application-owned `reconcileLegacyPurchase(record, exactInput)` callback before offering `continueLegacyPurchase()`. Keep reverse compact-seller → older-buyer handlers application-owned.
 9. If established 3.0/3.1 proposal discovery and mutation can land on different processes, configure the same durable `EstablishedProposalStore`, stable `principalScope`, and stable non-secret `legacyPurchaseSellerSessionScope` on every coordinator. Recover submitted work with `reconcileEstablishedProposalTask({ account, sellerTaskId })`; see [Media-buy compatibility: durable established proposal state](./guides/MEDIA-BUY-3.2-COMPATIBILITY.md#durable-established-proposal-state). The bundled in-memory store is a non-durable reference implementation.
+10. Upgrade durable idempotency storage before application traffic: add the nullable PostgreSQL `retain_until` column/index, preserve `IdempotencyCacheEntry.retainUntil`, and add atomic `putIfAbsent()`, `replaceIfPayloadHash()`, `replaceIfPayloadHashAndExpired()`, and `deleteIfPayloadHash()` to every custom backend.
 
 ### Legacy continuation store upgrade
 
@@ -198,6 +199,53 @@ a retry against an SDK 13 entry returns `IDEMPOTENCY_CONFLICT` instead of the
 old cached body; reconcile by natural key rather than minting a replacement
 key until the original replay TTL expires. New entries cannot replay a body
 across tenants or tools.
+
+### Upgrade durable idempotency backends before application code
+
+SDK 14 adds an absolute physical-retention fence to every idempotency entry.
+Apply the PostgreSQL table migration before starting an SDK 14 server:
+
+```sql
+ALTER TABLE adcp_idempotency
+  ADD COLUMN IF NOT EXISTS retain_until TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_adcp_idempotency_retain_until
+  ON adcp_idempotency(retain_until, expires_at);
+```
+
+Use the table name configured for each agent. `getIdempotencyMigration()` emits
+the complete current schema for new installs; readiness now probes
+`retain_until`, so starting application traffic against the old shape fails
+closed. The column remains nullable for a rolling database migration, while
+reads and cleanup conservatively retain old-writer rows through the configured
+legacy grace.
+
+Custom `IdempotencyBackend` implementations must preserve the entry's
+`retainUntil` value and implement atomic `putIfAbsent()`,
+`replaceIfPayloadHash()`, `replaceIfPayloadHashAndExpired()`, and
+`deleteIfPayloadHash()`. Upgrade all custom
+adapters before passing them to `createIdempotencyStore()` or `webhookDedup`;
+SDK 14 rejects incomplete backends at construction. Redis adapters must derive
+relative expiry from the absolute horizon using Redis server time, not an
+application-process clock, so clock skew cannot evict the fence early.
+`replaceIfPayloadHashAndExpired()` must test the expected payload hash and
+logical expiry in the same database operation, using backend time and treating
+an entry expiring in the current second as live. A read followed by ordinary
+payload-hash replacement is not equivalent: renewal can preserve the hash and
+create an ABA takeover window.
+`putIfAbsent()` is strictly absent-only in SDK 14; it must return `false` for
+every retained record, including a logically expired one. All expiry reclaim
+uses the exact-generation method above so an earlier absent read cannot erase a
+newer claim that appears and expires while the caller is awaiting another
+store operation.
+
+Audit every Redis-backed SDK store during the upgrade. Outside development and
+test, the idempotency backend, `RedisReplayStore`, and
+`redisCtxMetadataStore` now require a deployment-unique `keyPrefix` when a
+database is shared. An omitted, blank, or SDK-default prefix fails startup.
+For a Redis database operationally dedicated to one deployment, pass
+`acknowledgeIsolatedDatabase: true`; `suppressDefaultPrefixWarning` only
+controls development/test warnings and is not a production acknowledgement.
 
 ## Adopt one compact-first lifecycle
 

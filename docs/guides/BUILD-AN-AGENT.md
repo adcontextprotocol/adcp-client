@@ -490,12 +490,17 @@ The framework auto-handles:
 
 Scoping is per-principal — `resolveSessionKey` doubles as the idempotency principal, so two buyers with different session keys won't share cache entries. Override with `resolveIdempotencyPrincipal` if you need a different scope (e.g., `operator_id`).
 
-**Successful responses are cached.** Request-validation failures and ordinary
-handler errors are not cached, so a transient pre-mutation 5xx can re-execute on
-retry. One safety exception applies after a mutating handler has already
-returned: if strict response validation rejects that response, the framework
-retains an ambiguity fence instead of rerunning the mutation. Reconcile that
-operation by its natural key before issuing a new intent.
+**Successful responses are cached.** Request-validation failures happen before
+the handler and may be retried after correction. Once a mutating handler is
+invoked, however, a thrown exception cannot prove that no upstream side effect
+committed. The framework therefore caches non-transient typed rejections thrown
+directly by the handler as the durable outcome. Transient typed exceptions,
+unknown exceptions, and post-handler response failures become a full-window
+ambiguity fence rather than a misleading retryable response. Exact retries
+never re-enter that handler; reconcile an ambiguous operation by its natural
+key before issuing a new intent. Optional idempotency on non-mutating handlers
+may still release its claim after a thrown error because no mutation was
+admitted.
 
 ### Schema-Driven Validation (opt-in)
 

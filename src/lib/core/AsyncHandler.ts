@@ -132,6 +132,14 @@ export class WebhookDedupConflictError extends Error {
   }
 }
 
+/** Keep the sender claim when durable ownership could not be released. @internal */
+export class WebhookDedupClaimRetentionError extends AggregateError {
+  constructor(errors: Iterable<unknown>, message: string) {
+    super(errors, message);
+    this.name = 'WebhookDedupClaimRetentionError';
+  }
+}
+
 /**
  * Metadata for agent-initiated notifications
  * Same as WebhookMetadata but includes notification-specific fields
@@ -364,6 +372,9 @@ export interface AsyncHandlerConfig {
    * dedicated one. Scope is per-agent so keys from different senders are
    * independent, matching the spec's "scoped to authenticated sender
    * identity" rule.
+   * Custom backends must implement atomic `putIfAbsent()`,
+   * `replaceIfPayloadHash()`, `replaceIfPayloadHashAndExpired()`, and
+   * `deleteIfPayloadHash()` operations.
    *
    * Every delivery without `idempotency_key`, and every malformed present
    * key, fails before handler dispatch. Older A2A senders that cannot emit
@@ -407,10 +418,11 @@ export class AsyncHandler {
       backend &&
       (typeof backend.putIfAbsent !== 'function' ||
         typeof backend.replaceIfPayloadHash !== 'function' ||
+        typeof backend.replaceIfPayloadHashAndExpired !== 'function' ||
         typeof backend.deleteIfPayloadHash !== 'function')
     ) {
       throw new Error(
-        'handlers.webhookDedup.backend must implement atomic putIfAbsent(), replaceIfPayloadHash(), and deleteIfPayloadHash().'
+        'handlers.webhookDedup.backend must implement atomic putIfAbsent(), replaceIfPayloadHash(), replaceIfPayloadHashAndExpired(), and deleteIfPayloadHash().'
       );
     }
     if (dedup?.ttlSeconds !== undefined && (!Number.isSafeInteger(dedup.ttlSeconds) || dedup.ttlSeconds <= 0)) {
@@ -496,6 +508,30 @@ export class AsyncHandler {
     /** Preserves the originating preview API across async completion. */
     previewHandler?: 'canonical' | 'legacy';
   }): Promise<'handled' | 'already_handled' | 'in_progress'> {
+    const dispatched = await this.runWebhookDeduplicated({
+      result,
+      metadata,
+      dispatch: () => this.handleClaimedWebhook({ result, metadata, previewHandler }),
+    });
+    return dispatched.outcome;
+  }
+
+  /**
+   * Claim a sender webhook before invoking settlement or publication work.
+   * The callback runs under the renewable dedup owner, and the handled marker
+   * is installed only after the callback (including durable acknowledgement)
+   * succeeds. This keeps exact retries from re-entering durable recovery.
+   * @internal
+   */
+  async runWebhookDeduplicated<T>({
+    result,
+    metadata,
+    dispatch,
+  }: {
+    result: AdCPAsyncResponseData | undefined;
+    metadata: WebhookMetadata;
+    dispatch: () => Promise<T>;
+  }): Promise<{ outcome: 'handled' | 'already_handled' | 'in_progress'; value?: T }> {
     const dedupClaim = await this.claimWebhook(metadata, result);
     if (dedupClaim.outcome !== 'claimed') {
       await this.emitActivity({
@@ -509,55 +545,15 @@ export class AsyncHandler {
         idempotency_key: metadata.idempotency_key,
         timestamp: metadata.timestamp,
       });
-      return dedupClaim.outcome;
+      return { outcome: dedupClaim.outcome };
     }
 
     const stopClaimRenewal = this.startWebhookClaimRenewal(dedupClaim);
-    let handlerCompleted = false;
+    let dispatchCompleted = false;
     let renewalStopped = false;
     try {
-      // Emit activity
-      await this.emitActivity({
-        type: 'webhook_received',
-        idempotency_key: metadata.idempotency_key,
-        operation_id: metadata.operation_id,
-        agent_id: metadata.agent_id,
-        context_id: metadata.context_id,
-        task_id: metadata.task_id,
-        task_type: metadata.task_type,
-        status: metadata.status,
-        payload: result,
-        timestamp: metadata.timestamp,
-      });
-
-      // Check if this is a notification (media_buy_delivery with notification_type)
-      // Notifications are treated like status updates for an ongoing "get delivery report" operation
-      // The operation_id (from URL) groups all reports for the same agent + month
-      if (
-        metadata.task_type === 'media_buy_delivery' &&
-        result &&
-        typeof result === 'object' &&
-        'notification_type' in result
-      ) {
-        const notificationPayload = result as unknown as MediaBuyDeliveryNotification;
-
-        // Build notification metadata
-        // operation_id comes from webhook URL and was lazily generated from agent + month
-        const notificationMetadata: NotificationMetadata = {
-          ...metadata,
-          notification_type: notificationPayload.notification_type,
-          sequence_number: notificationPayload.sequence_number,
-          next_expected_at: notificationPayload.next_expected_at,
-        };
-
-        await this.config.onMediaBuyDeliveryNotification?.(notificationPayload, notificationMetadata);
-      } else {
-        // All status changes go through the specific handler
-        // The handler receives metadata with status and can act accordingly
-        await this.handleCompletion(metadata.task_type, result, metadata, previewHandler);
-      }
-
-      handlerCompleted = true;
+      const value = await dispatch();
+      dispatchCompleted = true;
       await stopClaimRenewal();
       renewalStopped = true;
 
@@ -587,11 +583,31 @@ export class AsyncHandler {
           throw new Error('Webhook processing claim was lost before handler publication completed.');
         }
       }
-      return 'handled';
+      return { outcome: 'handled', value };
     } catch (error) {
-      if (!handlerCompleted && dedupClaim.claimKey && dedupClaim.claimToken && this.config.webhookDedup) {
+      if (
+        !dispatchCompleted &&
+        !(error instanceof WebhookDedupClaimRetentionError) &&
+        dedupClaim.claimKey &&
+        dedupClaim.claimToken &&
+        this.config.webhookDedup
+      ) {
         try {
-          await this.config.webhookDedup.backend.deleteIfPayloadHash(dedupClaim.claimKey, dedupClaim.claimToken);
+          const nowSeconds = Math.floor(Date.now() / 1000);
+          await this.config.webhookDedup.backend.replaceIfPayloadHash(dedupClaim.claimKey, dedupClaim.claimToken, {
+            // Release processing ownership for an exact retry without
+            // releasing the sender key to a different payload. The expired
+            // logical lease is immediately reclaimable by the same event;
+            // retainUntil keeps its immutable fingerprint through the full
+            // dedup window.
+            payloadHash: dedupClaim.claimToken,
+            response: {
+              claimToken: dedupClaim.claimToken,
+              eventFingerprint: dedupClaim.eventFingerprint,
+            },
+            expiresAt: nowSeconds - 1,
+            retainUntil: nowSeconds + dedupClaim.ttlSeconds!,
+          });
         } catch (rollbackError) {
           console.error(
             `Error rolling back webhook dedup claim for task ${metadata.task_type}:`,
@@ -603,6 +619,49 @@ export class AsyncHandler {
     } finally {
       if (!renewalStopped) await stopClaimRenewal();
     }
+  }
+
+  /** Dispatch a webhook whose sender dedup claim is already owned. @internal */
+  async handleClaimedWebhook({
+    result,
+    metadata,
+    previewHandler,
+  }: {
+    result: AdCPAsyncResponseData | undefined;
+    metadata: WebhookMetadata;
+    previewHandler?: 'canonical' | 'legacy';
+  }): Promise<void> {
+    await this.emitActivity({
+      type: 'webhook_received',
+      idempotency_key: metadata.idempotency_key,
+      operation_id: metadata.operation_id,
+      agent_id: metadata.agent_id,
+      context_id: metadata.context_id,
+      task_id: metadata.task_id,
+      task_type: metadata.task_type,
+      status: metadata.status,
+      payload: result,
+      timestamp: metadata.timestamp,
+    });
+
+    if (
+      metadata.task_type === 'media_buy_delivery' &&
+      result &&
+      typeof result === 'object' &&
+      'notification_type' in result
+    ) {
+      const notificationPayload = result as unknown as MediaBuyDeliveryNotification;
+      const notificationMetadata: NotificationMetadata = {
+        ...metadata,
+        notification_type: notificationPayload.notification_type,
+        sequence_number: notificationPayload.sequence_number,
+        next_expected_at: notificationPayload.next_expected_at,
+      };
+      await this.config.onMediaBuyDeliveryNotification?.(notificationPayload, notificationMetadata);
+      return;
+    }
+
+    await this.handleCompletion(metadata.task_type, result, metadata, previewHandler);
   }
 
   private startWebhookClaimRenewal(claim: WebhookDedupClaim): () => Promise<void> {
@@ -625,7 +684,11 @@ export class AsyncHandler {
             payloadHash: currentToken,
             response: { claimToken: currentToken, eventFingerprint: claim.eventFingerprint },
             expiresAt: nowSeconds + claim.claimTtlSeconds!,
-            retainUntil: nowSeconds + claim.claimTtlSeconds!,
+            // The processing lease may be short for crash recovery, but the
+            // sender key remains bound to this exact event for the complete
+            // dedup window. An expired exact event may reclaim the lease;
+            // a changed payload may not take over the retained key.
+            retainUntil: nowSeconds + claim.ttlSeconds!,
           });
           if (!renewed) {
             stopped = true;
@@ -800,6 +863,7 @@ export class AsyncHandler {
     const claimKey = completedKey;
     const nowSeconds = Math.floor(Date.now() / 1000);
     const claimExpiresAt = nowSeconds + claimTtlSeconds;
+    const claimRetainUntil = nowSeconds + ttlSeconds;
     const eventFingerprint = createHash('sha256')
       .update(
         canonicalize({
@@ -835,6 +899,15 @@ export class AsyncHandler {
     if (completedState === 'corrupt') {
       return { outcome: 'in_progress' };
     }
+    if (completedState === 'expired' && webhookDedupEntryRetained(completed, nowSeconds)) {
+      const retainedFingerprint = webhookActiveClaimFingerprint(completed);
+      if (retainedFingerprint !== undefined && retainedFingerprint !== eventFingerprint) {
+        throw new WebhookDedupConflictError();
+      }
+      if (retainedFingerprint === undefined && webhookHandledFingerprint(completed) === undefined) {
+        return { outcome: 'in_progress' };
+      }
+    }
 
     const legacyCompleted = await dedup.backend.get(legacyCompletedKey);
     const legacyState = webhookDedupEntryState(legacyCompleted, nowSeconds);
@@ -853,19 +926,22 @@ export class AsyncHandler {
       payloadHash: claimToken,
       response: { claimToken, eventFingerprint },
       expiresAt: claimExpiresAt,
-      retainUntil: claimExpiresAt,
+      retainUntil: claimRetainUntil,
     };
-    // Atomic logical-expiry takeover belongs in putIfAbsent. A read-derived
-    // CAS can overwrite a claim renewed after this receiver's stale read, or
-    // a newly published handled marker whose fingerprint matches an older
-    // generation (ABA).
-    const claimed = await dedup.backend.putIfAbsent(claimKey, claimEntry);
+    // Fresh claims use putIfAbsent. Retained expired generations require one
+    // backend-time CAS over both the exact payload hash and logical expiry.
+    // Splitting either predicate into a prior read would let a delayed retry
+    // overwrite a renewed owner or a newer same-fingerprint generation (ABA).
+    const claimed =
+      completedState === 'expired' && completed !== null
+        ? await dedup.backend.replaceIfPayloadHashAndExpired(claimKey, completed.payloadHash, claimEntry)
+        : await dedup.backend.putIfAbsent(claimKey, claimEntry);
     if (claimed) {
       const fenced = await dedup.backend.replaceIfPayloadHash(claimKey, claimToken, {
         payloadHash: claimToken,
         response: { claimToken, eventFingerprint },
         expiresAt: claimExpiresAt,
-        retainUntil: claimExpiresAt,
+        retainUntil: claimRetainUntil,
       });
       if (!fenced) throw new Error('Webhook processing claim could not establish atomic ownership.');
       return {
@@ -891,6 +967,15 @@ export class AsyncHandler {
       const activeFingerprint = webhookActiveClaimFingerprint(completedAfterRace);
       if (activeFingerprint !== undefined && activeFingerprint !== eventFingerprint) {
         throw new WebhookDedupConflictError();
+      }
+    }
+    if (racedState === 'expired' && webhookDedupEntryRetained(completedAfterRace, nowSeconds)) {
+      const retainedFingerprint = webhookActiveClaimFingerprint(completedAfterRace);
+      if (retainedFingerprint !== undefined && retainedFingerprint !== eventFingerprint) {
+        throw new WebhookDedupConflictError();
+      }
+      if (retainedFingerprint === undefined && webhookHandledFingerprint(completedAfterRace) === undefined) {
+        return { outcome: 'in_progress' };
       }
     }
     return { outcome: 'in_progress' };
@@ -927,8 +1012,20 @@ type WebhookDedupEntryState = 'absent' | 'expired' | 'live' | 'corrupt';
 
 function webhookDedupEntryState(entry: IdempotencyCacheEntry | null, nowSeconds: number): WebhookDedupEntryState {
   if (entry === null) return 'absent';
-  if (!Number.isFinite(entry.expiresAt)) return 'corrupt';
+  if (
+    typeof entry.payloadHash !== 'string' ||
+    !Number.isFinite(entry.expiresAt) ||
+    (entry.retainUntil !== undefined && !Number.isFinite(entry.retainUntil))
+  ) {
+    return 'corrupt';
+  }
   return entry.expiresAt >= nowSeconds ? 'live' : 'expired';
+}
+
+function webhookDedupEntryRetained(entry: IdempotencyCacheEntry | null, nowSeconds: number): boolean {
+  if (!entry) return false;
+  const retainUntil = entry.retainUntil ?? entry.expiresAt;
+  return Number.isFinite(retainUntil) && retainUntil >= nowSeconds;
 }
 
 function legacyWebhookHandledFence(entry: IdempotencyCacheEntry | null): boolean {

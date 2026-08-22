@@ -213,7 +213,7 @@ if (result.status === 'submitted' && result.submitted) {
 const humanApprovalHandler = (context) => {
   if (context.inputRequest.field === 'final_approval') {
     // Defer for human approval
-    return { defer: true, token: `approval-${Date.now()}` };
+    return { defer: true, token: crypto.randomUUID() };
   }
   return 'auto-approved';
 };
@@ -221,7 +221,8 @@ const humanApprovalHandler = (context) => {
 const result = await agent.getProducts(params, humanApprovalHandler);
 
 if (result.status === 'deferred' && result.deferred) {
-  console.log(`Deferred with token: ${result.deferred.token}`);
+  await approvedContinuationStore.save(result.deferred.token);
+  console.log('Deferred; continuation stored securely.');
   console.log(`Question: ${result.deferred.question}`);
   
   // Later, when human provides input...
@@ -265,8 +266,8 @@ try {
     console.error('Too many clarifications:', error.message);
     // Improve your handler logic
   } else if (error instanceof DeferredTaskError) {
-    console.log('Task deferred with token:', error.token);
-    // Normal flow for deferred tasks
+    await approvedContinuationStore.save(error.token);
+    console.log('Task deferred; continuation stored securely.');
   } else {
     console.error('Unexpected error:', error.message);
   }

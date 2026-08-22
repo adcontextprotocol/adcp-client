@@ -2151,6 +2151,260 @@ describe('TaskExecutor pre-dispatch boundary', () => {
     assert.equal(await client.dispatchParsedWebhook(parsed('durable_webhook_key_0001')), true);
     assert.equal(recoveries, 1);
     assert.equal(handlerCalls, 1);
+    assert.equal(await client.dispatchParsedWebhook(parsed('durable_webhook_key_0001')), true);
+    assert.equal(recoveries, 1, 'an exact sender retry must be deduplicated before durable recovery');
+    assert.equal(handlerCalls, 1);
+  });
+
+  test('releases durable settlement ownership before making a failed sender claim retryable', async () => {
+    const backend = memoryBackend({ sweepIntervalMs: 0 });
+    const replaceIfPayloadHash = backend.replaceIfPayloadHash.bind(backend);
+    let recoveryCalls = 0;
+    let handlerCalls = 0;
+    let nackFinished = false;
+    let releaseNack;
+    let markNackEntered;
+    const nackEntered = new Promise(resolve => {
+      markNackEntered = resolve;
+    });
+    backend.replaceIfPayloadHash = async (...args) => {
+      const replacement = args[2];
+      if (replacement.response?.claimToken && replacement.expiresAt < Math.floor(Date.now() / 1000)) {
+        assert.equal(nackFinished, true, 'the durable NACK must finish before the sender claim is released');
+      }
+      return replaceIfPayloadHash(...args);
+    };
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      const client = new SingleAgentClient(AGENT, {
+        allowUnauthenticatedWebhooks: true,
+        strictSchemaValidation: false,
+        validateFeatures: false,
+        handlers: {
+          webhookDedup: { backend },
+          onCreateMediaBuyStatusChange: () => {
+            handlerCalls += 1;
+            if (handlerCalls === 1) throw new Error('publication failed');
+          },
+        },
+      });
+      client.registerDurableSettlementRecovery(async (_operationId, observation) => {
+        recoveryCalls += 1;
+        return {
+          settled: true,
+          status: 'completed',
+          result: observation.result,
+          onDispatchError: async () => {
+            markNackEntered();
+            await new Promise(resolve => {
+              releaseNack = resolve;
+            });
+            nackFinished = true;
+          },
+        };
+      });
+      const parsed = {
+        ok: true,
+        protocol: 'mcp',
+        envelope: {},
+        result: { media_buy_id: 'nack-before-release' },
+        metadata: {
+          operationId: 'nack-before-release-operation',
+          taskId: 'nack-before-release-task',
+          taskType: 'create_media_buy',
+          status: 'completed',
+          requiresDurableSettlement: true,
+          idempotencyKey: 'nack_before_release_key_0001',
+        },
+      };
+
+      const first = client.dispatchParsedWebhook(parsed);
+      await nackEntered;
+      await assert.rejects(
+        client.dispatchParsedWebhook(parsed),
+        error => error?.code === 'webhook_publication_in_progress'
+      );
+      assert.equal(recoveryCalls, 1);
+      releaseNack();
+      await assert.rejects(first, /publication failed/);
+
+      assert.equal(await client.dispatchParsedWebhook(parsed), true);
+      assert.equal(recoveryCalls, 2);
+      assert.equal(handlerCalls, 2);
+    } finally {
+      console.error = originalError;
+    }
+  });
+
+  test('does not NACK durable settlement after ACK when sender marker publication fails', async () => {
+    const backend = memoryBackend({ sweepIntervalMs: 0 });
+    const replaceIfPayloadHash = backend.replaceIfPayloadHash.bind(backend);
+    backend.replaceIfPayloadHash = async (...args) => {
+      if (args[2]?.response?.state === 'adcp_webhook_handled_v1') return false;
+      return replaceIfPayloadHash(...args);
+    };
+    let recoveryCalls = 0;
+    let acknowledgements = 0;
+    let rejections = 0;
+    const client = new SingleAgentClient(AGENT, {
+      allowUnauthenticatedWebhooks: true,
+      strictSchemaValidation: false,
+      validateFeatures: false,
+      handlers: {
+        webhookDedup: { backend },
+        onCreateMediaBuyStatusChange: () => undefined,
+      },
+    });
+    client.registerDurableSettlementRecovery(async (_operationId, observation) => {
+      recoveryCalls += 1;
+      return {
+        settled: true,
+        status: 'completed',
+        result: observation.result,
+        afterDispatch: async () => {
+          acknowledgements += 1;
+        },
+        onDispatchError: async () => {
+          rejections += 1;
+        },
+      };
+    });
+    const parsed = {
+      ok: true,
+      protocol: 'mcp',
+      envelope: {},
+      result: { media_buy_id: 'ack-before-marker' },
+      metadata: {
+        operationId: 'ack-before-marker-operation',
+        taskId: 'ack-before-marker-task',
+        taskType: 'create_media_buy',
+        status: 'completed',
+        requiresDurableSettlement: true,
+        idempotencyKey: 'ack_before_marker_key_0001',
+      },
+    };
+
+    await assert.rejects(client.dispatchParsedWebhook(parsed), /claim was lost/);
+    assert.equal(acknowledgements, 1);
+    assert.equal(rejections, 0);
+    await assert.rejects(
+      client.dispatchParsedWebhook(parsed),
+      error => error?.code === 'webhook_publication_in_progress'
+    );
+    assert.equal(recoveryCalls, 1, 'the retained sender claim must prevent immediate recovery after ACK');
+  });
+
+  test('retains the sender claim when durable settlement ownership cannot be released', async () => {
+    const backend = memoryBackend({ sweepIntervalMs: 0 });
+    const replaceIfPayloadHash = backend.replaceIfPayloadHash.bind(backend);
+    let releaseCalls = 0;
+    backend.replaceIfPayloadHash = async (...args) => {
+      const replacement = args[2];
+      if (replacement.response?.claimToken && replacement.expiresAt < Math.floor(Date.now() / 1000)) {
+        releaseCalls += 1;
+      }
+      return replaceIfPayloadHash(...args);
+    };
+    let recoveryCalls = 0;
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      const client = new SingleAgentClient(AGENT, {
+        allowUnauthenticatedWebhooks: true,
+        strictSchemaValidation: false,
+        validateFeatures: false,
+        handlers: {
+          webhookDedup: { backend },
+          onCreateMediaBuyStatusChange: () => {
+            throw new Error('handler failed before publication');
+          },
+        },
+      });
+      client.registerDurableSettlementRecovery(async (_operationId, observation) => {
+        recoveryCalls += 1;
+        return {
+          settled: true,
+          status: 'completed',
+          result: observation.result,
+          onDispatchError: async () => {
+            throw new Error('durable NACK failed');
+          },
+        };
+      });
+      const parsed = {
+        ok: true,
+        protocol: 'mcp',
+        envelope: {},
+        result: { media_buy_id: 'retain-after-nack-failure' },
+        metadata: {
+          operationId: 'retain-after-nack-failure-operation',
+          taskId: 'retain-after-nack-failure-task',
+          taskType: 'create_media_buy',
+          status: 'completed',
+          requiresDurableSettlement: true,
+          idempotencyKey: 'retain_after_nack_failure_0001',
+        },
+      };
+
+      await assert.rejects(
+        client.dispatchParsedWebhook(parsed),
+        error =>
+          error?.code === 'webhook_publication_in_progress' &&
+          error?.cause?.name === 'WebhookDedupClaimRetentionError' &&
+          error?.cause?.errors?.some(cause => cause?.message === 'durable NACK failed')
+      );
+      assert.equal(releaseCalls, 0);
+      await assert.rejects(
+        client.dispatchParsedWebhook(parsed),
+        error => error?.code === 'webhook_publication_in_progress'
+      );
+      assert.equal(recoveryCalls, 1);
+      assert.equal(releaseCalls, 0);
+    } finally {
+      console.error = originalError;
+    }
+  });
+
+  test('maps durable NACK retention to a public retryable error without configured handlers', async () => {
+    const client = new SingleAgentClient(AGENT, {
+      allowUnauthenticatedWebhooks: true,
+      strictSchemaValidation: false,
+      validateFeatures: false,
+    });
+    client.registerDurableSettlementRecovery(async (_operationId, observation) => ({
+      settled: true,
+      status: 'completed',
+      result: observation.result,
+      afterDispatch: async () => {
+        throw new Error('durable ACK failed');
+      },
+      onDispatchError: async () => {
+        throw new Error('durable NACK failed');
+      },
+    }));
+    const parsed = {
+      ok: true,
+      protocol: 'mcp',
+      envelope: {},
+      result: { media_buy_id: 'no-handler-retained-buy' },
+      metadata: {
+        operationId: 'no-handler-retained-operation',
+        taskId: 'no-handler-retained-task',
+        taskType: 'create_media_buy',
+        status: 'completed',
+        requiresDurableSettlement: true,
+        idempotencyKey: 'no_handler_retained_event_0001',
+      },
+    };
+
+    await assert.rejects(
+      client.dispatchParsedWebhook(parsed),
+      error =>
+        error?.code === 'webhook_publication_in_progress' &&
+        error?.cause?.name === 'WebhookDedupClaimRetentionError' &&
+        error?.cause?.errors?.some(cause => cause?.message === 'durable NACK failed')
+    );
   });
 
   test('publishes a durably queued callback only after durable task binding', async () => {

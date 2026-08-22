@@ -192,7 +192,7 @@ const smartHandler = createConditionalHandler([
     handler: (ctx) => {
       // Defer expensive approvals to human
       if (ctx.getPreviousResponse('budget') > 75000) {
-        return { defer: true, token: `approval-${Date.now()}` };
+        return { defer: true, token: crypto.randomUUID() };
       }
       return true;
     }
@@ -282,7 +282,7 @@ async function createCampaignWithApprovals(brief: string) {
         }
         
         // Second check: defer expensive budgets
-        return { defer: true, token: `budget-approval-${Date.now()}` };
+        return { defer: true, token: crypto.randomUUID() };
       }
     },
     {
@@ -298,7 +298,7 @@ async function createCampaignWithApprovals(brief: string) {
       condition: (ctx) => ctx.inputRequest.field === 'creative_approval',
       handler: (ctx) => {
         // Always defer creative approvals
-        return { defer: true, token: `creative-${Date.now()}` };
+        return { defer: true, token: crypto.randomUUID() };
       }
     }
   ], deferAllHandler);

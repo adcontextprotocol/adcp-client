@@ -9284,60 +9284,70 @@ describe('legacy products-only purchase continuations', () => {
     assert.equal(typeof acknowledgedSdkPublication.operation.acknowledgedSettlementFingerprint, 'string');
     assert.ok(Date.parse(acknowledgedSdkPublication.operation.replayExpiresAt) > Date.now());
 
-    const senderStore = createInMemoryLegacyPurchaseContinuationStore({ maxRecords: 1 });
-    const senderToken = 'sender-publication-token';
-    const senderClaim = {
-      ...claim,
-      idempotencyKey: 'sender-publication-key',
-      inputFingerprint: 'sender-publication-input',
-      operationKey: 'sender-publication-operation',
-      callbackOperationId: 'sender-publication-callback',
-      sellerTaskId: 'sender-publication-task',
-      replayExpiresAt: new Date(Date.now() + 10).toISOString(),
-    };
-    assert.equal(
-      (await senderStore.create(continuation(senderToken, 'sender-publication-issuance'))).outcome,
-      'created'
-    );
-    assert.equal((await senderStore.claim(senderToken, { claim: senderClaim, expected: binding })).outcome, 'claimed');
-    assert.equal(await senderStore.recordSubmittedTask(senderToken, senderClaim, senderClaim.sellerTaskId), true);
-    const senderPending = {
-      operationId: senderClaim.callbackOperationId,
-      serverTaskId: senderClaim.sellerTaskId,
-      taskType: 'create_media_buy',
-      idempotencyKey: 'sender-publication-event',
-      terminal,
-    };
-    assert.equal(
-      (await senderStore.recordPendingSettlement(senderToken, senderClaim, senderPending)).outcome,
-      'recorded'
-    );
-    assert.equal((await senderStore.complete(senderToken, senderClaim, terminal)).outcome, 'pending_completed');
-    const senderOwnerId = 'sender-publication-owner';
-    assert.equal(
-      await senderStore.claimPendingSettlementPublication(senderToken, senderClaim, senderPending, {
-        ownerId: senderOwnerId,
-        expiresAt: new Date(Date.now() + 60_000).toISOString(),
-      }),
-      true
-    );
-    await new Promise(resolve => setTimeout(resolve, 15));
-    assert.equal(
-      (await senderStore.create(continuation('blocked-replacement-token', 'blocked-replacement-issuance'))).outcome,
-      'capacity'
-    );
-    assert.ok(await senderStore.get(senderToken));
-    assert.equal(
-      await senderStore.releasePendingSettlementPublication(senderToken, senderClaim, senderPending, senderOwnerId),
-      true
-    );
-    assert.equal(
-      (await senderStore.create(continuation('sender-replacement-token', 'sender-replacement-issuance'))).outcome,
-      'capacity'
-    );
-    const retainedSenderPublication = await senderStore.get(senderToken);
-    assert.ok(retainedSenderPublication.operation.pendingSettlement);
-    assert.ok(Date.parse(retainedSenderPublication.operation.replayExpiresAt) > Date.now());
+    const originalDateNow = Date.now;
+    let senderNow = originalDateNow();
+    Date.now = () => senderNow;
+    try {
+      const senderStore = createInMemoryLegacyPurchaseContinuationStore({ maxRecords: 1 });
+      const senderToken = 'sender-publication-token';
+      const senderClaim = {
+        ...claim,
+        idempotencyKey: 'sender-publication-key',
+        inputFingerprint: 'sender-publication-input',
+        operationKey: 'sender-publication-operation',
+        callbackOperationId: 'sender-publication-callback',
+        sellerTaskId: 'sender-publication-task',
+        replayExpiresAt: new Date(Date.now() + 10).toISOString(),
+      };
+      assert.equal(
+        (await senderStore.create(continuation(senderToken, 'sender-publication-issuance'))).outcome,
+        'created'
+      );
+      assert.equal(
+        (await senderStore.claim(senderToken, { claim: senderClaim, expected: binding })).outcome,
+        'claimed'
+      );
+      assert.equal(await senderStore.recordSubmittedTask(senderToken, senderClaim, senderClaim.sellerTaskId), true);
+      const senderPending = {
+        operationId: senderClaim.callbackOperationId,
+        serverTaskId: senderClaim.sellerTaskId,
+        taskType: 'create_media_buy',
+        idempotencyKey: 'sender-publication-event',
+        terminal,
+      };
+      assert.equal(
+        (await senderStore.recordPendingSettlement(senderToken, senderClaim, senderPending)).outcome,
+        'recorded'
+      );
+      assert.equal((await senderStore.complete(senderToken, senderClaim, terminal)).outcome, 'pending_completed');
+      const senderOwnerId = 'sender-publication-owner';
+      assert.equal(
+        await senderStore.claimPendingSettlementPublication(senderToken, senderClaim, senderPending, {
+          ownerId: senderOwnerId,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        }),
+        true
+      );
+      senderNow += 11;
+      assert.equal(
+        (await senderStore.create(continuation('blocked-replacement-token', 'blocked-replacement-issuance'))).outcome,
+        'capacity'
+      );
+      assert.ok(await senderStore.get(senderToken));
+      assert.equal(
+        await senderStore.releasePendingSettlementPublication(senderToken, senderClaim, senderPending, senderOwnerId),
+        true
+      );
+      assert.equal(
+        (await senderStore.create(continuation('sender-replacement-token', 'sender-replacement-issuance'))).outcome,
+        'capacity'
+      );
+      const retainedSenderPublication = await senderStore.get(senderToken);
+      assert.ok(retainedSenderPublication.operation.pendingSettlement);
+      assert.ok(Date.parse(retainedSenderPublication.operation.replayExpiresAt) > Date.now());
+    } finally {
+      Date.now = originalDateNow;
+    }
   });
 
   test('extends SDK proof retention when acknowledging a completed result without an outbox', async () => {

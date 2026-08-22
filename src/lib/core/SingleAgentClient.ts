@@ -147,7 +147,12 @@ import type {
 import type { AdcpTaskName, TaskRequestFor, TaskResponseTypeMap } from './AgentClient';
 import type { DeferredTaskStorage } from '../storage/interfaces';
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
-import { AsyncHandler, WebhookDedupConflictError, WebhookDedupInputError } from './AsyncHandler';
+import {
+  AsyncHandler,
+  WebhookDedupClaimRetentionError,
+  WebhookDedupConflictError,
+  WebhookDedupInputError,
+} from './AsyncHandler';
 import { verifyWebhookRequest, type WebhookHeaderValue, type WebhookHeadersLike } from '../webhooks';
 import {
   InMemoryWebhookRegistrationStore,
@@ -2904,31 +2909,19 @@ export class SingleAgentClient {
    *
    * @example
    * ```typescript
-   * import { verifyWebhookRequest } from '@adcp/sdk/webhooks';
-   *
-   * app.post('/webhook/:taskType', async (req, res) => {
-   *   try {
-   *     const check = verifyWebhookRequest({
-   *       rawBody: req.rawBody,
-   *       headers: req.headers,
-   *       globalSecret: process.env.WEBHOOK_SECRET,
-   *     });
-   *     if (!check.ok) return res.status(401).json({ error: check.reason });
-   *
-   *     const handled = await client.handleWebhook(
-   *       req.body,
-   *       req.params.taskType,
-   *       req.params.operationId,
-   *       check.signature,
-   *       check.timestamp,
-   *       req.rawBody
-   *     );
-   *     res.status(200).json({ received: handled });
-   *   } catch (error) {
-   *     res.status(401).json({ error: error.message });
-   *   }
-   * });
+   * app.post(
+   *   '/webhook/:task_type/:operation_id',
+   *   express.raw({ type: 'application/json' }),
+   *   client.createWebhookHandler({
+   *     getRequestUrl: req => `https://buyer.example${req.originalUrl}`,
+   *   }),
+   * );
    * ```
+   *
+   * `createWebhookHandler()` preserves the SDK's typed HTTP mapping: authentication
+   * failures return 401, invalid/conflicting deliveries return 400/409, rate abuse
+   * returns 429, and transient verification, storage, or publication failures return
+   * 503 for seller retry. Do not map every `handleWebhook()` exception to 401.
    */
   async handleWebhook(
     payload: MCPWebhookPayload | A2ATask | TaskStatusUpdateEvent,
@@ -3456,158 +3449,231 @@ export class SingleAgentClient {
     }
     this.rememberCanonicalCreativeWebhookContext(metadata);
     let externalStatus: ExternalTaskStatusResult | undefined;
+    let forgetPolicyState = false;
     try {
       const canonicalResult = this.canonicalizeWebhookCreativeResult(metadata, parsed.result, canonicalCreativeTask);
-      const policyDispatch = await this.applyProductPropertyPolicyToWebhookResult(
-        canonicalResult as AdCPAsyncResponseData | undefined,
-        metadata
-      );
-      let webhookResult = policyDispatch.result;
-      metadata = policyDispatch.metadata;
+      const dedupResult = canonicalResult as AdCPAsyncResponseData | undefined;
+      const dedupMetadata = { ...metadata };
+      let webhookResult = dedupResult;
+      let suppressHandler = false;
 
-      if (metadata.task_type === 'request_proposals') {
-        assertNativeRequestProposalsResult(webhookResult);
-      }
+      const dispatchClaimedWebhook = async (): Promise<boolean> => {
+        try {
+          const policyDispatch = await this.applyProductPropertyPolicyToWebhookResult(webhookResult, metadata);
+          webhookResult = policyDispatch.result;
+          metadata = policyDispatch.metadata;
+          suppressHandler = policyDispatch.suppressHandler;
 
-      const observation = {
-        status: metadata.status as import('./ConversationTypes').TaskStatus,
-        result: webhookResult,
-        serverTaskId: metadata.task_id,
-        taskType: metadata.task_type,
-        ...(metadata.idempotency_key !== undefined && { idempotencyKey: metadata.idempotency_key }),
-      };
-      if (parsed.metadata.requiresDurableSettlement === true) {
-        const recovered = await this.recoverDurableSettlement(metadata.operation_id, observation);
-        if (recovered) {
-          const hasTerminalStatus =
-            recovered.status !== undefined && DURABLE_SETTLEMENT_TERMINAL_STATUSES.has(recovered.status);
-          const validQueued =
-            recovered.queued === true &&
-            recovered.settled === false &&
-            recovered.duplicate !== true &&
-            recovered.status === undefined &&
-            recovered.result === undefined &&
-            recovered.error === undefined;
-          const validDuplicate =
-            recovered.duplicate === true &&
-            recovered.settled === true &&
-            recovered.queued !== true &&
-            hasTerminalStatus;
-          const validSettled =
-            recovered.settled === true &&
-            recovered.duplicate !== true &&
-            recovered.queued !== true &&
-            hasTerminalStatus &&
-            (recovered.status !== 'completed' || recovered.result !== undefined);
-          if (!validQueued && !validDuplicate && !validSettled) {
-            throw new WebhookDispatchError(
-              'webhook_durable_settlement_unavailable',
-              'The durable settlement recoverer returned an invalid or contradictory callback outcome.'
+          if (metadata.task_type === 'request_proposals') {
+            assertNativeRequestProposalsResult(webhookResult);
+          }
+
+          const observation = {
+            status: metadata.status as import('./ConversationTypes').TaskStatus,
+            result: webhookResult,
+            serverTaskId: metadata.task_id,
+            taskType: metadata.task_type,
+            ...(metadata.idempotency_key !== undefined && { idempotencyKey: metadata.idempotency_key }),
+          };
+          if (parsed.metadata.requiresDurableSettlement === true) {
+            const recovered = await this.recoverDurableSettlement(metadata.operation_id, observation);
+            if (recovered) {
+              const hasTerminalStatus =
+                recovered.status !== undefined && DURABLE_SETTLEMENT_TERMINAL_STATUSES.has(recovered.status);
+              const validQueued =
+                recovered.queued === true &&
+                recovered.settled === false &&
+                recovered.duplicate !== true &&
+                recovered.status === undefined &&
+                recovered.result === undefined &&
+                recovered.error === undefined;
+              const validDuplicate =
+                recovered.duplicate === true &&
+                recovered.settled === true &&
+                recovered.queued !== true &&
+                hasTerminalStatus;
+              const validSettled =
+                recovered.settled === true &&
+                recovered.duplicate !== true &&
+                recovered.queued !== true &&
+                hasTerminalStatus &&
+                (recovered.status !== 'completed' || recovered.result !== undefined);
+              if (!validQueued && !validDuplicate && !validSettled) {
+                throw new WebhookDispatchError(
+                  'webhook_durable_settlement_unavailable',
+                  'The durable settlement recoverer returned an invalid or contradictory callback outcome.'
+                );
+              }
+              externalStatus = recovered;
+            } else {
+              throw new WebhookDispatchError(
+                'webhook_durable_settlement_unavailable',
+                'The callback requires durable mutation settlement, but no recoverable settlement route is available.'
+              );
+            }
+          } else {
+            externalStatus = await this.executor.observeExternalTaskStatus(
+              metadata.operation_id,
+              observation.status,
+              observation.result,
+              { serverTaskId: observation.serverTaskId, taskType: observation.taskType }
             );
           }
-          externalStatus = recovered;
-        } else {
-          throw new WebhookDispatchError(
-            'webhook_durable_settlement_unavailable',
-            'The callback requires durable mutation settlement, but no recoverable settlement route is available.'
-          );
-        }
-      } else {
-        externalStatus = await this.executor.observeExternalTaskStatus(
-          metadata.operation_id,
-          observation.status,
-          observation.result,
-          { serverTaskId: observation.serverTaskId, taskType: observation.taskType }
-        );
-      }
-      if (!externalStatus) throw new Error('Webhook settlement did not produce an observable status.');
-      if (externalStatus.queued) return true;
-      if (externalStatus.duplicate) {
-        metadata = {
-          ...metadata,
-          status: externalStatus.status ?? metadata.status,
-          ...(externalStatus.error !== undefined && { message: externalStatus.error }),
-        };
-        const duplicateActivity: Activity = {
-          type: 'webhook_duplicate',
-          operation_id: metadata.operation_id,
-          agent_id: metadata.agent_id,
-          context_id: metadata.context_id,
-          task_id: metadata.task_id,
-          task_type: metadata.task_type,
-          status: metadata.status,
-          idempotency_key: metadata.idempotency_key,
-          timestamp: metadata.timestamp,
-        };
-        await this.config.onActivity?.(canonicalCreativeActivity(duplicateActivity));
-        await this.asyncHandler?.handleDurableSettlementDuplicate(metadata);
-        await externalStatus.afterDispatch?.();
-        return true;
-      }
-      if (externalStatus.settled) {
-        webhookResult = externalStatus.result as AdCPAsyncResponseData | undefined;
-        metadata = {
-          ...metadata,
-          status: externalStatus.status ?? metadata.status,
-          ...(externalStatus.error !== undefined && { message: externalStatus.error }),
-        };
-      }
-
-      // Emit activity
-      await this.config.onActivity?.(
-        canonicalCreativeActivity({
-          type: 'webhook_received',
-          operation_id: metadata.operation_id,
-          agent_id: metadata.agent_id,
-          context_id: metadata.context_id,
-          task_id: metadata.task_id,
-          task_type: metadata.task_type,
-          status: metadata.status,
-          payload: webhookResult,
-          timestamp: metadata.timestamp,
-        })
-      );
-
-      if (policyDispatch.suppressHandler) {
-        await externalStatus.afterDispatch?.();
-        return true;
-      }
-
-      // Handle through async handler if configured
-      if (this.asyncHandler) {
-        let outcome: Awaited<ReturnType<AsyncHandler['handleWebhook']>>;
-        try {
-          outcome = await this.asyncHandler.handleWebhook({
-            result: webhookResult,
-            metadata,
-            previewHandler: parsed.metadata.previewHandler ?? this.previewCreativeHandlerForWebhook(metadata),
-          });
-        } catch (error) {
-          if (error instanceof WebhookDedupConflictError) {
-            throw new WebhookDispatchError('webhook_idempotency_conflict', error.message, error);
+          if (!externalStatus) throw new Error('Webhook settlement did not produce an observable status.');
+          if (externalStatus.queued) {
+            externalStatus = undefined;
+            return true;
           }
-          if (error instanceof WebhookDedupInputError) {
-            throw new WebhookDispatchError('webhook_envelope_invalid', error.message, error);
+          if (externalStatus.duplicate) {
+            metadata = {
+              ...metadata,
+              status: externalStatus.status ?? metadata.status,
+              ...(externalStatus.error !== undefined && { message: externalStatus.error }),
+            };
+            const duplicateActivity: Activity = {
+              type: 'webhook_duplicate',
+              operation_id: metadata.operation_id,
+              agent_id: metadata.agent_id,
+              context_id: metadata.context_id,
+              task_id: metadata.task_id,
+              task_type: metadata.task_type,
+              status: metadata.status,
+              idempotency_key: metadata.idempotency_key,
+              timestamp: metadata.timestamp,
+            };
+            await this.config.onActivity?.(canonicalCreativeActivity(duplicateActivity));
+            await this.asyncHandler?.handleDurableSettlementDuplicate(metadata);
+            await externalStatus.afterDispatch?.();
+            externalStatus = undefined;
+            return true;
+          }
+          if (externalStatus.settled) {
+            webhookResult = externalStatus.result as AdCPAsyncResponseData | undefined;
+            metadata = {
+              ...metadata,
+              status: externalStatus.status ?? metadata.status,
+              ...(externalStatus.error !== undefined && { message: externalStatus.error }),
+            };
+          }
+
+          await this.config.onActivity?.(
+            canonicalCreativeActivity({
+              type: 'webhook_received',
+              operation_id: metadata.operation_id,
+              agent_id: metadata.agent_id,
+              context_id: metadata.context_id,
+              task_id: metadata.task_id,
+              task_type: metadata.task_type,
+              status: metadata.status,
+              payload: webhookResult,
+              timestamp: metadata.timestamp,
+            })
+          );
+
+          if (!suppressHandler && this.asyncHandler) {
+            await this.asyncHandler.handleClaimedWebhook({
+              result: webhookResult,
+              metadata,
+              previewHandler: parsed.metadata.previewHandler ?? this.previewCreativeHandlerForWebhook(metadata),
+            });
+          }
+          await externalStatus.afterDispatch?.();
+          externalStatus = undefined;
+          return this.asyncHandler !== undefined || suppressHandler;
+        } catch (error) {
+          const rejectedStatus = externalStatus;
+          externalStatus = undefined;
+          if (rejectedStatus?.onDispatchError) {
+            try {
+              await rejectedStatus.onDispatchError();
+            } catch (rejectionError) {
+              throw new WebhookDedupClaimRetentionError(
+                [error, rejectionError],
+                'Webhook dispatch failed and its durable settlement ownership could not be released.'
+              );
+            }
           }
           throw error;
         }
-        if (outcome === 'in_progress') {
-          throw new WebhookDispatchError(
-            'webhook_publication_in_progress',
-            'A matching callback publication is still in progress.'
-          );
+      };
+
+      if (!this.asyncHandler) {
+        let handled: boolean;
+        try {
+          handled = await dispatchClaimedWebhook();
+        } catch (error) {
+          if (error instanceof WebhookDedupClaimRetentionError) {
+            throw new WebhookDispatchError(
+              'webhook_publication_in_progress',
+              'Webhook dispatch failed while durable publication ownership remained active.',
+              error
+            );
+          }
+          throw error;
         }
-        await externalStatus.afterDispatch?.();
-        return true;
+        forgetPolicyState = DURABLE_SETTLEMENT_TERMINAL_STATUSES.has(
+          metadata.status as import('./ConversationTypes').TaskStatus
+        );
+        return handled;
       }
 
-      await externalStatus.afterDispatch?.();
-      return false;
-    } catch (error) {
-      await externalStatus?.onDispatchError?.();
-      throw error;
+      let deduped: {
+        outcome: 'handled' | 'already_handled' | 'in_progress';
+        value?: boolean;
+      };
+      try {
+        deduped = await this.asyncHandler.runWebhookDeduplicated({
+          result: dedupResult,
+          metadata: dedupMetadata,
+          dispatch: dispatchClaimedWebhook,
+        });
+      } catch (error) {
+        if (error instanceof WebhookDedupClaimRetentionError) {
+          throw new WebhookDispatchError(
+            'webhook_publication_in_progress',
+            'Webhook dispatch failed while durable publication ownership remained active.',
+            error
+          );
+        }
+        if (error instanceof WebhookDedupConflictError) {
+          throw new WebhookDispatchError('webhook_idempotency_conflict', error.message, error);
+        }
+        if (error instanceof WebhookDedupInputError) {
+          throw new WebhookDispatchError('webhook_envelope_invalid', error.message, error);
+        }
+        throw error;
+      }
+      if (deduped.outcome === 'in_progress') {
+        throw new WebhookDispatchError(
+          'webhook_publication_in_progress',
+          'A matching callback publication is still in progress.'
+        );
+      }
+      if (deduped.outcome === 'already_handled') {
+        await this.config.onActivity?.(
+          canonicalCreativeActivity({
+            type: 'webhook_duplicate',
+            operation_id: metadata.operation_id,
+            agent_id: metadata.agent_id,
+            context_id: metadata.context_id,
+            task_id: metadata.task_id,
+            task_type: metadata.task_type,
+            status: metadata.status,
+            idempotency_key: metadata.idempotency_key,
+            timestamp: metadata.timestamp,
+          })
+        );
+        forgetPolicyState = DURABLE_SETTLEMENT_TERMINAL_STATUSES.has(
+          metadata.status as import('./ConversationTypes').TaskStatus
+        );
+        return true;
+      }
+      forgetPolicyState = DURABLE_SETTLEMENT_TERMINAL_STATUSES.has(
+        metadata.status as import('./ConversationTypes').TaskStatus
+      );
+      return deduped.value ?? true;
     } finally {
-      this.forgetProductPolicyRequestParams(metadata);
+      if (forgetPolicyState) this.forgetProductPolicyRequestParams(metadata);
     }
   }
 

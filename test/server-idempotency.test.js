@@ -577,11 +577,11 @@ describe('createAdcpServer with idempotency', () => {
     assert.equal(calls, 0);
   });
 
-  it('handler errors are NOT cached (retry re-executes)', async () => {
+  it('fences an uncertain mutating handler exception instead of re-executing it', async () => {
     const idempotency = createIdempotencyStore({
       backend: memoryBackend({ sweepIntervalMs: 0 }),
     });
-    let failNext = true;
+    let calls = 0;
     const server = createAdcpServer({
       name: 'T',
       version: '1.0.0',
@@ -589,23 +589,113 @@ describe('createAdcpServer with idempotency', () => {
       resolveSessionKey: () => 'tenant',
       mediaBuy: {
         createMediaBuy: async () => {
-          if (failNext) {
-            failNext = false;
-            throw new Error('transient fail');
-          }
-          return { media_buy_id: 'mb_success', packages: [] };
+          calls += 1;
+          // A real handler may have committed an upstream side effect before
+          // its transport/client throws. The framework cannot distinguish
+          // that state from a genuinely pre-mutation failure.
+          throw new Error('upstream response was lost after commit');
         },
       },
     });
 
     const key = 'retry_err_abcdefghij';
     const first = await callTool(server, 'create_media_buy', { ...basePayload, idempotency_key: key });
-    assert.match(JSON.stringify(first), /SERVICE_UNAVAILABLE/);
+    assert.equal(first.adcp_error?.code, 'SERVICE_UNAVAILABLE');
+    assert.match(first.adcp_error?.message, /Reconcile.*natural key/i);
 
-    // Retry with SAME key should re-execute (error not cached, claim released)
+    // Exact retry replays the ambiguity fence and never repeats the mutation.
     const second = await callTool(server, 'create_media_buy', { ...basePayload, idempotency_key: key });
-    assert.equal(second.media_buy_id, 'mb_success');
-    assert.notEqual(second.replayed, true);
+    assert.equal(second.adcp_error?.code, 'SERVICE_UNAVAILABLE');
+    assert.equal(calls, 1);
+  });
+
+  it('caches a non-transient typed error thrown by a mutating handler', async () => {
+    const idempotency = createIdempotencyStore({
+      backend: memoryBackend({ sweepIntervalMs: 0 }),
+    });
+    let calls = 0;
+    const server = createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency,
+      resolveSessionKey: () => 'tenant',
+      mediaBuy: {
+        createMediaBuy: async () => {
+          calls += 1;
+          throw adcpError('INVALID_REQUEST', { message: 'The supplied intent violates a durable seller rule.' });
+        },
+      },
+    });
+    const request = { ...basePayload, idempotency_key: 'typed_throw_fence_0001' };
+
+    const first = await callTool(server, 'create_media_buy', request);
+    const retry = await callTool(server, 'create_media_buy', request);
+
+    assert.equal(first.adcp_error?.code, 'INVALID_REQUEST');
+    assert.equal(retry.adcp_error?.code, 'INVALID_REQUEST');
+    assert.equal(calls, 1);
+  });
+
+  it('turns a transient typed mutating exception into an ambiguity fence', async () => {
+    const idempotency = createIdempotencyStore({
+      backend: memoryBackend({ sweepIntervalMs: 0 }),
+    });
+    let calls = 0;
+    const server = createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency,
+      resolveSessionKey: () => 'tenant',
+      mediaBuy: {
+        createMediaBuy: async () => {
+          calls += 1;
+          throw adcpError('RATE_LIMITED', { message: 'upstream admission became uncertain', retry_after: 1 });
+        },
+      },
+    });
+    const request = { ...basePayload, idempotency_key: 'transient_throw_fence_0001' };
+
+    const first = await callTool(server, 'create_media_buy', request);
+    const retry = await callTool(server, 'create_media_buy', request);
+
+    assert.equal(first.adcp_error?.code, 'SERVICE_UNAVAILABLE');
+    assert.match(first.adcp_error?.message, /Reconcile.*natural key/i);
+    assert.equal(retry.adcp_error?.code, 'SERVICE_UNAVAILABLE');
+    assert.equal(calls, 1);
+  });
+
+  it('infers transient recovery when a thrown standard error omits recovery', async () => {
+    const idempotency = createIdempotencyStore({
+      backend: memoryBackend({ sweepIntervalMs: 0 }),
+    });
+    let calls = 0;
+    const server = createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency,
+      resolveSessionKey: () => 'tenant',
+      mediaBuy: {
+        createMediaBuy: async () => {
+          calls += 1;
+          const response = adcpError('RATE_LIMITED', {
+            message: 'upstream admission became uncertain',
+            retry_after: 1,
+          });
+          delete response.structuredContent.adcp_error.recovery;
+          response.content = [{ type: 'text', text: JSON.stringify(response.structuredContent) }];
+          throw response;
+        },
+      },
+    });
+    const request = { ...basePayload, idempotency_key: 'missing_recovery_fence_0001' };
+
+    const first = await callTool(server, 'create_media_buy', request);
+    const retry = await callTool(server, 'create_media_buy', request);
+
+    assert.equal(first.adcp_error?.code, 'SERVICE_UNAVAILABLE');
+    assert.equal(retry.adcp_error?.code, 'SERVICE_UNAVAILABLE');
+    assert.match(first.adcp_error?.message, /Reconcile.*natural key/i);
+    assert.equal(calls, 1);
   });
 
   it('fails closed when a completed handler loses its request claim before cache publication', async () => {
@@ -634,7 +724,7 @@ describe('createAdcpServer with idempotency', () => {
     assert.equal(result.media_buy_id, undefined);
   });
 
-  it('caches an ambiguity fence when framework response processing throws after mutation success', async () => {
+  it('caches an ambiguity fence when post-handler processing throws a typed error', async () => {
     const idempotency = createIdempotencyStore({
       backend: memoryBackend({ sweepIntervalMs: 0 }),
       ttlSeconds: 3600,
@@ -646,7 +736,9 @@ describe('createAdcpServer with idempotency', () => {
       idempotency,
       resolveSessionKey: () => 'tenant',
       responseEnhancer: response => {
-        if (response.structuredContent?.media_buy_id) throw new Error('post-handler enhancer failed');
+        if (response.structuredContent?.media_buy_id) {
+          throw adcpError('RATE_LIMITED', { message: 'post-handler enhancer failed', retry_after: 1 });
+        }
       },
       mediaBuy: {
         createMediaBuy: async () => {
@@ -819,7 +911,8 @@ describe('createAdcpServer with idempotency', () => {
     }
   });
 
-  it('fails closed when a thrown handler error cannot release its idempotency claim', async () => {
+  it('fails closed when a thrown mutating handler outcome cannot be published', async () => {
+    let releaseCalls = 0;
     const idempotency = {
       ttlSeconds: 3600,
       capability: () => ({ replay_ttl_seconds: 3600 }),
@@ -829,9 +922,11 @@ describe('createAdcpServer with idempotency', () => {
         claimToken: '__adcp_in_flight__:request-payload-hash:owner',
       }),
       renew: async () => {},
-      save: async () => {},
-      release: async () => {
+      save: async () => {
         throw new Error('idempotency backend unavailable');
+      },
+      release: async () => {
+        releaseCalls += 1;
       },
     };
     const server = createAdcpServer({
@@ -853,6 +948,7 @@ describe('createAdcpServer with idempotency', () => {
 
     assert.equal(result.adcp_error?.code, 'SERVICE_UNAVAILABLE');
     assert.notEqual(result.adcp_error?.code, 'RATE_LIMITED');
+    assert.equal(releaseCalls, 0, 'a failed publish must retain the original mutation claim');
   });
 
   it('keeps a long-running handler fenced beyond the working-response timeout', async t => {

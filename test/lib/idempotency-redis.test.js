@@ -97,7 +97,6 @@ describe('redisBackend — default-prefix-on-db-0 warning', () => {
     // RedisLikeClient adapter path — no `options` object at all.
     redisBackend({
       get: async () => null,
-      set: async () => null,
       del: async () => 0,
       eval: async () => null,
       ping: async () => 'PONG',
@@ -189,6 +188,10 @@ test('redisBackend redacts client errors from every runtime operation', async ()
     ['put', () => backend.put('scoped-key', entry)],
     ['putIfAbsent', () => backend.putIfAbsent('scoped-key', entry)],
     ['replaceIfPayloadHash', () => backend.replaceIfPayloadHash('scoped-key', 'owner-token', entry)],
+    [
+      'replaceIfPayloadHashAndExpired',
+      () => backend.replaceIfPayloadHashAndExpired('scoped-key', 'owner-token', entry),
+    ],
     ['deleteIfPayloadHash', () => backend.deleteIfPayloadHash('scoped-key', 'owner-token')],
     ['delete', () => backend.delete('scoped-key')],
   ];
@@ -203,7 +206,7 @@ test('redisBackend redacts client errors from every runtime operation', async ()
   }
 });
 
-test('redisBackend putIfAbsent uses Redis server time inside the atomic expiry takeover', async () => {
+test('redisBackend putIfAbsent is absent-only and derives physical TTL from Redis server time', async () => {
   const { redisBackend } = require('../../dist/lib/server/index.js');
   let observedScript;
   let observedArguments;
@@ -219,43 +222,91 @@ test('redisBackend putIfAbsent uses Redis server time inside the atomic expiry t
     ping: async () => 'PONG',
   };
   const backend = redisBackend(client, { keyPrefix: 'clock-skew-test:' });
-  const claimed = await backend.putIfAbsent('scope', {
+  const entry = {
     payloadHash: 'owner',
     response: null,
     expiresAt: Math.floor(Date.now() / 1000) + 3600,
-  });
+  };
+  const claimed = await backend.putIfAbsent('scope', entry);
 
   assert.equal(claimed, true);
+  assert.match(observedScript, /if raw then return 0 end/);
   assert.match(observedScript, /redis\.call\('TIME'\)/);
-  assert.equal(observedArguments.length, 2, 'application wall-clock time must not be passed into the Lua decision');
+  assert.match(observedScript, /local ttl = tonumber\(ARGV\[2\]\) - now \+ 1/);
+  assert.deepEqual(observedArguments, [JSON.stringify(entry), String(entry.expiresAt + 120)]);
 });
 
-test('redisBackend cannot configure physical expiry before retainUntil', async () => {
+test('redisBackend expired-owner replacement combines payload hash and Redis-time expiry predicates', async () => {
   const { redisBackend } = require('../../dist/lib/server/index.js');
-  let observedTtl;
+  let observedScript;
+  let observedArguments;
   const client = {
     get: async () => null,
-    set: async (_key, _value, options) => {
-      observedTtl = options.EX;
-      return 'OK';
-    },
+    set: async () => null,
     del: async () => 0,
-    eval: async () => 1,
+    eval: async (script, options) => {
+      observedScript = script;
+      observedArguments = options.arguments;
+      return 0;
+    },
     ping: async () => 'PONG',
   };
-  const nowSeconds = Math.floor(Date.now() / 1000);
+  const backend = redisBackend(client, { keyPrefix: 'expired-cas-test:' });
+  const entry = {
+    payloadHash: 'new-owner',
+    response: { version: 2 },
+    expiresAt: 2_000_000_000,
+    retainUntil: 2_000_000_200,
+  };
+
+  assert.equal(await backend.replaceIfPayloadHashAndExpired('scope', 'expected-owner', entry), false);
+  assert.match(observedScript, /if current\.payloadHash ~= ARGV\[1\] then return 0 end/);
+  assert.match(observedScript, /redis\.call\('TIME'\)/);
+  assert.match(observedScript, /if tonumber\(current\.expiresAt\) >= now then return 0 end/);
+  assert.match(observedScript, /local ttl = tonumber\(ARGV\[3\]\) - now \+ 1/);
+  assert.match(observedScript, /redis\.call\('SET'/);
+  assert.deepEqual(observedArguments, ['expected-owner', JSON.stringify(entry), String(entry.retainUntil)]);
+});
+
+test('redisBackend derives physical expiry from retainUntil using Redis server time despite application clock skew', async () => {
+  const { redisBackend } = require('../../dist/lib/server/index.js');
+  let observedScript;
+  let observedArguments;
+  const client = {
+    get: async () => null,
+    set: async () => 'OK',
+    del: async () => 0,
+    eval: async (script, options) => {
+      observedScript = script;
+      observedArguments = options.arguments;
+      return 1;
+    },
+    ping: async () => 'PONG',
+  };
+  const redisServerNow = Math.floor(Date.now() / 1000);
+  const applicationNow = redisServerNow + 600;
   const backend = redisBackend(client, {
     keyPrefix: 'retention-horizon-test:',
     expiredGraceSeconds: 0,
   });
-  await backend.put('scope', {
+  const entry = {
     payloadHash: 'owner',
     response: null,
-    expiresAt: nowSeconds + 3600,
-    retainUntil: nowSeconds + 3690,
-  });
+    expiresAt: applicationNow + 3600,
+    retainUntil: applicationNow + 3690,
+  };
+  const originalDateNow = Date.now;
+  Date.now = () => applicationNow * 1000;
+  try {
+    await backend.put('scope', entry);
+  } finally {
+    Date.now = originalDateNow;
+  }
 
-  assert.ok(observedTtl >= 3690, `expected Redis TTL to retain through retainUntil equality, received ${observedTtl}`);
+  assert.match(observedScript, /redis\.call\('TIME'\)/);
+  assert.match(observedScript, /local ttl = tonumber\(ARGV\[2\]\) - now \+ 1/);
+  assert.deepEqual(observedArguments, [JSON.stringify(entry), String(entry.retainUntil)]);
+  assert.equal(Number(observedArguments[1]) - redisServerNow + 1, 4291);
 });
 
 test('redisBackend validates legacy retention grace against store clock skew', () => {
@@ -298,13 +349,22 @@ test('redisBackend payload-hash fencing replaces and deletes only the current ow
     },
     del: async key => (values.delete(key) ? 1 : 0),
     eval: async (script, options) => {
-      assert.match(script, /if current\.payloadHash ~= ARGV\[1\] then return 0 end/);
       const key = options.keys[0];
+      if (!/current\.payloadHash/.test(script)) {
+        assert.match(script, /redis\.call\('TIME'\)/);
+        assert.match(script, /redis\.call\('SET'/);
+        values.set(key, options.arguments[0]);
+        return 1;
+      }
+      assert.match(script, /if current\.payloadHash ~= ARGV\[1\] then return 0 end/);
       const raw = values.get(key);
       if (raw === undefined) return 0;
       const current = JSON.parse(raw);
       if (current.payloadHash !== options.arguments[0]) return 0;
       if (/redis\.call\('SET'/.test(script)) {
+        assert.match(script, /redis\.call\('TIME'\)/);
+        assert.match(script, /local ttl = tonumber\(ARGV\[3\]\) - now \+ 1/);
+        assert.equal(options.arguments[2], String(JSON.parse(options.arguments[1]).retainUntil));
         values.set(key, options.arguments[1]);
         return 1;
       }
@@ -451,7 +511,7 @@ describe('redisBackend', { skip: !REDIS_URL && 'REDIS_URL not set' }, () => {
     assert.deepEqual(got.response, { v: 1 });
   });
 
-  test('putIfAbsent reclaims a logically expired entry retained by the Redis grace TTL', async () => {
+  test('putIfAbsent leaves a retained expired entry for exact-generation reclaim', async () => {
     const backend = redisBackend(client);
     await client.set(
       'adcp:idem:preclaim',
@@ -463,19 +523,20 @@ describe('redisBackend', { skip: !REDIS_URL && 'REDIS_URL not set' }, () => {
       { EX: 60 }
     );
 
-    const claimed = await backend.putIfAbsent('preclaim', {
+    const replacement = {
       payloadHash: 'fresh',
       response: { fresh: true },
       expiresAt: Math.floor(Date.now() / 1000) + 120,
-    });
-    assert.equal(claimed, true);
+    };
+    assert.equal(await backend.putIfAbsent('preclaim', replacement), false);
+    assert.equal(await backend.replaceIfPayloadHashAndExpired('preclaim', 'stale', replacement), true);
 
     const got = await backend.get('preclaim');
     assert.equal(got.payloadHash, 'fresh');
     assert.deepEqual(got.response, { fresh: true });
   });
 
-  test('ttlFor refuses to write an entry whose expiresAt is already past', async () => {
+  test('Redis refuses to write an entry whose physical retention horizon is already past', async () => {
     const backend = redisBackend(client);
     // expiresAt 3600s in the past — even with the 120s grace window,
     // the resulting Redis TTL would be deeply negative. Must throw
@@ -488,7 +549,7 @@ describe('redisBackend', { skip: !REDIS_URL && 'REDIS_URL not set' }, () => {
           response: {},
           expiresAt: Math.floor(Date.now() / 1000) - 3600,
         }),
-      /retention horizon .* is already past/
+      /redisBackend\.put: database operation failed/
     );
   });
 
@@ -538,6 +599,16 @@ describe('redisBackend', { skip: !REDIS_URL && 'REDIS_URL not set' }, () => {
     assert.deepEqual(await backend.get('pcas'), replacement);
     assert.equal(await backend.deleteIfPayloadHash('pcas', 'owner-b'), true);
     assert.equal(await backend.get('pcas'), null);
+
+    await backend.put('pexpired-cas', {
+      payloadHash: 'expired-owner',
+      response: { version: 1 },
+      expiresAt: now - 2,
+      retainUntil: now + 3700,
+    });
+    assert.equal(await backend.replaceIfPayloadHashAndExpired('pexpired-cas', 'stale-owner', replacement), false);
+    assert.equal(await backend.replaceIfPayloadHashAndExpired('pexpired-cas', 'expired-owner', replacement), true);
+    assert.deepEqual(await backend.get('pexpired-cas'), replacement);
   });
 
   test('keyPrefix isolates writes from other apps on the same db', async () => {

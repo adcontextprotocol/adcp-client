@@ -115,23 +115,31 @@ export interface IdempotencyBackend {
   validateClockSkewSeconds?(clockSkewSeconds: number): void;
   get(scopedKey: string): Promise<IdempotencyCacheEntry | null>;
   /**
-   * Atomically install an entry only if no entry exists for `scopedKey` or
-   * the current entry is logically expired according to backend time.
-   * Expiry comparison and replacement MUST be one atomic operation; an
-   * entry expiring exactly now remains live.
+   * Atomically install an entry only if no entry exists for `scopedKey`.
    * Used as a claim step by the middleware to close the concurrent-miss
    * race (two parallel requests with the same fresh key both seeing
    * `miss` and both executing side effects). Returns `true` if the
    * caller "won" the claim and should proceed to run the handler;
    * `false` if another request claimed first (the caller should treat
    * the result as a replay or conflict on re-check). Callers that need to
-   * reclaim a logically expired entry MUST use this primitive rather than a
-   * read-derived CAS, which is vulnerable to renewal and completed-marker
-   * ABA races.
+   * reclaim a logically expired entry MUST use
+   * `replaceIfPayloadHashAndExpired()` rather than this primitive or a
+   * read-derived CAS. Treating expiry as absence lets a stale absent read
+   * overwrite a newer generation after its short lease expires.
    */
   putIfAbsent(scopedKey: string, entry: IdempotencyCacheEntry): Promise<boolean>;
   /** Atomically replace an entry only when its current payload hash matches. */
   replaceIfPayloadHash(scopedKey: string, expectedPayloadHash: string, entry: IdempotencyCacheEntry): Promise<boolean>;
+  /**
+   * Atomically replace an entry only when its current payload hash matches and
+   * it is logically expired according to backend time. An entry expiring
+   * exactly now remains live.
+   */
+  replaceIfPayloadHashAndExpired(
+    scopedKey: string,
+    expectedPayloadHash: string,
+    entry: IdempotencyCacheEntry
+  ): Promise<boolean>;
   /** Atomically delete an entry only when its current payload hash matches (used by webhook dedup claims). */
   deleteIfPayloadHash(scopedKey: string, expectedPayloadHash: string): Promise<boolean>;
   /** Store an entry unconditionally. Middleware publication uses fenced replacement instead. */
@@ -339,8 +347,11 @@ export interface IdempotencyStore {
    * Retry-storm guard, not a spec replay. Without it, a drifted handler
    * under strict validation + a retrying buyer produces unbounded
    * re-execution (release-on-error lets every retry hit the handler again
-   * with the same drift). Caching for `TRANSIENT_ERROR_TTL_SECONDS` (10s)
-   * short-circuits retries within the buyer's typical backoff window.
+   * with the same drift). The logical cache TTL is
+   * `TRANSIENT_ERROR_TTL_SECONDS` (10s). As with every idempotency result,
+   * peers continue replaying it through the configured `clockSkewSeconds`
+   * safety window rather than risking a fresh execution while clocks may
+   * disagree, so the default effective suppression window is up to 70s.
    *
    * **Operational note — DoS primitive.** A drifted handler reachable by
    * a hostile buyer is a cache-fill vector: every fresh idempotency_key
@@ -350,9 +361,10 @@ export interface IdempotencyStore {
    * probing for drift. Steady-state `VALIDATION_ERROR` should be zero.
    *
    * **Dev-experience note — TTL opacity.** After deploying a handler fix,
-   * same-key retries within the 10s window still replay the cached error
-   * before the fix takes effect. Iterative handler authors should use a
-   * fresh `idempotency_key` to bypass the cache during development.
+   * same-key retries within the logical 10s TTL plus the configured clock-skew
+   * safety window still replay the cached error before the fix takes effect.
+   * Iterative handler authors should use a fresh `idempotency_key` to bypass
+   * the cache during development.
    */
   saveTransientError?(params: {
     principal: string;
@@ -491,11 +503,12 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
   if (
     typeof backend.putIfAbsent !== 'function' ||
     typeof backend.replaceIfPayloadHash !== 'function' ||
+    typeof backend.replaceIfPayloadHashAndExpired !== 'function' ||
     typeof backend.deleteIfPayloadHash !== 'function'
   ) {
     throw new TypeError(
-      'createIdempotencyStore requires atomic putIfAbsent, replaceIfPayloadHash, and deleteIfPayloadHash fencing so concurrent requests and stale owners cannot execute, publish, or release newer claims. ' +
-        'Use memoryBackend(), pgBackend(pool), redisBackend(client), or implement all three methods on the custom backend.'
+      'createIdempotencyStore requires atomic putIfAbsent, replaceIfPayloadHash, replaceIfPayloadHashAndExpired, and deleteIfPayloadHash fencing so concurrent requests and stale owners cannot execute, publish, or release newer claims. ' +
+        'Use memoryBackend(), pgBackend(pool), redisBackend(client), or implement all four methods on the custom backend.'
     );
   }
 
@@ -505,6 +518,7 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
     async check({ principal, key, payload, extraScope }): Promise<IdempotencyCheckResult> {
       const scopedKey = scope(principal, key, extraScope);
       const payloadHash = hashPayload(payload);
+      let expiredClaimPayloadHash: string | undefined;
 
       const cached = await backend.get(scopedKey);
       if (cached) {
@@ -551,9 +565,7 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
             // ownership too.
             return { kind: 'in-flight', retryAfterSeconds: 1 };
           }
-          // Fall through to putIfAbsent, whose atomic logical-expiry
-          // replacement protects a concurrent renewal from stale-read
-          // takeover.
+          expiredClaimPayloadHash = cached.payloadHash;
         } else {
           if (cached.expiresAt + clockSkewSeconds < nowSeconds) {
             return { kind: 'expired' };
@@ -576,12 +588,16 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
       const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
       const retainUntil = expiresAt + clockSkewSeconds;
       const claimToken = `${IN_FLIGHT_HASH_PREFIX}${payloadHash}:${randomUUID()}`;
-      const claimed = await backend.putIfAbsent(scopedKey, {
+      const claimEntry = {
         payloadHash: claimToken,
         response: null,
         expiresAt,
         retainUntil,
-      });
+      };
+      const claimed =
+        expiredClaimPayloadHash === undefined
+          ? await backend.putIfAbsent(scopedKey, claimEntry)
+          : await backend.replaceIfPayloadHashAndExpired(scopedKey, expiredClaimPayloadHash, claimEntry);
 
       if (!claimed) {
         // Someone beat us to the claim — re-read to find out what they did.

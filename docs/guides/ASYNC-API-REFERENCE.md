@@ -735,7 +735,8 @@ Thrown when a task is deferred (normal flow for deferred tasks).
 
 ```typescript
 class DeferredTaskError extends Error {
-  constructor(public token: string);
+  readonly token: string; // Readable, but non-enumerable and non-writable at runtime
+  constructor(token: string);
 }
 ```
 
@@ -746,10 +747,13 @@ try {
   const result = await internalTaskExecution();
 } catch (error) {
   if (error instanceof DeferredTaskError) {
-    console.log('Task deferred with token:', error.token);
+    await approvedContinuationStore.save(error.token);
+    console.log('Task deferred; continuation stored securely.');
   }
 }
 ```
+
+The token is a bearer capability. Do not log or expose it; persist and pass it only through an approved secret-bearing path.
 
 ---
 

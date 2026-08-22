@@ -53,12 +53,7 @@ export function memoryBackend(options: MemoryBackendOptions = {}): IdempotencyBa
       store.set(scopedKey, cloneEntry(entry));
     },
     async putIfAbsent(scopedKey: string, entry: IdempotencyCacheEntry): Promise<boolean> {
-      const existing = store.get(scopedKey);
-      if (existing) {
-        const nowSeconds = Math.floor(Date.now() / 1000);
-        if (existing.expiresAt >= nowSeconds) return false;
-        // Expired entry — replace it (lets a stale claim be reclaimed).
-      }
+      if (store.has(scopedKey)) return false;
       store.set(scopedKey, cloneEntry(entry));
       return true;
     },
@@ -69,6 +64,17 @@ export function memoryBackend(options: MemoryBackendOptions = {}): IdempotencyBa
     ): Promise<boolean> {
       const existing = store.get(scopedKey);
       if (!existing || existing.payloadHash !== expectedPayloadHash) return false;
+      store.set(scopedKey, cloneEntry(entry));
+      return true;
+    },
+    async replaceIfPayloadHashAndExpired(
+      scopedKey: string,
+      expectedPayloadHash: string,
+      entry: IdempotencyCacheEntry
+    ): Promise<boolean> {
+      const existing = store.get(scopedKey);
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      if (!existing || existing.payloadHash !== expectedPayloadHash || existing.expiresAt >= nowSeconds) return false;
       store.set(scopedKey, cloneEntry(entry));
       return true;
     },

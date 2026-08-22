@@ -84,10 +84,11 @@ export function createLazyBackend(factory: LazyBackendFactory, options: LazyBack
           if (
             typeof resolved.putIfAbsent !== 'function' ||
             typeof resolved.replaceIfPayloadHash !== 'function' ||
+            typeof resolved.replaceIfPayloadHashAndExpired !== 'function' ||
             typeof resolved.deleteIfPayloadHash !== 'function'
           ) {
             throw new Error(
-              'createLazyBackend: resolved backend must support atomic putIfAbsent, replaceIfPayloadHash, and deleteIfPayloadHash fencing.'
+              'createLazyBackend: resolved backend must support atomic putIfAbsent, replaceIfPayloadHash, replaceIfPayloadHashAndExpired, and deleteIfPayloadHash fencing.'
             );
           }
           validateResolvedRetention(resolved);
@@ -128,6 +129,14 @@ export function createLazyBackend(factory: LazyBackendFactory, options: LazyBack
         throw new Error('createLazyBackend: resolved backend does not support atomic payload-hash replacement.');
       }
       return resolved.replaceIfPayloadHash(scopedKey, expectedPayloadHash, entry);
+    },
+
+    async replaceIfPayloadHashAndExpired(
+      scopedKey: string,
+      expectedPayloadHash: string,
+      entry: IdempotencyCacheEntry
+    ): Promise<boolean> {
+      return (await resolveBackend()).replaceIfPayloadHashAndExpired(scopedKey, expectedPayloadHash, entry);
     },
 
     async deleteIfPayloadHash(scopedKey: string, expectedPayloadHash: string): Promise<boolean> {

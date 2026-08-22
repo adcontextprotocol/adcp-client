@@ -249,36 +249,42 @@ if (result.status === 'deferred') {
 
 // ✅ Solution: Proper deferred task storage and management
 class DeferredTaskManager {
+  // Use an encrypted durable store instead when continuations must survive a
+  // process restart. Keys are non-secret approval IDs; bearer tokens are never
+  // included in notification-facing objects.
   private deferredTasks = new Map<string, any>();
   
   async handleDeferredTask(result: TaskResult) {
     if (result.status === 'deferred' && result.deferred) {
-      const taskInfo = {
-        token: result.deferred.token,
-        question: result.deferred.question,
+      const approvalRequestId = crypto.randomUUID();
+      const storedTask = {
         resume: result.deferred.resume,
+      };
+      const notification = {
+        approvalRequestId,
+        question: result.deferred.question,
         createdAt: new Date(),
         metadata: result.metadata
       };
       
-      this.deferredTasks.set(result.deferred.token, taskInfo);
+      this.deferredTasks.set(approvalRequestId, storedTask);
       
-      // Notify human/system about pending approval
-      await this.notifyPendingApproval(taskInfo);
+      // Notify human/system using only the non-secret reference.
+      await this.notifyPendingApproval(notification);
       
-      return taskInfo;
+      return notification;
     }
   }
   
-  async resumeTask(token: string, userInput: any) {
-    const taskInfo = this.deferredTasks.get(token);
-    if (!taskInfo) {
-      throw new Error(`Deferred task not found: ${token}`);
+  async resumeTask(approvalRequestId: string, userInput: any) {
+    const storedTask = this.deferredTasks.get(approvalRequestId);
+    if (!storedTask) {
+      throw new Error('Deferred task not found.');
     }
     
     try {
-      const result = await taskInfo.resume(userInput);
-      this.deferredTasks.delete(token); // Clean up
+      const result = await storedTask.resume(userInput);
+      this.deferredTasks.delete(approvalRequestId); // Clean up
       return result;
     } catch (error) {
       console.error('Failed to resume task:', error);
@@ -287,7 +293,7 @@ class DeferredTaskManager {
   }
   
   getPendingTasks() {
-    return Array.from(this.deferredTasks.values());
+    return Array.from(this.deferredTasks.keys()).map(approvalRequestId => ({ approvalRequestId }));
   }
 }
 ```

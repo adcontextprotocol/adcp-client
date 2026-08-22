@@ -81,9 +81,17 @@ export class MaxClarificationError extends Error {
 }
 
 export class DeferredTaskError extends Error {
-  constructor(public token: string) {
+  readonly token!: string;
+
+  constructor(token: string) {
     super('Task deferred with an opaque continuation token.');
     this.name = 'DeferredTaskError';
+    Object.defineProperty(this, 'token', {
+      value: token,
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
   }
 }
 
@@ -3452,7 +3460,14 @@ export class TaskExecutor {
     assertDeferredContinuationToken(token);
     const storage = this.config.deferredStorage;
     if (!storage) throw new Error('Deferred storage is unavailable for the linked callback checkpoint.');
-    const state = await storage.get(token);
+    let state: DeferredTaskState | undefined;
+    try {
+      state = await storage.get(token);
+    } catch (error) {
+      throw new DeferredSettlementOwnershipError('Deferred callback checkpoint state could not be loaded safely.', {
+        cause: error,
+      });
+    }
     if (!state) throw new Error('The linked deferred callback checkpoint is unavailable.');
     if (state.settlementOperationId !== operationId) {
       throw new Error('The deferred callback token is bound to a different committed operation.');

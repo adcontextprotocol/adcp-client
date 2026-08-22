@@ -87,7 +87,10 @@ for sellers that provide a real live A2A task continuation.
 `AsyncHandler.handleWebhook()` now returns `handled`, `already_handled`, or
 `in_progress`. Typed handler and activity failures propagate so webhook HTTP
 helpers can return a retryable failure instead of acknowledging work that was
-not published. Dedup processing claims use a renewable, owner-fenced lease and
+not published. Sender deduplication claims that lease before durable settlement
+recovery and retain it through handler publication and durable acknowledgement,
+so an exact callback retry cannot re-enter settlement side effects. Dedup
+processing claims use a renewable, owner-fenced lease and
 default to the full dedup retention window, so a renewal failure cannot permit
 automatic concurrent handler execution. Setting a shorter
 `inFlightTtlSeconds` is an explicit at-least-once liveness tradeoff that
@@ -105,7 +108,9 @@ read preserves completed fences but does not coordinate mixed-version claims.
 
 Custom deferred-task storage is now typed as `DeferredTaskStorage` and must
 provide atomic `putIfAbsent()` and generation-fenced `replaceIfVersion()` and
-`takeIfVersion()` operations. Resume atomically
+`takeIfVersion()` operations. `StorageFactory.createStorage('tokens')` now
+exposes that exact contract instead of the weaker generic storage surface.
+Resume atomically
 transitions the stored generation to a claimed fence with a fresh dispatch
 lease without making the token physically absent; cleanup removes only that
 exact claimed generation. Committed continuations use a renewable admission
@@ -124,6 +129,10 @@ timestamps, and restart-safe conversation state. An opaque serializable client
 context is round-tripped so public-client resumes reapply response
 normalization, product policy, canonical creative projection/routing, preview
 association, and completion handlers, including when the seller pauses again.
+Linked callback checkpoint read outages now
+remain typed, retryable ownership failures without leaking backend details, and
+MCP input/auth-required responses read clarification fields from
+`structuredContent` rather than falling back to a generic prompt.
 Serializable per-call projection catalogs are retained across recovery, and
 non-serializable per-call legacy converter functions now fail before dispatch
 when durable continuation storage is enabled. Resumed legacy product discovery
@@ -161,7 +170,11 @@ over-depth subtrees are truncated rather than persisted unvisited. Authenticated
 request property lists that require buyer-side verification fail before seller
 dispatch when durable storage is configured, because their credential cannot
 be safely reconstructed after restart. Continuation tokens are omitted from
-public error messages. Restart recovery resolves the current agent through
+public error messages and are non-enumerable on deferred errors so ordinary
+JSON and structured logging do not serialize them. Shipped examples treat
+these tokens as bearer capabilities: they use cryptographically random values,
+store them only through approved secret-bearing paths, and expose non-secret
+approval references to logs and UIs. Restart recovery resolves the current agent through
 `resolveDeferredAgent`.
 `SingleAgentClientConfig` exposes the storage, resolver, and token TTL directly,
 and `SingleAgentClient.resumeDeferredTask(token, input)` resumes the exact
@@ -172,22 +185,28 @@ single-agent client so a reconstructed media-buy compatibility coordinator's
 settlement recoverer, exact-token authorizer, response finalization, completion
 handlers, and session bookkeeping remain on the public restart path.
 Custom `IdempotencyBackend` implementations must add atomic
-`replaceIfPayloadHash()` and `deleteIfPayloadHash()` operations; these fence
+`putIfAbsent()`, `replaceIfPayloadHash()`,
+`replaceIfPayloadHashAndExpired()`, and `deleteIfPayloadHash()` operations;
+these fence
 webhook and request claim completion/release across replicas. Request-side
 `check()` misses now return a `claimToken` that is required by `save()`,
 `saveTransientError()`, and `release()`. With `webhookDedup` configured,
 missing MCP idempotency keys and every malformed present key fail closed before
 handler dispatch. Configured dedup now also requires the key on A2A deliveries;
 older A2A senders must leave receiver dedup disabled.
+`putIfAbsent()` is now strictly absent-only; custom backends must use the
+backend-time `replaceIfPayloadHashAndExpired()` predicate for every logical
+expiry takeover so stale absent reads and same-token renewals cannot erase a
+newer claim.
 Canonical request equivalence now excludes the write-only
 `authentication.credentials` value from both `push_notification_config` and
 `reporting_webhook`, so secret rotation does not false-conflict. URL, scheme,
 token, reporting frequency, requested metrics, and every other routing or
 request-semantic field remain hashed.
-`putIfAbsent()` must atomically insert when physically absent or replace a
-logically expired record using backend time (strictly expired; equality stays
-live). Read-then-CAS expiry takeover is not conforming because it permits
-renewal and completed-marker ABA races. Custom `IdempotencyStore`
+`replaceIfPayloadHashAndExpired()` must atomically require the exact payload
+hash and backend-time logical expiry (strictly expired; equality stays live).
+Read-then-CAS expiry takeover is not conforming because it permits renewal and
+completed-marker ABA races. Custom `IdempotencyStore`
 implementations must also provide owner-fenced `renew()` for long-running
 mutation claims.
 Backend entries must also preserve the new absolute `retainUntil` horizon so
@@ -195,10 +214,17 @@ physical cleanup cannot remove a completed mutation inside the configured
 clock-skew replay window. The PostgreSQL migration adds the matching
 `retain_until` column and cleanup index. Active request claims now bind the
 canonical request hash as well as their owner generation, so a different
-payload reusing an in-flight key conflicts immediately. Failed handlers now
-transition their owner claim to a fenced retryable marker instead of deleting
-the record: an exact retry can proceed, while changed payloads remain bound to
-the original key and conflict.
+payload reusing an in-flight key conflicts immediately. Failed non-mutating
+handlers with optional idempotency now transition their owner claim to a fenced
+retryable marker instead of deleting the record: an exact retry can proceed,
+while changed payloads remain bound to the original key and conflict. Once a
+mutating handler is invoked, non-transient typed rejections thrown directly by the
+handler are cached as its durable outcome; transient typed exceptions, unknown
+exceptions, and post-handler failures become a full-window ambiguity fence so
+an exact retry cannot repeat a side effect that may already have committed. A
+shortened processing lease does not shorten
+that payload binding: the active event fingerprint remains retained through
+the full dedup TTL, and only an exact retry may reclaim an expired lease.
 PostgreSQL keeps `retain_until` nullable for rolling compatibility with old
 writers. Reads use the greater of `retain_until` and
 `expires_at + legacyRetentionGraceSeconds`; cleanup uses the mathematically
@@ -207,7 +233,10 @@ writer that advances `expires_at` therefore cannot leave a stale
 physical-retention timestamp behind. The
 backend's legacy grace must be at least the store's `clockSkewSeconds`; unsafe
 configurations fail at construction. Redis retains the complete equality second
-at the physical horizon, matching the store and SQL cleanup boundary.
+at the physical horizon, matching the store and SQL cleanup boundary. Redis
+derives relative expiry from the absolute retention horizon using Redis server
+time for direct writes, first-owner claims, and owner-fenced replacements, so
+an ahead-skewed application clock cannot evict the replay fence early.
 Built-in request claims now use the full advertised replay window as their
 base fence and renew while the handler runs. A transient renewal outage cannot
 therefore reopen a live mutation after the 120-second working-response window;
@@ -223,8 +252,10 @@ idempotency declarations.
 Webhook dedup completion atomically replaces the owned processing claim with
 the handled marker, preventing a stale handler from publishing after lease
 loss.
-Outside development and test, Redis backends require a deployment-unique
-`keyPrefix` unless the operator explicitly acknowledges that the selected
-Redis database is isolated. Servers with mutating tools likewise refuse to
-start without a runtime idempotency store outside development and test; the
-existing explicit disabled mode remains the acknowledged escape hatch.
+Outside development and test, Redis idempotency, replay, and context-metadata
+backends require a deployment-unique `keyPrefix` unless the operator explicitly
+acknowledges that the selected Redis database is isolated. Warning suppression
+is not an isolation acknowledgement. Servers with mutating tools likewise
+refuse to start without a runtime idempotency store outside development and
+test; the existing explicit disabled mode remains the acknowledged escape
+hatch.

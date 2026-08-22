@@ -222,7 +222,11 @@ export interface StorageConfig {
  */
 export interface StorageFactory {
   /**
-   * Create a storage instance for a specific data type
+   * Create durable token storage with the atomic generation-fencing contract.
+   */
+  createStorage(type: 'tokens', options?: any): DeferredTaskStorage;
+  /**
+   * Create a storage instance for another data type.
    */
   createStorage<T>(type: string, options?: any): Storage<T>;
 }

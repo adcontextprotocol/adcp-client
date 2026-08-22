@@ -3,6 +3,7 @@ import type {
   DeferredTaskState,
   DeferredTaskStorage,
   SingleAgentClientConfig,
+  StorageFactory,
 } from '../../../dist/lib/index.js';
 
 const states = new Map<string, DeferredTaskState>();
@@ -70,6 +71,12 @@ const clientConfig: SingleAgentClientConfig = {
 };
 
 void clientConfig;
+
+declare const storageFactory: StorageFactory;
+const factoryTokenStorage: DeferredTaskStorage = storageFactory.createStorage('tokens');
+const factoryConversationStorage = storageFactory.createStorage<{ messages: string[] }>('conversations');
+void factoryTokenStorage.replaceIfVersion;
+void factoryConversationStorage.get;
 
 declare const agentClient: AgentClient;
 const resumedPurchase = agentClient.resumeDeferredTask<{ media_buy_id: string }>('durable-token', {

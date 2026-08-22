@@ -41,13 +41,14 @@ describe('createIdempotencyStore', () => {
         get: async () => null,
         putIfAbsent: async () => true,
         replaceIfPayloadHash: true,
+        replaceIfPayloadHashAndExpired: true,
         deleteIfPayloadHash: true,
         put: async () => {},
         delete: async () => {},
       };
       assert.throws(
         () => createIdempotencyStore({ backend }),
-        /atomic putIfAbsent, replaceIfPayloadHash, and deleteIfPayloadHash fencing/
+        /atomic putIfAbsent, replaceIfPayloadHash, replaceIfPayloadHashAndExpired, and deleteIfPayloadHash fencing/
       );
     });
 
@@ -55,11 +56,27 @@ describe('createIdempotencyStore', () => {
       const backend = {
         get: async () => null,
         replaceIfPayloadHash: async () => true,
+        replaceIfPayloadHashAndExpired: async () => true,
         deleteIfPayloadHash: async () => true,
         put: async () => {},
         delete: async () => {},
       };
       assert.throws(() => createIdempotencyStore({ backend }), /requires atomic putIfAbsent/);
+    });
+
+    it('rejects a custom backend without atomic expired-owner replacement', () => {
+      const backend = {
+        get: async () => null,
+        putIfAbsent: async () => true,
+        replaceIfPayloadHash: async () => true,
+        deleteIfPayloadHash: async () => true,
+        put: async () => {},
+        delete: async () => {},
+      };
+      assert.throws(
+        () => createIdempotencyStore({ backend }),
+        /requires atomic putIfAbsent, replaceIfPayloadHash, replaceIfPayloadHashAndExpired, and deleteIfPayloadHash/
+      );
     });
   });
 
@@ -502,6 +519,7 @@ describe('createLazyBackend', () => {
         get: inner.get,
         put: inner.put,
         replaceIfPayloadHash: inner.replaceIfPayloadHash,
+        replaceIfPayloadHashAndExpired: inner.replaceIfPayloadHashAndExpired,
         deleteIfPayloadHash: inner.deleteIfPayloadHash,
         delete: inner.delete,
       };
@@ -511,7 +529,21 @@ describe('createLazyBackend', () => {
       () => backend.get('p\u001fk'),
       error =>
         error?.cause?.message ===
-        'createLazyBackend: resolved backend must support atomic putIfAbsent, replaceIfPayloadHash, and deleteIfPayloadHash fencing.'
+        'createLazyBackend: resolved backend must support atomic putIfAbsent, replaceIfPayloadHash, replaceIfPayloadHashAndExpired, and deleteIfPayloadHash fencing.'
+    );
+  });
+
+  it('rejects a resolved backend without atomic expired-owner replacement', async () => {
+    const backend = createLazyBackend(async () => {
+      const { replaceIfPayloadHashAndExpired: _omitted, ...inner } = memoryBackend({ sweepIntervalMs: 0 });
+      return inner;
+    });
+
+    await assert.rejects(
+      () => backend.get('p\u001fk'),
+      error =>
+        error?.cause?.message ===
+        'createLazyBackend: resolved backend must support atomic putIfAbsent, replaceIfPayloadHash, replaceIfPayloadHashAndExpired, and deleteIfPayloadHash fencing.'
     );
   });
 
@@ -788,7 +820,7 @@ describe('request claim ownership fencing', () => {
     }
   });
 
-  it('a stale expiry read cannot reclaim a claim renewed before atomic putIfAbsent', async () => {
+  it('a stale expiry read cannot reclaim a claim renewed before atomic expired-owner replacement', async () => {
     const delegate = memoryBackend({ sweepIntervalMs: 0 });
     const key = 'renewal_aba_abcdefghij';
     const scopedKey = `p\u001f${key}`;
@@ -799,33 +831,74 @@ describe('request claim ownership fencing', () => {
       expiresAt: Math.floor(Date.now() / 1000) - 1,
     });
 
-    let releasePut;
-    let markPutReached;
-    const putReached = new Promise(resolve => {
-      markPutReached = resolve;
+    let releaseReplacement;
+    let markReplacementReached;
+    const replacementReached = new Promise(resolve => {
+      markReplacementReached = resolve;
     });
-    const putGate = new Promise(resolve => {
-      releasePut = resolve;
+    const replacementGate = new Promise(resolve => {
+      releaseReplacement = resolve;
     });
     const backend = {
       ...delegate,
-      putIfAbsent: async (...args) => {
-        markPutReached();
-        await putGate;
-        return delegate.putIfAbsent(...args);
+      replaceIfPayloadHashAndExpired: async (...args) => {
+        markReplacementReached();
+        await replacementGate;
+        return delegate.replaceIfPayloadHashAndExpired(...args);
       },
     };
     const store = createIdempotencyStore({ backend, ttlSeconds: 3600, clockSkewSeconds: 0 });
     const attempt = store.check({ principal: 'p', key, payload: { x: 1 } });
-    await putReached;
+    await replacementReached;
     await delegate.replaceIfPayloadHash(scopedKey, owner, {
       payloadHash: owner,
       response: null,
       expiresAt: Math.floor(Date.now() / 1000) + 120,
     });
-    releasePut();
+    releaseReplacement();
 
     assert.equal((await attempt).kind, 'in-flight');
+  });
+
+  it('a stale absent read cannot replace a newly expired request generation', async () => {
+    const delegate = memoryBackend({ sweepIntervalMs: 0 });
+    const key = 'absent_aba_abcdefghij';
+    const scopedKey = `p\u001f${key}`;
+    let releaseInitialRead;
+    let markInitialRead;
+    const initialReadReached = new Promise(resolve => {
+      markInitialRead = resolve;
+    });
+    const initialReadGate = new Promise(resolve => {
+      releaseInitialRead = resolve;
+    });
+    let blockFirstRead = true;
+    const backend = {
+      ...delegate,
+      get: async keyToRead => {
+        const snapshot = await delegate.get(keyToRead);
+        if (blockFirstRead) {
+          blockFirstRead = false;
+          markInitialRead();
+          await initialReadGate;
+        }
+        return snapshot;
+      },
+    };
+    const store = createIdempotencyStore({ backend, ttlSeconds: 3600, clockSkewSeconds: 0 });
+    const staleAttempt = store.check({ principal: 'p', key, payload: { x: 'stale' } });
+    await initialReadReached;
+    const newerClaim = `__adcp_in_flight__:${hashPayload({ x: 'newer' })}:newer-owner`;
+    await delegate.put(scopedKey, {
+      payloadHash: newerClaim,
+      response: null,
+      expiresAt: Math.floor(Date.now() / 1000) - 1,
+      retainUntil: Math.floor(Date.now() / 1000) + 300,
+    });
+    releaseInitialRead();
+
+    assert.equal((await staleAttempt).kind, 'conflict');
+    assert.equal((await delegate.get(scopedKey)).payloadHash, newerClaim);
   });
 
   it('treats a claim expiring exactly now as live until the next second', async () => {
