@@ -30,6 +30,7 @@ export interface LegacyPurchasePendingSettlement {
 }
 
 export interface LegacyPurchasePublicationLease {
+  /** Non-empty publication-owner identity. Whitespace-only values are invalid. */
   ownerId: string;
   expiresAt: string;
 }
@@ -217,7 +218,9 @@ export interface LegacyPurchaseContinuationStore {
   /**
    * Atomically acquire or renew publication ownership for the exact pending
    * settlement. Another unexpired owner returns false; an expired owner may
-   * be replaced. Implementations retain the lease only while pending remains.
+   * be replaced. `lease.ownerId` must be a string containing at least one
+   * non-whitespace character; invalid values return false without storing a
+   * lease. Implementations retain the lease only while pending remains.
    */
   claimPendingSettlementPublication?(
     token: string,
@@ -594,6 +597,8 @@ export class InMemoryLegacyPurchaseContinuationStore implements LegacyPurchaseCo
       !sameClaim(record.operation, claim) ||
       !record.operation.pendingSettlement ||
       !samePendingSettlement(record.operation.pendingSettlement, settlement) ||
+      typeof lease?.ownerId !== 'string' ||
+      lease.ownerId.trim().length === 0 ||
       !validFuture(lease.expiresAt, Date.now())
     ) {
       return false;

@@ -47,8 +47,19 @@ describe('createIdempotencyStore', () => {
       };
       assert.throws(
         () => createIdempotencyStore({ backend }),
-        /atomic replaceIfPayloadHash and deleteIfPayloadHash fencing/
+        /atomic putIfAbsent, replaceIfPayloadHash, and deleteIfPayloadHash fencing/
       );
+    });
+
+    it('rejects a custom backend without atomic first-owner claiming', () => {
+      const backend = {
+        get: async () => null,
+        replaceIfPayloadHash: async () => true,
+        deleteIfPayloadHash: async () => true,
+        put: async () => {},
+        delete: async () => {},
+      };
+      assert.throws(() => createIdempotencyStore({ backend }), /requires atomic putIfAbsent/);
     });
   });
 

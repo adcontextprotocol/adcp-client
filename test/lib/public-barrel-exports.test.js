@@ -18,6 +18,8 @@ import {
   CanonicalFormat,
   FormatAsset,
   IdempotencyClaimOwnershipError,
+  WebhookDedupConflictError,
+  WebhookDedupInputError,
   createLazyBackend,
   ensureGetProductsCacheScope,
   getFormatAssets,
@@ -97,6 +99,7 @@ const idempotencyErrors = [
   new IdempotencyClaimOwnershipError('save'),
   new ServerIdempotencyClaimOwnershipError('release'),
 ];
+const webhookDedupErrors = [new WebhookDedupInputError('invalid webhook key'), new WebhookDedupConflictError()];
 const settlementFingerprint: string = legacyPurchaseSettlementFingerprint({
   operationId: 'operation-1',
   serverTaskId: 'seller-task-1',
@@ -202,6 +205,8 @@ void mediaBuyShape;
 void inspectedAssets;
 void serverSyncError;
 void authErrors;
+void idempotencyErrors;
+void webhookDedupErrors;
 void settlementFingerprint;
 void lazyBackend;
 void lazyBackendOptions;
@@ -253,6 +258,14 @@ void acceptsTypesPlacement;
   });
 
   assert.strictEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+});
+
+test('root barrel exports webhook dedup error classes', () => {
+  const root = require('../../dist/lib/index.js');
+  assert.strictEqual(typeof root.WebhookDedupInputError, 'function');
+  assert.strictEqual(typeof root.WebhookDedupConflictError, 'function');
+  assert.ok(new root.WebhookDedupInputError() instanceof Error);
+  assert.ok(new root.WebhookDedupConflictError() instanceof Error);
 });
 
 test('schema exports stay behind @adcp/sdk/schemas', () => {

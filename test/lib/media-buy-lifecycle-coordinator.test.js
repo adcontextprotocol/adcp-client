@@ -9113,6 +9113,16 @@ describe('legacy products-only purchase continuations', () => {
     assert.equal((await store.recordPendingSettlement(token, claim, settlement)).outcome, 'recorded');
     assert.equal((await store.complete(token, claim, settlement.terminal)).outcome, 'pending_completed');
     assert.equal((await store.get(token)).operation.sellerTaskId, settlement.serverTaskId);
+    for (const ownerId of ['', '   ', null, 42, {}, []]) {
+      assert.equal(
+        await store.claimPendingSettlementPublication(token, claim, settlement, {
+          ownerId,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        }),
+        false
+      );
+      assert.equal((await store.get(token)).operation.pendingSettlementPublicationLease, undefined);
+    }
     const publicationOwnerId = 'promotion-publication-owner';
     assert.equal(
       await store.claimPendingSettlementPublication(token, claim, settlement, {

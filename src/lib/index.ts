@@ -593,7 +593,12 @@ export type {
   SyncCreativesStatusChangeHandler,
   GetProductsStatusChangeHandler,
 } from './core/AsyncHandler';
-export { AsyncHandler, createAsyncHandler } from './core/AsyncHandler';
+export {
+  AsyncHandler,
+  WebhookDedupConflictError,
+  WebhookDedupInputError,
+  createAsyncHandler,
+} from './core/AsyncHandler';
 
 // ====== WHOLESALE FEED WEBHOOKS ======
 export {

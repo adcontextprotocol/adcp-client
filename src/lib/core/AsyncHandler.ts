@@ -403,10 +403,12 @@ export class AsyncHandler {
     const backend = dedup?.backend;
     if (
       backend &&
-      (typeof backend.replaceIfPayloadHash !== 'function' || typeof backend.deleteIfPayloadHash !== 'function')
+      (typeof backend.putIfAbsent !== 'function' ||
+        typeof backend.replaceIfPayloadHash !== 'function' ||
+        typeof backend.deleteIfPayloadHash !== 'function')
     ) {
       throw new Error(
-        'handlers.webhookDedup.backend must implement atomic replaceIfPayloadHash() and deleteIfPayloadHash().'
+        'handlers.webhookDedup.backend must implement atomic putIfAbsent(), replaceIfPayloadHash(), and deleteIfPayloadHash().'
       );
     }
     if (dedup?.ttlSeconds !== undefined && (!Number.isSafeInteger(dedup.ttlSeconds) || dedup.ttlSeconds <= 0)) {

@@ -57,7 +57,25 @@ test('webhookDedup fails closed when a custom backend lacks atomic fencing', () 
           },
         },
       }),
-    /must implement atomic replaceIfPayloadHash/
+    /must implement atomic putIfAbsent\(\), replaceIfPayloadHash\(\), and deleteIfPayloadHash\(\)/
+  );
+});
+
+test('webhookDedup fails closed when a custom backend lacks atomic first-owner claiming', () => {
+  assert.throws(
+    () =>
+      new AsyncHandler({
+        webhookDedup: {
+          backend: {
+            get: async () => null,
+            put: async () => {},
+            replaceIfPayloadHash: async () => true,
+            deleteIfPayloadHash: async () => true,
+            delete: async () => {},
+          },
+        },
+      }),
+    /must implement atomic putIfAbsent\(\)/
   );
 });
 
