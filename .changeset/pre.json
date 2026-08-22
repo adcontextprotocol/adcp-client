@@ -15,10 +15,12 @@
     "bright-maps-fix-open-bugs",
     "bright-ravens-coordinate",
     "bright-ravens-profile",
+    "calm-buyers-persist-proposals",
     "calm-foxes-bound",
     "calm-macros-translate",
     "calm-otters-verify",
     "calm-pandas-preview",
+    "calm-webhooks-settle",
     "calm-yaks-block-ipv6",
     "clean-pumas-complete",
     "clean-types-drain-json",
@@ -27,6 +29,8 @@
     "fair-dragons-settle",
     "fair-runners-grade",
     "fix-k8s-cluster-local-private-url",
+    "fix-prerelease-schema-sync",
+    "fresh-betas-converge",
     "fresh-seals-fix-beta-regressions",
     "fuzzy-bears-guard",
     "gentle-carousels-render",
@@ -52,6 +56,7 @@
     "tiny-cats-validate-commitments",
     "tiny-schema-facades",
     "warm-foxes-list-schemas",
+    "wise-macros-compile",
     "wise-renders-project"
   ]
 }
