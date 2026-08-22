@@ -253,9 +253,9 @@ describe('comply() exact-version capability refusal', () => {
       capabilitiesResponse: {
         adcp_error: {
           code: 'VERSION_UNSUPPORTED',
-          message: 'AdCP version 3.2-beta.4 is not supported',
+          message: 'AdCP version 3.2-beta.5 is not supported',
           details: {
-            adcp_version: '3.2-beta.4',
+            adcp_version: '3.2-beta.5',
             supported_versions: ['3.2-beta.2'],
           },
         },

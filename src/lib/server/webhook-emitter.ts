@@ -18,13 +18,17 @@
  *     to compact separators per adcp#2478.
  *
  * Handler authors using `createAdcpServer` call `ctx.emitWebhook(...)` with
- * a `url`, `payload`, and `operation_id` — everything else is wired in.
+ * a `url`, complete payload, and SDK-local `delivery_id` — everything else
+ * is wired in. The payload's AdCP `operation_id` remains a separate task
+ * correlation identifier and MUST NOT be substituted for `delivery_id` when
+ * one operation can emit more than one status observation.
  */
 
 import { signWebhook, type SignerKey } from '../signing/signer';
 import { signWebhookAsync } from '../signing/signer-async';
 import type { SigningProvider } from '../signing/provider';
 import type { RequestLike } from '../signing/canonicalize';
+import { canonicalJsonSha256 } from '../utils/jcs';
 import { createPinAndBindFetch } from './pin-and-bind-fetch';
 import { createHmac, randomUUID } from 'node:crypto';
 
@@ -39,30 +43,130 @@ const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_.:-]{16,255}$/;
 const TERMINAL_SIGNATURE_WWW_AUTH_RE = /Signature\s+error="webhook_signature_/i;
 
 /**
- * Per-(operation_id) idempotency-key store. The key MUST be stable across
- * every retry of the same logical event — that's the load-bearing invariant
- * the receiver-side dedup depends on.
+ * Immutable binding for one webhook delivery. `delivery_id` is SDK-local;
+ * it is deliberately distinct from the AdCP `operation_id` correlation value
+ * carried inside task webhook payloads.
+ */
+export interface WebhookDeliveryBinding {
+  status: 'bound';
+  idempotencyKey: string;
+  /**
+   * Lowercase hex SHA-256 of RFC 8785 JCS({ ...payload, idempotency_key }).
+   * This is collision-resistant equality evidence, not a password hash or
+   * authenticity mechanism; RFC 9421 provides sender authentication.
+   */
+  payloadFingerprint: string;
+  /** Unix epoch milliseconds of the first delivery attempt. */
+  firstAttemptAtMs: number;
+  /**
+   * Store-authoritative physical retention boundary. The store MUST keep the
+   * full binding through this instant, then MAY replace it with a permanent
+   * retired tombstone. It MUST never make a claimed delivery ID look unused.
+   */
+  retainUntilMs: number;
+}
+
+/** Minimal permanent marker that prevents an expired delivery ID being rebound. */
+export interface WebhookDeliveryRetired {
+  status: 'retired';
+}
+
+export type WebhookDeliveryRecord = WebhookDeliveryBinding | WebhookDeliveryRetired;
+
+/** Store namespace. All members are trusted publisher-side values. */
+export interface WebhookDeliveryKey {
+  publisherScope: string;
+  tenantScope: string;
+  deliveryId: string;
+}
+
+export interface WebhookDeliveryProposal {
+  idempotencyKey: string;
+  payloadFingerprint: string;
+}
+
+/** Exact caller-owned state required to reconstruct a delivery after restart. */
+export interface WebhookDeliverySnapshot {
+  url: string;
+  payload: Record<string, unknown>;
+  authentication: WebhookAuthentication;
+  retries: Required<WebhookRetryOptions>;
+}
+
+/**
+ * Durable outbox seam for process-crash recovery. `checkpoint` runs before
+ * the delivery binding is claimed or any POST occurs. It MUST atomically keep
+ * the first exact snapshot for `key`, reject a conflicting snapshot, encrypt
+ * authentication material at rest, and arrange replay of unsettled snapshots
+ * after restart. `settle` removes/terminalizes that snapshot only after a 2xx
+ * delivery or a non-retryable outcome. A retryable exhausted result remains
+ * pending for the outbox worker.
+ */
+export interface WebhookDeliveryRecovery {
+  readonly durability: 'durable';
+  checkpoint(key: Readonly<WebhookDeliveryKey>, snapshot: Readonly<WebhookDeliverySnapshot>): Promise<void> | void;
+  settle(key: Readonly<WebhookDeliveryKey>, disposition: 'delivered' | 'terminal'): Promise<void> | void;
+}
+
+/**
+ * Per-delivery immutable binding store. `claim` MUST be atomic and use the
+ * backend's authoritative clock when it creates `firstAttemptAtMs` and
+ * `retainUntilMs`. It returns the winning record whether this caller inserted
+ * `proposed`, another replica won, or the ID has been retired. The full
+ * binding MUST remain available through `retentionMs`. On the first claim
+ * after that boundary, the backend MUST atomically replace it with and return
+ * `{ status: 'retired' }`. A claimed key MUST never become absent/rebindable:
+ * retain the tombstone for the lifetime of the publisher/tenant delivery-ID
+ * namespace.
  *
- * Defaults to an in-memory Map. Production publishers with multi-replica
- * emitters SHOULD inject a durable backend (the same way
+ * Defaults to an in-memory Map in test/development only. Every production
+ * publisher MUST inject a durable backend (the same way
  * `AsyncHandlerConfig.webhookDedup` accepts a pluggable store on the
  * receiver side).
  */
-export interface WebhookIdempotencyKeyStore {
-  get(operation_id: string): Promise<string | undefined> | string | undefined;
-  /** Called only on first-seen operation_id. Subsequent emits read via get(). */
-  set(operation_id: string, key: string): Promise<void> | void;
+export interface WebhookDeliveryStore {
+  readonly durability: 'process-local' | 'durable';
+  claim(
+    key: Readonly<WebhookDeliveryKey>,
+    proposed: Readonly<WebhookDeliveryProposal>,
+    retentionMs: number
+  ): Promise<WebhookDeliveryRecord> | WebhookDeliveryRecord;
 }
 
-export function memoryWebhookKeyStore(): WebhookIdempotencyKeyStore {
-  const m = new Map<string, string>();
+/** @deprecated Use {@link WebhookDeliveryStore}. */
+export type WebhookIdempotencyKeyStore = WebhookDeliveryStore;
+
+export function memoryWebhookDeliveryStore(options: { now?: () => number } = {}): WebhookDeliveryStore {
+  const m = new Map<string, WebhookDeliveryRecord>();
+  const now = options.now ?? Date.now;
+  const storageKey = (key: Readonly<WebhookDeliveryKey>): string =>
+    JSON.stringify([key.publisherScope, key.tenantScope, key.deliveryId]);
   return {
-    get: id => m.get(id),
-    set: (id, key) => {
-      m.set(id, key);
+    durability: 'process-local',
+    claim: (key, proposed, retentionMs) => {
+      const id = storageKey(key);
+      const existing = m.get(id);
+      if (existing?.status === 'bound' && now() > existing.retainUntilMs) {
+        const retired: WebhookDeliveryRetired = { status: 'retired' };
+        m.set(id, retired);
+        return retired;
+      }
+      if (existing !== undefined) return { ...existing };
+      const firstAttemptAtMs = now();
+      const stored: WebhookDeliveryBinding = {
+        status: 'bound',
+        ...proposed,
+        firstAttemptAtMs,
+        retainUntilMs: firstAttemptAtMs + retentionMs,
+      };
+      m.set(id, stored);
+      return { ...stored };
     },
   };
 }
+
+/** @deprecated Use {@link memoryWebhookDeliveryStore}. */
+export const memoryWebhookKeyStore = memoryWebhookDeliveryStore;
 
 /**
  * Authentication mode for a single delivery. Omit / pass `null` to use the
@@ -132,7 +236,36 @@ export interface WebhookEmitterOptions {
    */
   signerProvider?: SigningProvider;
   retries?: WebhookRetryOptions;
-  idempotencyKeyStore?: WebhookIdempotencyKeyStore;
+  /**
+   * Durable immutable delivery-binding store. Multi-replica publishers MUST
+   * provide a shared implementation whose `claim` is atomic.
+   */
+  deliveryStore?: WebhookDeliveryStore;
+  /** @deprecated Use `deliveryStore`. */
+  idempotencyKeyStore?: WebhookDeliveryStore;
+  /**
+   * Maximum interval after the first attempt during which this emitter may
+   * retry a delivery. Defaults to the AdCP 3.2 minimum of 86400 seconds (24h).
+   * Must be an integer from 86400 through 604800 (7d).
+   */
+  deliveryRetryHorizonSeconds?: number;
+  /**
+   * Durable delivery snapshot/outbox. Required in production so the
+   * advertised retry horizon remains recoverable across process crashes.
+   */
+  deliveryRecovery?: WebhookDeliveryRecovery;
+  /**
+   * Stable publisher namespace for shared delivery stores. Production direct
+   * emitter callers MUST set this. `createAdcpServer` defaults it from the
+   * trusted server name.
+   */
+  publisherScope?: string;
+  /**
+   * Stable tenant namespace for direct emitter callers. Production direct
+   * callers MUST set it. `createAdcpServer` derives it from resolved trusted
+   * request context and never from webhook payload fields.
+   */
+  tenantScope?: string;
   /**
    * Override the default idempotency-key generator. Must return a value
    * matching `/^[A-Za-z0-9_.:-]{16,255}$/` — the emitter rejects anything
@@ -177,6 +310,8 @@ export interface WebhookEmitterOptions {
    * always shows up in IDEs.
    */
   suppressLegacyWarnings?: boolean;
+  /** Clock override for deterministic tests. */
+  now?: () => number;
 }
 
 export interface WebhookEmitParams {
@@ -185,11 +320,12 @@ export interface WebhookEmitParams {
   /** Object body. Serialized with compact separators (adcp#2478). */
   payload: Record<string, unknown>;
   /**
-   * Stable logical event id. Two emits with the same operation_id reuse
-   * the same `idempotency_key` — this is the cross-attempt AND
-   * cross-process invariant the receiver dedups on.
+   * SDK-local identity for this exact webhook delivery. Retries MUST reuse
+   * the same value; a changed payload or distinct lifecycle observation MUST
+   * use a fresh value. This is intentionally not the AdCP `operation_id`,
+   * which remains a stable task correlation value inside the payload.
    */
-  operation_id: string;
+  delivery_id: string;
   /**
    * Per-emit override of the delivery's authentication mode. Omit for the
    * 9421 default.
@@ -200,7 +336,7 @@ export interface WebhookEmitParams {
 }
 
 export interface WebhookEmitAttempt {
-  operation_id: string;
+  delivery_id: string;
   idempotency_key: string;
   attempt: number;
   url: string;
@@ -214,7 +350,7 @@ export interface WebhookEmitAttemptResult extends WebhookEmitAttempt {
 }
 
 export interface WebhookEmitResult {
-  operation_id: string;
+  delivery_id: string;
   idempotency_key: string;
   attempts: number;
   delivered: boolean;
@@ -235,6 +371,8 @@ export interface WebhookEmitResult {
 
 export interface WebhookEmitter {
   emit(params: WebhookEmitParams): Promise<WebhookEmitResult>;
+  /** Bind an emitter to a trusted tenant namespace without exposing scope in emit params. */
+  forTenantScope(tenantScope: string): WebhookEmitter;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -248,31 +386,91 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): WebhookEmi
   if (!options.signerKey && !options.signerProvider) {
     throw new TypeError('createWebhookEmitter: one of signerKey or signerProvider is required');
   }
-  const store = options.idempotencyKeyStore ?? memoryWebhookKeyStore();
+  if (options.deliveryStore && options.idempotencyKeyStore) {
+    throw new TypeError('createWebhookEmitter: provide deliveryStore, not both deliveryStore and idempotencyKeyStore');
+  }
+  const retryHorizonSeconds = resolveRetryHorizonSeconds(options.deliveryRetryHorizonSeconds);
+  const explicitStore = options.deliveryStore ?? options.idempotencyKeyStore;
+  const store = explicitStore ?? memoryWebhookDeliveryStore({ now: options.now });
+  const production = process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'development';
+  if (production && store.durability !== 'durable') {
+    throw new TypeError(
+      'createWebhookEmitter: production webhook emission requires a durable WebhookDeliveryStore; ' +
+        'memoryWebhookDeliveryStore() is for development and tests only'
+    );
+  }
+  if (production && options.deliveryRecovery?.durability !== 'durable') {
+    throw new TypeError(
+      'createWebhookEmitter: production webhook emission requires durable deliveryRecovery ' +
+        'to checkpoint exact retry state before the first attempt'
+    );
+  }
+  if (production && (!options.publisherScope || !options.tenantScope)) {
+    throw new TypeError(
+      'createWebhookEmitter: production direct emitters require non-empty publisherScope and tenantScope'
+    );
+  }
+  const publisherScope = requireScope(options.publisherScope ?? 'development-publisher', 'publisherScope');
+  const tenantScope = requireScope(options.tenantScope ?? 'development-tenant', 'tenantScope');
   const generateKey = options.generateIdempotencyKey ?? defaultGenerateIdempotencyKey;
   const fetchImpl = options.fetch ?? createPinAndBindFetch();
   const sleep = options.sleep ?? defaultSleep;
+  const now = options.now ?? Date.now;
 
-  return {
+  const makeEmitter = (boundTenantScope: string): WebhookEmitter => ({
+    forTenantScope(nextTenantScope: string): WebhookEmitter {
+      return makeEmitter(requireScope(nextTenantScope, 'tenantScope'));
+    },
     async emit(params: WebhookEmitParams): Promise<WebhookEmitResult> {
-      const retries = resolveRetries(params.retries ?? options.retries);
-      const idempotency_key = await resolveIdempotencyKey(store, params.operation_id, generateKey);
+      // Snapshot every caller-owned value before the first await. A slow
+      // durable claim must not let post-invocation mutation change identity,
+      // destination, authentication, or retry policy.
+      const deliveryId = params.delivery_id;
+      if (typeof deliveryId !== 'string' || deliveryId.length === 0) {
+        throw new TypeError('delivery_id must be a non-empty string');
+      }
+      const url = params.url;
+      const payloadSnapshot = structuredClone(params.payload);
+      const authentication = params.authentication == null ? null : structuredClone(params.authentication);
+      const retries = resolveRetries(params.retries === undefined ? options.retries : structuredClone(params.retries));
+      assertIJson(payloadSnapshot);
+      const deliveryKey = { publisherScope, tenantScope: boundTenantScope, deliveryId };
+      await options.deliveryRecovery?.checkpoint(deliveryKey, {
+        url,
+        payload: structuredClone(payloadSnapshot),
+        authentication: authentication === null ? null : structuredClone(authentication),
+        retries: { ...retries },
+      });
+      let binding = await resolveDeliveryBinding({
+        store,
+        key: deliveryKey,
+        payload: payloadSnapshot,
+        generateKey,
+        nowMs: now(),
+        retryHorizonSeconds,
+      });
+      const idempotency_key = binding.idempotencyKey;
 
       // Serialize ONCE with compact separators — the same bytes feed both
       // the content-digest input and the HTTP body on every attempt. This
       // is the load-bearing rule from adcp#2478.
-      const bodyPayload = { ...params.payload, idempotency_key };
+      const bodyPayload = { ...payloadSnapshot, idempotency_key };
       const bodyBytes = JSON.stringify(bodyPayload);
 
       const errors: string[] = [];
       let lastStatus: number | undefined;
+      let finalTerminal = false;
 
       for (let attempt = 1; attempt <= retries.maxAttempts; attempt++) {
+        if (attempt > 1) {
+          binding = await refreshDeliveryBinding(store, deliveryKey, binding, retryHorizonSeconds);
+        }
+        assertWithinRetryHorizon(binding, deliveryId, now(), retryHorizonSeconds);
         const attemptInfo: WebhookEmitAttempt = {
-          operation_id: params.operation_id,
+          delivery_id: deliveryId,
           idempotency_key,
           attempt,
-          url: params.url,
+          url,
         };
         options.onAttempt?.(attemptInfo);
 
@@ -283,11 +481,11 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): WebhookEmi
 
         try {
           const response = await deliverOnce({
-            url: params.url,
+            url,
             bodyBytes,
             signerKey: options.signerKey,
             signerProvider: options.signerProvider,
-            authentication: params.authentication ?? null,
+            authentication,
             tag: options.tag,
             userAgent: options.userAgent,
             fetch: fetchImpl,
@@ -299,8 +497,9 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): WebhookEmi
           if (status >= 200 && status < 300) {
             const durationMs = Date.now() - started;
             options.onAttemptResult?.({ ...attemptInfo, status, durationMs, willRetry: false });
+            await options.deliveryRecovery?.settle(deliveryKey, 'delivered');
             return {
-              operation_id: params.operation_id,
+              delivery_id: deliveryId,
               idempotency_key,
               attempts: attempt,
               delivered: true,
@@ -330,6 +529,7 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): WebhookEmi
         if (error) errors.push(`attempt ${attempt}: ${error}`);
 
         const willRetry = !terminal && attempt < retries.maxAttempts;
+        finalTerminal = terminal;
         options.onAttemptResult?.({
           ...attemptInfo,
           ...(status !== undefined && { status }),
@@ -343,8 +543,10 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): WebhookEmi
         await sleep(backoffDelay(attempt, retries));
       }
 
+      if (finalTerminal) await options.deliveryRecovery?.settle(deliveryKey, 'terminal');
+
       return {
-        operation_id: params.operation_id,
+        delivery_id: deliveryId,
         idempotency_key,
         attempts: errors.length,
         delivered: false,
@@ -352,7 +554,33 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): WebhookEmi
         errors,
       };
     },
-  };
+  });
+  return makeEmitter(tenantScope);
+}
+
+async function refreshDeliveryBinding(
+  store: WebhookDeliveryStore,
+  key: WebhookDeliveryKey,
+  expected: WebhookDeliveryBinding,
+  retryHorizonSeconds: number
+): Promise<WebhookDeliveryBinding> {
+  const record = await store.claim(
+    key,
+    { idempotencyKey: expected.idempotencyKey, payloadFingerprint: expected.payloadFingerprint },
+    retryHorizonSeconds * 1000
+  );
+  if (record?.status === 'retired') throw retiredDeliveryError(key.deliveryId);
+  const binding = record as WebhookDeliveryBinding;
+  assertValidDeliveryBinding(binding, key.deliveryId, retryHorizonSeconds);
+  if (
+    binding.idempotencyKey !== expected.idempotencyKey ||
+    binding.payloadFingerprint !== expected.payloadFingerprint ||
+    binding.firstAttemptAtMs !== expected.firstAttemptAtMs ||
+    binding.retainUntilMs !== expected.retainUntilMs
+  ) {
+    throw new Error(`Webhook delivery store changed the immutable binding for delivery_id "${key.deliveryId}".`);
+  }
+  return binding;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -449,30 +677,156 @@ async function buildHeaders(args: {
 // Helpers
 // ────────────────────────────────────────────────────────────
 
-async function resolveIdempotencyKey(
-  store: WebhookIdempotencyKeyStore,
-  operation_id: string,
-  generate: () => string
-): Promise<string> {
-  const existing = await store.get(operation_id);
-  if (existing) {
-    if (!IDEMPOTENCY_KEY_PATTERN.test(existing)) {
-      throw new Error(
-        `idempotency-key store returned "${existing}" for operation_id "${operation_id}"; ` +
-          `does not match required pattern ${IDEMPOTENCY_KEY_PATTERN.source}`
-      );
-    }
-    return existing;
+async function resolveDeliveryBinding(args: {
+  store: WebhookDeliveryStore;
+  key: WebhookDeliveryKey;
+  payload: Record<string, unknown>;
+  generateKey: () => string;
+  nowMs: number;
+  retryHorizonSeconds: number;
+}): Promise<WebhookDeliveryBinding> {
+  const deliveryId = args.key.deliveryId;
+  if (typeof deliveryId !== 'string' || !deliveryId) throw new TypeError('delivery_id must be a non-empty string');
+
+  const candidateKey = args.generateKey();
+  assertValidIdempotencyKey(candidateKey, 'generateIdempotencyKey', deliveryId);
+
+  const proposed: WebhookDeliveryProposal = {
+    idempotencyKey: candidateKey,
+    payloadFingerprint: canonicalJsonSha256({ ...args.payload, idempotency_key: candidateKey }),
+  };
+  const record = await args.store.claim(args.key, proposed, args.retryHorizonSeconds * 1000);
+  if (record?.status === 'retired') {
+    throw retiredDeliveryError(deliveryId);
   }
-  const fresh = generate();
-  if (!IDEMPOTENCY_KEY_PATTERN.test(fresh)) {
+  const binding = record as WebhookDeliveryBinding;
+  assertValidDeliveryBinding(binding, deliveryId, args.retryHorizonSeconds);
+
+  const suppliedFingerprint = canonicalJsonSha256({
+    ...args.payload,
+    idempotency_key: binding.idempotencyKey,
+  });
+  if (binding.payloadFingerprint !== suppliedFingerprint) {
     throw new Error(
-      `generateIdempotencyKey produced "${fresh}" for operation_id "${operation_id}"; ` +
-        `must match ${IDEMPOTENCY_KEY_PATTERN.source}`
+      `Webhook delivery_id "${deliveryId}" is already bound to a different canonical payload. ` +
+        'Use a fresh delivery_id for each changed payload or lifecycle observation.'
     );
   }
-  await store.set(operation_id, fresh);
-  return fresh;
+
+  assertWithinRetryHorizon(binding, deliveryId, args.nowMs, args.retryHorizonSeconds);
+  return binding;
+}
+
+function retiredDeliveryError(deliveryId: string): Error {
+  return new Error(
+    `Webhook delivery_id "${deliveryId}" is retired after its retry horizon and MUST NOT be rebound. ` +
+      'Create a new logical notification and delivery_id only when protocol re-emission is allowed.'
+  );
+}
+
+function assertWithinRetryHorizon(
+  binding: WebhookDeliveryBinding,
+  deliveryId: string,
+  nowMs: number,
+  retryHorizonSeconds: number
+): void {
+  // Clamp ordinary replica clock skew. The store's authoritative
+  // retainUntilMs remains the actual hard boundary.
+  const effectiveNowMs = Math.max(binding.firstAttemptAtMs, nowMs);
+  if (effectiveNowMs > binding.firstAttemptAtMs + retryHorizonSeconds * 1000) {
+    throw new Error(
+      `Webhook delivery_id "${deliveryId}" is outside its ${retryHorizonSeconds}-second retry horizon. ` +
+        'Do not retry the retained idempotency key; create a new logical notification and delivery_id if re-emission is allowed.'
+    );
+  }
+}
+
+function assertValidDeliveryBinding(
+  binding: WebhookDeliveryBinding,
+  deliveryId: string,
+  retryHorizonSeconds: number
+): void {
+  if (binding === null || typeof binding !== 'object' || binding.status !== 'bound') {
+    throw new Error(`Webhook delivery store returned an invalid binding for delivery_id "${deliveryId}".`);
+  }
+  assertValidIdempotencyKey(binding.idempotencyKey, 'delivery store', deliveryId);
+  if (!/^[a-f0-9]{64}$/.test(binding.payloadFingerprint)) {
+    throw new Error(`Webhook delivery store returned an invalid payload fingerprint for delivery_id "${deliveryId}".`);
+  }
+  if (!Number.isSafeInteger(binding.firstAttemptAtMs) || binding.firstAttemptAtMs < 0) {
+    throw new Error(`Webhook delivery store returned an invalid firstAttemptAtMs for delivery_id "${deliveryId}".`);
+  }
+  const requiredRetainUntilMs = binding.firstAttemptAtMs + retryHorizonSeconds * 1000;
+  if (!Number.isSafeInteger(binding.retainUntilMs) || binding.retainUntilMs < requiredRetainUntilMs) {
+    throw new Error(
+      `Webhook delivery store returned a retainUntilMs shorter than the advertised retry horizon for delivery_id "${deliveryId}".`
+    );
+  }
+}
+
+function requireScope(value: string, name: 'publisherScope' | 'tenantScope'): string {
+  if (typeof value !== 'string' || value.length === 0 || value.includes('\0')) {
+    throw new TypeError(`${name} must be a non-empty string without NUL characters`);
+  }
+  return value;
+}
+
+function assertIJson(value: unknown): void {
+  const ancestors = new WeakSet<object>();
+  const stack: Array<{ value: unknown; exit?: boolean }> = [{ value }];
+  while (stack.length > 0) {
+    const frame = stack.pop()!;
+    const current = frame.value;
+    if (frame.exit) {
+      ancestors.delete(current as object);
+      continue;
+    }
+    if (typeof current === 'string') {
+      assertIJsonString(current);
+      continue;
+    }
+    if (current !== null && typeof current === 'object') {
+      if (ancestors.has(current)) {
+        throw new TypeError('Webhook payload contains a circular reference and is not valid JSON');
+      }
+      ancestors.add(current);
+      stack.push({ value: current, exit: true });
+      const entries = Array.isArray(current)
+        ? current.map((member, index) => [String(index), member] as const)
+        : Object.entries(current as Record<string, unknown>);
+      for (let index = entries.length - 1; index >= 0; index--) {
+        const [key, member] = entries[index]!;
+        assertIJsonString(key);
+        stack.push({ value: member });
+      }
+    }
+  }
+}
+
+function assertIJsonString(value: string): void {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const low = value.charCodeAt(index + 1);
+      if (low >= 0xdc00 && low <= 0xdfff) {
+        index++;
+        continue;
+      }
+      throw new TypeError('Webhook payload contains a lone Unicode surrogate, which is not valid I-JSON');
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      throw new TypeError('Webhook payload contains a lone Unicode surrogate, which is not valid I-JSON');
+    }
+  }
+}
+
+function assertValidIdempotencyKey(key: string, source: string, deliveryId: string): void {
+  if (!IDEMPOTENCY_KEY_PATTERN.test(key)) {
+    throw new Error(
+      `${source} returned "${key}" for delivery_id "${deliveryId}"; ` +
+        `does not match required pattern ${IDEMPOTENCY_KEY_PATTERN.source}`
+    );
+  }
 }
 
 /**
@@ -518,6 +872,14 @@ function resolveRetries(opts?: WebhookRetryOptions): Required<WebhookRetryOption
     maxDelayMs: Math.max(0, opts?.maxDelayMs ?? 60_000),
     jitter: Math.max(0, Math.min(1, opts?.jitter ?? 0.25)),
   };
+}
+
+function resolveRetryHorizonSeconds(value?: number): number {
+  const resolved = value ?? 86_400;
+  if (!Number.isInteger(resolved) || resolved < 86_400 || resolved > 604_800) {
+    throw new TypeError('deliveryRetryHorizonSeconds must be an integer from 86400 through 604800');
+  }
+  return resolved;
 }
 
 function defaultSleep(ms: number): Promise<void> {

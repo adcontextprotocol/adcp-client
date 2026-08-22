@@ -136,15 +136,15 @@ describe('discoverAgentProfile: AbortSignal honored (#1612)', () => {
         name: 'Older prerelease seller',
         tools: [{ name: 'get_adcp_capabilities' }, { name: 'get_products' }],
       }),
-      getAdcpVersion: () => '3.2-beta.4',
+      getAdcpVersion: () => '3.2-beta.5',
       getAdcpCapabilities: async () => ({
         success: false,
-        error: 'AdCP version 3.2-beta.4 is not supported',
+        error: 'AdCP version 3.2-beta.5 is not supported',
         adcpError: {
           code: 'VERSION_UNSUPPORTED',
-          message: 'AdCP version 3.2-beta.4 is not supported',
+          message: 'AdCP version 3.2-beta.5 is not supported',
           details: {
-            adcp_version: '3.2-beta.4',
+            adcp_version: '3.2-beta.5',
             supported_versions: ['3.1-rc.15', '3.2-beta.2'],
           },
         },
@@ -166,15 +166,15 @@ describe('discoverAgentProfile: AbortSignal honored (#1612)', () => {
         name: 'Public test seller',
         tools: [{ name: 'get_adcp_capabilities' }, { name: 'list_products' }],
       }),
-      getAdcpVersion: () => '3.2-beta.4',
+      getAdcpVersion: () => '3.2-beta.5',
       getAdcpCapabilities: async () => ({
         success: true,
         data: {
           adcp_error: {
             code: 'VERSION_UNSUPPORTED',
-            message: 'AdCP version 3.2-beta.4 is not supported',
+            message: 'AdCP version 3.2-beta.5 is not supported',
             details: {
-              adcp_version: '3.2-beta.4',
+              adcp_version: '3.2-beta.5',
               supported_versions: ['3.2-beta.2'],
             },
           },

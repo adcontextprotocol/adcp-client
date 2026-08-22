@@ -88,7 +88,7 @@ describe('pickWireSpecFields', () => {
     assert.ok(WIRE_SPEC_FIELDS.ReportUsageRequest.fields.includes('adcp_major_version'));
     const safe = pickWireSpecFields(
       {
-        adcp_version: '3.2.0-beta.4',
+        adcp_version: '3.2.0-beta.5',
         adcp_major_version: 3,
         idempotency_key: 'usage-envelope-0001',
         reporting_period: {
@@ -100,7 +100,7 @@ describe('pickWireSpecFields', () => {
       },
       'ReportUsageRequest'
     );
-    assert.equal(safe.adcp_version, '3.2.0-beta.4');
+    assert.equal(safe.adcp_version, '3.2.0-beta.5');
     assert.equal(safe.adcp_major_version, 3);
     assert.ok(!('attacker_field' in safe));
   });

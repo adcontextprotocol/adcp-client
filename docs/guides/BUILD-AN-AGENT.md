@@ -21,9 +21,9 @@ interfaces: `SalesCorePlatform` + `SalesIngestionPlatform`,
 `CampaignGovernancePlatform`, `BrandRightsPlatform`, etc.) and the
 framework wires capability projection, idempotency, RFC 9421 signing,
 async tasks, status normalization, lifecycle state, multi-tenant
-routing, and async task completion webhooks. Synchronous terminal
-responses stay inline unless an adopter explicitly enables the
-non-conformant `autoEmitCompletionWebhooks` compatibility option. Compile-time
+routing, and async task completion webhooks. Under AdCP 3.2 synchronous
+terminal responses remain silent on the task-webhook channel; the deprecated
+`autoEmitCompletionWebhooks` option is ignored. Compile-time
 enforcement via `RequiredPlatformsFor<S>` catches missing methods
 before runtime. The `definePlatform` / `defineSalesCorePlatform` /
 sibling helpers let you write inline platform literals without
@@ -579,23 +579,23 @@ serve(
 
 When signature headers are present, only signature auth runs (no fallback to bearer — that prevents bypass attacks). When absent, the credential authenticator runs as normal. `requiredFor` enforces the spec's `request_signature_required` 401 on operations that arrive unsigned without other credentials — start narrow and widen as your counterparties roll out signing. `replayStore` and `revocationStore` default to in-memory implementations — pass shared (e.g. Redis-backed) stores for horizontally scaled fleets. The capability key is `request_signing`; `signed_requests` is silently dropped (the `AdcpCapabilitiesOverrides` shape is what `get_adcp_capabilities` advertises).
 
-For outbound webhook signing, pass a `signerKey` on the server options:
+For outbound webhook signing, pass a signing provider and durable delivery
+store on the server options:
 
 ```typescript
 createAdcpServerFromPlatform(platform, {
   name: 'My Seller',
   version: '1.0.0',
   webhooks: {
-    signerKey: {
-      keyid: 'my-webhook-key-2026',
-      alg: 'ed25519',
-      privateKey: webhookPrivateJwk,
-    },
+    signerProvider: kmsSigningProvider,
+    deliveryStore: durableWebhookDeliveryStore,
+    deliveryRecovery: durableWebhookOutbox,
+    publisherScope: 'my-seller',
   },
 });
 ```
 
-**Production key storage.** For outbound *request* signing (calling other agents' tools), prefer a KMS-backed `SigningProvider` over in-process JWKs — `request_signing` accepts `{ kind: 'provider', provider, agent_url }` for any KMS / HSM / Vault backend. See [SIGNING-GUIDE.md § Production Key Storage](./SIGNING-GUIDE.md#step-35-production-key-storage--kms--hsm--vault) for the full walkthrough including a reference GCP KMS adapter. Server-side `webhooks.signerKey` currently accepts only an in-process `SignerKey`; KMS-backed webhook signing on the server is a follow-up.
+**Production key storage.** For outbound request or webhook signing, prefer a KMS-backed `SigningProvider` over in-process JWKs. See [SIGNING-GUIDE.md § Production Key Storage](./SIGNING-GUIDE.md#step-35-production-key-storage--kms--hsm--vault) for the full walkthrough including a reference GCP KMS adapter. Production webhook servers must provide a shared durable `deliveryStore` plus `deliveryRecovery`, a durable outbox that checkpoints the exact destination, payload/timestamp, authentication reference, and retry policy before delivery and recovers unsettled snapshots after restart. Tenant namespaces are derived from trusted resolved request context.
 
 See [SIGNING-GUIDE.md](./SIGNING-GUIDE.md) for the full walkthrough: key generation, JWKS publication, brand.json, conformance testing, and KMS-backed production deployment.
 

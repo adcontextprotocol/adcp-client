@@ -125,14 +125,10 @@ default when a request returns a terminal result inline. AdCP completion
 webhooks describe status changes after the initial response; buyers already
 have a synchronous result and should consume it directly.
 
-Existing integrations that temporarily depend on duplicate inline + webhook
-delivery can pass `autoEmitCompletionWebhooks: true`. This is a non-conformant
-compatibility extension covering synchronous discovery (`get_products`,
-`get_signals`) and mutation responses. Its synthesized `sync-*` task ID is not
-registered and cannot be polled with `get_task_status`. Delivery is detached
-and best-effort, so use durable request idempotency, ingress rate limits, and
-bounded emitter timeouts while migrating. Remove the option once buyers handle
-the inline terminal response.
+SDK 13 temporarily allowed duplicate inline + webhook delivery through
+`autoEmitCompletionWebhooks: true`. SDK 14 ignores that deprecated option:
+AdCP 3.2 requires synchronous terminal responses to remain silent on the task
+webhook channel. Buyers consume the inline result directly.
 
 ## Root type imports are canonical
 

@@ -22,7 +22,7 @@ async function withDualSurfaceSeller(serverAdcpVersion, buyerAdcpVersion, run, o
     end_time: '2027-02-01T00:00:00Z',
     confirmed_at: '2027-01-01T00:00:00Z',
   };
-  const supportedVersions = ['3.0.25', '3.1.18', '3.2.0-beta.4'].filter(version => {
+  const supportedVersions = ['3.0.25', '3.1.18', '3.2.0-beta.5'].filter(version => {
     if (serverAdcpVersion.startsWith('3.0.')) return version.startsWith('3.0.');
     if (serverAdcpVersion.startsWith('3.1.')) return !version.startsWith('3.2.');
     return true;
@@ -134,8 +134,8 @@ async function withDualSurfaceSeller(serverAdcpVersion, buyerAdcpVersion, run, o
 
 test('forced established diagnostics use actual MCP tool discovery on an all-tools 3.2 seller', async () => {
   await withDualSurfaceSeller(
-    '3.2.0-beta.4',
-    '3.2.0-beta.4',
+    '3.2.0-beta.5',
+    '3.2.0-beta.5',
     async ({ buyer, calls }) => {
       const lifecycle = await buyer.negotiateMediaBuyLifecycle({
         preferredLifecycle: 'established',
@@ -276,7 +276,7 @@ test('forced established diagnostics use actual MCP tool discovery on an all-too
 });
 
 test('SDK buyer uses the compact lifecycle against a 3.2 seller profile', async () => {
-  await withDualSurfaceSeller('3.2.0-beta.4', '3.2.0-beta.4', async ({ buyer, mcpClient, calls }) => {
+  await withDualSurfaceSeller('3.2.0-beta.5', '3.2.0-beta.5', async ({ buyer, mcpClient, calls }) => {
     const listed = await mcpClient.listTools();
     assert.ok(listed.tools.some(tool => tool.name === 'list_products'));
     assert.ok(!listed.tools.some(tool => tool.name === 'get_products'));
@@ -284,15 +284,15 @@ test('SDK buyer uses the compact lifecycle against a 3.2 seller profile', async 
     const result = await buyer.listProducts({ max_results: 10 });
     assert.strictEqual(result.success, true, JSON.stringify(result));
     assert.strictEqual(result.data.feed_version, 'feed-modern');
-    assert.deepStrictEqual(calls, [['list_products', '3.2-beta.4', 3]]);
+    assert.deepStrictEqual(calls, [['list_products', '3.2-beta.5', 3]]);
 
     const lifecycle = await buyer.negotiateMediaBuyLifecycle();
     const compatible = await lifecycle.listProducts({ max_results: 5 });
-    assert.strictEqual(lifecycle.negotiated_version, '3.2-beta.4');
+    assert.strictEqual(lifecycle.negotiated_version, '3.2-beta.5');
     assert.strictEqual(compatible.compatibility.lifecycle, 'compact');
     assert.deepStrictEqual(compatible.compatibility.tools_used, ['list_products']);
     assert.strictEqual(compatible.data.feed_version, 'feed-modern');
-    assert.deepStrictEqual(calls.at(-1), ['list_products', '3.2-beta.4', 3]);
+    assert.deepStrictEqual(calls.at(-1), ['list_products', '3.2-beta.5', 3]);
 
     const rejected = await mcpClient.callTool({
       name: 'request_proposals',
@@ -317,7 +317,7 @@ test('SDK buyer uses the compact lifecycle against a 3.2 seller profile', async 
 
 for (const adcpVersion of ['3.1.18', '3.0.25']) {
   test(`SDK buyer pinned to ${adcpVersion} can call a 3.2 seller's hidden legacy facade`, async () => {
-    await withDualSurfaceSeller('3.2.0-beta.4', adcpVersion, async ({ buyer, mcpClient, calls }) => {
+    await withDualSurfaceSeller('3.2.0-beta.5', adcpVersion, async ({ buyer, mcpClient, calls }) => {
       const listed = await mcpClient.listTools();
       assert.ok(!listed.tools.some(tool => tool.name === 'get_products'));
 
@@ -337,7 +337,7 @@ for (const adcpVersion of ['3.1.18', '3.0.25']) {
   });
 
   test(`SDK buyer pinned to ${adcpVersion} preserves the full hidden legacy lifecycle on a normal 3.2 profile`, async () => {
-    await withDualSurfaceSeller('3.2.0-beta.4', adcpVersion, async ({ buyer, mcpClient, calls }) => {
+    await withDualSurfaceSeller('3.2.0-beta.5', adcpVersion, async ({ buyer, mcpClient, calls }) => {
       const listedTools = await mcpClient.listTools();
       for (const hidden of ['get_products', 'create_media_buy', 'update_media_buy']) {
         assert.ok(!listedTools.tools.some(tool => tool.name === hidden), `${hidden} must stay hidden from tools/list`);

@@ -528,8 +528,8 @@ export interface HandlerContext<TAccount = unknown> {
    *
    *     await ctx.emitWebhook({
    *       url: push_notification_config.url,
-   *       payload: { task: { task_id, status: 'completed', result } },
-   *       operation_id: `create_media_buy.${media_buy_id}`,
+   *       payload: { operation_id, task_id, task_type: 'create_media_buy', status: 'completed', timestamp, result },
+   *       delivery_id: `create_media_buy.${media_buy_id}.completed`,
    *     });
    */
   emitWebhook?: (params: WebhookEmitParams) => Promise<WebhookEmitResult>;
@@ -1573,7 +1573,7 @@ export interface AdcpCustomToolConfig<
  * (and without falling back to `as any` when they typed it loosely).
  *
  * Subset of {@link WebhookEmitterOptions} the framework lifts to the
- * server config: signing key/provider, retry policy, idempotency-key
+ * server config: signing key/provider, retry policy, immutable delivery
  * store, fetch override, user-agent + tag, and the per-emit observability
  * hooks. Other emitter-internal knobs (rate limits, transport pool
  * sizing) stay on `WebhookEmitterOptions` for direct emitter callers.
@@ -1585,12 +1585,17 @@ export type WebhooksConfig = Pick<
   | 'signerKey'
   | 'signerProvider'
   | 'retries'
+  | 'deliveryStore'
   | 'idempotencyKeyStore'
+  | 'deliveryRetryHorizonSeconds'
+  | 'deliveryRecovery'
   | 'generateIdempotencyKey'
   | 'fetch'
   | 'userAgent'
   | 'tag'
 > & {
+  /** Stable publisher namespace for shared delivery-store keys. Defaults to the trusted server name. */
+  publisherScope?: string;
   /** Observability: emitter-wide onAttempt hook. */
   onAttempt?: WebhookEmitterOptions['onAttempt'];
   /** Observability: emitter-wide onAttemptResult hook. */
@@ -2732,6 +2737,47 @@ function taskOwnerScopeForContext(
   if (credential?.kind === 'api_key') return `api_key:${credential.key_id}`;
   if (typeof authInfo?.clientId === 'string' && authInfo.clientId.length > 0) return `client:${authInfo.clientId}`;
   return `account:${accountId}`;
+}
+
+/**
+ * Build the webhook delivery-store tenant namespace exclusively from trusted,
+ * resolved server context. Webhook payload and request-body delivery fields
+ * never participate, so one tenant cannot preclaim another tenant's delivery
+ * binding in a shared durable store.
+ */
+function webhookTenantScopeForContext<TAccount>(ctx: HandlerContext<TAccount>): string {
+  if (ctx.callerMutationScope) {
+    return JSON.stringify([
+      'caller',
+      ctx.callerMutationScope.tenant_id,
+      ctx.callerMutationScope.principal_id,
+      ctx.callerMutationScope.account_id ?? null,
+    ]);
+  }
+  const accountLike = ctx.account as
+    | { id?: unknown; account_id?: unknown; tenant_id?: unknown; tenantId?: unknown }
+    | undefined;
+  const accountId =
+    typeof accountLike?.id === 'string'
+      ? accountLike.id
+      : typeof accountLike?.account_id === 'string'
+        ? accountLike.account_id
+        : undefined;
+  const tenantId =
+    typeof accountLike?.tenant_id === 'string'
+      ? accountLike.tenant_id
+      : typeof accountLike?.tenantId === 'string'
+        ? accountLike.tenantId
+        : undefined;
+  const principal = authenticatedPrincipalForContext(ctx.authInfo, ctx.agent);
+  if (ctx.sessionKey !== undefined) {
+    return JSON.stringify(['session', ctx.sessionKey, tenantId ?? null, accountId ?? null, principal ?? null]);
+  }
+  if (tenantId !== undefined || accountId !== undefined) {
+    return JSON.stringify(['account', tenantId ?? null, accountId ?? null, principal ?? null]);
+  }
+  if (principal !== undefined) return JSON.stringify(['principal', principal]);
+  return 'single-tenant';
 }
 
 function compareProtocolTaskItems(
@@ -4365,8 +4411,8 @@ function selectServedAdcpRelease(
  * default `resolveIdempotencyPrincipal` synthesis, capability projection,
  * async-task envelopes, status normalization via `StatusMappers`,
  * multi-tenant routing via `TenantRegistry`, and async task completion
- * webhook delivery. Synchronous terminal responses remain inline unless
- * an adopter explicitly enables the non-conformant compatibility option.
+ * webhook delivery. Under AdCP 3.2 synchronous terminal responses remain
+ * silent on the task-webhook channel.
  *
  * Reach for `createAdcpServer` directly only when you need fine control
  * over individual handlers, are mid-migration from a v5 codebase, or
@@ -4833,7 +4879,40 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // Instantiate the emitter once — handler contexts expose its `emit`
   // bound method so per-request code calls `ctx.emitWebhook(...)` without
   // knowing about the emitter's construction or options.
-  const webhookEmitter = webhooks ? createWebhookEmitter(webhooks) : undefined;
+  const configuredWebhookStore = webhooks?.deliveryStore ?? webhooks?.idempotencyKeyStore;
+  if (
+    webhooks &&
+    process.env.NODE_ENV !== 'test' &&
+    process.env.NODE_ENV !== 'development' &&
+    configuredWebhookStore?.durability !== 'durable'
+  ) {
+    throw new Error(
+      'createAdcpServer: production webhook emission requires a durable WebhookDeliveryStore. ' +
+        'The store atomically retains each delivery key, canonical payload fingerprint, and first-attempt time ' +
+        'through the advertised retry horizon. Pass the shared store as webhooks.deliveryStore; ' +
+        'memoryWebhookDeliveryStore() is for development and tests only.'
+    );
+  }
+  if (
+    webhooks &&
+    process.env.NODE_ENV !== 'test' &&
+    process.env.NODE_ENV !== 'development' &&
+    webhooks.deliveryRecovery?.durability !== 'durable'
+  ) {
+    throw new Error(
+      'createAdcpServer: production webhook emission requires durable deliveryRecovery. ' +
+        'Checkpoint the exact destination, payload/timestamp, authentication reference, and retry policy before ' +
+        'the first attempt, then recover unsettled deliveries after restart.'
+    );
+  }
+  const webhookEmitter = webhooks
+    ? createWebhookEmitter({
+        ...webhooks,
+        publisherScope: webhooks.publisherScope ?? name,
+        // Rebound to a trusted request-derived scope before handler dispatch.
+        tenantScope: 'single-tenant',
+      })
+    : undefined;
 
   // Resolve `instructions` — sync function form is evaluated at construction.
   // Under `serve({ reuseAgent: false })` (the default) the factory runs
@@ -5418,8 +5497,6 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             }
           }
         }
-        if (webhookEmitter) ctx.emitWebhook = webhookEmitter.emit.bind(webhookEmitter);
-
         // Echo params.context into any response (success or error) so buyers
         // can trace correlation_id end-to-end. Framework-generated errors
         // (ACCOUNT_NOT_FOUND, SERVICE_UNAVAILABLE) go through this too.
@@ -6301,6 +6378,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // --- Handler ---
         let mutationHandlerCompleted = false;
         try {
+          if (webhookEmitter) {
+            const scopedEmitter = webhookEmitter.forTenantScope(webhookTenantScopeForContext(ctx));
+            ctx.emitWebhook = scopedEmitter.emit.bind(scopedEmitter);
+          }
           const result = await handler(params, ctx);
           mutationHandlerCompleted = true;
           // Narrow Error / Submitted arms of the *Response union before
@@ -7708,6 +7789,27 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     applyCapabilityOverrides(capabilitiesData, capConfig.overrides);
   }
 
+  if (webhooks) {
+    const profile = webhooks.tag ?? 'adcp/webhook-signing/v1';
+    if (profile !== 'adcp/webhook-signing/v1') {
+      throw new Error(
+        `createAdcpServer: webhooks.tag must be "adcp/webhook-signing/v1" so the emitted tag matches the advertised AdCP profile; got ${JSON.stringify(profile)}`
+      );
+    }
+    const algorithm = webhooks.signerKey?.alg ?? webhooks.signerProvider?.algorithm;
+    if (algorithm === undefined) {
+      throw new Error('createAdcpServer: webhooks must provide a signing key or provider with an advertised algorithm');
+    }
+    capabilitiesData.webhook_signing = {
+      ...capabilitiesData.webhook_signing,
+      supported: true,
+      profile,
+      algorithms: [algorithm],
+      legacy_hmac_fallback: capabilitiesData.webhook_signing?.legacy_hmac_fallback ?? false,
+      delivery_retry_horizon_seconds: webhooks.deliveryRetryHorizonSeconds ?? 86_400,
+    };
+  }
+
   // Resolve signing once, after capability overrides, then use this exact
   // policy for both discovery and transport enforcement. Explicit verifier
   // config remains authoritative over a conflicting capability override;
@@ -7879,6 +7981,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         data = projectCapabilitiesToVersion(data, release.validationVersion);
       }
       if (selected !== undefined && (selected.major < 3 || (selected.major === 3 && selected.minor === 1))) {
+        if (data.webhook_signing) {
+          delete (
+            data.webhook_signing as NonNullable<GetAdCPCapabilitiesResponse['webhook_signing']> & {
+              delivery_retry_horizon_seconds?: number;
+            }
+          ).delivery_retry_horizon_seconds;
+        }
         delete (data.adcp as GetAdCPCapabilitiesResponse['adcp'] & { capability_changes?: unknown }).capability_changes;
         const forwardMediaBuy = data.media_buy as
           | (NonNullable<typeof data.media_buy> & {

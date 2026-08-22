@@ -2085,7 +2085,7 @@ export interface PushNotificationConfig {
    */
   url: string;
   /**
-   * Buyer-supplied correlation identifier for the operation that will produce webhooks against this registration. The seller MUST echo this value verbatim into every webhook payload's `operation_id` field (see [`mcp-webhook-payload.json`](/schemas/core/mcp-webhook-payload.json) and [Webhooks — Operation IDs](/docs/building/by-layer/L3/webhooks#operation-ids-and-url-templates)). Buyers SHOULD generate a unique value per task invocation (UUID recommended). This field is the canonical registration channel for `operation_id`; buyers MAY additionally embed routing values in the URL path or query as an aid for their own HTTP server, but the URL is opaque to the seller and the wire-level source of truth is this field. Sellers MUST NOT parse the URL to recover `operation_id`. Sellers that receive a webhook registration without `operation_id` MAY reject the task with `INVALID_REQUEST`.
+   * Buyer-supplied correlation identifier for the operation that will produce webhooks against this registration. The seller MUST echo this value verbatim into every webhook payload's `operation_id` field (see [`mcp-webhook-payload.json`](/schemas/core/mcp-webhook-payload.json) and [Webhooks — Operation IDs](/docs/building/by-layer/L3/webhooks#operation-ids-and-url-templates)). Buyers SHOULD generate a unique value per task invocation (UUID recommended). This field is the canonical registration channel for `operation_id`; buyers MAY additionally embed routing values in the URL path or query as an aid for their own HTTP server, but the URL is opaque to the seller and the wire-level source of truth is this field. Sellers MUST NOT parse the URL to recover `operation_id`. For 3.x schema compatibility the member remains optional, but a seller MUST reject a task that registers an AdCP webhook without it using `INVALID_REQUEST`; otherwise the required webhook envelope cannot be emitted.
    */
   operation_id?: string;
   /**
@@ -9133,6 +9133,15 @@ export type CanonicalProposal = {
    */
   terms_digest: string;
   insertion_order?: InsertionOrder;
+  /**
+   * Optional budget guidance for this proposal — the planning answer to criteria.outcome_target and to open-budget briefs. commercial_terms.total_budget remains the concrete figure the plan is priced at; this band expresses the seller's recommended range around it.
+   */
+  total_budget_guidance?: {
+  };
+  /**
+   * Aggregate forecasted delivery for the proposal. For outcome_target requests, points carry the goal's metric or event key in metrics.
+   */
+  forecast?: CanonicalDeliveryForecast;
 };
 /**
  * Buyer-authored execution policy for automatic delivery, auction bidding, average outcome cost, or return on ad spend. The containing object determines authored scope: media-buy `bidding` is a complete inherited default and package `bidding` is a complete package override. Sellers MUST preserve authored scope on readback and MUST NOT copy an inherited media-buy policy into package `bidding`. Every monetary field in this block is denominated in the media-buy currency; the selected pricing option supplies the auction unit, never another denomination. Auction-unit identity is the pricing_model plus every canonical billing-event qualifier after defaults are applied: for example CPV view threshold, CPP demographic system/demographic, CPA event tuple, time time_unit, and flat-rate/DOOH parameters. An extension qualifier participates only when its registered extension specification explicitly defines how it contributes to auction-unit identity. A media-buy bid_amount or max_bid is valid only when every inheriting package resolves the same auction-unit identity. Every affected pricing option MUST use the media-buy currency; split currency-mismatched packages into separate buys. Seller-optimized media-buy cost_per/roas bind to the primary budget_allocation.optimization_goals goal. Package-authored cost_per/roas bind to the package primary optimization goal. The primary goal is the earliest array entry among goals with the lowest explicit numeric priority; unprioritized goals follow explicitly prioritized goals; when all priorities are absent, the first entry is primary. In fixed allocation, an inherited media-buy cost_per is valid only when all inheriting packages have compatible primary-goal result units; inherited roas requires value-bearing primary goals on every inheriting package. Canonical ROAS requires each value-bearing event source to declare the media-buy currency in value_currencies; each buy consumes only exact-currency records and sellers MUST NOT convert them. Absence invokes inheritance or provider automatic delivery; `{automatic:true}` is an explicit authored policy that overrides inheritance. Sellers MUST reject unsupported modes, combinations, units, currency, goal bindings, or native placements before any provider mutation and MUST NOT silently translate semantics.
@@ -28138,6 +28147,10 @@ export interface GetAdCPCapabilitiesResponse {
      */
     buying_modes?: ('brief' | 'wholesale' | 'refine')[];
     /**
+     * Whether this seller can accept the default measurement_terms it advertises on a product. A value of true means the seller can return a product carrying measurement_terms for a measurement-specific brief and accept those terms unchanged on a package for that product. This opts the seller into conformance scenarios that discover and replay the product's own terms. False or absent means acceptance is outside the seller's advertised scope, but the seller must still reject unsupported terms with TERMS_REJECTED rather than being graded on an acceptance path it did not claim.
+     */
+    measurement_terms_acceptance?: boolean;
+    /**
      * Whether this seller supports flexible-window availability discovery: parsing offer_filters.availability_horizon and answering with time-dimensioned forecast points that carry availability_status. Sellers declaring true MUST apply the full window contract — half-open non-overlapping windows that partition the requested horizon (or signal gaps via incomplete[]), with availability_status computed from all booking eligibility constraints, not only competing holds. false or absent means flexible-window support is unknown: buyers SHOULD use exact start_date/end_date filtering, and sellers MAY ignore the field or reject it. Conformance storyboards gate flexible-window checks on this declaration.
      */
     availability_horizon?: boolean;
@@ -29018,7 +29031,7 @@ export interface GetAdCPCapabilitiesResponse {
     protocol_methods_required_for?: string[];
   };
   /**
-   * RFC 9421 webhook-signature support for outbound webhook callbacks (top-level peer of request_signing). Declares which AdCP webhook-signing profile version and algorithms this agent produces on delivery, and whether it supports the legacy HMAC-SHA256 fallback for receivers that have not yet adopted RFC 9421. See docs/building/implementation/webhooks.mdx.
+   * RFC 9421 webhook-signature and delivery-retry support for outbound webhook callbacks (top-level peer of request_signing). Declares which AdCP webhook-signing profile version and algorithms this agent produces on delivery, whether it supports the legacy HMAC-SHA256 fallback for receivers that have not yet adopted RFC 9421, and the maximum retry horizon receivers use to retain immutable delivery evidence. See docs/building/by-layer/L3/webhooks.mdx.
    */
   webhook_signing?: {
     /**
@@ -29038,6 +29051,12 @@ export interface GetAdCPCapabilitiesResponse {
      * Whether this agent will fall back to HMAC-SHA256 on the legacy push_notification_config.authentication, accounts[].notification_configs[].authentication, or sync_agent_notification_configs.notification_configs[].authentication paths for receivers that have not adopted RFC 9421. Deprecated; removed in AdCP 4.0.
      */
     legacy_hmac_fallback?: boolean;
+    /**
+     * Maximum elapsed time from the first delivery attempt during which this agent may retry the same webhook delivery. The publisher retains the immutable delivery-key-to-RFC-8785-JCS-payload binding and sufficient delivery state for at least this interval, and MUST NOT retry that key afterward. Receivers retain the matching payload binding and terminal publication proof for at least max(86400, this value) seconds in AdCP 3.x. Retries do not extend the horizon. A webhook-emitting AdCP 3.2 agent MUST populate this additive field; it remains schema-optional so existing 3.x capability documents stay valid. Minimum 86400 (24h), maximum 604800 (7d).
+     * @minimum 86400
+     * @maximum 604800
+     */
+    delivery_retry_horizon_seconds?: number;
   };
   /**
    * Operator identity posture — trust-root pointer (`brand_json_url`) plus key-scoping and compromise-response controls the agent operates. `brand_json_url` is **load-bearing** for signature verification: when the agent declares any signing posture (`request_signing.supported_for`/`required_for` non-empty, `webhook_signing.supported === true`, or any `key_origins` subfield), `brand_json_url` MUST be present (storyboard-enforced in 3.x; schema-required in 4.0). Verifiers use it to bootstrap from the agent URL to the operator's brand.json (and from there to signing keys); see [security.mdx §Discovering an agent's signing keys](https://adcontextprotocol.org/docs/building/by-layer/L1/security#discovering-an-agents-signing-keys-via-brand_json_url). The remaining fields (`per_principal_key_isolation`, `key_origins`, `compromise_notification`) are advisory and receivers use them to reason about blast radius and revocation latency at onboarding. Empty-object semantics: `identity: {}` means "posture block present but no posture claimed" — schema-valid but advisory-neutral and receivers MUST treat it as equivalent to omitting the block, **except** that an agent declaring a signing posture elsewhere in the response with an empty `identity` MUST be rejected by storyboard runners as missing `brand_json_url`.
@@ -29411,7 +29430,7 @@ export interface GetTaskStatusRequest {
    */
   include_history?: boolean;
   /**
-   * Include the task's result payload when status is completed. Defaults to false for lightweight status-only polls. When true, sellers MUST include result on the response when status is completed.
+   * Include the task's canonical terminal result payload when one exists. Defaults to false for lightweight status-only polls. When true, sellers MUST include result for completed, failed, or rejected terminal tasks when that task produced a terminal artifact; canceled tasks may have no result. The legacy singular error field remains a convenience for failed tasks but does not replace the canonical terminal result.
    */
   include_result?: boolean;
   context?: ContextObject;
@@ -29515,7 +29534,7 @@ export interface GetTaskStatusResponse {
     step_number?: number;
   };
   /**
-   * Error details for failed tasks
+   * Convenience summary for failed tasks. When include_result was true and the canonical terminal result is also present, this error MUST agree with the canonical fatal error in result. A legacy poll carrying only this singular summary proves failure status but not equivalence to a richer terminal webhook artifact.
    */
   error?: {
     /**
@@ -29560,7 +29579,7 @@ export interface GetTaskStatusResponse {
     data: {};
   }[];
   /**
-   * Task-specific terminal payload. Present when include_result was true and the task has a result; absent otherwise. For failed tasks, use the error field instead. Consumers and sellers MUST resolve and validate the exact schema through manifest.task_result_resolution: use terminal_schema_overrides[task_type] when present, otherwise tools[task_type].response_schema. The polling envelope keeps this field generic so get_task_status does not embed every task response schema.
+   * Canonical task-specific terminal payload. Present when include_result was true and a completed, failed, or rejected task produced a terminal artifact; canceled tasks may omit it. For failed tasks, the singular error field is a convenience summary and MUST agree with the canonical fatal error represented here. Consumers and sellers MUST resolve and validate the exact schema through manifest.task_result_resolution: use terminal_schema_overrides[task_type] when present, otherwise tools[task_type].response_schema. The polling envelope keeps this field generic so get_task_status does not embed every task response schema.
    */
   result?: {};
   ext?: ExtensionObject;

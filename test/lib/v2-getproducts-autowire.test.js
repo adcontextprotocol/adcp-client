@@ -32,8 +32,8 @@ async function buildMockSeller(getProductsResponse, clientConfig = {}, { adverti
     server.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => {
       const capabilities = {
         status: 'completed',
-        adcp_version: '3.2.0-beta.4',
-        adcp: { major_versions: [3], supported_versions: ['3.2.0-beta.4'] },
+        adcp_version: '3.2.0-beta.5',
+        adcp: { major_versions: [3], supported_versions: ['3.2.0-beta.5'] },
         supported_protocols: ['media_buy'],
         specialisms: [],
       };

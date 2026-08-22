@@ -101,7 +101,7 @@ test('show --specialism <slug> --json emits structured envelope', () => {
 test('show --specialism renders compound capability gates instead of always graded', () => {
   const complianceDir = mkdtempSync(path.join(os.tmpdir(), 'adcp-compound-gate-cli-'));
   try {
-    cpSync(path.resolve(__dirname, '../../compliance/cache/3.2.0-beta.4'), complianceDir, { recursive: true });
+    cpSync(path.resolve(__dirname, '../../compliance/cache/3.2.0-beta.5'), complianceDir, { recursive: true });
     const indexPath = path.join(complianceDir, 'index.json');
     const index = JSON.parse(readFileSync(indexPath, 'utf8'));
     index.universal.push('compound-gated');

@@ -50,7 +50,7 @@ serve(() => createAdcpServerFromPlatform(platform, {
 })); // http://localhost:3001/mcp
 ```
 
-Compile-time enforcement: `RequiredPlatformsFor<S>` catches missing specialism methods. Capability projection auto-derives `get_adcp_capabilities` blocks (`audience_targeting`, `conversion_tracking`, `compliance_testing.scenarios`, etc.). Idempotency, RFC 9421 signing, async tasks, and status normalization are framework-owned. Synchronous terminal responses do not emit completion webhooks by default; `autoEmitCompletionWebhooks: true` is available only as a non-conformant compatibility extension.
+Compile-time enforcement: `RequiredPlatformsFor<S>` catches missing specialism methods. Capability projection auto-derives `get_adcp_capabilities` blocks (`audience_targeting`, `conversion_tracking`, `compliance_testing.scenarios`, etc.). Idempotency, RFC 9421 signing, async tasks, and status normalization are framework-owned. Under AdCP 3.2, synchronous terminal responses remain silent on the task-webhook channel; the deprecated `autoEmitCompletionWebhooks` option is ignored.
 
 Lower-level option: `createAdcpServer({ signals: { getSignals: ... } })` from `@adcp/sdk/server/legacy/v5` — handler-bag API. Still fully supported, the substrate the platform path calls into. Use when you need fine control over individual handlers, mid-migration from a v5 codebase, or custom-shaped tools the platform interface doesn't yet model. `wrapEnvelope(inner, { replayed, context, operationId })` from `@adcp/sdk/server` attaches protocol envelope fields with the per-error-code allowlist (IDEMPOTENCY_CONFLICT drops `replayed`).
 
@@ -1132,6 +1132,9 @@ Flow: `get_adcp_capabilities → sync_creatives → preview_creative`
 **Creative materialized localization** — Verifies capability discovery, materialized localized sync, explicit default/unmatched behavior, and exact list readback.
 Flow: `get_adcp_capabilities → sync_creatives → list_creatives`
 
+**Policy-backed creative rejections** — Reports each violated registry policy as its own CREATIVE_REJECTED error entry.
+Flow: `get_products → sync_creatives`
+
 **Sales agent with creative capabilities** — Stateful sales agent that accepts pushed creative assets and renders them in its environment.
 Flow: `get_adcp_capabilities → sync_creatives → preview_creative`
 
@@ -1192,7 +1195,7 @@ Flow: `get_adcp_capabilities → create_property_list → list_property_lists �
 ### Media Buy
 
 **Media buy seller agent** — Seller agent that receives briefs, returns products, accepts media buys, and reports delivery.
-Flow: `get_adcp_capabilities → sync_accounts → get_adcp_capabilities → sync_accounts → sync_governance → get_products → create_media_buy → get_media_buys → sync_creatives → get_media_buy_delivery → sync_governance → get_products → create_media_buy → get_media_buys → sync_creatives → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → sync_accounts → get_adcp_capabilities → sync_accounts → sync_governance → get_products → create_media_buy → get_media_buys → get_media_buy_delivery → sync_governance → get_products → create_media_buy → get_media_buys → get_media_buy_delivery`
 
 **Buyer-selected account timezone resolution** — Verifies advertised timezone reconciliation, cold-start reconnect, and separate account identities when a buyer selects another timezone.
 Flow: `get_adcp_capabilities → sync_accounts → list_accounts → sync_accounts → list_accounts → get_adcp_capabilities → sync_accounts → list_accounts`
@@ -1326,8 +1329,14 @@ Flow: `get_products → create_media_buy`
 **Seller honors property_list targeting on create and update** — Verifies that a seller accepts PropertyListReference in package targeting on create_media_buy AND update_media_buy, with parity between both paths.
 Flow: `get_products → create_media_buy → get_media_buys → update_media_buy → get_media_buys`
 
-**Seller rejects unworkable measurement_terms** — Buyer proposes measurement_terms the seller will not accept; seller returns TERMS_REJECTED; buyer retries with seller-compatible terms.
+**Seller accepts supported measurement_terms** — A seller that advertises measurement-term acceptance accepts a supported configuration and returns the confirmed terms.
 Flow: `get_products → create_media_buy`
+
+**Seller rejects unworkable measurement_terms** — Buyer proposes measurement_terms the seller will not accept; seller returns TERMS_REJECTED without being required to accept a different configuration.
+Flow: `get_products → create_media_buy`
+
+**Seller solves for budget from a structured outcome target** — Verifies criteria.outcome_target reverse forecasting: a metric or event goal plus desired volume answered with total_budget_guidance on proposals and a forecast whose points carry the goal's key in metrics.
+Flow: `sync_accounts → request_proposals`
 
 **Seller preserves explicit package automatic bidding** — Verifies package-scoped automatic bidding independently of media-buy bidding support.
 Flow: `sync_accounts → create_media_buy → get_media_buys`

@@ -584,7 +584,7 @@ function generateLlmsTxt(
   ln('```');
   ln();
   ln(
-    `Compile-time enforcement: \`RequiredPlatformsFor<S>\` catches missing specialism methods. Capability projection auto-derives \`get_adcp_capabilities\` blocks (\`audience_targeting\`, \`conversion_tracking\`, \`compliance_testing.scenarios\`, etc.). Idempotency, RFC 9421 signing, async tasks, and status normalization are framework-owned. Synchronous terminal responses do not emit completion webhooks by default; \`autoEmitCompletionWebhooks: true\` is available only as a non-conformant compatibility extension.`
+    `Compile-time enforcement: \`RequiredPlatformsFor<S>\` catches missing specialism methods. Capability projection auto-derives \`get_adcp_capabilities\` blocks (\`audience_targeting\`, \`conversion_tracking\`, \`compliance_testing.scenarios\`, etc.). Idempotency, RFC 9421 signing, async tasks, and status normalization are framework-owned. Under AdCP 3.2, synchronous terminal responses remain silent on the task-webhook channel; the deprecated \`autoEmitCompletionWebhooks\` option is ignored.`
   );
   ln();
   ln(

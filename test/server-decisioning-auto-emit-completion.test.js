@@ -1,6 +1,5 @@
-// Sync terminal responses do not emit completion webhooks by default.
-// `autoEmitCompletionWebhooks: true` preserves the legacy behavior as
-// an explicit, non-conformant compatibility extension.
+// AdCP 3.2 requires sync terminal responses to remain silent on the task
+// webhook channel, including when the removed compatibility flag is present.
 
 process.env.NODE_ENV = 'test';
 
@@ -86,7 +85,7 @@ async function flushMicrotasks() {
   await new Promise(r => setImmediate(r));
 }
 
-describe('sync completion webhook compatibility opt-in', () => {
+describe('sync completion webhook silence', () => {
   it('does not emit a webhook for a synchronous terminal response by default', async () => {
     const { server, calls } = buildServer();
     const result = await server.dispatchTestRequest({
@@ -151,7 +150,7 @@ describe('sync completion webhook compatibility opt-in', () => {
     assert.strictEqual(calls.length, 0, 'signals sync terminal response must not emit by default');
   });
 
-  it('fires webhook when the non-conformant compatibility extension is explicitly enabled', async () => {
+  it('stays silent when the deprecated compatibility flag is explicitly enabled', async () => {
     const { server, calls } = buildServer({ autoEmitCompletionWebhooks: true });
     const result = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -166,14 +165,7 @@ describe('sync completion webhook compatibility opt-in', () => {
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
     assert.strictEqual(result.structuredContent.media_buy_id, 'mb_42');
     await flushMicrotasks();
-    assert.strictEqual(calls.length, 1, 'one webhook fired');
-    assert.strictEqual(calls[0].url, 'https://buyer.example.com/webhook');
-    const payload = calls[0].payload;
-    assert.strictEqual(payload.task_type, 'create_media_buy');
-    assert.strictEqual(payload.status, 'completed');
-    assert.match(payload.task_id, /^sync-/, 'sync task_id prefix');
-    // Buyer correlates via the resource id on result, not task_id.
-    assert.strictEqual(payload.result?.media_buy_id, 'mb_42');
+    assert.strictEqual(calls.length, 0, 'sync terminal response MUST NOT emit a task webhook');
   });
 
   it('does NOT fire when buyer omits push_notification_config.url', async () => {
@@ -201,7 +193,7 @@ describe('sync completion webhook compatibility opt-in', () => {
     assert.strictEqual(calls.length, 0, 'auto-emit suppressed');
   });
 
-  it('passes echoed token to the webhook payload', async () => {
+  it('does not leak an echoed token through a forbidden sync webhook', async () => {
     const { server, calls } = buildServer({ autoEmitCompletionWebhooks: true });
     await server.dispatchTestRequest({
       method: 'tools/call',
@@ -214,10 +206,10 @@ describe('sync completion webhook compatibility opt-in', () => {
       },
     });
     await flushMicrotasks();
-    assert.strictEqual(calls[0].payload.token, 'shhh');
+    assert.strictEqual(calls.length, 0);
   });
 
-  it('webhook delivery failure does NOT fail the sync response', async () => {
+  it('does not invoke a failing emitter for a sync response', async () => {
     const failingEmitter = {
       emit: async () => ({ delivered: false, errors: ['receiver returned 500'] }),
       unsigned: true,
@@ -240,12 +232,12 @@ describe('sync completion webhook compatibility opt-in', () => {
         },
       },
     });
-    // Sync response succeeded even though the webhook delivery flopped.
+    // Sync response succeeds because the webhook emitter is never invoked.
     assert.notStrictEqual(result.isError, true);
     assert.strictEqual(result.structuredContent.media_buy_id, 'mb_42');
   });
 
-  it('sync_creatives auto-fires webhook on success', async () => {
+  it('sync_creatives remains silent even with the deprecated flag', async () => {
     const { server, calls } = buildServer({ autoEmitCompletionWebhooks: true });
     await server.dispatchTestRequest({
       method: 'tools/call',
@@ -260,19 +252,10 @@ describe('sync completion webhook compatibility opt-in', () => {
       },
     });
     await flushMicrotasks();
-    assert.strictEqual(calls.length, 1);
-    assert.strictEqual(calls[0].payload.task_type, 'sync_creatives');
-    assert.strictEqual(calls[0].payload.status, 'completed');
-    // Result carries the projected creatives array.
-    assert.ok(Array.isArray(calls[0].payload.result?.creatives));
+    assert.strictEqual(calls.length, 0);
   });
 
-  it('update_media_buy auto-fires webhook on success', async () => {
-    // Code-review must-fix: the changeset advertised update_media_buy
-    // coverage but the implementation initially routed updateMediaBuy
-    // straight through projectSync without extractPushConfig /
-    // routeIfHandoff. Broadcast-tv storyboard's
-    // expect_window_update_webhook step relies on this.
+  it('update_media_buy remains silent even with the deprecated flag', async () => {
     const { server, calls } = buildServer({ autoEmitCompletionWebhooks: true });
     await server.dispatchTestRequest({
       method: 'tools/call',
@@ -287,26 +270,16 @@ describe('sync completion webhook compatibility opt-in', () => {
       },
     });
     await flushMicrotasks();
-    assert.strictEqual(calls.length, 1);
-    assert.strictEqual(calls[0].payload.task_type, 'update_media_buy');
-    assert.strictEqual(calls[0].payload.status, 'completed');
-    assert.strictEqual(calls[0].payload.result?.media_buy_id, 'mb_42');
+    assert.strictEqual(calls.length, 0);
   });
 
-  it('SLOWLORIS DEFENSE: slow webhook receiver does NOT block sync response', async () => {
-    // Security review F12 must-fix: pre-fix code awaited webhook delivery
-    // inline, letting attacker-controlled push_notification_config.url
-    // hold the seller's request worker for the full retry budget. After
-    // fix the auto-emit is fire-and-forget; the sync response returns
-    // before webhook delivery completes.
-    let webhookResolve;
+  it('SLOWLORIS DEFENSE: a sync response never calls a slow webhook receiver', async () => {
+    let webhookCalled = false;
     const slowEmitter = {
-      // Returns a promise that resolves only when the test releases it.
-      // If routeIfHandoff awaits this, the sync dispatch blocks forever.
-      emit: () =>
-        new Promise(resolve => {
-          webhookResolve = resolve;
-        }),
+      emit: () => {
+        webhookCalled = true;
+        return new Promise(() => {});
+      },
       unsigned: true,
     };
     const server = createAdcpServerFromPlatform(basePlatform(), {
@@ -329,13 +302,9 @@ describe('sync completion webhook compatibility opt-in', () => {
       },
     });
     const elapsedMs = Date.now() - start;
-    // Sync response returned without waiting for the (still-blocked) webhook.
     assert.notStrictEqual(result.isError, true);
     assert.strictEqual(result.structuredContent.media_buy_id, 'mb_42');
-    // Generous bound — anything <100ms means we didn't await the
-    // pending webhook promise. (Inline-await would block forever here.)
     assert.ok(elapsedMs < 100, `sync response should return fast; took ${elapsedMs}ms`);
-    // Release the webhook so test cleanup doesn't leak the promise.
-    if (webhookResolve) webhookResolve({ delivered: true });
+    assert.strictEqual(webhookCalled, false);
   });
 });

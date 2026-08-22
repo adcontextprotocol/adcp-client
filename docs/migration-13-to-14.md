@@ -1,8 +1,8 @@
 # Migrating from 13.x to 14 beta
 
-SDK 14 adopts AdCP `3.2.0-beta.4` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the beta and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
+SDK 14 adopts AdCP `3.2.0-beta.5` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the beta and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
 
-AdCP 3.2 prereleases are exact protocol pins: beta.4 replaces beta.3 in the
+AdCP 3.2 prereleases are exact protocol pins: beta.5 replaces beta.4 in the
 SDK's compatible-version list rather than extending a rolling 3.2-beta range.
 Beta.1 restored `adcp_major_version` on `buy_products`,
 `accept_proposal`, and `control_media_buy`; the SDK now sends that field again
@@ -10,7 +10,9 @@ for beta.1 and later while retaining its omission only for an explicitly
 configured beta.0 peer. Beta.2 added canonical compact proposal and direct-buy
 storyboards through operational control and MediaBuy readback; beta.4 adds
 flexible-window availability and durable products-only legacy purchase
-continuations.
+continuations. Beta.5 defines stable async identity, cross-channel terminal
+convergence, webhook retry horizons, and crash-safe continuation generation
+replacement.
 
 ```bash
 npm install @adcp/sdk@beta
@@ -57,6 +59,69 @@ loading; keep using `requires_capability` for a singular predicate.
 9. If established 3.0/3.1 proposal discovery and mutation can land on different processes, configure the same durable `EstablishedProposalStore`, stable `principalScope`, and stable non-secret `legacyPurchaseSellerSessionScope` on every coordinator. Recover submitted work with `reconcileEstablishedProposalTask({ account, sellerTaskId })`; see [Media-buy compatibility: durable established proposal state](./guides/MEDIA-BUY-3.2-COMPATIBILITY.md#durable-established-proposal-state). The bundled in-memory store is a non-durable reference implementation.
 10. Upgrade durable idempotency storage before application traffic: add the nullable PostgreSQL `retain_until` column/index, preserve `IdempotencyCacheEntry.retainUntil`, and add atomic `putIfAbsent()`, `replaceIfPayloadHash()`, `replaceIfPayloadHashAndExpired()`, and `deleteIfPayloadHash()` to every custom backend.
 11. Upgrade custom deferred-task storage with `putForSettlementOperationIfAbsent()`, `getBySettlementOperationId()`, and `replaceForSettlementOperationIfVersion()`. The initial token/index write and nested A→B index move must each be atomic.
+12. Replace webhook emitter `operation_id` arguments with SDK-local `delivery_id` values and upgrade custom stores to `WebhookDeliveryStore`. One delivery ID binds one canonical payload and key; use a fresh delivery ID for each changed status observation while retaining the AdCP `operation_id` inside the payload.
+
+### Webhook delivery identity and retry horizons
+
+SDK 14 separates the emitter's local delivery identity from the AdCP
+operation correlation carried on the wire. Exact retries use the same
+`delivery_id`, complete payload (including its original `timestamp`), and
+`idempotency_key`. A changed payload or later lifecycle observation uses a
+fresh `delivery_id` and therefore a fresh delivery key even when its payload
+retains the same AdCP `operation_id` and `task_id`.
+
+```ts
+await ctx.emitWebhook({
+  url: pushNotificationConfig.url,
+  payload: {
+    operation_id: pushNotificationConfig.operation_id,
+    task_id: sellerTaskId,
+    task_type: 'create_media_buy',
+    status: 'completed',
+    timestamp: terminalObservedAt,
+    result,
+  },
+  delivery_id: `create_media_buy:${sellerTaskId}:completed`,
+});
+```
+
+The old `operation_id` emitter argument incorrectly combined these namespaces
+and is no longer accepted. `WebhookDeliveryStore.claim()` must atomically
+return either the winning immutable `{ status: 'bound', idempotencyKey,
+payloadFingerprint, firstAttemptAtMs, retainUntilMs }` binding or a permanent
+`{ status: 'retired' }` tombstone. The backend uses its authoritative clock,
+retains the full binding through the advertised horizon, and MUST NOT make a
+previously claimed delivery ID look unused after expiry. Store keys include
+trusted publisher and tenant scopes in addition to the delivery ID.
+Multi-replica publishers must provide a shared durable implementation; the bundled
+`memoryWebhookDeliveryStore()` is single-process only. The deprecated
+`WebhookIdempotencyKeyStore` and `memoryWebhookKeyStore()` names remain aliases
+for source discovery, but custom implementations must adopt the new binding
+contract.
+
+Production publishers must also implement `WebhookDeliveryRecovery`. Its
+`checkpoint()` durably stores the exact destination, canonical payload values
+(including the original body timestamp), authentication reference, and retry
+policy before the binding claim or first POST; it rejects conflicting reuse and
+arranges replay of unsettled entries after restart. Its `settle()` removes or
+terminalizes the outbox entry only after 2xx delivery or a non-retryable
+outcome. Retryable exhaustion stays pending. Encrypt authentication material at
+rest. Without this outbox, the agent cannot truthfully advertise a webhook
+delivery retry horizon after a process crash.
+
+`deliveryRetryHorizonSeconds` defaults to 86,400 seconds and accepts 86,400
+through 604,800. `createAdcpServer()` advertises the configured value under
+`webhook_signing.delivery_retry_horizon_seconds`, rejects a changed payload
+under an existing delivery ID, and refuses the retained key after that
+horizon. Do not mint a new delivery ID merely to extend a failed delivery; a
+fresh ID is only for a protocol-defined re-emission or genuinely distinct
+observation.
+
+Production direct `createWebhookEmitter()` callers must provide stable
+`publisherScope` and `tenantScope` values. `createAdcpServer()` uses its trusted
+server name for the publisher scope and derives the tenant scope only from
+resolved account/session/authentication context; it never trusts request or
+payload fields for this namespace.
 
 ### Legacy continuation store upgrade
 

@@ -423,7 +423,7 @@ describe('createWebhookEmitter: pin-and-bind opt-in via fetch override', () => {
     const result = await emitter.emit({
       url: 'https://127.0.0.1:9999/webhook',
       payload: { task: { task_id: 'mb-pin-test', status: 'completed' } },
-      operation_id: 'op.mb-pin-test',
+      delivery_id: 'delivery.mb-pin-test',
     });
 
     assert.strictEqual(result.delivered, false, 'pin-and-bind must not deliver to loopback');
@@ -447,7 +447,7 @@ describe('createWebhookEmitter: pin-and-bind opt-in via fetch override', () => {
     const result = await emitter.emit({
       url: 'https://127.0.0.1:9999/webhook',
       payload: { task: { task_id: 'default-guarded', status: 'completed' } },
-      operation_id: 'op.default-guarded',
+      delivery_id: 'delivery.default-guarded',
     });
     assert.strictEqual(result.delivered, false, 'default fetch must not deliver to loopback');
     assert.strictEqual(result.attempts, 1, 'SSRF block must be terminal — no retries');

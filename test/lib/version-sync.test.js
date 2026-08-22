@@ -25,11 +25,11 @@ test('AdCP semver pins normalize to release-precision wire values', () => {
 });
 
 test('3.2 beta remains exact while retaining the complete supported 3.0 and 3.1 GA lines', () => {
-  assert.equal(ADCP_VERSION, '3.2.0-beta.4');
+  assert.equal(ADCP_VERSION, '3.2.0-beta.5');
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.0.25'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.1.18'));
-  assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.2.0-beta.4'));
-  assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.2-beta.4'));
+  assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.2.0-beta.5'));
+  assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.2-beta.5'));
   assert.ok(!COMPATIBLE_ADCP_VERSIONS.includes('3.2.0-beta.1'));
   assert.ok(!COMPATIBLE_ADCP_VERSIONS.includes('3.2-beta.1'));
   assert.ok(!COMPATIBLE_ADCP_VERSIONS.includes('3.2.0-beta.0'));

@@ -97,7 +97,7 @@ describe('webhook HMAC-SHA256 deprecation warning', () => {
       await emitter.emit({
         url: 'http://x/h',
         payload: { event: 'hmac' },
-        operation_id: 'op.hmac.dep.1',
+        delivery_id: 'delivery.hmac.dep.1',
         authentication: HMAC_AUTH,
       });
 
@@ -122,13 +122,13 @@ describe('webhook HMAC-SHA256 deprecation warning', () => {
       await emitter.emit({
         url: 'http://x/h',
         payload: { n: 1 },
-        operation_id: 'op.hmac.dep.first',
+        delivery_id: 'delivery.hmac.dep.first',
         authentication: HMAC_AUTH,
       });
       await emitter.emit({
         url: 'http://x/h',
         payload: { n: 2 },
-        operation_id: 'op.hmac.dep.second',
+        delivery_id: 'delivery.hmac.dep.second',
         authentication: HMAC_AUTH,
       });
 
@@ -149,7 +149,7 @@ describe('webhook HMAC-SHA256 deprecation warning', () => {
       await emitter.emit({
         url: 'http://x/h',
         payload: { event: 'hmac-suppressed' },
-        operation_id: 'op.hmac.dep.suppress',
+        delivery_id: 'delivery.hmac.dep.suppress',
         authentication: HMAC_AUTH,
       });
 
@@ -170,12 +170,12 @@ describe('webhook HMAC-SHA256 deprecation warning', () => {
       await emitter.emit({
         url: 'http://x/h',
         payload: { p: '9421' },
-        operation_id: 'op.hmac.dep.9421',
+        delivery_id: 'delivery.hmac.dep.9421',
       });
       await emitter.emit({
         url: 'http://x/h',
         payload: { p: 'bearer' },
-        operation_id: 'op.hmac.dep.bearer',
+        delivery_id: 'delivery.hmac.dep.bearer',
         authentication: { type: 'bearer', token: 'opaque' },
       });
 
