@@ -106,6 +106,13 @@ const PRIORITY_CANONICAL_SCHEMAS = [
 // churn in core.generated.ts.
 const PRIORITY_EXTRACTED_TYPES = [
   {
+    ref: 'core/canonical-proposal.json',
+    typeName: 'CanonicalProposal',
+    reason:
+      'inline total_budget_guidance anyOf constraints can collapse the object fields when first reached through a bundled lifecycle response',
+    numberedReferenceAliases: [],
+  },
+  {
     ref: 'media-buy/request-proposals-response.json',
     typeName: 'RequestProposalsResponse',
     reason:
@@ -121,6 +128,7 @@ const PRIORITY_EXTRACTED_TYPES = [
 ] as const;
 
 const PRIORITY_CANONICAL_TYPE_NAMES = new Set([
+  'CanonicalProposal',
   'ExtensionObject',
   'CreativeBrief',
   'BrandReference',

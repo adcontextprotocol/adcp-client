@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-22T15:20:04.749Z
+// Generated at: 2026-08-22T21:15:11.658Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1906,6 +1906,24 @@ export const AuthorizationResultSchema = z.object({
     }).passthrough().optional()
 }).passthrough();
 
+export const InsertionOrderSchema = z.object({
+    io_id: z.string(),
+    terms: z.object({
+        advertiser: z.string().optional(),
+        publisher: z.string().optional(),
+        total_budget: z.object({
+            amount: z.number(),
+            currency: z.string()
+        }).passthrough().optional(),
+        flight_start: z.string().optional(),
+        flight_end: z.string().optional(),
+        payment_terms: z.union([z.literal("net_30"), z.literal("net_60"), z.literal("net_90"), z.literal("prepaid"), z.literal("due_on_receipt")]).optional()
+    }).passthrough().optional(),
+    terms_url: z.string().optional(),
+    signing_url: z.string().optional(),
+    requires_signature: z.boolean()
+}).passthrough();
+
 export const NotificationConfigSchema = z.object({}).passthrough().merge(z.object({
     subscriber_id: z.string(),
     url: z.string(),
@@ -3128,24 +3146,6 @@ export const PaginationResponseSchema = z.object({
     has_more: z.boolean(),
     cursor: z.string().optional(),
     total_count: z.number().optional()
-}).passthrough();
-
-export const InsertionOrderSchema = z.object({
-    io_id: z.string(),
-    terms: z.object({
-        advertiser: z.string().optional(),
-        publisher: z.string().optional(),
-        total_budget: z.object({
-            amount: z.number(),
-            currency: z.string()
-        }).passthrough().optional(),
-        flight_start: z.string().optional(),
-        flight_end: z.string().optional(),
-        payment_terms: z.union([z.literal("net_30"), z.literal("net_60"), z.literal("net_90"), z.literal("prepaid"), z.literal("due_on_receipt")]).optional()
-    }).passthrough().optional(),
-    terms_url: z.string().optional(),
-    signing_url: z.string().optional(),
-    requires_signature: z.boolean()
 }).passthrough();
 
 export const GetProductsRejectedSchema = AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).and(z.object({

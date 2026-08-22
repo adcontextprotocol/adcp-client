@@ -66,6 +66,66 @@ describe('Zod Schema Validation', () => {
     assert.equal(schemas.AvailabilityStatusSchema.safeParse('available').success, true);
   });
 
+  test('beta.5 validates canonical proposal budget guidance and forecast', async () => {
+    if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
+    const proposal = {
+      proposal_id: 'proposal-outcome-target',
+      proposal_kind: 'new_media_buy',
+      proposal_status: 'draft',
+      expires_at: '2027-01-02T00:00:00Z',
+      name: 'Outcome target proposal',
+      commercial_terms: {
+        brand: { domain: 'buyer.example' },
+        purchases: [
+          {
+            product_id: 'product-1',
+            pricing_option_id: 'price-1',
+            pricing: {
+              pricing_option_id: 'price-1',
+              pricing_model: 'cpm',
+              currency: 'USD',
+              fixed_price: 8,
+            },
+            start_time: '2027-01-01T00:00:00Z',
+            end_time: '2027-02-01T00:00:00Z',
+          },
+        ],
+        start_time: '2027-01-01T00:00:00Z',
+        end_time: '2027-02-01T00:00:00Z',
+        total_budget: { amount: 8_000, currency: 'USD' },
+      },
+      terms_digest: `sha256:${'A'.repeat(43)}`,
+      total_budget_guidance: { recommended: 8_000, currency: 'USD' },
+      forecast: {
+        points: [{ metrics: { clicks: { mid: 10_000 } } }],
+        forecast_range_unit: 'clicks',
+        method: 'modeled',
+        currency: 'USD',
+      },
+    };
+
+    assert.equal(schemas.CanonicalProposalSchema.safeParse(proposal).success, true);
+    assert.equal(
+      schemas.CanonicalProposalSchema.safeParse({
+        ...proposal,
+        total_budget_guidance: { recommended: 8_000 },
+      }).success,
+      false
+    );
+    assert.equal(
+      schemas.CanonicalProposalSchema.safeParse({
+        ...proposal,
+        total_budget_guidance: { currency: 'USD' },
+      }).success,
+      false
+    );
+    assert.equal(
+      schemas.CanonicalProposalSchema.safeParse({ ...proposal, forecast: { method: 'modeled', currency: 'USD' } })
+        .success,
+      false
+    );
+  });
+
   test('beta.4 continuation input schema accepts signed vectors and preserves closed loss consent', async () => {
     if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
     const vectors = JSON.parse(

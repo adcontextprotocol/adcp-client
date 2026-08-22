@@ -204,6 +204,43 @@ writeFileSync(__OUTPUT__, JSON.stringify({
   assert.equal(result.finalized.hasExpiry, true);
 });
 
+test('CanonicalProposal exposes beta.5 budget guidance and forecast fields', () => {
+  const source = ts.createSourceFile(
+    CORE_TYPES_PATH,
+    fs.readFileSync(CORE_TYPES_PATH, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  const proposal = source.statements.find(
+    statement => ts.isInterfaceDeclaration(statement) && statement.name.text === 'CanonicalProposal'
+  );
+  assert.ok(proposal, 'CanonicalProposal should be emitted from its authoritative schema');
+
+  const property = name =>
+    proposal.members.find(
+      member =>
+        ts.isPropertySignature(member) &&
+        (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name)) &&
+        member.name.text === name
+    );
+  const guidance = property('total_budget_guidance');
+  assert.ok(guidance?.questionToken, 'total_budget_guidance should be optional');
+  assert.ok(ts.isTypeLiteralNode(guidance.type), 'total_budget_guidance should retain its object shape');
+  assert.deepEqual(
+    guidance.type.members.map(member => member.name.text),
+    ['min', 'recommended', 'max', 'currency']
+  );
+  const currency = guidance.type.members.find(member => member.name.text === 'currency');
+  assert.equal(currency.questionToken, undefined, 'guidance currency should remain required');
+  assert.equal(currency.type.kind, ts.SyntaxKind.StringKeyword);
+
+  const forecast = property('forecast');
+  assert.ok(forecast?.questionToken, 'forecast should be optional');
+  assert.ok(ts.isTypeReferenceNode(forecast.type));
+  assert.equal(forecast.type.typeName.text, 'CanonicalDeliveryForecast');
+});
+
 test('request_proposals outcome branches retain products and legacy continuation fields', () => {
   const result = runGeneratorHarness(`
 import { readFileSync, writeFileSync } from 'node:fs';
