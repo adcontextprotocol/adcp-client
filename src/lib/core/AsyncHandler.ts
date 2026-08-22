@@ -771,13 +771,19 @@ export class AsyncHandler {
 
     const ttlSeconds = dedup.ttlSeconds ?? 86_400;
     const claimTtlSeconds = Math.min(ttlSeconds, dedup.inFlightTtlSeconds ?? ttlSeconds);
-    // Reserved prefix `adcp\u001fwebhook\u001fv1\u001f...` namespaces the
+    // Reserved prefix `adcp\u001fwebhook\u001fv2\u001f...` namespaces the
     // claim so webhook dedup entries can coexist with request-side
     // idempotency entries in a shared backend — a request-side principal
     // can never produce a scoped key with this prefix because the
     // principal regex excludes U+001F.
     const agentScope = createHash('sha256').update(metadata.agent_id).digest('base64url');
-    const completedKey = `adcp\u001fwebhook\u001fv1\u001f${agentScope}\u001f${key}`;
+    const completedKey = `adcp\u001fwebhook\u001fv2\u001f${agentScope}\u001f${key}`;
+    // The previous receiver version stored the authenticated agent ID directly in this
+    // v1 scope and published a `{ payloadHash: '', response: null }` fence.
+    // Keep v1 exclusively for that read-only migration probe: sharing a
+    // namespace with hashed scopes would let an agent ID equal to another
+    // agent's digest alias the two authenticated senders. New writes use v2.
+    const legacyCompletedKey = `adcp\u001fwebhook\u001fv1\u001f${metadata.agent_id}\u001f${key}`;
     // One record transitions atomically from owner token to handled marker.
     // A separate completion key would create a check-then-put publication
     // race where a stale owner could publish after losing its lease.
@@ -798,12 +804,38 @@ export class AsyncHandler {
       )
       .digest('base64url');
     const completed = await dedup.backend.get(completedKey);
-    const completedFingerprint = webhookHandledFingerprint(completed);
-    if (completedFingerprint !== undefined && completed!.expiresAt >= nowSeconds) {
-      if (completedFingerprint !== eventFingerprint) {
+    const completedState = webhookDedupEntryState(completed, nowSeconds);
+    if (completedState === 'live') {
+      const completedFingerprint = webhookHandledFingerprint(completed);
+      if (completedFingerprint !== undefined) {
+        if (completedFingerprint !== eventFingerprint) {
+          throw new WebhookDedupConflictError();
+        }
+        return { outcome: 'already_handled' };
+      }
+      const activeFingerprint = webhookActiveClaimFingerprint(completed);
+      if (activeFingerprint !== undefined && activeFingerprint !== eventFingerprint) {
         throw new WebhookDedupConflictError();
       }
-      return { outcome: 'already_handled' };
+      // Unknown live shapes may represent a claim whose write completed under
+      // a newer/older process. Never bypass that fence or let the legacy probe
+      // downgrade a current-key conflict into an acknowledged duplicate.
+      return { outcome: 'in_progress' };
+    }
+    if (completedState === 'corrupt') {
+      return { outcome: 'in_progress' };
+    }
+
+    const legacyCompleted = await dedup.backend.get(legacyCompletedKey);
+    const legacyState = webhookDedupEntryState(legacyCompleted, nowSeconds);
+    if (legacyState === 'live') {
+      // Only the exact origin-main marker is a completed legacy fence. A live
+      // unknown shape fails closed because it may belong to a partially
+      // upgraded receiver or a damaged record that still protects side effects.
+      return { outcome: legacyWebhookHandledFence(legacyCompleted) ? 'already_handled' : 'in_progress' };
+    }
+    if (legacyState === 'corrupt') {
+      return { outcome: 'in_progress' };
     }
 
     const claimToken = randomUUID();
@@ -837,20 +869,19 @@ export class AsyncHandler {
       };
     }
     const completedAfterRace = await dedup.backend.get(completedKey);
-    const racedFingerprint = webhookHandledFingerprint(completedAfterRace);
-    if (racedFingerprint !== undefined && completedAfterRace!.expiresAt >= nowSeconds) {
-      if (racedFingerprint !== eventFingerprint) {
+    const racedState = webhookDedupEntryState(completedAfterRace, nowSeconds);
+    if (racedState === 'live') {
+      const racedFingerprint = webhookHandledFingerprint(completedAfterRace);
+      if (racedFingerprint !== undefined) {
+        if (racedFingerprint !== eventFingerprint) {
+          throw new WebhookDedupConflictError();
+        }
+        return { outcome: 'already_handled' };
+      }
+      const activeFingerprint = webhookActiveClaimFingerprint(completedAfterRace);
+      if (activeFingerprint !== undefined && activeFingerprint !== eventFingerprint) {
         throw new WebhookDedupConflictError();
       }
-      return { outcome: 'already_handled' };
-    }
-    const activeFingerprint = webhookActiveClaimFingerprint(completedAfterRace);
-    if (
-      activeFingerprint !== undefined &&
-      completedAfterRace!.expiresAt >= nowSeconds &&
-      activeFingerprint !== eventFingerprint
-    ) {
-      throw new WebhookDedupConflictError();
     }
     return { outcome: 'in_progress' };
   }
@@ -880,6 +911,18 @@ interface WebhookDedupHandledMarker {
 interface WebhookDedupActiveClaimMarker {
   claimToken: string;
   eventFingerprint: string;
+}
+
+type WebhookDedupEntryState = 'absent' | 'expired' | 'live' | 'corrupt';
+
+function webhookDedupEntryState(entry: IdempotencyCacheEntry | null, nowSeconds: number): WebhookDedupEntryState {
+  if (entry === null) return 'absent';
+  if (!Number.isFinite(entry.expiresAt)) return 'corrupt';
+  return entry.expiresAt >= nowSeconds ? 'live' : 'expired';
+}
+
+function legacyWebhookHandledFence(entry: IdempotencyCacheEntry | null): boolean {
+  return entry?.payloadHash === '' && entry.response === null;
 }
 
 function webhookActiveClaimFingerprint(entry: IdempotencyCacheEntry | null): string | undefined {

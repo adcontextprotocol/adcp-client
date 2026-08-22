@@ -21,7 +21,11 @@ function baseMetadata(overrides = {}) {
 
 function dedupStorageKey(metadata) {
   const agentScope = createHash('sha256').update(metadata.agent_id).digest('base64url');
-  return `adcp\u001fwebhook\u001fv1\u001f${agentScope}\u001f${metadata.idempotency_key}`;
+  return `adcp\u001fwebhook\u001fv2\u001f${agentScope}\u001f${metadata.idempotency_key}`;
+}
+
+function legacyDedupStorageKey(metadata) {
+  return `adcp\u001fwebhook\u001fv1\u001f${metadata.agent_id}\u001f${metadata.idempotency_key}`;
 }
 
 function dedupEventFingerprint(metadata, result) {
@@ -194,30 +198,141 @@ test('webhookDedup scopes by agent_id so different senders do not collide', asyn
   assert.deepStrictEqual(calls, [`agent_a:${sharedKey}`, `agent_b:${sharedKey}`]);
 });
 
-test('webhookDedup hashes direct-caller agent IDs before composing backend keys', async () => {
+test('webhookDedup honors a live origin-main raw-agent fence and dispatches after it expires', async () => {
+  const backend = memoryBackend({ sweepIntervalMs: 0 });
+  const metadata = baseMetadata({ agent_id: 'legacy-agent' });
+  const legacyKey = legacyDedupStorageKey(metadata);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  await backend.put(legacyKey, { payloadHash: '', response: null, expiresAt: nowSeconds + 60 });
+  let calls = 0;
+  const handler = new AsyncHandler({
+    webhookDedup: { backend },
+    onCreateMediaBuyStatusChange: () => {
+      calls += 1;
+    },
+  });
+  const args = { result: { media_buy_id: 'mb_legacy' }, metadata };
+
+  assert.strictEqual(await handler.handleWebhook(args), 'already_handled');
+  assert.strictEqual(calls, 0);
+  assert.strictEqual(await backend.get(dedupStorageKey(metadata)), null, 'legacy replay must not claim the new key');
+
+  await backend.put(legacyKey, { payloadHash: '', response: null, expiresAt: nowSeconds - 1 });
+  assert.strictEqual(await handler.handleWebhook(args), 'handled');
+  assert.strictEqual(calls, 1);
+  assert.ok(await backend.get(dedupStorageKey(metadata)));
+});
+
+test('webhookDedup gives current hashed conflicts precedence over a live legacy fence', async () => {
+  const backend = memoryBackend({ sweepIntervalMs: 0 });
+  const metadata = baseMetadata({ agent_id: 'transition-agent' });
+  const originalResult = { media_buy_id: 'mb_original' };
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  await backend.put(legacyDedupStorageKey(metadata), {
+    payloadHash: '',
+    response: null,
+    expiresAt: nowSeconds + 60,
+  });
+  await backend.put(dedupStorageKey(metadata), {
+    payloadHash: 'handled-generation',
+    response: {
+      state: 'adcp_webhook_handled_v1',
+      eventFingerprint: dedupEventFingerprint(metadata, originalResult),
+    },
+    expiresAt: nowSeconds + 60,
+  });
+  const handler = new AsyncHandler({ webhookDedup: { backend } });
+
+  await assert.rejects(
+    handler.handleWebhook({ result: { media_buy_id: 'mb_conflict' }, metadata }),
+    error => error instanceof WebhookDedupConflictError
+  );
+});
+
+test('webhookDedup fails closed on a live malformed current entry before consulting legacy state', async () => {
+  const backend = memoryBackend({ sweepIntervalMs: 0 });
+  const metadata = baseMetadata({ agent_id: 'corrupt-current-agent' });
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  await backend.put(legacyDedupStorageKey(metadata), {
+    payloadHash: '',
+    response: null,
+    expiresAt: nowSeconds + 60,
+  });
+  await backend.put(dedupStorageKey(metadata), {
+    payloadHash: 'unknown-owner',
+    response: { unexpected: true },
+    expiresAt: nowSeconds + 60,
+  });
+  let calls = 0;
+  const handler = new AsyncHandler({
+    webhookDedup: { backend },
+    onCreateMediaBuyStatusChange: () => {
+      calls += 1;
+    },
+  });
+
+  assert.strictEqual(await handler.handleWebhook({ result: {}, metadata }), 'in_progress');
+  assert.strictEqual(calls, 0);
+});
+
+test('webhookDedup hashes direct-caller agent IDs for writes while transition-reading the legacy key', async () => {
   const delegate = memoryBackend({ sweepIntervalMs: 0 });
-  const observedKeys = [];
+  const readKeys = [];
+  const writeKeys = [];
   const backend = {
     ...delegate,
     get: async key => {
-      observedKeys.push(key);
+      readKeys.push(key);
       return delegate.get(key);
     },
     putIfAbsent: async (key, entry) => {
-      observedKeys.push(key);
+      writeKeys.push(key);
       return delegate.putIfAbsent(key, entry);
     },
     replaceIfPayloadHash: async (key, expected, entry) => {
-      observedKeys.push(key);
+      writeKeys.push(key);
       return delegate.replaceIfPayloadHash(key, expected, entry);
     },
     deleteIfPayloadHash: async (key, expected) => delegate.deleteIfPayloadHash(key, expected),
   };
   const handler = new AsyncHandler({ webhookDedup: { backend } });
   const agentId = 'tenant-a\u001fspoofed-scope';
-  await handler.handleWebhook({ result: {}, metadata: baseMetadata({ agent_id: agentId }) });
-  assert.ok(observedKeys.length > 0);
-  assert.ok(observedKeys.every(key => !key.includes(agentId)));
+  const metadata = baseMetadata({ agent_id: agentId });
+  await handler.handleWebhook({ result: {}, metadata });
+  assert.ok(readKeys.includes(legacyDedupStorageKey(metadata)));
+  assert.ok(writeKeys.length > 0);
+  assert.ok(writeKeys.every(key => !key.includes(agentId)));
+});
+
+test('webhookDedup isolates a raw agent ID that equals another sender hash', async () => {
+  const backend = memoryBackend({ sweepIntervalMs: 0 });
+  const victimAgentId = 'victim-agent';
+  const hashShapedAgentId = createHash('sha256').update(victimAgentId).digest('base64url');
+  const idempotencyKey = 'whk_0000000000000001';
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const victimMetadata = baseMetadata({ agent_id: victimAgentId, idempotency_key: idempotencyKey });
+  const hashShapedMetadata = baseMetadata({ agent_id: hashShapedAgentId, idempotency_key: idempotencyKey });
+
+  // Origin-main wrote v1 raw-agent fences. This hash-shaped raw ID is exactly
+  // the victim's digest, but the victim's current v2 scope must remain distinct.
+  await backend.put(legacyDedupStorageKey(hashShapedMetadata), {
+    payloadHash: '',
+    response: null,
+    expiresAt: nowSeconds + 60,
+  });
+  let victimCalls = 0;
+  const handler = new AsyncHandler({
+    webhookDedup: { backend },
+    onCreateMediaBuyStatusChange: () => {
+      victimCalls += 1;
+    },
+  });
+
+  assert.strictEqual(await handler.handleWebhook({ result: {}, metadata: victimMetadata }), 'handled');
+  assert.strictEqual(victimCalls, 1);
+  assert.notStrictEqual(dedupStorageKey(victimMetadata), legacyDedupStorageKey(hashShapedMetadata));
+  assert.strictEqual(await handler.handleWebhook({ result: {}, metadata: hashShapedMetadata }), 'already_handled');
+  assert.strictEqual(victimCalls, 1, 'the hash-shaped sender must not dispatch through the victim scope');
 });
 
 test('webhookDedup missing MCP idempotency_key: rejects before dispatch', async () => {
@@ -296,7 +411,7 @@ test('webhookDedup re-dispatches after backend eviction (TTL expiry path)', asyn
   await handler.handleWebhook({ result: {}, metadata: meta });
 
   // Simulate logical TTL expiry without a backend sweeper. Scoped keys use
-  // the reserved `adcp\u001fwebhook\u001fv1\u001f...` prefix.
+  // the reserved `adcp\u001fwebhook\u001fv2\u001f...` prefix.
   const completedKey = dedupStorageKey(meta);
   const expiredAt = Math.floor(Date.now() / 1000) - 1;
   await backend.put(completedKey, { ...(await backend.get(completedKey)), expiresAt: expiredAt });

@@ -188,7 +188,7 @@ const client = new AdCPClient(agents, {
 });
 ```
 
-Scope is per-agent so keys from different senders never collide. Swap `memoryBackend()` for `pgBackend(...)` when running multiple replicas — the same backend can be shared with the request-side idempotency store, the scoped key is namespaced under a reserved `adcp\u001fwebhook\u001fv1\u001f…` prefix so there is no collision risk.
+Scope is per-agent so keys from different senders never collide. Swap `memoryBackend()` for `pgBackend(...)` when running multiple replicas — the same backend can be shared with the request-side idempotency store. New hashed sender scopes use the reserved `adcp\u001fwebhook\u001fv2\u001f…` namespace; v1 is read only for migration of unexpired raw-agent fences written by older SDKs.
 
 ### Activity stream emits both events
 
@@ -232,3 +232,18 @@ Custom idempotency backends used for webhook dedup must implement the atomic
 `replaceIfPayloadHash()` and `deleteIfPayloadHash()` methods. The built-in
 memory, PostgreSQL, Redis, and lazy backends provide them. These operations
 prevent a stale replica from renewing or releasing a newer replica's claim.
+
+SDK 14 writes webhook fences under a hashed sender scope. During the upgrade it
+also reads an unexpired marker written by the previous receiver version under
+its raw sender scope, so a
+callback completed before deployment remains a duplicate instead of running the
+handler again. The compatibility lookup never writes or renews the old key;
+after its original TTL expires, only the hashed scope remains active.
+
+The namespace change is not safe for a mixed rolling deployment: old and new
+receivers claim different keys and can dispatch the same callback once each.
+Before upgrading, stop accepting webhook traffic, drain in-flight handlers,
+upgrade every receiver replica together, and only then restart webhook traffic.
+Mixed SDK 13/14 webhook receivers are unsupported. The legacy read preserves
+already-completed fences across the cutover; it does not coordinate concurrent
+old and new receivers.

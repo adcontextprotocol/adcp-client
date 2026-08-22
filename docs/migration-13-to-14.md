@@ -130,6 +130,15 @@ Completed-operation replay retention is at least seven days.
 `legacyPurchaseOperationTtlMs` configures unresolved-operation monitoring and
 may lengthen, but never shorten, that replay retention.
 
+SDK 14 also moves new webhook dedup claims and completion markers to a distinct
+v2 hashed-sender namespace while read-only probing unexpired SDK 13 v1
+raw-sender markers. This preserves completed fences across the upgrade, but it
+does not make mixed-version receivers safe: SDK 13 and SDK 14 claim different
+keys and can dispatch the same callback once each. Stop accepting webhook
+traffic, drain in-flight handlers, upgrade all webhook receiver replicas
+together, and then restart webhook traffic. Mixed SDK 13/14 webhook receivers
+are unsupported.
+
 Seller pauses are now protocol-specific. A2A can invoke an input handler or
 return a resume closure only for a live `input-required`/`auth-required` A2A
 Task, using its transport `Task.id`; the separate AdCP task handle remains for

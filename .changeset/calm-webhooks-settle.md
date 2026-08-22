@@ -92,7 +92,16 @@ default to the full dedup retention window, so a renewal failure cannot permit
 automatic concurrent handler execution. Setting a shorter
 `inFlightTtlSeconds` is an explicit at-least-once liveness tradeoff that
 requires idempotent application-side effects. Completed deliveries retain the
-configured full dedup TTL.
+configured full dedup TTL. During upgrade, the receiver also reads the
+unexpired raw-agent scoped v1 marker written by the previous SDK so an already
+handled callback is not dispatched a second time under the new hashed-agent
+key. New claims and completions are written only to the distinct v2 hashed
+namespace, preventing a hash-shaped raw agent ID from aliasing another sender.
+This namespace cutover requires a drained, all-at-once receiver upgrade: stop
+webhook traffic, drain in-flight handlers, upgrade every replica, and then
+restart traffic. Mixed old/new receivers are unsupported because they claim
+different namespaces and can dispatch the same callback once each; the legacy
+read preserves completed fences but does not coordinate mixed-version claims.
 
 Custom deferred-task storage is now typed as `DeferredTaskStorage` and must
 provide atomic `putIfAbsent()` and generation-fenced `replaceIfVersion()` and
