@@ -439,6 +439,17 @@ export class AgentClient {
     return this.client.registerDurableDeferredResumeAuthorization(authorizer);
   }
 
+  /** Register a generation-fenced handoff for a nested committed continuation. @internal */
+  registerDurableDeferredResumeTokenReplacement(
+    replacer: (
+      operationId: string,
+      currentToken: string,
+      replacementToken: string
+    ) => boolean | undefined | Promise<boolean | undefined>
+  ): () => void {
+    return this.client.registerDurableDeferredResumeTokenReplacement(replacer);
+  }
+
   /** Whether this exact continuation currently has a durable SDK checkpoint. @internal */
   hasDurablyStoredDeferredTask(token: string): Promise<boolean> {
     return this.client.hasDurablyStoredDeferredTask(token);
@@ -1641,6 +1652,26 @@ export class AgentClient {
 
     this.retainSession(result);
 
+    return result;
+  }
+
+  /**
+   * Resume an exact deferred continuation through this agent's configured
+   * durable storage and settlement coordinator.
+   *
+   * Reconstruct the {@link AgentClient} and negotiate any owning lifecycle
+   * coordinator before calling this method after a process restart. Delegating
+   * through the owned {@link SingleAgentClient} preserves trusted-agent
+   * resolution, committed-settlement recovery, response finalization, and
+   * completion handlers. The resumed result also updates this wrapper's A2A
+   * conversation and pending-task bookkeeping like task-specific methods do.
+   *
+   * @param token - Opaque deferred continuation token returned by the SDK
+   * @param input - Human- or application-provided answer for the paused task
+   */
+  async resumeDeferredTask<T = any>(token: string, input: unknown): Promise<TaskResult<T>> {
+    const result = await this.client.resumeDeferredTask<T>(token, input);
+    this.retainSession(result);
     return result;
   }
 

@@ -2,7 +2,7 @@
  * Redis idempotency backend integration tests.
  *
  * Requires a running Redis instance. Set REDIS_URL to run:
- *   REDIS_URL=redis://localhost:6379/15 node --test test/lib/idempotency-redis.test.js
+ *   NODE_ENV=test REDIS_URL=redis://localhost:6379/15 node --test test/lib/idempotency-redis.test.js
  *
  * Use a dedicated db index (e.g., /15) — these tests FLUSHDB between runs.
  * Skipped entirely when REDIS_URL is not set.

@@ -488,7 +488,8 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
   backend.validateClockSkewSeconds?.(clockSkewSeconds);
   if (typeof backend.replaceIfPayloadHash !== 'function' || typeof backend.deleteIfPayloadHash !== 'function') {
     throw new TypeError(
-      'createIdempotencyStore requires a backend with atomic replaceIfPayloadHash and deleteIfPayloadHash fencing.'
+      'createIdempotencyStore requires atomic replaceIfPayloadHash and deleteIfPayloadHash fencing so stale request owners cannot publish or release newer claims. ' +
+        'Use memoryBackend(), pgBackend(pool), redisBackend(client), or implement both methods on the custom backend.'
     );
   }
 

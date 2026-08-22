@@ -1,9 +1,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { createHash } = require('node:crypto');
-const { AsyncHandler } = require('../../dist/lib/core/AsyncHandler');
+const { AsyncHandler, WebhookDedupConflictError } = require('../../dist/lib/core/AsyncHandler');
 const { memoryBackend } = require('../../dist/lib/server/idempotency/backends/memory');
 const { AdCPClient, createLazyBackend } = require('../../dist/lib/index.js');
+const { canonicalize } = require('../../dist/lib/utils/jcs.js');
 
 function baseMetadata(overrides = {}) {
   return {
@@ -21,6 +22,22 @@ function baseMetadata(overrides = {}) {
 function dedupStorageKey(metadata) {
   const agentScope = createHash('sha256').update(metadata.agent_id).digest('base64url');
   return `adcp\u001fwebhook\u001fv1\u001f${agentScope}\u001f${metadata.idempotency_key}`;
+}
+
+function dedupEventFingerprint(metadata, result) {
+  return createHash('sha256')
+    .update(
+      canonicalize({
+        operationId: metadata.operation_id,
+        taskId: metadata.task_id,
+        taskType: metadata.task_type,
+        status: metadata.status,
+        contextId: metadata.context_id ?? null,
+        message: metadata.message ?? null,
+        result: result ?? null,
+      })
+    )
+    .digest('base64url');
 }
 
 test('webhookDedup fails closed when a custom backend lacks atomic fencing', () => {
@@ -342,6 +359,34 @@ test('webhookDedup distinguishes an in-progress retry from a completed replay', 
   assert.strictEqual(await handler.handleWebhook(args), 'already_handled');
 });
 
+test('webhookDedup rejects a different payload while the sender key is actively claimed', async () => {
+  let releaseHandler;
+  let markHandlerEntered;
+  const handlerEntered = new Promise(resolve => {
+    markHandlerEntered = resolve;
+  });
+  const handler = new AsyncHandler({
+    webhookDedup: { backend: memoryBackend({ sweepIntervalMs: 0 }) },
+    onCreateMediaBuyStatusChange: async () => {
+      markHandlerEntered();
+      await new Promise(resolve => {
+        releaseHandler = resolve;
+      });
+    },
+  });
+  const metadata = baseMetadata();
+  const first = handler.handleWebhook({ result: { media_buy_id: 'mb_1' }, metadata });
+  await handlerEntered;
+
+  await assert.rejects(
+    handler.handleWebhook({ result: { media_buy_id: 'mb_conflict' }, metadata }),
+    error => error instanceof WebhookDedupConflictError && /idempotency key was reused/.test(error.message)
+  );
+
+  releaseHandler();
+  assert.strictEqual(await first, 'handled');
+});
+
 test('webhookDedup renews a live handler claim past its initial lease', async () => {
   let releaseHandler;
   let markHandlerEntered;
@@ -539,11 +584,13 @@ test('webhookDedup lets a cold receiver reclaim an expired in-progress claim', a
 test('webhookDedup stale read cannot replace a claim renewed before atomic takeover', async () => {
   const delegate = memoryBackend({ sweepIntervalMs: 0 });
   const metadata = baseMetadata({ idempotency_key: 'renewal_aba_claim_0001' });
+  const result = { media_buy_id: 'mb_1' };
+  const eventFingerprint = dedupEventFingerprint(metadata, result);
   const key = dedupStorageKey(metadata);
   const owner = 'owner-generation';
   await delegate.put(key, {
     payloadHash: owner,
-    response: { claimToken: owner, eventFingerprint: 'fingerprint' },
+    response: { claimToken: owner, eventFingerprint },
     expiresAt: Math.floor(Date.now() / 1000) - 1,
   });
 
@@ -576,12 +623,12 @@ test('webhookDedup stale read cannot replace a claim renewed before atomic takeo
     },
   });
 
-  const attempt = receiver.handleWebhook({ result: { media_buy_id: 'mb_1' }, metadata });
+  const attempt = receiver.handleWebhook({ result, metadata });
   await staleRead;
   assert.strictEqual(
     await delegate.replaceIfPayloadHash(key, owner, {
       payloadHash: owner,
-      response: { claimToken: owner, eventFingerprint: 'fingerprint' },
+      response: { claimToken: owner, eventFingerprint },
       expiresAt: Math.floor(Date.now() / 1000) + 300,
     }),
     true

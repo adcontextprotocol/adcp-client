@@ -662,9 +662,15 @@ const DEFERRED_SECRET_KEY_PATTERN = new RegExp(
 function snapshotTaskOptions(options: TaskOptions): TaskOptions {
   return {
     ...options,
-    ...(options.transport !== undefined && { transport: { ...options.transport } }),
+    ...(options.transport !== undefined && { transport: snapshotTransportOptions(options.transport) }),
     ...(options.metadata !== undefined && { metadata: structuredClone(options.metadata) }),
   };
+}
+
+function snapshotTransportOptions(
+  transport?: import('../protocols').TransportOptions
+): import('../protocols').TransportOptions | undefined {
+  return transport === undefined ? undefined : { ...transport };
 }
 
 function durableDeferredSnapshot<T>(value: T): T {
@@ -775,6 +781,12 @@ export class TaskExecutor {
       canRecoverDeferredSettlement?: (operationId: string) => boolean | Promise<boolean>;
       /** Verify that this is still the coordinator's current committed continuation token. */
       authorizeDeferredSettlementResume?: (operationId: string, token: string) => boolean | Promise<boolean>;
+      /** Atomically hand a committed coordinator route from one persisted token generation to the next. */
+      replaceDeferredSettlementResumeToken?: (
+        operationId: string,
+        currentToken: string,
+        replacementToken: string
+      ) => boolean | Promise<boolean>;
       /** Settle a committed deferred result before it can be published or returned. */
       recoverDeferredSettlement?: (
         result: TaskResult<any>,
@@ -851,13 +863,22 @@ export class TaskExecutor {
       throw new ConfigurationError('deferredTaskTtlSeconds must be a positive safe integer.');
     }
     if (config.deferredStorage && typeof config.deferredStorage.putIfAbsent !== 'function') {
-      throw new ConfigurationError('Deferred storage must implement atomic putIfAbsent() creation.');
+      throw new ConfigurationError(
+        'Deferred storage must implement atomic putIfAbsent() creation so replicas cannot overwrite a continuation. ' +
+          'Use MemoryStorage for single-process tests or implement the DeferredTaskStorage atomic contract.'
+      );
     }
     if (config.deferredStorage && typeof config.deferredStorage.replaceIfVersion !== 'function') {
-      throw new ConfigurationError('Deferred storage must implement atomic replaceIfVersion() fencing.');
+      throw new ConfigurationError(
+        'Deferred storage must implement atomic replaceIfVersion() fencing so only one replica can dispatch a resume. ' +
+          'Use MemoryStorage for single-process tests or implement the DeferredTaskStorage atomic contract.'
+      );
     }
     if (config.deferredStorage && typeof config.deferredStorage.takeIfVersion !== 'function') {
-      throw new ConfigurationError('Deferred storage must implement atomic takeIfVersion() fencing.');
+      throw new ConfigurationError(
+        'Deferred storage must implement atomic takeIfVersion() cleanup so stale owners cannot delete newer state. ' +
+          'Use MemoryStorage for single-process tests or implement the DeferredTaskStorage atomic contract.'
+      );
     }
     this.responseParser = new ProtocolResponseParser();
     if (config.enableConversationStorage) {
@@ -1071,7 +1092,15 @@ export class TaskExecutor {
     beforeProtocolDispatch?: BeforeProtocolDispatchHook<T>,
     deferredClientContext?: unknown
   ): Promise<TaskResult<T>> {
-    const optionsSnapshot = snapshotTaskOptions(options);
+    // The configured transport is the same SSRF/custom-fetch trust boundary as
+    // a per-call override. Own the effective value before activity, governance,
+    // or protocol discovery can yield to code that still holds the config.
+    const optionsSnapshot = snapshotTaskOptions({
+      ...options,
+      ...(options.transport === undefined && this.config.transport !== undefined
+        ? { transport: this.config.transport }
+        : {}),
+    });
     return withTaskDeadline(optionsSnapshot, effectiveOptions =>
       this.executeTaskWithinDeadline<T>(
         agent,
@@ -2179,11 +2208,12 @@ export class TaskExecutor {
       taskId: serverTaskId,
       webhookUrl,
       track: async (transport?: import('../protocols').TransportOptions) => {
+        const transportSnapshot = snapshotTransportOptions(transport ?? pollingTransport ?? this.config.transport);
         const task = (
           await this.getTaskStatusWithRawResponse(
             agent,
             serverTaskId,
-            transport ?? pollingTransport,
+            transportSnapshot,
             undefined,
             taskName,
             serverVersion
@@ -2925,8 +2955,9 @@ export class TaskExecutor {
    * Task tracking methods (PR #78)
    */
   async listTasks(agent: AgentConfig, transport?: import('../protocols').TransportOptions): Promise<TaskInfo[]> {
+    const transportSnapshot = snapshotTransportOptions(transport ?? this.config.transport);
     try {
-      return await this.listTasksForAgent(agent, transport);
+      return await this.listTasksForAgent(agent, transportSnapshot);
     } catch {
       // Static message only — CodeQL's taint analysis treats `error` and
       // every property of it as sensitive once it originates from an
@@ -3020,7 +3051,8 @@ export class TaskExecutor {
     transport?: import('../protocols').TransportOptions,
     signal?: AbortSignal
   ): Promise<TaskInfo> {
-    return (await this.getTaskStatusWithRawResponse(agent, taskId, transport, signal)).task;
+    const transportSnapshot = snapshotTransportOptions(transport ?? this.config.transport);
+    return (await this.getTaskStatusWithRawResponse(agent, taskId, transportSnapshot, signal)).task;
   }
 
   async pollTaskCompletion<T>(
@@ -3034,6 +3066,10 @@ export class TaskExecutor {
     metadataTaskId = taskId,
     serverVersion?: 'v2' | 'v3'
   ): Promise<TaskResult<T>> {
+    // Transport policy is a request trust boundary. Own one shallow snapshot
+    // for the entire polling lifetime so caller mutation cannot substitute a
+    // fetch implementation or private-address policy between polls/cancel.
+    const transportSnapshot = snapshotTransportOptions(transport ?? this.config.transport);
     if (!Number.isFinite(pollInterval) || pollInterval < 0 || pollInterval > MAX_TIMER_DELAY_MS) {
       throw new RangeError(`pollInterval must be a finite non-negative number <= ${MAX_TIMER_DELAY_MS}`);
     }
@@ -3070,7 +3106,7 @@ export class TaskExecutor {
             // adcp-client#1617 Phase 2: pass the full agent so cancelA2ATask
             // can sign the POST when agent.request_signing is configured.
             // signed-requests sellers no longer 401 the cancel.
-            const cancelTransport = normalizeTransportOptions(transport ?? this.config.transport);
+            const cancelTransport = normalizeTransportOptions(transportSnapshot);
             void cancelA2ATask(
               agent,
               a2aCancellationTaskId,
@@ -3112,7 +3148,7 @@ export class TaskExecutor {
         const pollResult = await this.getTaskStatusWithRawResponse(
           agent,
           taskId,
-          transport,
+          transportSnapshot,
           signal,
           expectedTaskType,
           serverVersion
@@ -3343,9 +3379,10 @@ export class TaskExecutor {
     }
     if (state.settlementFinalizedResult !== undefined) {
       if (
+        state.settlementTerminalResult === undefined ||
         !terminalResult.metadata.serverTaskId ||
         terminalResult.metadata.serverTaskId !== state.settlementServerTaskId ||
-        !sameDeferredTerminal(state.settlementFinalizedResult, terminalResult)
+        !sameDeferredTerminal(state.settlementTerminalResult, terminalResult)
       ) {
         throw new Error('The durable callback conflicts with the finalized deferred settlement.');
       }
@@ -3589,6 +3626,11 @@ export class TaskExecutor {
     const claimTtlSeconds = this.deferredSafetyRetentionSeconds();
     const claimedVersion = randomUUID();
     const claimedAt = Date.now();
+    // MemoryStorage retains object references. Keep the durable claim and the
+    // mutable in-flight conversation on independent sanitized graphs so a
+    // transport failure cannot leave raw resume input in the retained fence.
+    const claimedMessages = durableDeferredSnapshot(state.messages);
+    const resumedMessages = durableDeferredSnapshot(state.messages);
     const claimed = await this.config.deferredStorage.replaceIfVersion(
       token,
       state.continuationVersion,
@@ -3596,6 +3638,7 @@ export class TaskExecutor {
         ...state,
         continuationVersion: claimedVersion,
         continuationClaimed: true,
+        messages: claimedMessages,
         createdAt: claimedAt,
         expiresAt: claimedAt + claimTtlSeconds * 1000,
       },
@@ -3643,7 +3686,7 @@ export class TaskExecutor {
         state.contextId,
         state.a2aTaskId,
         inputSnapshot,
-        state.messages,
+        resumedMessages,
         undefined, // No handler for deferred tasks - input was provided by human
         {},
         [],
@@ -3704,6 +3747,19 @@ export class TaskExecutor {
         if (!stored) {
           throw new Error('Replacement deferred continuation token already exists; refusing unsafe overwrite.');
         }
+        if (requiresSettlement && state.settlementResumeAuthorizationRequired === true) {
+          const replaced = await this.config.replaceDeferredSettlementResumeToken?.(
+            committedOperationId,
+            token,
+            nextToken
+          );
+          if (replaced !== true) {
+            // Seller input has already advanced A to B, so A must remain claimed
+            // and B must remain inaccessible. Removing/restoring either side
+            // would permit redispatch or an uncoordinated continuation.
+            throw new Error('The committed deferred continuation replacement could not be durably linked.');
+          }
+        }
         resumed.deferred.resume = nextInput =>
           liveSettlementOwner
             ? this.resumeDeferredTaskFromLiveClosure<T>(nextToken, nextInput, publishTerminalTaskStatus)
@@ -3714,6 +3770,15 @@ export class TaskExecutor {
       let afterFinalize: (() => Promise<void>) | undefined;
       if (requiresSettlement) {
         if (TERMINAL_TASK_STATUSES.has(resumed.status as TaskStatus)) {
+          const observedSettlementServerTaskId = resumed.metadata.serverTaskId;
+          if (
+            state.settlementServerTaskId !== undefined &&
+            observedSettlementServerTaskId !== undefined &&
+            state.settlementServerTaskId !== observedSettlementServerTaskId
+          ) {
+            throw new Error('The committed deferred continuation changed its bound seller task identity.');
+          }
+          const terminalSettlementServerTaskId = state.settlementServerTaskId ?? observedSettlementServerTaskId;
           const { match: _match, submitted: _submitted, deferred: _deferred, ...serializableResult } = resumed as any;
           const checkpointCreatedAt = Date.now();
           const checkpointTtlSeconds = this.deferredSafetyRetentionSeconds();
@@ -3726,6 +3791,9 @@ export class TaskExecutor {
             messages: durableDeferredSnapshot(resumed.conversation ?? state.messages),
             ...(state.clientContext !== undefined && {
               clientContext: durableDeferredSnapshot(state.clientContext),
+            }),
+            ...(terminalSettlementServerTaskId !== undefined && {
+              settlementServerTaskId: terminalSettlementServerTaskId,
             }),
             settlementTerminalResult: durableDeferredSnapshot(serializableResult),
             createdAt: checkpointCreatedAt,
@@ -4445,11 +4513,12 @@ export class TaskExecutor {
    * Get task list for a specific agent
    */
   async getTaskList(agentId: string, transport?: import('../protocols').TransportOptions): Promise<TaskInfo[]> {
+    const transportSnapshot = snapshotTransportOptions(transport ?? this.config.transport);
     // First try to get from agent via protocol
     const agent = this.findAgentById(agentId);
     if (agent) {
       try {
-        return await this.listTasksForAgent(agent, transport);
+        return await this.listTasksForAgent(agent, transportSnapshot);
       } catch {
         // Static message — see comment on listTasks above.
         console.warn('Failed to get remote task list (see DEBUG=adcp:* logs for detail)');

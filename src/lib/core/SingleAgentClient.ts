@@ -147,7 +147,7 @@ import type {
 import type { AdcpTaskName, TaskRequestFor, TaskResponseTypeMap } from './AgentClient';
 import type { DeferredTaskStorage } from '../storage/interfaces';
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
-import { AsyncHandler, WebhookDedupInputError } from './AsyncHandler';
+import { AsyncHandler, WebhookDedupConflictError, WebhookDedupInputError } from './AsyncHandler';
 import { verifyWebhookRequest, type WebhookHeaderValue, type WebhookHeadersLike } from '../webhooks';
 import {
   InMemoryWebhookRegistrationStore,
@@ -1004,6 +1004,7 @@ export type WebhookParseErrorCode =
   | 'webhook_registration_store_unavailable'
   | 'webhook_durable_settlement_unavailable'
   | 'webhook_publication_in_progress'
+  | 'webhook_idempotency_conflict'
   | 'webhook_verification_unavailable';
 
 export interface WebhookVerificationConfig {
@@ -1557,12 +1558,23 @@ export class SingleAgentClient {
   private readonly durableDeferredResumeAuthorizers = new Set<
     (operationId: string, token: string) => boolean | undefined | Promise<boolean | undefined>
   >();
+  private readonly durableDeferredResumeTokenReplacers = new Set<
+    (
+      operationId: string,
+      currentToken: string,
+      replacementToken: string
+    ) => boolean | undefined | Promise<boolean | undefined>
+  >();
 
   constructor(
     private agent: AgentConfig,
     private config: SingleAgentClientConfig = {}
   ) {
-    this.config = { ...config, transport: normalizeTransportOptions(config.transport) };
+    // Own the nested trust-boundary object at construction. Normalization
+    // historically returns the input object unchanged for the preferred
+    // `trustedFetchFn` spelling, so clone first while retaining function identity.
+    const configuredTransport = config.transport === undefined ? undefined : { ...config.transport };
+    this.config = { ...config, transport: normalizeTransportOptions(configuredTransport) };
     config = this.config;
     // Validate the configured adcpVersion at construction time. Throws
     // ConfigurationError if the pin's major differs from ADCP_MAJOR_VERSION
@@ -1606,6 +1618,12 @@ export class SingleAgentClient {
       authorizeDeferredSettlementResume: async (operationId, token) => {
         for (const authorize of this.durableDeferredResumeAuthorizers) {
           if ((await authorize(operationId, token)) === true) return true;
+        }
+        return false;
+      },
+      replaceDeferredSettlementResumeToken: async (operationId, currentToken, replacementToken) => {
+        for (const replace of this.durableDeferredResumeTokenReplacers) {
+          if ((await replace(operationId, currentToken, replacementToken)) === true) return true;
         }
         return false;
       },
@@ -2140,12 +2158,16 @@ export class SingleAgentClient {
     transport?: import('../protocols').TransportOptions,
     signal?: AbortSignal
   ): Promise<TaskInfo> {
-    const options = { transport, signal };
+    // Transport options define the outbound trust boundary. Own them before
+    // endpoint discovery yields so caller mutation cannot change the fetch or
+    // private-address policy between discovery and tasks/get.
+    const transportSnapshot = transport === undefined ? undefined : { ...transport };
+    const options = { transport: transportSnapshot, signal };
     const agent =
       this.normalizedAgent.protocol === 'a2a'
         ? await this.ensureCanonicalUrlResolved(options)
         : await this.ensureEndpointDiscovered(options);
-    return this.executor.getTaskStatus(agent, taskId, transport, signal);
+    return this.executor.getTaskStatus(agent, taskId, transportSnapshot, signal);
   }
 
   /** Register durable restart/replica settlement recovery for an SDK coordinator. @internal */
@@ -2165,6 +2187,18 @@ export class SingleAgentClient {
   ): () => void {
     this.durableDeferredResumeAuthorizers.add(authorizer);
     return () => this.durableDeferredResumeAuthorizers.delete(authorizer);
+  }
+
+  /** Register an atomic committed-route handoff for a nested durable pause. @internal */
+  registerDurableDeferredResumeTokenReplacement(
+    replacer: (
+      operationId: string,
+      currentToken: string,
+      replacementToken: string
+    ) => boolean | undefined | Promise<boolean | undefined>
+  ): () => void {
+    this.durableDeferredResumeTokenReplacers.add(replacer);
+    return () => this.durableDeferredResumeTokenReplacers.delete(replacer);
   }
 
   /** Whether this exact continuation currently has a durable SDK checkpoint. @internal */
@@ -3549,6 +3583,9 @@ export class SingleAgentClient {
             previewHandler: parsed.metadata.previewHandler ?? this.previewCreativeHandlerForWebhook(metadata),
           });
         } catch (error) {
+          if (error instanceof WebhookDedupConflictError) {
+            throw new WebhookDispatchError('webhook_idempotency_conflict', error.message, error);
+          }
           if (error instanceof WebhookDedupInputError) {
             throw new WebhookDispatchError('webhook_envelope_invalid', error.message, error);
           }
@@ -8784,6 +8821,7 @@ function missingMcpWebhookFields(payload: Record<string, unknown>): string[] {
 function webhookErrorHttpStatus(error: unknown): number {
   if (error instanceof WebhookDispatchError) {
     if (error.code === 'webhook_signature_replayed') return 409;
+    if (error.code === 'webhook_idempotency_conflict') return 409;
     if (error.code === 'webhook_signature_rate_abuse') return 429;
     if (
       error.code === 'webhook_registration_store_unavailable' ||

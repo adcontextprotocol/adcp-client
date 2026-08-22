@@ -1098,6 +1098,81 @@ describe('webhook registration provenance', () => {
     assert.strictEqual(firstResponse.statusCode, 202);
   });
 
+  test('webhook HTTP helper maps active same-key payload substitution to 409', async () => {
+    let releaseHandler;
+    let markHandlerEntered;
+    const handlerEntered = new Promise(resolve => {
+      markHandlerEntered = resolve;
+    });
+    const client = new SingleAgentClient(agent, {
+      allowUnauthenticatedWebhooks: true,
+      handlers: {
+        webhookDedup: { backend: memoryBackend({ sweepIntervalMs: 0 }) },
+        onGetProductsStatusChange: async () => {
+          markHandlerEntered();
+          await new Promise(resolve => {
+            releaseHandler = resolve;
+          });
+        },
+      },
+    });
+    const handler = client.createWebhookHandler();
+    const request = {
+      body: envelope({ operation_id: 'op-http-active-conflict' }),
+      params: { task_type: 'get_products', operation_id: 'op-http-active-conflict' },
+    };
+    const firstResponse = makeResponse();
+    const first = handler(request, firstResponse);
+    await handlerEntered;
+
+    const conflictResponse = makeResponse();
+    await handler(
+      { ...request, body: { ...request.body, result: { products: [{ product_id: 'different' }] } } },
+      conflictResponse
+    );
+    assert.strictEqual(conflictResponse.statusCode, 409);
+    assert.match(conflictResponse.body.error, /idempotency key was reused/);
+
+    releaseHandler();
+    await first;
+    assert.strictEqual(firstResponse.statusCode, 202);
+  });
+
+  test('getTaskStatus owns transport options before endpoint discovery yields', async () => {
+    const client = new SingleAgentClient(agent);
+    const trustedFetch = async () => new Response('{}', { status: 200 });
+    const substitutedFetch = async () => new Response('{}', { status: 500 });
+    const transport = { trustedFetchFn: trustedFetch, allowPrivateIp: false, requestTimeoutMs: 1_000 };
+    let releaseDiscovery;
+    let markDiscoveryEntered;
+    const discoveryEntered = new Promise(resolve => {
+      markDiscoveryEntered = resolve;
+    });
+    const discoveryRelease = new Promise(resolve => {
+      releaseDiscovery = resolve;
+    });
+    client.ensureEndpointDiscovered = async options => {
+      markDiscoveryEntered();
+      await discoveryRelease;
+      assert.strictEqual(options.transport.trustedFetchFn, trustedFetch);
+      assert.strictEqual(options.transport.allowPrivateIp, false);
+      return agent;
+    };
+    client.executor.getTaskStatus = async (_agent, taskId, observedTransport) => {
+      assert.strictEqual(observedTransport.trustedFetchFn, trustedFetch);
+      assert.strictEqual(observedTransport.allowPrivateIp, false);
+      return { taskId, taskType: 'create_media_buy', status: 'working', createdAt: 1, updatedAt: 1 };
+    };
+
+    const status = client.getTaskStatus('seller-task-snapshot', transport);
+    await discoveryEntered;
+    transport.trustedFetchFn = substitutedFetch;
+    transport.allowPrivateIp = true;
+    releaseDiscovery();
+
+    assert.strictEqual((await status).taskId, 'seller-task-snapshot');
+  });
+
   test('webhook HTTP helper maps malformed dedup keys to 400 before handler dispatch', async () => {
     let calls = 0;
     const client = new SingleAgentClient(agent, {

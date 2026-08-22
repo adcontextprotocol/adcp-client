@@ -1115,6 +1115,7 @@ describe(
         const states = new Map();
         const storage = atomicDeferredStorage(states);
         let currentToken = testDurableToken('committed-token-a');
+        const replacements = [];
         let calls = 0;
         ProtocolClient.callTool = mock.fn(async () => {
           calls += 1;
@@ -1127,6 +1128,12 @@ describe(
         const executor = new TaskExecutor({
           deferredStorage: storage,
           authorizeDeferredSettlementResume: async (_operationId, token) => token === currentToken,
+          replaceDeferredSettlementResumeToken: async (_operationId, expectedToken, replacementToken) => {
+            if (expectedToken !== currentToken) return false;
+            replacements.push([expectedToken, replacementToken]);
+            currentToken = replacementToken;
+            return true;
+          },
           canRecoverDeferredSettlement: async () => true,
           recoverDeferredSettlement: async result => ({ result }),
           strictSchemaValidation: false,
@@ -1149,25 +1156,138 @@ describe(
           })
         );
 
-        const pausedAgain = await initial.deferred.resume({ approved: true });
+        const initialToken = currentToken;
+        const pausedAgain = await executor.resumeDeferredTask(initialToken, { approved: true });
         const replacementToken = pausedAgain.deferred.token;
-        assert.notStrictEqual(replacementToken, currentToken);
+        assert.notStrictEqual(replacementToken, initialToken);
+        assert.deepStrictEqual(replacements, [[initialToken, replacementToken]]);
+        assert.strictEqual(currentToken, replacementToken);
         assert.strictEqual(states.get(replacementToken).settlementResumeAuthorizationRequired, true);
 
-        await assert.rejects(
-          executor.resumeDeferredTask(replacementToken, { confirmed: true }),
-          /not the current durable route/
-        );
+        await assert.rejects(executor.resumeDeferredTask(initialToken, { confirmed: true }), /not found/);
         assert.strictEqual(calls, 2, 'a stale nested token must fail before seller dispatch');
 
-        currentToken = replacementToken;
         const pausedThirdTime = await pausedAgain.deferred.resume({ confirmed: true });
         assert.strictEqual(pausedThirdTime.status, 'input-required');
+        assert.strictEqual(replacements.length, 2);
+        assert.strictEqual(replacements[1][0], replacementToken);
+        assert.strictEqual(replacements[1][1], pausedThirdTime.deferred.token);
+        assert.strictEqual(currentToken, pausedThirdTime.deferred.token);
         assert.strictEqual(calls, 3, 'the current live nested route may continue exactly once');
 
         currentToken = testDurableToken('coordinator-disposed-or-ambiguous');
         await assert.rejects(pausedThirdTime.deferred.resume({ final: true }), /not the current durable route/);
         assert.strictEqual(calls, 3, 'a held live closure must fail after its durable owner stops authorizing it');
+      });
+
+      test('rebinds a live committed nested pause before consuming its prior checkpoint', async () => {
+        const states = new Map();
+        const storage = atomicDeferredStorage(states);
+        let currentToken = testDurableToken('live-committed-token-a');
+        const replacements = [];
+        let calls = 0;
+        ProtocolClient.callTool = mock.fn(async () => {
+          calls += 1;
+          return a2aPausedTask({
+            question: calls === 1 ? 'First live approval?' : 'Second live approval?',
+            contextId: `live-committed-context-${calls}`,
+            taskId: `live-committed-seller-task-${calls}`,
+          });
+        });
+        const executor = new TaskExecutor({
+          deferredStorage: storage,
+          authorizeDeferredSettlementResume: async (_operationId, token) => token === currentToken,
+          replaceDeferredSettlementResumeToken: async (_operationId, expectedToken, replacementToken) => {
+            assert.strictEqual(states.has(expectedToken), true, 'the prior claim must still exist during route CAS');
+            assert.strictEqual(states.has(replacementToken), true, 'the replacement must be durable before route CAS');
+            if (expectedToken !== currentToken) return false;
+            replacements.push([expectedToken, replacementToken]);
+            currentToken = replacementToken;
+            return true;
+          },
+          canRecoverDeferredSettlement: async () => true,
+          recoverDeferredSettlement: async result => ({ result }),
+          strictSchemaValidation: false,
+        });
+        const initial = await executor.executeTask(
+          mockAgent,
+          'approvalTask',
+          {},
+          async () => ({ defer: true, token: currentToken }),
+          {},
+          'v3',
+          undefined,
+          async () => ({
+            action: 'dispatch_committed',
+            requireDeferredSettlementResumeAuthorization: true,
+            onResult: async result => result,
+            onError: async error => {
+              throw error;
+            },
+          })
+        );
+
+        const initialToken = currentToken;
+        const pausedAgain = await initial.deferred.resume({ approved: true });
+        const replacementToken = pausedAgain.deferred.token;
+        assert.deepStrictEqual(replacements, [[initialToken, replacementToken]]);
+        assert.strictEqual(currentToken, replacementToken);
+        assert.strictEqual(states.has(initialToken), false);
+        assert.strictEqual(states.has(replacementToken), true);
+        assert.strictEqual(calls, 2);
+      });
+
+      test('fences both generations when committed nested-token handoff fails after seller dispatch', async () => {
+        const states = new Map();
+        const storage = atomicDeferredStorage(states);
+        const initialToken = testDurableToken('failed-handoff-token-a');
+        let calls = 0;
+        ProtocolClient.callTool = mock.fn(async () => {
+          calls += 1;
+          return a2aPausedTask({
+            question: calls === 1 ? 'First approval?' : 'Second approval?',
+            contextId: `failed-handoff-context-${calls}`,
+            taskId: `failed-handoff-task-${calls}`,
+          });
+        });
+        const executor = new TaskExecutor({
+          deferredStorage: storage,
+          authorizeDeferredSettlementResume: async (_operationId, token) => token === initialToken,
+          replaceDeferredSettlementResumeToken: async () => false,
+          canRecoverDeferredSettlement: async () => true,
+          recoverDeferredSettlement: async result => ({ result }),
+          strictSchemaValidation: false,
+        });
+        const initial = await executor.executeTask(
+          mockAgent,
+          'approvalTask',
+          {},
+          async () => ({ defer: true, token: initialToken }),
+          {},
+          'v3',
+          undefined,
+          async () => ({
+            action: 'dispatch_committed',
+            requireDeferredSettlementResumeAuthorization: true,
+            onResult: async result => result,
+            onError: async error => {
+              throw error;
+            },
+          })
+        );
+
+        await assert.rejects(
+          executor.resumeDeferredTask(initial.deferred.token, { approved: true }),
+          /replacement could not be durably linked/
+        );
+        const replacementToken = [...states.keys()].find(token => token !== initialToken);
+        assert.ok(replacementToken, 'the seller-issued replacement stays durably fenced');
+        await assert.rejects(
+          executor.resumeDeferredTask(replacementToken, { confirmed: true }),
+          /not the current durable route/
+        );
+        await assert.rejects(executor.resumeDeferredTask(initialToken, { approved: true }), /already being resumed/);
+        assert.strictEqual(calls, 2, 'neither generation may redispatch seller input after handoff failure');
       });
 
       test('keeps polling-only committed pauses out of public durable-token recovery', async () => {

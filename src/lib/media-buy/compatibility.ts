@@ -839,6 +839,47 @@ function requestFingerprint(value: unknown): string {
   return createHash('sha256').update(canonicalize(value)).digest('base64url');
 }
 
+function snapshotCompatibilityTaskOptions(options: TaskOptions | undefined): TaskOptions | undefined {
+  if (!options) return undefined;
+  return {
+    ...options,
+    ...(options.transport !== undefined && { transport: { ...options.transport } }),
+    ...(options.metadata !== undefined && { metadata: structuredClone(options.metadata) }),
+  };
+}
+
+function stripWebhookAuthenticationCredential(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+  const config = value as Record<string, unknown>;
+  const authentication = config.authentication;
+  if (authentication === null || typeof authentication !== 'object' || Array.isArray(authentication)) return value;
+  const { credentials: _credentials, ...authenticationWithoutCredentials } = authentication as Record<string, unknown>;
+  void _credentials;
+  return { ...config, authentication: authenticationWithoutCredentials };
+}
+
+/**
+ * Preserve every mutation and routing field while excluding the two
+ * write-only callback credentials from the durable replay fingerprint.
+ */
+function legacyPurchaseInputFingerprint(value: unknown): string {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return requestFingerprint(value);
+  const input = value as Record<string, unknown>;
+  const sanitized: Record<string, unknown> = { ...input };
+  for (const field of ['push_notification_config', 'reporting_webhook'] as const) {
+    if (Object.hasOwn(sanitized, field)) sanitized[field] = stripWebhookAuthenticationCredential(sanitized[field]);
+  }
+  const legacyRequest = sanitized.legacy_create_request;
+  if (legacyRequest !== null && typeof legacyRequest === 'object' && !Array.isArray(legacyRequest)) {
+    const request = { ...(legacyRequest as Record<string, unknown>) };
+    for (const field of ['push_notification_config', 'reporting_webhook'] as const) {
+      if (Object.hasOwn(request, field)) request[field] = stripWebhookAuthenticationCredential(request[field]);
+    }
+    sanitized.legacy_create_request = request;
+  }
+  return requestFingerprint(sanitized);
+}
+
 function retiredAcceptancePositions(key: string, salt: Uint8Array, bitCount: number): number[] {
   const digest = createHash('sha256').update(salt).update(key).digest();
   return [0, 4, 8, 12, 16, 20, 24, 28].map(offset => digest.readUInt32BE(offset) % bitCount);
@@ -1600,6 +1641,7 @@ export class MediaBuyLifecycleCoordinator {
   private acceptanceTaskUnsubscribe?: () => void;
   private legacyPurchaseSettlementRecoveryUnsubscribe?: () => void;
   private legacyPurchaseDeferredAuthorizationUnsubscribe?: () => void;
+  private legacyPurchaseDeferredReplacementUnsubscribe?: () => void;
   private readonly legacyPurchaseWatchControllers = new Set<AbortController>();
   private disposed = false;
   private readonly idempotencyReplayTtlMs?: number;
@@ -1733,6 +1775,10 @@ export class MediaBuyLifecycleCoordinator {
       );
       this.legacyPurchaseDeferredAuthorizationUnsubscribe = this.agent.registerDurableDeferredResumeAuthorization(
         (operationId, token) => this.authorizeLegacyDeferredResume(operationId, token)
+      );
+      this.legacyPurchaseDeferredReplacementUnsubscribe = this.agent.registerDurableDeferredResumeTokenReplacement(
+        (operationId, currentToken, replacementToken) =>
+          this.replaceLegacyDeferredResumeToken(operationId, currentToken, replacementToken)
       );
     }
   }
@@ -4608,6 +4654,8 @@ export class MediaBuyLifecycleCoordinator {
     this.legacyPurchaseSettlementRecoveryUnsubscribe = undefined;
     this.legacyPurchaseDeferredAuthorizationUnsubscribe?.();
     this.legacyPurchaseDeferredAuthorizationUnsubscribe = undefined;
+    this.legacyPurchaseDeferredReplacementUnsubscribe?.();
+    this.legacyPurchaseDeferredReplacementUnsubscribe = undefined;
     for (const controller of this.legacyPurchaseWatchControllers) {
       controller.abort(createAbortError('Media-buy lifecycle coordinator disposed.'));
     }
@@ -5307,6 +5355,7 @@ export class MediaBuyLifecycleCoordinator {
     // commercial terms whose mutation must never change the payload that is
     // validated, fingerprinted, claimed, or dispatched.
     const inputSnapshot = structuredClone(input);
+    const optionsSnapshot = snapshotCompatibilityTaskOptions(options);
     if (!this.principalScope) {
       throw new LegacyPurchaseContinuationError(
         'binding_mismatch',
@@ -5485,7 +5534,7 @@ export class MediaBuyLifecycleCoordinator {
     }
     let claim: LegacyPurchaseClaim = {
       idempotencyKey,
-      inputFingerprint: requestFingerprint(inputSnapshot),
+      inputFingerprint: legacyPurchaseInputFingerprint(inputSnapshot),
       operationKey: requestFingerprint({
         operation: 'continueLegacyPurchase',
         principalScope: expectedBinding.principalScope,
@@ -5674,7 +5723,11 @@ export class MediaBuyLifecycleCoordinator {
           }
           let task: TaskInfo;
           try {
-            task = await this.agent.getTaskStatus(pending.serverTaskId, options?.transport, options?.signal);
+            task = await this.agent.getTaskStatus(
+              pending.serverTaskId,
+              optionsSnapshot?.transport,
+              optionsSnapshot?.signal
+            );
           } catch (error) {
             if (isAbortOrTimeoutError(error)) throw error;
             throw this.legacyPurchaseAmbiguousError(
@@ -5790,7 +5843,11 @@ export class MediaBuyLifecycleCoordinator {
         if (persistedOperation.sellerTaskId) {
           let task: TaskInfo;
           try {
-            task = await this.agent.getTaskStatus(persistedOperation.sellerTaskId, options?.transport, options?.signal);
+            task = await this.agent.getTaskStatus(
+              persistedOperation.sellerTaskId,
+              optionsSnapshot?.transport,
+              optionsSnapshot?.signal
+            );
           } catch (error) {
             if (isAbortOrTimeoutError(error)) throw error;
             throw this.legacyPurchaseAmbiguousError(
@@ -5897,7 +5954,7 @@ export class MediaBuyLifecycleCoordinator {
             result,
             context.publishSettledTaskStatus,
             context.registerExternalTaskSettlement,
-            options?.transport
+            optionsSnapshot?.transport
           );
           settledInsideExecutor = true;
           return settled;
@@ -5926,9 +5983,9 @@ export class MediaBuyLifecycleCoordinator {
         claimBeforeDispatch,
         inputHandler,
         {
-          ...options,
+          ...optionsSnapshot,
           disableWebhook:
-            options?.disableWebhook === true ||
+            optionsSnapshot?.disableWebhook === true ||
             !this.legacyPurchaseCallbackRecoveryEnabled ||
             continuation.operation.state !== 'available',
           skipAccountValidation: true,
@@ -5939,7 +5996,7 @@ export class MediaBuyLifecycleCoordinator {
       if (settledInsideExecutor) return result;
       // Test doubles and older internal façades may invoke the pre-dispatch
       // hook without honoring its executor-owned settlement callbacks.
-      return this.trackLegacyPurchaseResult(token, claim, result, undefined, undefined, options?.transport);
+      return this.trackLegacyPurchaseResult(token, claim, result, undefined, undefined, optionsSnapshot?.transport);
     } catch (error) {
       if (!claimedForDispatch) throw error;
       if (settledInsideExecutor) throw error;
@@ -6531,6 +6588,75 @@ export class MediaBuyLifecycleCoordinator {
     return operation.pendingSettlement === undefined && operation.deferredTaskToken === deferredToken;
   }
 
+  private async replaceLegacyDeferredResumeToken(
+    operationId: string,
+    currentToken: string,
+    replacementToken: string
+  ): Promise<boolean | undefined> {
+    const findByOperationId = this.legacyPurchaseContinuationStore.getByCallbackOperationId;
+    const replaceToken = this.legacyPurchaseContinuationStore.recordDeferredTaskToken;
+    if (!findByOperationId || !replaceToken) return undefined;
+    const indexed = await findByOperationId.call(this.legacyPurchaseContinuationStore, operationId);
+    if (!indexed) return undefined;
+    const continuation = await this.legacyPurchaseContinuationStore.get(indexed.token);
+    if (!continuation || continuation.token !== indexed.token || continuation.operation.state !== 'claimed') {
+      return false;
+    }
+    const operation = continuation.operation;
+    const replayExpiresAt = Date.parse(operation.replayExpiresAt);
+    const expected = this.legacyPurchaseBinding(continuation.accountScope);
+    if (
+      operation.callbackOperationId !== operationId ||
+      operation.pendingSettlement !== undefined ||
+      operation.deferredTaskToken !== currentToken ||
+      !Number.isFinite(replayExpiresAt) ||
+      replayExpiresAt <= Date.now() ||
+      continuation.principalScope !== expected.principalScope ||
+      continuation.accountScope !== expected.accountScope ||
+      continuation.sellerScope !== expected.sellerScope ||
+      continuation.clientSessionScope !== expected.clientSessionScope ||
+      continuation.sourceAdcpVersion !== expected.sourceAdcpVersion
+    ) {
+      return false;
+    }
+    const replaced = await replaceToken.call(
+      this.legacyPurchaseContinuationStore,
+      continuation.token,
+      operation,
+      replacementToken,
+      currentToken
+    );
+    if (!replaced) return false;
+
+    // A custom store's successful CAS is security-sensitive: verify both its
+    // primary record and callback index expose the same replacement route
+    // before TaskExecutor consumes the old SDK checkpoint.
+    const [primary, reindexed] = await Promise.all([
+      this.legacyPurchaseContinuationStore.get(continuation.token),
+      findByOperationId.call(this.legacyPurchaseContinuationStore, operationId),
+    ]);
+    const primaryReplayExpiresAt =
+      primary?.operation.state === 'claimed' ? Date.parse(primary.operation.replayExpiresAt) : Number.NaN;
+    return (
+      primary?.operation.state === 'claimed' &&
+      primary.operation.callbackOperationId === operationId &&
+      primary.operation.pendingSettlement === undefined &&
+      primary.operation.deferredTaskToken === replacementToken &&
+      Number.isFinite(primaryReplayExpiresAt) &&
+      primaryReplayExpiresAt > Date.now() &&
+      primary.principalScope === expected.principalScope &&
+      primary.accountScope === expected.accountScope &&
+      primary.sellerScope === expected.sellerScope &&
+      primary.clientSessionScope === expected.clientSessionScope &&
+      primary.sourceAdcpVersion === expected.sourceAdcpVersion &&
+      reindexed?.token === continuation.token &&
+      reindexed.operation.state === 'claimed' &&
+      reindexed.operation.callbackOperationId === operationId &&
+      reindexed.operation.pendingSettlement === undefined &&
+      reindexed.operation.deferredTaskToken === replacementToken
+    );
+  }
+
   private async recoverLegacyPurchaseSettlement(
     operationId: string,
     observation: ExternalTaskSettlementObservation
@@ -7073,6 +7199,7 @@ export class MediaBuyLifecycleCoordinator {
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
     const durablePendingSettlement = hasDeferredPendingSettlement(result);
     let durableDeferredTaskToken = false;
+    let deferredRouteSettledDuringHandoff = false;
     if (result.deferred && this.legacyPurchaseCallbackRecoveryEnabled) {
       durableDeferredTaskToken = await this.agent.hasDurablyStoredDeferredTask(result.deferred.token);
       if (!durableDeferredTaskToken) {
@@ -7088,8 +7215,42 @@ export class MediaBuyLifecycleCoordinator {
         expectedDeferredTaskToken
       );
       if (!recordedDeferredToken) {
-        await this.markLegacyPurchaseAmbiguous(token, claim, 'deferred_task_persistence_failed');
-        throw this.legacyPurchaseAmbiguousError('Could not durably bind the deferred seller continuation.');
+        // TaskExecutor installs the nested A -> B route before consuming A.
+        // A callback may terminalize that exact B-bound route while control is
+        // returning through this outer compatibility wrapper. Accept only that
+        // authoritative same-route winner; every stale/mismatched failure stays
+        // fail-closed. The normal seller-task binding path below then publishes
+        // or replays the durable winner in its established order.
+        const rebound = await this.legacyPurchaseContinuationStore.get(token);
+        const operation = rebound?.operation;
+        const sellerTaskId = result.metadata.serverTaskId ?? claim.sellerTaskId;
+        const sameClaimRoute =
+          operation !== undefined &&
+          operation.state !== 'available' &&
+          operation.idempotencyKey === claim.idempotencyKey &&
+          operation.inputFingerprint === claim.inputFingerprint &&
+          operation.operationKey === claim.operationKey &&
+          operation.callbackOperationId === claim.callbackOperationId &&
+          operation.deferredTaskToken === result.deferred.token;
+        const exactPendingRoute =
+          sameClaimRoute &&
+          operation.state === 'claimed' &&
+          operation.pendingSettlement !== undefined &&
+          sellerTaskId !== undefined &&
+          operation.pendingSettlement.operationId === operation.callbackOperationId &&
+          operation.pendingSettlement.serverTaskId === sellerTaskId &&
+          operation.pendingSettlement.taskType === 'create_media_buy' &&
+          (operation.sellerTaskId === undefined || operation.sellerTaskId === sellerTaskId);
+        const exactCompletedRoute =
+          sameClaimRoute &&
+          operation.state === 'completed' &&
+          sellerTaskId !== undefined &&
+          operation.sellerTaskId === sellerTaskId;
+        if (!exactPendingRoute && !exactCompletedRoute) {
+          await this.markLegacyPurchaseAmbiguous(token, claim, 'deferred_task_persistence_failed');
+          throw this.legacyPurchaseAmbiguousError('Could not durably bind the deferred seller continuation.');
+        }
+        deferredRouteSettledDuringHandoff = true;
       }
     }
     if (result.status === 'completed' || result.status === 'failed' || result.status === 'governance-denied') {
@@ -7371,7 +7532,16 @@ export class MediaBuyLifecycleCoordinator {
         throw this.legacyPurchaseAmbiguousError('The durably bound seller task could not be reloaded.');
       }
       if (bound.operation.state === 'completed') {
-        this.restoreLegacyPurchasePublicationProof(bound.operation, bound.operation.result);
+        if (bound.operation.pendingSettlement) {
+          await this.publishPendingLegacyPurchaseSettlement(
+            token,
+            bound.operation,
+            bound.operation.pendingSettlement,
+            bound.operation.result
+          );
+        } else {
+          this.restoreLegacyPurchasePublicationProof(bound.operation, bound.operation.result);
+        }
         return attachMatch(bound.operation.result);
       }
       const pendingSettlement = bound.operation.pendingSettlement;
@@ -7473,7 +7643,12 @@ export class MediaBuyLifecycleCoordinator {
       }
     }
 
-    if (result.status === 'working' || result.status === 'input-required' || result.status === 'auth-required') {
+    if (
+      result.status === 'working' ||
+      result.status === 'input-required' ||
+      result.status === 'auth-required' ||
+      (result.status === 'deferred' && deferredRouteSettledDuringHandoff)
+    ) {
       const sellerTaskId = result.metadata.serverTaskId;
       if (!sellerTaskId) {
         await this.markLegacyPurchaseAmbiguous(token, claim, 'paused_task_identity_missing');

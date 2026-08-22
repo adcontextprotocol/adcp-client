@@ -124,6 +124,14 @@ export class WebhookDedupInputError extends Error {
   }
 }
 
+/** A valid sender key was reused for a different authenticated callback value. */
+export class WebhookDedupConflictError extends Error {
+  constructor(message = 'Webhook idempotency key was reused for a different callback payload.') {
+    super(message);
+    this.name = 'WebhookDedupConflictError';
+  }
+}
+
 /**
  * Metadata for agent-initiated notifications
  * Same as WebhookMetadata but includes notification-specific fields
@@ -793,7 +801,7 @@ export class AsyncHandler {
     const completedFingerprint = webhookHandledFingerprint(completed);
     if (completedFingerprint !== undefined && completed!.expiresAt >= nowSeconds) {
       if (completedFingerprint !== eventFingerprint) {
-        throw new Error('Webhook idempotency key was reused for a different callback payload.');
+        throw new WebhookDedupConflictError();
       }
       return { outcome: 'already_handled' };
     }
@@ -832,9 +840,17 @@ export class AsyncHandler {
     const racedFingerprint = webhookHandledFingerprint(completedAfterRace);
     if (racedFingerprint !== undefined && completedAfterRace!.expiresAt >= nowSeconds) {
       if (racedFingerprint !== eventFingerprint) {
-        throw new Error('Webhook idempotency key was reused for a different callback payload.');
+        throw new WebhookDedupConflictError();
       }
       return { outcome: 'already_handled' };
+    }
+    const activeFingerprint = webhookActiveClaimFingerprint(completedAfterRace);
+    if (
+      activeFingerprint !== undefined &&
+      completedAfterRace!.expiresAt >= nowSeconds &&
+      activeFingerprint !== eventFingerprint
+    ) {
+      throw new WebhookDedupConflictError();
     }
     return { outcome: 'in_progress' };
   }
@@ -859,6 +875,24 @@ const WEBHOOK_DEDUP_HANDLED = 'adcp_webhook_handled_v1';
 interface WebhookDedupHandledMarker {
   state: typeof WEBHOOK_DEDUP_HANDLED;
   eventFingerprint: string;
+}
+
+interface WebhookDedupActiveClaimMarker {
+  claimToken: string;
+  eventFingerprint: string;
+}
+
+function webhookActiveClaimFingerprint(entry: IdempotencyCacheEntry | null): string | undefined {
+  if (!entry?.response || typeof entry.response !== 'object') return undefined;
+  const response = entry.response as Partial<WebhookDedupActiveClaimMarker>;
+  if (
+    typeof response.claimToken === 'string' &&
+    response.claimToken === entry.payloadHash &&
+    typeof response.eventFingerprint === 'string'
+  ) {
+    return response.eventFingerprint;
+  }
+  return undefined;
 }
 
 function webhookHandledFingerprint(entry: IdempotencyCacheEntry | null): string | undefined {

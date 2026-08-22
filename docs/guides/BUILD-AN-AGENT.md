@@ -42,9 +42,14 @@ A minimal signals agent using `createAdcpServerFromPlatform` + the
 import { serve } from '@adcp/sdk';
 import {
   createAdcpServerFromPlatform,
+  createIdempotencyStore,
   definePlatform,
   defineSignalsPlatform,
+  memoryBackend,
 } from '@adcp/sdk/server';
+
+// Single-process example. Use pgBackend(pool) or redisBackend(client) in production.
+const idempotency = createIdempotencyStore({ backend: memoryBackend(), ttlSeconds: 86400 });
 
 const platform = definePlatform({
   capabilities: {
@@ -80,7 +85,7 @@ const platform = definePlatform({
   }),
 });
 
-serve(() => createAdcpServerFromPlatform(platform, { name: 'My Signals Agent', version: '1.0.0' }));
+serve(() => createAdcpServerFromPlatform(platform, { name: 'My Signals Agent', version: '1.0.0', idempotency }));
 // listening on http://localhost:3001/mcp
 ```
 
@@ -111,11 +116,16 @@ The declarative path. You declare a typed `DecisioningPlatform` per specialism a
 import { serve } from '@adcp/sdk';
 import {
   createAdcpServerFromPlatform,
+  createIdempotencyStore,
   definePlatform,
   defineSalesCorePlatform,
+  memoryBackend,
   refAccountId,
   AccountNotFoundError,
 } from '@adcp/sdk/server';
+
+// Single-process example. Use pgBackend(pool) or redisBackend(client) in production.
+const idempotency = createIdempotencyStore({ backend: memoryBackend(), ttlSeconds: 86400 });
 
 const platform = definePlatform({
   capabilities: {
@@ -154,7 +164,7 @@ const platform = definePlatform({
   }),
 });
 
-serve(() => createAdcpServerFromPlatform(platform, { name: 'My Publisher', version: '1.0.0' }));
+serve(() => createAdcpServerFromPlatform(platform, { name: 'My Publisher', version: '1.0.0', idempotency }));
 ```
 
 **What the framework does for you:**
@@ -480,7 +490,12 @@ The framework auto-handles:
 
 Scoping is per-principal — `resolveSessionKey` doubles as the idempotency principal, so two buyers with different session keys won't share cache entries. Override with `resolveIdempotencyPrincipal` if you need a different scope (e.g., `operator_id`).
 
-**Only successful responses are cached.** Handler errors re-execute on retry rather than replaying — so a transient 5xx doesn't lock a failure into the cache.
+**Successful responses are cached.** Request-validation failures and ordinary
+handler errors are not cached, so a transient pre-mutation 5xx can re-execute on
+retry. One safety exception applies after a mutating handler has already
+returned: if strict response validation rejects that response, the framework
+retains an ambiguity fence instead of rerunning the mutation. Reconcile that
+operation by its natural key before issuing a new intent.
 
 ### Schema-Driven Validation (opt-in)
 

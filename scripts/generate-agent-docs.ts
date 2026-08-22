@@ -553,9 +553,14 @@ function generateLlmsTxt(
   ln(`import { serve } from '@adcp/sdk';`);
   ln(`import {`);
   ln(`  createAdcpServerFromPlatform,`);
+  ln(`  createIdempotencyStore,`);
   ln(`  definePlatform,`);
   ln(`  defineSignalsPlatform,`);
+  ln(`  memoryBackend,`);
   ln(`} from '@adcp/sdk/server';`);
+  ln();
+  ln(`// Single-process example. Use pgBackend(pool) or redisBackend(client) in production.`);
+  ln(`const idempotency = createIdempotencyStore({ backend: memoryBackend(), ttlSeconds: 86400 });`);
   ln();
   ln(`const platform = definePlatform({`);
   ln(`  capabilities: {`);
@@ -574,6 +579,7 @@ function generateLlmsTxt(
   ln(`serve(() => createAdcpServerFromPlatform(platform, {`);
   ln(`  name: 'My Signals Agent',`);
   ln(`  version: '1.0.0',`);
+  ln(`  idempotency,`);
   ln(`})); // http://localhost:3001/mcp`);
   ln('```');
   ln();

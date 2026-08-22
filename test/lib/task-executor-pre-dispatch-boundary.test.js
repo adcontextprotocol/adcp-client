@@ -548,6 +548,346 @@ describe('TaskExecutor pre-dispatch boundary', () => {
     assert.equal(dispatchedOptions.transport.trustedFetchFn, trustedFetchFn);
   });
 
+  test('snapshots the direct-executor configured transport before an awaited pre-dispatch boundary', async () => {
+    let releaseActivity;
+    const activityRelease = new Promise(resolve => {
+      releaseActivity = resolve;
+    });
+    let markActivityStarted;
+    const activityStarted = new Promise(resolve => {
+      markActivityStarted = resolve;
+    });
+    let dispatchedOptions;
+    ProtocolClient.callTool = mock.fn(async (_agent, _taskName, _params, options) => {
+      dispatchedOptions = options;
+      return { status: 'completed', data: { media_buy_id: 'buy-config-transport-snapshot' } };
+    });
+    const trustedFetchFn = async () => new Response();
+    const mutatedFetchFn = async () => new Response();
+    const configuredTransport = {
+      allowPrivateIp: false,
+      maxResponseBytes: 2048,
+      requestTimeoutMs: 4000,
+      trustedFetchFn,
+    };
+    const config = {
+      strictSchemaValidation: false,
+      transport: configuredTransport,
+      onActivity: async activity => {
+        if (activity.type !== 'protocol_request') return;
+        markActivityStarted();
+        await activityRelease;
+      },
+    };
+    const executor = new TaskExecutor(config);
+
+    const execution = executor.executeTask(AGENT, 'create_media_buy', {
+      idempotency_key: 'configured-transport-snapshot',
+    });
+    await activityStarted;
+    configuredTransport.allowPrivateIp = true;
+    configuredTransport.maxResponseBytes = 999_999_999;
+    configuredTransport.requestTimeoutMs = 1;
+    configuredTransport.trustedFetchFn = mutatedFetchFn;
+    releaseActivity();
+
+    assert.equal((await execution).status, 'completed');
+    assert.notStrictEqual(dispatchedOptions.transport, configuredTransport);
+    assert.equal(dispatchedOptions.transport.allowPrivateIp, false);
+    assert.equal(dispatchedOptions.transport.maxResponseBytes, 2048);
+    assert.equal(dispatchedOptions.transport.requestTimeoutMs, 4000);
+    assert.equal(dispatchedOptions.transport.trustedFetchFn, trustedFetchFn);
+  });
+
+  test('SingleAgentClient owns its configured transport before handing it to TaskExecutor', async () => {
+    let releaseActivity;
+    const activityRelease = new Promise(resolve => {
+      releaseActivity = resolve;
+    });
+    let markActivityStarted;
+    const activityStarted = new Promise(resolve => {
+      markActivityStarted = resolve;
+    });
+    let dispatchedOptions;
+    ProtocolClient.callTool = mock.fn(async (_agent, _taskName, _params, options) => {
+      dispatchedOptions = options;
+      return { status: 'completed', data: { media_buy_id: 'buy-client-config-transport-snapshot' } };
+    });
+    const trustedFetchFn = async () => new Response();
+    const mutatedFetchFn = async () => new Response();
+    const configuredTransport = {
+      allowPrivateIp: false,
+      maxResponseBytes: 3072,
+      requestTimeoutMs: 3000,
+      trustedFetchFn,
+    };
+    const client = new SingleAgentClient(AGENT, {
+      transport: configuredTransport,
+      validation: { requests: 'off', responses: 'off' },
+      onActivity: async activity => {
+        if (activity.type !== 'protocol_request') return;
+        markActivityStarted();
+        await activityRelease;
+      },
+    });
+
+    // Mutate the caller's config after construction but before operation
+    // admission. The client must already own the original trust policy.
+    configuredTransport.allowPrivateIp = true;
+    configuredTransport.maxResponseBytes = 999_999_999;
+    configuredTransport.requestTimeoutMs = 1;
+    configuredTransport.trustedFetchFn = mutatedFetchFn;
+    const execution = client.executor.executeTask(AGENT, 'create_media_buy', {
+      idempotency_key: 'client-configured-transport-snapshot',
+    });
+    await activityStarted;
+    releaseActivity();
+
+    assert.equal((await execution).status, 'completed');
+    assert.notStrictEqual(dispatchedOptions.transport, configuredTransport);
+    assert.equal(dispatchedOptions.transport.allowPrivateIp, false);
+    assert.equal(dispatchedOptions.transport.maxResponseBytes, 3072);
+    assert.equal(dispatchedOptions.transport.requestTimeoutMs, 3000);
+    assert.equal(dispatchedOptions.transport.trustedFetchFn, trustedFetchFn);
+  });
+
+  test('snapshots direct task-status transport policy before the status lookup yields', async () => {
+    let releaseLookup;
+    const lookupRelease = new Promise(resolve => {
+      releaseLookup = resolve;
+    });
+    let markLookupStarted;
+    const lookupStarted = new Promise(resolve => {
+      markLookupStarted = resolve;
+    });
+    const executor = new TaskExecutor({ strictSchemaValidation: false });
+    const trustedFetchFn = async () => new Response();
+    const mutatedFetchFn = async () => new Response();
+    const transport = {
+      allowPrivateIp: false,
+      maxResponseBytes: 1024,
+      requestTimeoutMs: 5000,
+      trustedFetchFn,
+    };
+    const signal = new AbortController().signal;
+    let observedTransport;
+    let observedSignal;
+    executor.getTaskStatusWithRawResponse = async (_agent, taskId, lookupTransport, lookupSignal) => {
+      observedTransport = lookupTransport;
+      observedSignal = lookupSignal;
+      markLookupStarted();
+      await lookupRelease;
+      return {
+        task: {
+          taskId,
+          taskType: 'create_media_buy',
+          status: 'working',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+        rawResponse: {},
+      };
+    };
+
+    const lookup = executor.getTaskStatus(AGENT, 'seller-status-snapshot', transport, signal);
+    await lookupStarted;
+    transport.allowPrivateIp = true;
+    transport.maxResponseBytes = 999_999_999;
+    transport.requestTimeoutMs = 1;
+    transport.trustedFetchFn = mutatedFetchFn;
+    releaseLookup();
+
+    assert.equal((await lookup).taskId, 'seller-status-snapshot');
+    assert.notStrictEqual(observedTransport, transport);
+    assert.equal(observedTransport.allowPrivateIp, false);
+    assert.equal(observedTransport.maxResponseBytes, 1024);
+    assert.equal(observedTransport.requestTimeoutMs, 5000);
+    assert.equal(observedTransport.trustedFetchFn, trustedFetchFn);
+    assert.strictEqual(observedSignal, signal);
+  });
+
+  test('snapshots direct task-list transport policy before the remote lookup yields', async () => {
+    let releaseLookup;
+    const lookupRelease = new Promise(resolve => {
+      releaseLookup = resolve;
+    });
+    let markLookupStarted;
+    const lookupStarted = new Promise(resolve => {
+      markLookupStarted = resolve;
+    });
+    const executor = new TaskExecutor({ strictSchemaValidation: false });
+    const trustedFetchFn = async () => new Response();
+    const mutatedFetchFn = async () => new Response();
+    const transport = {
+      allowPrivateIp: false,
+      maxResponseBytes: 1536,
+      requestTimeoutMs: 4500,
+      trustedFetchFn,
+    };
+    let observedTransport;
+    executor.listTasksForAgent = async (_agent, lookupTransport) => {
+      observedTransport = lookupTransport;
+      markLookupStarted();
+      await lookupRelease;
+      return [];
+    };
+
+    const lookup = executor.listTasks(AGENT, transport);
+    await lookupStarted;
+    transport.allowPrivateIp = true;
+    transport.maxResponseBytes = 999_999_999;
+    transport.requestTimeoutMs = 1;
+    transport.trustedFetchFn = mutatedFetchFn;
+    releaseLookup();
+
+    assert.deepEqual(await lookup, []);
+    assert.notStrictEqual(observedTransport, transport);
+    assert.equal(observedTransport.allowPrivateIp, false);
+    assert.equal(observedTransport.maxResponseBytes, 1536);
+    assert.equal(observedTransport.requestTimeoutMs, 4500);
+    assert.equal(observedTransport.trustedFetchFn, trustedFetchFn);
+  });
+
+  test('reuses one transport snapshot across direct polling iterations', async () => {
+    let releaseFirstPoll;
+    const firstPollRelease = new Promise(resolve => {
+      releaseFirstPoll = resolve;
+    });
+    let markFirstPollStarted;
+    const firstPollStarted = new Promise(resolve => {
+      markFirstPollStarted = resolve;
+    });
+    const executor = new TaskExecutor({ strictSchemaValidation: false });
+    const trustedFetchFn = async () => new Response();
+    const mutatedFetchFn = async () => new Response();
+    const transport = {
+      allowPrivateIp: false,
+      maxResponseBytes: 2048,
+      requestTimeoutMs: 4000,
+      trustedFetchFn,
+    };
+    const observedTransports = [];
+    let polls = 0;
+    executor.getTaskStatusWithRawResponse = async (_agent, taskId, pollTransport) => {
+      observedTransports.push(pollTransport);
+      polls += 1;
+      if (polls === 1) {
+        markFirstPollStarted();
+        await firstPollRelease;
+        return {
+          task: {
+            taskId,
+            taskType: 'create_media_buy',
+            status: 'working',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          },
+          rawResponse: {},
+        };
+      }
+      return {
+        task: {
+          taskId,
+          taskType: 'create_media_buy',
+          status: 'completed',
+          result: { media_buy_id: 'poll-transport-snapshot' },
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+        rawResponse: {},
+      };
+    };
+
+    const completion = executor.pollTaskCompletion(
+      AGENT,
+      'seller-poll-snapshot',
+      0,
+      transport,
+      undefined,
+      undefined,
+      'create_media_buy'
+    );
+    await firstPollStarted;
+    transport.allowPrivateIp = true;
+    transport.maxResponseBytes = 999_999_999;
+    transport.requestTimeoutMs = 1;
+    transport.trustedFetchFn = mutatedFetchFn;
+    releaseFirstPoll();
+
+    assert.equal((await completion).status, 'completed');
+    assert.equal(observedTransports.length, 2);
+    assert.strictEqual(observedTransports[0], observedTransports[1]);
+    assert.notStrictEqual(observedTransports[0], transport);
+    assert.equal(observedTransports[0].allowPrivateIp, false);
+    assert.equal(observedTransports[0].maxResponseBytes, 2048);
+    assert.equal(observedTransports[0].requestTimeoutMs, 4000);
+    assert.equal(observedTransports[0].trustedFetchFn, trustedFetchFn);
+  });
+
+  test('snapshots a submitted track transport override before its lookup yields', async () => {
+    ProtocolClient.callTool = mock.fn(async () => ({
+      status: 'submitted',
+      task_id: 'seller-track-snapshot',
+    }));
+    const executor = new TaskExecutor({ strictSchemaValidation: false });
+    const pending = await executor.executeTask(
+      AGENT,
+      'create_media_buy',
+      { idempotency_key: 'submitted-track-transport-snapshot' },
+      undefined,
+      {}
+    );
+    assert.equal(pending.status, 'submitted');
+
+    let releaseLookup;
+    const lookupRelease = new Promise(resolve => {
+      releaseLookup = resolve;
+    });
+    let markLookupStarted;
+    const lookupStarted = new Promise(resolve => {
+      markLookupStarted = resolve;
+    });
+    const trustedFetchFn = async () => new Response();
+    const mutatedFetchFn = async () => new Response();
+    const transport = {
+      allowPrivateIp: false,
+      maxResponseBytes: 4096,
+      requestTimeoutMs: 3000,
+      trustedFetchFn,
+    };
+    let observedTransport;
+    executor.getTaskStatusWithRawResponse = async (_agent, taskId, lookupTransport) => {
+      observedTransport = lookupTransport;
+      markLookupStarted();
+      await lookupRelease;
+      return {
+        task: {
+          taskId,
+          taskType: 'create_media_buy',
+          status: 'working',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+        rawResponse: {},
+      };
+    };
+
+    const lookup = pending.submitted.track(transport);
+    await lookupStarted;
+    transport.allowPrivateIp = true;
+    transport.maxResponseBytes = 999_999_999;
+    transport.requestTimeoutMs = 1;
+    transport.trustedFetchFn = mutatedFetchFn;
+    releaseLookup();
+
+    assert.equal((await lookup).taskId, 'seller-track-snapshot');
+    assert.notStrictEqual(observedTransport, transport);
+    assert.equal(observedTransport.allowPrivateIp, false);
+    assert.equal(observedTransport.maxResponseBytes, 4096);
+    assert.equal(observedTransport.requestTimeoutMs, 3000);
+    assert.equal(observedTransport.trustedFetchFn, trustedFetchFn);
+  });
+
   test('runs the committed error settlement exactly once when seller dispatch throws', async () => {
     const transportError = new Error('seller transport failed after dispatch');
     const durableError = new Error('durable outcome fenced with secret-db-token');

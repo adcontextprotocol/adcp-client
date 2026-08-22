@@ -305,6 +305,12 @@ argument, stale writers return `false`, and an exact installed-token retry
 returns `true`. That exact token is also the only callback-capable claimed route
 allowed to send seller continuation input; ambiguous, completed, expired,
 stale, unlinked, or coordinator-less routes fail closed.
+When a restarted/public resume pauses again, the SDK first persists the new
+deferred checkpoint, then uses that compare-and-swap to replace the legacy
+operation's exact prior token, and only then consumes the prior SDK checkpoint
+or returns the new token. If the cross-store handoff fails after seller input
+was dispatched, the prior checkpoint stays claimed and the replacement remains
+unauthorized, preventing either generation from redispatching input.
 `acknowledgePendingSettlement` must atomically clear the exact pending entry and
 retain its stable, nonempty `acknowledgedSettlementFingerprint` through
 `operation.replayExpiresAt`. `get` and `getByCallbackOperationId` must return
@@ -378,6 +384,21 @@ callbacks. This installs the callback-operation recovery lookup synchronously
 when negotiation completes. The seller-session scope must be stable across
 replicas; do not rely on a newly negotiated in-memory context ID for cold-start
 recovery.
+
+Use that same reconstructed `AgentClient` to redeem a persisted continuation;
+do not construct a separate `SingleAgentClient`, because it would not own the
+coordinator's settlement recoverer and exact-token authorizer:
+
+```ts
+const agent = new AgentClient(agentConfig, { deferredStorage });
+await agent.negotiateMediaBuyLifecycle({
+  legacyPurchaseContinuationStore,
+  principalScope,
+  legacyPurchaseSellerSessionScope,
+});
+
+const resumed = await agent.resumeDeferredTask(deferredToken, humanInput);
+```
 
 The webhook authenticity state is a separate durability boundary. Replicas
 must also share a durable `webhookRegistrationStore`; RFC 9421 deployments

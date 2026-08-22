@@ -253,7 +253,10 @@ export function redisBackend(client: RedisBackendClient, options: RedisBackendOp
 
   for (const method of ['get', 'set', 'del', 'eval', 'ping'] as const) {
     if (typeof c?.[method] !== 'function') {
-      throw new Error(`redisBackend: client must implement ${method}().`);
+      throw new Error(
+        `redisBackend: client must implement ${method}(). ` +
+          'Pass a node-redis compatible client or an adapter implementing get/set/del/eval/ping; atomic replay fencing depends on these methods.'
+      );
     }
   }
 

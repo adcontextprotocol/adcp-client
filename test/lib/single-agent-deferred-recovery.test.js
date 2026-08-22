@@ -1096,6 +1096,57 @@ test('failed committed recovery retains the terminal observation and retries wit
   }
 });
 
+test('transport failure retains a claimed fence without aliasing raw resume input into durable messages', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('transport-failure-resume-secret-token');
+  const now = Date.now();
+  await storage.putIfAbsent(
+    token,
+    {
+      continuationVersion: 'transport-failure-resume-secret-version',
+      taskId: 'transport-failure-resume-secret-operation',
+      a2aTaskId: 'transport-failure-resume-secret-a2a-task',
+      serverVersion: 'v3',
+      agentId: agent.id,
+      taskName: 'approval_task',
+      params: {},
+      messages: [],
+      createdAt: now,
+      expiresAt: now + 60_000,
+    },
+    60
+  );
+  const resumeSecret = 'raw-resume-input-secret';
+  let protocolCalls = 0;
+  ProtocolClient.callTool = async (_resolvedAgent, taskName, params) => {
+    protocolCalls += 1;
+    assert.equal(taskName, 'approval_task');
+    assert.equal(params.input.auth_token, resumeSecret);
+    throw new Error('uncertain continuation transport failure');
+  };
+
+  try {
+    const executor = new TaskExecutor({
+      deferredStorage: storage,
+      resolveDeferredAgent: async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' }),
+      validation: { requests: 'off', responses: 'off' },
+    });
+    await assert.rejects(
+      executor.resumeDeferredTask(token, { auth_token: resumeSecret }),
+      /uncertain continuation transport failure/
+    );
+    assert.equal(protocolCalls, 1);
+    const retainedFence = await storage.get(token);
+    assert.equal(retainedFence.continuationClaimed, true);
+    assert.deepEqual(retainedFence.messages, []);
+    assert.doesNotMatch(JSON.stringify(retainedFence), new RegExp(resumeSecret));
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});
+
 test('committed submitted resume reconstructs polling after restart without redispatching input', async () => {
   const originalCallTool = ProtocolClient.callTool;
   const storage = new MemoryStorage({ autoCleanup: false });
@@ -1644,6 +1695,179 @@ test('external callbacks cannot replace an existing deferred terminal winner', a
     assert.equal(finalized.settlementTerminalResult.data.media_buy_id, 'poll-winner-buy');
     assert.equal(finalized.settlementFinalizedResult.data.media_buy_id, 'poll-winner-buy');
   } finally {
+    storage.destroy();
+  }
+});
+
+test('finalized deferred callbacks compare the raw seller observation while public replay stays finalized', async () => {
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('finalized-external-callback-duplicate-token');
+  const malformedToken = testDurableToken('finalized-external-callback-missing-raw-token');
+  const operationId = 'finalized-external-callback-operation';
+  const sellerWorkId = 'finalized-external-callback-seller-work';
+  const now = Date.now();
+  const metadata = {
+    taskId: operationId,
+    serverTaskId: sellerWorkId,
+    taskName: 'create_media_buy',
+    agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+    responseTimeMs: 1,
+    timestamp: new Date().toISOString(),
+    clarificationRounds: 0,
+    status: 'completed',
+  };
+  const rawSellerResult = {
+    success: true,
+    status: 'completed',
+    data: { media_buy_id: 'raw-seller-buy', legacy_format_id: 'legacy-format' },
+    metadata,
+    conversation: [],
+    debug_logs: [],
+  };
+  const finalizedPublicResult = {
+    ...rawSellerResult,
+    data: {
+      media_buy_id: 'raw-seller-buy',
+      format_option_id: 'canonical-format',
+      application_handler_annotation: true,
+    },
+  };
+  const baseState = {
+    continuationVersion: 'finalized-external-callback-version',
+    continuationClaimed: true,
+    taskId: operationId,
+    a2aTaskId: 'finalized-external-callback-a2a-task',
+    serverVersion: 'v3',
+    agentId: agent.id,
+    taskName: 'create_media_buy',
+    params: {},
+    messages: [],
+    settlementOperationId: operationId,
+    settlementServerTaskId: sellerWorkId,
+    settlementFinalizedResult: finalizedPublicResult,
+    createdAt: now,
+    expiresAt: now + 60_000,
+  };
+  await storage.putIfAbsent(token, { ...baseState, settlementTerminalResult: rawSellerResult }, 60);
+  await storage.putIfAbsent(
+    malformedToken,
+    { ...baseState, continuationVersion: 'finalized-external-callback-missing-raw-version' },
+    60
+  );
+
+  try {
+    const executor = new TaskExecutor({
+      deferredStorage: storage,
+      validation: { requests: 'off', responses: 'off' },
+    });
+    assert.equal(
+      await executor.checkpointExternalDeferredSettlement(token, operationId, structuredClone(rawSellerResult)),
+      undefined
+    );
+    const replay = await executor.resumeDeferredTask(token, { ignored: true });
+    assert.deepEqual(replay.data, finalizedPublicResult.data);
+    await assert.rejects(
+      executor.checkpointExternalDeferredSettlement(malformedToken, operationId, rawSellerResult),
+      /conflicts with the finalized deferred settlement/
+    );
+  } finally {
+    storage.destroy();
+  }
+});
+
+test('terminal resume binds a newly observed seller task ID for finalized callback duplicates', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('terminal-binds-late-seller-task-token');
+  const mismatchToken = testDurableToken('terminal-rejects-changed-seller-task-token');
+  const operationId = 'terminal-binds-late-seller-task-operation';
+  const mismatchOperationId = 'terminal-rejects-changed-seller-task-operation';
+  const sellerWorkId = 'terminal-binds-late-seller-task-work';
+  const previouslyBoundWorkId = 'terminal-previously-bound-seller-task-work';
+  const conflictingWorkId = 'terminal-conflicting-seller-task-work';
+  const now = Date.now();
+  const baseState = {
+    continuationVersion: 'terminal-binds-late-seller-task-version',
+    taskId: operationId,
+    a2aTaskId: 'terminal-binds-late-a2a-task',
+    serverVersion: 'v3',
+    agentId: agent.id,
+    taskName: 'create_media_buy',
+    params: {},
+    messages: [],
+    settlementOperationId: operationId,
+    createdAt: now,
+    expiresAt: now + 60_000,
+  };
+  await storage.putIfAbsent(token, baseState, 60);
+  await storage.putIfAbsent(
+    mismatchToken,
+    {
+      ...baseState,
+      continuationVersion: 'terminal-rejects-changed-seller-task-version',
+      taskId: mismatchOperationId,
+      a2aTaskId: 'terminal-rejects-changed-a2a-task',
+      settlementOperationId: mismatchOperationId,
+      settlementServerTaskId: previouslyBoundWorkId,
+    },
+    60
+  );
+
+  ProtocolClient.callTool = async (_resolvedAgent, taskName, _params, options) => {
+    assert.equal(taskName, 'create_media_buy');
+    const mismatched = options.session.taskId === 'terminal-rejects-changed-a2a-task';
+    return {
+      status: 'completed',
+      task_id: mismatched ? conflictingWorkId : sellerWorkId,
+      data: {
+        media_buy_id: mismatched ? 'terminal-conflicting-buy' : 'terminal-late-bound-buy',
+        packages: [],
+      },
+    };
+  };
+
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    resolveDeferredAgent: async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' }),
+    canRecoverDeferredSettlement: async () => true,
+    recoverDeferredSettlement: async result => ({ result }),
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  try {
+    const completed = await executor.resumeDeferredTask(token, { approved: true });
+    assert.equal(completed.status, 'completed');
+    const finalized = await storage.get(token);
+    assert.equal(finalized.settlementServerTaskId, sellerWorkId);
+    assert.deepEqual(finalized.settlementFinalizedResult.data, completed.data);
+
+    const exactCallback = {
+      success: true,
+      status: 'completed',
+      data: structuredClone(completed.data),
+      metadata: { ...completed.metadata, serverTaskId: sellerWorkId },
+      conversation: [],
+      debug_logs: [],
+    };
+    assert.equal(await executor.checkpointExternalDeferredSettlement(token, operationId, exactCallback), undefined);
+    await assert.rejects(
+      executor.checkpointExternalDeferredSettlement(token, operationId, {
+        ...exactCallback,
+        metadata: { ...exactCallback.metadata, serverTaskId: conflictingWorkId },
+      }),
+      /conflicts with the finalized deferred settlement/
+    );
+
+    await assert.rejects(
+      executor.resumeDeferredTask(mismatchToken, { approved: true }),
+      /changed its bound seller task identity/
+    );
+    const mismatchFence = await storage.get(mismatchToken);
+    assert.equal(mismatchFence.settlementServerTaskId, previouslyBoundWorkId);
+    assert.equal(mismatchFence.settlementTerminalResult, undefined);
+    assert.equal(mismatchFence.continuationClaimed, true);
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
     storage.destroy();
   }
 });

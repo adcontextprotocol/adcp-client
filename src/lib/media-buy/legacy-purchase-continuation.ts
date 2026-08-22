@@ -244,7 +244,9 @@ export interface LegacyPurchaseContinuationStore {
    * checkpoint recovery. Initial binding requires both stored and expected
    * tokens to be absent. A nested pause replaces only the exact expected
    * token; a stale expected token returns false. An exact already-installed
-   * token returns true without changing state. Tokens are bearer capabilities:
+   * token returns true without changing state. The operation must remain
+   * claimed, unexpired, and free of a pending terminal settlement at the
+   * atomic write boundary. Tokens are bearer capabilities:
    * require either UUIDv4 or 43-256 URL-safe characters and reject weaker
    * values without changing state.
    */
@@ -654,13 +656,15 @@ export class InMemoryLegacyPurchaseContinuationStore implements LegacyPurchaseCo
       (!/^[A-Za-z0-9_-]{43,256}$/.test(deferredTaskToken) &&
         !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(deferredTaskToken)) ||
       !record ||
-      record.operation.state === 'available' ||
+      record.operation.state !== 'claimed' ||
+      record.operation.pendingSettlement !== undefined ||
+      !validFuture(record.operation.replayExpiresAt, Date.now()) ||
       !sameClaim(record.operation, claim)
     ) {
       return false;
     }
     if (record.operation.deferredTaskToken === deferredTaskToken) return true;
-    if (record.operation.state === 'completed' || record.operation.deferredTaskToken !== expectedDeferredTaskToken) {
+    if (record.operation.deferredTaskToken !== expectedDeferredTaskToken) {
       return false;
     }
     return this.replace({ ...record, operation: { ...record.operation, deferredTaskToken } });
@@ -694,9 +698,18 @@ export class InMemoryLegacyPurchaseContinuationStore implements LegacyPurchaseCo
       ) {
         return false;
       }
+      const replayExpiresAt =
+        settlement.publicationSource === 'sdk'
+          ? new Date(
+              Math.max(
+                Date.parse(record.operation.replayExpiresAt),
+                Date.now() + LEGACY_PURCHASE_PUBLICATION_PROOF_RETENTION_MS
+              )
+            ).toISOString()
+          : record.operation.replayExpiresAt;
       return this.replace({
         ...record,
-        operation: { ...record.operation, acknowledgedSettlementFingerprint: fingerprint },
+        operation: { ...record.operation, replayExpiresAt, acknowledgedSettlementFingerprint: fingerprint },
       });
     }
     if (

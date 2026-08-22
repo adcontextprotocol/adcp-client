@@ -12,6 +12,7 @@ const {
   MemoryStorage,
   MediaBuyLifecycleCompatibilityError,
   createInMemoryEstablishedProposalStore,
+  ProtocolClient,
   createInMemoryLegacyPurchaseContinuationStore,
   legacyPurchaseSettlementFingerprint,
   memoryBackend,
@@ -180,8 +181,8 @@ function deferred(taskName, resume) {
 
 let compatibilityOperationSequence = 0;
 
-function clientWithCaps(caps, adcpVersion, clientOptions = {}) {
-  const agent = new AgentClient(AGENT, {
+function clientWithCaps(caps, adcpVersion, clientOptions = {}, agentConfig = AGENT) {
+  const agent = new AgentClient(agentConfig, {
     validateFeatures: false,
     ...(adcpVersion && { adcpVersion }),
     ...clientOptions,
@@ -5148,12 +5149,21 @@ describe('legacy products-only purchase continuations', () => {
       },
     };
 
-    const purchase = coordinator.continueLegacyPurchase(input);
+    const trustedFetch = async () => new Response('{}', { status: 200 });
+    const substitutedFetch = async () => new Response('{}', { status: 500 });
+    const taskOptions = {
+      transport: { trustedFetchFn: trustedFetch, allowPrivateIp: false, requestTimeoutMs: 1_000 },
+      metadata: { tenant: { id: 'tenant-snapshot' } },
+    };
+    const purchase = coordinator.continueLegacyPurchase(input, undefined, taskOptions);
     await getStarted;
     input.account.account_id = 'attacker-account';
     input.legacy_create_request.account.account_id = 'attacker-account';
     input.legacy_create_request.packages[0].budget = 999999;
     input.legacy_create_request.packages[0].pricing_option_id = 'attacker-price';
+    taskOptions.transport.trustedFetchFn = substitutedFetch;
+    taskOptions.transport.allowPrivateIp = true;
+    taskOptions.metadata.tenant.id = 'attacker-tenant';
     releaseGet();
 
     assert.equal((await purchase).status, 'completed');
@@ -5161,6 +5171,80 @@ describe('legacy products-only purchase continuations', () => {
     assert.equal(dispatched.packages[0].budget, 10);
     assert.equal(dispatched.packages[0].pricing_option_id, 'fixed-cpm');
     assert.equal(dispatchOptions.disableWebhook, true, 'polling-only custom stores must suppress task webhooks');
+    assert.strictEqual(dispatchOptions.transport.trustedFetchFn, trustedFetch);
+    assert.equal(dispatchOptions.transport.allowPrivateIp, false);
+    assert.equal(dispatchOptions.metadata.tenant.id, 'tenant-snapshot');
+  });
+
+  test('continuation replay fingerprints exclude only write-only webhook credentials', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    agent.getProducts = async () =>
+      completed('get_products', {
+        products: [legacyListedProduct('p-credential-fingerprint', 'Credential fingerprint')],
+      });
+    let dispatches = 0;
+    agent.createMediaBuyLegacy = async () => {
+      dispatches += 1;
+      return completed('create_media_buy', { media_buy_id: 'buy-credential-fingerprint', packages: [] });
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-credential-fingerprint',
+      legacyPurchaseContinuationStore: store,
+    });
+    const discovery = await coordinator.requestProposals({
+      idempotency_key: 'request-proposals-credential-fingerprint-0001',
+      account: { account_id: 'account-credential-fingerprint' },
+      brand: { domain: 'example.com' },
+      brief: 'Credential-safe replay fingerprint',
+    });
+    const input = {
+      idempotency_key: '7ed655a5-dbc0-455a-8dc7-5f8d2052aa81',
+      continuation_token: discovery.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-credential-fingerprint' },
+      selected_product_ids: ['p-credential-fingerprint'],
+      accepted_losses: discovery.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-credential-fingerprint-create-0001',
+        account: { account_id: 'account-credential-fingerprint' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-credential-fingerprint', budget: 10, pricing_option_id: 'fixed-cpm' }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+        push_notification_config: {
+          url: 'https://buyer.example/tasks',
+          authentication: {
+            schemes: ['HMAC-SHA256'],
+            credentials: 'task-secret-first-0123456789abcdef',
+          },
+        },
+        reporting_webhook: {
+          url: 'https://buyer.example/reports',
+          authentication: {
+            schemes: ['HMAC-SHA256'],
+            credentials: 'report-secret-first-0123456789abcdef',
+          },
+          reporting_frequency: 'daily',
+        },
+      },
+    };
+
+    assert.equal((await coordinator.continueLegacyPurchase(input)).status, 'completed');
+    const rotated = structuredClone(input);
+    rotated.legacy_create_request.push_notification_config.authentication.credentials =
+      'task-secret-rotated-0123456789abcdef';
+    rotated.legacy_create_request.reporting_webhook.authentication.credentials =
+      'report-secret-rotated-0123456789abcdef';
+    assert.equal((await coordinator.continueLegacyPurchase(rotated)).status, 'completed');
+    assert.equal(dispatches, 1, 'credential rotation must replay the original mutation');
+
+    const rerouted = structuredClone(rotated);
+    rerouted.legacy_create_request.reporting_webhook.url = 'https://other-buyer.example/reports';
+    await assert.rejects(coordinator.continueLegacyPurchase(rerouted), error => error.code === 'conflict');
+    assert.equal(dispatches, 1, 'routing changes remain bound by the replay fingerprint');
+
+    const persisted = await store.get(input.continuation_token);
+    assert.doesNotMatch(JSON.stringify(persisted), /task-secret|report-secret/);
   });
 
   test('rejects governance rewrites and final pricing drift before claiming the continuation', async () => {
@@ -6689,7 +6773,8 @@ describe('legacy products-only purchase continuations', () => {
         const replay = await coordinator.continueLegacyPurchase(input);
         assert.equal(replay.status, 'completed');
         assert.equal(replay.data.media_buy_id, `${suffix}-settled`);
-        assert.equal(polledTransport, settlementTransport);
+        assert.deepEqual(polledTransport, settlementTransport);
+        assert.notStrictEqual(polledTransport, settlementTransport, 'polling must use the owned transport snapshot');
         assert.equal(completionHandlerCalls, 1);
         await agent.externalTaskSettlementHandler({
           status: 'completed',
@@ -6908,7 +6993,7 @@ describe('legacy products-only purchase continuations', () => {
 
     failNextDeferredFinalization = true;
     await assert.rejects(
-      agent.client.resumeDeferredTask(deferredToken, { retry: true }),
+      agent.resumeDeferredTask(deferredToken, { retry: true }),
       /committed deferred completion could not be durably acknowledged/i
     );
     assert.equal(handlerCalls, 2);
@@ -6917,7 +7002,7 @@ describe('legacy products-only purchase continuations', () => {
     assert.equal(typeof legacyAcknowledged.operation.acknowledgedSettlementFingerprint, 'string');
     assert.ok(legacyAcknowledged.operation.acknowledgedSettlementFingerprint.length > 0);
 
-    const recovered = await agent.client.resumeDeferredTask(deferredToken, { retry: true });
+    const recovered = await agent.resumeDeferredTask(deferredToken, { retry: true });
     assert.equal(recovered.status, 'completed');
     assert.equal(recovered.data.media_buy_id, 'buy-handler-retry');
     assert.equal(handlerCalls, 2);
@@ -7095,6 +7180,422 @@ describe('legacy products-only purchase continuations', () => {
       assert.equal(deferredFinal.settlementFinalizedResult.data.media_buy_id, 'poll-terminal-winner');
     } finally {
       coordinator.dispose();
+      deferredStorage.destroy();
+    }
+  });
+
+  test('hands a restarted callback-capable purchase from deferred token A to nested token B', async () => {
+    const originalCallTool = ProtocolClient.callTool;
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const deferredStorage = new MemoryStorage({ autoCleanup: false });
+    const initialDeferredToken = testDurableToken('restart-nested-token-a');
+    const sellerTaskId = 'restart-nested-seller-work';
+    const a2aAgent = {
+      id: 'restart-nested-seller',
+      name: 'Restart nested seller',
+      agent_uri: 'https://seller.example/a2a',
+      protocol: 'a2a',
+    };
+    const clientOptions = {
+      deferredStorage,
+      resolveDeferredAgent: async agentId => (agentId === a2aAgent.id ? a2aAgent : undefined),
+      validation: { requests: 'off', responses: 'off' },
+    };
+    const first = clientWithCaps(capabilities({ version: '3.0' }), '3.0', clientOptions, a2aAgent);
+    first.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-restart-nested', 'Restart nested')] });
+    first.createMediaBuyLegacy = async () => ({
+      success: true,
+      status: 'input-required',
+      metadata: {
+        taskId: 'restart-nested-client-task',
+        serverTaskId: sellerTaskId,
+        a2aTaskId: 'restart-nested-a2a-a',
+        contextId: 'restart-nested-context-a',
+        taskName: 'create_media_buy',
+        agent: { id: a2aAgent.id, name: a2aAgent.name, protocol: 'a2a' },
+        responseTimeMs: 1,
+        timestamp: new Date().toISOString(),
+        clarificationRounds: 0,
+        status: 'input-required',
+      },
+      deferred: { token: initialDeferredToken, resume: async () => assert.fail('live token must not resume') },
+    });
+
+    let firstCoordinator;
+    let restartedCoordinator;
+    try {
+      const seededAt = Date.now();
+      await deferredStorage.putIfAbsent(
+        initialDeferredToken,
+        {
+          continuationVersion: 'restart-nested-version-a',
+          taskId: 'restart-nested-client-task',
+          contextId: 'restart-nested-context-a',
+          a2aTaskId: 'restart-nested-a2a-a',
+          serverVersion: 'v3',
+          agentId: a2aAgent.id,
+          taskName: 'create_media_buy',
+          params: {},
+          messages: [],
+          createdAt: seededAt,
+          expiresAt: seededAt + 60_000,
+        },
+        60
+      );
+      firstCoordinator = await first.negotiateMediaBuyLifecycle({
+        principalScope: 'buyer-restart-nested',
+        legacyPurchaseContinuationStore: store,
+      });
+      const discovery = await firstCoordinator.requestProposals({
+        idempotency_key: 'request-proposals-restart-nested-0001',
+        account: { account_id: 'account-restart-nested' },
+        brand: { domain: 'example.com' },
+        brief: 'Restart and pause a second time',
+      });
+      const continuationToken = discovery.data.purchase_continuation.continuation_token;
+      const paused = await firstCoordinator.continueLegacyPurchase({
+        idempotency_key: '388932cb-bb9d-4804-bf27-df36f19cb891',
+        continuation_token: continuationToken,
+        account: { account_id: 'account-restart-nested' },
+        selected_product_ids: ['p-restart-nested'],
+        accepted_losses: discovery.data.purchase_continuation.losses,
+        legacy_create_request: {
+          idempotency_key: 'legacy-restart-nested-create-0001',
+          account: { account_id: 'account-restart-nested' },
+          brand: { domain: 'example.com' },
+          packages: [{ product_id: 'p-restart-nested', budget: 10, pricing_option_id: 'fixed-cpm' }],
+          start_time: '2099-01-01T00:00:00Z',
+          end_time: '2099-02-01T00:00:00Z',
+        },
+      });
+      assert.equal(paused.deferred.token, initialDeferredToken);
+      const claimed = await store.get(continuationToken);
+      assert.equal(claimed.operation.state, 'claimed');
+      assert.equal(claimed.operation.deferredTaskToken, initialDeferredToken);
+      const operationId = claimed.operation.callbackOperationId;
+
+      const initialState = await deferredStorage.get(initialDeferredToken);
+      await deferredStorage.set(
+        initialDeferredToken,
+        {
+          ...initialState,
+          taskId: operationId,
+          clientContext: {
+            kind: 'single-agent',
+            taskType: 'create_media_buy',
+            canonical: false,
+            productPolicyRequest: {},
+          },
+          settlementOperationId: operationId,
+          settlementResumeAuthorizationRequired: true,
+          settlementServerTaskId: sellerTaskId,
+        },
+        60
+      );
+      firstCoordinator.dispose();
+      firstCoordinator = undefined;
+
+      const restarted = clientWithCaps(capabilities({ version: '3.0' }), '3.0', clientOptions, a2aAgent);
+      let recoverCallback;
+      const registerRecovery = restarted.registerDurableSettlementRecovery.bind(restarted);
+      restarted.registerDurableSettlementRecovery = recoverer => {
+        recoverCallback = recoverer;
+        return registerRecovery(recoverer);
+      };
+      restartedCoordinator = await restarted.negotiateMediaBuyLifecycle({
+        principalScope: 'buyer-restart-nested',
+        legacyPurchaseContinuationStore: store,
+      });
+
+      let sellerCalls = 0;
+      ProtocolClient.callTool = async (_agent, taskName, params, options) => {
+        assert.equal(taskName, 'create_media_buy');
+        sellerCalls += 1;
+        if (sellerCalls === 1) {
+          assert.deepEqual(params, { input: { approved: true } });
+          assert.equal(options.session.taskId, 'restart-nested-a2a-a');
+          return {
+            result: {
+              kind: 'task',
+              id: 'restart-nested-a2a-b',
+              contextId: 'restart-nested-context-b',
+              status: {
+                state: 'input-required',
+                message: {
+                  kind: 'message',
+                  messageId: 'restart-nested-question-b',
+                  role: 'agent',
+                  parts: [{ kind: 'data', data: { status: 'input-required', question: 'Confirm again?' } }],
+                },
+              },
+              artifacts: [
+                {
+                  artifactId: 'restart-nested-work-binding',
+                  metadata: { adcp_task_id: sellerTaskId },
+                  parts: [],
+                },
+              ],
+            },
+          };
+        }
+        assert.deepEqual(params, { input: { confirmed: true } });
+        assert.equal(options.session.taskId, 'restart-nested-a2a-b');
+        return {
+          result: {
+            kind: 'task',
+            id: 'restart-nested-a2a-b',
+            contextId: 'restart-nested-context-b',
+            status: { state: 'completed' },
+            artifacts: [
+              {
+                artifactId: 'restart-nested-terminal',
+                metadata: { adcp_task_id: sellerTaskId },
+                parts: [
+                  {
+                    kind: 'data',
+                    data: { media_buy_id: 'buy-restart-nested', packages: [] },
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      };
+
+      const pausedAgain = await restarted.resumeDeferredTask(initialDeferredToken, { approved: true });
+      assert.equal(pausedAgain.status, 'input-required');
+      const replacementToken = pausedAgain.deferred.token;
+      assert.notEqual(replacementToken, initialDeferredToken);
+      assert.equal(await deferredStorage.has(initialDeferredToken), false);
+      assert.equal(await deferredStorage.has(replacementToken), true);
+      const rebound = await store.get(continuationToken);
+      assert.equal(rebound.operation.state, 'claimed');
+      assert.equal(rebound.operation.deferredTaskToken, replacementToken);
+      assert.equal((await store.getByCallbackOperationId(operationId)).operation.deferredTaskToken, replacementToken);
+
+      const completedResult = await restarted.resumeDeferredTask(replacementToken, { confirmed: true });
+      assert.equal(completedResult.status, 'completed');
+      assert.equal(completedResult.data.media_buy_id, 'buy-restart-nested');
+      assert.equal(sellerCalls, 2);
+
+      const laterCallback = await recoverCallback(operationId, {
+        status: 'completed',
+        result: structuredClone(completedResult.data),
+        serverTaskId: sellerTaskId,
+        taskType: 'create_media_buy',
+        idempotencyKey: 'restart-nested-later-callback',
+      });
+      assert.equal(laterCallback.duplicate, true);
+      assert.equal(laterCallback.settled, true);
+      assert.equal(sellerCalls, 2, 'an exact later callback must not redispatch either continuation input');
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+      firstCoordinator?.dispose();
+      restartedCoordinator?.dispose();
+      deferredStorage.destroy();
+    }
+  });
+
+  test('reconciles a terminal callback between the live nested-token CAS and outer confirmation', async () => {
+    const originalCallTool = ProtocolClient.callTool;
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const deferredStorage = new MemoryStorage({ autoCleanup: false });
+    const initialDeferredToken = testDurableToken('live-nested-token-a');
+    const sellerTaskId = 'live-nested-seller-work';
+    const a2aAgent = {
+      id: 'live-nested-seller',
+      name: 'Live nested seller',
+      agent_uri: 'https://seller.example/a2a',
+      protocol: 'a2a',
+    };
+    const agent = clientWithCaps(
+      capabilities({ version: '3.0' }),
+      '3.0',
+      {
+        deferredStorage,
+        resolveDeferredAgent: async agentId => (agentId === a2aAgent.id ? a2aAgent : undefined),
+        validation: { requests: 'off', responses: 'off' },
+      },
+      a2aAgent
+    );
+    agent.getProducts = async () =>
+      completed('get_products', { products: [legacyListedProduct('p-live-nested', 'Live nested')] });
+    let continuationToken;
+    agent.createMediaBuyLegacy = async () => {
+      const claimed = await store.get(continuationToken);
+      assert.equal(claimed.operation.state, 'claimed');
+      const operationId = claimed.operation.callbackOperationId;
+      const createdAt = Date.now();
+      assert.equal(
+        await deferredStorage.putIfAbsent(
+          initialDeferredToken,
+          {
+            continuationVersion: 'live-nested-version-a',
+            taskId: operationId,
+            contextId: 'live-nested-context-a',
+            a2aTaskId: 'live-nested-a2a-a',
+            serverVersion: 'v3',
+            agentId: a2aAgent.id,
+            taskName: 'create_media_buy',
+            params: {},
+            messages: [],
+            settlementOperationId: operationId,
+            settlementResumeAuthorizationRequired: true,
+            settlementServerTaskId: sellerTaskId,
+            createdAt,
+            expiresAt: createdAt + 60_000,
+          },
+          60
+        ),
+        true
+      );
+      return {
+        success: true,
+        status: 'input-required',
+        metadata: {
+          taskId: operationId,
+          serverTaskId: sellerTaskId,
+          a2aTaskId: 'live-nested-a2a-a',
+          contextId: 'live-nested-context-a',
+          taskName: 'create_media_buy',
+          agent: { id: a2aAgent.id, name: a2aAgent.name, protocol: 'a2a' },
+          responseTimeMs: 1,
+          timestamp: new Date().toISOString(),
+          clarificationRounds: 0,
+          status: 'input-required',
+        },
+        deferred: {
+          token: initialDeferredToken,
+          resume: input => agent.client.executor.resumeDeferredTaskFromLiveClosure(initialDeferredToken, input, false),
+        },
+      };
+    };
+    let sellerCalls = 0;
+    ProtocolClient.callTool = async (_agent, taskName, params, options) => {
+      assert.equal(taskName, 'create_media_buy');
+      sellerCalls += 1;
+      assert.deepEqual(params, { input: { approved: true } });
+      assert.equal(options.session.taskId, 'live-nested-a2a-a');
+      return {
+        result: {
+          kind: 'task',
+          id: 'live-nested-a2a-b',
+          contextId: 'live-nested-context-b',
+          status: {
+            state: 'input-required',
+            message: {
+              kind: 'message',
+              messageId: 'live-nested-question-b',
+              role: 'agent',
+              parts: [{ kind: 'data', data: { status: 'input-required', question: 'Approve?' } }],
+            },
+          },
+          artifacts: [
+            {
+              artifactId: 'live-nested-work-b',
+              metadata: { adcp_task_id: sellerTaskId },
+              parts: [],
+            },
+          ],
+        },
+      };
+    };
+
+    let recoverCallback;
+    const registerRecovery = agent.registerDurableSettlementRecovery.bind(agent);
+    agent.registerDurableSettlementRecovery = recoverer => {
+      recoverCallback = recoverer;
+      return registerRecovery(recoverer);
+    };
+    let injectedCallback = false;
+    const registerReplacement = agent.registerDurableDeferredResumeTokenReplacement.bind(agent);
+    agent.registerDurableDeferredResumeTokenReplacement = replacer =>
+      registerReplacement(async (operationId, currentToken, replacementToken) => {
+        const replaced = await replacer(operationId, currentToken, replacementToken);
+        if (replaced === true && !injectedCallback) {
+          injectedCallback = true;
+          const callback = await recoverCallback(operationId, {
+            status: 'completed',
+            result: { media_buy_id: 'buy-live-nested-callback', packages: [] },
+            serverTaskId: sellerTaskId,
+            taskType: 'create_media_buy',
+            idempotencyKey: 'live-nested-callback-event',
+          });
+          assert.equal(callback.settled, true);
+          await callback.afterDispatch?.();
+        }
+        return replaced;
+      });
+    let coordinator;
+    try {
+      coordinator = await agent.negotiateMediaBuyLifecycle({
+        principalScope: 'buyer-live-nested',
+        legacyPurchaseContinuationStore: store,
+      });
+      const discovery = await coordinator.requestProposals({
+        idempotency_key: 'request-proposals-live-nested-0001',
+        account: { account_id: 'account-live-nested' },
+        brand: { domain: 'example.com' },
+        brief: 'Pause twice through the live compatibility wrapper',
+      });
+      continuationToken = discovery.data.purchase_continuation.continuation_token;
+      const paused = await coordinator.continueLegacyPurchase({
+        idempotency_key: '6aec2638-506c-48c7-909b-b0e1798fcafe',
+        continuation_token: continuationToken,
+        account: { account_id: 'account-live-nested' },
+        selected_product_ids: ['p-live-nested'],
+        accepted_losses: discovery.data.purchase_continuation.losses,
+        legacy_create_request: {
+          idempotency_key: 'legacy-live-nested-create-0001',
+          account: { account_id: 'account-live-nested' },
+          brand: { domain: 'example.com' },
+          packages: [{ product_id: 'p-live-nested', budget: 10, pricing_option_id: 'fixed-cpm' }],
+          start_time: '2099-01-01T00:00:00Z',
+          end_time: '2099-02-01T00:00:00Z',
+        },
+      });
+      assert.equal(paused.status, 'input-required');
+      assert.equal(paused.deferred.token, initialDeferredToken);
+      const claimed = await store.get(continuationToken);
+      assert.equal(claimed.operation.state, 'claimed');
+      assert.equal(claimed.operation.deferredTaskToken, initialDeferredToken);
+
+      const originalRecordDeferredTaskToken = store.recordDeferredTaskToken.bind(store);
+      const handoffObservations = [];
+      store.recordDeferredTaskToken = async (token, claim, replacementToken, expectedToken) => {
+        if (expectedToken !== undefined) {
+          handoffObservations.push({
+            expectedToken,
+            replacementToken,
+            oldCheckpointPresent: await deferredStorage.has(expectedToken),
+            replacementCheckpointPresent: await deferredStorage.has(replacementToken),
+          });
+        }
+        return originalRecordDeferredTaskToken(token, claim, replacementToken, expectedToken);
+      };
+
+      const completedDuringHandoff = await paused.deferred.resume({ approved: true });
+      assert.equal(completedDuringHandoff.status, 'completed');
+      assert.equal(completedDuringHandoff.data.media_buy_id, 'buy-live-nested-callback');
+      const replacementToken = handoffObservations[0].replacementToken;
+      assert.notEqual(replacementToken, initialDeferredToken);
+      assert.equal(handoffObservations.length, 2, 'inner CAS and outer idempotent binding must both execute');
+      assert.deepEqual(handoffObservations[0], {
+        expectedToken: initialDeferredToken,
+        replacementToken,
+        oldCheckpointPresent: true,
+        replacementCheckpointPresent: true,
+      });
+      assert.equal(handoffObservations[1].oldCheckpointPresent, false);
+      assert.equal(handoffObservations[1].replacementCheckpointPresent, true);
+      const completed = await store.get(continuationToken);
+      assert.equal(completed.operation.state, 'completed');
+      assert.equal(completed.operation.deferredTaskToken, replacementToken);
+      assert.equal(sellerCalls, 1);
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+      coordinator?.dispose();
       deferredStorage.destroy();
     }
   });
@@ -8484,6 +8985,59 @@ describe('legacy products-only purchase continuations', () => {
     const retainedSenderPublication = await senderStore.get(senderToken);
     assert.ok(retainedSenderPublication.operation.pendingSettlement);
     assert.ok(Date.parse(retainedSenderPublication.operation.replayExpiresAt) > Date.now());
+  });
+
+  test('extends SDK proof retention when acknowledging a completed result without an outbox', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const binding = {
+      principalScope: 'sdk-proof-principal',
+      accountScope: 'sdk-proof-account',
+      sellerScope: 'sdk-proof-seller',
+      clientSessionScope: 'sdk-proof-session',
+      sourceAdcpVersion: '3.0',
+    };
+    const claim = {
+      idempotencyKey: 'sdk-proof-key',
+      inputFingerprint: 'sdk-proof-input',
+      operationKey: 'sdk-proof-operation',
+      claimedAt: new Date().toISOString(),
+      replayExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      selectedProductIds: ['p-sdk-proof'],
+      callbackOperationId: 'sdk-proof-callback',
+      sellerTaskId: 'sdk-proof-task',
+    };
+    const token = 'sdk-proof-token';
+    assert.equal(
+      (
+        await store.create({
+          ...binding,
+          token,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          issuanceFingerprint: 'sdk-proof-issuance',
+          discoveryRequestFingerprint: 'sdk-proof-discovery',
+          observedResponse: { products: [{ product_id: 'p-sdk-proof' }] },
+          productIds: ['p-sdk-proof'],
+          losses: [],
+          operation: { state: 'available' },
+        })
+      ).outcome,
+      'created'
+    );
+    assert.equal((await store.claim(token, { claim, expected: binding })).outcome, 'claimed');
+    assert.equal(await store.recordSubmittedTask(token, claim, claim.sellerTaskId), true);
+    const terminal = completed('create_media_buy', { media_buy_id: 'sdk-proof-buy', packages: [] });
+    assert.equal((await store.complete(token, claim, terminal)).outcome, 'completed');
+    const settlement = {
+      operationId: claim.callbackOperationId,
+      serverTaskId: claim.sellerTaskId,
+      taskType: 'create_media_buy',
+      publicationSource: 'sdk',
+      terminal,
+    };
+    const acknowledgedAt = Date.now();
+    assert.equal(await store.acknowledgePendingSettlement(token, claim, settlement), true);
+    const acknowledged = await store.get(token);
+    assert.ok(Date.parse(acknowledged.operation.replayExpiresAt) >= acknowledgedAt + 7 * 24 * 60 * 60 * 1000);
   });
 
   test('declares missing seller replay guarantees for 3.0 and 3.1 continuations', async () => {

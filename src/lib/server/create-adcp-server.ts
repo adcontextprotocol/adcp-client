@@ -12,11 +12,21 @@
  *
  * @example
  * ```typescript
- * import { createAdcpServer, serve } from '@adcp/sdk/server/legacy/v5';
+ * import {
+ *   createAdcpServer,
+ *   createIdempotencyStore,
+ *   memoryBackend,
+ *   serve,
+ * } from '@adcp/sdk/server/legacy/v5';
+ *
+ * // Single-process example. Use pgBackend(pool) or redisBackend(client) for
+ * // durable, replica-safe production replay.
+ * const idempotency = createIdempotencyStore({ backend: memoryBackend(), ttlSeconds: 86400 });
  *
  * serve(() => createAdcpServer({
  *   name: 'My Publisher',
  *   version: '1.0.0',
+ *   idempotency,
  *
  *   // Second argument carries `toolName` and (when `authenticate` is wired
  *   // on `serve()`) the caller's `authInfo`. Adapters that front an

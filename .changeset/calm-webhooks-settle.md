@@ -7,6 +7,18 @@ asynchronous work, binding callbacks and polling to trusted discovered
 identities, and recovering durable settlement safely across races, restarts,
 and replicas.
 
+Migration checklist:
+
+- Custom legacy-purchase stores: implement the six callback/publication methods
+  together, including owner-fenced publication and retained acknowledgement proof.
+- Custom deferred stores: implement atomic `putIfAbsent`, `replaceIfVersion`, and
+  `takeIfVersion` with the documented TTL and generation semantics.
+- Idempotency backends: provide owner-fenced replace/delete, retain records through
+  clock skew, and configure replica-safe key/table namespaces.
+- Buyer clients: persist deferred state for callback-capable committed purchases
+  and resume restart tokens through the same client/coordinator route.
+- Operators: run backend migrations and readiness probes before serving traffic.
+
 Breaking for custom continuation stores: they must use write-once seller-task binding and handle
 the `complete()` outcomes `completed`, `pending_completed`, `duplicate`, and `conflict`.
 They must atomically cross-check pending callback and bound seller task IDs, and
@@ -43,7 +55,10 @@ so a crash before a separate deferred-checkpoint ACK can still recover the
 publication proof.
 Deferred-token binding is generation-fenced: nested pauses compare-and-swap
 the exact prior token rather than allowing a stale continuation to overwrite
-the callback recovery route. Callback-capable committed deferred records also
+the callback recovery route. Restarted/public resumes persist the replacement
+checkpoint, atomically rebind that exact coordinator route, and only then
+consume the prior checkpoint or return the replacement; a failed handoff leaves
+both generations fail-closed without redispatch. Callback-capable committed deferred records also
 require the owning durable coordinator to authorize the exact current,
 unexpired claimed token before sending seller continuation input. Already
 pending or terminal checkpoints remain recoverable without redispatch.
@@ -136,6 +151,10 @@ public error messages. Restart recovery resolves the current agent through
 and `SingleAgentClient.resumeDeferredTask(token, input)` resumes the exact
 persisted A2A task after restart. Handler-issued deferrals without durable
 storage retain a same-process exact-task closure.
+`AgentClient.resumeDeferredTask(token, input)` delegates through its owned
+single-agent client so a reconstructed media-buy compatibility coordinator's
+settlement recoverer, exact-token authorizer, response finalization, completion
+handlers, and session bookkeeping remain on the public restart path.
 Custom `IdempotencyBackend` implementations must add atomic
 `replaceIfPayloadHash()` and `deleteIfPayloadHash()` operations; these fence
 webhook and request claim completion/release across replicas. Request-side

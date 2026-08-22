@@ -20,9 +20,14 @@ AdCP is an open protocol for AI agents to buy, manage, and optimize advertising 
 import { serve } from '@adcp/sdk';
 import {
   createAdcpServerFromPlatform,
+  createIdempotencyStore,
   definePlatform,
   defineSignalsPlatform,
+  memoryBackend,
 } from '@adcp/sdk/server';
+
+// Single-process example. Use pgBackend(pool) or redisBackend(client) in production.
+const idempotency = createIdempotencyStore({ backend: memoryBackend(), ttlSeconds: 86400 });
 
 const platform = definePlatform({
   capabilities: {
@@ -41,6 +46,7 @@ const platform = definePlatform({
 serve(() => createAdcpServerFromPlatform(platform, {
   name: 'My Signals Agent',
   version: '1.0.0',
+  idempotency,
 })); // http://localhost:3001/mcp
 ```
 

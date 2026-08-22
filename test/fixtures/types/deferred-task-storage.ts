@@ -1,4 +1,9 @@
-import type { DeferredTaskState, DeferredTaskStorage, SingleAgentClientConfig } from '../../../dist/lib/index.js';
+import type {
+  AgentClient,
+  DeferredTaskState,
+  DeferredTaskStorage,
+  SingleAgentClientConfig,
+} from '../../../dist/lib/index.js';
 
 const states = new Map<string, DeferredTaskState>();
 
@@ -65,3 +70,14 @@ const clientConfig: SingleAgentClientConfig = {
 };
 
 void clientConfig;
+
+declare const agentClient: AgentClient;
+const resumedPurchase = agentClient.resumeDeferredTask<{ media_buy_id: string }>('durable-token', {
+  approved: true,
+});
+void resumedPurchase.then(result => {
+  if (result.status === 'completed') {
+    const mediaBuyId: string = result.data.media_buy_id;
+    void mediaBuyId;
+  }
+});
