@@ -118,3 +118,78 @@ export function validateTestKit(testKit: TestOptions['test_kit']): void {
     );
   }
 }
+
+/**
+ * Resolve a storyboard's declared `prerequisites.test_kit` into
+ * `options.test_kit` (adcontextprotocol/adcp#6735).
+ *
+ * Historically the declaration was decorative: `from_test_kit` / `$test_kit.*`
+ * references read only the caller-supplied `options.test_kit`, so a run
+ * without an explicit kit silently degraded credentialed steps to
+ * unauthenticated probes — grading conformant sellers FAIL on
+ * credential-keyed storyboards (`comply_controller_mode_gate`). This loader
+ * makes the declaration real:
+ *
+ *   - No-op when the storyboard declares no kit, or when the caller already
+ *     supplied `options.test_kit` (caller/hosted-engine configuration wins;
+ *     the hosted engine pre-populates the declared kit itself — see the
+ *     server-side half of adcp#6735).
+ *   - Otherwise loads `<compliance cache>/<declared path>`, validates it
+ *     with the same invariants as a caller-supplied kit, and returns amended
+ *     options.
+ *   - A declared-but-unloadable kit throws: the storyboard cannot run as
+ *     designed, and an explicit configuration error beats a deterministic
+ *     false FAIL.
+ */
+export function resolveDeclaredTestKit<
+  O extends { test_kit?: TestOptions['test_kit']; adcpVersion?: string; complianceDir?: string },
+>(storyboard: { id?: string; prerequisites?: { test_kit?: string } }, options: O): O {
+  const declared = storyboard.prerequisites?.test_kit;
+  if (!declared || options.test_kit) return options;
+
+  // Lazy imports keep this module safe for programmatic (non-filesystem) use.
+  const { readFileSync } = require('node:fs') as typeof import('node:fs');
+  const { join, resolve, sep } = require('node:path') as typeof import('node:path');
+  const { parse } = require('yaml') as typeof import('yaml');
+  const { getComplianceCacheDir } = require('./compliance') as typeof import('./compliance');
+
+  const sbId = storyboard.id ?? '<unknown>';
+  const cacheDir = resolve(
+    getComplianceCacheDir({
+      ...(options.adcpVersion !== undefined && { version: options.adcpVersion }),
+      ...(options.complianceDir !== undefined && { complianceDir: options.complianceDir }),
+    })
+  );
+  const kitPath = resolve(join(cacheDir, declared));
+  // Containment: the declared path comes from cache-shipped YAML; never let
+  // it escape the cache root.
+  if (kitPath !== cacheDir && !kitPath.startsWith(cacheDir + sep)) {
+    throw new Error(
+      `storyboard "${sbId}" declares prerequisites.test_kit ${JSON.stringify(declared.slice(0, 120))} ` +
+        `which resolves outside the compliance cache root — refusing to load it.`
+    );
+  }
+
+  let raw: string;
+  try {
+    raw = readFileSync(kitPath, 'utf8');
+  } catch {
+    // A declared kit that isn't present in this cache is tolerated at load
+    // time: storyboards may declare a kit whose auth no step uses (and
+    // external bundles may omit kit files entirely). Steps that DO require
+    // the credential hard-fail individually in `authHeadersForStep` with an
+    // explicit configuration error — never a silent unauthenticated probe.
+    return options;
+  }
+  let kit: TestOptions['test_kit'];
+  try {
+    kit = parse(raw) as TestOptions['test_kit'];
+  } catch (err) {
+    throw new Error(
+      `storyboard "${sbId}" declares prerequisites.test_kit "${declared}" but ${kitPath} is not ` +
+        `valid YAML: ${err instanceof Error ? err.message : String(err)}.`
+    );
+  }
+  validateTestKit(kit);
+  return { ...options, test_kit: kit };
+}
