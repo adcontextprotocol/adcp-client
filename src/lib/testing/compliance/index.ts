@@ -10,6 +10,7 @@ export {
   computeOverallStatus,
   formatComplianceResults,
   formatComplianceResultsJSON,
+  rotateStoryboardsForOffset,
 } from './comply';
 export type { ComplyOptions } from './comply';
 
