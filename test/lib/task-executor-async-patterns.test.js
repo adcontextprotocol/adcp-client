@@ -992,7 +992,7 @@ describe(
           return { status: ADCP_STATUS.COMPLETED, data: { approved: params.input } };
         });
         const firstExecutor = new TaskExecutor({ deferredStorage: storage, strictSchemaValidation: false });
-        const deferred = await firstExecutor.executeTask(mockAgent, 'approvalTask', {}, async () => ({
+        await firstExecutor.executeTask(mockAgent, 'approvalTask', {}, async () => ({
           defer: true,
           token: testDurableToken('atomic-resume-token'),
         }));
