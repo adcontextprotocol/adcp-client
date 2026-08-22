@@ -1,7 +1,7 @@
 // Core task execution engine for ADCP conversation flow
 // Implements PR #78 async patterns: working/submitted/input-required/completed
 
-import { createHash, randomUUID } from 'crypto';
+import { createHmac, randomBytes, randomUUID } from 'crypto';
 import type { AgentConfig } from '../types';
 import {
   ProtocolClient,
@@ -100,6 +100,10 @@ const DEFERRED_SETTLEMENT_NACK = Symbol('adcp.deferredSettlementNack');
 const AUTHORITATIVE_POLLED_TERMINAL = Symbol('adcp.authoritativePolledTerminal');
 const DEFERRED_PENDING_SETTLEMENT = Symbol('adcp.deferredPendingSettlement');
 const COMPLETION_HANDLER_ALREADY_PUBLISHED = Symbol('adcp.completionHandlerAlreadyPublished');
+// Observation fingerprints live only in process-local settlement maps. A
+// process-private HMAC keeps equality stable for those maps without retaining
+// a reusable digest of credential-bearing seller result data.
+const EXTERNAL_TASK_OBSERVATION_HMAC_KEY = randomBytes(32);
 
 export class DeferredSettlementOwnershipError extends Error {
   constructor(message: string) {
@@ -2422,7 +2426,7 @@ export class TaskExecutor {
   }
 
   private externalTaskObservationKey(observation: ExternalTaskSettlementObservation): string {
-    return createHash('sha256')
+    return createHmac('sha256', EXTERNAL_TASK_OBSERVATION_HMAC_KEY)
       .update(
         canonicalize({
           status: observation.status,
