@@ -183,7 +183,13 @@ export interface LegacyPurchaseContinuationStore {
    * at least `LEGACY_PURCHASE_PUBLICATION_PROOF_RETENTION_MS` from admission so
    * handler retry and cross-store finalization remain crash-recoverable. If a
    * seller task is already bound, a different settlement serverTaskId must
-   * return conflict.
+   * return conflict. A completed operation with no pending outbox or
+   * acknowledgement proof accepts an exact terminal settlement as a
+   * publication reservation before application dispatch. Concurrent
+   * re-emissions of that same terminal observation may carry different
+   * delivery idempotency keys; the first stored descriptor wins and later
+   * callers return `duplicate` without replacing it. A different terminal
+   * observation returns `conflict`.
    */
   recordPendingSettlement?(
     token: string,
@@ -547,7 +553,6 @@ export class InMemoryLegacyPurchaseContinuationStore implements LegacyPurchaseCo
     if (!record) return { outcome: 'missing' };
     if (
       record.operation.state === 'available' ||
-      record.operation.state === 'completed' ||
       !sameClaim(record.operation, claim) ||
       (!validFuture(record.operation.replayExpiresAt, Date.now()) && settlement.publicationSource !== 'sdk') ||
       settlement.taskType !== 'create_media_buy' ||
@@ -555,6 +560,19 @@ export class InMemoryLegacyPurchaseContinuationStore implements LegacyPurchaseCo
       (record.operation.sellerTaskId !== undefined && record.operation.sellerTaskId !== settlement.serverTaskId)
     ) {
       return { outcome: 'conflict' };
+    }
+    if (record.operation.state === 'completed') {
+      const fingerprint = legacyPurchaseSettlementFingerprint(settlement);
+      if (
+        !sameTerminalResult(record.operation.result, settlement.terminal) ||
+        (record.operation.acknowledgedSettlementFingerprint !== undefined &&
+          record.operation.acknowledgedSettlementFingerprint !== fingerprint)
+      ) {
+        return { outcome: 'conflict' };
+      }
+      if (record.operation.acknowledgedSettlementFingerprint === fingerprint) {
+        return { outcome: 'duplicate' };
+      }
     }
     const existing = record.operation.pendingSettlement;
     const replayExpiresAt = new Date(
@@ -565,12 +583,14 @@ export class InMemoryLegacyPurchaseContinuationStore implements LegacyPurchaseCo
     ).toISOString();
     if (existing) {
       const duplicate =
-        existing.operationId === settlement.operationId &&
-        existing.serverTaskId === settlement.serverTaskId &&
-        existing.taskType === settlement.taskType &&
-        existing.idempotencyKey === settlement.idempotencyKey &&
-        existing.publicationSource === settlement.publicationSource &&
-        sameTerminalResult(existing.terminal, settlement.terminal);
+        record.operation.state === 'completed'
+          ? legacyPurchaseSettlementFingerprint(existing) === legacyPurchaseSettlementFingerprint(settlement)
+          : existing.operationId === settlement.operationId &&
+            existing.serverTaskId === settlement.serverTaskId &&
+            existing.taskType === settlement.taskType &&
+            existing.idempotencyKey === settlement.idempotencyKey &&
+            existing.publicationSource === settlement.publicationSource &&
+            sameTerminalResult(existing.terminal, settlement.terminal);
       if (!duplicate) return { outcome: 'conflict' };
       return this.replace({ ...record, operation: { ...record.operation, replayExpiresAt } })
         ? { outcome: 'duplicate' }

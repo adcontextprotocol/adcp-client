@@ -9403,6 +9403,84 @@ describe('legacy products-only purchase continuations', () => {
     assert.ok(Date.parse(acknowledged.operation.replayExpiresAt) >= acknowledgedAt + 7 * 24 * 60 * 60 * 1000);
   });
 
+  test('completed callback re-emissions reserve exactly one publication owner before dispatch', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const binding = {
+      principalScope: 'completed-publication-principal',
+      accountScope: 'completed-publication-account',
+      sellerScope: 'completed-publication-seller',
+      clientSessionScope: 'completed-publication-session',
+      sourceAdcpVersion: '3.0',
+    };
+    const claim = {
+      idempotencyKey: 'completed-publication-key',
+      inputFingerprint: 'completed-publication-input',
+      operationKey: 'completed-publication-operation',
+      claimedAt: new Date().toISOString(),
+      replayExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      selectedProductIds: ['p-completed-publication'],
+      callbackOperationId: 'completed-publication-callback',
+      sellerTaskId: 'completed-publication-task',
+    };
+    const token = 'completed-publication-token';
+    assert.equal(
+      (
+        await store.create({
+          ...binding,
+          token,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          issuanceFingerprint: 'completed-publication-issuance',
+          discoveryRequestFingerprint: 'completed-publication-discovery',
+          observedResponse: { products: [{ product_id: 'p-completed-publication' }] },
+          productIds: ['p-completed-publication'],
+          losses: [],
+          operation: { state: 'available' },
+        })
+      ).outcome,
+      'created'
+    );
+    assert.equal((await store.claim(token, { claim, expected: binding })).outcome, 'claimed');
+    assert.equal(await store.recordSubmittedTask(token, claim, claim.sellerTaskId), true);
+    const terminal = completed('create_media_buy', { media_buy_id: 'completed-publication-buy', packages: [] });
+    assert.equal((await store.complete(token, claim, terminal)).outcome, 'completed');
+    const first = {
+      operationId: claim.callbackOperationId,
+      serverTaskId: claim.sellerTaskId,
+      taskType: 'create_media_buy',
+      idempotencyKey: 'completed-publication-delivery-a',
+      terminal,
+    };
+    const second = { ...first, idempotencyKey: 'completed-publication-delivery-b' };
+    const reservations = await Promise.all([
+      store.recordPendingSettlement(token, claim, first),
+      store.recordPendingSettlement(token, claim, second),
+    ]);
+    assert.deepEqual(reservations.map(result => result.outcome).sort(), ['duplicate', 'recorded']);
+    const reserved = await store.get(token);
+    assert.equal(reserved.operation.state, 'completed');
+    assert.equal(reserved.operation.pendingSettlement.idempotencyKey, first.idempotencyKey);
+
+    const leases = await Promise.all([
+      store.claimPendingSettlementPublication(token, claim, reserved.operation.pendingSettlement, {
+        ownerId: 'completed-publication-owner-a',
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+      store.claimPendingSettlementPublication(token, claim, reserved.operation.pendingSettlement, {
+        ownerId: 'completed-publication-owner-b',
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    ]);
+    assert.deepEqual(leases.slice().sort(), [false, true]);
+    const ownerId = leases[0] ? 'completed-publication-owner-a' : 'completed-publication-owner-b';
+    assert.equal(
+      await store.acknowledgePendingSettlement(token, claim, reserved.operation.pendingSettlement, ownerId),
+      true
+    );
+    const acknowledged = await store.get(token);
+    assert.equal(acknowledged.operation.pendingSettlement, undefined);
+    assert.equal(acknowledged.operation.acknowledgedSettlementFingerprint, legacyPurchaseSettlementFingerprint(first));
+  });
+
   test('declares missing seller replay guarantees for 3.0 and 3.1 continuations', async () => {
     for (const version of ['3.0', '3.1']) {
       const caps = capabilities({ version });

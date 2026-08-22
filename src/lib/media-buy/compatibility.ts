@@ -88,6 +88,7 @@ import {
   type LegacyPurchaseLoss,
   type LegacyPurchaseOperation,
   type LegacyPurchasePendingSettlement,
+  type LegacyPurchasePendingSettlementResult,
   type LegacyPurchaseSourceVersion,
   type LegacyPurchaseTerminalResult,
   type ReconcileLegacyPurchase,
@@ -7123,25 +7124,98 @@ export class MediaBuyLifecycleCoordinator {
           completedClaim.acknowledgedSettlementFingerprint === expectedPublicationFingerprint;
         if (publicationWasAcknowledged) {
           markCompletionHandlerAlreadyPublished(completedClaim.result);
+          return bridgeDeferredCheckpoint(
+            {
+              settled: true,
+              duplicate: true,
+              result: completedClaim.result.data,
+              status: completedClaim.result.status,
+              ...(completedClaim.result.error !== undefined && { error: completedClaim.result.error }),
+            },
+            completedClaim.result
+          );
         }
-        return bridgeDeferredCheckpoint(
+
+        // A completed record without an outbox or ACK proof still needs an
+        // atomic publication reservation. A post-handler ACK alone permits
+        // two replicas (or two re-emission delivery keys) to invoke the
+        // adopter handler before either one records its proof.
+        let reserved: LegacyPurchasePendingSettlementResult;
+        try {
+          reserved = await this.legacyPurchaseContinuationStore.recordPendingSettlement!(
+            continuationToken,
+            completedClaim,
+            acknowledgementSettlement
+          );
+        } catch (error) {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'Could not durably reserve completion-handler publication.',
+            true,
+            undefined,
+            error
+          );
+        }
+        if (reserved.outcome !== 'recorded' && reserved.outcome !== 'duplicate') {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'Could not atomically reserve completion-handler publication.',
+            true
+          );
+        }
+        const publicationRecord = await this.legacyPurchaseContinuationStore.get(continuationToken);
+        if (
+          !publicationRecord ||
+          publicationRecord.operation.state !== 'completed' ||
+          !this.sameLegacyPurchaseTerminalResult(publicationRecord.operation.result, completedClaim.result)
+        ) {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'Could not verify the durable completion-handler publication reservation.',
+            true
+          );
+        }
+        if (publicationRecord.operation.acknowledgedSettlementFingerprint === expectedPublicationFingerprint) {
+          markCompletionHandlerAlreadyPublished(publicationRecord.operation.result);
+          return bridgeDeferredCheckpoint(
+            {
+              settled: true,
+              duplicate: true,
+              result: publicationRecord.operation.result.data,
+              status: publicationRecord.operation.result.status,
+              ...(publicationRecord.operation.result.error !== undefined && {
+                error: publicationRecord.operation.result.error,
+              }),
+            },
+            publicationRecord.operation.result
+          );
+        }
+        const reservedSettlement = publicationRecord.operation.pendingSettlement;
+        if (
+          !reservedSettlement ||
+          legacyPurchaseSettlementFingerprint(reservedSettlement) !== expectedPublicationFingerprint
+        ) {
+          throw new LegacyPurchaseContinuationError(
+            'store_error',
+            'The durable completion-handler publication reservation does not match the terminal winner.',
+            true
+          );
+        }
+        const reservedStatus = await this.attachLegacyPurchasePublicationLease(
           {
             settled: true,
-            duplicate: publicationWasAcknowledged,
-            result: completedClaim.result.data,
-            status: completedClaim.result.status,
-            ...(completedClaim.result.error !== undefined && { error: completedClaim.result.error }),
-            ...(!publicationWasAcknowledged && {
-              afterDispatch: () =>
-                this.acknowledgePendingLegacyPurchaseSettlement(
-                  continuationToken,
-                  completedClaim,
-                  acknowledgementSettlement
-                ),
+            duplicate: false,
+            result: publicationRecord.operation.result.data,
+            status: publicationRecord.operation.result.status,
+            ...(publicationRecord.operation.result.error !== undefined && {
+              error: publicationRecord.operation.result.error,
             }),
           },
-          completedClaim.result
+          continuationToken,
+          publicationRecord.operation,
+          reservedSettlement
         );
+        return bridgeDeferredCheckpoint(reservedStatus, publicationRecord.operation.result);
       }
 
       const completion = await this.persistLegacyPurchaseCompletion(continuation.token, claim, terminal);
