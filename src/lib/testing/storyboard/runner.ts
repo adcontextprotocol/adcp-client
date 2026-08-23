@@ -5449,6 +5449,7 @@ async function executeStep(
       taskName: effectiveStep.task,
       ...(options.adcpVersion && { adcpVersion: options.adcpVersion }),
       ...(options._serverAdcpVersion && { responseAdcpVersion: options._serverAdcpVersion }),
+      strictResponseSchemaValidation: options.strictResponseSchemaValidation !== false,
       ...(validationTaskResult && { taskResult: validationTaskResult }),
       ...(httpResult && { httpResult }),
       agentUrl: runState.agentUrl,
@@ -5558,6 +5559,7 @@ async function executeStep(
       taskName: effectiveStep.task,
       ...(options.adcpVersion && { adcpVersion: options.adcpVersion }),
       ...(options._serverAdcpVersion && { responseAdcpVersion: options._serverAdcpVersion }),
+      strictResponseSchemaValidation: options.strictResponseSchemaValidation !== false,
       ...(validationTaskResult && { taskResult: validationTaskResult }),
       agentUrl: runState.agentUrl,
       contributions: runState.contributions,
@@ -6317,6 +6319,7 @@ async function executeProbeStep(
     taskName: step.task === REPLAY_TRUSTED_MATCH_CONTEXT_VECTOR_TASK ? 'context_match' : step.task,
     ...(options.adcpVersion && { adcpVersion: options.adcpVersion }),
     ...(options._serverAdcpVersion && { responseAdcpVersion: options._serverAdcpVersion }),
+    strictResponseSchemaValidation: options.strictResponseSchemaValidation !== false,
     httpResult: redactedHttpResult,
     ...(step.task === REPLAY_TRUSTED_MATCH_CONTEXT_VECTOR_TASK &&
       redactedHttpResult && {

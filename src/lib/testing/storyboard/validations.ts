@@ -59,6 +59,8 @@ export interface ValidationContext {
   adcpVersion?: string;
   /** Server-declared AdCP version to use for response-shape compatibility decisions. */
   responseAdcpVersion?: string;
+  /** Make a strict AJV response-schema rejection fail the validation. */
+  strictResponseSchemaValidation?: boolean;
   taskResult?: TaskResult;
   httpResult?: HttpProbeResult;
   agentUrl: string;
@@ -612,9 +614,10 @@ function validateResponseSchema(
   // packaged verdict.
   if (!parseResult) return noResponseSchemaResult(validation, taskName, schema_id, schema_url, strict);
 
-  // Strict (AJV) verdict runs alongside the lenient Zod check so packaged-cache
-  // runs surface strictness deltas without changing their historical pass/fail.
-  // Explicit external bundles take the authoritative branch above instead.
+  // Strict (AJV) verdict runs alongside the lenient Zod check. Storyboard runs
+  // grade that verdict by default; direct validation callers and explicit
+  // migration runs can leave it informational. Explicit external bundles take
+  // the authoritative branch above instead.
 
   // Shape-drift no longer rides on `ValidationResult.warning` — issue #935
   // moved that diagnostic to `StoryboardStepResult.hints[]` as a structured
@@ -630,6 +633,25 @@ function validateResponseSchema(
       schema_id,
       schema_url,
     };
+    if (strict && !strict.valid && ctx.strictResponseSchemaValidation === true) {
+      const issues = strict.issues ?? [];
+      const firstIssue = issues[0];
+      return {
+        ...base,
+        passed: false,
+        error:
+          issues.length > 0
+            ? issues
+                .slice(0, 5)
+                .map(issue => `${issue.instance_path || '/'}: ${issue.message}`)
+                .join('; ')
+            : `Strict JSON Schema rejected the ${taskName} response`,
+        json_pointer: firstIssue?.instance_path || null,
+        expected: schema_id ?? `response schema for ${taskName}`,
+        actual: issues,
+        strict,
+      };
+    }
     // Surface strict-only / variant-fallback signal via `warning` so step-
     // level output (and LLM-driven self-correction that scans `error`/
     // `warning` fields) sees something without flipping `passed`.

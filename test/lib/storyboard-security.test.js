@@ -1756,6 +1756,9 @@ describe('security_baseline: unconditional PRM enforcement (#677)', () => {
     return {
       protocol: 'mcp',
       allow_http: true,
+      // These fixtures intentionally exercise auth-routing behavior with a
+      // minimal list_creatives envelope, not response-schema conformance.
+      strictResponseSchemaValidation: false,
       agentTools: ['list_creatives'],
       _profile: { name: 'T', tools: ['list_creatives'] },
       _client: {

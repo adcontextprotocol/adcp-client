@@ -1049,6 +1049,10 @@ function parseAgentOptions(args) {
   const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
   const dryRun = args.includes('--dry-run');
   const allowHttp = args.includes('--allow-http');
+  // Migration escape hatch for compatibility harnesses that are testing
+  // transport/version behavior against a known schema-invalid legacy seller.
+  // Normal local compliance runs remain strict by default.
+  const strictResponseSchemaValidation = !args.includes('--no-strict-response-schema-validation');
   // `--no-sandbox` forces `account.sandbox: false` (production) on every
   // request the runner builds. The default behavior leaves the field unset
   // (spec-equivalent to false), but agents that key sandbox routing on
@@ -1233,6 +1237,7 @@ function parseAgentOptions(args) {
     debug,
     dryRun,
     allowHttp,
+    strictResponseSchemaValidation,
     noSandbox,
     assertsSeededState,
     mediaBuyLifecycleCompatibility,
@@ -2012,6 +2017,11 @@ SUBCOMMANDS:
   step <agent> <id> <step_id>  Run a single step (stateless, LLM-friendly)
 
 RUN OPTIONS (full assessment):
+  Response-schema checks are strict and grading by default, matching the
+  hosted compliance grader. JSON output includes strict_validation_summary.
+  --no-strict-response-schema-validation
+                      Keep packaged-schema strict failures diagnostic-only.
+                      Intended only for temporary legacy migration harnesses.
   --tracks TRACKS     Comma-separated tracks to include in the report
   --storyboards IDS   Comma-separated storyboard/bundle IDs to run
   --compliance-version VERSION
@@ -2888,6 +2898,7 @@ async function handleStoryboardRun(args) {
     ...(webhookReceiverOpts ?? {}),
     ...(fileComplianceVersion && { adcpVersion: fileComplianceVersion }),
     ...(fileSchemaRoot && { schemaRoot: fileSchemaRoot }),
+    ...(!opts.strictResponseSchemaValidation && { strictResponseSchemaValidation: false }),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(opts.mediaBuyLifecycleCompatibility && {
@@ -3729,6 +3740,7 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
       compliance: resolveOptions,
       ...(opts.complianceVersion ||
       opts.schemaRoot ||
+      !opts.strictResponseSchemaValidation ||
       opts.noSandbox ||
       opts.assertsSeededState ||
       opts.mediaBuyLifecycleCompatibility ||
@@ -3737,6 +3749,7 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
             runStoryboardOptions: {
               ...(opts.complianceVersion && !opts.complianceDir && { adcpVersion: opts.complianceVersion }),
               ...(opts.schemaRoot && { schemaRoot: opts.schemaRoot }),
+              ...(!opts.strictResponseSchemaValidation && { strictResponseSchemaValidation: false }),
               ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
               ...(opts.assertsSeededState && { assertsSeededState: true }),
               ...(opts.mediaBuyLifecycleCompatibility && {
@@ -4157,6 +4170,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     ...(webhookReceiverOpts ?? {}),
     ...(opts.complianceVersion && !opts.complianceDir && { adcpVersion: opts.complianceVersion }),
     ...(opts.schemaRoot && { schemaRoot: opts.schemaRoot }),
+    ...(!opts.strictResponseSchemaValidation && { strictResponseSchemaValidation: false }),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(opts.mediaBuyLifecycleCompatibility && {
@@ -4424,6 +4438,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
     ...(webhookReceiverOpts ?? {}),
     ...(opts.complianceVersion && !opts.complianceDir && { adcpVersion: opts.complianceVersion }),
     ...(opts.schemaRoot && { schemaRoot: opts.schemaRoot }),
+    ...(!opts.strictResponseSchemaValidation && { strictResponseSchemaValidation: false }),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(opts.mediaBuyLifecycleCompatibility && {
@@ -4651,6 +4666,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     ...(opts.complianceVersion && { version: opts.complianceVersion }),
     ...(opts.complianceDir && { complianceDir: opts.complianceDir }),
     ...(opts.schemaRoot && { schemaRoot: opts.schemaRoot }),
+    ...(!opts.strictResponseSchemaValidation && { strictResponseSchemaValidation: false }),
     ...(opts.hostedStableLineAlias && { hostedStableLineAlias: opts.hostedStableLineAlias }),
   };
 
@@ -4800,6 +4816,7 @@ async function handleStoryboardStepCmd(args) {
     positionalArgs,
     complianceVersion,
     schemaRoot,
+    strictResponseSchemaValidation,
     mediaBuyLifecycleCompatibility,
   } = parseAgentOptions(args);
   const { resolveOptions } = parseComplianceSelection(args);
@@ -4857,6 +4874,7 @@ async function handleStoryboardStepCmd(args) {
     request,
     ...(complianceVersion && { adcpVersion: complianceVersion }),
     ...(schemaRoot && { schemaRoot }),
+    ...(!strictResponseSchemaValidation && { strictResponseSchemaValidation: false }),
     ...(mediaBuyLifecycleCompatibility && {
       mediaBuyLifecycleCompatibility,
     }),
