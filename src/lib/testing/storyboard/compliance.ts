@@ -16,6 +16,7 @@ import { ADCPError } from '../../errors';
 import { isAdcpVersionSupported } from '../../utils/adcp-version-config';
 import { hasSchemaBundle, resolveBundleKey } from '../../validation/schema-loader';
 import { synthesizeRequestSigningSteps } from './request-signing/synthesize';
+import { markStoryboardComplianceRoot } from './provenance';
 import type { RunnerSelectionResult, Storyboard } from './types';
 
 /**
@@ -553,11 +554,14 @@ function annotateStoryboardVersion(
   adcpVersion: string | undefined,
   complianceDir: string
 ): Storyboard {
-  return {
-    ...storyboard,
-    ...(adcpVersion !== undefined && { adcp_version: adcpVersion }),
-    compliance_dir: complianceDir,
-  };
+  return markStoryboardComplianceRoot(
+    {
+      ...storyboard,
+      ...(adcpVersion !== undefined && { adcp_version: adcpVersion }),
+      compliance_dir: complianceDir,
+    },
+    complianceDir
+  );
 }
 
 function safeLoadUniversal(path: string): Storyboard[] {

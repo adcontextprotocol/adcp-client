@@ -84,6 +84,7 @@ import { readBrandJsonUrl } from '../../signing/agent-resolver/capabilities-type
 import { selectAgentByUrl } from '../../signing/agent-resolver/select-agent';
 import { resolveDeclaredTestKit, selectProbeTask, validateTestKit } from './test-kit';
 import { validateStoryboardShape } from './loader';
+import { trustedStoryboardComplianceRoot } from './provenance';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
 import { createWebhookReceiver, type WebhookReceiver, type WebhookWaitResult } from './webhook-receiver';
 import { WEBHOOK_ASSERTION_TASKS, armWebhookAssertions, executeWebhookAssertionStep } from './webhook-assertions';
@@ -224,7 +225,8 @@ export function applyStoryboardVersionOptions(
 ): StoryboardRunOptions {
   const versioned = applyAdcpVersionRunOptions(storyboard.adcp_version, options);
   const mayInheritStoryboardDir = options.adcpVersion === undefined || options.adcpVersion === storyboard.adcp_version;
-  const complianceDir = versioned.complianceDir ?? (mayInheritStoryboardDir ? storyboard.compliance_dir : undefined);
+  const complianceDir =
+    versioned.complianceDir ?? (mayInheritStoryboardDir ? trustedStoryboardComplianceRoot(storyboard) : undefined);
   return complianceDir && versioned.complianceDir !== complianceDir ? { ...versioned, complianceDir } : versioned;
 }
 
@@ -7449,7 +7451,9 @@ function authHeadersForStep(directive: StepAuthDirective, options: StoryboardRun
       // conformant agent FAIL.
       throw new Error(
         'step declares auth.from_test_kit but no test kit with auth.api_key is configured — ' +
-          'declare prerequisites.test_kit on the storyboard or pass options.test_kit.'
+          'declare prerequisites.test_kit and authorize its cache with options.complianceDir ' +
+          '(CLI: --compliance-dir), ' +
+          'or pass options.test_kit (CLI: --test-kit).'
       );
     }
   } else if ('value_strategy' in directive && directive.value_strategy) {
@@ -7484,19 +7488,23 @@ function basicAuthHeadersForStep(
     };
   }
 
-  const source =
-    directive.from_test_kit !== undefined
-      ? resolveStepBasicFromTestKit(directive.from_test_kit, options)
-      : directive.basic !== undefined
-        ? directive.basic
-        : directive;
+  const usesTestKit =
+    directive.from_test_kit === true ||
+    (typeof directive.from_test_kit === 'string' && directive.from_test_kit.length > 0);
+  const source = usesTestKit
+    ? resolveStepBasicFromTestKit(directive.from_test_kit!, options)
+    : directive.basic !== undefined
+      ? directive.basic
+      : directive;
   if (source === undefined) {
-    if (directive.from_test_kit !== undefined) {
+    if (usesTestKit) {
       // adcp#6735 — same hard-fail as the api_key arm: never send an
       // unauthenticated probe in place of a declared kit credential.
       throw new Error(
         'step declares auth.from_test_kit (basic) but no test kit with matching credentials is configured — ' +
-          'declare prerequisites.test_kit on the storyboard or pass options.test_kit.'
+          'declare prerequisites.test_kit and authorize its cache with options.complianceDir ' +
+          '(CLI: --compliance-dir), ' +
+          'or pass options.test_kit (CLI: --test-kit).'
       );
     }
     return {};
