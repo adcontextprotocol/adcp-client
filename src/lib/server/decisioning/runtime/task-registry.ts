@@ -42,6 +42,12 @@ export type TaskStatus =
   | 'auth-required'
   | 'unknown';
 
+const TERMINAL_TASK_STATUSES: ReadonlySet<TaskStatus> = new Set(['completed', 'failed', 'rejected', 'canceled']);
+
+function isTerminalTaskStatus(status: TaskStatus): boolean {
+  return TERMINAL_TASK_STATUSES.has(status);
+}
+
 export interface TaskRecord<TResult = unknown, TError extends AdcpStructuredError = AdcpStructuredError> {
   taskId: string;
   /** Tool name that started the task (e.g., 'create_media_buy'). */
@@ -54,7 +60,7 @@ export interface TaskRecord<TResult = unknown, TError extends AdcpStructuredErro
   status: TaskStatus;
   /** Status message on the final arm (`error.message` on failed). */
   statusMessage?: string;
-  /** Terminal result on `completed`. */
+  /** Canonical terminal artifact on `completed`, `failed`, or `rejected`. */
   result?: TResult;
   /** Terminal error on `failed`. */
   error?: TError;
@@ -140,10 +146,10 @@ export interface TaskRegistry {
   complete<TResult>(taskId: string, result: TResult): Promise<void>;
 
   /**
-   * Mark a task `failed` with the structured error. No-op if the task is
-   * already terminal (idempotent).
+   * Mark a task `failed` with the structured error and, when available, the
+   * canonical terminal artifact. No-op if the task is already terminal.
    */
-  fail(taskId: string, error: AdcpStructuredError): Promise<void>;
+  fail(taskId: string, error: AdcpStructuredError, result?: unknown): Promise<void>;
 
   /**
    * Record intermediate progress from `TaskHandoffContext.update(...)`.
@@ -228,18 +234,19 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
     async complete<TResult>(taskId: string, result: TResult): Promise<void> {
       const existing = tasks.get(taskId);
       if (!existing) return;
-      if (existing.status === 'completed' || existing.status === 'failed') return;
+      if (isTerminalTaskStatus(existing.status)) return;
       existing.status = 'completed';
       existing.result = result;
       existing.updatedAt = new Date().toISOString();
     },
 
-    async fail(taskId: string, error: AdcpStructuredError): Promise<void> {
+    async fail(taskId: string, error: AdcpStructuredError, result?: unknown): Promise<void> {
       const existing = tasks.get(taskId);
       if (!existing) return;
-      if (existing.status === 'completed' || existing.status === 'failed') return;
+      if (isTerminalTaskStatus(existing.status)) return;
       existing.status = 'failed';
       existing.error = error;
+      if (result !== undefined) existing.result = result;
       existing.statusMessage = error.message;
       existing.updatedAt = new Date().toISOString();
     },
@@ -247,7 +254,7 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
     async updateProgress(taskId: string, progress: TaskHandoffProgress): Promise<void> {
       const existing = tasks.get(taskId);
       if (!existing) return;
-      if (existing.status === 'completed' || existing.status === 'failed') return;
+      if (isTerminalTaskStatus(existing.status)) return;
       if (existing.status === 'submitted') existing.status = 'working';
       existing.progress = progress;
       existing.updatedAt = new Date().toISOString();

@@ -1167,38 +1167,19 @@ describe('governance wire binding', () => {
     }
   });
 
-  it('keeps SDK-injected A2A webhook authentication outside the governed arguments', async () => {
+  it('fails closed before disclosing an SDK-injected A2A webhook secret', async () => {
     const originalCallTool = ProtocolClient.callTool;
-    let governedPayload;
-    let sellerPayload;
-    let sellerOptions;
-    ProtocolClient.callTool = async (_agent, tool, params, options) => {
-      if (tool === 'check_governance') {
-        governedPayload = structuredClone(params.payload);
-        return {
-          structuredContent: {
-            check_id: 'a2a-wire-check',
-            check_type: 'intent',
-            verdict: 'approved',
-            explanation: 'Approved',
-            governance_context: 'signed-a2a-context',
-            expires_at: '2026-08-18T12:00:00Z',
-          },
-        };
-      }
-      if (tool === 'report_plan_outcome') {
-        return { structuredContent: { outcome_id: 'a2a-outcome', outcome_state: 'accepted' } };
-      }
-      sellerPayload = structuredClone(params);
-      sellerOptions = structuredClone(options);
-      return { structuredContent: { status: 'completed', media_buy_id: 'a2a-buy' } };
+    let calls = 0;
+    ProtocolClient.callTool = async () => {
+      calls += 1;
+      throw new Error('must not be called');
     };
     try {
       const executor = createGovernedExecutor({
         webhookUrlTemplate: 'https://buyer.example/hooks/{operation_id}',
         webhookSecret: 'a-secure-a2a-webhook-secret-at-least-32-chars',
       });
-      await executor.executeTask(
+      const result = await executor.executeTask(
         { id: 'seller', name: 'Seller', agent_uri: 'https://seller.example/a2a', protocol: 'a2a' },
         'create_media_buy',
         { total_budget: { amount: 10, currency: 'USD' } },
@@ -1207,9 +1188,11 @@ describe('governance wire binding', () => {
         'v3',
         modernCapabilities
       );
-      assert.ok(!('push_notification_config' in governedPayload));
-      assert.equal(computeGovernedPayloadHash(governedPayload), computeGovernedPayloadHash(sellerPayload));
-      assert.equal(sellerOptions.webhookSecret, 'a-secure-a2a-webhook-secret-at-least-32-chars');
+      assert.equal(result.success, false);
+      assert.match(result.error, /push_notification_config\.authentication\.credentials/);
+      assert.match(result.error, /disableWebhook: true/);
+      assert.ok(!result.error.includes('a-secure-a2a-webhook-secret-at-least-32-chars'));
+      assert.equal(calls, 0);
     } finally {
       ProtocolClient.callTool = originalCallTool;
     }

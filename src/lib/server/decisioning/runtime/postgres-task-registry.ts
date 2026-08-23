@@ -307,19 +307,21 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
       await pool.query(
         `UPDATE ${table}
          SET status = 'completed', result = $2::jsonb, updated_at = NOW()
-         WHERE task_id = $1 AND status NOT IN ('completed', 'failed')`,
+         WHERE task_id = $1 AND status NOT IN ('completed', 'failed', 'rejected', 'canceled')`,
         [taskId, json]
       );
     },
 
-    async fail(taskId: string, error: AdcpStructuredError): Promise<void> {
-      const json = safeStringify(error, taskId);
-      assertResultSize(json, taskId);
+    async fail(taskId: string, error: AdcpStructuredError, result?: unknown): Promise<void> {
+      const errorJson = safeStringify(error, taskId);
+      const resultJson = result === undefined ? undefined : safeStringify(result, taskId);
+      assertResultSize(errorJson, taskId);
+      if (resultJson !== undefined) assertResultSize(resultJson, taskId);
       await pool.query(
         `UPDATE ${table}
-         SET status = 'failed', error = $2::jsonb, status_message = $3, updated_at = NOW()
-         WHERE task_id = $1 AND status NOT IN ('completed', 'failed')`,
-        [taskId, json, error.message]
+         SET status = 'failed', error = $2::jsonb, result = $3::jsonb, status_message = $4, updated_at = NOW()
+         WHERE task_id = $1 AND status NOT IN ('completed', 'failed', 'rejected', 'canceled')`,
+        [taskId, errorJson, resultJson ?? null, error.message]
       );
     },
 
@@ -330,7 +332,7 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
          SET progress = $2::jsonb,
              status = CASE WHEN status = 'submitted' THEN 'working' ELSE status END,
              updated_at = NOW()
-         WHERE task_id = $1 AND status NOT IN ('completed', 'failed')`,
+         WHERE task_id = $1 AND status NOT IN ('completed', 'failed', 'rejected', 'canceled')`,
         [taskId, json]
       );
     },

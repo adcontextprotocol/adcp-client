@@ -102,6 +102,8 @@ export interface WebhookMetadata {
    * canonical dedup key; see `AsyncHandlerConfig.webhookDedup`.
    */
   idempotency_key?: string;
+  /** Seller notification identity, stable when one logical event is re-emitted. */
+  notification_id?: string;
   /**
    * Buyer-side product property policy evaluation for completed get_products
    * webhooks. Present when the client filters, audits, or rejects a webhook
@@ -532,8 +534,8 @@ export class AsyncHandler {
     metadata: WebhookMetadata;
     dispatch: () => Promise<T>;
   }): Promise<{ outcome: 'handled' | 'already_handled' | 'in_progress'; value?: T }> {
-    const dedupClaim = await this.claimWebhook(metadata, result);
-    if (dedupClaim.outcome !== 'claimed') {
+    const deliveryClaim = await this.claimWebhook(metadata, result);
+    if (deliveryClaim.outcome !== 'claimed') {
       await this.emitActivity({
         type: 'webhook_duplicate',
         operation_id: metadata.operation_id,
@@ -545,69 +547,69 @@ export class AsyncHandler {
         idempotency_key: metadata.idempotency_key,
         timestamp: metadata.timestamp,
       });
-      return { outcome: dedupClaim.outcome };
+      return { outcome: deliveryClaim.outcome };
     }
 
-    const stopClaimRenewal = this.startWebhookClaimRenewal(dedupClaim);
+    const claims = [deliveryClaim];
+    if (this.config.webhookDedup && TERMINAL_WEBHOOK_STATUSES.has(metadata.status)) {
+      // Sellers may scope task IDs per buyer operation. Include the trusted
+      // registration's operation ID so two tenants sharing a seller and
+      // backend cannot poison each other's logical terminal fence.
+      const taskIdentity = createHash('sha256')
+        .update(canonicalize({ operationId: metadata.operation_id, taskId: metadata.task_id }))
+        .digest('base64url');
+      let logicalClaim: WebhookDedupClaim;
+      try {
+        logicalClaim = await this.claimWebhook(
+          { ...metadata, idempotency_key: `terminal:${taskIdentity}` },
+          result,
+          'terminal'
+        );
+      } catch (error) {
+        await this.releaseWebhookClaim(deliveryClaim);
+        throw error;
+      }
+      if (logicalClaim.outcome !== 'claimed') {
+        if (logicalClaim.outcome === 'already_handled') {
+          // Bind this fresh delivery key to the already-published terminal
+          // event so an exact transport retry is also acknowledged cheaply.
+          await this.publishWebhookClaim(deliveryClaim);
+        } else {
+          await this.releaseWebhookClaim(deliveryClaim);
+        }
+        await this.emitActivity({
+          type: 'webhook_duplicate',
+          operation_id: metadata.operation_id,
+          agent_id: metadata.agent_id,
+          context_id: metadata.context_id,
+          task_id: metadata.task_id,
+          task_type: metadata.task_type,
+          status: metadata.status,
+          idempotency_key: metadata.idempotency_key,
+          timestamp: metadata.timestamp,
+        });
+        return { outcome: logicalClaim.outcome };
+      }
+      claims.push(logicalClaim);
+    }
+
+    const stopClaimRenewals = claims.map(claim => this.startWebhookClaimRenewal(claim));
     let dispatchCompleted = false;
     let renewalStopped = false;
     try {
       const value = await dispatch();
       dispatchCompleted = true;
-      await stopClaimRenewal();
+      await Promise.all(stopClaimRenewals.map(stop => stop()));
       renewalStopped = true;
-
-      if (dedupClaim.claimKey && dedupClaim.claimToken && this.config.webhookDedup) {
-        const handledMarker: WebhookDedupHandledMarker = {
-          state: WEBHOOK_DEDUP_HANDLED,
-          eventFingerprint: dedupClaim.eventFingerprint ?? '',
-        };
-        const handledExpiresAt = Math.floor(Date.now() / 1000) + dedupClaim.ttlSeconds!;
-        const published = await this.config.webhookDedup.backend.replaceIfPayloadHash(
-          dedupClaim.claimKey,
-          dedupClaim.claimToken,
-          {
-            // A unique publication generation prevents an expired-marker
-            // ABA: a stale taker cannot match a later receiver's handled
-            // marker even when both callbacks have the same fingerprint.
-            payloadHash: `${WEBHOOK_DEDUP_HANDLED}:${randomUUID()}`,
-            response: handledMarker,
-            // Retention starts when processing completes, not when it was
-            // claimed. Long-running handlers therefore receive the full
-            // configured duplicate fence after their side effects finish.
-            expiresAt: handledExpiresAt,
-            retainUntil: handledExpiresAt,
-          }
-        );
-        if (!published) {
-          throw new Error('Webhook processing claim was lost before handler publication completed.');
-        }
-      }
+      // Publish the logical terminal fence before its delivery fence. If the
+      // second publication fails, another delivery still cannot republish the
+      // terminal effect.
+      for (const claim of [...claims].reverse()) await this.publishWebhookClaim(claim);
       return { outcome: 'handled', value };
     } catch (error) {
-      if (
-        !dispatchCompleted &&
-        !(error instanceof WebhookDedupClaimRetentionError) &&
-        dedupClaim.claimKey &&
-        dedupClaim.claimToken &&
-        this.config.webhookDedup
-      ) {
+      if (!dispatchCompleted && !(error instanceof WebhookDedupClaimRetentionError)) {
         try {
-          const nowSeconds = Math.floor(Date.now() / 1000);
-          await this.config.webhookDedup.backend.replaceIfPayloadHash(dedupClaim.claimKey, dedupClaim.claimToken, {
-            // Release processing ownership for an exact retry without
-            // releasing the sender key to a different payload. The expired
-            // logical lease is immediately reclaimable by the same event;
-            // retainUntil keeps its immutable fingerprint through the full
-            // dedup window.
-            payloadHash: dedupClaim.claimToken,
-            response: {
-              claimToken: dedupClaim.claimToken,
-              eventFingerprint: dedupClaim.eventFingerprint,
-            },
-            expiresAt: nowSeconds - 1,
-            retainUntil: nowSeconds + dedupClaim.ttlSeconds!,
-          });
+          await Promise.all(claims.map(claim => this.releaseWebhookClaim(claim)));
         } catch (rollbackError) {
           console.error(
             `Error rolling back webhook dedup claim for task ${metadata.task_type}:`,
@@ -617,8 +619,35 @@ export class AsyncHandler {
       }
       throw error;
     } finally {
-      if (!renewalStopped) await stopClaimRenewal();
+      if (!renewalStopped) await Promise.all(stopClaimRenewals.map(stop => stop()));
     }
+  }
+
+  private async publishWebhookClaim(claim: WebhookDedupClaim): Promise<void> {
+    if (!claim.claimKey || !claim.claimToken || !claim.ttlSeconds || !this.config.webhookDedup) return;
+    const handledMarker: WebhookDedupHandledMarker = {
+      state: WEBHOOK_DEDUP_HANDLED,
+      eventFingerprint: claim.eventFingerprint ?? '',
+    };
+    const handledExpiresAt = Math.floor(Date.now() / 1000) + claim.ttlSeconds;
+    const published = await this.config.webhookDedup.backend.replaceIfPayloadHash(claim.claimKey, claim.claimToken, {
+      payloadHash: `${WEBHOOK_DEDUP_HANDLED}:${randomUUID()}`,
+      response: handledMarker,
+      expiresAt: handledExpiresAt,
+      retainUntil: handledExpiresAt,
+    });
+    if (!published) throw new Error('Webhook processing claim was lost before handler publication completed.');
+  }
+
+  private async releaseWebhookClaim(claim: WebhookDedupClaim): Promise<void> {
+    if (!claim.claimKey || !claim.claimToken || !claim.ttlSeconds || !this.config.webhookDedup) return;
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    await this.config.webhookDedup.backend.replaceIfPayloadHash(claim.claimKey, claim.claimToken, {
+      payloadHash: claim.claimToken,
+      response: { claimToken: claim.claimToken, eventFingerprint: claim.eventFingerprint },
+      expiresAt: nowSeconds - 1,
+      retainUntil: nowSeconds + claim.ttlSeconds,
+    });
   }
 
   /** Dispatch a webhook whose sender dedup claim is already owned. @internal */
@@ -834,7 +863,8 @@ export class AsyncHandler {
    */
   private async claimWebhook(
     metadata: WebhookMetadata,
-    result: AdCPAsyncResponseData | undefined
+    result: AdCPAsyncResponseData | undefined,
+    namespace: 'delivery' | 'terminal' = 'delivery'
   ): Promise<WebhookDedupClaim> {
     const dedup = this.config.webhookDedup;
     if (!dedup) return { outcome: 'claimed' };
@@ -850,13 +880,17 @@ export class AsyncHandler {
     // can never produce a scoped key with this prefix because the
     // principal regex excludes U+001F.
     const agentScope = createHash('sha256').update(metadata.agent_id).digest('base64url');
-    const completedKey = `adcp\u001fwebhook\u001fv2\u001f${agentScope}\u001f${key}`;
+    const completedKey =
+      namespace === 'terminal'
+        ? `adcp\u001fwebhook-terminal\u001fv1\u001f${agentScope}\u001f${key}`
+        : `adcp\u001fwebhook\u001fv2\u001f${agentScope}\u001f${key}`;
     // The previous receiver version stored the authenticated agent ID directly in this
     // v1 scope and published a `{ payloadHash: '', response: null }` fence.
     // Keep v1 exclusively for that read-only migration probe: sharing a
     // namespace with hashed scopes would let an agent ID equal to another
     // agent's digest alias the two authenticated senders. New writes use v2.
-    const legacyCompletedKey = `adcp\u001fwebhook\u001fv1\u001f${metadata.agent_id}\u001f${key}`;
+    const legacyCompletedKey =
+      namespace === 'delivery' ? `adcp\u001fwebhook\u001fv1\u001f${metadata.agent_id}\u001f${key}` : undefined;
     // One record transitions atomically from owner token to handled marker.
     // A separate completion key would create a check-then-put publication
     // race where a stale owner could publish after losing its lease.
@@ -871,6 +905,7 @@ export class AsyncHandler {
           taskId: metadata.task_id,
           taskType: metadata.task_type,
           status: metadata.status,
+          notificationId: metadata.notification_id ?? null,
           contextId: metadata.context_id ?? null,
           message: metadata.message ?? null,
           result: result ?? null,
@@ -909,16 +944,18 @@ export class AsyncHandler {
       }
     }
 
-    const legacyCompleted = await dedup.backend.get(legacyCompletedKey);
-    const legacyState = webhookDedupEntryState(legacyCompleted, nowSeconds);
-    if (legacyState === 'live') {
-      // Only the exact origin-main marker is a completed legacy fence. A live
-      // unknown shape fails closed because it may belong to a partially
-      // upgraded receiver or a damaged record that still protects side effects.
-      return { outcome: legacyWebhookHandledFence(legacyCompleted) ? 'already_handled' : 'in_progress' };
-    }
-    if (legacyState === 'corrupt') {
-      return { outcome: 'in_progress' };
+    if (legacyCompletedKey !== undefined) {
+      const legacyCompleted = await dedup.backend.get(legacyCompletedKey);
+      const legacyState = webhookDedupEntryState(legacyCompleted, nowSeconds);
+      if (legacyState === 'live') {
+        // Only the exact origin-main marker is a completed legacy fence. A live
+        // unknown shape fails closed because it may belong to a partially
+        // upgraded receiver or a damaged record that still protects side effects.
+        return { outcome: legacyWebhookHandledFence(legacyCompleted) ? 'already_handled' : 'in_progress' };
+      }
+      if (legacyState === 'corrupt') {
+        return { outcome: 'in_progress' };
+      }
     }
 
     const claimToken = randomUUID();
@@ -996,6 +1033,7 @@ interface WebhookDedupClaim {
 // pattern is malformed and fails closed before a scoped key or handler
 // dispatch can be formed from arbitrary sender-supplied bytes.
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_.:-]{16,255}$/;
+const TERMINAL_WEBHOOK_STATUSES = new Set<WebhookMetadata['status']>(['completed', 'failed', 'rejected', 'canceled']);
 const WEBHOOK_DEDUP_HANDLED = 'adcp_webhook_handled_v1';
 
 interface WebhookDedupHandledMarker {

@@ -103,13 +103,31 @@ if (!artifact.name) { ... }
 
 Used for receiving task completion/progress notifications. Placement differs by protocol:
 
-- **A2A Protocol**: Goes in `params.configuration.pushNotificationConfig` (camelCase)
+- **AdCP 3.2.0-beta.5 on A2A**: Goes in skill parameters as
+  `push_notification_config` (snake_case), including `operation_id`. The native
+  A2A `params.configuration.pushNotificationConfig` is a distinct transport
+  facility; the SDK may retain it for compatibility, but it does not replace
+  the AdCP application-layer field.
 
   ```typescript
   await a2aClient.sendMessage({
-    message: { /* task content */ },
+    message: {
+      parts: [{
+        kind: 'data',
+        data: {
+          skill: 'create_media_buy',
+          parameters: {
+            push_notification_config: {
+              url: webhookUrl,
+              operation_id: operationId
+            }
+          }
+        }
+      }]
+    },
+    // Optional native A2A configuration remains separate.
     configuration: {
-      pushNotificationConfig: {  // ← For async task status
+      pushNotificationConfig: {
         url: webhookUrl,
         token?: clientToken,
         authentication: { schemes: ['HMAC-SHA256'], credentials: secret }
@@ -118,13 +136,15 @@ Used for receiving task completion/progress notifications. Placement differs by 
   });
   ```
 
-- **MCP Protocol**: Goes in tool arguments as `push_notification_config` (snake_case)
+- **MCP Protocol (remote or in-process)**: Goes in tool arguments as
+  `push_notification_config` (snake_case)
   ```typescript
   await mcpClient.callTool('create_media_buy', {
     buyer_ref: '...',
     packages: [...],
     push_notification_config: {  // ← For async task status
       url: webhookUrl,
+      operation_id: operationId,
       token?: clientToken,
       authentication: { schemes: ['HMAC-SHA256'], credentials: secret }
     }

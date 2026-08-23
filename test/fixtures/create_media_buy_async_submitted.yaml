@@ -170,6 +170,7 @@ phases:
               pricing_option_id: "cpm_standard"
           push_notification_config:
             url: "https://buyer.example/webhooks/adcp"
+            operation_id: "storyboard_create_media_buy_async_submitted"
           idempotency_key: "$generate:uuid_v4#media_buy_seller_create_submitted_create_media_buy"
           context:
             correlation_id: "create_media_buy_async_submitted--create_media_buy"

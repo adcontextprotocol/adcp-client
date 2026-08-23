@@ -2271,6 +2271,26 @@ describe('createAdcpServer', () => {
       assert.deepStrictEqual(status.result, { creatives: [{ creative_id: 'cr_1' }] });
       assert.deepStrictEqual(status.context, { trace_id: 'trace_1' });
 
+      const failed = await taskRegistry.create({
+        tool: 'sync_creatives',
+        accountId: 'acct_1',
+        ownerScope: 'api_key:buyer-1',
+      });
+      const failure = { code: 'SERVICE_UNAVAILABLE', message: 'seller unavailable', recovery: 'transient' };
+      const failureArtifact = { errors: [failure] };
+      await taskRegistry.fail(failed.taskId, failure, failureArtifact);
+      const failedWithoutResult = await callTool(server, 'get_task_status', { task_id: failed.taskId }, buyerOne);
+      assert.strictEqual(failedWithoutResult.status, 'failed');
+      assert.strictEqual(failedWithoutResult.result, undefined);
+      const failedWithResult = await callTool(
+        server,
+        'get_task_status',
+        { task_id: failed.taskId, include_result: true },
+        buyerOne
+      );
+      assert.deepStrictEqual(failedWithResult.result, failureArtifact);
+      assert.strictEqual(failedWithResult.error.code, 'SERVICE_UNAVAILABLE');
+
       const crossTenant = await callToolRaw(server, 'get_task_status', { task_id: owned.taskId }, buyerTwo);
       assert.strictEqual(crossTenant.isError, true);
       assert.strictEqual(crossTenant.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');
@@ -2327,6 +2347,44 @@ describe('createAdcpServer', () => {
       );
       assert.strictEqual(tooManyTaskIds.isError, true);
       assert.strictEqual(tooManyTaskIds.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    });
+
+    it('returns a produced rejected artifact only when include_result is true', async () => {
+      const now = new Date().toISOString();
+      const record = {
+        taskId: 'task_rejected_artifact',
+        tool: 'sync_creatives',
+        accountId: 'acct_1',
+        ownerScope: 'api_key:buyer-1',
+        status: 'rejected',
+        result: { errors: [{ code: 'POLICY_VIOLATION', message: 'rejected by policy' }] },
+        createdAt: now,
+        updatedAt: now,
+      };
+      const taskRegistry = {
+        create: async () => ({ taskId: record.taskId }),
+        getTask: async taskId => (taskId === record.taskId ? record : null),
+        complete: async () => {},
+        fail: async () => {},
+        updateProgress: async () => {},
+        _registerBackground: () => {},
+      };
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry,
+        resolveAccountFromAuth: async () => ({ id: 'acct_1' }),
+      });
+      const buyer = { authInfo: { credential: { kind: 'api_key', key_id: 'buyer-1' } } };
+      const summary = await callTool(server, 'get_task_status', { task_id: record.taskId }, buyer);
+      assert.strictEqual(summary.result, undefined);
+      const detailed = await callTool(
+        server,
+        'get_task_status',
+        { task_id: record.taskId, include_result: true },
+        buyer
+      );
+      assert.deepStrictEqual(detailed.result, record.result);
     });
 
     it('polls and lists every task type newly admitted by the 3.2 enum', async () => {

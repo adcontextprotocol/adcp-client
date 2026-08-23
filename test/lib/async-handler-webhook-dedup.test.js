@@ -13,9 +13,10 @@ function baseMetadata(overrides = {}) {
     task_id: 'task_1',
     agent_id: 'agent_1',
     task_type: 'create_media_buy',
-    status: 'completed',
+    status: 'working',
     timestamp: new Date().toISOString(),
     idempotency_key: 'whk_01HW9D3H8FZP2N6R8T0V4X6Z9B',
+    notification_id: 'notification_01HW9D3H8FZP2N6R8T0V4X6Z9B',
     ...overrides,
   };
 }
@@ -37,6 +38,7 @@ function dedupEventFingerprint(metadata, result) {
         taskId: metadata.task_id,
         taskType: metadata.task_type,
         status: metadata.status,
+        notificationId: metadata.notification_id ?? null,
         contextId: metadata.context_id ?? null,
         message: metadata.message ?? null,
         result: result ?? null,
@@ -228,6 +230,101 @@ test('webhookDedup dispatches distinct idempotency_keys independently', async ()
   });
 
   assert.deepStrictEqual(calls, ['whk_0000000000000001', 'whk_0000000000000002']);
+});
+
+test('webhookDedup publishes one terminal task across distinct delivery keys', async () => {
+  const calls = [];
+  const handler = new AsyncHandler({
+    webhookDedup: { backend: memoryBackend({ sweepIntervalMs: 0 }) },
+    onCreateMediaBuyStatusChange: (_response, metadata) => calls.push(metadata.idempotency_key),
+  });
+  const terminal = {
+    status: 'completed',
+    notification_id: 'notification_terminal_0001',
+  };
+  assert.strictEqual(
+    await handler.handleWebhook({
+      result: { media_buy_id: 'mb_1' },
+      metadata: baseMetadata({ ...terminal, idempotency_key: 'whk_terminal_000000001' }),
+    }),
+    'handled'
+  );
+  assert.strictEqual(
+    await handler.handleWebhook({
+      result: { media_buy_id: 'mb_1' },
+      metadata: baseMetadata({ ...terminal, idempotency_key: 'whk_terminal_000000002' }),
+    }),
+    'already_handled'
+  );
+  assert.deepStrictEqual(calls, ['whk_terminal_000000001']);
+});
+
+test('webhookDedup keeps identical seller task IDs isolated by buyer operation', async () => {
+  const calls = [];
+  const handler = new AsyncHandler({
+    webhookDedup: { backend: memoryBackend({ sweepIntervalMs: 0 }) },
+    onCreateMediaBuyStatusChange: (_response, metadata) => calls.push(metadata.operation_id),
+  });
+  for (const [operation_id, idempotency_key] of [
+    ['op_tenant_a', 'whk_terminal_tenant_0001'],
+    ['op_tenant_b', 'whk_terminal_tenant_0002'],
+  ]) {
+    assert.strictEqual(
+      await handler.handleWebhook({
+        result: { media_buy_id: 'mb_shared_seller_id' },
+        metadata: baseMetadata({
+          operation_id,
+          task_id: 'seller_task_scoped_per_operation',
+          status: 'completed',
+          idempotency_key,
+        }),
+      }),
+      'handled'
+    );
+  }
+  assert.deepStrictEqual(calls, ['op_tenant_a', 'op_tenant_b']);
+});
+
+test('webhookDedup rejects conflicting terminal artifacts across delivery keys', async () => {
+  const handler = new AsyncHandler({ webhookDedup: { backend: memoryBackend({ sweepIntervalMs: 0 }) } });
+  await handler.handleWebhook({
+    result: { media_buy_id: 'mb_1' },
+    metadata: baseMetadata({ status: 'completed', idempotency_key: 'whk_terminal_conflict01' }),
+  });
+  await assert.rejects(
+    handler.handleWebhook({
+      result: { media_buy_id: 'mb_2' },
+      metadata: baseMetadata({ status: 'completed', idempotency_key: 'whk_terminal_conflict02' }),
+    }),
+    /idempotency key was reused/
+  );
+});
+
+test('sender delivery keys cannot poison the internal terminal-task namespace', async () => {
+  const calls = [];
+  const handler = new AsyncHandler({
+    webhookDedup: { backend: memoryBackend({ sweepIntervalMs: 0 }) },
+    onCreateMediaBuyStatusChange: (_result, metadata) => calls.push(metadata.status),
+  });
+  const taskId = 'task_namespace_isolation';
+  const taskHash = createHash('sha256').update(taskId).digest('base64url');
+  await handler.handleWebhook({
+    result: { progress: 50 },
+    metadata: baseMetadata({
+      task_id: taskId,
+      status: 'working',
+      idempotency_key: `terminal:${taskHash}`,
+    }),
+  });
+  await handler.handleWebhook({
+    result: { media_buy_id: 'mb_1' },
+    metadata: baseMetadata({
+      task_id: taskId,
+      status: 'completed',
+      idempotency_key: 'whk_terminal_namespace01',
+    }),
+  });
+  assert.deepStrictEqual(calls, ['working', 'completed']);
 });
 
 test('webhookDedup rejects one sender key reused for a different callback payload', async () => {
@@ -457,6 +554,7 @@ test('idempotency_key propagates from MCP envelope through SingleAgentClient to 
 
   const envelope = {
     idempotency_key: 'whk_01HW9D3H8FZP2N6R8T0V4X6Z9B',
+    notification_id: 'notification_01HW9D3H8FZP2N6R8T0V4X6Z9B',
     operation_id: 'op_1',
     task_id: 'task_1',
     task_type: 'create_media_buy',
@@ -469,6 +567,7 @@ test('idempotency_key propagates from MCP envelope through SingleAgentClient to 
   assert.strictEqual(handled, true);
   assert.ok(seenMetadata, 'handler should be called');
   assert.strictEqual(seenMetadata.idempotency_key, 'whk_01HW9D3H8FZP2N6R8T0V4X6Z9B');
+  assert.strictEqual(seenMetadata.notification_id, 'notification_01HW9D3H8FZP2N6R8T0V4X6Z9B');
 });
 
 test('webhookDedup re-dispatches after backend eviction (TTL expiry path)', async () => {

@@ -3252,6 +3252,10 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
         'Optional account reference for tenant scoping. Either AccountReference arm is accepted: ' +
           '`{account_id}` for explicit accounts or `{brand, operator, sandbox?}` for implicit accounts.'
       ),
+    include_result: z
+      .boolean()
+      .optional()
+      .describe('Include a canonical terminal artifact for completed, failed, or rejected tasks.'),
   };
   return {
     description:
@@ -3274,7 +3278,7 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
     // resolver and reads tenant B's task. Same threading as the regular
     // `resolveAccount` dispatch flow in `create-adcp-server.ts:2380-2398`.
     handler: async (
-      args: { task_id: string; account?: { account_id?: string } },
+      args: { task_id: string; account?: { account_id?: string }; include_result?: boolean },
       extra: { authInfo?: ResolvedAuthInfo }
     ) => {
       const policyError = credentialPolicyError(args as Record<string, unknown>, extra);
@@ -3471,7 +3475,11 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
         payload.completed_at = record.updatedAt;
       }
       if (record.statusMessage) payload.message = record.statusMessage;
-      if (record.status === 'completed' && record.result !== undefined) {
+      if (
+        args.include_result === true &&
+        (record.status === 'completed' || record.status === 'failed' || record.status === 'rejected') &&
+        record.result !== undefined
+      ) {
         payload.result = record.result;
       }
       if (record.status === 'failed' && record.error) {
@@ -3985,6 +3993,7 @@ interface DispatchHitlOpts {
   pushNotificationUrl?: string;
   pushNotificationToken?: string;
   pushNotificationOperationId?: string;
+  servedAdcpVersion?: string;
   emitWebhook?: HandlerContext<Account>['emitWebhook'];
   observability?: DecisioningObservabilityHooks;
   logger: AdcpLogger;
@@ -4211,8 +4220,9 @@ async function dispatchHitl<TResult>(
             message: 'Task failed',
           }
     );
+    const failureArtifact = { errors: [structured] };
     try {
-      await taskRegistry.fail(taskId, structured);
+      await taskRegistry.fail(taskId, structured, failureArtifact);
     } catch (registryErr) {
       opts.logger.error(
         `[adcp/decisioning] task ${taskId} (${opts.tool}) failed AND registry fail-write also failed — ` +
@@ -4224,7 +4234,7 @@ async function dispatchHitl<TResult>(
     }
     fireTransition('failed', structured.code);
     await emitTaskWebhook(opts, {
-      task: { task_id: taskId, status: 'failed', error: structured },
+      task: { task_id: taskId, status: 'failed', result: failureArtifact, error: structured },
     });
   })();
   taskRegistry._registerBackground(taskId, completion);
@@ -4280,13 +4290,24 @@ function buildTaskWebhookPayload(
     payload.result = artifact.result;
   }
   if (status === 'failed' && artifact.error !== undefined) {
-    payload.result = { errors: [artifact.error] };
+    payload.result = artifact.result ?? { errors: [artifact.error] };
     payload.message = artifact.error.message;
   }
   return payload;
 }
 
 function resolveWebhookPayloadOperationId(opts: DispatchHitlOpts, taskId: string): string {
+  if (
+    opts.pushNotificationOperationId === undefined &&
+    (opts.servedAdcpVersion === '3.2.0-beta.5' || opts.servedAdcpVersion === '3.2-beta.5')
+  ) {
+    throw new AdcpError('INVALID_REQUEST', {
+      message: 'push_notification_config.operation_id is required for webhook delivery',
+      field: 'push_notification_config.operation_id',
+    });
+  }
+  // Older negotiated bundles predate buyer-supplied operation IDs. Preserve
+  // their stable compatibility value without allowing beta.5 to synthesize.
   return opts.pushNotificationOperationId ?? `${opts.tool}.${taskId}`;
 }
 
@@ -5235,6 +5256,7 @@ function buildProposalNegotiationHandlers<P extends DecisioningPlatform<any, any
               pushNotificationUrl: push.url,
               pushNotificationToken: push.token,
               pushNotificationOperationId: push.operationId,
+              servedAdcpVersion: ctx.servedAdcpVersion,
               emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
               autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
               observability,
@@ -5321,6 +5343,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             pushNotificationUrl: push.url,
             pushNotificationToken: push.token,
             pushNotificationOperationId: push.operationId,
+            servedAdcpVersion: ctx.servedAdcpVersion,
             emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
             autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
             observability,
@@ -5437,6 +5460,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 pushNotificationUrl: push.url,
                 pushNotificationToken: push.token,
                 pushNotificationOperationId: push.operationId,
+                servedAdcpVersion: ctx.servedAdcpVersion,
                 emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
                 autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
                 observability,
@@ -5547,6 +5571,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 pushNotificationUrl: push.url,
                 pushNotificationToken: push.token,
                 pushNotificationOperationId: push.operationId,
+                servedAdcpVersion: ctx.servedAdcpVersion,
                 emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
                 autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
                 observability,
@@ -5664,6 +5689,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 pushNotificationUrl: push.url,
                 pushNotificationToken: push.token,
                 pushNotificationOperationId: push.operationId,
+                servedAdcpVersion: ctx.servedAdcpVersion,
                 emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
                 autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
                 observability,
@@ -5751,6 +5777,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 pushNotificationUrl: push.url,
                 pushNotificationToken: push.token,
                 pushNotificationOperationId: push.operationId,
+                servedAdcpVersion: ctx.servedAdcpVersion,
                 emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
                 autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
                 observability,
@@ -5804,6 +5831,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 pushNotificationUrl: push.url,
                 pushNotificationToken: push.token,
                 pushNotificationOperationId: push.operationId,
+                servedAdcpVersion: ctx.servedAdcpVersion,
                 emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
                 autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
                 observability,
@@ -6150,6 +6178,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
                 pushNotificationUrl: push.url,
                 pushNotificationToken: push.token,
                 pushNotificationOperationId: push.operationId,
+                servedAdcpVersion: ctx.servedAdcpVersion,
                 emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
                 autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
                 observability,
@@ -6385,6 +6414,7 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
               pushNotificationUrl: push.url,
               pushNotificationToken: push.token,
               pushNotificationOperationId: push.operationId,
+              servedAdcpVersion: ctx.servedAdcpVersion,
               emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
               autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
               observability,

@@ -14,6 +14,29 @@ continuations. Beta.5 defines stable async identity, cross-channel terminal
 convergence, webhook retry horizons, and crash-safe continuation generation
 replacement.
 
+### Beta.5 task webhook registration and polling
+
+`push_notification_config` is now an AdCP application-layer field across MCP,
+A2A, and REST. On A2A it is carried in skill parameters and remains distinct
+from native `TaskPushNotificationConfig`. Every beta.5 registration must carry
+a buyer `operation_id`; SDK clients generate and reuse one identity across the
+authorized request, registration provenance, route, and webhook envelope.
+Beta.5 sellers return `INVALID_REQUEST` before handler dispatch when the field
+is missing or malformed. Explicitly negotiated older bundles keep their prior
+wire behavior.
+
+Receivers continue to fence exact delivery retries by seller plus
+`idempotency_key`, and additionally fence terminal publication by authenticated
+seller, buyer `operation_id`, and seller `task_id`. This prevents a beta.5
+terminal re-emission under a new delivery key from running handlers twice while
+keeping seller task IDs that are scoped per buyer operation isolated. Configure
+shared durable `webhookDedup` storage for multi-replica receivers.
+
+When polling with `include_result: true`, `get_task_status`/`tasks_get` now
+returns a stored canonical artifact for `completed`, `failed`, and `rejected`
+tasks. A failed response may carry both the top-level summary `error` and a
+canonical `result.errors[]`; they describe the same failure.
+
 ```bash
 npm install @adcp/sdk@beta
 ```
@@ -60,6 +83,8 @@ loading; keep using `requires_capability` for a singular predicate.
 10. Upgrade durable idempotency storage before application traffic: add the nullable PostgreSQL `retain_until` column/index, preserve `IdempotencyCacheEntry.retainUntil`, and add atomic `putIfAbsent()`, `replaceIfPayloadHash()`, `replaceIfPayloadHashAndExpired()`, and `deleteIfPayloadHash()` to every custom backend.
 11. Upgrade custom deferred-task storage with `putForSettlementOperationIfAbsent()`, `getBySettlementOperationId()`, and `replaceForSettlementOperationIfVersion()`. The initial token/index write and nested A→B index move must each be atomic.
 12. Replace webhook emitter `operation_id` arguments with SDK-local `delivery_id` values and upgrade custom stores to `WebhookDeliveryStore`. One delivery ID binds one canonical payload and key; use a fresh delivery ID for each changed status observation while retaining the AdCP `operation_id` inside the payload.
+13. Ensure custom beta.5 buyers include `push_notification_config.operation_id`, and update A2A integrations to keep the AdCP registration in skill parameters even when native A2A push configuration is also present.
+14. Treat failed/rejected task results as canonical terminal artifacts when `include_result` is requested; do not discard them while preserving only the summary error.
 
 ### Webhook delivery identity and retry horizons
 

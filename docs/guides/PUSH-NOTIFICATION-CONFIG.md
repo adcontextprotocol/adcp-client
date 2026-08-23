@@ -1,6 +1,6 @@
 # Push Notification Config
 
-Push notification config tells the AdCP agent where to send async task status updates via webhook. It is automatically injected by the client at the transport layer — you do not set it per-request.
+Push notification config tells the AdCP agent where to send async task status updates via webhook. In AdCP 3.2.0-beta.5 it is application-layer request data on MCP, A2A, and REST. The client injects it automatically when `webhookUrlTemplate` is configured.
 
 ## How It Works
 
@@ -21,7 +21,8 @@ The default RFC 9421 registration has no `authentication` block:
 ```json
 {
   "push_notification_config": {
-    "url": "https://your-app.com/adcp/webhook/create_media_buy/agent_123/cd51e063-2b79-4a6d-afac-ed7789c3a443"
+    "url": "https://your-app.com/adcp/webhook/create_media_buy/agent_123/cd51e063-2b79-4a6d-afac-ed7789c3a443",
+    "operation_id": "cd51e063-2b79-4a6d-afac-ed7789c3a443"
   }
 }
 ```
@@ -32,6 +33,7 @@ Setting `webhookSecret` opts into the legacy shape:
 {
   "push_notification_config": {
     "url": "https://your-app.com/adcp/webhook/create_media_buy/agent_123/cd51e063-2b79-4a6d-afac-ed7789c3a443",
+    "operation_id": "cd51e063-2b79-4a6d-afac-ed7789c3a443",
     "authentication": {
       "schemes": ["HMAC-SHA256"],
       "credentials": "your-hmac-secret-min-32-characters-here"
@@ -67,6 +69,7 @@ Setting `webhookSecret` opts into the legacy shape:
     },
     "push_notification_config": {
       "url": "https://your-app.com/adcp/webhook/create_media_buy/agent_123/cd51e063-2b79-4a6d-afac-ed7789c3a443",
+      "operation_id": "cd51e063-2b79-4a6d-afac-ed7789c3a443",
       "authentication": {
         "schemes": ["HMAC-SHA256"],
         "credentials": "your-hmac-secret-min-32-characters-here"
@@ -85,6 +88,7 @@ Setting `webhookSecret` opts into the legacy shape:
     "creatives": [...],
     "push_notification_config": {
       "url": "https://your-app.com/adcp/webhook/sync_creatives/agent_123/f3a9b2c1-1234-5678-abcd-ef0123456789",
+      "operation_id": "f3a9b2c1-1234-5678-abcd-ef0123456789",
       "authentication": {
         "schemes": ["HMAC-SHA256"],
         "credentials": "your-hmac-secret-min-32-characters-here"
@@ -101,7 +105,25 @@ Setting `webhookSecret` opts into the legacy shape:
 | Purpose | Task status updates (submitted, complete, failed) | Ongoing campaign delivery metrics |
 | Operations | All async operations | `create_media_buy` only |
 | Frequency | Per task lifecycle event | Hourly / daily / monthly |
-| Set by | Client auto-injects | Client auto-injects |
+| Set by | Client auto-injects | Caller supplies in task parameters |
+
+On A2A, this AdCP registration stays in the skill parameters as
+`push_notification_config`. It is distinct from A2A's native
+`configuration.pushNotificationConfig`; the SDK retains native A2A
+configuration for transport compatibility without treating it as a substitute
+for the application-layer registration. In-process MCP receives the same AdCP
+argument as remote MCP.
+
+For beta.5, sellers reject a registration whose `operation_id` is missing or
+does not match `^[A-Za-z0-9_.:-]{1,255}$`. The SDK reuses the operation identity
+created by `TaskExecutor`, so the request, registration record, webhook route,
+and returned webhook envelope all correlate on the same value.
+
+As with MCP, a modern governed A2A request cannot disclose an HMAC credential
+to the governance service while also authorizing the exact seller argument
+object. The SDK fails closed for that combination; use RFC 9421 (omit
+`webhookSecret`), set `{ disableWebhook: true }` and poll, or use an application
+flow whose governance boundary can safely authorize the callback configuration.
 
 ## Authentication
 
@@ -162,7 +184,7 @@ The mode recorded at registration is authoritative. The receiver never tries RFC
 
 ## Deduplication
 
-AdCP webhooks use at-least-once delivery — publishers retry until they see a 2xx response, so the same event can arrive more than once. Every MCP webhook payload carries a required `idempotency_key` the publisher keeps stable across retries; receivers dedupe by it.
+AdCP webhooks use at-least-once delivery — publishers retry until they see a 2xx response, so the same event can arrive more than once. Every MCP webhook payload carries a required `idempotency_key` for one delivery identity. Beta.5 can re-emit the same terminal task under another delivery key; the receiver therefore also fences terminal publication by authenticated seller, buyer `operation_id`, and seller `task_id`. Optional `notification_id` is preserved as logical-event evidence and conflicting reuse fails closed.
 
 Wire the client's `webhookDedup` on the `AsyncHandler` to get this for free:
 
@@ -176,7 +198,8 @@ const client = new AdCPClient(agents, {
   handlers: {
     webhookDedup: { backend: memoryBackend(), ttlSeconds: 86_400 }, // 24h
     onCreateMediaBuyStatusChange: async (result, metadata) => {
-      // First delivery for this idempotency_key runs here; retries are dropped.
+      // One terminal publication runs here, even if it is re-emitted under
+      // another delivery idempotency_key.
     },
   },
 });
@@ -204,7 +227,7 @@ The `webhook_duplicate` event intentionally omits `payload` (the original `webho
 
 ### Migrating from ad-hoc dedup
 
-If you previously tracked processed webhooks by `(task_id, status, timestamp)`, replace that with `webhookDedup`. The tuple is fragile — two status transitions sharing a millisecond collide, and governance/artifact webhooks have no `task_id` to key on. `idempotency_key` is the canonical dedup field per AdCP 3.0. Running both layers in parallel is a silent footgun: the ad-hoc tuple can drop events that the key-based layer would have dispatched correctly.
+If you previously tracked processed webhooks by `(task_id, status, timestamp)`, replace that with `webhookDedup`. The SDK keeps delivery-key replay protection separate from beta.5 terminal-task convergence, avoiding timestamp-based collisions while still detecting one delivery key reused with changed content.
 
 ### A2A and missing keys
 

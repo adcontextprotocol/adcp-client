@@ -91,6 +91,49 @@ describe('getDecisioningTaskRegistryMigration', () => {
       'missing ownerScope should fail closed before issuing a broad DB query'
     );
   });
+
+  test('in-memory registry preserves rejected and canceled terminal records', async () => {
+    const { createInMemoryTaskRegistry } = require('../dist/lib/server/decisioning/runtime/task-registry');
+    const registry = createInMemoryTaskRegistry();
+
+    for (const status of ['rejected', 'canceled']) {
+      const { taskId } = await registry.create({ tool: 'create_media_buy', accountId: 'acct_1' });
+      const seeded = await registry.getTask(taskId);
+      seeded.status = status;
+      seeded.result = { terminal: status };
+
+      await registry.updateProgress(taskId, { percent: 50, message: 'must not overwrite' });
+      await registry.complete(taskId, { terminal: 'completed' });
+      await registry.fail(taskId, { code: 'INVALID_STATE', message: 'must not overwrite' });
+
+      const record = await registry.getTask(taskId);
+      assert.strictEqual(record.status, status);
+      assert.deepStrictEqual(record.result, { terminal: status });
+      assert.strictEqual(record.progress, undefined);
+      assert.strictEqual(record.error, undefined);
+    }
+  });
+
+  test('Postgres registry fences every terminal status in all update queries', async () => {
+    const { createPostgresTaskRegistry } = require('../dist/lib/server/decisioning');
+    const queries = [];
+    const pool = {
+      async query(text) {
+        queries.push(text);
+        return { rowCount: 0, rows: [] };
+      },
+    };
+    const registry = createPostgresTaskRegistry({ pool });
+
+    await registry.updateProgress('task_terminal', { percent: 50 });
+    await registry.complete('task_terminal', { terminal: 'completed' });
+    await registry.fail('task_terminal', { code: 'INVALID_STATE', message: 'must not overwrite' });
+
+    assert.strictEqual(queries.length, 3);
+    for (const query of queries) {
+      assert.match(query, /status NOT IN \('completed', 'failed', 'rejected', 'canceled'\)/);
+    }
+  });
 });
 
 describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
@@ -181,17 +224,20 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
     const registry = createPostgresTaskRegistry({ pool });
     const { taskId } = await registry.create({ tool: 'sync_creatives', accountId: 'acc_1' });
 
-    await registry.fail(taskId, {
+    const error = {
       code: 'GOVERNANCE_DENIED',
       recovery: 'terminal',
       message: 'operator declined the buy',
-    });
+    };
+    const artifact = { errors: [error] };
+    await registry.fail(taskId, error, artifact);
 
     let record = await registry.getTask(taskId);
     assert.strictEqual(record.status, 'failed');
     assert.strictEqual(record.error.code, 'GOVERNANCE_DENIED');
     assert.strictEqual(record.error.recovery, 'terminal');
     assert.strictEqual(record.statusMessage, 'operator declined the buy');
+    assert.deepStrictEqual(record.result, artifact);
 
     // Second fail is a no-op
     await registry.fail(taskId, { code: 'INVALID_STATE', recovery: 'correctable', message: 'should not overwrite' });
