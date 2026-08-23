@@ -368,7 +368,9 @@ export {
 export {
   InMemoryEstablishedProposalStore,
   createInMemoryEstablishedProposalStore,
+  ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS,
   type EstablishedProposalBinding,
+  type EstablishedProposalCompletionWindow,
   type EstablishedProposalMutationClaim,
   type EstablishedProposalMutationBinding,
   type EstablishedProposalMutationIntent,

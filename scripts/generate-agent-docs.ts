@@ -1109,7 +1109,14 @@ function generateLlmsTxt(
   ln(`| \`PricingOption\` | Price model (CPM, vCPM, CPC, CPCV, CPV, CPP, CPA, FlatRate, Time) |`);
   ln(`| \`GovernanceConfig\` | Buyer-side governance middleware config |`);
   ln(
-    `| \`EstablishedProposalStore\` | Durable 3.0/3.1 proposal snapshots, atomic mutation fences, and submitted-task reconciliation |`
+    `| \`EstablishedProposalStore\` | Durable 3.0/3.1 proposal snapshots, atomic mutation fences, seven-day completion proofs, pruning, and submitted-task reconciliation |`
+  );
+  ln(
+    `| \`WebhooksConfig.tenantScope\` | Explicit trusted webhook namespace for a genuinely single-tenant server; multi-tenant servers derive scope per request |`
+  );
+  ln();
+  ln(
+    `Production webhook publishers may construct an unbound emitter and call \`forTenantScope(trustedTenant)\` before every delivery. Direct unbound \`emit()\` fails before checkpointing or network access. \`createAdcpServer\` derives scope from trusted request context; configure \`webhooks.tenantScope\` only for a genuinely single-tenant factory.`
   );
   ln();
 
@@ -1338,8 +1345,10 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(
     `type EstablishedProposalTransitionResult = { outcome: 'updated'; records: EstablishedProposalRecord[] } | { outcome: 'missing' | 'conflict' | 'capacity'; records: EstablishedProposalRecord[] };`
   );
+  ln(`const ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS = 604800000;`);
+  ln(`interface EstablishedProposalCompletionWindow { completedAt: string; retainUntil: string; }`);
   ln(
-    `interface EstablishedProposalSubmittedOperation { request: EstablishedProposalReserveRequest; records: EstablishedProposalRecord[]; sellerTaskId: string; settled?: boolean; }`
+    `interface EstablishedProposalSubmittedOperation { request: EstablishedProposalReserveRequest; records: EstablishedProposalRecord[]; sellerTaskId: string; settled?: boolean; completion?: EstablishedProposalCompletionWindow; }`
   );
   ln();
   ln(`interface EstablishedProposalStore {`);
@@ -1354,6 +1363,9 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(
     `  findSubmittedTask(scope: EstablishedProposalTaskScope, sellerTaskId: string): Promise<EstablishedProposalSubmittedOperation | undefined>;`
   );
+  ln(
+    `  /** Any retained tombstone with this operationKey returns conflict, even if claim or binding evidence differs. */`
+  );
   ln(`  reserveMutation(request: EstablishedProposalReserveRequest): Promise<EstablishedProposalReserveResult>;`);
   ln(
     `  completeMutation(request: EstablishedProposalReserveRequest, disposition: 'accepted', terminalResultFingerprint: string): Promise<EstablishedProposalTransitionResult>;`
@@ -1364,6 +1376,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(
     `  completeDecline(request: EstablishedProposalReserveRequest, retainedBindings?: readonly EstablishedProposalMutationBinding[]): Promise<EstablishedProposalTransitionResult>;`
   );
+  ln(`  pruneCompletionTombstones?(limit?: number): Promise<number>;`);
   ln(`  releaseMutation(request: EstablishedProposalReserveRequest): Promise<EstablishedProposalTransitionResult>;`);
   ln(
     `  recordSubmittedTask(request: EstablishedProposalReserveRequest, sellerTaskId: string): Promise<EstablishedProposalTransitionResult>;`
@@ -1374,6 +1387,44 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`}`);
   ln();
   ln(`// After restart: lifecycle.reconcileEstablishedProposalTask({ account, sellerTaskId })`);
+  ln('```');
+  ln();
+
+  ln(`## Production Webhook Tenant Binding`);
+  ln();
+  ln(
+    `An unbound production \`WebhookEmitter\` is safe to construct with a stable \`publisherScope\`, durable delivery store, and durable recovery outbox. It refuses direct emission until trusted tenant scope is bound:`
+  );
+  ln();
+  ln('```typescript');
+  ln(`interface WebhookEmitter {`);
+  ln(`  emit(params: WebhookEmitParams): Promise<WebhookEmitResult>;`);
+  ln(`  forTenantScope(tenantScope: string): WebhookEmitter;`);
+  ln(`}`);
+  ln();
+  ln(`// Relevant WebhooksConfig fields (other signing and delivery fields omitted):`);
+  ln(`interface WebhooksConfig {`);
+  ln(`  publisherScope?: string; // defaults to the trusted server name`);
+  ln(`  tenantScope?: string;    // explicit trusted single-tenant fallback only`);
+  ln(`}`);
+  ln();
+  ln(
+    `const publisher = createWebhookEmitter({ publisherScope: 'publisher', deliveryStore, deliveryRecovery, signerKey });`
+  );
+  ln(`await publisher.forTenantScope(authenticatedTenant).emit(params);`);
+  ln();
+  ln(`createAdcpServer({`);
+  ln(`  name: 'publisher',`);
+  ln(`  version: '1.0.0',`);
+  ln(`  // Multi-tenant: omit tenantScope; trusted request context is required.`);
+  ln(`  webhooks: { signerKey, deliveryStore, deliveryRecovery },`);
+  ln(`});`);
+  ln(`createAdcpServer({`);
+  ln(`  name: 'publisher',`);
+  ln(`  version: '1.0.0',`);
+  ln(`  // Genuinely single-tenant: configure the trusted fallback explicitly.`);
+  ln(`  webhooks: { signerKey, deliveryStore, deliveryRecovery, tenantScope: 'tenant-a' },`);
+  ln(`});`);
   ln('```');
   ln();
 

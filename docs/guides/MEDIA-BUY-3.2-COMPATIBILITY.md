@@ -204,11 +204,16 @@ identical row remains terminal so an ambiguity replay cannot resurrect the
 source. Implementations must retain a bounded completion tombstone keyed by
 `operationKey`, including source, successor, and retained fingerprints. An
 exact repeated completion returns `updated`, while conflicting completion
-evidence fails closed. Tombstones count toward the configured record and byte
-limits. `putSnapshot(snapshot, expectedSnapshotFingerprint)` may replace a
-different generation only when that exact generation is still available in
-the same atomic transaction; concurrent, reserved, and terminal generations
-win. `discardSnapshot()` must likewise compare the expected fingerprint in the
+evidence fails closed. Stamp each tombstone with the backing store's
+authoritative completion time and retain it for at least
+`ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS` (seven days).
+`findSubmittedTask()` exposes that `completedAt` / `retainUntil` window when a
+tombstone services recovery. Tombstones count toward the configured record and
+byte limits until they expire.
+`putSnapshot(snapshot, expectedSnapshotFingerprint)` may replace a different
+generation only when that exact generation is still available in the same
+atomic transaction; concurrent, reserved, and terminal generations win.
+`discardSnapshot()` must likewise compare the expected fingerprint in the
 delete transaction.
 
 The remaining transitions are equally fail-closed: `recordSubmittedTask()` may
@@ -224,13 +229,20 @@ only accept→accepted and compares a hash of the authoritative reduced terminal
 evidence so conflicting successful observations fail closed; and
 `completeDecline()` atomically terminalizes successful
 rows while restoring seller-confirmed unable bindings. Authoritatively settled
-terminal records and completion tombstones are permanent authorization fences:
-a bounded store
-must return capacity rather than evict them and reauthorize a proposal. An
-exact operation already represented by a completion tombstone must not be
-reserved or dispatched again. The tombstone must also service the scoped
-`findSubmittedTask(..., sellerTaskId)` lookup so reconciliation remains
-idempotent after the caller loses a completion response.
+terminal records are permanent authorization fences. Completion tombstones are
+authorization fences through their protocol-owned retention horizon: a bounded
+store must return capacity rather than evict them early and reauthorize a
+proposal. Any `reserveMutation()` reuse of an `operationKey` represented by a
+retained completion tombstone must return `conflict`, even when the new claim
+or binding evidence differs; only an exact repeated completion may return the
+idempotent `updated` outcome. The tombstone must also service the
+scoped `findSubmittedTask(..., sellerTaskId)` lookup so reconciliation remains
+idempotent after the caller loses a completion response. Durable stores should
+implement `pruneCompletionTombstones()` or an equivalent database-owned sweeper
+that uses the database clock. At or after `retainUntil`, pruning may make
+`findSubmittedTask()` return `undefined`; `reserveMutation()` then derives its
+result solely from the remaining source records and may reserve again when all
+sources were restored as available.
 
 After restart, call
 `lifecycle.reconcileEstablishedProposalTask({ account, sellerTaskId })`. The

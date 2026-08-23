@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-08-22
+> Generated at: 2026-08-23
 > Library: @adcp/sdk v14.0.0-beta.7
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -1829,7 +1829,10 @@ See docs/TYPE-SUMMARY.md for field-level detail. Key types at a glance:
 | `Targeting` | Audience criteria (geo, demo, behavioral, contextual, device) |
 | `PricingOption` | Price model (CPM, vCPM, CPC, CPCV, CPV, CPP, CPA, FlatRate, Time) |
 | `GovernanceConfig` | Buyer-side governance middleware config |
-| `EstablishedProposalStore` | Durable 3.0/3.1 proposal snapshots, atomic mutation fences, and submitted-task reconciliation |
+| `EstablishedProposalStore` | Durable 3.0/3.1 proposal snapshots, atomic mutation fences, seven-day completion proofs, pruning, and submitted-task reconciliation |
+| `WebhooksConfig.tenantScope` | Explicit trusted webhook namespace for a genuinely single-tenant server; multi-tenant servers derive scope per request |
+
+Production webhook publishers may construct an unbound emitter and call `forTenantScope(trustedTenant)` before every delivery. Direct unbound `emit()` fails before checkpointing or network access. `createAdcpServer` derives scope from trusted request context; configure `webhooks.tenantScope` only for a genuinely single-tenant factory.
 
 ## Task Statuses
 

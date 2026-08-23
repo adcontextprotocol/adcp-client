@@ -1596,6 +1596,8 @@ export type WebhooksConfig = Pick<
 > & {
   /** Stable publisher namespace for shared delivery-store keys. Defaults to the trusted server name. */
   publisherScope?: string;
+  /** Trusted fallback namespace for a genuinely single-tenant server. */
+  tenantScope?: string;
   /** Observability: emitter-wide onAttempt hook. */
   onAttempt?: WebhookEmitterOptions['onAttempt'];
   /** Observability: emitter-wide onAttemptResult hook. */
@@ -2745,7 +2747,7 @@ function taskOwnerScopeForContext(
  * never participate, so one tenant cannot preclaim another tenant's delivery
  * binding in a shared durable store.
  */
-function webhookTenantScopeForContext<TAccount>(ctx: HandlerContext<TAccount>): string {
+function webhookTenantScopeForContext<TAccount>(ctx: HandlerContext<TAccount>): string | undefined {
   if (ctx.callerMutationScope) {
     return JSON.stringify([
       'caller',
@@ -2777,7 +2779,7 @@ function webhookTenantScopeForContext<TAccount>(ctx: HandlerContext<TAccount>): 
     return JSON.stringify(['account', tenantId ?? null, accountId ?? null, principal ?? null]);
   }
   if (principal !== undefined) return JSON.stringify(['principal', principal]);
-  return 'single-tenant';
+  return undefined;
 }
 
 function compareProtocolTaskItems(
@@ -4909,10 +4911,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     ? createWebhookEmitter({
         ...webhooks,
         publisherScope: webhooks.publisherScope ?? name,
-        // Rebound to a trusted request-derived scope before handler dispatch.
-        tenantScope: 'single-tenant',
+        // Intentionally unbound until handler dispatch derives trusted scope.
+        tenantScope: undefined,
       })
     : undefined;
+  const configuredWebhookTenantScope = webhooks?.tenantScope;
+  const configuredWebhookEmitter =
+    webhookEmitter && configuredWebhookTenantScope !== undefined
+      ? webhookEmitter.forTenantScope(configuredWebhookTenantScope)
+      : webhookEmitter;
 
   // Resolve `instructions` — sync function form is evaluated at construction.
   // Under `serve({ reuseAgent: false })` (the default) the factory runs
@@ -6379,7 +6386,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         let mutationHandlerCompleted = false;
         try {
           if (webhookEmitter) {
-            const scopedEmitter = webhookEmitter.forTenantScope(webhookTenantScopeForContext(ctx));
+            const tenantScope = webhookTenantScopeForContext(ctx);
+            const scopedEmitter =
+              tenantScope === undefined ? configuredWebhookEmitter! : webhookEmitter.forTenantScope(tenantScope);
             ctx.emitWebhook = scopedEmitter.emit.bind(scopedEmitter);
           }
           const result = await handler(params, ctx);

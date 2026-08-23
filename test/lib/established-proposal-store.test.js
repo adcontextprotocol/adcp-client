@@ -1,7 +1,10 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createInMemoryEstablishedProposalStore } = require('../../dist/lib/index.js');
+const {
+  createInMemoryEstablishedProposalStore,
+  ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS,
+} = require('../../dist/lib/index.js');
 
 const scope = {
   principalScope: 'buyer-tenant-1',
@@ -401,6 +404,129 @@ describe('InMemoryEstablishedProposalStore', () => {
         idempotencyKey: `${operation}-unable-key-0002`,
       });
       assert.equal((await store.reserveMutation(next)).outcome, 'reserved');
+    }
+  });
+
+  test('retains completion proofs through the minimum horizon and prunes them at the boundary', async () => {
+    for (const operation of ['refine', 'decline']) {
+      let now = Date.parse('2026-08-22T00:00:00.000Z');
+      const store = createInMemoryEstablishedProposalStore({ clock: () => new Date(now) });
+      const entry = snapshot(`retained-completion-${operation}`);
+      await store.putSnapshot(entry);
+      const mutation = request(entry, {
+        operation,
+        operationKey: `retained-completion-${operation}-operation`,
+        requestFingerprint: `retained-completion-${operation}-request`,
+        idempotencyKey: `retained-completion-${operation}-key`,
+      });
+      await store.reserveMutation(mutation);
+      await store.recordSubmittedTask(mutation, `retained-completion-${operation}-task`);
+      const completion =
+        operation === 'refine'
+          ? await store.completeRefinement(mutation, [], mutation.bindings)
+          : await store.completeDecline(mutation, mutation.bindings);
+      assert.equal(completion.outcome, 'updated');
+
+      now += ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS - 1;
+      assert.equal(await store.pruneCompletionTombstones(), 0);
+      assert.equal((await store.reserveMutation(mutation)).outcome, 'conflict');
+      const conflictingReuse = request(entry, {
+        operation,
+        operationKey: mutation.claim.operationKey,
+        requestFingerprint: `retained-completion-${operation}-changed-request`,
+        idempotencyKey: `retained-completion-${operation}-changed-key`,
+      });
+      assert.equal((await store.reserveMutation(conflictingReuse)).outcome, 'conflict');
+      const recovered = await store.findSubmittedTask(
+        { ...scope, accountScope: entry.accountScope },
+        `retained-completion-${operation}-task`
+      );
+      assert.equal(recovered.settled, true);
+      assert.deepEqual(recovered.completion, {
+        completedAt: '2026-08-22T00:00:00.000Z',
+        retainUntil: new Date(
+          Date.parse('2026-08-22T00:00:00.000Z') + ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS
+        ).toISOString(),
+      });
+
+      now += 1;
+      assert.equal(await store.pruneCompletionTombstones(), 1);
+      assert.equal(
+        await store.findSubmittedTask(
+          { ...scope, accountScope: entry.accountScope },
+          `retained-completion-${operation}-task`
+        ),
+        undefined
+      );
+      assert.equal((await store.reserveMutation(mutation)).outcome, 'reserved');
+    }
+  });
+
+  test('rejects completion retention below the protocol-owned minimum', () => {
+    assert.throws(
+      () =>
+        createInMemoryEstablishedProposalStore({
+          completionTombstoneRetentionMs: ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS - 1,
+        }),
+      /completionTombstoneRetentionMs must be a safe integer of at least/
+    );
+  });
+
+  test('prunes at most the requested limit and rejects invalid limits', async () => {
+    let now = Date.parse('2026-08-22T00:00:00.000Z');
+    const store = createInMemoryEstablishedProposalStore({ clock: () => new Date(now) });
+    for (const suffix of ['a', 'b']) {
+      const entry = snapshot(`limited-prune-${suffix}`);
+      await store.putSnapshot(entry);
+      const mutation = request(entry, {
+        operation: 'decline',
+        operationKey: `limited-prune-${suffix}-operation`,
+        requestFingerprint: `limited-prune-${suffix}-request`,
+        idempotencyKey: `limited-prune-${suffix}-key`,
+      });
+      assert.equal((await store.reserveMutation(mutation)).outcome, 'reserved');
+      assert.equal((await store.completeDecline(mutation, mutation.bindings)).outcome, 'updated');
+    }
+
+    now += ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS;
+    assert.equal(await store.pruneCompletionTombstones(1), 1);
+    assert.equal(await store.pruneCompletionTombstones(1), 1);
+    assert.equal(await store.pruneCompletionTombstones(1), 0);
+
+    for (const invalid of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN]) {
+      await assert.rejects(store.pruneCompletionTombstones(invalid), /limit must be a positive safe integer/);
+    }
+  });
+
+  test('pruning task recovery never reauthorizes consumed refinement or decline sources', async () => {
+    for (const operation of ['refine', 'decline']) {
+      let now = Date.parse('2026-08-22T00:00:00.000Z');
+      const store = createInMemoryEstablishedProposalStore({ clock: () => new Date(now) });
+      const entry = snapshot(`consumed-completion-${operation}`);
+      await store.putSnapshot(entry);
+      const mutation = request(entry, {
+        operation,
+        operationKey: `consumed-completion-${operation}-operation`,
+        requestFingerprint: `consumed-completion-${operation}-request`,
+        idempotencyKey: `consumed-completion-${operation}-key`,
+      });
+      await store.reserveMutation(mutation);
+      await store.recordSubmittedTask(mutation, `consumed-completion-${operation}-task`);
+      const completion =
+        operation === 'refine' ? await store.completeRefinement(mutation, []) : await store.completeDecline(mutation);
+      assert.equal(completion.outcome, 'updated');
+
+      now += ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS;
+      assert.equal(await store.pruneCompletionTombstones(), 1);
+      assert.equal(
+        await store.findSubmittedTask(
+          { ...scope, accountScope: entry.accountScope },
+          `consumed-completion-${operation}-task`
+        ),
+        undefined
+      );
+      assert.equal((await store.reserveMutation(mutation)).outcome, 'terminal');
+      assert.equal((await store.get(entry)).operation.disposition, operation === 'refine' ? 'refined' : 'declined');
     }
   });
 
