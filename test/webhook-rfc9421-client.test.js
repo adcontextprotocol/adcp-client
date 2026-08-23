@@ -1201,15 +1201,51 @@ describe('webhook registration provenance', () => {
   test('prepares MCP and A2A placement exactly and never treats reporting_webhook as task registration', async () => {
     const reporting = { url: 'https://buyer.example/reporting' };
     const callbackUrl = 'https://buyer.example/webhook/op-placement';
-    const mcp = prepareProtocolToolCall(agent, { reporting_webhook: reporting }, { webhookUrl: callbackUrl });
+    const operationId = 'op-placement';
+    const mcp = prepareProtocolToolCall(
+      agent,
+      { reporting_webhook: reporting },
+      { webhookUrl: callbackUrl, operationId }
+    );
     assert.strictEqual(mcp.args.reporting_webhook, reporting);
-    assert.deepStrictEqual(mcp.args.push_notification_config, { url: callbackUrl });
+    assert.deepStrictEqual(mcp.args.push_notification_config, { url: callbackUrl, operation_id: operationId });
 
     const a2aAgent = { ...agent, protocol: 'a2a' };
-    const a2a = prepareProtocolToolCall(a2aAgent, { reporting_webhook: reporting }, { webhookUrl: callbackUrl });
+    const a2a = prepareProtocolToolCall(
+      a2aAgent,
+      { reporting_webhook: reporting },
+      { webhookUrl: callbackUrl, operationId }
+    );
     assert.strictEqual(a2a.args.reporting_webhook, reporting);
-    assert.strictEqual(a2a.args.push_notification_config, undefined);
+    assert.deepStrictEqual(a2a.args.push_notification_config, { url: callbackUrl, operation_id: operationId });
     assert.deepStrictEqual(a2a.pushNotificationConfig, { url: callbackUrl });
+
+    const inProcess = prepareProtocolToolCall(
+      { ...agent, _inProcessMcpClient: {} },
+      {},
+      { webhookUrl: callbackUrl, operationId }
+    );
+    assert.deepStrictEqual(inProcess.args.push_notification_config, { url: callbackUrl, operation_id: operationId });
+
+    const legacyA2a = prepareProtocolToolCall(a2aAgent, {}, { webhookUrl: callbackUrl, adcpVersion: '3.1.18' });
+    assert.strictEqual(legacyA2a.args.push_notification_config, undefined);
+    assert.deepStrictEqual(legacyA2a.pushNotificationConfig, { url: callbackUrl });
+
+    const callerDowngrade = prepareProtocolToolCall(
+      a2aAgent,
+      { adcp_version: '3.1', adcp_major_version: 3 },
+      { webhookUrl: callbackUrl, operationId }
+    );
+    assert.strictEqual(callerDowngrade.args.push_notification_config, undefined);
+    const callerUpgrade = prepareProtocolToolCall(
+      a2aAgent,
+      { adcp_version: '3.2-beta.5', adcp_major_version: 3 },
+      { webhookUrl: callbackUrl, operationId, adcpVersion: '3.1.18' }
+    );
+    assert.deepStrictEqual(callerUpgrade.args.push_notification_config, {
+      url: callbackUrl,
+      operation_id: operationId,
+    });
 
     const args = { reporting_webhook: reporting };
     const prepared = { args: { ...args, exact_marker: true } };

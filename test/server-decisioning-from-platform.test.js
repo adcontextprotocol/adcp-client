@@ -3650,7 +3650,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     const productsPush = await dispatchGetProducts(productsServer, {
       buying_mode: 'wholesale',
       brief: undefined,
-      push_notification_config: { url: 'https://buyer.example.com/webhook' },
+      push_notification_config: { url: 'https://buyer.example.com/webhook', operation_id: 'op_products_wholesale' },
     });
     assert.strictEqual(productsPush.isError, true);
     assert.strictEqual(productsPush.structuredContent.adcp_error.code, 'INVALID_REQUEST');
@@ -3692,7 +3692,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     const signalsPush = await dispatchGetSignals(signalsServer, {
       discovery_mode: 'wholesale',
       brief: undefined,
-      push_notification_config: { url: 'https://buyer.example.com/webhook' },
+      push_notification_config: { url: 'https://buyer.example.com/webhook', operation_id: 'op_signals_wholesale' },
     });
     assert.strictEqual(signalsPush.isError, true);
     assert.strictEqual(signalsPush.structuredContent.adcp_error.code, 'INVALID_REQUEST');
@@ -5888,7 +5888,7 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
           start_time: '2026-05-01T00:00:00Z',
           end_time: '2026-06-01T00:00:00Z',
           account: { account_id: 'acc_1' },
-          push_notification_config: { url: 'https://buyer.example.com/webhook' },
+          push_notification_config: { url: 'https://buyer.example.com/webhook', operation_id: 'op_registry_failure' },
         },
       },
     });
@@ -5964,7 +5964,7 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
           start_time: '2026-05-01T00:00:00Z',
           end_time: '2026-06-01T00:00:00Z',
           account: { account_id: 'acc_1' },
-          push_notification_config: { url: 'https://buyer.example.com/webhook' },
+          push_notification_config: { url: 'https://buyer.example.com/webhook', operation_id: 'op_observability' },
         },
       },
     });
@@ -6152,7 +6152,7 @@ describe('HITL push notification webhook on terminal state', () => {
     assertMcpWebhookPayloadValid(emit.payload);
   });
 
-  it('treats webhook URL as opaque when push config omits operation_id', async () => {
+  it('rejects beta.5 webhook registration when operation_id is omitted', async () => {
     const emits = [];
     const fakeEmitter = {
       emit: async params => {
@@ -6180,6 +6180,8 @@ describe('HITL push notification webhook on terminal state', () => {
           start_time: '2026-05-01T00:00:00Z',
           end_time: '2026-06-01T00:00:00Z',
           account: { account_id: 'acc_1' },
+          adcp_major_version: 3,
+          adcp_version: '3.2-beta.5',
           push_notification_config: {
             url: 'https://buyer.example.com/step/create_media_buy/op_url_must_not_be_parsed',
             token: 'webhook-token-1234',
@@ -6188,15 +6190,10 @@ describe('HITL push notification webhook on terminal state', () => {
       },
     });
 
-    assert.strictEqual(result.structuredContent.status, 'submitted');
-    await server.awaitTask(result.structuredContent.task_id);
-
-    assert.strictEqual(emits.length, 1, 'one webhook emitted on terminal completion');
-    assert.ok(emits[0].payload.operation_id.startsWith('create_media_buy.'));
-    assert.match(emits[0].delivery_id, /^task-webhook:acc_1:create_media_buy:task_/);
-    assert.notStrictEqual(emits[0].payload.operation_id, 'op_url_must_not_be_parsed');
-    assert.notStrictEqual(emits[0].delivery_id, 'op_url_must_not_be_parsed');
-    assertMcpWebhookPayloadValid(emits[0].payload);
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(result.structuredContent.adcp_error.field, 'push_notification_config.operation_id');
+    assert.strictEqual(emits.length, 0);
   });
 
   it('emits webhook on failed task with structured error', async () => {
@@ -6229,7 +6226,7 @@ describe('HITL push notification webhook on terminal state', () => {
           start_time: '2026-05-01T00:00:00Z',
           end_time: '2026-06-01T00:00:00Z',
           account: { account_id: 'acc_1' },
-          push_notification_config: { url: 'https://buyer.example.com/webhook' },
+          push_notification_config: { url: 'https://buyer.example.com/webhook', operation_id: 'op_failed_task' },
         },
       },
     });
@@ -6328,7 +6325,11 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
   }
 
   async function dispatchWithUrl(server, url, token) {
-    return dispatchWithPushConfig(server, { url, ...(token != null && { token }) });
+    return dispatchWithPushConfig(server, {
+      url,
+      operation_id: 'op_url_validation',
+      ...(token != null && { token }),
+    });
   }
 
   function makeServer({ warns, emits } = {}) {
@@ -6451,7 +6452,7 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
   });
 
   for (const [label, operationId, reasonFragment] of [
-    ['non-string operation_id', 123, 'must be a string'],
+    ['non-string operation_id', 123, 'must match'],
     ['empty operation_id', '', 'must match'],
     ['operation_id over 255 chars', 'a'.repeat(256), 'must match'],
     ['operation_id with invalid character', 'op/bad', 'must match'],
@@ -6561,7 +6562,10 @@ describe('tasks_get wire tool (B9)', () => {
     const taskId = await createTask(server, 'acc_owner');
     const result = await server.dispatchTestRequest({
       method: 'tools/call',
-      params: { name: 'tasks_get', arguments: { task_id: taskId, account: { account_id: 'acc_owner' } } },
+      params: {
+        name: 'tasks_get',
+        arguments: { task_id: taskId, account: { account_id: 'acc_owner' }, include_result: true },
+      },
     });
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
     const payload = result.structuredContent;
@@ -6598,7 +6602,10 @@ describe('tasks_get wire tool (B9)', () => {
             start_time: '2026-05-01T00:00:00Z',
             end_time: '2026-06-01T00:00:00Z',
             account: { account_id: 'acc_owner' },
-            push_notification_config: { url: 'https://buyer.example/webhooks/tasks' },
+            push_notification_config: {
+              url: 'https://buyer.example/webhooks/tasks',
+              operation_id: 'op_submitted_task_tools',
+            },
           },
         },
       });

@@ -261,6 +261,9 @@ test('A2A: webhook authentication payload is signed even when the operation is o
       schemes: ['HMAC-SHA256'],
       credentials: 'placeholder_secret_min_32_characters_required',
     });
+    const applicationPush = call.body.params.message.parts[0].data.parameters.push_notification_config;
+    assert.strictEqual(applicationPush.authentication.credentials, 'placeholder_secret_min_32_characters_required');
+    assert.match(applicationPush.operation_id, /^[A-Za-z0-9_.:-]{1,255}$/);
   } finally {
     await cleanup(stub);
   }

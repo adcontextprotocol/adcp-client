@@ -62,7 +62,7 @@ async function callCreateMediaBuyWithUrl(server, url) {
         promoted_offering: 'x',
         packages: [],
         idempotency_key: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-        push_notification_config: { url },
+        push_notification_config: { url, operation_id: 'op_private_webhook_test' },
       },
     },
   });

@@ -72,6 +72,11 @@ const ARGS_BASE = {
   idempotency_key: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
 };
 
+const PUSH_CONFIG = {
+  url: 'https://buyer.example.com/webhook',
+  operation_id: 'op_sync_completion_silence',
+};
+
 // Webhook auto-emit is fire-and-forget (security review F12 must-fix —
 // awaiting inline lets a slowloris buyer URL hold the seller's request
 // worker for the full retry budget). Tests asserting on `calls` after
@@ -94,7 +99,7 @@ describe('sync completion webhook silence', () => {
         name: 'create_media_buy',
         arguments: {
           ...ARGS_BASE,
-          push_notification_config: { url: 'https://buyer.example.com/webhook' },
+          push_notification_config: PUSH_CONFIG,
         },
       },
     });
@@ -120,7 +125,7 @@ describe('sync completion webhook silence', () => {
           account: { account_id: 'acc_1' },
           creatives: [{ creative_id: 'cr_1', name: 'Creative 1', format_kind: 'image', assets: {} }],
           idempotency_key: 'dddddddd-dddd-dddd-dddd-dddddddddddd',
-          push_notification_config: { url: 'https://buyer.example.com/webhook' },
+          push_notification_config: PUSH_CONFIG,
         },
       },
     });
@@ -141,7 +146,7 @@ describe('sync completion webhook silence', () => {
           account: { account_id: 'acc_1' },
           discovery_mode: 'brief',
           brief: 'sports fans',
-          push_notification_config: { url: 'https://buyer.example.com/webhook' },
+          push_notification_config: PUSH_CONFIG,
         },
       },
     });
@@ -158,7 +163,7 @@ describe('sync completion webhook silence', () => {
         name: 'create_media_buy',
         arguments: {
           ...ARGS_BASE,
-          push_notification_config: { url: 'https://buyer.example.com/webhook' },
+          push_notification_config: PUSH_CONFIG,
         },
       },
     });
@@ -185,7 +190,7 @@ describe('sync completion webhook silence', () => {
         name: 'create_media_buy',
         arguments: {
           ...ARGS_BASE,
-          push_notification_config: { url: 'https://buyer.example.com/webhook' },
+          push_notification_config: PUSH_CONFIG,
         },
       },
     });
@@ -201,7 +206,7 @@ describe('sync completion webhook silence', () => {
         name: 'create_media_buy',
         arguments: {
           ...ARGS_BASE,
-          push_notification_config: { url: 'https://buyer.example.com/webhook', token: 'shhh' },
+          push_notification_config: { ...PUSH_CONFIG, token: 'shhh' },
         },
       },
     });
@@ -228,7 +233,7 @@ describe('sync completion webhook silence', () => {
         name: 'create_media_buy',
         arguments: {
           ...ARGS_BASE,
-          push_notification_config: { url: 'https://buyer.example.com/webhook' },
+          push_notification_config: PUSH_CONFIG,
         },
       },
     });
@@ -247,7 +252,7 @@ describe('sync completion webhook silence', () => {
           account: { account_id: 'acc_1' },
           creatives: [{ creative_id: 'cr_1', name: 'Creative 1', format_kind: 'image', assets: {} }],
           idempotency_key: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
-          push_notification_config: { url: 'https://buyer.example.com/webhook' },
+          push_notification_config: PUSH_CONFIG,
         },
       },
     });
@@ -265,7 +270,7 @@ describe('sync completion webhook silence', () => {
           account: { account_id: 'acc_1' },
           media_buy_id: 'mb_42',
           idempotency_key: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
-          push_notification_config: { url: 'https://buyer.example.com/webhook' },
+          push_notification_config: PUSH_CONFIG,
         },
       },
     });
@@ -297,7 +302,7 @@ describe('sync completion webhook silence', () => {
         name: 'create_media_buy',
         arguments: {
           ...ARGS_BASE,
-          push_notification_config: { url: 'https://buyer.example.com/webhook' },
+          push_notification_config: PUSH_CONFIG,
         },
       },
     });

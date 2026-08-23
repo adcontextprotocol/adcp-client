@@ -960,6 +960,7 @@ type NormalizedWebhookPayload = {
   message?: string;
   timestamp?: string;
   idempotency_key?: string;
+  notification_id?: string;
   protocol?: 'mcp' | 'a2a';
 };
 
@@ -1084,6 +1085,7 @@ export interface WebhookParseSuccess {
     operationId: string;
     contextId?: string;
     idempotencyKey?: string;
+    notificationId?: string;
     status: TaskStatus;
     timestamp?: string;
     message?: string;
@@ -3368,6 +3370,7 @@ export class SingleAgentClient {
         message: normalizedPayload.message,
         timestamp: normalizedPayload.timestamp || new Date().toISOString(),
         idempotency_key: normalizedPayload.idempotency_key,
+        notification_id: normalizedPayload.notification_id,
         protocol: normalizedPayload.protocol ?? 'mcp',
       };
       const canonicalCreativeTask =
@@ -3412,6 +3415,7 @@ export class SingleAgentClient {
           previewHandler,
           timestamp: normalizedPayload.timestamp,
           idempotencyKey: normalizedPayload.idempotency_key,
+          notificationId: normalizedPayload.notification_id,
           requiresDurableSettlement: registration?.requiresDurableSettlement,
         },
       };
@@ -3479,6 +3483,7 @@ export class SingleAgentClient {
       message: parsed.metadata.message,
       timestamp: parsed.metadata.timestamp || new Date().toISOString(),
       idempotency_key: parsed.metadata.idempotencyKey,
+      notification_id: parsed.metadata.notificationId,
       protocol: parsed.protocol,
       rawHTTPPayload: canonicalCreativeTask ? stripLegacyCreativeIdentity(parsed.envelope) : parsed.envelope,
     };
@@ -3920,6 +3925,7 @@ export class SingleAgentClient {
         message: textParts.length > 0 ? textParts.join(' ') : undefined,
         timestamp: a2aPayload.status?.timestamp || new Date().toISOString(),
         ...(typeof adcpData.idempotency_key === 'string' && { idempotency_key: adcpData.idempotency_key }),
+        ...(typeof adcpData.notification_id === 'string' && { notification_id: adcpData.notification_id }),
         protocol: 'a2a',
       };
     }
@@ -3956,6 +3962,7 @@ export class SingleAgentClient {
         message: mcpPayload.message ?? undefined,
         timestamp: mcpPayload.timestamp,
         idempotency_key: mcpPayload.idempotency_key,
+        notification_id: mcpPayload.notification_id ?? undefined,
         protocol: 'mcp',
       };
     }

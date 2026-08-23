@@ -305,16 +305,16 @@ type GovernedCredentialScanResult =
   | { kind: 'limit'; limit: 'nodes' | 'depth' };
 
 function webhookRegistrationFromPreparedCall(
-  agent: AgentConfig,
+  _agent: AgentConfig,
   preparedCall: PreparedProtocolToolCall
 ): { callbackUrl: string; mode: 'rfc9421' | 'hmac-sha256' } | undefined {
   const candidate =
-    agent.protocol === 'a2a'
-      ? preparedCall.pushNotificationConfig
-      : preparedCall.args.push_notification_config &&
-          typeof preparedCall.args.push_notification_config === 'object' &&
-          !Array.isArray(preparedCall.args.push_notification_config)
-        ? (preparedCall.args.push_notification_config as Record<string, unknown>)
+    preparedCall.args.push_notification_config &&
+    typeof preparedCall.args.push_notification_config === 'object' &&
+    !Array.isArray(preparedCall.args.push_notification_config)
+      ? (preparedCall.args.push_notification_config as Record<string, unknown>)
+      : _agent.protocol === 'a2a'
+        ? preparedCall.pushNotificationConfig
         : undefined;
   if (!candidate) return undefined;
   if (typeof candidate.url !== 'string') {
@@ -1335,6 +1335,7 @@ export class TaskExecutor {
               toolName: taskName,
               webhookUrl,
               webhookSecret: this.config.webhookSecret,
+              operationId: taskId,
               serverVersion: effectiveServerVersion,
               adcpVersion: this.config.adcpVersion,
               wireAdcpVersion: this.config.wireAdcpVersion,
@@ -1343,10 +1344,7 @@ export class TaskExecutor {
           : params;
         if (await governanceMiddleware.shouldCheck(taskName, governableParams, targetCapabilities)) {
           const sdkInjectedPushConfig =
-            modernGovernance &&
-            agent.protocol === 'mcp' &&
-            webhookUrl !== undefined &&
-            this.config.webhookSecret !== undefined;
+            modernGovernance && webhookUrl !== undefined && this.config.webhookSecret !== undefined;
           assertGovernedPayloadHasNoCallbackCredentials(taskName, governableParams, { sdkInjectedPushConfig });
           const { result: govResult, params: adjustedParams } = await governanceMiddleware.checkProposed(
             agent,
@@ -1412,6 +1410,7 @@ export class TaskExecutor {
         toolName: taskName,
         webhookUrl,
         webhookSecret: this.config.webhookSecret,
+        operationId: taskId,
         serverVersion: effectiveServerVersion,
         adcpVersion: this.config.adcpVersion,
         wireAdcpVersion: this.config.wireAdcpVersion,
@@ -1513,6 +1512,7 @@ export class TaskExecutor {
         debugLogs,
         webhookUrl,
         webhookSecret: this.config.webhookSecret,
+        operationId: taskId,
         serverVersion: effectiveServerVersion,
         session: { contextId: options.contextId, taskId: options.taskId },
         adcpVersion: this.config.adcpVersion,

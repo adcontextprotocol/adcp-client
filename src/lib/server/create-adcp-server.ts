@@ -4260,6 +4260,33 @@ function compareAdcpRelease(left: ParsedAdcpRelease, right: ParsedAdcpRelease): 
   return 0;
 }
 
+const PUSH_OPERATION_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,255}$/;
+
+function releaseRequiresPushOperationId(release: string): boolean {
+  const bundle = resolveBundleKey(release);
+  return bundle === '3.2.0-beta.5' || bundle === '3.2-beta.5';
+}
+
+function pushOperationIdError(
+  params: Record<string, unknown>,
+  release: ServedAdcpRelease
+): McpToolResponse | undefined {
+  if (!releaseRequiresPushOperationId(release.validationVersion)) return undefined;
+  const config = params.push_notification_config;
+  if (config === undefined) return undefined;
+  if (
+    !isPlainObject(config) ||
+    typeof config.operation_id !== 'string' ||
+    !PUSH_OPERATION_ID_PATTERN.test(config.operation_id)
+  ) {
+    return adcpError('INVALID_REQUEST', {
+      message: `push_notification_config.operation_id must match ${PUSH_OPERATION_ID_PATTERN.source}`,
+      field: 'push_notification_config.operation_id',
+    });
+  }
+  return undefined;
+}
+
 let bundledCompatibleReleases: ParsedAdcpRelease[] | undefined;
 
 function bundledReleasesForMajors(majors: readonly number[], configured: ParsedAdcpRelease): ParsedAdcpRelease[] {
@@ -5536,6 +5563,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             })
           );
         }
+        const operationIdError = pushOperationIdError(params, requestRelease);
+        if (operationIdError) return finalize(operationIdError);
 
         // --- Buyer-agent registry resolution (#1269 / #1292) ---
         // Runs after `authInfo` is populated and before account resolution
@@ -7482,7 +7511,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             })
           );
         }
-        if (params?.include_result === true && response.status === 'completed') {
+        if (
+          params?.include_result === true &&
+          (response.status === 'completed' || response.status === 'failed' || response.status === 'rejected') &&
+          task.result !== undefined
+        ) {
           response.result = task.result as GetTaskStatusResponse['result'];
         }
         if (isPlainObject(params?.context)) response.context = params.context;
