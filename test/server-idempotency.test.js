@@ -484,6 +484,7 @@ describe('createAdcpServer with idempotency', () => {
       governance_context: 'governance-token-v1',
       push_notification_config: {
         url: 'https://buyer.example/callback',
+        operation_id: 'op_finalize_proposal_2',
         token: 'receipt-token',
         authentication: { schemes: ['HMAC-SHA256'], credentials: 'secret-v1' },
       },

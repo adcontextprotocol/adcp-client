@@ -111,6 +111,7 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
       idempotency_key: 'e2e_create_key_0123456',
       push_notification_config: {
         url: `${receiver.base_url}/step/e2e_trigger/e2e_op_01`,
+        operation_id: 'e2e_op_01',
       },
     });
 
@@ -299,7 +300,10 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
       end_time: '2026-05-31T23:59:59Z',
       packages: [{ product_id: 'p1', budget: 5000, pricing_option_id: 'po-1' }],
       idempotency_key: 'stability_key_abcdefghij',
-      push_notification_config: { url: `${receiver.base_url}/step/stable/op_stable` },
+      push_notification_config: {
+        url: `${receiver.base_url}/step/stable/op_stable`,
+        operation_id: 'op_stable',
+      },
     });
     assert.strictEqual(emittedKeys[0], emittedKeys[1], 'exact retries must reuse the delivery key');
     assert.notStrictEqual(emittedKeys[1], emittedKeys[2], 'changed observations must use a fresh delivery key');
