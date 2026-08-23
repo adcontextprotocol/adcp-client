@@ -79,7 +79,7 @@ loading; keep using `requires_capability` for a singular predicate.
 6. Re-run TypeScript against generated schema imports. Prefer per-tool type slices if the complete schema barrel exhausts the default Node heap.
 7. Exercise mixed-version tests before rollout: 14→3.0, 14→3.1, 14→3.2 beta, and older buyer→14 server where applicable.
 8. If a legacy brief may return products without a proposal, configure a durable `LegacyPurchaseContinuationStore`, stable `principalScope`, and application-owned `reconcileLegacyPurchase(record, exactInput)` callback before offering `continueLegacyPurchase()`. Keep reverse compact-seller → older-buyer handlers application-owned.
-9. If established 3.0/3.1 proposal discovery and mutation can land on different processes, configure the same durable `EstablishedProposalStore`, stable `principalScope`, and stable non-secret `legacyPurchaseSellerSessionScope` on every coordinator. Recover submitted work with `reconcileEstablishedProposalTask({ account, sellerTaskId })`; see [Media-buy compatibility: durable established proposal state](./guides/MEDIA-BUY-3.2-COMPATIBILITY.md#durable-established-proposal-state). The bundled in-memory store is a non-durable reference implementation.
+9. If established 3.0/3.1 proposal discovery and mutation can land on different processes, configure the same durable `EstablishedProposalStore`, stable `principalScope`, and stable non-secret `legacyPurchaseSellerSessionScope` on every coordinator. Add store-clock `completedAt` and `retainUntil` fields to refinement/decline completion tombstones, index `retainUntil`, and retain each proof for at least `ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS`. Conservatively backfill pre-upgrade tombstones to a future seven-day horizon, then run a database-clock sweeper that atomically prunes only expired rows. Recover submitted work with `reconcileEstablishedProposalTask({ account, sellerTaskId })`; see [Media-buy compatibility: durable established proposal state](./guides/MEDIA-BUY-3.2-COMPATIBILITY.md#durable-established-proposal-state). The bundled in-memory store is a non-durable reference implementation.
 10. Upgrade durable idempotency storage before application traffic: add the nullable PostgreSQL `retain_until` column/index, preserve `IdempotencyCacheEntry.retainUntil`, and add atomic `putIfAbsent()`, `replaceIfPayloadHash()`, `replaceIfPayloadHashAndExpired()`, and `deleteIfPayloadHash()` to every custom backend.
 11. Upgrade custom deferred-task storage with `putForSettlementOperationIfAbsent()`, `getBySettlementOperationId()`, and `replaceForSettlementOperationIfVersion()`. The initial token/index write and nested A→B index move must each be atomic.
 12. Replace webhook emitter `operation_id` arguments with SDK-local `delivery_id` values and upgrade custom stores to `WebhookDeliveryStore`. One delivery ID binds one canonical payload and key; use a fresh delivery ID for each changed status observation while retaining the AdCP `operation_id` inside the payload.
@@ -142,11 +142,17 @@ horizon. Do not mint a new delivery ID merely to extend a failed delivery; a
 fresh ID is only for a protocol-defined re-emission or genuinely distinct
 observation.
 
-Production direct `createWebhookEmitter()` callers must provide stable
-`publisherScope` and `tenantScope` values. `createAdcpServer()` uses its trusted
-server name for the publisher scope and derives the tenant scope only from
-resolved account/session/authentication context; it never trusts request or
-payload fields for this namespace.
+Production direct `createWebhookEmitter()` callers must provide a stable
+`publisherScope`. A production publisher may omit `tenantScope`; the resulting
+unbound emitter refuses direct `emit()` calls, so bind every authenticated
+request or durable job with `forTenantScope(trustedTenant)` first. Callers that
+provide `tenantScope` at construction retain the existing directly usable
+behavior. `createAdcpServer()` uses its trusted server name for the publisher
+scope and derives tenant scope only from resolved account/session/authentication
+context. A genuinely single-tenant server may configure
+`webhooks.tenantScope`; otherwise production emission without trusted scope
+fails before durable checkpointing or delivery. Request and payload fields
+never select this namespace.
 
 ### Legacy continuation store upgrade
 

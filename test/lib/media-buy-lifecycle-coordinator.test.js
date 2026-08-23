@@ -12,6 +12,7 @@ const {
   MemoryStorage,
   MediaBuyLifecycleCompatibilityError,
   createInMemoryEstablishedProposalStore,
+  ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS,
   ProtocolClient,
   createInMemoryLegacyPurchaseContinuationStore,
   legacyPurchaseSettlementFingerprint,
@@ -4795,7 +4796,8 @@ describe('durable established proposal compatibility', () => {
 
   test('fresh coordinators reconcile submitted refine and unable-decline results', async () => {
     for (const operation of ['refine', 'decline']) {
-      const store = createInMemoryEstablishedProposalStore();
+      let storeNow = Date.parse('2026-08-23T00:00:00.000Z');
+      const store = createInMemoryEstablishedProposalStore({ clock: () => new Date(storeNow) });
       const terms = {
         brand: { domain: 'example.com' },
         start_time: '2027-01-01T00:00:00Z',
@@ -4884,6 +4886,34 @@ describe('durable established proposal compatibility', () => {
         ).status,
         'completed'
       );
+
+      const settledAgent = clientWithCaps(capabilities({ version: '3.1' }));
+      settledAgent.getTaskStatus = async () => assert.fail('retained completion proof must avoid seller polling');
+      const settled = await settledAgent.negotiateMediaBuyLifecycle(options);
+      assert.equal(
+        (
+          await settled.reconcileEstablishedProposalTask({
+            account: { account_id: 'account-1' },
+            sellerTaskId: `seller-${operation}-task`,
+          })
+        ).status,
+        'completed'
+      );
+      settled.dispose();
+
+      storeNow += ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS;
+      assert.equal(await store.pruneCompletionTombstones(), 1);
+      const prunedAgent = clientWithCaps(capabilities({ version: '3.1' }));
+      prunedAgent.getTaskStatus = async () => assert.fail('pruned recovery must fail before seller polling');
+      const pruned = await prunedAgent.negotiateMediaBuyLifecycle(options);
+      await assert.rejects(
+        pruned.reconcileEstablishedProposalTask({
+          account: { account_id: 'account-1' },
+          sellerTaskId: `seller-${operation}-task`,
+        }),
+        /No submitted established proposal mutation exists/
+      );
+      pruned.dispose();
 
       const acceptAgent = clientWithCaps(capabilities({ version: '3.1' }));
       acceptAgent.createMediaBuy = async () => durableCreateSuccess(`mb-${operation}`);

@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-08-22
+> Generated at: 2026-08-23
 > @adcp/sdk v14.0.0-beta.7
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -98,7 +98,9 @@ interface EstablishedProposalReserveRequest { bindings: readonly EstablishedProp
 type EstablishedProposalPutResult = { outcome: 'stored' | 'unchanged' | 'fenced'; record: EstablishedProposalRecord } | { outcome: 'missing' | 'capacity' };
 type EstablishedProposalReserveResult = { outcome: 'reserved'; records: EstablishedProposalRecord[]; retry: boolean } | { outcome: 'missing' | 'expired' | 'in_flight' | 'ambiguous' | 'terminal' | 'conflict' | 'capacity'; records: EstablishedProposalRecord[] };
 type EstablishedProposalTransitionResult = { outcome: 'updated'; records: EstablishedProposalRecord[] } | { outcome: 'missing' | 'conflict' | 'capacity'; records: EstablishedProposalRecord[] };
-interface EstablishedProposalSubmittedOperation { request: EstablishedProposalReserveRequest; records: EstablishedProposalRecord[]; sellerTaskId: string; settled?: boolean; }
+const ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS = 604800000;
+interface EstablishedProposalCompletionWindow { completedAt: string; retainUntil: string; }
+interface EstablishedProposalSubmittedOperation { request: EstablishedProposalReserveRequest; records: EstablishedProposalRecord[]; sellerTaskId: string; settled?: boolean; completion?: EstablishedProposalCompletionWindow; }
 
 interface EstablishedProposalStore {
   putSnapshot(snapshot: ProposalSnapshotEntry, expectedSnapshotFingerprint?: string): Promise<EstablishedProposalPutResult>;
@@ -106,16 +108,51 @@ interface EstablishedProposalStore {
   get(binding: EstablishedProposalBinding): Promise<EstablishedProposalRecord | undefined>;
   find(scope: EstablishedProposalScope, proposalIds: readonly string[]): Promise<EstablishedProposalRecord[]>;
   findSubmittedTask(scope: EstablishedProposalTaskScope, sellerTaskId: string): Promise<EstablishedProposalSubmittedOperation | undefined>;
+  /** Any retained tombstone with this operationKey returns conflict, even if claim or binding evidence differs. */
   reserveMutation(request: EstablishedProposalReserveRequest): Promise<EstablishedProposalReserveResult>;
   completeMutation(request: EstablishedProposalReserveRequest, disposition: 'accepted', terminalResultFingerprint: string): Promise<EstablishedProposalTransitionResult>;
   completeRefinement(request: EstablishedProposalReserveRequest, replacements: readonly ProposalSnapshotEntry[], retainedBindings?: readonly EstablishedProposalMutationBinding[]): Promise<EstablishedProposalTransitionResult>;
   completeDecline(request: EstablishedProposalReserveRequest, retainedBindings?: readonly EstablishedProposalMutationBinding[]): Promise<EstablishedProposalTransitionResult>;
+  pruneCompletionTombstones?(limit?: number): Promise<number>;
   releaseMutation(request: EstablishedProposalReserveRequest): Promise<EstablishedProposalTransitionResult>;
   recordSubmittedTask(request: EstablishedProposalReserveRequest, sellerTaskId: string): Promise<EstablishedProposalTransitionResult>;
   markAmbiguous(request: EstablishedProposalReserveRequest, ambiguity: 'paused' | 'commit-uncertain'): Promise<EstablishedProposalTransitionResult>;
 }
 
 // After restart: lifecycle.reconcileEstablishedProposalTask({ account, sellerTaskId })
+```
+
+## Production Webhook Tenant Binding
+
+An unbound production `WebhookEmitter` is safe to construct with a stable `publisherScope`, durable delivery store, and durable recovery outbox. It refuses direct emission until trusted tenant scope is bound:
+
+```typescript
+interface WebhookEmitter {
+  emit(params: WebhookEmitParams): Promise<WebhookEmitResult>;
+  forTenantScope(tenantScope: string): WebhookEmitter;
+}
+
+// Relevant WebhooksConfig fields (other signing and delivery fields omitted):
+interface WebhooksConfig {
+  publisherScope?: string; // defaults to the trusted server name
+  tenantScope?: string;    // explicit trusted single-tenant fallback only
+}
+
+const publisher = createWebhookEmitter({ publisherScope: 'publisher', deliveryStore, deliveryRecovery, signerKey });
+await publisher.forTenantScope(authenticatedTenant).emit(params);
+
+createAdcpServer({
+  name: 'publisher',
+  version: '1.0.0',
+  // Multi-tenant: omit tenantScope; trusted request context is required.
+  webhooks: { signerKey, deliveryStore, deliveryRecovery },
+});
+createAdcpServer({
+  name: 'publisher',
+  version: '1.0.0',
+  // Genuinely single-tenant: configure the trusted fallback explicitly.
+  webhooks: { signerKey, deliveryStore, deliveryRecovery, tenantScope: 'tenant-a' },
+});
 ```
 
 ## Trusted Match 3.1.10 Types

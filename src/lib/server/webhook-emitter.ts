@@ -261,9 +261,10 @@ export interface WebhookEmitterOptions {
    */
   publisherScope?: string;
   /**
-   * Stable tenant namespace for direct emitter callers. Production direct
-   * callers MUST set it. `createAdcpServer` derives it from resolved trusted
-   * request context and never from webhook payload fields.
+   * Stable tenant namespace for direct emitter callers. A production emitter
+   * that omits it is intentionally unbound: direct `emit()` calls fail until
+   * `forTenantScope()` supplies trusted scope. `createAdcpServer` derives that
+   * scope from resolved request context and never from webhook payload fields.
    */
   tenantScope?: string;
   /**
@@ -405,23 +406,29 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): WebhookEmi
         'to checkpoint exact retry state before the first attempt'
     );
   }
-  if (production && (!options.publisherScope || !options.tenantScope)) {
-    throw new TypeError(
-      'createWebhookEmitter: production direct emitters require non-empty publisherScope and tenantScope'
-    );
+  if (production && !options.publisherScope) {
+    throw new TypeError('createWebhookEmitter: production webhook emitters require a non-empty publisherScope');
   }
   const publisherScope = requireScope(options.publisherScope ?? 'development-publisher', 'publisherScope');
-  const tenantScope = requireScope(options.tenantScope ?? 'development-tenant', 'tenantScope');
+  const tenantScope =
+    options.tenantScope === undefined && production
+      ? undefined
+      : requireScope(options.tenantScope ?? 'development-tenant', 'tenantScope');
   const generateKey = options.generateIdempotencyKey ?? defaultGenerateIdempotencyKey;
   const fetchImpl = options.fetch ?? createPinAndBindFetch();
   const sleep = options.sleep ?? defaultSleep;
   const now = options.now ?? Date.now;
 
-  const makeEmitter = (boundTenantScope: string): WebhookEmitter => ({
+  const makeEmitter = (boundTenantScope: string | undefined): WebhookEmitter => ({
     forTenantScope(nextTenantScope: string): WebhookEmitter {
       return makeEmitter(requireScope(nextTenantScope, 'tenantScope'));
     },
     async emit(params: WebhookEmitParams): Promise<WebhookEmitResult> {
+      if (boundTenantScope === undefined) {
+        throw new TypeError(
+          'WebhookEmitter.emit: production emitter is not tenant-bound; call forTenantScope(trustedTenant) before emit()'
+        );
+      }
       // Snapshot every caller-owned value before the first await. A slow
       // durable claim must not let post-invocation mutation change identity,
       // destination, authentication, or retry policy.

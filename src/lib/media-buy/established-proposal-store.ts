@@ -2,6 +2,9 @@ export type EstablishedProposalSourceVersion = '3.0' | '3.1';
 export type EstablishedProposalMutationKind = 'accept' | 'refine' | 'decline';
 export type EstablishedProposalMutationDisposition = 'accepted' | 'refined' | 'declined' | 'commit-uncertain';
 
+/** Minimum replay/restart horizon for completed refinement and decline proofs. */
+export const ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
 export interface EstablishedProposalScope {
   /** Stable, server-controlled authenticated principal identity. Never a credential. */
   principalScope: string;
@@ -95,6 +98,15 @@ export interface EstablishedProposalSubmittedOperation {
   sellerTaskId: string;
   /** True when a bounded completion tombstone is servicing an idempotent reconciliation retry. */
   settled?: boolean;
+  /** Present when recovery was served by a completion tombstone. */
+  completion?: EstablishedProposalCompletionWindow;
+}
+
+export interface EstablishedProposalCompletionWindow {
+  /** Store-authoritative completion time. */
+  completedAt: string;
+  /** Earliest instant at which the completion proof may be pruned. */
+  retainUntil: string;
 }
 
 /**
@@ -139,6 +151,12 @@ export interface EstablishedProposalStore {
     scope: EstablishedProposalTaskScope,
     sellerTaskId: string
   ): Promise<EstablishedProposalSubmittedOperation | undefined>;
+  /**
+   * Atomically reserve the supplied mutation. Any retained completion
+   * tombstone with the same `operationKey` must return `conflict`, even when
+   * claim or binding evidence differs; an operation-identity collision must
+   * never authorize redispatch.
+   */
   reserveMutation(request: EstablishedProposalReserveRequest): Promise<EstablishedProposalReserveResult>;
   completeMutation(
     request: EstablishedProposalReserveRequest,
@@ -156,6 +174,22 @@ export interface EstablishedProposalStore {
     request: EstablishedProposalReserveRequest,
     retainedBindings?: readonly EstablishedProposalMutationBinding[]
   ): Promise<EstablishedProposalTransitionResult>;
+  /**
+   * Delete completion tombstones whose store-authored `retainUntil` is at or
+   * before the store's current time. Implementations must never prune earlier
+   * than `ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS` after
+   * completion. After pruning, `findSubmittedTask` may return `undefined` and
+   * `reserveMutation` may return any result justified by the remaining source
+   * records (including a fresh reservation when every source was restored).
+   * `limit` is the maximum number of tombstones deleted in one call; ordering
+   * is unspecified. Return the number of deletions committed. Durable stores
+   * must select eligible rows and delete them atomically using one transaction
+   * and one backing-store clock snapshot.
+   *
+   * Optional for backward compatibility; durable implementations should
+   * implement this or provide an equivalent database-owned sweeper.
+   */
+  pruneCompletionTombstones?(limit?: number): Promise<number>;
   /**
    * Release an exact reserved/retryable claim, or an exact terminal
    * `commit-uncertain` claim after authoritative seller failure evidence.
@@ -176,6 +210,16 @@ export interface InMemoryEstablishedProposalStoreOptions {
   maxRecords?: number;
   maxBytes?: number;
   clock?: () => Date;
+  /** Must be at least the protocol-owned seven-day minimum. */
+  completionTombstoneRetentionMs?: number;
+}
+
+interface InMemoryCompletionTombstone extends EstablishedProposalCompletionWindow {
+  requestSignature: string;
+  replacementSignature: string;
+  request: EstablishedProposalReserveRequest;
+  sellerTaskId?: string;
+  records: EstablishedProposalRecord[];
 }
 
 function clone<T>(value: T): T {
@@ -235,32 +279,46 @@ export class InMemoryEstablishedProposalStore implements EstablishedProposalStor
   private readonly recordBytes = new Map<string, number>();
   private readonly operationIndex = new Map<string, readonly string[]>();
   private readonly proposalMutationIndex = new Map<string, string>();
-  private readonly completedRefinements = new Map<
-    string,
-    {
-      requestSignature: string;
-      replacementSignature: string;
-      request: EstablishedProposalReserveRequest;
-      sellerTaskId?: string;
-      records: EstablishedProposalRecord[];
-    }
-  >();
+  private readonly completedRefinements = new Map<string, InMemoryCompletionTombstone>();
   private completedRefinementBytes = 0;
   private totalBytes = 0;
   private readonly maxRecords: number;
   private readonly maxBytes: number;
   private readonly clock: () => Date;
+  private readonly completionTombstoneRetentionMs: number;
 
   constructor(options: InMemoryEstablishedProposalStoreOptions = {}) {
     this.maxRecords = options.maxRecords ?? 256;
     this.maxBytes = options.maxBytes ?? 4 * 1024 * 1024;
     this.clock = options.clock ?? (() => new Date());
+    this.completionTombstoneRetentionMs =
+      options.completionTombstoneRetentionMs ?? ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS;
     if (!Number.isSafeInteger(this.maxRecords) || this.maxRecords <= 0) {
       throw new TypeError('maxRecords must be a positive safe integer.');
     }
     if (!Number.isSafeInteger(this.maxBytes) || this.maxBytes <= 0) {
       throw new TypeError('maxBytes must be a positive safe integer.');
     }
+    if (
+      !Number.isSafeInteger(this.completionTombstoneRetentionMs) ||
+      this.completionTombstoneRetentionMs < ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS
+    ) {
+      throw new TypeError(
+        `completionTombstoneRetentionMs must be a safe integer of at least ${ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS}.`
+      );
+    }
+  }
+
+  private completionWindow(): EstablishedProposalCompletionWindow {
+    const completedAtMs = this.clock().getTime();
+    const retainUntilMs = completedAtMs + this.completionTombstoneRetentionMs;
+    if (!Number.isFinite(completedAtMs) || retainUntilMs > 8_640_000_000_000_000) {
+      throw new TypeError('clock must return a valid Date within the supported completion retention range.');
+    }
+    return {
+      completedAt: new Date(completedAtMs).toISOString(),
+      retainUntil: new Date(retainUntilMs).toISOString(),
+    };
   }
 
   private sizeOf(record: EstablishedProposalRecord): number {
@@ -375,6 +433,7 @@ export class InMemoryEstablishedProposalStore implements EstablishedProposalStor
         records: completed.records,
         sellerTaskId,
         settled: true,
+        completion: { completedAt: completed.completedAt, retainUntil: completed.retainUntil },
       });
     }
     const matched = [...this.records.values()].find(
@@ -427,12 +486,7 @@ export class InMemoryEstablishedProposalStore implements EstablishedProposalStor
     const bindingKeys = [...new Set(request.bindings.map(key))].sort();
     if (bindingKeys.length === 0) return { outcome: 'missing', records: [] };
     const completed = this.completedRefinements.get(request.claim.operationKey);
-    if (
-      completed &&
-      completed.request.claim.operation === request.claim.operation &&
-      completed.request.claim.requestFingerprint === request.claim.requestFingerprint &&
-      completed.request.claim.idempotencyKey === request.claim.idempotencyKey
-    ) {
+    if (completed) {
       return { outcome: 'conflict', records: completed.records.map(clone) };
     }
     const records = bindingKeys.flatMap(recordKey => {
@@ -739,12 +793,13 @@ export class InMemoryEstablishedProposalStore implements EstablishedProposalStor
         ? []
         : [record.operation.sellerTaskId]
     )[0];
-    const tombstone = {
+    const tombstone: InMemoryCompletionTombstone = {
       requestSignature,
       replacementSignature,
       request: clone(request),
       ...(sellerTaskId && { sellerTaskId }),
       records: updated.map(clone),
+      ...this.completionWindow(),
     };
     const tombstoneBytes = Buffer.byteLength(JSON.stringify(tombstone), 'utf8');
     if (
@@ -842,12 +897,13 @@ export class InMemoryEstablishedProposalStore implements EstablishedProposalStor
         ? []
         : [record.operation.sellerTaskId]
     )[0];
-    const tombstone = {
+    const tombstone: InMemoryCompletionTombstone = {
       requestSignature,
       replacementSignature,
       request: clone(request),
       ...(sellerTaskId && { sellerTaskId }),
       records: updated.map(clone),
+      ...this.completionWindow(),
     };
     const tombstoneBytes = Buffer.byteLength(JSON.stringify(tombstone), 'utf8');
     if (
@@ -869,6 +925,24 @@ export class InMemoryEstablishedProposalStore implements EstablishedProposalStor
       }
     }
     return { outcome: 'updated', records: updated.map(clone) };
+  }
+
+  async pruneCompletionTombstones(limit = 1_000): Promise<number> {
+    if (!Number.isSafeInteger(limit) || limit <= 0) {
+      throw new TypeError('pruneCompletionTombstones limit must be a positive safe integer.');
+    }
+    const now = this.clock().getTime();
+    if (!Number.isFinite(now)) throw new TypeError('clock must return a valid Date.');
+    let pruned = 0;
+    for (const [operationKey, tombstone] of this.completedRefinements) {
+      if (pruned >= limit) break;
+      const retainUntil = Date.parse(tombstone.retainUntil);
+      if (!Number.isFinite(retainUntil) || retainUntil > now) continue;
+      this.completedRefinements.delete(operationKey);
+      this.completedRefinementBytes -= Buffer.byteLength(JSON.stringify(tombstone), 'utf8');
+      pruned += 1;
+    }
+    return pruned;
   }
 
   async releaseMutation(request: EstablishedProposalReserveRequest): Promise<EstablishedProposalTransitionResult> {
@@ -969,6 +1043,6 @@ export class InMemoryEstablishedProposalStore implements EstablishedProposalStor
 
 export function createInMemoryEstablishedProposalStore(
   options: InMemoryEstablishedProposalStoreOptions = {}
-): EstablishedProposalStore {
+): InMemoryEstablishedProposalStore {
   return new InMemoryEstablishedProposalStore(options);
 }

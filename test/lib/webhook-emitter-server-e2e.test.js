@@ -15,6 +15,7 @@ const { generateKeyPairSync } = require('node:crypto');
 
 const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server.js');
 const { InMemoryStateStore } = require('../../dist/lib/server/state-store.js');
+const { createIdempotencyStore, memoryBackend } = require('../../dist/lib/server/idempotency/index.js');
 const { memoryWebhookDeliveryStore } = require('../../dist/lib/server/webhook-emitter.js');
 const {
   createPinAndBindFetch,
@@ -169,6 +170,182 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
     assert.strictEqual(seenEmitWebhook, undefined);
   });
 
+  test('production server binds its unbound publisher from an explicit single-tenant fallback', async () => {
+    const { signerKey } = makeSignerKey();
+    const claimedKeys = [];
+    const deliveryStore = {
+      durability: 'durable',
+      claim(key, proposed, retentionMs) {
+        claimedKeys.push({ ...key });
+        const firstAttemptAtMs = Date.now();
+        return {
+          status: 'bound',
+          ...proposed,
+          firstAttemptAtMs,
+          retainUntilMs: firstAttemptAtMs + retentionMs,
+        };
+      },
+    };
+    const deliveryRecovery = {
+      durability: 'durable',
+      checkpoint() {},
+      settle() {},
+    };
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    let server;
+    try {
+      server = createAdcpServer({
+        name: 'production-publisher',
+        version: '1.0.0',
+        stateStore: new InMemoryStateStore(),
+        idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
+        resolveIdempotencyPrincipal: () => 'trusted-principal',
+        webhooks: {
+          signerKey,
+          deliveryStore,
+          deliveryRecovery,
+          tenantScope: 'single-tenant',
+          fetch: async () => new Response(null, { status: 204 }),
+        },
+        mediaBuy: {
+          createMediaBuy: async (_params, ctx) => {
+            await ctx.emitWebhook({ url: 'https://buyer.example/status', payload: {}, delivery_id: 'delivery-1' });
+            return { media_buy_id: 'mb_production', packages: [] };
+          },
+        },
+      });
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
+
+    const result = await callTool(server, 'create_media_buy', {
+      account: { brand: { domain: 'acme.example' }, operator: 'op.example' },
+      brand: { domain: 'acme.example' },
+      start_time: '2026-05-01T00:00:00Z',
+      end_time: '2026-05-31T23:59:59Z',
+      packages: [{ product_id: 'p1', budget: 5000, pricing_option_id: 'po-1' }],
+      idempotency_key: 'production_create_key_01',
+      push_notification_config: { url: 'https://buyer.example/status' },
+    });
+
+    assert.strictEqual(result.media_buy_id, 'mb_production');
+    assert.deepStrictEqual(claimedKeys, [
+      { publisherScope: 'production-publisher', tenantScope: 'single-tenant', deliveryId: 'delivery-1' },
+    ]);
+  });
+
+  test('production server refuses webhook emission without trusted tenant scope', async () => {
+    const { signerKey } = makeSignerKey();
+    let claims = 0;
+    let checkpoints = 0;
+    let fetches = 0;
+    let emissionError;
+    const deliveryStore = {
+      durability: 'durable',
+      claim(_key, proposed, retentionMs) {
+        claims += 1;
+        const firstAttemptAtMs = Date.now();
+        return {
+          status: 'bound',
+          ...proposed,
+          firstAttemptAtMs,
+          retainUntilMs: firstAttemptAtMs + retentionMs,
+        };
+      },
+    };
+    const deliveryRecovery = {
+      durability: 'durable',
+      checkpoint() {
+        checkpoints += 1;
+      },
+      settle() {},
+    };
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    let server;
+    try {
+      server = createAdcpServer({
+        name: 'unscoped-production-publisher',
+        version: '1.0.0',
+        stateStore: new InMemoryStateStore(),
+        idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
+        resolveIdempotencyPrincipal: () => 'trusted-principal',
+        webhooks: {
+          signerKey,
+          deliveryStore,
+          deliveryRecovery,
+          fetch: async () => {
+            fetches += 1;
+            return new Response(null, { status: 204 });
+          },
+        },
+        mediaBuy: {
+          createMediaBuy: async (_params, ctx) => {
+            try {
+              await ctx.emitWebhook({
+                url: 'https://buyer.example/status',
+                payload: {},
+                delivery_id: 'unscoped-delivery',
+              });
+            } catch (error) {
+              emissionError = error;
+              throw error;
+            }
+            return { media_buy_id: 'must-not-complete', packages: [] };
+          },
+        },
+      });
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
+
+    const result = await callTool(server, 'create_media_buy', {
+      account: { brand: { domain: 'acme.example' }, operator: 'op.example' },
+      brand: { domain: 'acme.example' },
+      start_time: '2026-05-01T00:00:00Z',
+      end_time: '2026-05-31T23:59:59Z',
+      packages: [{ product_id: 'p1', budget: 5000, pricing_option_id: 'po-1' }],
+      idempotency_key: 'unscoped_create_key_01',
+      push_notification_config: { url: 'https://buyer.example/status' },
+    });
+
+    assert.match(emissionError.message, /not tenant-bound; call forTenantScope/);
+    assert.strictEqual(result.status, 'failed');
+    assert.strictEqual(claims, 0);
+    assert.strictEqual(checkpoints, 0);
+    assert.strictEqual(fetches, 0);
+  });
+
+  test('production server validates an explicit tenant scope at startup', () => {
+    const { signerKey } = makeSignerKey();
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const memory = memoryWebhookDeliveryStore();
+      assert.throws(
+        () =>
+          createAdcpServer({
+            name: 'invalid-tenant-scope',
+            version: '1.0.0',
+            stateStore: new InMemoryStateStore(),
+            webhooks: {
+              signerKey,
+              tenantScope: 'invalid\0tenant',
+              deliveryStore: { ...memory, durability: 'durable' },
+              deliveryRecovery: { durability: 'durable', checkpoint() {}, settle() {} },
+            },
+          }),
+        /tenantScope must be a non-empty string without NUL characters/
+      );
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
+
   test('production server refuses an implicit in-memory delivery binding store', () => {
     const { signerKey } = makeSignerKey();
     const previousNodeEnv = process.env.NODE_ENV;
@@ -317,6 +494,15 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
   test('trusted resolved tenant scopes isolate colliding delivery IDs in one shared store', async () => {
     const { signerKey } = makeSignerKey();
     const delivered = [];
+    const claimedKeys = [];
+    const bindings = memoryWebhookDeliveryStore();
+    const deliveryStore = {
+      durability: bindings.durability,
+      claim(key, proposed, retentionMs) {
+        claimedKeys.push({ ...key });
+        return bindings.claim(key, proposed, retentionMs);
+      },
+    };
     const server = createAdcpServer({
       name: 'tenant-scoped-publisher',
       version: '1.0.0',
@@ -324,6 +510,7 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
       resolveSessionKey: ({ account }) => account.id,
       webhooks: {
         signerKey,
+        deliveryStore,
         fetch: async (_url, init) => {
           delivered.push(JSON.parse(init.body));
           return { status: 204, headers: new Headers() };
@@ -352,5 +539,13 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
     await callTool(server, 'create_media_buy', request('tenant-b.example'));
     assert.strictEqual(delivered.length, 2);
     assert.notStrictEqual(delivered[0].idempotency_key, delivered[1].idempotency_key);
+    assert.strictEqual(claimedKeys.length, 2);
+    assert.strictEqual(claimedKeys[0].publisherScope, 'tenant-scoped-publisher');
+    assert.strictEqual(claimedKeys[1].publisherScope, 'tenant-scoped-publisher');
+    assert.strictEqual(claimedKeys[0].deliveryId, 'same-local-delivery-id');
+    assert.strictEqual(claimedKeys[1].deliveryId, 'same-local-delivery-id');
+    assert.match(claimedKeys[0].tenantScope, /tenant-a\.example/);
+    assert.match(claimedKeys[1].tenantScope, /tenant-b\.example/);
+    assert.notStrictEqual(claimedKeys[0].tenantScope, claimedKeys[1].tenantScope);
   });
 });

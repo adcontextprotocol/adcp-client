@@ -800,6 +800,67 @@ describe('createWebhookEmitter: signerKey and signerProvider produce byte-identi
 // ────────────────────────────────────────────────────────────
 
 describe('createWebhookEmitter: construction validation', () => {
+  test('production permits tenant binding after constructing an unbound publisher', async () => {
+    const { signerKey } = makeSignerKey();
+    const fetch = stubFetch([{ status: 204 }]);
+    const records = new Map();
+    const deliveryStore = {
+      durability: 'durable',
+      claim(key, proposed, retentionMs) {
+        const storageKey = JSON.stringify([key.publisherScope, key.tenantScope, key.deliveryId]);
+        const existing = records.get(storageKey);
+        if (existing) return { ...existing };
+        const record = {
+          status: 'bound',
+          ...proposed,
+          firstAttemptAtMs: 1_000,
+          retainUntilMs: 1_000 + retentionMs,
+        };
+        records.set(storageKey, record);
+        return { ...record };
+      },
+    };
+    const recoveryKeys = [];
+    const deliveryRecovery = {
+      durability: 'durable',
+      checkpoint(key) {
+        recoveryKeys.push({ ...key });
+      },
+      settle() {},
+    };
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    let publisher;
+    try {
+      publisher = createWebhookEmitter({
+        signerKey,
+        fetch,
+        sleep: noSleep,
+        now: () => 1_000,
+        deliveryStore,
+        deliveryRecovery,
+        publisherScope: 'publisher',
+      });
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
+
+    await assert.rejects(
+      () => publisher.emit({ url: 'http://x/h', payload: {}, delivery_id: 'unbound-delivery' }),
+      /not tenant-bound; call forTenantScope/
+    );
+    const result = await publisher
+      .forTenantScope('trusted-tenant')
+      .emit({ url: 'http://x/h', payload: {}, delivery_id: 'bound-delivery' });
+
+    assert.equal(result.delivered, true);
+    assert.deepEqual(recoveryKeys, [
+      { publisherScope: 'publisher', tenantScope: 'trusted-tenant', deliveryId: 'bound-delivery' },
+    ]);
+    assert.equal(fetch.calls.length, 1);
+  });
+
   test('production rejects an explicit process-local delivery store', () => {
     const { signerKey } = makeSignerKey();
     const previousNodeEnv = process.env.NODE_ENV;
