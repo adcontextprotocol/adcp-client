@@ -982,10 +982,12 @@ describe('storyboard runner AdCP version negotiation', () => {
         complianceDir: '/tmp/compliance cache',
         schemaRoot: '/tmp/schema root',
         hostedStableLineAlias: '3.1',
+        testKitPath: '/tmp/test kit.yaml',
       }
     );
 
     assert.match(failures[0].fix_command, /--schema-root '\/tmp\/schema root'/);
     assert.match(failures[0].fix_command, /--hosted-stable-line-alias 3\.1/);
+    assert.match(failures[0].fix_command, /--test-kit '\/tmp\/test kit\.yaml'/);
   });
 });
