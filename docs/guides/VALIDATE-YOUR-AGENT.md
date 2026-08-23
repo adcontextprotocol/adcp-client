@@ -86,6 +86,8 @@ delta for diagnostics. Programmatic migration tooling can temporarily pass
 `strictResponseSchemaValidation: false` to `runStoryboard()` or `comply()` to
 restore the historical informational-only posture when using packaged schemas.
 An explicit external `schemaRoot` always remains authoritative.
+The CLI equivalent is `--no-strict-response-schema-validation`; reserve it for
+temporary legacy compatibility harnesses rather than routine compliance runs.
 
 **Flags you'll actually use:**
 

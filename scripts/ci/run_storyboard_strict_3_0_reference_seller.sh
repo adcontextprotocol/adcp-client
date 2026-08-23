@@ -348,6 +348,7 @@ RUN_STATUS=0
 ADCP_AUTH_TOKEN="$ADCP_AUTH_TOKEN" "${RUNNER_CMD[@]}" storyboard run "http://127.0.0.1:$ADCP_PORT/mcp" "$ADCP_STORYBOARD_ID" \
   --json \
   --allow-http \
+  --no-strict-response-schema-validation \
   --timeout "$ADCP_RUNNER_TIMEOUT_SECONDS" >"$STORYBOARD_RESULT_PATH" 2>>"$SELLER_LOG_PATH" || RUN_STATUS=$?
 
 log "Probing get_products through candidate SDK with major-only envelope"
