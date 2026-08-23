@@ -285,7 +285,7 @@ describe('createAdcpServerFromPlatform — comply_test_controller wiring', () =>
     const platform = basePlatform({ withComplianceTesting: true });
     // Adopter wires three adapters but only wants to advertise two.
     platform.capabilities.compliance_testing = {
-      scenarios: ['force_creative_status', 'simulate_delivery'],
+      scenarios: ['force_creative_status', 'simulate_delivery', 'seller_custom_fixture_reset'],
     };
     const server = createAdcpServerFromPlatform(platform, {
       name: 'comply-host',
@@ -326,7 +326,7 @@ describe('createAdcpServerFromPlatform — comply_test_controller wiring', () =>
       params: { name: 'get_adcp_capabilities', arguments: {} },
     });
     const scenarios = result.structuredContent?.compliance_testing?.scenarios;
-    assert.deepStrictEqual(scenarios, ['force_creative_status', 'simulate_delivery']);
+    assert.deepStrictEqual(scenarios, ['force_creative_status', 'simulate_delivery', 'seller_custom_fixture_reset']);
   });
 
   it('does NOT project compliance_testing block when capability + complyTest are both omitted', async () => {

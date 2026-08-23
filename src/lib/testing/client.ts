@@ -31,6 +31,7 @@ interface TestClientVersionOptions {
   adcpVersion: string;
   wireAdcpVersion?: string;
   versionEnvelope: VersionEnvelopeMode;
+  strictResponseSchemaValidation: boolean;
   authMode?: string;
   fetchFn?: typeof fetch;
   maxResponseBytes?: number;
@@ -193,7 +194,10 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
 
   const multiClient = new ADCPMultiAgentClient([agentConfig], {
     headers,
-    validation: { logSchemaViolations: false },
+    validation: {
+      responses: options.strictResponseSchemaValidation === false ? 'warn' : 'strict',
+      logSchemaViolations: false,
+    },
     ...(options.adcpVersion !== undefined && { adcpVersion: options.adcpVersion }),
     ...(options.wireAdcpVersion !== undefined && { wireAdcpVersion: options.wireAdcpVersion }),
     ...(options.versionEnvelope !== undefined && { versionEnvelope: options.versionEnvelope }),
@@ -208,6 +212,7 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
       adcpVersion: multiClient.getAdcpVersion(),
       ...(options.wireAdcpVersion !== undefined && { wireAdcpVersion: options.wireAdcpVersion }),
       versionEnvelope: options.versionEnvelope ?? 'auto',
+      strictResponseSchemaValidation: options.strictResponseSchemaValidation !== false,
       ...(authMode !== undefined && { authMode }),
       ...(options.transport?.trustedFetchFn && { fetchFn: options.transport.trustedFetchFn }),
       ...(options.transport?.maxResponseBytes !== undefined && {
@@ -272,6 +277,7 @@ function testClientMatchesVersionOptions(client: TestClient, options: TestOption
     meta.adcpVersion === expectedAdcpVersion &&
     meta.wireAdcpVersion === expectedWireAdcpVersion &&
     meta.versionEnvelope === expectedVersionEnvelope &&
+    meta.strictResponseSchemaValidation === (effectiveOptions.strictResponseSchemaValidation !== false) &&
     meta.authMode === expectedAuthMode &&
     meta.fetchFn === effectiveOptions.transport?.trustedFetchFn &&
     meta.maxResponseBytes === effectiveOptions.transport?.maxResponseBytes &&

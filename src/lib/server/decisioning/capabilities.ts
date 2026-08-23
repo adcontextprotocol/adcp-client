@@ -618,11 +618,11 @@ export type BrandCapabilities = NonNullable<NonNullable<GetAdCPCapabilitiesRespo
  */
 export interface ComplianceTestingCapabilities {
   /**
-   * Scenarios this agent advertises support for. Wire enum is the
-   * canonical scenario enum, excluding `list_scenarios` because that
-   * is a discovery operation rather than a test capability. Framework
-   * defaults this from the adopter-supplied `complyTest` adapter set
-   * when omitted.
+   * Scenarios this agent advertises support for. The wire field is open to
+   * implementation-specific string values; canonical controller scenarios
+   * are recommendations, not an enum constraint. `list_scenarios` remains a
+   * discovery operation rather than a test capability. Framework defaults
+   * this from the adopter-supplied `complyTest` adapter set when omitted.
    */
   scenarios?: ReadonlyArray<_ComplianceTestingScenario>;
 }
