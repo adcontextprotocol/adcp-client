@@ -536,6 +536,83 @@ Encrypt authentication material at rest and store a key reference where your
 implementation can do so. This recovery seam is required in production so the
 advertised retry horizon represents actual recoverable state.
 
+The SDK includes PostgreSQL and Redis implementations for both layers, so
+applications do not need to reproduce the atomic binding and lease rules:
+
+```typescript
+import {
+  createWebhookDeliveryRecovery,
+  getWebhookDeliveryMigration,
+  getWebhookDeliveryRecoveryMigration,
+  pgWebhookDeliveryStore,
+  pgWebhookDeliveryRecoveryBackend,
+  pollWebhookDeliveryRecovery,
+} from '@adcp/sdk/server';
+
+const deliveryTable = 'myagent_webhook_deliveries';
+const outboxTable = 'myagent_webhook_outbox';
+await pool.query(getWebhookDeliveryMigration({ tableName: deliveryTable }));
+await pool.query(getWebhookDeliveryRecoveryMigration({ tableName: outboxTable }));
+
+const deliveryStore = pgWebhookDeliveryStore(pool, { tableName: deliveryTable });
+const deliveryRecovery = createWebhookDeliveryRecovery({
+  backend: pgWebhookDeliveryRecoveryBackend(pool, { tableName: outboxTable }),
+  authenticationAdapter: {
+    protect: (authentication, key) => secretManager.protect(authentication, key),
+    resolve: (protectedValue, key) => secretManager.resolve(protectedValue, key),
+  },
+});
+
+await pollWebhookDeliveryRecovery({
+  recovery: deliveryRecovery,
+  ownerToken: process.env.INSTANCE_ID,
+  errorRetryAfterMs: 30_000,
+  onError: (error, lease) => metrics.recordWebhookRecoveryError(error, lease.key),
+  deliver: async lease => {
+    const result = await webhookEmitter.forTenantScope(lease.key.tenantScope).emitRecovered(lease);
+    if (result.delivered) return { disposition: 'delivered' };
+    if (result.terminal) return { disposition: 'terminal' };
+    return { disposition: 'retry', retryAfterMs: 30_000 };
+  },
+});
+```
+
+Redis deployments use `redisWebhookDeliveryStore()` and
+`redisWebhookDeliveryRecoveryBackend()` with deployment-unique prefixes. Both
+PostgreSQL table names and Redis key prefixes must be unique to the deployment;
+an isolated database can instead be acknowledged explicitly. Both
+backends use their own clocks for retention, leases, and retry scheduling. The
+initial checkpoint atomically leases the live send, preventing a recovery worker
+from racing the normal POST. Lease owner plus version fences stale workers after
+a crash or takeover; polling heartbeats one delivery before claiming the next.
+`pollWebhookDeliveryRecovery()` performs one bounded poll; the application owns
+its scheduler, retry policy, metrics, and alerting. A thrown delivery error is
+released after `errorRetryAfterMs` (one second by default), and `onError`
+receives delivery and lease-renewal failures without changing fence ownership.
+The `deliver` callback must enforce an abortable transport timeout shorter than
+the retry horizon. The poller deliberately does not time out the callback and
+release its lease: doing so cannot cancel an arbitrary side effect and could let
+a replacement worker duplicate an HTTP request that is still running.
+Terminal binding-retirement errors are fenced-settled instead of hot-looping.
+Recovery rejects serialized snapshots larger than 2 MiB by default
+(`maxSnapshotBytes` can set a lower application limit). `delivery_id` is a
+trusted server-generated identity, not a tenant-supplied wire value. Operators
+must still enforce database/Redis capacity quotas and alerts per deployment:
+delivery bindings and their retired tombstones intentionally remain durable so
+an expired identity cannot be rebound and replayed.
+Delivery handlers must be
+idempotent (or use a transactional outbox with their side effects), because no
+library can make an external HTTP effect and a separate database acknowledgement
+one atomic transaction.
+
+The SDK never owns KMS keys. `WebhookAuthenticationAdapter` is the boundary for
+encryption or opaque secret references; durable recovery rejects bearer/HMAC
+snapshots when no adapter is configured. The adapter must authenticate the
+supplied tenant, delivery, destination, and snapshot-context values as AAD.
+Backends verify stored snapshot hashes before secret resolution and redact the
+payload and protected secret reference at settlement. Tenant authorization, RBAC, product
+APIs, and any webhook-management UI remain application concerns.
+
 The default in 5.x is still `globalThis.fetch` because pin-and-bind blocks loopback http URLs (the storyboard runner's `createWebhookReceiver` listens on `http://127.0.0.1:port`); flipping the default would break in-process storyboard runs without a migration. In v6 the default flips to `createPinAndBindFetch()`. Adopters whose tests run against the storyboard runner should pass `LOOPBACK_OK_WEBHOOK_SSRF_POLICY` for those runs — it relaxes only the loopback + http rules and keeps every other CIDR / metadata-host deny in place:
 
 ```typescript

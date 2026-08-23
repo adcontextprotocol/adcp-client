@@ -1401,6 +1401,10 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  emit(params: WebhookEmitParams): Promise<WebhookEmitResult>;`);
   ln(`  forTenantScope(tenantScope: string): WebhookEmitter;`);
   ln(`}`);
+  ln(`interface RecoverableWebhookEmitter extends WebhookEmitter {`);
+  ln(`  emitRecovered(delivery: WebhookRecoveredDelivery): Promise<WebhookEmitResult>;`);
+  ln(`  forTenantScope(tenantScope: string): RecoverableWebhookEmitter;`);
+  ln(`}`);
   ln();
   ln(`// Relevant WebhooksConfig fields (other signing and delivery fields omitted):`);
   ln(`interface WebhooksConfig {`);

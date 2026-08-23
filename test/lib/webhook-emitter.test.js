@@ -185,7 +185,7 @@ describe('createWebhookEmitter: retry behavior', () => {
     const result = await emitter.emit({ url: 'http://x/h', payload: {}, delivery_id: 'delivery.401' });
     assert.strictEqual(result.delivered, false);
     assert.strictEqual(fetch.calls.length, 1);
-    assert.match(result.errors[0], /webhook_signature_tag_invalid/);
+    assert.equal(result.errors[0], 'attempt 1: HTTP 401');
   });
 
   test('max-attempts cap', async () => {
@@ -195,6 +195,33 @@ describe('createWebhookEmitter: retry behavior', () => {
     const result = await emitter.emit({ url: 'http://x/h', payload: {}, delivery_id: 'delivery.cap' });
     assert.strictEqual(result.delivered, false);
     assert.strictEqual(fetch.calls.length, 3);
+  });
+
+  test('sanitizes nested provider and transport messages in caller-visible errors', async () => {
+    const { signerKey } = makeSignerKey();
+    const fetch = async () => {
+      throw new Error('fetch failed', { cause: new Error('kms://tenant-secret/key IAM principal denied') });
+    };
+    const emitter = createWebhookEmitter({ signerKey, fetch, sleep: noSleep, retries: { maxAttempts: 1 } });
+    const result = await emitter.emit({ url: 'http://x/h', payload: {}, delivery_id: 'delivery.sanitized' });
+    assert.deepStrictEqual(result.errors, ['attempt 1: Webhook delivery failed']);
+  });
+
+  test('does not copy receiver-controlled response headers into caller-visible errors', async () => {
+    const { signerKey } = makeSignerKey();
+    const fetch = stubFetch([
+      {
+        status: 302,
+        headers: {
+          location: 'https://receiver.invalid/secret-path?token=header-secret',
+          'www-authenticate': 'Bearer error_description="header-secret"',
+        },
+      },
+    ]);
+    const emitter = createWebhookEmitter({ signerKey, fetch, sleep: noSleep, retries: { maxAttempts: 1 } });
+    const result = await emitter.emit({ url: 'http://x/h', payload: {}, delivery_id: 'delivery.header-sanitized' });
+    assert.equal(result.errors.length, 1);
+    assert.doesNotMatch(result.errors[0], /header-secret|receiver\.invalid/);
   });
 });
 

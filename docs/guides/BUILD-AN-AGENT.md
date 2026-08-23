@@ -595,7 +595,7 @@ createAdcpServerFromPlatform(platform, {
 });
 ```
 
-**Production key storage.** For outbound request or webhook signing, prefer a KMS-backed `SigningProvider` over in-process JWKs. See [SIGNING-GUIDE.md § Production Key Storage](./SIGNING-GUIDE.md#step-35-production-key-storage--kms--hsm--vault) for the full walkthrough including a reference GCP KMS adapter. Production webhook servers must provide a shared durable `deliveryStore` plus `deliveryRecovery`, a durable outbox that checkpoints the exact destination, payload/timestamp, authentication reference, and retry policy before delivery and recovers unsettled snapshots after restart. Tenant namespaces are derived from trusted resolved request context.
+**Production key storage.** For outbound request or webhook signing, prefer a KMS-backed `SigningProvider` over in-process JWKs. See [SIGNING-GUIDE.md § Production Key Storage](./SIGNING-GUIDE.md#step-35-production-key-storage--kms--hsm--vault) for the full walkthrough including a reference GCP KMS adapter. Production webhook servers must provide a shared durable `deliveryStore` plus `deliveryRecovery`, a durable outbox that checkpoints the exact destination, payload/timestamp, authentication reference, and retry policy before delivery and recovers unsettled snapshots after restart. The SDK supplies PostgreSQL and Redis delivery stores, recovery backends, migrations, and a bounded recovery polling API; applications supply the KMS/secret adapter and operational scheduler. Tenant namespaces are derived from trusted resolved request context.
 
 See [SIGNING-GUIDE.md](./SIGNING-GUIDE.md) for the full walkthrough: key generation, JWKS publication, brand.json, conformance testing, and KMS-backed production deployment.
 
