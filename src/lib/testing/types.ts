@@ -116,6 +116,17 @@ export interface TestOptions {
    * authoritative over the SDK's generated Zod snapshot for the run.
    */
   schemaRoot?: string;
+  /**
+   * Whether strict AJV response-schema failures contribute to storyboard
+   * grading. Defaults to `true`, matching the hosted compliance grader.
+   *
+   * Set to `false` only for packaged-schema diagnostic migrations that need
+   * the historical lenient-Zod grade while inspecting
+   * `strict_validation_summary` and the per-validation `strict` verdicts.
+   * Strict validation still runs in that mode; it is informational rather
+   * than grading. An explicit external `schemaRoot` remains authoritative.
+   */
+  strictResponseSchemaValidation?: boolean;
   /** Custom User-Agent string sent with all outbound requests */
   userAgent?: string;
   // Brand reference for product discovery (preferred over brand_manifest)

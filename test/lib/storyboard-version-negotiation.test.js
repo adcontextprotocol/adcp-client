@@ -268,6 +268,15 @@ describe('storyboard runner AdCP version negotiation', () => {
       }),
       shared
     );
+    assert.notStrictEqual(
+      getOrCreateClient('https://example.com/mcp', {
+        _client: shared,
+        adcpVersion: CURRENT_PRERELEASE_VERSION,
+        versionEnvelope: 'auto',
+        strictResponseSchemaValidation: false,
+      }),
+      shared
+    );
   });
 
   test('discovery-only _client is not reused for executable storyboard calls', () => {

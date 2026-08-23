@@ -82,6 +82,7 @@ const storyboard = {
 };
 
 const searchResponse = {
+  cache_scope: 'public',
   signals: [
     {
       // Shape matches get-signals-response.json required fields + their

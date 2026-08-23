@@ -804,6 +804,13 @@ function _define_platform_with_compliance_accepts_ct(p: _PlatformWithCT): _Platf
   return definePlatformWithCompliance(p);
 }
 
+// Positive: the capability schema is deliberately open to seller-specific
+// scenario names; canonical controller constants are recommendations only.
+const _custom_compliance_scenario: ComplianceTestingCapabilities = {
+  scenarios: ['seller_custom_fixture_reset'],
+};
+void _custom_compliance_scenario;
+
 // Negative: definePlatformWithCompliance rejects a platform missing compliance_testing
 // (compliance_testing is optional on DecisioningPlatformCapabilities, required by the helper).
 function _define_platform_with_compliance_rejects_missing_ct() {

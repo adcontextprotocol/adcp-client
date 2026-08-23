@@ -2012,6 +2012,8 @@ SUBCOMMANDS:
   step <agent> <id> <step_id>  Run a single step (stateless, LLM-friendly)
 
 RUN OPTIONS (full assessment):
+  Response-schema checks are strict and grading by default, matching the
+  hosted compliance grader. JSON output includes strict_validation_summary.
   --tracks TRACKS     Comma-separated tracks to include in the report
   --storyboards IDS   Comma-separated storyboard/bundle IDs to run
   --compliance-version VERSION

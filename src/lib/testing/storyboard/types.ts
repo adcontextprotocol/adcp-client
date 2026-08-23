@@ -2414,33 +2414,29 @@ export interface ValidationResult {
   observations?: unknown[];
   /**
    * Non-fatal human-readable warning attached when a check `passed` but
-   * detected a softer issue the caller should still see — today used only
-   * by `response_schema` to surface the top strict-AJV issue when Zod
-   * accepts and AJV rejects (the "lenient-passes ∧ strict-fails" subset
-   * of issue #820). LLM-driven self-correction and CI graphs that scan
-   * `error`/`warning` fields can act on this without the runner flipping
-   * step pass/fail and breaking existing tests.
+   * detected a softer issue the caller should still see. `response_schema`
+   * uses this for variant-fallback diagnostics and, when strict grading is
+   * explicitly disabled, strict-only AJV findings. LLM-driven self-correction
+   * and CI graphs that scan `error`/`warning` fields can act on the warning.
    */
   warning?: string;
   /**
    * Issue #820 follow-up — strict JSON-schema (AJV) verdict for
-   * `response_schema` checks. `passed` remains the lenient Zod outcome
-   * (runner's historical packaged-cache semantics); `strict` carries the
-   * AJV-with-formats-and-additionalProperties verdict separately so agent
-   * developers can see the strict/lenient delta. When the run supplies an
-   * external `schemaRoot`, its AJV verdict is authoritative and may drive
-   * `passed`. Absent on non-response_schema checks or when no AJV schema is
-   * available.
+   * `response_schema` checks. Packaged-schema storyboard runs grade this
+   * verdict by default; `strictResponseSchemaValidation: false` restores the
+   * historical lenient grade while retaining the verdict as diagnostics.
+   * An external `schemaRoot` is always authoritative. Absent on
+   * non-response_schema checks or when no AJV schema is available.
    */
   strict?: StrictValidationVerdict;
 }
 
 /**
  * Strict (AJV JSON-schema) verdict attached to a response_schema
- * validation result. Informational for packaged-cache runs, where step
- * pass/fail remains driven by the lenient Zod path. Authoritative for runs
- * with an external `schemaRoot`, so current protocol source is not gated by
- * the SDK's generated Zod snapshot.
+ * validation result. Authoritative by default for packaged-cache storyboard
+ * runs and always authoritative for runs with an external `schemaRoot`.
+ * Packaged-cache callers may explicitly make it informational with
+ * `strictResponseSchemaValidation: false` during migrations.
  */
 export interface StrictValidationVerdict {
   valid: boolean;
@@ -3153,8 +3149,10 @@ export interface StrictValidationSummary {
    * Count of validations where lenient Zod accepted AND strict AJV
    * rejected — the "silent failures" the agent ships today that a strict
    * dispatcher would block. Subset of `failed`. This is the actionable
-   * production-readiness signal for agent developers: a green lenient run
-   * with `strict_only_failures > 0` is a migration trap.
+   * production-readiness signal for agent developers. With the default
+   * strict grading these failures make the owning step fail; callers that
+   * explicitly disable strict grading can still use this count as migration
+   * telemetry.
    */
   strict_only_failures: number;
   /**
