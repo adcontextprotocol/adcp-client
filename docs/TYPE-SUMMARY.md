@@ -131,6 +131,10 @@ interface WebhookEmitter {
   emit(params: WebhookEmitParams): Promise<WebhookEmitResult>;
   forTenantScope(tenantScope: string): WebhookEmitter;
 }
+interface RecoverableWebhookEmitter extends WebhookEmitter {
+  emitRecovered(delivery: WebhookRecoveredDelivery): Promise<WebhookEmitResult>;
+  forTenantScope(tenantScope: string): RecoverableWebhookEmitter;
+}
 
 // Relevant WebhooksConfig fields (other signing and delivery fields omitted):
 interface WebhooksConfig {

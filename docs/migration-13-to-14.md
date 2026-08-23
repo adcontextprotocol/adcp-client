@@ -134,6 +134,31 @@ outcome. Retryable exhaustion stays pending. Encrypt authentication material at
 rest. Without this outbox, the agent cannot truthfully advertise a webhook
 delivery retry horizon after a process crash.
 
+SDK 14 now provides the durable building blocks directly. Use
+`pgWebhookDeliveryStore()` or `redisWebhookDeliveryStore()` for immutable
+delivery bindings. Pair it with `pgWebhookDeliveryRecoveryBackend()` or
+`redisWebhookDeliveryRecoveryBackend()` through
+`createWebhookDeliveryRecovery()`. PostgreSQL deployments must run both
+`getWebhookDeliveryMigration()` and
+`getWebhookDeliveryRecoveryMigration()`. Production PostgreSQL deployments
+must configure deployment-unique table names (or explicitly acknowledge a
+dedicated database). Redis deployments have the same requirement for key
+prefixes.
+
+The recovery backends checkpoint the first exact snapshot, reject conflicting
+reuse, atomically lease the initial live send, use backend-authoritative clocks, and expose version-fenced lease,
+renewal, release, and settlement primitives. `pollWebhookDeliveryRecovery()`
+runs one bounded recovery pass and leaves scheduling, retry policy, and
+observability to the application. Use `errorRetryAfterMs` for thrown callback
+backoff and `onError` for callback or lease-renewal telemetry; retired or
+out-of-horizon deliveries are terminalized automatically. Supply a
+`WebhookAuthenticationAdapter` for
+bearer or HMAC deliveries; it stores ciphertext or an opaque secret reference
+plus a stable non-secret equality fingerprint. The adapter must authenticate
+the supplied tenant/destination/snapshot context. Settled records redact payload
+and protected secret references. The application still owns KMS
+keys, secret management, tenant authorization/RBAC, and management APIs or UI.
+
 `deliveryRetryHorizonSeconds` defaults to 86,400 seconds and accepts 86,400
 through 604,800. `createAdcpServer()` advertises the configured value under
 `webhook_signing.delivery_retry_horizon_seconds`, rejects a changed payload

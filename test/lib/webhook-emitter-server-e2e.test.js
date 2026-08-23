@@ -227,7 +227,7 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
       end_time: '2026-05-31T23:59:59Z',
       packages: [{ product_id: 'p1', budget: 5000, pricing_option_id: 'po-1' }],
       idempotency_key: 'production_create_key_01',
-      push_notification_config: { url: 'https://buyer.example/status' },
+      push_notification_config: { url: 'https://buyer.example/status', operation_id: 'production-op-01' },
     });
 
     assert.strictEqual(result.media_buy_id, 'mb_production');
@@ -309,7 +309,7 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
       end_time: '2026-05-31T23:59:59Z',
       packages: [{ product_id: 'p1', budget: 5000, pricing_option_id: 'po-1' }],
       idempotency_key: 'unscoped_create_key_01',
-      push_notification_config: { url: 'https://buyer.example/status' },
+      push_notification_config: { url: 'https://buyer.example/status', operation_id: 'unscoped-op-01' },
     });
 
     assert.match(emissionError.message, /not tenant-bound; call forTenantScope/);

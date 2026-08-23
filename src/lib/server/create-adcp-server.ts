@@ -1901,9 +1901,9 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * if your server never emits webhooks.
    *
    * Provide exactly one of `signerKey` (in-process JWK) or `signerProvider`
-   * (KMS-backed async signing). The signing key or provider key MUST have
-   * `adcp_use: "webhook-signing"` — a request-signing key is a conformance
-   * violation per adcp#2423 (key purpose discriminator). Publishers publishing
+   * (KMS-backed async signing). The signing key or provider key SHOULD have
+   * `adcp_use: "request-signing"`; the deprecated `"webhook-signing"` value is
+   * accepted for compatibility. Publishers publishing
    * their JWKS at the `jwks_uri` on brand.json's `agents[]` entry reuse the
    * same key across every buyer they deliver to.
    */

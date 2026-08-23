@@ -31,6 +31,13 @@ import type { RequestLike } from '../signing/canonicalize';
 import { canonicalJsonSha256 } from '../utils/jcs';
 import { createPinAndBindFetch } from './pin-and-bind-fetch';
 import { createHmac, randomUUID } from 'node:crypto';
+import {
+  assertDeliveryKey,
+  assertProposal,
+  assertRetentionMs,
+  isWebhookDeliveryTerminalError,
+  WebhookDeliveryTerminalError,
+} from './webhook-delivery/common';
 
 /**
  * Minimum pattern per adcp#2417 / core/mcp-webhook-payload.json.
@@ -104,8 +111,21 @@ export interface WebhookDeliverySnapshot {
  */
 export interface WebhookDeliveryRecovery {
   readonly durability: 'durable';
-  checkpoint(key: Readonly<WebhookDeliveryKey>, snapshot: Readonly<WebhookDeliverySnapshot>): Promise<void> | void;
+  checkpoint(
+    key: Readonly<WebhookDeliveryKey>,
+    snapshot: Readonly<WebhookDeliverySnapshot>
+  ): Promise<void | WebhookDeliveryRecoveryClaim> | void | WebhookDeliveryRecoveryClaim;
   settle(key: Readonly<WebhookDeliveryKey>, disposition: 'delivered' | 'terminal'): Promise<void> | void;
+}
+
+/** Fenced ownership returned by SDK durable recovery implementations. */
+export interface WebhookDeliveryRecoveryClaim {
+  readonly leaseExpiresAtMs: number;
+  /** Backend-independent renewal cadence. SDK claims set this from the configured lease duration. */
+  readonly heartbeatIntervalMs?: number;
+  renew(): Promise<boolean>;
+  release(retryAfterMs?: number): Promise<boolean>;
+  settle(disposition: 'delivered' | 'terminal'): Promise<boolean>;
 }
 
 /**
@@ -144,6 +164,9 @@ export function memoryWebhookDeliveryStore(options: { now?: () => number } = {})
   return {
     durability: 'process-local',
     claim: (key, proposed, retentionMs) => {
+      assertDeliveryKey(key);
+      assertProposal(proposed);
+      assertRetentionMs(retentionMs);
       const id = storageKey(key);
       const existing = m.get(id);
       if (existing?.status === 'bound' && now() > existing.retainUntilMs) {
@@ -355,18 +378,10 @@ export interface WebhookEmitResult {
   idempotency_key: string;
   attempts: number;
   delivered: boolean;
+  /** True only when the final outcome is known to be non-retryable. */
+  terminal?: boolean;
   final_status?: number;
-  /**
-   * Per-attempt error messages (transport / signer / network failures).
-   *
-   * **Logging caution:** when a `signerProvider` rejection bubbles into
-   * this array, the message text comes from the adapter and may include
-   * infra-flavored detail (KMS resource names, IAM principals, project
-   * IDs). Mirrors the same caution flagged on `SigningProvider.fingerprint`.
-   * If you pipe `errors[]` into shared logs / observability pipelines,
-   * sanitize or redact at your boundary — adapter messages aren't
-   * guaranteed to be operator-safe.
-   */
+  /** Sanitized per-attempt failure classifications; nested provider/backend messages are never copied here. */
   errors: string[];
 }
 
@@ -376,11 +391,23 @@ export interface WebhookEmitter {
   forTenantScope(tenantScope: string): WebhookEmitter;
 }
 
+/** SDK emitter with durable replay support. Kept separate so existing custom WebhookEmitter implementations remain valid. */
+export interface RecoverableWebhookEmitter extends WebhookEmitter {
+  /** Replay a fenced durable snapshot without creating a competing checkpoint. */
+  emitRecovered(delivery: WebhookRecoveredDelivery): Promise<WebhookEmitResult>;
+  forTenantScope(tenantScope: string): RecoverableWebhookEmitter;
+}
+
+export interface WebhookRecoveredDelivery extends WebhookDeliveryRecoveryClaim {
+  key: WebhookDeliveryKey;
+  snapshot: WebhookDeliverySnapshot;
+}
+
 // ────────────────────────────────────────────────────────────
 // Factory
 // ────────────────────────────────────────────────────────────
 
-export function createWebhookEmitter(options: WebhookEmitterOptions): WebhookEmitter {
+export function createWebhookEmitter(options: WebhookEmitterOptions): RecoverableWebhookEmitter {
   if (options.signerKey && options.signerProvider) {
     throw new TypeError('createWebhookEmitter: provide exactly one of signerKey or signerProvider, not both');
   }
@@ -419,9 +446,22 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): WebhookEmi
   const sleep = options.sleep ?? defaultSleep;
   const now = options.now ?? Date.now;
 
-  const makeEmitter = (boundTenantScope: string | undefined): WebhookEmitter => ({
-    forTenantScope(nextTenantScope: string): WebhookEmitter {
+  const makeEmitter = (boundTenantScope: string | undefined): RecoverableWebhookEmitter => ({
+    forTenantScope(nextTenantScope: string): RecoverableWebhookEmitter {
       return makeEmitter(requireScope(nextTenantScope, 'tenantScope'));
+    },
+    emitRecovered(delivery): Promise<WebhookEmitResult> {
+      if (delivery.key.publisherScope !== publisherScope || delivery.key.tenantScope !== boundTenantScope) {
+        throw new Error('Recovered webhook delivery does not belong to this publisher/tenant emitter scope.');
+      }
+      return this.emit({
+        url: delivery.snapshot.url,
+        payload: delivery.snapshot.payload,
+        authentication: delivery.snapshot.authentication,
+        retries: delivery.snapshot.retries,
+        delivery_id: delivery.key.deliveryId,
+        __recoveryClaim: delivery,
+      } as WebhookEmitParams & { __recoveryClaim: WebhookDeliveryRecoveryClaim });
     },
     async emit(params: WebhookEmitParams): Promise<WebhookEmitResult> {
       if (boundTenantScope === undefined) {
@@ -442,127 +482,232 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): WebhookEmi
       const retries = resolveRetries(params.retries === undefined ? options.retries : structuredClone(params.retries));
       assertIJson(payloadSnapshot);
       const deliveryKey = { publisherScope, tenantScope: boundTenantScope, deliveryId };
-      await options.deliveryRecovery?.checkpoint(deliveryKey, {
-        url,
-        payload: structuredClone(payloadSnapshot),
-        authentication: authentication === null ? null : structuredClone(authentication),
-        retries: { ...retries },
-      });
-      let binding = await resolveDeliveryBinding({
-        store,
-        key: deliveryKey,
-        payload: payloadSnapshot,
-        generateKey,
-        nowMs: now(),
-        retryHorizonSeconds,
-      });
-      const idempotency_key = binding.idempotencyKey;
-
-      // Serialize ONCE with compact separators — the same bytes feed both
-      // the content-digest input and the HTTP body on every attempt. This
-      // is the load-bearing rule from adcp#2478.
-      const bodyPayload = { ...payloadSnapshot, idempotency_key };
-      const bodyBytes = JSON.stringify(bodyPayload);
-
-      const errors: string[] = [];
-      let lastStatus: number | undefined;
-      let finalTerminal = false;
-
-      for (let attempt = 1; attempt <= retries.maxAttempts; attempt++) {
-        if (attempt > 1) {
-          binding = await refreshDeliveryBinding(store, deliveryKey, binding, retryHorizonSeconds);
+      const recoveredClaim = (params as WebhookEmitParams & { __recoveryClaim?: WebhookDeliveryRecoveryClaim })
+        .__recoveryClaim;
+      const recoveryClaim =
+        recoveredClaim ??
+        (await options.deliveryRecovery?.checkpoint(deliveryKey, {
+          url,
+          payload: structuredClone(payloadSnapshot),
+          authentication: authentication === null ? null : structuredClone(authentication),
+          retries: { ...retries },
+        }));
+      const recoveryHeartbeat = recoveryClaim ? startRecoveryClaimHeartbeat(recoveryClaim) : undefined;
+      try {
+        let binding;
+        try {
+          binding = await resolveDeliveryBinding({
+            store,
+            key: deliveryKey,
+            payload: payloadSnapshot,
+            generateKey,
+            nowMs: now(),
+            retryHorizonSeconds,
+          });
+        } catch (error) {
+          if (isWebhookDeliveryTerminalError(error) && recoveryClaim && !recoveredClaim) {
+            await recoveryHeartbeat?.stop();
+            if (!recoveryHeartbeat?.lossMessage() && !(await recoveryClaim.settle('terminal'))) {
+              throw new Error('Terminal delivery binding failure could not settle its recovery lease', {
+                cause: error,
+              });
+            }
+          }
+          throw error;
         }
-        assertWithinRetryHorizon(binding, deliveryId, now(), retryHorizonSeconds);
-        const attemptInfo: WebhookEmitAttempt = {
+        const idempotency_key = binding.idempotencyKey;
+
+        // Serialize ONCE with compact separators — the same bytes feed both
+        // the content-digest input and the HTTP body on every attempt. This
+        // is the load-bearing rule from adcp#2478.
+        const bodyPayload = { ...payloadSnapshot, idempotency_key };
+        const bodyBytes = JSON.stringify(bodyPayload);
+
+        const errors: string[] = [];
+        let lastStatus: number | undefined;
+        let finalTerminal = false;
+        let attempts = 0;
+
+        for (let attempt = 1; attempt <= retries.maxAttempts; attempt++) {
+          attempts = attempt;
+          await recoveryHeartbeat?.renewNow();
+          if (attempt > 1) {
+            binding = await refreshDeliveryBinding(store, deliveryKey, binding, retryHorizonSeconds);
+          }
+          assertWithinRetryHorizon(binding, deliveryId, now(), retryHorizonSeconds);
+          const attemptInfo: WebhookEmitAttempt = {
+            delivery_id: deliveryId,
+            idempotency_key,
+            attempt,
+            url,
+          };
+          options.onAttempt?.(attemptInfo);
+
+          const started = Date.now();
+          let status: number | undefined;
+          let error: string | undefined;
+          let terminal = false;
+
+          try {
+            const response = await deliverOnce({
+              url,
+              bodyBytes,
+              signerKey: options.signerKey,
+              signerProvider: options.signerProvider,
+              authentication,
+              tag: options.tag,
+              userAgent: options.userAgent,
+              fetch: fetchImpl,
+              suppressLegacyWarnings: options.suppressLegacyWarnings,
+            });
+            status = response.status;
+            lastStatus = status;
+
+            if (status >= 200 && status < 300) {
+              const durationMs = Date.now() - started;
+              options.onAttemptResult?.({ ...attemptInfo, status, durationMs, willRetry: false });
+              await recoveryHeartbeat?.stop();
+              const heartbeatError = recoveryHeartbeat?.lossMessage();
+              if (heartbeatError) errors.push(heartbeatError);
+              if (recoveredClaim) {
+                // The polling worker owns fenced settlement after classifying
+                // this recovered attempt.
+              } else if (recoveryClaim) {
+                if (!heartbeatError && !(await recoveryClaim.settle('delivered'))) {
+                  errors.push('delivery succeeded but its recovery lease could not be settled');
+                }
+              } else {
+                await options.deliveryRecovery?.settle(deliveryKey, 'delivered');
+              }
+              return {
+                delivery_id: deliveryId,
+                idempotency_key,
+                attempts: attempt,
+                delivered: true,
+                terminal: false,
+                final_status: status,
+                errors,
+              };
+            }
+
+            terminal = isTerminalStatus(status, response.wwwAuthenticate);
+            error =
+              status >= 300 && status < 400
+                ? `HTTP ${status} redirect — redirects are ` +
+                  `never followed for signed webhook delivery, because the signature covers @target-uri and ` +
+                  `would not verify at the redirect target. Re-register the webhook with the final URL.`
+                : `HTTP ${status}`;
+          } catch (err) {
+            error = formatTransportError(err);
+            // Network / transport errors are retryable — the delivery didn't
+            // reach the receiver, so no risk of double-processing.
+            // Pin-and-bind SSRF blocks are themselves terminal: the URL
+            // (or its DNS resolution) violates policy and won't change on retry.
+            if (errorContainsCode(err, 'EADCP_SSRF_BLOCKED')) {
+              terminal = true;
+            }
+          }
+
+          if (error) errors.push(`attempt ${attempt}: ${error}`);
+
+          const willRetry = !terminal && attempt < retries.maxAttempts;
+          finalTerminal = terminal;
+          options.onAttemptResult?.({
+            ...attemptInfo,
+            ...(status !== undefined && { status }),
+            durationMs: Date.now() - started,
+            error,
+            willRetry,
+          });
+
+          if (!willRetry) break;
+
+          await sleep(backoffDelay(attempt, retries));
+        }
+
+        await recoveryHeartbeat?.stop();
+        const heartbeatError = recoveryHeartbeat?.lossMessage();
+        if (heartbeatError) errors.push(heartbeatError);
+        if (finalTerminal && !recoveredClaim) {
+          if (recoveryClaim && !heartbeatError && !(await recoveryClaim.settle('terminal'))) {
+            errors.push('terminal delivery outcome could not settle its recovery lease');
+          } else if (!recoveryClaim) await options.deliveryRecovery?.settle(deliveryKey, 'terminal');
+        } else if (recoveryClaim && !recoveredClaim && !heartbeatError) {
+          if (!(await recoveryClaim.release(0))) {
+            errors.push('retryable delivery outcome could not release its recovery lease');
+          }
+        }
+
+        return {
           delivery_id: deliveryId,
           idempotency_key,
-          attempt,
-          url,
+          attempts,
+          delivered: false,
+          terminal: finalTerminal,
+          ...(lastStatus !== undefined && { final_status: lastStatus }),
+          errors,
         };
-        options.onAttempt?.(attemptInfo);
-
-        const started = Date.now();
-        let status: number | undefined;
-        let error: string | undefined;
-        let terminal = false;
-
-        try {
-          const response = await deliverOnce({
-            url,
-            bodyBytes,
-            signerKey: options.signerKey,
-            signerProvider: options.signerProvider,
-            authentication,
-            tag: options.tag,
-            userAgent: options.userAgent,
-            fetch: fetchImpl,
-            suppressLegacyWarnings: options.suppressLegacyWarnings,
-          });
-          status = response.status;
-          lastStatus = status;
-
-          if (status >= 200 && status < 300) {
-            const durationMs = Date.now() - started;
-            options.onAttemptResult?.({ ...attemptInfo, status, durationMs, willRetry: false });
-            await options.deliveryRecovery?.settle(deliveryKey, 'delivered');
-            return {
-              delivery_id: deliveryId,
-              idempotency_key,
-              attempts: attempt,
-              delivered: true,
-              final_status: status,
-              errors,
-            };
-          }
-
-          terminal = isTerminalStatus(status, response.wwwAuthenticate);
-          error =
-            status >= 300 && status < 400
-              ? `HTTP ${status} redirect${response.location ? ` to ${response.location}` : ''} — redirects are ` +
-                `never followed for signed webhook delivery, because the signature covers @target-uri and ` +
-                `would not verify at the redirect target. Re-register the webhook with the final URL.`
-              : `HTTP ${status}${response.wwwAuthenticate ? ` (${response.wwwAuthenticate})` : ''}`;
-        } catch (err) {
-          error = formatTransportError(err);
-          // Network / transport errors are retryable — the delivery didn't
-          // reach the receiver, so no risk of double-processing.
-          // Pin-and-bind SSRF blocks are themselves terminal: the URL
-          // (or its DNS resolution) violates policy and won't change on retry.
-          if (errorContainsCode(err, 'EADCP_SSRF_BLOCKED')) {
-            terminal = true;
-          }
-        }
-
-        if (error) errors.push(`attempt ${attempt}: ${error}`);
-
-        const willRetry = !terminal && attempt < retries.maxAttempts;
-        finalTerminal = terminal;
-        options.onAttemptResult?.({
-          ...attemptInfo,
-          ...(status !== undefined && { status }),
-          durationMs: Date.now() - started,
-          ...(error !== undefined && { error }),
-          willRetry,
-        });
-
-        if (!willRetry) break;
-
-        await sleep(backoffDelay(attempt, retries));
+      } finally {
+        await recoveryHeartbeat?.stop();
       }
-
-      if (finalTerminal) await options.deliveryRecovery?.settle(deliveryKey, 'terminal');
-
-      return {
-        delivery_id: deliveryId,
-        idempotency_key,
-        attempts: errors.length,
-        delivered: false,
-        ...(lastStatus !== undefined && { final_status: lastStatus }),
-        errors,
-      };
     },
   });
   return makeEmitter(tenantScope);
+}
+
+interface RecoveryClaimHeartbeat {
+  renewNow(): Promise<void>;
+  stop(): Promise<void>;
+  lossMessage(): string | undefined;
+}
+
+/** Keep the initial live-owner fence valid across KMS, POST, and retry sleeps. */
+function startRecoveryClaimHeartbeat(claim: WebhookDeliveryRecoveryClaim): RecoveryClaimHeartbeat {
+  let stopped = false;
+  let lost: Error | undefined;
+  let inFlight: Promise<void> | undefined;
+  // Never subtract the backend-authoritative expiry from the replica's wall
+  // clock. Clock skew could otherwise postpone the first renewal until after
+  // takeover. Third-party legacy claims fall back to the safe 1s-lease cadence.
+  const intervalMs = claim.heartbeatIntervalMs ?? 250;
+
+  const markLost = (cause?: unknown) => {
+    lost = new Error('Webhook delivery recovery lease was lost during backend renewal', {
+      ...(cause !== undefined && { cause }),
+    });
+  };
+  const renew = async () => {
+    if (stopped || lost) return;
+    try {
+      if (!(await claim.renew())) markLost();
+    } catch (error) {
+      markLost(error);
+    }
+  };
+  const scheduleRenewal = () => {
+    if (stopped || lost || inFlight) return;
+    inFlight = renew().finally(() => {
+      inFlight = undefined;
+    });
+  };
+  const timer = setInterval(scheduleRenewal, intervalMs);
+  timer.unref?.();
+
+  return {
+    async renewNow() {
+      if (inFlight) await inFlight;
+      if (!stopped && !lost) await renew();
+      if (lost) throw lost;
+    },
+    async stop() {
+      if (!stopped) {
+        stopped = true;
+        clearInterval(timer);
+      }
+      if (inFlight) await inFlight;
+    },
+    lossMessage: () => lost?.message,
+  };
 }
 
 async function refreshDeliveryBinding(
@@ -714,7 +859,7 @@ async function resolveDeliveryBinding(args: {
     idempotency_key: binding.idempotencyKey,
   });
   if (binding.payloadFingerprint !== suppliedFingerprint) {
-    throw new Error(
+    throw new WebhookDeliveryTerminalError(
       `Webhook delivery_id "${deliveryId}" is already bound to a different canonical payload. ` +
         'Use a fresh delivery_id for each changed payload or lifecycle observation.'
     );
@@ -725,7 +870,7 @@ async function resolveDeliveryBinding(args: {
 }
 
 function retiredDeliveryError(deliveryId: string): Error {
-  return new Error(
+  return new WebhookDeliveryTerminalError(
     `Webhook delivery_id "${deliveryId}" is retired after its retry horizon and MUST NOT be rebound. ` +
       'Create a new logical notification and delivery_id only when protocol re-emission is allowed.'
   );
@@ -741,7 +886,7 @@ function assertWithinRetryHorizon(
   // retainUntilMs remains the actual hard boundary.
   const effectiveNowMs = Math.max(binding.firstAttemptAtMs, nowMs);
   if (effectiveNowMs > binding.firstAttemptAtMs + retryHorizonSeconds * 1000) {
-    throw new Error(
+    throw new WebhookDeliveryTerminalError(
       `Webhook delivery_id "${deliveryId}" is outside its ${retryHorizonSeconds}-second retry horizon. ` +
         'Do not retry the retained idempotency key; create a new logical notification and delivery_id if re-emission is allowed.'
     );
@@ -897,23 +1042,22 @@ function defaultSleep(ms: number): Promise<void> {
 }
 
 /**
- * Format a transport-layer error for `result.errors[]`. Walks `cause` chains
- * (undici wraps the connector failure under a generic "fetch failed") so
- * operators see the actual rule that fired (e.g. SSRF policy block) instead
- * of an opaque outer message.
+ * Format a transport-layer error for caller-visible `result.errors[]` without
+ * copying provider, database, hostname, IAM, or secret-manager detail.
  */
 function formatTransportError(err: unknown): string {
-  if (!(err instanceof Error)) return String(err);
-  const parts: string[] = [];
-  let cur: Error | undefined = err;
+  let cur: unknown = err;
   let depth = 0;
-  while (cur && depth < 5) {
+  while (cur instanceof Error && depth < 5) {
     const code = (cur as NodeJS.ErrnoException).code;
-    parts.push(code ? `${code}: ${cur.message}` : cur.message);
-    cur = cur.cause instanceof Error ? cur.cause : undefined;
+    if (code === 'EADCP_SSRF_BLOCKED') return 'EADCP_SSRF_BLOCKED: webhook destination rejected by policy';
+    if (typeof code === 'string' && /^[A-Z][A-Z0-9_]{1,63}$/.test(code)) {
+      return `${code}: webhook delivery failed`;
+    }
+    cur = cur.cause;
     depth++;
   }
-  return parts.join(' — ');
+  return 'Webhook delivery failed';
 }
 
 function errorContainsCode(err: unknown, code: string): boolean {
