@@ -1,7 +1,6 @@
 import type { FormatReferenceStructuredObject } from '../../types/core.generated';
 import type {
   AgentPlacementFormatDeclaration,
-  CoordinatedPlacementsFormatDeclaration,
   CustomFormatDeclaration,
   DAASTAudioFormatDeclaration,
   DisplayTagFormatDeclaration,
@@ -15,6 +14,7 @@ import type {
   ResponsiveCreativeFormatDeclaration,
   SellerRenderedStatefulDisplayFormatDeclaration,
   SponsoredPlacementFormatDeclaration,
+  CoordinatedPlacementsFormatDeclaration,
   VASTVideoFormatDeclaration,
 } from '../../types/tools.generated';
 import type { CanonicalFormatDeclaration as CanonicalBaseFormatDeclaration } from './legacy-metadata';

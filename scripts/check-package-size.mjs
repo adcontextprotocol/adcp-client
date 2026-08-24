@@ -11,11 +11,14 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// The full beta.6 bundle includes expanded reporting projections plus the
-// canonical coordinated-placement and stateful-display format schemas.
-const MAX_PACKED_TARBALL_BYTES = 52 * 1024 * 1024;
-const MAX_UNPACKED_PACKAGE_BYTES = 350 * 1024 * 1024;
-const MAX_PACKED_FILE_COUNT = 8_200;
+// The signed 3.2.0-beta.6 bundle adds two substantial canonical format
+// schemas and expands the reporting/tool projections. Keep the budgets tight
+// to the resulting artifact (about 48 MiB packed, 337 MiB unpacked, 7,811
+// files) while allowing normal compressor variance across supported Node/npm
+// versions.
+const MAX_PACKED_TARBALL_BYTES = 50 * 1024 * 1024;
+const MAX_UNPACKED_PACKAGE_BYTES = 340 * 1024 * 1024;
+const MAX_PACKED_FILE_COUNT = 7_900;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
 const EXPECTED_ESM_SCHEMA_FACADE = "export * from './schemas.generated.js';\n";
