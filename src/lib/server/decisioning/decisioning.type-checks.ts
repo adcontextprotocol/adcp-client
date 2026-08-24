@@ -267,6 +267,13 @@ function _signals_only_capabilities_compiles(): DecisioningCapabilities {
   };
 }
 
+function _standard_extension_capabilities_compile(): Pick<DecisioningCapabilities, 'extensions_supported' | 'ext'> {
+  return {
+    extensions_supported: ['example'] as const,
+    ext: { example: { feature: true } },
+  };
+}
+
 // Negative: channels rejects values outside the MediaChannel union.
 function _channels_rejects_unknown_channel(): Pick<DecisioningCapabilities, 'channels'> {
   // @ts-expect-error — 'billboard' is not a known MediaChannel value.

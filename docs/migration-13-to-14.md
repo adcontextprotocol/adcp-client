@@ -689,6 +689,29 @@ The outer `status` remains the asynchronous task state (`completed`, `working`, 
 
 Regenerated 3.2 types include new tools, error codes, canonical formats, measurement surfaces, and more exact intersections/tuples. If application code imported broad generated types or runtime schemas, expect TypeScript to reveal newly exhaustive unions.
 
+SDK 14 also adds semantic refinements to public object schemas. Behavior when
+composing a refined schema varies across supported Zod 4 releases: `.extend()`
+may throw during module initialization or may succeed with version-specific
+semantics. When adding application-owned fields to an SDK schema, use
+`.safeExtend()` consistently:
+
+```ts
+import { z } from 'zod';
+import { BiddingPolicySchema } from '@adcp/sdk/schemas';
+
+const ApplicationBiddingPolicySchema = BiddingPolicySchema.safeExtend({
+  application_policy_id: z.string(),
+});
+```
+
+Keep the SDK refinements in place: they enforce protocol rules that structural
+object validation alone cannot express. `.partial()` is also version-dependent:
+it may reject a refined object or return a structural partial without the
+original checks. Define application patch schemas separately, merge the patch
+with a complete object, and parse that result through the full SDK schema before
+using it. Do not rebuild from `.shape`, because doing so silently discards the
+protocol checks.
+
 The media-buy compatibility coordinator does not expose `unknown[]` rows or a
 `Record<string, unknown>` escape hatch. Product and proposal collections use
 `CompatibleProduct` / `CompatibleProposal`, proposal methods return separate

@@ -11,6 +11,64 @@ async function callCapabilities(server) {
 }
 
 describe('capabilities.overrides — per-domain merge (#654)', () => {
+  it('projects standard extension declarations through their dedicated fields', async () => {
+    const extensionsSupported = ['example'];
+    const ext = { example: { feature: true } };
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      capabilities: {
+        extensions_supported: extensionsSupported,
+        ext,
+      },
+    });
+
+    extensionsSupported.push('caller-mutation');
+    ext.example.feature = false;
+    const caps = await callCapabilities(server);
+    assert.deepStrictEqual(caps.extensions_supported, ['example']);
+    assert.deepStrictEqual(caps.ext, { example: { feature: true } });
+    assert.deepStrictEqual(caps.supported_protocols, ['media_buy']);
+
+    caps.extensions_supported.push('response-mutation');
+    caps.ext.example.feature = false;
+    const secondCaps = await callCapabilities(server);
+    assert.deepStrictEqual(secondCaps.extensions_supported, ['example']);
+    assert.deepStrictEqual(secondCaps.ext, { example: { feature: true } });
+  });
+
+  it('preserves an explicitly empty extension declaration', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      capabilities: { extensions_supported: [], ext: {} },
+    });
+    const caps = await callCapabilities(server);
+    assert.deepStrictEqual(caps.extensions_supported, []);
+    assert.deepStrictEqual(caps.ext, {});
+  });
+
+  it('keeps standard top-level fields outside the override bag', () => {
+    for (const [key, value] of [
+      ['supported_protocols', ['creative']],
+      ['extensions_supported', ['example']],
+      ['ext', { example: { feature: true } }],
+    ]) {
+      assert.throws(
+        () =>
+          createAdcpServer({
+            name: 'Test',
+            version: '1.0.0',
+            mediaBuy: { getProducts: async () => ({ products: [] }) },
+            capabilities: { overrides: { [key]: value } },
+          }),
+        new RegExp(`capabilities\\.overrides\\.${key} is not allowed`)
+      );
+    }
+  });
+
   it('adds fields that the framework does not auto-derive', async () => {
     const server = createAdcpServer({
       name: 'Test',
