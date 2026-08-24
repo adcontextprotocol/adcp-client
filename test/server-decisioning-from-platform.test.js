@@ -6152,7 +6152,7 @@ describe('HITL push notification webhook on terminal state', () => {
     assertMcpWebhookPayloadValid(emit.payload);
   });
 
-  it('rejects beta.5 webhook registration when operation_id is omitted', async () => {
+  it('rejects beta.6 webhook registration when operation_id is omitted', async () => {
     const emits = [];
     const fakeEmitter = {
       emit: async params => {
@@ -6181,7 +6181,7 @@ describe('HITL push notification webhook on terminal state', () => {
           end_time: '2026-06-01T00:00:00Z',
           account: { account_id: 'acc_1' },
           adcp_major_version: 3,
-          adcp_version: '3.2-beta.5',
+          adcp_version: '3.2-beta.6',
           push_notification_config: {
             url: 'https://buyer.example.com/step/create_media_buy/op_url_must_not_be_parsed',
             token: 'webhook-token-1234',
@@ -6626,7 +6626,7 @@ describe('tasks_get wire tool (B9)', () => {
       assert.strictEqual(status.structuredContent.status, 'submitted');
       assert.strictEqual(status.structuredContent.has_webhook, true);
       assert.strictEqual(status.structuredContent.result, undefined);
-      assert.strictEqual(status.structuredContent.adcp_version, '3.2-beta.5');
+      assert.strictEqual(status.structuredContent.adcp_version, '3.2-beta.6');
 
       const listed = await server.dispatchTestRequest({
         method: 'tools/call',

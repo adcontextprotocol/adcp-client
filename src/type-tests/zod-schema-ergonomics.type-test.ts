@@ -8,7 +8,6 @@ import { z } from 'zod';
 import {
   CanonicalFormatDisplayTagSchema,
   CanonicalFormatHTML5BannerSchema,
-  CanonicalFormatImageSchema,
   MediaBuyFeaturesSchema,
   ProductSchema,
 } from '../lib/types/schemas.generated';
@@ -37,9 +36,6 @@ const DisplayTagExtended = CanonicalFormatDisplayTagSchema.extend({
   _adopter_marker: z.string(),
 });
 void DisplayTagExtended;
-
-const ImagePicked = CanonicalFormatImageSchema.pick({ experimental: true });
-void ImagePicked;
 
 const HTML5BannerOmitted = CanonicalFormatHTML5BannerSchema.omit({
   deprecated: true,

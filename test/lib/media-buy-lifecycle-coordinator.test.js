@@ -3724,7 +3724,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /served AdCP 3\.3, which is newer than the client pin 3\.2\.0-beta\.5/
+      /served AdCP 3\.3, which is newer than the client pin 3\.2\.0-beta\.6/
     );
   });
 

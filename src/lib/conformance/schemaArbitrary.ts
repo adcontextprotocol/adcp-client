@@ -527,9 +527,34 @@ function enforceSimpleConditionals(value: Record<string, unknown>, schema: JsonS
   for (const entry of (schema.allOf as JsonSchema[] | undefined) ?? []) {
     current = enforceRequiredTriggerConst(current, entry);
     current = avoidUnsatisfiedConstConditional(current, entry, schema);
+    current = enforceElseForbidden(current, entry);
   }
   current = enforceConstThenForbidden(current, schema);
   return current;
+}
+
+/**
+ * Handle the common `if const / else not-required` shape by removing fields
+ * that are only legal when the discriminator matches. Beta.6 creative
+ * manifests use this to reserve `component_assets` for coordinated placements.
+ */
+function enforceElseForbidden(value: Record<string, unknown>, conditional: JsonSchema): Record<string, unknown> {
+  const ifSchema = conditional.if as JsonSchema | undefined;
+  const ifProps = ifSchema?.properties as Record<string, JsonSchema> | undefined;
+  const triggerKeys = Array.isArray(ifSchema?.required) ? (ifSchema.required as string[]) : [];
+  const elseNot = (conditional.else as JsonSchema | undefined)?.not as JsonSchema | undefined;
+  const forbidden = Array.isArray(elseNot?.required) ? (elseNot.required as string[]) : [];
+  if (!ifProps || triggerKeys.length === 0 || forbidden.length === 0) return value;
+
+  const matches = triggerKeys.every(key => {
+    const prop = ifProps[key];
+    return key in value && prop && typeof prop === 'object' && 'const' in prop && value[key] === prop.const;
+  });
+  if (matches) return value;
+
+  const next = { ...value };
+  for (const key of forbidden) delete next[key];
+  return next;
 }
 
 /**

@@ -4265,8 +4265,9 @@ function compareAdcpRelease(left: ParsedAdcpRelease, right: ParsedAdcpRelease): 
 const PUSH_OPERATION_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,255}$/;
 
 function releaseRequiresPushOperationId(release: string): boolean {
-  const bundle = resolveBundleKey(release);
-  return bundle === '3.2.0-beta.5' || bundle === '3.2-beta.5';
+  const parsed = parseAdcpRelease(resolveBundleKey(release));
+  const threshold = parseAdcpRelease('3.2-beta.5');
+  return parsed !== undefined && threshold !== undefined && compareAdcpRelease(parsed, threshold) >= 0;
 }
 
 function pushOperationIdError(

@@ -110,6 +110,36 @@ describe('verifier API v3: operation optional + VerifyResult discriminated union
     );
   });
 
+  it('matches A2A 1.0 PascalCase protocol methods exactly', async () => {
+    const request = {
+      method: 'POST',
+      url: 'https://seller.example.com/a2a',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"jsonrpc":"2.0","method":"CancelTask","params":{"id":"task_conformance_001"},"id":1}',
+    };
+    const options = {
+      ...baseStores(),
+      capability: {
+        supported: true,
+        covers_content_digest: 'either',
+        required_for: [],
+        protocol_methods_required_for: ['CancelTask'],
+      },
+      now: () => 1_776_520_800,
+    };
+
+    await assert.rejects(
+      () => verifyRequestSignature(request, options),
+      err => err instanceof RequestSignatureError && err.code === 'request_signature_required' && err.failedStep === 0
+    );
+
+    const mismatch = await verifyRequestSignature(request, {
+      ...options,
+      capability: { ...options.capability, protocol_methods_required_for: ['tasks/cancel'] },
+    });
+    assert.strictEqual(mismatch.status, 'unsigned', '0.3 names must not normalize to A2A 1.0 names');
+  });
+
   it('unsigned JSON-RPC batch with protocol method in protocol_methods_required_for throws request_signature_required', async () => {
     await assert.rejects(
       () =>

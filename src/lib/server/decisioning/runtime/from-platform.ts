@@ -4297,10 +4297,8 @@ function buildTaskWebhookPayload(
 }
 
 function resolveWebhookPayloadOperationId(opts: DispatchHitlOpts, taskId: string): string {
-  if (
-    opts.pushNotificationOperationId === undefined &&
-    (opts.servedAdcpVersion === '3.2.0-beta.5' || opts.servedAdcpVersion === '3.2-beta.5')
-  ) {
+  const requiresRegisteredOperationId = /^3\.2(?:\.0)?-beta\.(?:[5-9]|[1-9]\d+)$/.test(opts.servedAdcpVersion ?? '');
+  if (opts.pushNotificationOperationId === undefined && requiresRegisteredOperationId) {
     throw new AdcpError('INVALID_REQUEST', {
       message: 'push_notification_config.operation_id is required for webhook delivery',
       field: 'push_notification_config.operation_id',

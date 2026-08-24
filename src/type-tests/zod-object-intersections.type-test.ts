@@ -38,8 +38,9 @@ const productExtend = ProductSchema.extend({
 void productExtend;
 void productExtend.shape.audit_id;
 
-const canonicalFormatImageShape = CanonicalFormatImageSchema.shape;
-void canonicalFormatImageShape.image_formats;
+// beta.6 adds a cross-field motion restriction, so image is intentionally an
+// intersection schema. Parsing remains typed even though object helpers do not.
+void CanonicalFormatImageSchema.safeParse({ width: 300, height: 250 });
 
 const getProductsShape = TOOL_REQUEST_SCHEMAS.get_products.shape;
 void getProductsShape.brief;

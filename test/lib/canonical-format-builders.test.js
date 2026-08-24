@@ -74,11 +74,21 @@ describe('canonical creative format helpers', () => {
       root.CanonicalFormat.nativeInFeed({ assets: [] }),
       root.CanonicalFormat.responsiveCreative({ aspect_ratios: ['1:1'] }),
       root.CanonicalFormat.agentPlacement({ requirements: {} }),
+      root.CanonicalFormat.sellerRenderedStatefulDisplay({ states: [], breakpoints: [] }),
+      root.CanonicalFormat.coordinatedPlacements({ components: [] }),
     ];
 
     assert.deepStrictEqual(
       declarations.map(decl => decl.format_kind),
-      ['image_carousel', 'sponsored_placement', 'native_in_feed', 'responsive_creative', 'agent_placement']
+      [
+        'image_carousel',
+        'sponsored_placement',
+        'native_in_feed',
+        'responsive_creative',
+        'agent_placement',
+        'seller_rendered_stateful_display',
+        'coordinated_placements',
+      ]
     );
   });
 

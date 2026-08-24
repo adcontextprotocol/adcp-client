@@ -119,6 +119,19 @@ const TS7056_SCHEMAS: Array<{ name: string; tsType?: string; objectShape?: boole
   { name: 'WholesaleFeedWebhookSchema' },
   { name: 'ComplyTestControllerRequestSchema', objectShape: true },
   { name: 'ListCreativesResponseSchema' },
+  // 3.2.0-beta.6 adds two deeply nested canonical presentation formats.
+  // Their inlined appearances push these public validation schemas over the
+  // declaration serializer limit; none are used for shape-based composition.
+  { name: 'ProductFormatDeclarationSchema' },
+  { name: 'PlacementSchema' },
+  { name: 'FormatSchema' },
+  { name: 'TransformerSchema' },
+  { name: 'AvailablePackageSchema' },
+  { name: 'ListCreativeFormatsResponseSchema' },
+  { name: 'PackageStatusSchema' },
+  { name: 'ListTransformersResponseCreativeAgentSchema' },
+  { name: 'GetAdCPCapabilitiesResponseSchema' },
+  { name: 'ListTransformersResponseSchema' },
 ];
 
 function postProcessTS7056Annotations(content: string): string {
@@ -1170,18 +1183,8 @@ function postProcessCreativeRuntimeConstraints(content: string): string {
   preserveCreativeConstraints('CreativeAssetSchema');
   preserveCreativeConstraints('CreativeManifestSchema');
 
-  const creativeManifest = schemaBlock('CreativeManifestSchema');
-  const assetValueSchema = `const CreativeAssetValueSchema: z.ZodType = z.unknown().superRefine((value, ctx) => {
-    const variants = Array.isArray(value) ? value : [value];
-    if (variants.length === 0 || variants.some(variant => !AssetVariantSchema.safeParse(variant).success)) {
-        ctx.addIssue({
-            code: "custom",
-            message: "creative slot must contain an asset or non-empty array of assets"
-        });
-    }
-});
-
-const CreativeAssetsSchema: z.ZodType<Record<string, unknown>> = z.record(z.string(), z.unknown()).superRefine((assets, ctx) => {
+  const creativeAssets = schemaBlock('CreativeAssetsSchema');
+  const creativeAssetsSchema = `export const CreativeAssetsSchema: z.ZodType<Record<string, unknown>> = z.record(z.string(), z.unknown()).superRefine((assets, ctx) => {
     for (const [slotKey, assetValue] of Object.entries(assets)) {
         if (/^[a-z0-9_]+$/.test(slotKey) && !CreativeAssetValueSchema.safeParse(assetValue).success) {
             ctx.addIssue({
@@ -1190,6 +1193,18 @@ const CreativeAssetsSchema: z.ZodType<Record<string, unknown>> = z.record(z.stri
                 message: "creative slot must contain an asset or non-empty array of assets"
             });
         }
+    }
+});`;
+  content = content.slice(0, creativeAssets.start) + creativeAssetsSchema + content.slice(creativeAssets.end);
+
+  const creativeManifest = schemaBlock('CreativeManifestSchema');
+  const assetValueSchema = `const CreativeAssetValueSchema: z.ZodType = z.unknown().superRefine((value, ctx) => {
+    const variants = Array.isArray(value) ? value : [value];
+    if (variants.length === 0 || variants.some(variant => !AssetVariantSchema.safeParse(variant).success)) {
+        ctx.addIssue({
+            code: "custom",
+            message: "creative slot must contain an asset or non-empty array of assets"
+        });
     }
 });
 

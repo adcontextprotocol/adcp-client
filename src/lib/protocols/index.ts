@@ -76,6 +76,16 @@ import {
   type TransportActivityHandler as TransportActivityHandlerFn,
 } from './transportDiagnostics';
 
+function usesApplicationPushRegistration(bundle: string | undefined): boolean {
+  if (bundle === undefined) return false;
+  const match = /^3\.(\d+)(?:\.0)?(?:-beta\.(\d+))?$/.exec(bundle);
+  if (!match) return false;
+  const minor = Number(match[1]);
+  if (minor > 2) return true;
+  if (minor < 2) return false;
+  return match[2] === undefined || Number(match[2]) >= 5;
+}
+
 export {
   sanitizeTransportHeaders,
   sanitizeTransportUrl,
@@ -461,8 +471,8 @@ export function prepareProtocolToolCall(
   applyPublishedSchemaCompatibility(options.toolName, argsWithVersion, args);
   const effectiveBundle =
     typeof argsWithVersion.adcp_version === 'string' ? resolveBundleKey(argsWithVersion.adcp_version) : undefined;
-  const usesBeta5ApplicationRegistration =
-    options.serverVersion !== 'v2' && (effectiveBundle === '3.2.0-beta.5' || effectiveBundle === '3.2-beta.5');
+  const usesApplicationRegistration =
+    options.serverVersion !== 'v2' && usesApplicationPushRegistration(effectiveBundle);
 
   let pushNotificationConfig: PushNotificationConfig | undefined;
   let applicationPushNotificationConfig: PushNotificationConfig | undefined;
@@ -485,7 +495,7 @@ export function prepareProtocolToolCall(
         ...(options.webhookToken && { token: options.webhookToken }),
       };
     }
-    if (usesBeta5ApplicationRegistration && pushNotificationConfig) {
+    if (usesApplicationRegistration && pushNotificationConfig) {
       operationId = options.operationId ?? randomUUID();
       applicationPushNotificationConfig = {
         ...pushNotificationConfig,

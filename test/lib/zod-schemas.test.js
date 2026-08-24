@@ -434,7 +434,10 @@ describe('Zod Schema Validation', () => {
     assert.equal(typeof schemas.ProductSchema.extend, 'function', 'ProductSchema should support extend');
     assert.equal(typeof schemas.ProductSchema.omit, 'function', 'ProductSchema should support omit');
     assert.equal(typeof schemas.ProductSchema.pick, 'function', 'ProductSchema should support pick');
-    assert.ok(schemas.CanonicalFormatImageSchema.shape.image_formats, 'canonical formats should expose object shape');
+    assert.ok(
+      schemas.CanonicalFormatImageSchema.safeParse({ image_formats: ['svg'] }).success,
+      'canonical image format should validate beta.6 image fields'
+    );
   });
 
   test('PriceBreakdownSchema preserves adjustment XOR and 1..20 bounds', async () => {

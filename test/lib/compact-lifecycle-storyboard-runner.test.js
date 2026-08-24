@@ -12,7 +12,7 @@ const { TOOL_INPUT_SHAPE, toMcpResponse } = require('../../dist/lib/server/test-
 const { getComplianceStoryboardById } = require('../../dist/lib/testing/storyboard/index.js');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
 
-const ADCP_VERSION = '3.2.0-beta.5';
+const ADCP_VERSION = '3.2.0-beta.6';
 const ACCOUNT = {
   brand: { domain: 'acmeoutdoor.example' },
   operator: 'pinnacle-agency.example',
@@ -40,8 +40,8 @@ function closeServer(server) {
   return new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
 }
 
-function assertBeta3Envelope(request) {
-  assert.equal(request.adcp_version, '3.2-beta.5');
+function assertBeta6Envelope(request) {
+  assert.equal(request.adcp_version, '3.2-beta.6');
   assert.equal(request.adcp_major_version, 3);
 }
 
@@ -125,7 +125,7 @@ async function createLifecycleServer() {
   const mediaBuy = {
     async listProducts(request) {
       record('listProducts', request);
-      assertBeta3Envelope(request);
+      assertBeta6Envelope(request);
       const productId = request.criteria.product_ids[0];
       const direct = productId === 'compact_direct_buy_video';
       const pricingOptionId = direct ? 'compact_direct_video_cpm' : 'compact_video_cpm';
@@ -147,7 +147,7 @@ async function createLifecycleServer() {
 
     async requestProposals(request) {
       record('requestProposals', request);
-      assertBeta3Envelope(request);
+      assertBeta6Envelope(request);
       const terms = commercialTerms(request.criteria.product_ids[0], 'compact_video_cpm');
       state.proposalSequence += 1;
       const proposalId = state.proposalSequence === 1 ? 'proposal-draft' : `proposal-draft-${state.proposalSequence}`;
@@ -167,7 +167,7 @@ async function createLifecycleServer() {
 
     async refineProposals(request) {
       record('refineProposals', request);
-      assertBeta3Envelope(request);
+      assertBeta6Envelope(request);
       const terms = commercialTerms('compact_lifecycle_video', 'compact_video_cpm');
       return {
         status: 'completed',
@@ -195,7 +195,7 @@ async function createLifecycleServer() {
 
     async acceptProposal(request) {
       record('acceptProposal', request);
-      assertBeta3Envelope(request);
+      assertBeta6Envelope(request);
       const terms = commercialTerms('compact_lifecycle_video', 'compact_video_cpm');
       const accepted = proposal({
         id: request.proposal_id,
@@ -210,7 +210,7 @@ async function createLifecycleServer() {
 
     async declineProposals(request) {
       record('declineProposals', request);
-      assertBeta3Envelope(request);
+      assertBeta6Envelope(request);
       return {
         results: request.declines.map(decline => ({ proposal_id: decline.proposal_id, outcome: 'declined' })),
       };
@@ -218,7 +218,7 @@ async function createLifecycleServer() {
 
     async buyProducts(request) {
       record('buyProducts', request);
-      assertBeta3Envelope(request);
+      assertBeta6Envelope(request);
       assert.equal(request.feed_version, 'direct-feed-v1');
       assert.equal(request.pricing_version, DIRECT_PRICING_VERSION);
       const purchase = request.purchases[0];
@@ -239,7 +239,7 @@ async function createLifecycleServer() {
 
     async controlMediaBuy(request) {
       record('controlMediaBuy', request);
-      assertBeta3Envelope(request);
+      assertBeta6Envelope(request);
       assert.equal(request.media_buy_id, state.mediaBuyId);
       assert.equal(request.revision, state.revision);
       state.revision += 1;
@@ -263,7 +263,7 @@ async function createLifecycleServer() {
 
     async getMediaBuys(request) {
       record('getMediaBuys', request);
-      assertBeta3Envelope(request);
+      assertBeta6Envelope(request);
       assert.deepEqual(request.media_buy_ids, [state.mediaBuyId]);
       return {
         media_buys: [
@@ -376,7 +376,7 @@ async function runLifecycle(id) {
   }
 }
 
-test('public storyboard runner executes the complete compact proposal lifecycle over validated beta.3 MCP', async () => {
+test('public storyboard runner executes the complete compact proposal lifecycle over validated beta.6 MCP', async () => {
   assert.deepEqual(await runLifecycle('media_buy_seller/compact_product_lifecycle'), [
     'complyTestController',
     'listProducts',
@@ -388,7 +388,7 @@ test('public storyboard runner executes the complete compact proposal lifecycle 
   ]);
 });
 
-test('public storyboard runner executes the complete compact direct-buy lifecycle over validated beta.3 MCP', async () => {
+test('public storyboard runner executes the complete compact direct-buy lifecycle over validated beta.6 MCP', async () => {
   assert.deepEqual(await runLifecycle('media_buy_seller/compact_direct_buy_lifecycle'), [
     'complyTestController',
     'listProducts',
@@ -398,7 +398,7 @@ test('public storyboard runner executes the complete compact direct-buy lifecycl
   ]);
 });
 
-test('compact-first coordinator executes proposal outcomes and the full control matrix over validated beta.3 MCP', async () => {
+test('compact-first coordinator executes proposal outcomes and the full control matrix over validated beta.6 MCP', async () => {
   const { calls, server, url } = await createLifecycleServer();
   try {
     const buyer = new AgentClient(

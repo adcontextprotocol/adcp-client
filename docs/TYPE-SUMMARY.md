@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-08-23
+> Generated at: 2026-08-24
 > @adcp/sdk v14.0.0-beta.7
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -900,6 +900,7 @@ _Request:_
   start_date: string
   end_date: string
   include_package_daily_breakdown: boolean
+  requested_metrics: object[]
   time_granularity: Reporting Frequency
   include_window_breakdown: boolean
   attribution_window: object

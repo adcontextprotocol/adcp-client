@@ -419,7 +419,7 @@ describe('conformance: seedFixtures', () => {
       brand_id: 'compact_brand',
     });
     assert.equal(observed.bought.length, 1);
-    assert.equal(observed.bought[0].adcp_version, '3.2-beta.5');
+    assert.equal(observed.bought[0].adcp_version, '3.2-beta.6');
     assert.equal(observed.bought[0].adcp_major_version, 3);
     assert.match(observed.bought[0].idempotency_key, /^[0-9a-f-]{36}$/);
     assert.equal(observed.bought[0].feed_version, 'feed-compact-1');
