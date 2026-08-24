@@ -92,6 +92,62 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     assert.strictEqual(typeof server.dispatchTestRequest, 'function');
   });
 
+  it('projects standard extension capabilities without overriding derived protocols (#2671)', async () => {
+    const platform = buildPlatform();
+    const extensionsSupported = ['example'];
+    const ext = { example: { feature: true } };
+    platform.capabilities.extensions_supported = extensionsSupported;
+    platform.capabilities.ext = ext;
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'extension-capabilities',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'strict' },
+    });
+
+    extensionsSupported.push('caller_mutation');
+    ext.example.feature = false;
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_adcp_capabilities', arguments: {} },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.deepStrictEqual(result.structuredContent.extensions_supported, ['example']);
+    assert.deepStrictEqual(result.structuredContent.ext, { example: { feature: true } });
+    assert.ok(result.structuredContent.supported_protocols.includes('media_buy'));
+
+    result.structuredContent.extensions_supported.push('response_mutation');
+    result.structuredContent.ext.example.feature = false;
+    const secondResult = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_adcp_capabilities', arguments: {} },
+    });
+    assert.notStrictEqual(secondResult.isError, true, JSON.stringify(secondResult.structuredContent));
+    assert.deepStrictEqual(secondResult.structuredContent.extensions_supported, ['example']);
+    assert.deepStrictEqual(secondResult.structuredContent.ext, { example: { feature: true } });
+  });
+
+  it('strictly validates extension capability declarations (#2671)', async () => {
+    for (const invalidCapabilities of [
+      { extensions_supported: ['Invalid-Namespace'] },
+      { extensions_supported: ['example', 'example'] },
+      { ext: [] },
+    ]) {
+      const platform = buildPlatform();
+      Object.assign(platform.capabilities, invalidCapabilities);
+      const server = createAdcpServerFromPlatform(platform, {
+        name: 'invalid-extension-capabilities',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'strict' },
+      });
+      const result = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: { name: 'get_adcp_capabilities', arguments: {} },
+      });
+      assert.strictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+    }
+  });
+
   it('makes the compact 3.2 lifecycle primary while preserving legacy seller routes', async () => {
     const calls = [];
     const base = buildPlatform();

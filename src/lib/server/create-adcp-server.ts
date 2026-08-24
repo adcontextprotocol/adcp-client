@@ -1157,7 +1157,13 @@ export interface AdcpCapabilitiesConfig {
   features?: Partial<MediaBuyFeatures>;
   account?: Partial<AccountCapabilities>;
   creative?: Partial<CreativeCapabilities>;
-  extensions_supported?: string[];
+  extensions_supported?: readonly string[];
+  /**
+   * Vendor-namespaced extension capability data emitted at the top-level
+   * `get_adcp_capabilities.ext` field. Each populated namespace should also
+   * be listed in {@link extensions_supported}.
+   */
+  ext?: NonNullable<GetAdCPCapabilitiesResponse['ext']>;
   /**
    * RFC 9421 request-signing verifier capability. See
    * docs/building/implementation/security.mdx#signed-requests-transport-layer.
@@ -1204,7 +1210,7 @@ export interface AdcpCapabilitiesConfig {
    * - primitive overrides replace the auto-derived value.
    *
    * Top-level fields the framework owns (`adcp`, `supported_protocols`,
-   * `specialisms`, `extensions_supported`) are not accepted here — configure
+   * `specialisms`, `extensions_supported`, `ext`) are not accepted here — configure
    * them via their dedicated fields on {@link AdcpCapabilitiesConfig}.
    */
   overrides?: AdcpCapabilitiesOverrides;
@@ -7818,8 +7824,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     };
   }
 
-  if (capConfig?.extensions_supported?.length) {
-    capabilitiesData.extensions_supported = capConfig.extensions_supported;
+  if (capConfig?.extensions_supported !== undefined) {
+    capabilitiesData.extensions_supported = [...capConfig.extensions_supported];
+  }
+
+  if (capConfig?.ext !== undefined) {
+    capabilitiesData.ext = structuredClone(capConfig.ext);
   }
 
   if (capConfig?.request_signing) {

@@ -2360,6 +2360,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   };
   const adopterCreative = platform.capabilities.creative;
   const adopterAccount = platform.capabilities.account;
+  const adopterExtensionsSupported = platform.capabilities.extensions_supported;
+  const adopterCapabilityExt = platform.capabilities.ext;
   const adopterOverrides = platform.capabilities.overrides;
   const adopterSupportedVersions = platform.capabilities.supported_versions;
   const hasOverridesObject = hasOverridesProjection || adopterOverrides !== undefined;
@@ -2374,6 +2376,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     }),
     ...(adopterCreative !== undefined && { creative: adopterCreative }),
     ...(adopterAccount !== undefined && { account: adopterAccount }),
+    ...(adopterExtensionsSupported !== undefined && {
+      extensions_supported: [...adopterExtensionsSupported],
+    }),
+    ...(adopterCapabilityExt !== undefined && { ext: adopterCapabilityExt }),
     ...(adopterSupportedVersions !== undefined && {
       supported_versions: [...adopterSupportedVersions],
     }),

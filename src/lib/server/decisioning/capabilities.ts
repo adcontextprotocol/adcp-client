@@ -296,6 +296,20 @@ export interface DecisioningCapabilities<TConfig = unknown> {
   account?: Partial<AccountCapabilities>;
 
   /**
+   * Registered extension namespaces supported by this platform. Projected
+   * verbatim onto `get_adcp_capabilities.extensions_supported`; use the
+   * matching namespace keys in {@link ext} for capability data.
+   */
+  extensions_supported?: readonly string[];
+
+  /**
+   * Vendor-namespaced extension capability data projected onto the top-level
+   * `get_adcp_capabilities.ext` field. Each populated namespace should also
+   * be declared in {@link extensions_supported}.
+   */
+  ext?: NonNullable<GetAdCPCapabilitiesResponse['ext']>;
+
+  /**
    * Deep-merge overrides applied to the wire `get_adcp_capabilities`
    * response. Use this for fields that the top-level `DecisioningCapabilities`
    * shape doesn't model — `media_buy.propagation_surfaces`,
@@ -303,7 +317,9 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    * framework's per-domain projections (auto-derived `media_buy`, `brand`,
    * `account`, `compliance_testing` blocks) are merged AFTER adopter
    * overrides, so framework-derived values remain authoritative on the keys
-   * the projection engine handles.
+   * the projection engine handles. Framework-owned top-level fields such as
+   * `supported_protocols`, `extensions_supported`, and `ext` stay outside
+   * this override bag and use dedicated projection slots.
    *
    * Mirrors `AdcpCapabilitiesConfig.overrides` on the lower-level
    * `createAdcpServer` API. Resolves the `definePlatform` passthrough gap
