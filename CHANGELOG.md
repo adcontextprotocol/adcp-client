@@ -1,5 +1,34 @@
 # Changelog
 
+## 14.0.0-beta.8
+
+### Major Changes
+
+- 17c912b: Define a seven-day minimum retention and pruning contract for established-proposal completion tombstones, and allow production webhook publishers to bind trusted tenant scope after emitter construction.
+
+  Production servers that previously relied on the implicit `single-tenant` webhook namespace must now configure `webhooks.tenantScope` or resolve trusted account, session, or authentication scope for each request. Unscoped production emission fails before durable checkpointing or network delivery.
+
+### Minor Changes
+
+- 5a55112: Add PostgreSQL and Redis webhook delivery stores plus durable, lease-fenced outbox recovery backends, secret-reference adapters, migrations, and a reusable recovery polling API.
+
+### Patch Changes
+
+- 9c53b29: Complete the AdCP 3.2.0-beta.6 adoption with updated migration guidance,
+  consistent prerelease fixtures, and A2A 1.0 request-signing method coverage.
+- b229519: storyboard runner: resolve a storyboard's declared `prerequisites.test_kit` from a caller-selected or trusted-loader compliance cache into `options.test_kit` (caller-supplied kits win), and hard-fail steps whose `auth.from_test_kit` resolves no credential instead of silently sending an unauthenticated probe (adcontextprotocol/adcp#6735). Previously the declaration was decorative: runs without an explicit kit degraded credential-keyed steps (comply_controller_mode_gate) to no-auth probes, grading conformant sellers FAIL. Ad-hoc `--file` runs authorize cache-relative kits only with an explicit `--compliance-dir`; `--compliance-version` selects protocol/schema data without granting credential-read authority, and callers can instead pass `--test-kit`. Targeted `storyboard step --test-kit` reruns now preserve the same explicit override. Declared kit paths are containment-checked against the cache root; a declared kit missing from the cache is tolerated at load time (only steps that actually need the credential fail, with an explicit configuration error).
+- 1d16869: Adopt the signed AdCP 3.2.0-beta.6 schema and compliance bundle, including
+  delivery metric leaf identities, sortable transactional metrics,
+  `time_based_views`, qualifier-aware vendor metric rows, requested metric
+  narrowing, and negotiated delivery breakdown sorting and completeness echoes.
+- ccb2b3b: Preserve the AdCP 3.2 beta.5 canonical proposal `total_budget_guidance` object shape and `forecast` reference in generated TypeScript types.
+- ff37e9b: Make SDK test clients, including `createTestClient`, and authored storyboard response-schema checks grade strict JSON Schema verdicts by default so local CLI and programmatic preflight results match hosted compliance grading. Add `strictResponseSchemaValidation: false` as a packaged-schema diagnostic migration escape hatch, and preserve implementation-specific strings in `compliance_testing.scenarios`.
+- 3618dac: Complete AdCP 3.2.0-beta.5 async adoption: carry buyer operation IDs in
+  application-layer webhook registration across MCP and A2A, reject malformed
+  beta.5 registrations before seller dispatch, converge terminal re-emissions
+  across delivery keys, and preserve failed or rejected task artifacts when
+  polling with `include_result`.
+
 ## 14.0.0-beta.7
 
 ### Major Changes
