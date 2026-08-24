@@ -30,7 +30,7 @@ const PRODUCTS_ONLY_BRIEF_VECTORS = JSON.parse(
   readFileSync(
     path.resolve(
       __dirname,
-      '../../compliance/cache/3.2.0-beta.5/test-vectors/products-only-brief-compatibility/vectors.json'
+      '../../compliance/cache/latest/test-vectors/products-only-brief-compatibility/vectors.json'
     ),
     'utf8'
   )
