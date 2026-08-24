@@ -451,7 +451,7 @@ test('customHeaders signing-reserved keys are stripped before signing', async ()
       /keyid="attacker"/,
       'attacker-supplied Signature-Input was overwritten'
     );
-    assert.match(call.headers['content-digest'], /^sha-256=:[A-Za-z0-9+/]+=*:$/);
+    assert.match(call.headers['content-digest'], /^sha-256=:[A-Za-z0-9+/]{43}=:/);
     assert.notStrictEqual(
       call.headers['content-digest'],
       'sha-256=:AAAA:',

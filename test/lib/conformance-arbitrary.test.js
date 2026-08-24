@@ -284,7 +284,7 @@ describe('conformance: schemaToArbitrary', { concurrency: false }, () => {
     }
   });
 
-  test('if/else discriminator removes fields forbidden outside the matching branch', () => {
+  test('if/else: removes fields forbidden outside the discriminator branch', () => {
     const schema = {
       type: 'object',
       properties: {
@@ -304,9 +304,8 @@ describe('conformance: schemaToArbitrary', { concurrency: false }, () => {
     };
     const validate = makeAjv().compile(schema);
     const samples = fc.sample(schemaToArbitrary(schema), { numRuns: 100, seed: 42 });
-    assert.equal(
+    assert.ok(
       samples.every(sample => validate(sample)),
-      true,
       JSON.stringify(validate.errors)
     );
   });

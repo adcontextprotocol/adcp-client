@@ -71,20 +71,11 @@ import { resolveBundleKey, toReleasePrecisionWire, validateAdcpVersionWire } fro
 import { buildAgentSigningContext, CAPABILITY_OP, ensureCapabilityLoaded } from '../signing/client';
 import { withResponseSizeLimit } from './responseSizeLimit';
 import { preparedProtocolToolCallFor } from './prepared-call-context';
+import { isAdcpVersionAtLeast } from '../utils/adcp-version-config';
 import {
   withTransportDiagnostics,
   type TransportActivityHandler as TransportActivityHandlerFn,
 } from './transportDiagnostics';
-
-function usesApplicationPushRegistration(bundle: string | undefined): boolean {
-  if (bundle === undefined) return false;
-  const match = /^3\.(\d+)(?:\.0)?(?:-beta\.(\d+))?$/.exec(bundle);
-  if (!match) return false;
-  const minor = Number(match[1]);
-  if (minor > 2) return true;
-  if (minor < 2) return false;
-  return match[2] === undefined || Number(match[2]) >= 5;
-}
 
 export {
   sanitizeTransportHeaders,
@@ -472,7 +463,7 @@ export function prepareProtocolToolCall(
   const effectiveBundle =
     typeof argsWithVersion.adcp_version === 'string' ? resolveBundleKey(argsWithVersion.adcp_version) : undefined;
   const usesApplicationRegistration =
-    options.serverVersion !== 'v2' && usesApplicationPushRegistration(effectiveBundle);
+    options.serverVersion !== 'v2' && isAdcpVersionAtLeast(effectiveBundle, '3.2.0-beta.5');
 
   let pushNotificationConfig: PushNotificationConfig | undefined;
   let applicationPushNotificationConfig: PushNotificationConfig | undefined;

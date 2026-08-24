@@ -270,6 +270,8 @@ export function stripLegacyCreativeIdentity<T>(value: T): CanonicalCreativeRespo
     'native_in_feed',
     'responsive_creative',
     'agent_placement',
+    'seller_rendered_stateful_display',
+    'coordinated_placements',
     'custom',
   ]);
   const creativeIdentityKey = (key: string): boolean =>
@@ -648,6 +650,8 @@ const CANONICAL_FORMAT_KINDS = new Set<CanonicalFormatKind>([
   'native_in_feed',
   'responsive_creative',
   'agent_placement',
+  'seller_rendered_stateful_display',
+  'coordinated_placements',
   'custom',
 ]);
 

@@ -44,6 +44,8 @@ export type CanonicalFormatKind =
   | 'native_in_feed'
   | 'responsive_creative'
   | 'agent_placement'
+  | 'seller_rendered_stateful_display'
+  | 'coordinated_placements'
   | 'custom';
 
 /**

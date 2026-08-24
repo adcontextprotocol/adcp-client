@@ -23,10 +23,7 @@ const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/id
 
 const PRODUCTS_ONLY_BRIEF_VECTORS = JSON.parse(
   readFileSync(
-    path.resolve(
-      __dirname,
-      '../compliance/cache/3.2.0-beta.6/test-vectors/products-only-brief-compatibility/vectors.json'
-    ),
+    path.resolve(__dirname, '../compliance/cache/latest/test-vectors/products-only-brief-compatibility/vectors.json'),
     'utf8'
   )
 );
@@ -6162,37 +6159,39 @@ describe('HITL push notification webhook on terminal state', () => {
     };
 
     const platform = buildHitlPlatform(async () => ({ media_buy_id: 'mb_42', status: 'active' }));
-    const server = createAdcpServerFromPlatform(platform, {
-      name: 'webhook',
-      version: '0.0.1',
-      validation: { requests: 'off', responses: 'off' },
-      taskWebhookEmitter: fakeEmitter,
-    });
-
-    const result = await server.dispatchTestRequest({
-      method: 'tools/call',
-      params: {
-        name: 'create_media_buy',
-        arguments: {
-          buyer_ref: 'b1',
-          idempotency_key: '11111111-1111-1111-1111-111111111111',
-          packages: [],
-          start_time: '2026-05-01T00:00:00Z',
-          end_time: '2026-06-01T00:00:00Z',
-          account: { account_id: 'acc_1' },
-          adcp_major_version: 3,
-          adcp_version: '3.2-beta.6',
-          push_notification_config: {
-            url: 'https://buyer.example.com/step/create_media_buy/op_url_must_not_be_parsed',
-            token: 'webhook-token-1234',
+    for (const adcpVersion of ['3.2-beta.6']) {
+      const server = createAdcpServerFromPlatform(platform, {
+        name: 'webhook',
+        version: '0.0.1',
+        adcpVersion: '3.2.0-beta.6',
+        validation: { requests: 'off', responses: 'off' },
+        taskWebhookEmitter: fakeEmitter,
+      });
+      const result = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'create_media_buy',
+          arguments: {
+            buyer_ref: 'b1',
+            idempotency_key: '11111111-1111-1111-1111-111111111111',
+            packages: [],
+            start_time: '2026-05-01T00:00:00Z',
+            end_time: '2026-06-01T00:00:00Z',
+            account: { account_id: 'acc_1' },
+            adcp_major_version: 3,
+            adcp_version: adcpVersion,
+            push_notification_config: {
+              url: 'https://buyer.example.com/step/create_media_buy/op_url_must_not_be_parsed',
+              token: 'webhook-token-1234',
+            },
           },
         },
-      },
-    });
+      });
 
-    assert.strictEqual(result.isError, true);
-    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
-    assert.strictEqual(result.structuredContent.adcp_error.field, 'push_notification_config.operation_id');
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+      assert.strictEqual(result.structuredContent.adcp_error.field, 'push_notification_config.operation_id');
+    }
     assert.strictEqual(emits.length, 0);
   });
 

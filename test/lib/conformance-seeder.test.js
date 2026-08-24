@@ -272,7 +272,7 @@ describe('conformance: seedFixtures', () => {
     let proposalSequence = 0;
     const { server, port } = await startAgent({
       adcpVersion: '3.2.0-beta.6',
-      // This regression fixture must stay valid against the selected beta.1
+      // This regression fixture must stay valid against the selected beta.6
       // response schemas. Strict mode turns schema drift into a test failure
       // instead of the SDK's usual non-blocking validation warning.
       validation: { responses: 'strict' },

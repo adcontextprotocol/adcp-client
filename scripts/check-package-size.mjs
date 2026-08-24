@@ -11,6 +11,8 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// The full beta.6 bundle includes expanded reporting projections plus the
+// canonical coordinated-placement and stateful-display format schemas.
 const MAX_PACKED_TARBALL_BYTES = 52 * 1024 * 1024;
 const MAX_UNPACKED_PACKAGE_BYTES = 350 * 1024 * 1024;
 const MAX_PACKED_FILE_COUNT = 8_200;

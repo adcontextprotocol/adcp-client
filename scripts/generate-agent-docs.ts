@@ -190,8 +190,8 @@ function fieldType(prop: any): string {
   if (prop.enum) return prop.enum.map((v: string) => `'${v}'`).join(' | ');
   if (prop.const) return `'${prop.const}'`;
   if (prop.type === 'array') {
-    const itemType = prop.items?.title || prop.items?.type || 'object';
-    return `${itemType}[]`;
+    const itemType = fieldType(prop.items) || 'object';
+    return itemType.includes(' | ') ? `(${itemType})[]` : `${itemType}[]`;
   }
   if (prop.type === 'object' && prop.title) return prop.title;
   if (prop.$ref) {

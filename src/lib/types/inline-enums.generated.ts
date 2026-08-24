@@ -166,6 +166,13 @@ export const CanonicalFormatHTML5Banner_ClicktagMacroValues = ["clickTag", "clic
 /** single | CanonicalFormatHTML5Banner.mraid_version */
 export const CanonicalFormatHTML5Banner_MraidVersionValues = ["2.0", "3.0"] as const;
 
+// ====== CanonicalFormatImage ======
+
+/** array of | CanonicalFormatImage.image_formats */
+export const CanonicalFormatImage_ImageFormatsValues = ["jpg", "jpeg", "png", "gif", "webp", "svg"] as const;
+/** single | CanonicalFormatImage.motion_level */
+export const CanonicalFormatImage_MotionLevelValues = ["static", "limited_motion"] as const;
+
 // ====== CanonicalFormatImageCarousel ======
 
 /** array of | CanonicalFormatImageCarousel.allowed_card_asset_types */
@@ -184,8 +191,6 @@ export const CanonicalFormatNativeInFeed_MenuPlacementValues = ["tile", "headlin
 
 // ====== CanonicalFormatOption ======
 
-/** single | CanonicalFormatOption.format_kind */
-export const CanonicalFormatOption_FormatKindValues = ["image", "html5", "display_tag", "image_carousel", "video_hosted", "video_vast", "audio_hosted", "audio_daast", "sponsored_placement", "native_in_feed", "responsive_creative", "agent_placement", "custom"] as const;
 /** single | CanonicalFormatOption.seller_preference */
 export const CanonicalFormatOption_SellerPreferenceValues = ["preferred", "accepted", "discouraged"] as const;
 
@@ -873,6 +878,15 @@ export const CanonicalFormatHostedVideo_ReferenceMutabilityValues = CanonicalFor
 export const CanonicalFormatHTML5Banner_CompositionModelValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues;
 /** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_ReferenceMutabilityValues` — same literal set, CanonicalFormatHTML5Banner.reference_mutability duplicates the canonical export. */
 export const CanonicalFormatHTML5Banner_ReferenceMutabilityValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_ReferenceMutabilityValues;
+// --- CanonicalFormatImage ---
+/** @deprecated use `CanonicalFormatHostedAudio_AssetSourceValues` — same literal set, CanonicalFormatImage.asset_source duplicates the canonical export. */
+export const CanonicalFormatImage_AssetSourceValues = CanonicalFormatHostedAudio_AssetSourceValues;
+/** @deprecated use `CanonicalFormatHostedAudio_BuyerAssetAcceptanceValues` — same literal set, CanonicalFormatImage.buyer_asset_acceptance duplicates the canonical export. */
+export const CanonicalFormatImage_BuyerAssetAcceptanceValues = CanonicalFormatHostedAudio_BuyerAssetAcceptanceValues;
+/** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues` — same literal set, CanonicalFormatImage.composition_model duplicates the canonical export. */
+export const CanonicalFormatImage_CompositionModelValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues;
+/** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_ReferenceMutabilityValues` — same literal set, CanonicalFormatImage.reference_mutability duplicates the canonical export. */
+export const CanonicalFormatImage_ReferenceMutabilityValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_ReferenceMutabilityValues;
 // --- CanonicalFormatImageCarousel ---
 /** @deprecated use `CanonicalFormatImageCarousel_AllowedCardAssetTypesValues` — same literal set, CanonicalFormatImageCarousel.allowed_card_media_asset_types duplicates the canonical export. */
 export const CanonicalFormatImageCarousel_AllowedCardMediaAssetTypesValues = CanonicalFormatImageCarousel_AllowedCardAssetTypesValues;

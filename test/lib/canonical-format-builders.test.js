@@ -74,8 +74,8 @@ describe('canonical creative format helpers', () => {
       root.CanonicalFormat.nativeInFeed({ assets: [] }),
       root.CanonicalFormat.responsiveCreative({ aspect_ratios: ['1:1'] }),
       root.CanonicalFormat.agentPlacement({ requirements: {} }),
-      root.CanonicalFormat.sellerRenderedStatefulDisplay({ states: [], breakpoints: [] }),
-      root.CanonicalFormat.coordinatedPlacements({ components: [] }),
+      root.CanonicalFormat.sellerRenderedStatefulDisplay({ states: [], breakpoints: [], canvas: {} }),
+      root.CanonicalFormat.coordinatedPlacements({ placements: [] }),
     ];
 
     assert.deepStrictEqual(

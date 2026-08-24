@@ -109,7 +109,7 @@ async function withHonestEstablishedSeller(version, run) {
         idempotency: { supported: true, replay_ttl_seconds: 86400 },
         ...(version.startsWith('3.1') && { supported_versions: ['3.0', '3.1'], build_version: version }),
         ...(version.startsWith('3.2') && {
-          supported_versions: ['3.0', '3.1', '3.2-beta.6'],
+          supported_versions: ['3.0', '3.1', version.replace('.0-', '-')],
           build_version: version,
         }),
       },

@@ -10,7 +10,28 @@ import {
   CanonicalFormatHTML5BannerSchema,
   MediaBuyFeaturesSchema,
   ProductSchema,
+  ProductFormatDeclarationSchema,
+  PlacementSchema,
+  FormatSchema,
+  TransformerSchema,
+  AvailablePackageSchema,
+  ListCreativeFormatsResponseSchema,
+  PackageStatusSchema,
+  ListTransformersResponseCreativeAgentSchema,
+  GetAdCPCapabilitiesResponseSchema,
+  ListTransformersResponseSchema,
 } from '../lib/types/schemas.generated';
+import type { Format, AvailablePackage } from '../lib/types/core.generated';
+import type {
+  ProductFormatDeclaration,
+  Placement,
+  Transformer,
+  ListCreativeFormatsResponse,
+  PackageStatus,
+  ListTransformersResponseCreativeAgent,
+  GetAdCPCapabilitiesResponse,
+  ListTransformersResponse,
+} from '../lib/types/tools.generated';
 
 const ProductWithCacheSchema = ProductSchema.extend({
   _cached_at: z.string().datetime(),
@@ -48,3 +69,41 @@ const MediaBuyFeaturesExtended = MediaBuyFeaturesSchema.extend({
   _evaluated_at: z.string().datetime(),
 });
 void MediaBuyFeaturesExtended;
+
+// Beta.6 expansion pushed these declarations across TS7056's serialization
+// threshold. Their explicit annotations must retain parse output types and,
+// for object schemas, the public composition helpers.
+declare const unknownInput: unknown;
+const productFormat: ProductFormatDeclaration = ProductFormatDeclarationSchema.parse(unknownInput);
+const placement: Placement = PlacementSchema.parse(unknownInput);
+const format: Format = FormatSchema.parse(unknownInput);
+const transformer: Transformer = TransformerSchema.parse(unknownInput);
+const availablePackage: AvailablePackage = AvailablePackageSchema.parse(unknownInput);
+const formatsResponse: ListCreativeFormatsResponse = ListCreativeFormatsResponseSchema.parse(unknownInput);
+const packageStatus: PackageStatus = PackageStatusSchema.parse(unknownInput);
+const transformerResponse: ListTransformersResponseCreativeAgent =
+  ListTransformersResponseCreativeAgentSchema.parse(unknownInput);
+const capabilities: GetAdCPCapabilitiesResponse = GetAdCPCapabilitiesResponseSchema.parse(unknownInput);
+const listTransformers: ListTransformersResponse = ListTransformersResponseSchema.parse(unknownInput);
+void [
+  productFormat,
+  placement,
+  format,
+  transformer,
+  availablePackage,
+  formatsResponse,
+  packageStatus,
+  transformerResponse,
+  capabilities,
+  listTransformers,
+];
+
+ProductFormatDeclarationSchema.pick({ format_kind: true });
+FormatSchema.pick({ format_id: true });
+TransformerSchema.pick({ transformer_id: true });
+AvailablePackageSchema.pick({ package_id: true });
+ListCreativeFormatsResponseSchema.pick({ formats: true });
+PackageStatusSchema.pick({ package_id: true });
+ListTransformersResponseCreativeAgentSchema.pick({ transformers: true });
+GetAdCPCapabilitiesResponseSchema.pick({ status: true });
+ListTransformersResponseSchema.pick({ transformers: true });

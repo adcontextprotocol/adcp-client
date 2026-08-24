@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.2.0-beta.6
-// Generated at: 2026-08-24T04:30:37.778Z
+// Generated at: 2026-08-24T06:28:26.392Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -4137,6 +4137,72 @@ export interface CatalogRequirement {
   system_versions?: [string, ...string[]];
 }
 /**
+ * A well-formed BCP 47 language tag used by AdCP only as language identity. Script and region may refine that identity; other valid BCP 47 subtags remain part of tag matching but do not make this a general locale-settings object. It does not determine currency, time zone, number/date formatting, market, or legal jurisdiction. The AdCP canonical wire profile requires lower-case language and variants, title-case script, and upper-case region (for example `en-US`, `zh-Hant-TW`, or `x-private`). RFC 5646 comparisons are case-insensitive and its case regularization is optional; AdCP intentionally requires this stricter single wire spelling and receivers MUST reject differently cased tags rather than silently normalizing them. The schema pattern enforces the AdCP casing profile and extension structure for commonly used tags; conforming receivers additionally validate the complete RFC 5646 grammar and registry rules. Every new AdCP field carrying BCP 47 language identity or a concrete language range MUST reference this schema instead of declaring independent string constraints.
+ */
+export type LanguageTag = string;
+
+/**
+ * Compact canonical creative-format declaration. Legacy named-format links are intentionally absent; params are validated against the canonical schema selected by format_kind without inlining every format union into product discovery.
+ */
+export interface CanonicalFormatOption {
+  /**
+   * @minLength 1
+   */
+  format_option_id?: string;
+  /**
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+   */
+  publisher_domain?: string;
+  /**
+   * @minLength 1
+   */
+  display_name?: string;
+  /**
+   * @pattern ^https:\/\/
+   */
+  sample_render_url?: string;
+  applies_to_channels?: MediaChannel[];
+  seller_preference?: 'preferred' | 'accepted' | 'discouraged';
+  locale_policy?: CreativeLocalePolicy;
+  canonical_formats_only?: boolean;
+  experimental?: boolean;
+  format_kind:
+    | 'image'
+    | 'html5'
+    | 'display_tag'
+    | 'image_carousel'
+    | 'video_hosted'
+    | 'video_vast'
+    | 'audio_hosted'
+    | 'audio_daast'
+    | 'sponsored_placement'
+    | 'native_in_feed'
+    | 'responsive_creative'
+    | 'agent_placement'
+    | 'seller_rendered_stateful_display'
+    | 'coordinated_placements'
+    | 'custom';
+  params: {};
+  /**
+   * @minLength 1
+   */
+  format_shape?: string;
+  format_schema?: PlatformExtensionReference;
+}
+/**
+ * Seller-declared locale eligibility for one product or placement format declaration. Each accepted_language_ranges entry is a concrete canonical BCP 47 language range evaluated with RFC 4647 section 3.3.1 Basic Filtering: fr accepts fr, fr-CA, and fr-FR, while fr-CA accepts only fr-CA and its more-specific descendants. Ranges are ORed and wildcards are not supported. Presence is a hard assignment constraint, not a preference: at least one materialized creative locale variant must match. The seller filters the creative to eligible variants before applying buyer-declared strict Lookup, locale_fallbacks, or default behavior; buyer policy can never select a seller-ineligible variant.
+ */
+export interface CreativeLocalePolicy {
+  /**
+   * Concrete canonical BCP 47 language ranges accepted by this format option. RFC 4647 Basic Filtering is directional: seller range fr accepts variant fr-CA, but seller range fr-CA does not accept variant fr or fr-FR. Use zxx explicitly for language-neutral creative; und means unknown and is not a wildcard.
+   *
+   * @minItems 1
+   * @maxItems 50
+   */
+  accepted_language_ranges: [LanguageTag, ...LanguageTag[]];
+}
+// DELIVERYMETRICAGGREGATE PRIORITY CANONICAL SCHEMA
+/**
  * One cross-buy delivery aggregate partitioned by metric scope and qualifier. Row-symmetric with `package.committed_metrics` and delivery `missing_metrics` so buyers can reconcile by `(scope, metric_id, qualifier)`.
  */
 export type DeliveryMetricAggregate =
@@ -5209,10 +5275,6 @@ export type FrequencyCap = {
  * Purchased placement selection within the product. This constrains package inventory; it is distinct from creative_assignments[].placement_refs, which only route individual creatives within the purchased set. On create, mode selected supplies the complete selected set and mode default uses the product default. On update, the surrounding targeting_overlay replacement semantics apply.
  */
 export type PlacementSelection = SelectedPlacements | ProductDefaultPlacements;
-/**
- * A well-formed BCP 47 language tag used by AdCP only as language identity. Script and region may refine that identity; other valid BCP 47 subtags remain part of tag matching but do not make this a general locale-settings object. It does not determine currency, time zone, number/date formatting, market, or legal jurisdiction. The AdCP canonical wire profile requires lower-case language and variants, title-case script, and upper-case region (for example `en-US`, `zh-Hant-TW`, or `x-private`). RFC 5646 comparisons are case-insensitive and its case regularization is optional; AdCP intentionally requires this stricter single wire spelling and receivers MUST reject differently cased tags rather than silently normalizing them. The schema pattern enforces the AdCP casing profile and extension structure for commonly used tags; conforming receivers additionally validate the complete RFC 5646 grammar and registry rules. Every new AdCP field carrying BCP 47 language identity or a concrete language range MUST reference this schema instead of declaring independent string constraints.
- */
-export type LanguageTag = string;
 /**
  * Assignment of a creative asset to a package with optional rotation and placement routing. Used in create_media_buy and update_media_buy requests. Buyers identify the stored creative with `creative_id` only. A generic `id` alias, if present due to adapter-internal payload reuse, is not an AdCP identifier and sellers MUST ignore it on input. Note: sync_creatives does not support package rotation, placement_refs, or placement_ids - use create/update_media_buy for package-level trafficking controls.
  */
@@ -9882,6 +9944,941 @@ export interface CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement {
    */
   disclosure_required?: boolean;
 }
+// CANONICALFORMATSELLERRENDEREDSTATEFULDISPLAY PRIORITY CANONICAL SCHEMA
+/**
+ * Seller-rendered display unit whose declaration is an executable template contract: buyer-known visual states, explicit transitions, breakpoint canvases, and per-state slot bindings. The seller owns the runtime; `supply_mode` declares which end the buyer feeds. For machine-rendered `components` and `rendered_canvases` supply, sellers MUST support `preview_creative` returning every state × breakpoint from a candidate manifest. `layered_source` instead follows the asynchronous seller-production preview path after the declared production window. `composition_model: deterministic` describes serving the finished states, not instant derivation from layered source. Buyer-executable HTML/MRAID is `html5`, a buyer-delivered tag is `display_tag`, arbitrary games/hotspots/scripts remain `custom`, and per-impression algorithmic assembly is `responsive_creative`.
+ */
+export interface CanonicalFormatSellerRenderedStatefulDisplay {
+  /**
+   * Experimental in AdCP 3.2 while the creative working group gathers implementation evidence across premium web and mobile/app sellers.
+   */
+  experimental?: boolean;
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.
+   */
+  deprecated?: boolean;
+  /**
+   * No v1 named-format equivalent can express multiple seller-rendered states and their breakpoint bindings.
+   */
+  v1_translatable?: boolean;
+  /**
+   * AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.
+   */
+  since_version?: string;
+  /**
+   * AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').
+   */
+  migration_target_version?: string;
+  /**
+   * Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).
+   */
+  composition_model?: 'deterministic' | 'algorithmic';
+  /**
+   * When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.
+   */
+  provenance_required?: boolean;
+  /**
+   * Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.
+   *
+   * **Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: "platform_extension_field", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.
+   */
+  platform_extensions?: PlatformExtensionReference[];
+  /**
+   * When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.
+   *
+   * **Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.
+   */
+  synthesis_nondeterministic?: boolean;
+  /**
+   * Default manifest slots; which are consumed depends on `supply_mode`. `state_canvases` images MUST carry `state_id` and `breakpoint_id`, and `state_click_urls` entries MUST carry `state_id` (semantic validators resolve the bindings). Component images SHOULD carry `focal_point` for deterministic seller cropping. `landing_page_url` is the default destination (see `clickthrough`). `font_files` MUST contain only buyer-licensed fonts; publisher-proprietary fonts never travel in manifests. Only image, video, text, url, zip, and pixel_tracker slot asset types are accepted — executable types (javascript, html, css, webhook) are rejected even via `slots` overrides.
+   */
+  slots?: {
+    /**
+     * Canonical asset_group_id from /schemas/core/asset-group-vocabulary.json. Non-canonical IDs are valid but trigger soft warnings.
+     */
+    asset_group_id: string;
+    /**
+     * Discriminator selecting the asset schema this slot accepts. SDK codegen uses this to type the slot value. `published_post` is an existing-post reference asset, not uploaded media bytes and not a catalog row. `card` is the multi-card carousel element type (see card-asset.json). `pixel_tracker` / `vast_tracker` / `daast_tracker` are the renderer-fired measurement-tracker primitives — see `/schemas/core/assets/pixel-tracker-asset.json` and the VAST / DAAST tracker schemas. `object` is a last-resort fallback for structured non-asset inputs that don't fit any primitive asset_type — prefer specific types whenever possible.
+     */
+    asset_type:
+      | 'image'
+      | 'video'
+      | 'audio'
+      | 'text'
+      | 'markdown'
+      | 'url'
+      | 'html'
+      | 'css'
+      | 'javascript'
+      | 'vast'
+      | 'daast'
+      | 'webhook'
+      | 'brief'
+      | 'catalog'
+      | 'published_post'
+      | 'zip'
+      | 'card'
+      | 'object'
+      | 'pixel_tracker'
+      | 'vast_tracker'
+      | 'daast_tracker';
+    /**
+     * Whether this slot is required for a valid manifest.
+     */
+    required?: boolean;
+    /**
+     * Minimum count for repeatable / pool slots.
+     */
+    min?: number;
+    /**
+     * Maximum count for repeatable / pool slots.
+     */
+    max?: number;
+    /**
+     * Per-slot character limit. Valid only when `asset_type` is `text`, `markdown`, or `brief`. Mutually exclusive with `max_size_kb` (which applies to binary asset types). Schema enforces via if/then so a producer can't set both on the same slot.
+     */
+    max_chars?: number;
+    /**
+     * Per-slot file size limit in kilobytes. Valid only when `asset_type` is `image`, `video`, `audio`, or `zip`. Mutually exclusive with `max_chars` (which applies to text asset types). Schema enforces via if/then so a producer can't set both on the same slot.
+     */
+    max_size_kb?: number;
+    /**
+     * Accepted intrinsic-pixel densities for this image-bearing slot. Valid when `asset_type` is `image`, and on a `card` slot where it constrains each card's image media (video media is unaffected). This makes density available to every canonical carrying image assets (native, carousel, responsive, companion images, and image itself), not only `format_kind: image`. When the image canonical also declares top-level `params.pixel_ratios`, the effective set is the intersection; an empty intersection is invalid. One matching asset satisfies the slot unless `required_pixel_ratios` requires rendition coverage.
+     */
+    pixel_ratios?: number[];
+    /**
+     * Required density coverage for an image rendition set. Valid only when `asset_type` is `image` and `pixel_ratios` is also declared. Every value MUST appear in the effective accepted set after intersecting any top-level image `params.pixel_ratios`, and the manifest slot value MUST be an array containing exactly one matching image rendition for each required ratio. Other accepted ratios remain optional. For example, `pixel_ratios: [1, 1.5, 2]` with `required_pixel_ratios: [1, 2]` requires the 1x and 2x renditions while making 1.5x optional. SDKs enforce intersection, subset, coverage, and duplicate-ratio rules because JSON Schema draft-07 cannot express them generically.
+     */
+    required_pixel_ratios?: number[];
+    /**
+     * When `asset_group_id` is `logo`, renderer-facing brand.json logo slots acceptable for this format slot. Producers selecting from brand.json SHOULD prefer `logos[]` entries whose `slots[]` intersects this list, then apply `visual_guidelines.logo_usage_rules[]`.
+     */
+    logo_slots?: LogoSlot[];
+    /**
+     * Subset of `logo_slots` for which this format expects explicit logo coverage. A manifest or brand-derived logo pool SHOULD include at least one usable logo for each required slot; if coverage is missing, builders SHOULD surface a validation warning or approval mapping instead of guessing from prose.
+     */
+    required_logo_slots?: LogoSlot[];
+    /**
+     * Human-readable description of what the slot expects from the buyer.
+     */
+    description?: string;
+    /**
+     * Dispatch hint for `build_creative` and v1↔v2 wire translators: when `true`, the slot's value is consumed as INPUT to a production step (host-read script, brief copy fed to generative synthesis, catalog feed driving per-SKU rendering) and is not rendered verbatim. When `false` (default), the slot's value is rendered verbatim on the placement (image bytes, video file, display tag).
+     *
+     * Motivates the v1↔v2 dispatch table: pre-v2 buyers shipped production-consumed inputs separately in a `inputs` map on the build_creative request; v2 collapses inputs and rendered assets into a single `assets` map keyed by `asset_group_id`. SDK translators between v1 and v2 use this flag per canonical to know which assets in the v2 manifest map back to v1 `inputs` vs v1 `assets`. Without the per-slot flag the dispatch table lives in adopter code and every SDK gets it slightly different.
+     *
+     * Producers SHOULD set this explicitly on slots whose consumption pattern isn't obvious (host-read scripts on `audio_hosted`, briefs on generative `video_hosted`, catalog feeds on `sponsored_placement`). For canonicals where every slot is render-verbatim (`image`, `display_tag`, `video_vast`), the default `false` is sufficient and the flag MAY be omitted.
+     */
+    consumed_for_production?: boolean;
+  }[];
+  /**
+   * Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
+   */
+  required_connections?: DownstreamConnectionRequirement[];
+  /**
+   * Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.
+   */
+  reference_mutability?: 'immutable_snapshot' | 'mutable_requires_reapproval' | 'mutable_auto_recheck';
+  /**
+   * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
+   */
+  production_window_business_days?: number;
+  /**
+   * Which end of the template contract the buyer feeds. `components`: buyer supplies component slots; seller renders states (no `state_canvases`/`layered_source` assets allowed). `rendered_canvases`: buyer supplies exactly one `state_canvases` image per declared state × breakpoint pair. `layered_source`: buyer ships design source (+ optional `font_files`); seller production derives states (`production_window_business_days` applies) — transitional for sellers without executable templates.
+   */
+  supply_mode?: 'components' | 'rendered_canvases' | 'layered_source';
+  /**
+   * Finite visual states known at buy time; state and breakpoint IDs form the canvas-key matrix. Runtime causes live in `transitions[]`. A single-state unit (topscroll, interscroller, skin) declares one state, no transitions, and typically a `reveal` mechanic.
+   */
+  states: {
+    /**
+     * Stable identifier used by `state_canvases[].state_id` and `state_click_urls[].state_id`.
+     * @pattern ^[a-z][a-z0-9_]*$
+     */
+    state_id: string;
+    /**
+     * `underlay` renders the canvas beneath page content, which scrolls over it (IAB New Ad Portfolio underlay class: skins, reveal units). Transitions into `overlay`/`fullscreen_overlay` states SHOULD be user-initiated; non-user-action entries emit LEAN policy warnings.
+     */
+    anchoring: 'inline' | 'sticky_top' | 'sticky_bottom' | 'overlay' | 'fullscreen_overlay' | 'underlay';
+    /**
+     * Asset group IDs rendered in this state (components mode). Makes the template executable: given components and bindings, assembly is deterministic. Every value MUST resolve to a declared slot. Omitted means all supplied component slots may render.
+     */
+    slot_bindings?: string[];
+    /**
+     * Whether the seller-rendered layout animates within this state (attract loops, load animations). Intra-state animation is seller-rendered; buyer canvases stay static images.
+     */
+    motion?: 'static' | 'animated';
+    /**
+     * Upper bound on intra-state animation duration. Required when `motion` is `animated`.
+     */
+    max_animation_s?: number;
+    breakpoints: {
+    }[];
+    /**
+     * Whether this state visibly renders a seller-controlled close affordance. When true, rendering MUST follow IAB New Ad Portfolio close-button guidance (top-right, minimum 50×50 dp, available from state entry).
+     */
+    close_affordance: boolean;
+  }[];
+  /**
+   * State rendered when the unit first becomes visible. MUST resolve to `states[].state_id`; for a single-state unit it MUST equal the sole state.
+   * @pattern ^[a-z][a-z0-9_]*$
+   */
+  initial_state_id: string;
+  /**
+   * How the unit enters view, distinct from state changes. `clip_window`: canvas fixed and progressively exposed through a scrolling window (interscroller, topscroll). `scroll_parallax`: canvas moves at a different rate than content. Reveal is presentation of one canvas, not a transition; do not fabricate a second state to express it.
+   */
+  reveal?: 'none' | 'clip_window' | 'scroll_parallax';
+  /**
+   * Bounded seller-rendered transitions between declared visual states. Required when `states` has more than one entry; MUST be omitted for single-state units. Every non-initial state MUST be reachable from `initial_state_id`. Dismissal is terminal unit behavior declared by `user_controls.dismissible`, not a hidden visual state.
+   */
+  transitions?: (
+    | {
+        /**
+         * Stable transition identifier for preview and reporting.
+         * @pattern ^[a-z][a-z0-9_]*$
+         */
+        transition_id: string;
+        /**
+         * @pattern ^[a-z][a-z0-9_]*$
+         */
+        from_state_id: string;
+        /**
+         * @pattern ^[a-z][a-z0-9_]*$
+         */
+        to_state_id: string;
+        /**
+         * Cause of the transition. `timer` counts from state entry; `in_view_timer` counts viewable time in the current state (industry auto-collapse is N seconds in view). `media_event` fires on `video_main` playback milestones. The outcome is expressed separately by `to_state_id`.
+         */
+        trigger: 'timer';
+        /**
+         * Scroll direction that arms a `scroll_threshold` transition; enables direction-aware expand/collapse cycles. Re-crossing in the opposite direction does not re-fire this transition.
+         */
+        direction?: 'down' | 'up';
+        /**
+         * `scroll_linked` continuously interpolates the seller-owned layout between the two declared endpoint states; it is valid only with trigger `scroll_progress` and does not permit buyer scripting.
+         */
+        transition_mode: 'instant' | 'animated';
+        /**
+         * For `timer`: delay after `from_state_id` activates (re-entry restarts it). For `in_view_timer`: accumulated viewable milliseconds in `from_state_id`. Timer-class transitions in a state cycle MUST declare at least 1000 (anti-strobe floor).
+         * @minimum 0
+         */
+        delay_ms: number;
+        /**
+         * Duration of a seller-rendered animated transition.
+         * @minimum 0
+         */
+        duration_ms?: number;
+        /**
+         * Whether `video_main` continues without restart while the seller changes state.
+         */
+        preserve_playback?: boolean;
+      }
+    | {
+        /**
+         * Stable transition identifier for preview and reporting.
+         * @pattern ^[a-z][a-z0-9_]*$
+         */
+        transition_id: string;
+        /**
+         * @pattern ^[a-z][a-z0-9_]*$
+         */
+        from_state_id: string;
+        /**
+         * @pattern ^[a-z][a-z0-9_]*$
+         */
+        to_state_id: string;
+        /**
+         * Cause of the transition. `timer` counts from state entry; `in_view_timer` counts viewable time in the current state (industry auto-collapse is N seconds in view). `media_event` fires on `video_main` playback milestones. The outcome is expressed separately by `to_state_id`.
+         */
+        trigger: 'in_view_timer';
+        /**
+         * Scroll direction that arms a `scroll_threshold` transition; enables direction-aware expand/collapse cycles. Re-crossing in the opposite direction does not re-fire this transition.
+         */
+        direction?: 'down' | 'up';
+        /**
+         * `scroll_linked` continuously interpolates the seller-owned layout between the two declared endpoint states; it is valid only with trigger `scroll_progress` and does not permit buyer scripting.
+         */
+        transition_mode: 'instant' | 'animated';
+        /**
+         * For `timer`: delay after `from_state_id` activates (re-entry restarts it). For `in_view_timer`: accumulated viewable milliseconds in `from_state_id`. Timer-class transitions in a state cycle MUST declare at least 1000 (anti-strobe floor).
+         * @minimum 0
+         */
+        delay_ms: number;
+        /**
+         * Duration of a seller-rendered animated transition.
+         * @minimum 0
+         */
+        duration_ms?: number;
+        /**
+         * Whether `video_main` continues without restart while the seller changes state.
+         */
+        preserve_playback?: boolean;
+      }
+    | {
+        /**
+         * Stable transition identifier for preview and reporting.
+         * @pattern ^[a-z][a-z0-9_]*$
+         */
+        transition_id: string;
+        /**
+         * @pattern ^[a-z][a-z0-9_]*$
+         */
+        from_state_id: string;
+        /**
+         * @pattern ^[a-z][a-z0-9_]*$
+         */
+        to_state_id: string;
+        /**
+         * Cause of the transition. `timer` counts from state entry; `in_view_timer` counts viewable time in the current state (industry auto-collapse is N seconds in view). `media_event` fires on `video_main` playback milestones. The outcome is expressed separately by `to_state_id`.
+         */
+        trigger: 'scroll_threshold';
+        /**
+         * Input driving a user or scroll transition. `hover` expansion is disallowed by IAB NAP guidance and emits a LEAN policy warning visible to buyers.
+         */
+        input: 'scroll';
+        /**
+         * Scroll direction that arms a `scroll_threshold` transition; enables direction-aware expand/collapse cycles. Re-crossing in the opposite direction does not re-fire this transition.
+         */
+        direction?: 'down' | 'up';
+        /**
+         * `scroll_linked` continuously interpolates the seller-owned layout between the two declared endpoint states; it is valid only with trigger `scroll_progress` and does not permit buyer scripting.
+         */
+        transition_mode: 'instant' | 'animated';
+        /**
+         * Duration of a seller-rendered animated transition.
+         * @minimum 0
+         */
+        duration_ms?: number;
+        /**
+         * Viewport/page scroll threshold that starts a `scroll_threshold` transition.
+         * @minimum 0
+         * @maximum 100
+         */
+        scroll_threshold_percent: number;
+        /**
+         * Reference frame for scroll percentages. Progress is `scroll_offset / max(scroll_extent - viewport_extent, 1) * 100`, measured on either the page document or the nearest seller-declared containing scroller.
+         */
+        scroll_reference: 'document_progress' | 'containing_scroller_progress';
+        /**
+         * Whether `video_main` continues without restart while the seller changes state.
+         */
+        preserve_playback?: boolean;
+      }
+    | {
+        /**
+         * Stable transition identifier for preview and reporting.
+         * @pattern ^[a-z][a-z0-9_]*$
+         */
+        transition_id: string;
+        /**
+         * @pattern ^[a-z][a-z0-9_]*$
+         */
+        from_state_id: string;
+        /**
+         * @pattern ^[a-z][a-z0-9_]*$
+         */
+        to_state_id: string;
+        /**
+         * Cause of the transition. `timer` counts from state entry; `in_view_timer` counts viewable time in the current state (industry auto-collapse is N seconds in view). `media_event` fires on `video_main` playback milestones. The outcome is expressed separately by `to_state_id`.
+         */
+        trigger: 'scroll_progress';
+        /**
+         * Input driving a user or scroll transition. `hover` expansion is disallowed by IAB NAP guidance and emits a LEAN policy warning visible to buyers.
+         */
+        input: 'scroll';
+        /**
+         * `scroll_linked` continuously interpolates the seller-owned layout between the two declared endpoint states; it is valid only with trigger `scroll_progress` and does not permit buyer scripting.
+         */
+        transition_mode: 'scroll_linked';
+        /**
+         * Duration of a seller-rendered animated transition.
+         * @minimum 0
+         */
+        duration_ms?: number;
+        /**
+         * Reference frame for scroll percentages. Progress is `scroll_offset / max(scroll_extent - viewport_extent, 1) * 100`, measured on either the page document or the nearest seller-declared containing scroller.
+         */
+        scroll_reference: 'document_progress' | 'containing_scroller_progress';
+        /**
+         * Start of the bounded scroll interval for a `scroll_progress` transition.
+         * @minimum 0
+         * @maximum 100
+         */
+        scroll_start_percent: number;
+        /**
+         * End of the bounded scroll interval for a `scroll_progress` transition. MUST be greater than `scroll_start_percent`.
+         * @minimum 0
+         * @maximum 100
+         */
+        scroll_end_percent: number;
+        /**
+         * Whether `video_main` continues without restart while the seller changes state.
+         */
+        preserve_playback?: boolean;
+      }
+    | {
+        /**
+         * Stable transition identifier for preview and reporting.
+         * @pattern ^[a-z][a-z0-9_]*$
+         */
+        transition_id: string;
+        /**
+         * @pattern ^[a-z][a-z0-9_]*$
+         */
+        from_state_id: string;
+        /**
+         * @pattern ^[a-z][a-z0-9_]*$
+         */
+        to_state_id: string;
+        /**
+         * Cause of the transition. `timer` counts from state entry; `in_view_timer` counts viewable time in the current state (industry auto-collapse is N seconds in view). `media_event` fires on `video_main` playback milestones. The outcome is expressed separately by `to_state_id`.
+         */
+        trigger: 'user_action';
+        /**
+         * Input driving a user or scroll transition. `hover` expansion is disallowed by IAB NAP guidance and emits a LEAN policy warning visible to buyers.
+         */
+        input:
+          | 'tap'
+          | 'hover'
+          | 'swipe_up'
+          | 'swipe_down'
+          | 'swipe_left'
+          | 'swipe_right'
+          | 'scroll'
+          | 'expand_control'
+          | 'collapse_control';
+        /**
+         * `scroll_linked` continuously interpolates the seller-owned layout between the two declared endpoint states; it is valid only with trigger `scroll_progress` and does not permit buyer scripting.
+         */
+        transition_mode: 'instant' | 'animated';
+        /**
+         * Duration of a seller-rendered animated transition.
+         * @minimum 0
+         */
+        duration_ms?: number;
+        /**
+         * Whether `video_main` continues without restart while the seller changes state.
+         */
+        preserve_playback?: boolean;
+      }
+    | {
+        /**
+         * Stable transition identifier for preview and reporting.
+         * @pattern ^[a-z][a-z0-9_]*$
+         */
+        transition_id: string;
+        /**
+         * @pattern ^[a-z][a-z0-9_]*$
+         */
+        from_state_id: string;
+        /**
+         * @pattern ^[a-z][a-z0-9_]*$
+         */
+        to_state_id: string;
+        /**
+         * Cause of the transition. `timer` counts from state entry; `in_view_timer` counts viewable time in the current state (industry auto-collapse is N seconds in view). `media_event` fires on `video_main` playback milestones. The outcome is expressed separately by `to_state_id`.
+         */
+        trigger: 'media_event';
+        /**
+         * Playback milestone of `video_main` driving a `media_event` transition (endframes, collapse-on-complete).
+         */
+        media_event: 'video_start' | 'video_complete';
+        /**
+         * `scroll_linked` continuously interpolates the seller-owned layout between the two declared endpoint states; it is valid only with trigger `scroll_progress` and does not permit buyer scripting.
+         */
+        transition_mode: 'instant' | 'animated';
+        /**
+         * Duration of a seller-rendered animated transition.
+         * @minimum 0
+         */
+        duration_ms?: number;
+        /**
+         * Whether `video_main` continues without restart while the seller changes state.
+         */
+        preserve_playback?: boolean;
+      }
+  )[];
+  /**
+   * Destination policy. `required` (default): manifest MUST supply `landing_page_url`. `optional`: click-optional units (in-feed brand units) may omit it. `none`: unit is non-clickable; manifests MUST NOT supply `landing_page_url` or `state_click_urls`. Per-state overrides via `state_click_urls` entries carrying `state_id`; `landing_page_url` is the fallback for unlisted states.
+   */
+  clickthrough?: 'required' | 'optional' | 'none';
+  /**
+   * When any state anchors as `overlay` or `fullscreen_overlay`, either `dismissible` MUST be true or that state's `close_affordance` MUST be true (dismissibility floor; semantic validators enforce).
+   */
+  user_controls: {
+    dismissible: boolean;
+    user_collapsible: boolean;
+  };
+  /**
+   * Rectangular areas constraining buyer artwork. Omitted state/breakpoint selectors apply the constraint to every canvas. For fluid or range-sized breakpoints, use percent-unit regions.
+   */
+  canvas_constraints?: CanvasConstraint[];
+  /**
+   * Accepted embedded-video duration [min, max]. `duration_ms_exact` takes precedence when both are present.
+   */
+  duration_ms_range?: (number | null)[];
+  /**
+   * @minimum 1
+   */
+  duration_ms_exact?: number;
+  /**
+   * Embedded-video aspect ratio.
+   * @pattern ^[0-9]+(\.[0-9]+)?:[0-9]+(\.[0-9]+)?$
+   */
+  aspect_ratio?: string;
+  containers?: ('mp4' | 'webm' | 'mov')[];
+  video_playback?: 'none' | 'auto_muted' | 'user_initiated';
+  /**
+   * @minimum 1
+   */
+  max_initial_load_kb?: number;
+  /**
+   * Ceiling on assets loaded after the window load event (IAB LEAN subload). Pairs with `max_initial_load_kb` to mirror the New Ad Portfolio initial/subload weight pair.
+   * @minimum 1
+   */
+  max_subload_kb?: number;
+  /**
+   * When true, non-initial assets load only after the host page's window load event (IAB LEAN subload boundary).
+   */
+  polite_load?: boolean;
+}
+/**
+ * Rectangular rule applied to buyer artwork. State and breakpoint selectors are optional so the same shape can constrain a coordinated-placement component or a specific stateful-display canvas.
+ */
+export interface CanvasConstraint {
+  constraint: 'safe_area' | 'reserved_region' | 'decoration_only_edge' | 'no_text_or_logos';
+  state_id?: string;
+  breakpoint_id?: string;
+  region: {
+  };
+}
+
+// CANONICALFORMATCOORDINATEDPLACEMENTS PRIORITY CANONICAL SCHEMA
+/**
+ * Re-export of `SizeModeMutex` under the legacy codegen artifact name.
+ *
+ * `SizeModeMutex1` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `SizeModeMutex` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `SizeModeMutex`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `SizeModeMutex` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type SizeModeMutex1 = SizeModeMutex;
+/**
+ * Re-export of `Responsive` under the legacy codegen artifact name.
+ *
+ * `Responsive1` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `Responsive` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `Responsive`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `Responsive` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type Responsive1 = Responsive;
+/**
+ * Re-export of `SizeModeMutex` under the legacy codegen artifact name.
+ *
+ * `SizeModeMutex2` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `SizeModeMutex` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `SizeModeMutex`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `SizeModeMutex` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type SizeModeMutex2 = SizeModeMutex;
+/**
+ * Re-export of `Responsive` under the legacy codegen artifact name.
+ *
+ * `Responsive2` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `Responsive` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `Responsive`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `Responsive` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type Responsive2 = Responsive;
+/**
+ * One creative manifest atomically supplies assets for multiple declared product placements. Each component binds to a public `Product.placements[]` entry and either declares an inline non-custom canonical format or references a sibling format option on the same product. Components cannot nest coordinated placements. The manifest supplies component slots under `component_assets.<component_id>`; `shared_slots` assets are supplied once at top level. Inventory exclusivity remains `Product.exclusivity`, not a creative-format parameter. Ordinary products whose placements accept independently assigned creatives do not need this canonical.
+ */
+export interface CanonicalFormatCoordinatedPlacements {
+  /**
+   * Experimental in AdCP 3.2 while the creative working group gathers implementation evidence for atomic cross-placement composition.
+   */
+  experimental?: boolean;
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.
+   */
+  deprecated?: boolean;
+  /**
+   * No v1 named-format equivalent can express a coordinated multi-placement buy.
+   */
+  v1_translatable?: boolean;
+  /**
+   * AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.
+   */
+  since_version?: string;
+  /**
+   * AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').
+   */
+  migration_target_version?: string;
+  /**
+   * Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).
+   */
+  composition_model?: 'deterministic' | 'algorithmic';
+  /**
+   * When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.
+   */
+  provenance_required?: boolean;
+  /**
+   * Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.
+   *
+   * **Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: "platform_extension_field", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.
+   */
+  platform_extensions?: PlatformExtensionReference[];
+  /**
+   * When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.
+   *
+   * **Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.
+   */
+  synthesis_nondeterministic?: boolean;
+  /**
+   * Programmatic declaration of which canonical asset_group_id slots a manifest targeting this format must (or may) populate. Lets SDK codegen and validators enumerate expected slots without parsing the format's prose description. Each entry references an asset_group_id from the canonical vocabulary registry, paired with an `asset_type` so the validator knows which asset schema to apply. Format-level narrowing parameters that apply across all slots (e.g., flat `headline_max_chars` on responsive_creative) may also live on the format declaration; per-slot constraints (a specific slot's `max_chars` or `max_size_kb`) live on the slot entry.
+   */
+  slots?: {
+    /**
+     * Canonical asset_group_id from /schemas/core/asset-group-vocabulary.json. Non-canonical IDs are valid but trigger soft warnings.
+     */
+    asset_group_id: string;
+    /**
+     * Discriminator selecting the asset schema this slot accepts. SDK codegen uses this to type the slot value. `published_post` is an existing-post reference asset, not uploaded media bytes and not a catalog row. `card` is the multi-card carousel element type (see card-asset.json). `pixel_tracker` / `vast_tracker` / `daast_tracker` are the renderer-fired measurement-tracker primitives — see `/schemas/core/assets/pixel-tracker-asset.json` and the VAST / DAAST tracker schemas. `object` is a last-resort fallback for structured non-asset inputs that don't fit any primitive asset_type — prefer specific types whenever possible.
+     */
+    asset_type:
+      | 'image'
+      | 'video'
+      | 'audio'
+      | 'text'
+      | 'markdown'
+      | 'url'
+      | 'html'
+      | 'css'
+      | 'javascript'
+      | 'vast'
+      | 'daast'
+      | 'webhook'
+      | 'brief'
+      | 'catalog'
+      | 'published_post'
+      | 'zip'
+      | 'card'
+      | 'object'
+      | 'pixel_tracker'
+      | 'vast_tracker'
+      | 'daast_tracker';
+    /**
+     * Whether this slot is required for a valid manifest.
+     */
+    required?: boolean;
+    /**
+     * Minimum count for repeatable / pool slots.
+     */
+    min?: number;
+    /**
+     * Maximum count for repeatable / pool slots.
+     */
+    max?: number;
+    /**
+     * Per-slot character limit. Valid only when `asset_type` is `text`, `markdown`, or `brief`. Mutually exclusive with `max_size_kb` (which applies to binary asset types). Schema enforces via if/then so a producer can't set both on the same slot.
+     */
+    max_chars?: number;
+    /**
+     * Per-slot file size limit in kilobytes. Valid only when `asset_type` is `image`, `video`, `audio`, or `zip`. Mutually exclusive with `max_chars` (which applies to text asset types). Schema enforces via if/then so a producer can't set both on the same slot.
+     */
+    max_size_kb?: number;
+    /**
+     * Accepted intrinsic-pixel densities for this image-bearing slot. Valid when `asset_type` is `image`, and on a `card` slot where it constrains each card's image media (video media is unaffected). This makes density available to every canonical carrying image assets (native, carousel, responsive, companion images, and image itself), not only `format_kind: image`. When the image canonical also declares top-level `params.pixel_ratios`, the effective set is the intersection; an empty intersection is invalid. One matching asset satisfies the slot unless `required_pixel_ratios` requires rendition coverage.
+     */
+    pixel_ratios?: number[];
+    /**
+     * Required density coverage for an image rendition set. Valid only when `asset_type` is `image` and `pixel_ratios` is also declared. Every value MUST appear in the effective accepted set after intersecting any top-level image `params.pixel_ratios`, and the manifest slot value MUST be an array containing exactly one matching image rendition for each required ratio. Other accepted ratios remain optional. For example, `pixel_ratios: [1, 1.5, 2]` with `required_pixel_ratios: [1, 2]` requires the 1x and 2x renditions while making 1.5x optional. SDKs enforce intersection, subset, coverage, and duplicate-ratio rules because JSON Schema draft-07 cannot express them generically.
+     */
+    required_pixel_ratios?: number[];
+    /**
+     * When `asset_group_id` is `logo`, renderer-facing brand.json logo slots acceptable for this format slot. Producers selecting from brand.json SHOULD prefer `logos[]` entries whose `slots[]` intersects this list, then apply `visual_guidelines.logo_usage_rules[]`.
+     */
+    logo_slots?: LogoSlot[];
+    /**
+     * Subset of `logo_slots` for which this format expects explicit logo coverage. A manifest or brand-derived logo pool SHOULD include at least one usable logo for each required slot; if coverage is missing, builders SHOULD surface a validation warning or approval mapping instead of guessing from prose.
+     */
+    required_logo_slots?: LogoSlot[];
+    /**
+     * Human-readable description of what the slot expects from the buyer.
+     */
+    description?: string;
+    /**
+     * Dispatch hint for `build_creative` and v1↔v2 wire translators: when `true`, the slot's value is consumed as INPUT to a production step (host-read script, brief copy fed to generative synthesis, catalog feed driving per-SKU rendering) and is not rendered verbatim. When `false` (default), the slot's value is rendered verbatim on the placement (image bytes, video file, display tag).
+     *
+     * Motivates the v1↔v2 dispatch table: pre-v2 buyers shipped production-consumed inputs separately in a `inputs` map on the build_creative request; v2 collapses inputs and rendered assets into a single `assets` map keyed by `asset_group_id`. SDK translators between v1 and v2 use this flag per canonical to know which assets in the v2 manifest map back to v1 `inputs` vs v1 `assets`. Without the per-slot flag the dispatch table lives in adopter code and every SDK gets it slightly different.
+     *
+     * Producers SHOULD set this explicitly on slots whose consumption pattern isn't obvious (host-read scripts on `audio_hosted`, briefs on generative `video_hosted`, catalog feeds on `sponsored_placement`). For canonicals where every slot is render-verbatim (`image`, `display_tag`, `video_vast`), the default `false` is sufficient and the flag MAY be omitted.
+     */
+    consumed_for_production?: boolean;
+  }[];
+  /**
+   * Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
+   */
+  required_connections?: DownstreamConnectionRequirement[];
+  /**
+   * Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.
+   */
+  reference_mutability?: 'immutable_snapshot' | 'mutable_requires_reapproval' | 'mutable_auto_recheck';
+  /**
+   * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
+   */
+  production_window_business_days?: number;
+  components: (
+    | {
+      }
+    | (
+        | {
+            format_kind: 'image';
+            params?: CanonicalFormatImage;
+          }
+        | {
+            format_kind: 'html5';
+            params?: CanonicalFormatHTML5Banner;
+          }
+        | {
+            format_kind: 'display_tag';
+            params?: CanonicalFormatDisplayTag;
+          }
+        | {
+            format_kind: 'image_carousel';
+            params?: CanonicalFormatImageCarousel;
+          }
+        | {
+            format_kind: 'video_hosted';
+            params?: CanonicalFormatHostedVideo;
+          }
+        | {
+            format_kind: 'video_vast';
+            params?: CanonicalFormatVASTVideo;
+          }
+        | {
+            format_kind: 'audio_hosted';
+            params?: CanonicalFormatHostedAudio;
+          }
+        | {
+            format_kind: 'audio_daast';
+            params?: CanonicalFormatDAASTAudio;
+          }
+        | {
+            format_kind: 'sponsored_placement';
+            params?: CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven;
+          }
+        | {
+            format_kind: 'native_in_feed';
+            params?: CanonicalFormatNativeInFeed;
+          }
+        | {
+            format_kind: 'responsive_creative';
+            params?: CanonicalFormatResponsiveCreative;
+          }
+        | {
+            format_kind: 'agent_placement';
+            params?: CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement;
+          }
+        | {
+            format_kind: 'seller_rendered_stateful_display';
+            params?: CanonicalFormatSellerRenderedStatefulDisplay;
+          }
+      )
+  )[];
+  /**
+   * Manifest slots supplied once and consumed by one or more coordinated components.
+   */
+  shared_slots?: {
+    /**
+     * @pattern ^[a-z0-9_]+$
+     */
+    asset_group_id: string;
+    asset_type:
+      | 'image'
+      | 'video'
+      | 'audio'
+      | 'text'
+      | 'markdown'
+      | 'url'
+      | 'html'
+      | 'css'
+      | 'javascript'
+      | 'vast'
+      | 'daast'
+      | 'webhook'
+      | 'brief'
+      | 'catalog'
+      | 'published_post'
+      | 'zip'
+      | 'card'
+      | 'object'
+      | 'pixel_tracker'
+      | 'vast_tracker'
+      | 'daast_tracker';
+    required?: boolean;
+    /**
+     * @minimum 0
+     */
+    min?: number;
+    /**
+     * @minimum 1
+     */
+    max?: number;
+    /**
+     * Component IDs that consume this shared asset. Every value MUST resolve to `components[].component_id`.
+     */
+    consumed_by: string[];
+  }[];
+}
+/**
+ * Shared parameter fields that apply across canonical formats. Each canonical format extends this base with format-specific parameters (dimensions, durations, codecs, slot constraints).
+ */
+export interface CanonicalFormatBase {
+  /**
+   * When true, this canonical or seller narrowing may not work as declared. Adopters SHOULD preflight it with validate_input or in a sandbox and SHOULD NOT route production budget without testing; experimental status never makes the deprecated v1 path preferable. Drivers include unsettled spec shape, an adopter runtime gap, and custom shapes awaiting promotion. This replaces the earlier status plus runtime_status axes. Sellers SHOULD set experimental whenever a canonical or declaration is not production-ready.
+   */
+  experimental?: boolean;
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.
+   */
+  deprecated?: boolean;
+  /**
+   * Whether this canonical has any v1 named-format equivalent. `true` (default) — the canonical is structurally expressible as one or more v1 named formats (IAB display sizes, VAST tags, DAAST tags, etc.); v1→v2 projection via `v1-canonical-mapping.json` is meaningful. `false` — the canonical is inherently new in v2 and has no v1 form; v1's `list_creative_formats` couldn't express it because the underlying concept (algorithmic surface composition, AI-surface mentions, retail-media catalog placements, multi-card carousels) didn't exist as a v1 named-format archetype.
+   *
+   * Lets SDKs distinguish two failure modes that today look identical: (a) the registry hasn't covered this canonical yet (correctable — seller adds explicit `canonical` field or files a registry entry) vs (b) no v1 path is possible (informational — buyer needs v2-aware consumption, or seller declares `canonical_formats_only: true` on the product declaration). SDKs encountering `v1_translatable: false` on a canonical SHOULD NOT emit `FORMAT_PROJECTION_FAILED` (which signals registry-coverage gap) — instead surface the inherent v1-unreachability as a different diagnostic or skip silently. The six inherently-v2 canonicals in 3.2 are `image_carousel`, `sponsored_placement`, `responsive_creative`, `agent_placement`, `seller_rendered_stateful_display`, and `coordinated_placements`.
+   */
+  v1_translatable?: boolean;
+  /**
+   * AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.
+   */
+  since_version?: string;
+  /**
+   * AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').
+   */
+  migration_target_version?: string;
+  /**
+   * Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).
+   */
+  composition_model?: 'deterministic' | 'algorithmic';
+  /**
+   * When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.
+   */
+  provenance_required?: boolean;
+  /**
+   * Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.
+   *
+   * **Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: "platform_extension_field", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.
+   */
+  platform_extensions?: PlatformExtensionReference[];
+  /**
+   * When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.
+   *
+   * **Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.
+   */
+  synthesis_nondeterministic?: boolean;
+  /**
+   * Programmatic declaration of which canonical asset_group_id slots a manifest targeting this format must (or may) populate. Lets SDK codegen and validators enumerate expected slots without parsing the format's prose description. Each entry references an asset_group_id from the canonical vocabulary registry, paired with an `asset_type` so the validator knows which asset schema to apply. Format-level narrowing parameters that apply across all slots (e.g., flat `headline_max_chars` on responsive_creative) may also live on the format declaration; per-slot constraints (a specific slot's `max_chars` or `max_size_kb`) live on the slot entry.
+   */
+  slots?: {
+  }[];
+  /**
+   * Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
+   */
+  required_connections?: DownstreamConnectionRequirement[];
+  /**
+   * Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.
+   */
+  reference_mutability?: 'immutable_snapshot' | 'mutable_requires_reapproval' | 'mutable_auto_recheck';
+  /**
+   * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
+   */
+  production_window_business_days?: number;
+}
+/**
+ * Re-export of `Fixed` under the legacy codegen artifact name.
+ *
+ * `Fixed1` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `Fixed` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `Fixed`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `Fixed` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type Fixed1 = Fixed;
+/**
+ * Re-export of `MultiSize` under the legacy codegen artifact name.
+ *
+ * `MultiSize1` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `MultiSize` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `MultiSize`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `MultiSize` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type MultiSize1 = MultiSize;
+/**
+ * Re-export of `None` under the legacy codegen artifact name.
+ *
+ * `None1` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `None` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `None`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `None` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type None1 = None;
+/**
+ * Re-export of `Fixed` under the legacy codegen artifact name.
+ *
+ * `Fixed2` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `Fixed` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `Fixed`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `Fixed` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type Fixed2 = Fixed;
+/**
+ * Re-export of `MultiSize` under the legacy codegen artifact name.
+ *
+ * `MultiSize2` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `MultiSize` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `MultiSize`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `MultiSize` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type MultiSize2 = MultiSize;
+/**
+ * Re-export of `None` under the legacy codegen artifact name.
+ *
+ * `None2` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `None` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `None`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `None` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type None2 = None;
 // VALIDATEPROPERTYDELIVERYREQUEST PRIORITY CANONICAL SCHEMA
 /**
  * Account that owns the list. Required when the authenticated agent has access to multiple accounts; optional otherwise.
@@ -13026,551 +14023,6 @@ export type ProductFormatDeclaration = {
     | CustomFormatDeclaration
   );
 /**
- * Re-export of `SizeModeMutex` under the legacy codegen artifact name.
- *
- * `SizeModeMutex1` is a json-schema-to-typescript under-resolution artifact —
- * the bundler inlined the same schema at two call sites and jsts emitted a numbered
- * sibling. The body it produced was strictly weaker than `SizeModeMutex` (missing the
- * discriminator, canonical wrapper, or named union); aliasing to `SizeModeMutex`
- * gives consumers the correctly-discriminated shape that matches the wire format.
- *
- * @deprecated Use `SizeModeMutex` from `@adcp/sdk/types`. Slated for removal in the next major.
- */
-export type SizeModeMutex1 = SizeModeMutex;
-/**
- * Re-export of `Responsive` under the legacy codegen artifact name.
- *
- * `Responsive1` is a json-schema-to-typescript under-resolution artifact —
- * the bundler inlined the same schema at two call sites and jsts emitted a numbered
- * sibling. The body it produced was strictly weaker than `Responsive` (missing the
- * discriminator, canonical wrapper, or named union); aliasing to `Responsive`
- * gives consumers the correctly-discriminated shape that matches the wire format.
- *
- * @deprecated Use `Responsive` from `@adcp/sdk/types`. Slated for removal in the next major.
- */
-export type Responsive1 = Responsive;
-/**
- * Re-export of `SizeModeMutex` under the legacy codegen artifact name.
- *
- * `SizeModeMutex2` is a json-schema-to-typescript under-resolution artifact —
- * the bundler inlined the same schema at two call sites and jsts emitted a numbered
- * sibling. The body it produced was strictly weaker than `SizeModeMutex` (missing the
- * discriminator, canonical wrapper, or named union); aliasing to `SizeModeMutex`
- * gives consumers the correctly-discriminated shape that matches the wire format.
- *
- * @deprecated Use `SizeModeMutex` from `@adcp/sdk/types`. Slated for removal in the next major.
- */
-export type SizeModeMutex2 = SizeModeMutex;
-/**
- * Re-export of `Responsive` under the legacy codegen artifact name.
- *
- * `Responsive2` is a json-schema-to-typescript under-resolution artifact —
- * the bundler inlined the same schema at two call sites and jsts emitted a numbered
- * sibling. The body it produced was strictly weaker than `Responsive` (missing the
- * discriminator, canonical wrapper, or named union); aliasing to `Responsive`
- * gives consumers the correctly-discriminated shape that matches the wire format.
- *
- * @deprecated Use `Responsive` from `@adcp/sdk/types`. Slated for removal in the next major.
- */
-export type Responsive2 = Responsive;
-/**
- * Seller-rendered display unit whose declaration is an executable template contract: buyer-known visual states, explicit transitions, breakpoint canvases, and per-state slot bindings. The seller owns the runtime; `supply_mode` declares which end the buyer feeds. For machine-rendered `components` and `rendered_canvases` supply, sellers MUST support `preview_creative` returning every state × breakpoint from a candidate manifest. `layered_source` instead follows the asynchronous seller-production preview path after the declared production window. `composition_model: deterministic` describes serving the finished states, not instant derivation from layered source. Buyer-executable HTML/MRAID is `html5`, a buyer-delivered tag is `display_tag`, arbitrary games/hotspots/scripts remain `custom`, and per-impression algorithmic assembly is `responsive_creative`.
- */
-export type CanonicalFormatSellerRenderedStatefulDisplay = CanonicalFormatBase & {
-  /**
-   * Experimental in AdCP 3.2 while the creative working group gathers implementation evidence across premium web and mobile/app sellers.
-   */
-  experimental?: boolean;
-  /**
-   * No v1 named-format equivalent can express multiple seller-rendered states and their breakpoint bindings.
-   */
-  v1_translatable?: boolean;
-  since_version?: string;
-  composition_model?: string;
-  /**
-   * Which end of the template contract the buyer feeds. `components`: buyer supplies component slots; seller renders states (no `state_canvases`/`layered_source` assets allowed). `rendered_canvases`: buyer supplies exactly one `state_canvases` image per declared state × breakpoint pair. `layered_source`: buyer ships design source (+ optional `font_files`); seller production derives states (`production_window_business_days` applies) — transitional for sellers without executable templates.
-   */
-  supply_mode?: 'components' | 'rendered_canvases' | 'layered_source';
-  /**
-   * Default manifest slots; which are consumed depends on `supply_mode`. `state_canvases` images MUST carry `state_id` and `breakpoint_id`, and `state_click_urls` entries MUST carry `state_id` (semantic validators resolve the bindings). Component images SHOULD carry `focal_point` for deterministic seller cropping. `landing_page_url` is the default destination (see `clickthrough`). `font_files` MUST contain only buyer-licensed fonts; publisher-proprietary fonts never travel in manifests. Only image, video, text, url, zip, and pixel_tracker slot asset types are accepted — executable types (javascript, html, css, webhook) are rejected even via `slots` overrides.
-   */
-  slots?: {
-  };
-  /**
-   * Finite visual states known at buy time; state and breakpoint IDs form the canvas-key matrix. Runtime causes live in `transitions[]`. A single-state unit (topscroll, interscroller, skin) declares one state, no transitions, and typically a `reveal` mechanic.
-   *
-   * @minItems 1
-   */
-  states: [
-    {
-      /**
-       * Stable identifier used by `state_canvases[].state_id` and `state_click_urls[].state_id`.
-       */
-      state_id: string;
-      /**
-       * `underlay` renders the canvas beneath page content, which scrolls over it (IAB New Ad Portfolio underlay class: skins, reveal units). Transitions into `overlay`/`fullscreen_overlay` states SHOULD be user-initiated; non-user-action entries emit LEAN policy warnings.
-       */
-      anchoring: 'inline' | 'sticky_top' | 'sticky_bottom' | 'overlay' | 'fullscreen_overlay' | 'underlay';
-      /**
-       * Asset group IDs rendered in this state (components mode). Makes the template executable: given components and bindings, assembly is deterministic. Every value MUST resolve to a declared slot. Omitted means all supplied component slots may render.
-       */
-      slot_bindings?: string[];
-      /**
-       * Whether the seller-rendered layout animates within this state (attract loops, load animations). Intra-state animation is seller-rendered; buyer canvases stay static images.
-       */
-      motion?: 'static' | 'animated';
-      /**
-       * Upper bound on intra-state animation duration. Required when `motion` is `animated`.
-       */
-      max_animation_s?: number;
-      /**
-       * @minItems 1
-       */
-      breakpoints: [
-        (
-          | {
-            }
-          | {
-            }
-          | {
-            }
-        ) &
-          (
-            | {
-              }
-            | {
-              }
-            | {
-              }
-          ),
-        ...((
-          | {
-            }
-          | {
-            }
-          | {
-            }
-        ) &
-          (
-            | {
-              }
-            | {
-              }
-            | {
-              }
-          ))[]
-      ];
-      /**
-       * Whether this state visibly renders a seller-controlled close affordance. When true, rendering MUST follow IAB New Ad Portfolio close-button guidance (top-right, minimum 50×50 dp, available from state entry).
-       */
-      close_affordance: boolean;
-    },
-    ...{
-      /**
-       * Stable identifier used by `state_canvases[].state_id` and `state_click_urls[].state_id`.
-       */
-      state_id: string;
-      /**
-       * `underlay` renders the canvas beneath page content, which scrolls over it (IAB New Ad Portfolio underlay class: skins, reveal units). Transitions into `overlay`/`fullscreen_overlay` states SHOULD be user-initiated; non-user-action entries emit LEAN policy warnings.
-       */
-      anchoring: 'inline' | 'sticky_top' | 'sticky_bottom' | 'overlay' | 'fullscreen_overlay' | 'underlay';
-      /**
-       * Asset group IDs rendered in this state (components mode). Makes the template executable: given components and bindings, assembly is deterministic. Every value MUST resolve to a declared slot. Omitted means all supplied component slots may render.
-       */
-      slot_bindings?: string[];
-      /**
-       * Whether the seller-rendered layout animates within this state (attract loops, load animations). Intra-state animation is seller-rendered; buyer canvases stay static images.
-       */
-      motion?: 'static' | 'animated';
-      /**
-       * Upper bound on intra-state animation duration. Required when `motion` is `animated`.
-       */
-      max_animation_s?: number;
-      /**
-       * @minItems 1
-       */
-      breakpoints: [
-        (
-          | {
-            }
-          | {
-            }
-          | {
-            }
-        ) &
-          (
-            | {
-              }
-            | {
-              }
-            | {
-              }
-          ),
-        ...((
-          | {
-            }
-          | {
-            }
-          | {
-            }
-        ) &
-          (
-            | {
-              }
-            | {
-              }
-            | {
-              }
-          ))[]
-      ];
-      /**
-       * Whether this state visibly renders a seller-controlled close affordance. When true, rendering MUST follow IAB New Ad Portfolio close-button guidance (top-right, minimum 50×50 dp, available from state entry).
-       */
-      close_affordance: boolean;
-    }[]
-  ];
-  /**
-   * State rendered when the unit first becomes visible. MUST resolve to `states[].state_id`; for a single-state unit it MUST equal the sole state.
-   */
-  initial_state_id: string;
-  /**
-   * How the unit enters view, distinct from state changes. `clip_window`: canvas fixed and progressively exposed through a scrolling window (interscroller, topscroll). `scroll_parallax`: canvas moves at a different rate than content. Reveal is presentation of one canvas, not a transition; do not fabricate a second state to express it.
-   */
-  reveal?: 'none' | 'clip_window' | 'scroll_parallax';
-  /**
-   * Bounded seller-rendered transitions between declared visual states. Required when `states` has more than one entry; MUST be omitted for single-state units. Every non-initial state MUST be reachable from `initial_state_id`. Dismissal is terminal unit behavior declared by `user_controls.dismissible`, not a hidden visual state.
-   *
-   * @minItems 1
-   */
-  transitions?: [
-    (
-      | {
-          trigger: 'timer';
-          transition_mode?: 'instant' | 'animated';
-        }
-      | {
-          trigger: 'in_view_timer';
-          transition_mode?: 'instant' | 'animated';
-        }
-      | {
-          trigger: 'scroll_threshold';
-          input: 'scroll';
-          transition_mode?: 'instant' | 'animated';
-        }
-      | {
-          trigger: 'scroll_progress';
-          input: 'scroll';
-          transition_mode?: 'scroll_linked';
-        }
-      | {
-          trigger: 'user_action';
-          transition_mode?: 'instant' | 'animated';
-        }
-      | {
-          trigger: 'media_event';
-          transition_mode?: 'instant' | 'animated';
-        }
-    ),
-    ...(
-      | {
-          trigger: 'timer';
-          transition_mode?: 'instant' | 'animated';
-        }
-      | {
-          trigger: 'in_view_timer';
-          transition_mode?: 'instant' | 'animated';
-        }
-      | {
-          trigger: 'scroll_threshold';
-          input: 'scroll';
-          transition_mode?: 'instant' | 'animated';
-        }
-      | {
-          trigger: 'scroll_progress';
-          input: 'scroll';
-          transition_mode?: 'scroll_linked';
-        }
-      | {
-          trigger: 'user_action';
-          transition_mode?: 'instant' | 'animated';
-        }
-      | {
-          trigger: 'media_event';
-          transition_mode?: 'instant' | 'animated';
-        }
-    )[]
-  ];
-  /**
-   * Destination policy. `required` (default): manifest MUST supply `landing_page_url`. `optional`: click-optional units (in-feed brand units) may omit it. `none`: unit is non-clickable; manifests MUST NOT supply `landing_page_url` or `state_click_urls`. Per-state overrides via `state_click_urls` entries carrying `state_id`; `landing_page_url` is the fallback for unlisted states.
-   */
-  clickthrough?: 'required' | 'optional' | 'none';
-  /**
-   * When any state anchors as `overlay` or `fullscreen_overlay`, either `dismissible` MUST be true or that state's `close_affordance` MUST be true (dismissibility floor; semantic validators enforce).
-   */
-  user_controls: {
-    dismissible: boolean;
-    user_collapsible: boolean;
-  };
-  /**
-   * Rectangular areas constraining buyer artwork. Omitted state/breakpoint selectors apply the constraint to every canvas. For fluid or range-sized breakpoints, use percent-unit regions.
-   */
-  canvas_constraints?: CanvasConstraint[];
-  /**
-   * Accepted embedded-video duration [min, max]. `duration_ms_exact` takes precedence when both are present.
-   *
-   * @minItems 2
-   * @maxItems 2
-   */
-  duration_ms_range?: [number | null, number | null];
-  duration_ms_exact?: number;
-  /**
-   * Embedded-video aspect ratio.
-   */
-  aspect_ratio?: string;
-  containers?: ('mp4' | 'webm' | 'mov')[];
-  video_playback?: 'none' | 'auto_muted' | 'user_initiated';
-  max_initial_load_kb?: number;
-  /**
-   * Ceiling on assets loaded after the window load event (IAB LEAN subload). Pairs with `max_initial_load_kb` to mirror the New Ad Portfolio initial/subload weight pair.
-   */
-  max_subload_kb?: number;
-  /**
-   * When true, non-initial assets load only after the host page's window load event (IAB LEAN subload boundary).
-   */
-  polite_load?: boolean;
-};
-/**
- * One creative manifest atomically supplies assets for multiple declared product placements. Each component binds to a public `Product.placements[]` entry and either declares an inline non-custom canonical format or references a sibling format option on the same product. Components cannot nest coordinated placements. The manifest supplies component slots under `component_assets.<component_id>`; `shared_slots` assets are supplied once at top level. Inventory exclusivity remains `Product.exclusivity`, not a creative-format parameter. Ordinary products whose placements accept independently assigned creatives do not need this canonical.
- */
-export type CanonicalFormatCoordinatedPlacements = CanonicalFormatBase & {
-  /**
-   * Experimental in AdCP 3.2 while the creative working group gathers implementation evidence for atomic cross-placement composition.
-   */
-  experimental?: boolean;
-  /**
-   * No v1 named-format equivalent can express a coordinated multi-placement buy.
-   */
-  v1_translatable?: boolean;
-  since_version?: string;
-  composition_model?: string;
-  /**
-   * @minItems 2
-   */
-  components: [
-    (
-      | {
-        }
-      | (
-          | {
-              format_kind: 'image';
-              params?: CanonicalFormatImage;
-            }
-          | {
-              format_kind: 'html5';
-              params?: CanonicalFormatHTML5Banner;
-            }
-          | {
-              format_kind: 'display_tag';
-              params?: CanonicalFormatDisplayTag;
-            }
-          | {
-              format_kind: 'image_carousel';
-              params?: CanonicalFormatImageCarousel;
-            }
-          | {
-              format_kind: 'video_hosted';
-              params?: CanonicalFormatHostedVideo;
-            }
-          | {
-              format_kind: 'video_vast';
-              params?: CanonicalFormatVASTVideo;
-            }
-          | {
-              format_kind: 'audio_hosted';
-              params?: CanonicalFormatHostedAudio;
-            }
-          | {
-              format_kind: 'audio_daast';
-              params?: CanonicalFormatDAASTAudio;
-            }
-          | {
-              format_kind: 'sponsored_placement';
-              params?: CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven;
-            }
-          | {
-              format_kind: 'native_in_feed';
-              params?: CanonicalFormatNativeInFeed;
-            }
-          | {
-              format_kind: 'responsive_creative';
-              params?: CanonicalFormatResponsiveCreative;
-            }
-          | {
-              format_kind: 'agent_placement';
-              params?: CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement;
-            }
-          | {
-              format_kind: 'seller_rendered_stateful_display';
-              params?: CanonicalFormatSellerRenderedStatefulDisplay;
-            }
-        )
-    ),
-    (
-      | {
-        }
-      | (
-          | {
-              format_kind: 'image';
-              params?: CanonicalFormatImage;
-            }
-          | {
-              format_kind: 'html5';
-              params?: CanonicalFormatHTML5Banner;
-            }
-          | {
-              format_kind: 'display_tag';
-              params?: CanonicalFormatDisplayTag;
-            }
-          | {
-              format_kind: 'image_carousel';
-              params?: CanonicalFormatImageCarousel;
-            }
-          | {
-              format_kind: 'video_hosted';
-              params?: CanonicalFormatHostedVideo;
-            }
-          | {
-              format_kind: 'video_vast';
-              params?: CanonicalFormatVASTVideo;
-            }
-          | {
-              format_kind: 'audio_hosted';
-              params?: CanonicalFormatHostedAudio;
-            }
-          | {
-              format_kind: 'audio_daast';
-              params?: CanonicalFormatDAASTAudio;
-            }
-          | {
-              format_kind: 'sponsored_placement';
-              params?: CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven;
-            }
-          | {
-              format_kind: 'native_in_feed';
-              params?: CanonicalFormatNativeInFeed;
-            }
-          | {
-              format_kind: 'responsive_creative';
-              params?: CanonicalFormatResponsiveCreative;
-            }
-          | {
-              format_kind: 'agent_placement';
-              params?: CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement;
-            }
-          | {
-              format_kind: 'seller_rendered_stateful_display';
-              params?: CanonicalFormatSellerRenderedStatefulDisplay;
-            }
-        )
-    ),
-    ...(
-      | {
-        }
-      | (
-          | {
-              format_kind: 'image';
-              params?: CanonicalFormatImage;
-            }
-          | {
-              format_kind: 'html5';
-              params?: CanonicalFormatHTML5Banner;
-            }
-          | {
-              format_kind: 'display_tag';
-              params?: CanonicalFormatDisplayTag;
-            }
-          | {
-              format_kind: 'image_carousel';
-              params?: CanonicalFormatImageCarousel;
-            }
-          | {
-              format_kind: 'video_hosted';
-              params?: CanonicalFormatHostedVideo;
-            }
-          | {
-              format_kind: 'video_vast';
-              params?: CanonicalFormatVASTVideo;
-            }
-          | {
-              format_kind: 'audio_hosted';
-              params?: CanonicalFormatHostedAudio;
-            }
-          | {
-              format_kind: 'audio_daast';
-              params?: CanonicalFormatDAASTAudio;
-            }
-          | {
-              format_kind: 'sponsored_placement';
-              params?: CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven;
-            }
-          | {
-              format_kind: 'native_in_feed';
-              params?: CanonicalFormatNativeInFeed;
-            }
-          | {
-              format_kind: 'responsive_creative';
-              params?: CanonicalFormatResponsiveCreative;
-            }
-          | {
-              format_kind: 'agent_placement';
-              params?: CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement;
-            }
-          | {
-              format_kind: 'seller_rendered_stateful_display';
-              params?: CanonicalFormatSellerRenderedStatefulDisplay;
-            }
-        )
-    )[]
-  ];
-  /**
-   * Manifest slots supplied once and consumed by one or more coordinated components.
-   */
-  shared_slots?: {
-    asset_group_id: string;
-    asset_type:
-      | 'image'
-      | 'video'
-      | 'audio'
-      | 'text'
-      | 'markdown'
-      | 'url'
-      | 'html'
-      | 'css'
-      | 'javascript'
-      | 'vast'
-      | 'daast'
-      | 'webhook'
-      | 'brief'
-      | 'catalog'
-      | 'published_post'
-      | 'zip'
-      | 'card'
-      | 'object'
-      | 'pixel_tracker'
-      | 'vast_tracker'
-      | 'daast_tracker';
-    required?: boolean;
-    min?: number;
-    max?: number;
-    /**
-     * Component IDs that consume this shared asset. Every value MUST resolve to `components[].component_id`.
-     *
-     * @minItems 1
-     */
-    consumed_by: [string, ...string[]];
-  }[];
-};
-/**
  * Represents a purchased advertising campaign
  */
 export interface MediaBuy {
@@ -14810,85 +15262,9 @@ export type BrandReference5 = BrandReference;
  * @deprecated Use `BrandReference` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
 export type BrandReference6 = BrandReference;
-/**
- * Optional seller-enforced creative-locale constraint for this format option. This is product/placement eligibility, not a new format kind or synthetic locale-specific format ID. Because legacy format_ids cannot preserve this constraint, declarations carrying locale_policy MUST set canonical_formats_only to true and MUST NOT carry v1_format_ref.
- */
-export interface CreativeLocalePolicy {
-  /**
-   * Concrete canonical BCP 47 language ranges accepted by this format option. RFC 4647 Basic Filtering is directional: seller range fr accepts variant fr-CA, but seller range fr-CA does not accept variant fr or fr-FR. Use zxx explicitly for language-neutral creative; und means unknown and is not a wildcard.
-   *
-   * @minItems 1
-   * @maxItems 50
-   */
-  accepted_language_ranges: [LanguageTag, ...LanguageTag[]];
-}
 export interface ImageFormatDeclaration {
   format_kind: 'image';
   params: CanonicalFormatImage;
-}
-/**
- * Shared parameter fields that apply across canonical formats. Each canonical format extends this base with format-specific parameters (dimensions, durations, codecs, slot constraints).
- */
-export interface CanonicalFormatBase {
-  /**
-   * When true, this canonical or seller narrowing may not work as declared. Adopters SHOULD preflight it with validate_input or in a sandbox and SHOULD NOT route production budget without testing; experimental status never makes the deprecated v1 path preferable. Drivers include unsettled spec shape, an adopter runtime gap, and custom shapes awaiting promotion. This replaces the earlier status plus runtime_status axes. Sellers SHOULD set experimental whenever a canonical or declaration is not production-ready.
-   */
-  experimental?: boolean;
-  /**
-   * When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.
-   */
-  deprecated?: boolean;
-  /**
-   * Whether this canonical has any v1 named-format equivalent. `true` (default) — the canonical is structurally expressible as one or more v1 named formats (IAB display sizes, VAST tags, DAAST tags, etc.); v1→v2 projection via `v1-canonical-mapping.json` is meaningful. `false` — the canonical is inherently new in v2 and has no v1 form; v1's `list_creative_formats` couldn't express it because the underlying concept (algorithmic surface composition, AI-surface mentions, retail-media catalog placements, multi-card carousels) didn't exist as a v1 named-format archetype.
-   *
-   * Lets SDKs distinguish two failure modes that today look identical: (a) the registry hasn't covered this canonical yet (correctable — seller adds explicit `canonical` field or files a registry entry) vs (b) no v1 path is possible (informational — buyer needs v2-aware consumption, or seller declares `canonical_formats_only: true` on the product declaration). SDKs encountering `v1_translatable: false` on a canonical SHOULD NOT emit `FORMAT_PROJECTION_FAILED` (which signals registry-coverage gap) — instead surface the inherent v1-unreachability as a different diagnostic or skip silently. The six inherently-v2 canonicals in 3.2 are `image_carousel`, `sponsored_placement`, `responsive_creative`, `agent_placement`, `seller_rendered_stateful_display`, and `coordinated_placements`.
-   */
-  v1_translatable?: boolean;
-  /**
-   * AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.
-   */
-  since_version?: string;
-  /**
-   * AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').
-   */
-  migration_target_version?: string;
-  /**
-   * Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).
-   */
-  composition_model?: 'deterministic' | 'algorithmic';
-  /**
-   * When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.
-   */
-  provenance_required?: boolean;
-  /**
-   * Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.
-   *
-   * **Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: "platform_extension_field", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.
-   */
-  platform_extensions?: PlatformExtensionReference1[];
-  /**
-   * When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.
-   *
-   * **Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.
-   */
-  synthesis_nondeterministic?: boolean;
-  /**
-   * Programmatic declaration of which canonical asset_group_id slots a manifest targeting this format must (or may) populate. Lets SDK codegen and validators enumerate expected slots without parsing the format's prose description. Each entry references an asset_group_id from the canonical vocabulary registry, paired with an `asset_type` so the validator knows which asset schema to apply. Format-level narrowing parameters that apply across all slots (e.g., flat `headline_max_chars` on responsive_creative) may also live on the format declaration; per-slot constraints (a specific slot's `max_chars` or `max_size_kb`) live on the slot entry.
-   */
-  slots?: {
-  }[];
-  /**
-   * Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
-   */
-  required_connections?: DownstreamConnectionRequirement[];
-  /**
-   * Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.
-   */
-  reference_mutability?: 'immutable_snapshot' | 'mutable_requires_reapproval' | 'mutable_auto_recheck';
-  /**
-   * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
-   */
-  production_window_business_days?: number;
 }
 /**
  * Re-export of `PlatformExtensionReference` under the legacy codegen artifact name.
@@ -14906,82 +15282,10 @@ export interface HTML5FormatDeclaration {
   format_kind: 'html5';
   params: CanonicalFormatHTML5Banner;
 }
-/**
- * Re-export of `Fixed` under the legacy codegen artifact name.
- *
- * `Fixed1` is a json-schema-to-typescript under-resolution artifact —
- * the bundler inlined the same schema at two call sites and jsts emitted a numbered
- * sibling. The body it produced was strictly weaker than `Fixed` (missing the
- * discriminator, canonical wrapper, or named union); aliasing to `Fixed`
- * gives consumers the correctly-discriminated shape that matches the wire format.
- *
- * @deprecated Use `Fixed` from `@adcp/sdk/types`. Slated for removal in the next major.
- */
-export type Fixed1 = Fixed;
-/**
- * Re-export of `MultiSize` under the legacy codegen artifact name.
- *
- * `MultiSize1` is a json-schema-to-typescript under-resolution artifact —
- * the bundler inlined the same schema at two call sites and jsts emitted a numbered
- * sibling. The body it produced was strictly weaker than `MultiSize` (missing the
- * discriminator, canonical wrapper, or named union); aliasing to `MultiSize`
- * gives consumers the correctly-discriminated shape that matches the wire format.
- *
- * @deprecated Use `MultiSize` from `@adcp/sdk/types`. Slated for removal in the next major.
- */
-export type MultiSize1 = MultiSize;
-/**
- * Re-export of `None` under the legacy codegen artifact name.
- *
- * `None1` is a json-schema-to-typescript under-resolution artifact —
- * the bundler inlined the same schema at two call sites and jsts emitted a numbered
- * sibling. The body it produced was strictly weaker than `None` (missing the
- * discriminator, canonical wrapper, or named union); aliasing to `None`
- * gives consumers the correctly-discriminated shape that matches the wire format.
- *
- * @deprecated Use `None` from `@adcp/sdk/types`. Slated for removal in the next major.
- */
-export type None1 = None;
 export interface DisplayTagFormatDeclaration {
   format_kind: 'display_tag';
   params: CanonicalFormatDisplayTag;
 }
-/**
- * Re-export of `Fixed` under the legacy codegen artifact name.
- *
- * `Fixed2` is a json-schema-to-typescript under-resolution artifact —
- * the bundler inlined the same schema at two call sites and jsts emitted a numbered
- * sibling. The body it produced was strictly weaker than `Fixed` (missing the
- * discriminator, canonical wrapper, or named union); aliasing to `Fixed`
- * gives consumers the correctly-discriminated shape that matches the wire format.
- *
- * @deprecated Use `Fixed` from `@adcp/sdk/types`. Slated for removal in the next major.
- */
-export type Fixed2 = Fixed;
-/**
- * Re-export of `MultiSize` under the legacy codegen artifact name.
- *
- * `MultiSize2` is a json-schema-to-typescript under-resolution artifact —
- * the bundler inlined the same schema at two call sites and jsts emitted a numbered
- * sibling. The body it produced was strictly weaker than `MultiSize` (missing the
- * discriminator, canonical wrapper, or named union); aliasing to `MultiSize`
- * gives consumers the correctly-discriminated shape that matches the wire format.
- *
- * @deprecated Use `MultiSize` from `@adcp/sdk/types`. Slated for removal in the next major.
- */
-export type MultiSize2 = MultiSize;
-/**
- * Re-export of `None` under the legacy codegen artifact name.
- *
- * `None2` is a json-schema-to-typescript under-resolution artifact —
- * the bundler inlined the same schema at two call sites and jsts emitted a numbered
- * sibling. The body it produced was strictly weaker than `None` (missing the
- * discriminator, canonical wrapper, or named union); aliasing to `None`
- * gives consumers the correctly-discriminated shape that matches the wire format.
- *
- * @deprecated Use `None` from `@adcp/sdk/types`. Slated for removal in the next major.
- */
-export type None2 = None;
 export interface ImageCarouselFormatDeclaration {
   format_kind: 'image_carousel';
   params: CanonicalFormatImageCarousel;
@@ -15021,16 +15325,6 @@ export interface AgentPlacementFormatDeclaration {
 export interface SellerRenderedStatefulDisplayFormatDeclaration {
   format_kind: 'seller_rendered_stateful_display';
   params: CanonicalFormatSellerRenderedStatefulDisplay;
-}
-/**
- * Rectangular rule applied to buyer artwork. State and breakpoint selectors are optional so the same shape can constrain a coordinated-placement component or a specific stateful-display canvas.
- */
-export interface CanvasConstraint {
-  constraint: 'safe_area' | 'reserved_region' | 'decoration_only_edge' | 'no_text_or_logos';
-  state_id?: string;
-  breakpoint_id?: string;
-  region: {
-  };
 }
 export interface CoordinatedPlacementsFormatDeclaration {
   format_kind: 'coordinated_placements';
@@ -17841,135 +18135,6 @@ export type CanonicalReportingCommitment =
       qualifier?: CanonicalMetricQualifier;
       effective_at?: string;
     };
-/**
- * Compact canonical creative-format declaration. Legacy named-format links are intentionally absent; params are validated against the canonical schema selected by format_kind without inlining every format union into product discovery.
- */
-export type CanonicalFormatOption = {
-} & {
-  format_option_id?: string;
-  publisher_domain?: string;
-  display_name?: string;
-  sample_render_url?: string;
-  /**
-   * @minItems 1
-   */
-  applies_to_channels?: [MediaChannel, ...MediaChannel[]];
-  seller_preference?: 'preferred' | 'accepted' | 'discouraged';
-  locale_policy?: CreativeLocalePolicy;
-  canonical_formats_only?: boolean;
-  experimental?: boolean;
-  format_kind:
-    | 'image'
-    | 'html5'
-    | 'display_tag'
-    | 'image_carousel'
-    | 'video_hosted'
-    | 'video_vast'
-    | 'audio_hosted'
-    | 'audio_daast'
-    | 'sponsored_placement'
-    | 'native_in_feed'
-    | 'responsive_creative'
-    | 'agent_placement'
-    | 'custom';
-  params: {
-  };
-  format_shape?: string;
-  format_schema?: PlatformExtensionReference1;
-} & {
-  format_option_id?: string;
-  publisher_domain?: string;
-  display_name?: string;
-  sample_render_url?: string;
-  /**
-   * @minItems 1
-   */
-  applies_to_channels?: [MediaChannel, ...MediaChannel[]];
-  seller_preference?: 'preferred' | 'accepted' | 'discouraged';
-  locale_policy?: CreativeLocalePolicy;
-  canonical_formats_only?: boolean;
-  experimental?: boolean;
-  format_kind:
-    | 'image'
-    | 'html5'
-    | 'display_tag'
-    | 'image_carousel'
-    | 'video_hosted'
-    | 'video_vast'
-    | 'audio_hosted'
-    | 'audio_daast'
-    | 'sponsored_placement'
-    | 'native_in_feed'
-    | 'responsive_creative'
-    | 'agent_placement'
-    | 'custom';
-  params: {
-  };
-  format_shape?: string;
-  format_schema?: PlatformExtensionReference1;
-} & {
-  format_option_id?: string;
-  publisher_domain?: string;
-  display_name?: string;
-  sample_render_url?: string;
-  /**
-   * @minItems 1
-   */
-  applies_to_channels?: [MediaChannel, ...MediaChannel[]];
-  seller_preference?: 'preferred' | 'accepted' | 'discouraged';
-  locale_policy?: CreativeLocalePolicy;
-  canonical_formats_only?: boolean;
-  experimental?: boolean;
-  format_kind:
-    | 'image'
-    | 'html5'
-    | 'display_tag'
-    | 'image_carousel'
-    | 'video_hosted'
-    | 'video_vast'
-    | 'audio_hosted'
-    | 'audio_daast'
-    | 'sponsored_placement'
-    | 'native_in_feed'
-    | 'responsive_creative'
-    | 'agent_placement'
-    | 'custom';
-  params: {
-  };
-  format_shape?: string;
-  format_schema?: PlatformExtensionReference1;
-} & {
-  format_option_id?: string;
-  publisher_domain?: string;
-  display_name?: string;
-  sample_render_url?: string;
-  /**
-   * @minItems 1
-   */
-  applies_to_channels?: [MediaChannel, ...MediaChannel[]];
-  seller_preference?: 'preferred' | 'accepted' | 'discouraged';
-  locale_policy?: CreativeLocalePolicy;
-  canonical_formats_only?: boolean;
-  experimental?: boolean;
-  format_kind:
-    | 'image'
-    | 'html5'
-    | 'display_tag'
-    | 'image_carousel'
-    | 'video_hosted'
-    | 'video_vast'
-    | 'audio_hosted'
-    | 'audio_daast'
-    | 'sponsored_placement'
-    | 'native_in_feed'
-    | 'responsive_creative'
-    | 'agent_placement'
-    | 'custom';
-  params: {
-  };
-  format_shape?: string;
-  format_schema?: PlatformExtensionReference1;
-};
 /**
  * Compact product placement with canonical format narrowing only.
  */

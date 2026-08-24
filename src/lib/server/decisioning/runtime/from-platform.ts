@@ -55,7 +55,6 @@ import type { AdcpServer } from '../../adcp-server';
 import {
   createAdcpServer,
   COMPACT_MEDIA_BUY_MUTATION_TOOLS,
-  releaseRequiresPushOperationId,
   type AdcpServerConfig,
   type MediaBuyHandlers,
   type ProposalNegotiationHandlers,
@@ -72,6 +71,7 @@ import {
 import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from '../platform';
 import type { ComplianceTestingCapabilities } from '../capabilities';
 import { normalizeTargetingCapabilities } from '../capabilities';
+import { isAdcpVersionAtLeast } from '../../../utils/adcp-version-config';
 import type { Account, ResolvedAuthInfo, ResolveContext } from '../account';
 import {
   AccountNotFoundError,
@@ -4298,16 +4298,14 @@ function buildTaskWebhookPayload(
 }
 
 function resolveWebhookPayloadOperationId(opts: DispatchHitlOpts, taskId: string): string {
-  const requiresRegisteredOperationId =
-    opts.servedAdcpVersion !== undefined && releaseRequiresPushOperationId(opts.servedAdcpVersion);
-  if (opts.pushNotificationOperationId === undefined && requiresRegisteredOperationId) {
+  if (opts.pushNotificationOperationId === undefined && isAdcpVersionAtLeast(opts.servedAdcpVersion, '3.2.0-beta.5')) {
     throw new AdcpError('INVALID_REQUEST', {
       message: 'push_notification_config.operation_id is required for webhook delivery',
       field: 'push_notification_config.operation_id',
     });
   }
   // Older negotiated bundles predate buyer-supplied operation IDs. Preserve
-  // their stable compatibility value without allowing beta.5 to synthesize.
+  // their stable compatibility value without allowing beta.5+ to synthesize.
   return opts.pushNotificationOperationId ?? `${opts.tool}.${taskId}`;
 }
 
