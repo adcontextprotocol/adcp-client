@@ -109,7 +109,7 @@ async function withHonestEstablishedSeller(version, run) {
         idempotency: { supported: true, replay_ttl_seconds: 86400 },
         ...(version.startsWith('3.1') && { supported_versions: ['3.0', '3.1'], build_version: version }),
         ...(version.startsWith('3.2') && {
-          supported_versions: ['3.0', '3.1', '3.2-beta.5'],
+          supported_versions: ['3.0', '3.1', version.replace('.0-', '-')],
           build_version: version,
         }),
       },
@@ -197,7 +197,7 @@ async function withHonestEstablishedSeller(version, run) {
   const mcp = new Client({ name: `compact-buyer-for-${version}`, version: '1.0.0' });
   await Promise.all([mcp.connect(clientTransport), server.connect(serverTransport)]);
   const buyer = AgentClient.fromMCPClient(mcp, {
-    adcpVersion: '3.2.0-beta.5',
+    adcpVersion: '3.2.0-beta.6',
     validation: { requests: 'strict', responses: 'strict' },
   });
   try {
@@ -274,7 +274,7 @@ async function withHonestV25Seller(run) {
   const mcp = new Client({ name: 'compact-buyer-for-v2.5', version: '1.0.0' });
   await Promise.all([mcp.connect(clientTransport), server.connect(serverTransport)]);
   const buyer = AgentClient.fromMCPClient(mcp, {
-    adcpVersion: '3.2.0-beta.5',
+    adcpVersion: '3.2.0-beta.6',
     allowV2: true,
     validation: { requests: 'strict', responses: 'strict' },
   });
@@ -326,7 +326,7 @@ async function withHonestEstablishedProposalState(state, run) {
   const mcp = new Client({ name: `proposal-${state}-buyer`, version: '1.0.0' });
   await Promise.all([mcp.connect(clientTransport), server.connect(serverTransport)]);
   const buyer = AgentClient.fromMCPClient(mcp, {
-    adcpVersion: '3.2.0-beta.5',
+    adcpVersion: '3.2.0-beta.6',
     validation: { requests: 'strict', responses: 'strict' },
   });
   try {
@@ -434,7 +434,7 @@ for (const state of ['submitted', 'input-required']) {
   });
 }
 
-for (const version of ['3.0.25', '3.1.18', '3.2.0-beta.5']) {
+for (const version of ['3.0.25', '3.1.18', '3.2.0-beta.6']) {
   test(`3.2 compact facade preserves the complete ${version} direct lifecycle over honest MCP wire`, async () => {
     await withHonestEstablishedSeller(version, async ({ buyer, calls, mutations }) => {
       const lifecycle = await buyer.negotiateMediaBuyLifecycle({
@@ -446,7 +446,7 @@ for (const version of ['3.0.25', '3.1.18', '3.2.0-beta.5']) {
       assert.equal(lifecycle.lifecycle, 'established');
       assert.equal(
         lifecycle.negotiated_version,
-        version.startsWith('3.2') ? '3.2-beta.5' : version.startsWith('3.1') ? '3.1' : '3.0'
+        version.startsWith('3.2') ? '3.2-beta.6' : version.startsWith('3.1') ? '3.1' : '3.0'
       );
       assert.equal(listed.data.feed_version, 'legacy-feed-1');
       assert.equal(listed.data.pricing_version, 'legacy-price-1');
@@ -816,7 +816,7 @@ test('the same compact-first buyer facade projects established direct and propos
   try {
     const buyer = new AgentClient(
       { id: 'a2a-release-gate', name: 'A2A release gate', agent_uri: url, protocol: 'a2a' },
-      { adcpVersion: '3.2.0-beta.5', validation: { requests: 'strict', responses: 'strict' } }
+      { adcpVersion: '3.2.0-beta.6', validation: { requests: 'strict', responses: 'strict' } }
     );
     const lifecycle = await buyer.negotiateMediaBuyLifecycle({
       principalScope: 'release-gate-buyer',
@@ -1067,8 +1067,8 @@ test('the compact-first buyer uses the native 3.2 lifecycle discovered over offi
   const adcp = createAdcpServer({
     name: 'a2a-compact-release-gate',
     version: '1.0.0',
-    adcpVersion: '3.2.0-beta.5',
-    capabilities: { supported_versions: ['3.0', '3.1', '3.2-beta.5'] },
+    adcpVersion: '3.2.0-beta.6',
+    capabilities: { supported_versions: ['3.0', '3.1', '3.2-beta.6'] },
     validation: { requests: 'strict', responses: 'strict' },
     mediaBuy: {
       listProducts: async params => {
@@ -1187,13 +1187,13 @@ test('the compact-first buyer uses the native 3.2 lifecycle discovered over offi
   try {
     const buyer = new AgentClient(
       { id: 'a2a-compact-release-gate', name: 'A2A compact release gate', agent_uri: url, protocol: 'a2a' },
-      { adcpVersion: '3.2.0-beta.5', validation: { requests: 'strict', responses: 'strict' } }
+      { adcpVersion: '3.2.0-beta.6', validation: { requests: 'strict', responses: 'strict' } }
     );
     const capabilities = await buyer.getAdcpCapabilities({});
     assert.equal(capabilities.success, true, JSON.stringify(capabilities));
     const lifecycle = await buyer.negotiateMediaBuyLifecycle({ principalScope: 'release-gate-buyer' });
     assert.equal(lifecycle.lifecycle, 'compact');
-    assert.equal(lifecycle.negotiated_version, '3.2-beta.5');
+    assert.equal(lifecycle.negotiated_version, '3.2-beta.6');
 
     const listed = await lifecycle.listProducts({ account: ACCOUNT, brand: BRAND });
     assert.equal(listed.success, true, JSON.stringify(listed));

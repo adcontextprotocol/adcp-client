@@ -64,7 +64,7 @@ describe('conformance: schemaToArbitrary', { concurrency: false }, () => {
       assert.ok(!UPDATE_TIER_TOOLS.includes(tool), `${tool} is not forced into legacy defaults`);
     }
     for (const tool of compactTools) {
-      assert.equal(hasSchemas(tool, { version: '3.2.0-beta.5' }), true, `${tool} 3.2 schemas are loadable`);
+      assert.equal(hasSchemas(tool, { version: '3.2.0-beta.6' }), true, `${tool} 3.2 schemas are loadable`);
       assert.equal(hasSchemas(tool, { version: '3.1.18' }), false, `${tool} is gated out of 3.1`);
       assert.equal(hasSchemas(tool, { version: '3.0.25' }), false, `${tool} is gated out of 3.0`);
     }
@@ -74,9 +74,9 @@ describe('conformance: schemaToArbitrary', { concurrency: false }, () => {
     const versionOnly = prepareConformanceProbeRequest(
       'list_products',
       { adcp_version: '99.99' },
-      { adcpVersion: '3.2.0-beta.5' }
+      { adcpVersion: '3.2.0-beta.6' }
     );
-    assert.equal(versionOnly.adcp_version, '3.2-beta.5');
+    assert.equal(versionOnly.adcp_version, '3.2-beta.6');
     assert.equal(Object.hasOwn(versionOnly, 'adcp_major_version'), false);
 
     const majorOnly = prepareConformanceProbeRequest(
@@ -140,8 +140,8 @@ describe('conformance: schemaToArbitrary', { concurrency: false }, () => {
     };
 
     for (const [tool, sample] of Object.entries(samples)) {
-      const probe = prepareConformanceProbeRequest(tool, sample, { fixtures, adcpVersion: '3.2.0-beta.5' });
-      const validate = makeAjv().compile(loadRequestSchema(tool, { version: '3.2.0-beta.5' }));
+      const probe = prepareConformanceProbeRequest(tool, sample, { fixtures, adcpVersion: '3.2.0-beta.6' });
+      const validate = makeAjv().compile(loadRequestSchema(tool, { version: '3.2.0-beta.6' }));
       assert.equal(validate(probe), true, `${tool}: ${JSON.stringify(validate.errors)}`);
     }
 
@@ -282,6 +282,32 @@ describe('conformance: schemaToArbitrary', { concurrency: false }, () => {
     for (const v of fc.sample(arb, { numRuns: 50, seed: 1 })) {
       assert.ok('a' in v || 'b' in v, `neither a nor b in ${JSON.stringify(v)}`);
     }
+  });
+
+  test('if/else: removes fields forbidden outside the discriminator branch', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        format_kind: { enum: ['image', 'coordinated_placements'] },
+        component_assets: { type: 'object' },
+      },
+      allOf: [
+        {
+          if: {
+            properties: { format_kind: { const: 'coordinated_placements' } },
+            required: ['format_kind'],
+          },
+          then: { required: ['component_assets'] },
+          else: { not: { required: ['component_assets'] } },
+        },
+      ],
+    };
+    const validate = makeAjv().compile(schema);
+    const samples = fc.sample(schemaToArbitrary(schema), { numRuns: 100, seed: 42 });
+    assert.ok(
+      samples.every(sample => validate(sample)),
+      JSON.stringify(validate.errors)
+    );
   });
 
   test('fixtures: scalar creative_id draws from the pool', () => {

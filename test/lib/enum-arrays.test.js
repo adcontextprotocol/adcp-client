@@ -43,6 +43,38 @@ describe('Enum value arrays (enums.generated)', () => {
     );
   });
 
+  it('exports the beta.6 delivery metric identity and sorting surface', async () => {
+    if (!enums) enums = await import('../../dist/lib/types/enums.generated.js');
+
+    const leafMetrics = [
+      'quartile_25',
+      'quartile_50',
+      'quartile_75',
+      'quartile_100',
+      'viewable_rate',
+      'viewable_impressions',
+      'measurable_impressions',
+      'viewed_seconds',
+    ];
+    const transactionalSortMetrics = [
+      'cpm',
+      'cost_per_completed_view',
+      'downloads',
+      'units_sold',
+      'new_to_brand_units',
+      'plays',
+      'commissionable_value',
+    ];
+
+    for (const metric of [...leafMetrics, 'time_based_views']) {
+      assert.ok(enums.AvailableMetricValues.includes(metric), `AvailableMetricValues should include ${metric}`);
+    }
+    for (const metric of [...leafMetrics, ...transactionalSortMetrics]) {
+      assert.ok(enums.SortMetricValues.includes(metric), `SortMetricValues should include ${metric}`);
+    }
+    assert.deepEqual([...enums.ViewThresholdBasisValues], ['play_time', 'in_view']);
+  });
+
   it("matches the corresponding Zod schema's literals (Pacing)", async () => {
     if (!enums) enums = await import('../../dist/lib/types/enums.generated.js');
     if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');

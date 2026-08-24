@@ -4,7 +4,15 @@ const {
   sellerAdvertises31,
   shouldOmit31Fields,
   omit31BrandFields,
+  isAdcpVersionAtLeast,
 } = require('../../dist/lib/utils/adcp-version-config.js');
+
+test('isAdcpVersionAtLeast compares release-precision prerelease pins', () => {
+  assert.equal(isAdcpVersionAtLeast('3.2-beta.4', '3.2.0-beta.5'), false);
+  assert.equal(isAdcpVersionAtLeast('3.2-beta.5', '3.2.0-beta.5'), true);
+  assert.equal(isAdcpVersionAtLeast('3.2-beta.6', '3.2.0-beta.5'), true);
+  assert.equal(isAdcpVersionAtLeast('3.2.0', '3.2.0-beta.5'), true);
+});
 
 test('sellerAdvertises31: buildVersion is advisory and never used for negotiation', () => {
   assert.equal(sellerAdvertises31({ buildVersion: '3.1.0' }), false);

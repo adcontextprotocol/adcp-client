@@ -302,6 +302,7 @@ describe('SingleAgentClient Request Validation', () => {
       inner.cachedCapabilities = {
         version: 'v3',
         majorVersions: [3],
+        supportedVersions: ['3.2.0-beta.6'],
         protocols: ['media_buy'],
         features: {
           inlineCreativeManagement: false,
@@ -1024,6 +1025,23 @@ describe('v3 partial-schema field stripping', () => {
       mockResponse: { deliveries: [] },
     },
     {
+      name: 'get_media_buy_delivery requested_metrics',
+      toolName: 'get_media_buy_delivery',
+      invoke: agent => agent.getMediaBuyDelivery.bind(agent),
+      partialToolSchema: { status_filter: {} },
+      request: {
+        requested_metrics: ['viewable_rate', 'quartile_100', 'time_based_views'],
+        reporting_dimensions: { format: { sort_by: 'viewable_rate', sort_direction: 'asc' } },
+        totally_made_up_field: 'junk',
+      },
+      preservedField: 'requested_metrics',
+      preservedValue: ['viewable_rate', 'quartile_100', 'time_based_views'],
+      additionalPreserved: {
+        reporting_dimensions: { format: { sort_by: 'viewable_rate', sort_direction: 'asc' } },
+      },
+      mockResponse: { deliveries: [] },
+    },
+    {
       name: 'sync_creatives',
       toolName: 'sync_creatives',
       invoke: agent => agent.syncCreatives.bind(agent),
@@ -1076,6 +1094,7 @@ describe('v3 partial-schema field stripping', () => {
       inner.cachedCapabilities = {
         version: 'v3',
         majorVersions: [3],
+        supportedVersions: ['3.2.0-beta.6'],
         protocols: ['media_buy'],
         features: {
           inlineCreativeManagement: false,
@@ -1116,6 +1135,13 @@ describe('v3 partial-schema field stripping', () => {
         tc.preservedValue,
         `canonical ${tc.preservedField} must be preserved even though the agent under-declares it`
       );
+      for (const [field, value] of Object.entries(tc.additionalPreserved ?? {})) {
+        assert.deepStrictEqual(
+          call.args[field],
+          value,
+          `canonical ${field} must be preserved even though the agent under-declares it`
+        );
+      }
       assert.strictEqual(
         call.args.totally_made_up_field,
         undefined,

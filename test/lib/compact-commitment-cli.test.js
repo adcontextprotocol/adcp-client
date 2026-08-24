@@ -96,7 +96,7 @@ before(async () => {
       createAdcpServer({
         name: 'Compact commitment seller',
         version: '1.0.0',
-        adcpVersion: '3.2.0-beta.5',
+        adcpVersion: '3.2.0-beta.6',
         idempotency: 'disabled',
         validation: { requests: 'strict', responses: 'strict' },
         mediaBuy: {
@@ -167,7 +167,7 @@ for (const [tool, payload] of calls) {
     );
     assert.doesNotMatch(result.stderr, /Schema validation failed/, `${tool}: ${result.stderr}`);
     const output = JSON.parse(result.stdout);
-    assert.strictEqual(output.data.adcp_version, '3.2-beta.5');
+    assert.strictEqual(output.data.adcp_version, '3.2-beta.6');
     assert.strictEqual(output.data.media_buy_id, 'mb-1');
   });
 }

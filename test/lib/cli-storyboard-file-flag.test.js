@@ -144,11 +144,11 @@ test('--compliance-version rejects an environment cache from a different protoco
       scenarioPath,
       '--dry-run',
       '--compliance-version',
-      '3.2.0-beta.5',
+      '3.2.0-beta.6',
     ]);
 
     assert.strictEqual(result.status, 2);
-    assert.match(result.stderr, /--compliance-version 3\.2\.0-beta\.5/);
+    assert.match(result.stderr, /--compliance-version 3\.2\.0-beta\.6/);
     assert.match(result.stderr, /cache that declares AdCP 3\.1\.13/);
   } finally {
     if (oldComplianceDir === undefined) delete process.env.ADCP_COMPLIANCE_DIR;
@@ -208,7 +208,7 @@ test('--file forwards explicit cache authority for a declared test kit', { timeo
   const cliHome = path.join(fixtureRoot, 'home');
   mkdirSync(kitDir, { recursive: true });
   mkdirSync(cliHome, { recursive: true });
-  writeComplianceIndex(complianceDir, '3.2.0-beta.5');
+  writeComplianceIndex(complianceDir, '3.2.0-beta.6');
   writeFileSync(
     path.join(kitDir, 'live.yaml'),
     ['auth:', '  api_key: "cli-declared-kit-key"', '  probe_task: list_creatives', ''].join('\n')
@@ -287,7 +287,7 @@ test('--file forwards explicit cache authority for a declared test kit', { timeo
   assert.strictEqual(explicitDir.status, 0, explicitDir.stderr);
   assert.ok(authorizations.includes('Bearer cli-declared-kit-key'));
 
-  const versionOnly = await run(['--compliance-version', '3.2.0-beta.5'], {
+  const versionOnly = await run(['--compliance-version', '3.2.0-beta.6'], {
     ADCP_COMPLIANCE_DIR: complianceDir,
   });
   assert.strictEqual(versionOnly.status, 0, versionOnly.stderr);

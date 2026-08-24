@@ -7,10 +7,12 @@ import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
 import { parseAdcpMajorVersion, type AdcpVersion } from '../version';
 import {
   isAdcpVersionSupported,
+  isAdcpVersionAtLeast,
   isPre31AdcpVersion,
   isPre32AdcpVersion,
   resolveAdcpVersion,
 } from '../utils/adcp-version-config';
+import { beta6ReportingRequestIssue, type Beta6DeliveryRequestIssue } from '../media-buy/reporting-version';
 import { getVersionAdapter, resolveAdapterKey } from '../adapters/version';
 import { isExternalSchemaRootActive, schemaAllowsTopLevelField } from '../validation/schema-loader';
 import type {
@@ -7085,7 +7087,13 @@ export class SingleAgentClient {
         [CAPABILITY_DISCOVERY_CONTEXT]: capabilityDiscoveryContext,
       };
       const serverVersion = await this.detectServerVersion(detectionOptions);
-      this.assertRequestSupportedByTargetVersion(taskName, normalizedParams, capabilityDiscoveryContext.capabilities);
+      this.assertRequestSupportedByTargetVersion(
+        taskName,
+        normalizedParams,
+        capabilityDiscoveryContext.capabilities,
+        false,
+        serverVersion
+      );
       const { options: effectiveOptions, driftLog: webhookDriftLog } = this.suppressPre31DiscoveryWebhook(
         taskName,
         options,
@@ -8331,6 +8339,11 @@ export class SingleAgentClient {
     _options?: TaskOptions,
     canonicalCreativeInvocation = false
   ): void {
+    const configuredVersion = this.config.wireAdcpVersion ?? this.resolvedAdcpVersion;
+    const beta6Issue = beta6ReportingRequestIssue(taskName, params);
+    if (beta6Issue && !isAdcpVersionAtLeast(configuredVersion, '3.2.0-beta.6')) {
+      this.throwBeta6ReportingUnsupported(taskName, beta6Issue, configuredVersion);
+    }
     if (
       taskName === 'preview_creative' &&
       canonicalCreativeInvocation &&
@@ -8428,6 +8441,28 @@ export class SingleAgentClient {
     canonicalCreativeInvocation = false,
     serverVersion?: 'v2' | 'v3'
   ): void {
+    const beta6Issue = beta6ReportingRequestIssue(taskName, params);
+    if (beta6Issue) {
+      const advertisedVersions = capabilities?.supportedVersions ?? [];
+      const responseVersion =
+        typeof capabilities?._raw?.adcp_version === 'string' ? capabilities._raw.adcp_version : undefined;
+      const supportsBeta6 =
+        advertisedVersions.some(version => isAdcpVersionAtLeast(version, '3.2.0-beta.6')) ||
+        (advertisedVersions.length === 0 && isAdcpVersionAtLeast(responseVersion, '3.2.0-beta.6'));
+      const hasAuthoritativeLegacyEvidence =
+        serverVersion === 'v2' ||
+        advertisedVersions.length > 0 ||
+        responseVersion !== undefined ||
+        (capabilities?._synthetic === false && capabilities?.version === 'v3');
+      if (!supportsBeta6 && hasAuthoritativeLegacyEvidence) {
+        this.throwBeta6ReportingUnsupported(
+          taskName,
+          beta6Issue,
+          advertisedVersions.join(', ') || responseVersion || serverVersion || capabilities?.version || 'unknown',
+          'the target seller does not advertise AdCP 3.2.0-beta.6 support'
+        );
+      }
+    }
     if (taskName === 'preview_creative' && canonicalCreativeInvocation) {
       const advertisedVersions = capabilities?.supportedVersions ?? [];
       const responseVersion =
@@ -8495,6 +8530,28 @@ export class SingleAgentClient {
         current_version: currentVersion,
         tool: taskName,
         field,
+      },
+    });
+  }
+
+  private throwBeta6ReportingUnsupported(
+    taskName: string,
+    issue: Beta6DeliveryRequestIssue,
+    currentVersion: string,
+    incompatibility = `this client is pinned to ${currentVersion}`
+  ): never {
+    const suggestion = 'Negotiate AdCP 3.2.0-beta.6 or omit the beta.6 reporting field or metric.';
+    throw new ProtocolFeatureUnsupportedError([`${taskName}.${issue.field}`], [], this.agent.agent_uri, {
+      message: `${taskName} ${issue.field} requires AdCP 3.2.0-beta.6 or later; ${incompatibility}. ${suggestion}`,
+      field: issue.field,
+      suggestion,
+      details: {
+        feature: `${taskName}.${issue.field}`,
+        required_version: '3.2.0-beta.6',
+        capability_path: 'adcp.supported_versions',
+        current_version: currentVersion,
+        tool: taskName,
+        field: issue.field,
       },
     });
   }

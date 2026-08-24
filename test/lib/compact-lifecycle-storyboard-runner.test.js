@@ -12,7 +12,7 @@ const { TOOL_INPUT_SHAPE, toMcpResponse } = require('../../dist/lib/server/test-
 const { getComplianceStoryboardById } = require('../../dist/lib/testing/storyboard/index.js');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
 
-const ADCP_VERSION = '3.2.0-beta.5';
+const ADCP_VERSION = '3.2.0-beta.6';
 const ACCOUNT = {
   brand: { domain: 'acmeoutdoor.example' },
   operator: 'pinnacle-agency.example',
@@ -41,7 +41,7 @@ function closeServer(server) {
 }
 
 function assertBeta3Envelope(request) {
-  assert.equal(request.adcp_version, '3.2-beta.5');
+  assert.equal(request.adcp_version, '3.2-beta.6');
   assert.equal(request.adcp_major_version, 3);
 }
 

@@ -122,7 +122,7 @@ test('builder pins the 3.2 wire envelope and returns an immutable deep snapshot 
   input.context.planning.attempt = 2;
   input.refinements[0].ask = 'Changed after construction';
 
-  assert.equal(built.adcp_version, '3.2-beta.5');
+  assert.equal(built.adcp_version, '3.2-beta.6');
   assert.equal(built.adcp_major_version, 3);
   assert.equal(built.context.planning.attempt, 1);
   assert.equal(built.refinements[0].ask, 'Improve the terms');

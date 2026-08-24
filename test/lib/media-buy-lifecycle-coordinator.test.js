@@ -30,7 +30,7 @@ const PRODUCTS_ONLY_BRIEF_VECTORS = JSON.parse(
   readFileSync(
     path.resolve(
       __dirname,
-      '../../compliance/cache/3.2.0-beta.5/test-vectors/products-only-brief-compatibility/vectors.json'
+      '../../compliance/cache/latest/test-vectors/products-only-brief-compatibility/vectors.json'
     ),
     'utf8'
   )
@@ -43,7 +43,7 @@ const AGENT = {
   protocol: 'mcp',
 };
 
-function capabilities({ version = '3.2.0-beta.5', tools, discoveredTools, replayTtlSeconds = 3600 } = {}) {
+function capabilities({ version = '3.2.0-beta.6', tools, discoveredTools, replayTtlSeconds = 3600 } = {}) {
   if (version === '2.5') {
     return {
       version: 'v2',
@@ -3672,8 +3672,8 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
   test('does not select a newer prerelease than the compact buyer pin', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.supportedVersions = ['3.1', '3.2.0-beta.6'];
-    const agent = clientWithCaps(caps, '3.2.0-beta.5');
+    caps.supportedVersions = ['3.1', '3.2.0-beta.7'];
+    const agent = clientWithCaps(caps, '3.2.0-beta.6');
     const calls = [];
     agent.getProducts = async () => {
       calls.push('get_products');
@@ -3689,12 +3689,12 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
   test('fails closed when every valid advertised version is newer than the buyer pin', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.supportedVersions = ['3.2.0-beta.6'];
-    const agent = clientWithCaps(caps, '3.2.0-beta.5');
+    caps.supportedVersions = ['3.2.0-beta.7'];
+    const agent = clientWithCaps(caps, '3.2.0-beta.6');
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /advertises only AdCP versions newer than the client pin 3\.2\.0-beta\.5/
+      /advertises only AdCP versions newer than the client pin 3\.2\.0-beta\.6/
     );
   });
 
@@ -3702,7 +3702,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
     delete caps.supportedVersions;
     caps._synthetic = true;
-    const agent = clientWithCaps(caps, '3.2.0-beta.5');
+    const agent = clientWithCaps(caps, '3.2.0-beta.6');
     const calls = [];
     agent.listProducts = async () => {
       calls.push('list_products');
@@ -3713,7 +3713,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
     const coordinator = await agent.negotiateMediaBuyLifecycle();
     await coordinator.listProducts({});
 
-    assert.equal(coordinator.negotiated_version, '3.2.0-beta.5');
+    assert.equal(coordinator.negotiated_version, '3.2.0-beta.6');
     assert.deepEqual(calls, ['list_products']);
   });
 
@@ -3724,19 +3724,19 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /served AdCP 3\.3, which is newer than the client pin 3\.2\.0-beta\.5/
+      /served AdCP 3\.3, which is newer than the client pin 3\.2\.0-beta\.6/
     );
   });
 
   test('fails closed when an exact newer prerelease is served despite an older advertised fallback', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.servedVersion = '3.2.0-beta.6';
-    caps.supportedVersions = ['3.2.0-beta.5', '3.2.0-beta.6'];
-    const agent = clientWithCaps(caps, '3.2.0-beta.5');
+    caps.servedVersion = '3.2.0-beta.7';
+    caps.supportedVersions = ['3.2.0-beta.6', '3.2.0-beta.7'];
+    const agent = clientWithCaps(caps, '3.2.0-beta.6');
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /served AdCP 3\.2\.0-beta\.6, which is newer than the client pin 3\.2\.0-beta\.5/
+      /served AdCP 3\.2\.0-beta\.7, which is newer than the client pin 3\.2\.0-beta\.6/
     );
   });
 
@@ -3755,8 +3755,8 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
   test('accepts an authoritative served release at or below the buyer pin', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
     caps.servedVersion = '3.2.0-beta.2';
-    caps.supportedVersions = ['3.2.0-beta.5'];
-    const agent = clientWithCaps(caps, '3.2.0-beta.5');
+    caps.supportedVersions = ['3.2.0-beta.6'];
+    const agent = clientWithCaps(caps, '3.2.0-beta.6');
     agent.listProducts = async () => completed('list_products', { products: [], feed_version: 'feed-1' });
 
     const coordinator = await agent.negotiateMediaBuyLifecycle();
@@ -3770,7 +3770,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
     delete caps.supportedVersions;
     caps.buildVersion = '3.2.0-beta.5+sha.abc123';
-    const agent = clientWithCaps(caps, '3.2.0-beta.5');
+    const agent = clientWithCaps(caps, '3.2.0-beta.6');
     agent.getProducts = async () => completed('get_products', { products: [] });
     agent.listProducts = async () => assert.fail('build metadata must not enable compact wire tools');
 
@@ -6056,11 +6056,11 @@ describe('legacy products-only purchase continuations', () => {
 
     const native = clientWithCaps(
       capabilities({
-        version: '3.2.0-beta.5',
+        version: '3.2.0-beta.6',
         tools: COMPACT_TOOLS,
         discoveredTools: ['get_products', ...COMPACT_TOOLS],
       }),
-      '3.2.0-beta.5'
+      '3.2.0-beta.6'
     );
     native.getProducts = async () =>
       completed('get_products', { products: [{ product_id: 'p-native', name: 'Native' }] });
@@ -6080,7 +6080,7 @@ describe('legacy products-only purchase continuations', () => {
 
   test('executes the signed account-fenced listed_purchase vector through native buy_products', async () => {
     const vector = PRODUCTS_ONLY_BRIEF_VECTORS.listed_purchase_cases[0];
-    const agent = clientWithCaps(capabilities({ version: '3.2.0-beta.5', tools: COMPACT_TOOLS }), '3.2.0-beta.5');
+    const agent = clientWithCaps(capabilities({ version: '3.2.0-beta.6', tools: COMPACT_TOOLS }), '3.2.0-beta.6');
     const calls = [];
     agent.buyProducts = async request => {
       calls.push(request);
@@ -10980,7 +10980,7 @@ describe('MediaBuyLifecycleCoordinator mutation boundaries', () => {
   });
 
   test('readback fields are gated by the exact established schema version', async () => {
-    for (const version of ['3.0', '3.1', '3.2.0-beta.5']) {
+    for (const version of ['3.0', '3.1', '3.2.0-beta.6']) {
       const tools = version.startsWith('3.2')
         ? [...COMPACT_TOOLS, 'get_media_buys', 'get_media_buy_delivery']
         : undefined;
@@ -11050,6 +11050,118 @@ describe('MediaBuyLifecycleCoordinator mutation boundaries', () => {
       }
       assert.equal(readbacks, version === '3.0' ? 0 : version === '3.1' ? 2 : 4);
     }
+  });
+
+  test('beta.6 delivery metric and sorting requests fail closed for older sellers', async () => {
+    for (const version of ['3.2.0-beta.5', '3.2.0-beta.6']) {
+      const agent = clientWithCaps(capabilities({ version, tools: [...COMPACT_TOOLS, 'get_media_buy_delivery'] }));
+      let readbacks = 0;
+      agent.getMediaBuyDelivery = async () => {
+        readbacks += 1;
+        return completed('get_media_buy_delivery', { media_buy_deliveries: [] });
+      };
+      const coordinator = await agent.negotiateMediaBuyLifecycle();
+      const requests = [
+        [{ requested_metrics: ['viewable_rate'] }, 'requested_metrics'],
+        [
+          { reporting_dimensions: { placement: { sort_by: 'viewable_rate' } } },
+          'reporting_dimensions.placement.sort_by',
+        ],
+        [
+          { reporting_dimensions: { placement: { sort_direction: 'asc' } } },
+          'reporting_dimensions.placement.sort_direction',
+        ],
+        [{ reporting_dimensions: { format: {} } }, 'reporting_dimensions.format'],
+      ];
+
+      for (const [request, feature] of requests) {
+        if (version === '3.2.0-beta.5') {
+          await assert.rejects(
+            coordinator.getMediaBuyDelivery(request),
+            error => error instanceof MediaBuyLifecycleCompatibilityError && error.feature === feature
+          );
+        } else {
+          await coordinator.getMediaBuyDelivery(request);
+        }
+      }
+      assert.equal(readbacks, version === '3.2.0-beta.5' ? 0 : requests.length);
+    }
+  });
+
+  test('beta.6 metric identities fail closed across compact beta.5 requests', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.2.0-beta.5', tools: COMPACT_TOOLS }));
+    let calls = 0;
+    for (const method of [
+      'listProducts',
+      'requestProposals',
+      'refineProposals',
+      'buyProducts',
+      'acceptProposal',
+      'controlMediaBuy',
+    ]) {
+      agent[method] = async () => {
+        calls += 1;
+        return completed('unexpected', {});
+      };
+    }
+    const coordinator = await agent.negotiateMediaBuyLifecycle();
+    const cases = [
+      [
+        () =>
+          coordinator.listProducts({
+            criteria: { offer_filters: { required_metrics: ['viewable_rate'] } },
+          }),
+        'criteria.offer_filters.required_metrics',
+      ],
+      [
+        () =>
+          coordinator.requestProposals({
+            criteria: { offer_filters: { required_metrics: ['quartile_100'] } },
+          }),
+        'criteria.offer_filters.required_metrics',
+      ],
+      [
+        () =>
+          coordinator.refineProposals({
+            refinements: [
+              {
+                proposal_id: 'proposal-1',
+                criteria: { offer_filters: { required_metrics: ['time_based_views'] } },
+              },
+            ],
+          }),
+        'refinements[0].criteria.offer_filters.required_metrics',
+      ],
+      [
+        () =>
+          coordinator.buyProducts({
+            purchases: [
+              {
+                committed_metrics: [
+                  { scope: 'standard', metric_id: 'measurable_impressions', committed_at: '2026-08-24T00:00:00Z' },
+                ],
+              },
+            ],
+          }),
+        'purchases[0].committed_metrics[0].metric_id',
+      ],
+      [
+        () => coordinator.acceptProposal({ reporting_webhook: { requested_metrics: ['viewed_seconds'] } }),
+        'reporting_webhook.requested_metrics',
+      ],
+      [
+        () => coordinator.controlMediaBuy({ reporting_webhook: { requested_metrics: ['quartile_25'] } }),
+        'reporting_webhook.requested_metrics',
+      ],
+    ];
+
+    for (const [invoke, feature] of cases) {
+      await assert.rejects(
+        invoke(),
+        error => error instanceof MediaBuyLifecycleCompatibilityError && error.feature === feature
+      );
+    }
+    assert.equal(calls, 0);
   });
 
   test('product field selection is gated by the exact established enum', async () => {
@@ -13622,7 +13734,7 @@ describe('MediaBuyLifecycleCoordinator mutation boundaries', () => {
   });
 
   test('rejects media-buy cancellation combined with name on compact and established lifecycles', async () => {
-    for (const { version, tools } of [{ version: '3.0' }, { version: '3.2.0-beta.5', tools: COMPACT_TOOLS }]) {
+    for (const { version, tools } of [{ version: '3.0' }, { version: '3.2.0-beta.6', tools: COMPACT_TOOLS }]) {
       const agent = clientWithCaps(capabilities({ version, tools }));
       let mutations = 0;
       agent.updateMediaBuy = async () => {

@@ -3,6 +3,7 @@ import {
   toCanonicalFormatOptionsWithRoutes as projectionToCanonicalFormatOptionsWithRoutes,
   type V2ProductFormatDeclaration,
 } from '../lib/v2/projection';
+import type { CanonicalFormatOption } from '../lib/types/core.generated';
 
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
@@ -41,6 +42,11 @@ const declarations: V2ProductFormatDeclaration[] = [
   },
 ];
 
+const promotedCompactOptions: CanonicalFormatOption[] = [
+  { format_kind: 'seller_rendered_stateful_display', params: {} },
+  { format_kind: 'coordinated_placements', params: {} },
+];
+
 const projectedFromRoot = toCanonicalFormatOptionsWithRoutes('adcp-3-2-product', declarations);
 const projectedFromSubpath = projectionToCanonicalFormatOptionsWithRoutes('adcp-3-2-product', declarations);
 const sampleRenderUrl: ProductFormatDeclaration['sample_render_url'] =
@@ -50,3 +56,4 @@ const localePolicy: ProductFormatDeclaration['locale_policy'] = projectedFromRoo
 void projectedFromSubpath;
 void sampleRenderUrl;
 void localePolicy;
+void promotedCompactOptions;
