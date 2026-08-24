@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const {
   createAdcpServer: _createAdcpServer,
   MEDIA_BUY_MCP_TOOL_PROFILE,
+  releaseRequiresPushOperationId,
 } = require('../dist/lib/server/create-adcp-server');
 const { readFileSync } = require('node:fs');
 const { getSdkServer } = require('../dist/lib/server/adcp-server');
@@ -70,6 +71,15 @@ function registeredTool(server, toolName) {
 // ---------------------------------------------------------------------------
 
 describe('createAdcpServer', () => {
+  it('keeps push operation_id required from 3.2 beta.5 through GA and later releases', () => {
+    assert.strictEqual(releaseRequiresPushOperationId('3.1.18'), false);
+    assert.strictEqual(releaseRequiresPushOperationId('3.2.0-beta.4'), false);
+    assert.strictEqual(releaseRequiresPushOperationId('3.2.0-beta.5'), true);
+    assert.strictEqual(releaseRequiresPushOperationId('3.2.0-beta.6'), true);
+    assert.strictEqual(releaseRequiresPushOperationId('3.2.0'), true);
+    assert.strictEqual(releaseRequiresPushOperationId('3.3.0'), true);
+  });
+
   it('returns an AdcpServer with connect / close / dispatchTestRequest', () => {
     const server = createAdcpServer({ name: 'Test', version: '1.0.0' });
     assert.strictEqual(typeof server.connect, 'function');

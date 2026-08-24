@@ -55,6 +55,7 @@ import type { AdcpServer } from '../../adcp-server';
 import {
   createAdcpServer,
   COMPACT_MEDIA_BUY_MUTATION_TOOLS,
+  releaseRequiresPushOperationId,
   type AdcpServerConfig,
   type MediaBuyHandlers,
   type ProposalNegotiationHandlers,
@@ -4297,7 +4298,8 @@ function buildTaskWebhookPayload(
 }
 
 function resolveWebhookPayloadOperationId(opts: DispatchHitlOpts, taskId: string): string {
-  const requiresRegisteredOperationId = /^3\.2(?:\.0)?-beta\.(?:[5-9]|[1-9]\d+)$/.test(opts.servedAdcpVersion ?? '');
+  const requiresRegisteredOperationId =
+    opts.servedAdcpVersion !== undefined && releaseRequiresPushOperationId(opts.servedAdcpVersion);
   if (opts.pushNotificationOperationId === undefined && requiresRegisteredOperationId) {
     throw new AdcpError('INVALID_REQUEST', {
       message: 'push_notification_config.operation_id is required for webhook delivery',
