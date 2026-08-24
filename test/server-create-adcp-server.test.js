@@ -203,7 +203,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Migration seller',
         version: '1.0.0',
-        adcpVersion: '3.2.0-beta.5',
+        adcpVersion: '3.2.0-beta.6',
         mcpToolProfile: 'all',
         mediaBuy: {
           ...compactHandlers,

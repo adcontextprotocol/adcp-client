@@ -271,8 +271,8 @@ describe('conformance: seedFixtures', () => {
     });
     let proposalSequence = 0;
     const { server, port } = await startAgent({
-      adcpVersion: '3.2.0-beta.5',
-      // This regression fixture must stay valid against the selected beta.5
+      adcpVersion: '3.2.0-beta.6',
+      // This regression fixture must stay valid against the selected beta.6
       // response schemas. Strict mode turns schema drift into a test failure
       // instead of the SDK's usual non-blocking validation warning.
       validation: { responses: 'strict' },
@@ -435,7 +435,7 @@ describe('conformance: seedFixtures', () => {
   test('default seeding does not probe the compact lifecycle unless the selected bundle enables it', async () => {
     let compactCalls = 0;
     const { server, port } = await startAgent({
-      adcpVersion: '3.2.0-beta.5',
+      adcpVersion: '3.2.0-beta.6',
       mediaBuy: {
         getProducts: async () => ({ products: [], cache_scope: 'public' }),
         listProducts: async () => {
