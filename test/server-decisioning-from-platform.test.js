@@ -23,10 +23,7 @@ const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/id
 
 const PRODUCTS_ONLY_BRIEF_VECTORS = JSON.parse(
   readFileSync(
-    path.resolve(
-      __dirname,
-      '../compliance/cache/latest/test-vectors/products-only-brief-compatibility/vectors.json'
-    ),
+    path.resolve(__dirname, '../compliance/cache/latest/test-vectors/products-only-brief-compatibility/vectors.json'),
     'utf8'
   )
 );
