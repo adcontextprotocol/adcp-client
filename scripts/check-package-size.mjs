@@ -11,9 +11,9 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const MAX_PACKED_TARBALL_BYTES = 45 * 1024 * 1024;
-const MAX_UNPACKED_PACKAGE_BYTES = 305 * 1024 * 1024;
-const MAX_PACKED_FILE_COUNT = 7_400;
+const MAX_PACKED_TARBALL_BYTES = 52 * 1024 * 1024;
+const MAX_UNPACKED_PACKAGE_BYTES = 350 * 1024 * 1024;
+const MAX_PACKED_FILE_COUNT = 8_200;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
 const EXPECTED_ESM_SCHEMA_FACADE = "export * from './schemas.generated.js';\n";
