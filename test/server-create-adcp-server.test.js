@@ -99,7 +99,7 @@ describe('createAdcpServer', () => {
 
     it('stays exactly aligned with the checked-in AdCP 3.2 media-buy manifest', () => {
       const manifest = JSON.parse(
-        readFileSync('schemas/cache/3.2.0-beta.5/mcp/2026-07-28/profiles/media-buy/manifest.json', 'utf8')
+        readFileSync('schemas/cache/3.2.0-beta.6/mcp/2026-07-28/profiles/media-buy/manifest.json', 'utf8')
       );
       assert.deepStrictEqual([...MEDIA_BUY_MCP_TOOL_PROFILE], manifest.filters.include_tools);
     });
@@ -109,8 +109,8 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Profile seller',
         version: '1.0.0',
-        adcpVersion: '3.2.0-beta.5',
-        capabilities: { supported_versions: ['3.0.25', '3.1.18', '3.2.0-beta.5'] },
+        adcpVersion: '3.2.0-beta.6',
+        capabilities: { supported_versions: ['3.0.25', '3.1.18', '3.2.0-beta.6'] },
         mediaBuy: {
           ...compactHandlers,
           getProducts: async params => {
@@ -147,14 +147,14 @@ describe('createAdcpServer', () => {
       assert.ok(!names.includes('update_media_buy'), 'deprecated update alias should not be advertised');
       assert.ok(!names.includes('build_creative'), 'creative-builder tools are outside the media-buy role profile');
       assert.deepStrictEqual(listed._meta, {
-        adcp_version: '3.2.0-beta.5',
+        adcp_version: '3.2.0-beta.6',
         adcp_profile: 'media-buy',
       });
-      assert.strictEqual(listed.tools[0]._meta.adcp_version, '3.2.0-beta.5');
+      assert.strictEqual(listed.tools[0]._meta.adcp_version, '3.2.0-beta.6');
       const requestProposalsTool = listed.tools.find(tool => tool.name === 'request_proposals');
       const officialRequestSchema = JSON.parse(
         readFileSync(
-          'schemas/cache/3.2.0-beta.5/mcp/2026-07-28/profiles/media-buy/media-buy/request-proposals-request.json',
+          'schemas/cache/3.2.0-beta.6/mcp/2026-07-28/profiles/media-buy/media-buy/request-proposals-request.json',
           'utf8'
         )
       );
@@ -203,7 +203,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Migration seller',
         version: '1.0.0',
-        adcpVersion: '3.2.0-beta.5',
+        adcpVersion: '3.2.0-beta.6',
         mcpToolProfile: 'all',
         mediaBuy: {
           ...compactHandlers,

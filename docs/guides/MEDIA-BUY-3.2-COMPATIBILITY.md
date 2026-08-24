@@ -5,11 +5,13 @@ routes it can still **call**. A 3.2 seller should make the compact lifecycle the
 obvious path for new buyers without breaking a 3.0 or 3.1 buyer that already
 calls the established names.
 
-The SDK is pinned to the signed `3.2.0-beta.5` bundle. That exact prerelease
-supersedes beta.4 and adds the normative async identity, cross-channel
-convergence, webhook retry-horizon, and continuation-generation contract.
-Beta.4 introduced flexible-window availability and the products-only legacy
-purchase-continuation contract.
+The SDK is pinned to the signed `3.2.0-beta.6` bundle. That exact prerelease
+supersedes beta.5 and adds coordinated placements, seller-rendered stateful
+display, creative component assets, and A2A 1.0 request-signing method names.
+Beta.5 added the normative async identity, cross-channel convergence, webhook
+retry-horizon, and continuation-generation contract; beta.4 introduced
+flexible-window availability and the products-only legacy purchase-continuation
+contract.
 
 ## MCP surface comparison
 
@@ -74,7 +76,7 @@ const platform = {
 createAdcpServerFromPlatform(platform, {
   name: 'seller',
   version: '1.0.0',
-  adcpVersion: '3.2.0-beta.5',
+  adcpVersion: '3.2.0-beta.6',
 });
 ```
 

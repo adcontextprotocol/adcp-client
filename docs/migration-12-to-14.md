@@ -1,13 +1,15 @@
 # Migrating from 12.x to 14 beta
 
-This is the direct upgrade path for applications skipping SDK 13. SDK 14 includes both SDK 13's canonical-creative and security boundary changes and the AdCP `3.2.0-beta.5` preview surface. Treat it as two review checkpoints even if you deploy one package update.
+This is the direct upgrade path for applications skipping SDK 13. SDK 14 includes both SDK 13's canonical-creative and security boundary changes and the AdCP `3.2.0-beta.6` preview surface. Treat it as two review checkpoints even if you deploy one package update.
 
-AdCP prerelease pins are exact: beta.5 supersedes beta.4. Beta.2 added canonical
+AdCP prerelease pins are exact: beta.6 supersedes beta.5. Beta.2 added canonical
 compact proposal and direct-buy lifecycle storyboards through operational
 control and MediaBuy readback; beta.4 adds flexible-window availability and
 durable products-only legacy purchase continuations. Beta.5 defines stable
 async identity, cross-channel terminal convergence, webhook retry horizons,
-and crash-safe continuation generation replacement.
+and crash-safe continuation generation replacement. Beta.6 adds coordinated
+placements, seller-rendered stateful display, creative component assets, and
+A2A 1.0 request-signing method names.
 
 Install the beta explicitly:
 

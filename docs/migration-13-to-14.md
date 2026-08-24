@@ -1,8 +1,8 @@
 # Migrating from 13.x to 14 beta
 
-SDK 14 adopts AdCP `3.2.0-beta.5` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the beta and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
+SDK 14 adopts AdCP `3.2.0-beta.6` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the beta and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
 
-AdCP 3.2 prereleases are exact protocol pins: beta.5 replaces beta.4 in the
+AdCP 3.2 prereleases are exact protocol pins: beta.6 replaces beta.5 in the
 SDK's compatible-version list rather than extending a rolling 3.2-beta range.
 Beta.1 restored `adcp_major_version` on `buy_products`,
 `accept_proposal`, and `control_media_buy`; the SDK now sends that field again
@@ -12,16 +12,17 @@ storyboards through operational control and MediaBuy readback; beta.4 adds
 flexible-window availability and durable products-only legacy purchase
 continuations. Beta.5 defines stable async identity, cross-channel terminal
 convergence, webhook retry horizons, and crash-safe continuation generation
-replacement.
+replacement. Beta.6 adds coordinated placements, seller-rendered stateful
+display, creative component assets, and A2A 1.0 request-signing method names.
 
 ### Beta.5 task webhook registration and polling
 
 `push_notification_config` is now an AdCP application-layer field across MCP,
 A2A, and REST. On A2A it is carried in skill parameters and remains distinct
-from native `TaskPushNotificationConfig`. Every beta.5 registration must carry
+from native `TaskPushNotificationConfig`. Every beta.5-or-later registration must carry
 a buyer `operation_id`; SDK clients generate and reuse one identity across the
 authorized request, registration provenance, route, and webhook envelope.
-Beta.5 sellers return `INVALID_REQUEST` before handler dispatch when the field
+Beta.5-or-later sellers return `INVALID_REQUEST` before handler dispatch when the field
 is missing or malformed. Explicitly negotiated older bundles keep their prior
 wire behavior.
 
@@ -83,7 +84,7 @@ loading; keep using `requires_capability` for a singular predicate.
 10. Upgrade durable idempotency storage before application traffic: add the nullable PostgreSQL `retain_until` column/index, preserve `IdempotencyCacheEntry.retainUntil`, and add atomic `putIfAbsent()`, `replaceIfPayloadHash()`, `replaceIfPayloadHashAndExpired()`, and `deleteIfPayloadHash()` to every custom backend.
 11. Upgrade custom deferred-task storage with `putForSettlementOperationIfAbsent()`, `getBySettlementOperationId()`, and `replaceForSettlementOperationIfVersion()`. The initial token/index write and nested A→B index move must each be atomic.
 12. Replace webhook emitter `operation_id` arguments with SDK-local `delivery_id` values and upgrade custom stores to `WebhookDeliveryStore`. One delivery ID binds one canonical payload and key; use a fresh delivery ID for each changed status observation while retaining the AdCP `operation_id` inside the payload.
-13. Ensure custom beta.5 buyers include `push_notification_config.operation_id`, and update A2A integrations to keep the AdCP registration in skill parameters even when native A2A push configuration is also present.
+13. Ensure custom 3.2 buyers include `push_notification_config.operation_id`, and update A2A integrations to keep the AdCP registration in skill parameters even when native A2A push configuration is also present.
 14. Treat failed/rejected task results as canonical terminal artifacts when `include_result` is requested; do not discard them while preserving only the summary error.
 
 ### Webhook delivery identity and retry horizons

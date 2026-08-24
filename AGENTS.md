@@ -103,7 +103,7 @@ if (!artifact.name) { ... }
 
 Used for receiving task completion/progress notifications. Placement differs by protocol:
 
-- **AdCP 3.2.0-beta.5 on A2A**: Goes in skill parameters as
+- **AdCP 3.2.0-beta.6 on A2A**: Goes in skill parameters as
   `push_notification_config` (snake_case), including `operation_id`. The native
   A2A `params.configuration.pushNotificationConfig` is a distinct transport
   facility; the SDK may retain it for compatibility, but it does not replace
