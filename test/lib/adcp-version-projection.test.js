@@ -12,6 +12,7 @@ test('isAdcpVersionAtLeast compares release-precision prerelease pins', () => {
   assert.equal(isAdcpVersionAtLeast('3.2-beta.5', '3.2.0-beta.5'), true);
   assert.equal(isAdcpVersionAtLeast('3.2-beta.6', '3.2.0-beta.5'), true);
   assert.equal(isAdcpVersionAtLeast('3.2.0', '3.2.0-beta.5'), true);
+  assert.equal(isAdcpVersionAtLeast('3.3.0', '3.2.0-beta.5'), true);
 });
 
 test('sellerAdvertises31: buildVersion is advisory and never used for negotiation', () => {

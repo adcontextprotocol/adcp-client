@@ -56,7 +56,7 @@ function revise(overrides = {}) {
 }
 
 function request(refinements = [revise()]) {
-  return { adcp_version: '3.2-beta.5', adcp_major_version: 3, idempotency_key: KEY, refinements };
+  return { adcp_version: '3.2-beta.6', adcp_major_version: 3, idempotency_key: KEY, refinements };
 }
 
 function completed(data) {
