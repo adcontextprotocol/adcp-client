@@ -859,7 +859,7 @@ describe('createAdcpServer', () => {
           acceptProposal: async () => ({}),
         },
       });
-      const modern = await callTool(server, 'get_adcp_capabilities', { adcp_version: '3.2-beta.5' });
+      const modern = await callTool(server, 'get_adcp_capabilities', { adcp_version: '3.2-beta.6' });
       assert.deepStrictEqual(modern.media_buy.lifecycle_tools, [
         'list_products',
         'request_proposals',
@@ -2267,7 +2267,7 @@ describe('createAdcpServer', () => {
       assert.strictEqual(status.task_type, 'sync_creatives');
       assert.strictEqual(status.protocol, 'creative');
       assert.strictEqual(status.has_webhook, true);
-      assert.strictEqual(status.adcp_version, '3.2-beta.5');
+      assert.strictEqual(status.adcp_version, '3.2-beta.6');
       assert.deepStrictEqual(status.result, { creatives: [{ creative_id: 'cr_1' }] });
       assert.deepStrictEqual(status.context, { trace_id: 'trace_1' });
 
@@ -2312,7 +2312,7 @@ describe('createAdcpServer', () => {
       assert.strictEqual(listed.tasks[0].task_type, 'sync_creatives');
       assert.strictEqual(listed.tasks[0].has_webhook, true);
       assert.strictEqual(listed.pagination.total_count, 1);
-      assert.strictEqual(listed.adcp_version, '3.2-beta.5');
+      assert.strictEqual(listed.adcp_version, '3.2-beta.6');
 
       const buyerTwoList = await callTool(
         server,
@@ -2326,7 +2326,7 @@ describe('createAdcpServer', () => {
       const badCursor = await callToolRaw(server, 'list_tasks', { pagination: { cursor: 'not-a-number' } }, buyerOne);
       assert.strictEqual(badCursor.isError, true);
       assert.strictEqual(badCursor.structuredContent.adcp_error.code, 'INVALID_REQUEST');
-      assert.strictEqual(badCursor.structuredContent.adcp_version, '3.2-beta.5');
+      assert.strictEqual(badCursor.structuredContent.adcp_version, '3.2-beta.6');
 
       const opaqueTaskId = 'opaque_' + 'x'.repeat(160);
       const opaque = await taskRegistry.create({
@@ -2754,12 +2754,12 @@ describe('createAdcpServer', () => {
       const status = await callToolRaw(server, 'get_task_status', { task_id: owned.taskId }, extra);
       assert.strictEqual(status.isError, true);
       assert.strictEqual(status.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
-      assert.strictEqual(status.structuredContent.adcp_version, '3.2-beta.5');
+      assert.strictEqual(status.structuredContent.adcp_version, '3.2-beta.6');
 
       const listed = await callToolRaw(server, 'list_tasks', {}, extra);
       assert.strictEqual(listed.isError, true);
       assert.strictEqual(listed.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
-      assert.strictEqual(listed.structuredContent.adcp_version, '3.2-beta.5');
+      assert.strictEqual(listed.structuredContent.adcp_version, '3.2-beta.6');
 
       const contextLeak = await callToolRaw(
         server,

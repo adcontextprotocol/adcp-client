@@ -53,7 +53,11 @@ import {
   toReleasePrecisionVersion,
   type AdcpVersion,
 } from '../version';
-import { isMovingAdcpPrereleaseFamilyAlias, resolveAdcpVersion } from '../utils/adcp-version-config';
+import {
+  isAdcpVersionAtLeast,
+  isMovingAdcpPrereleaseFamilyAlias,
+  resolveAdcpVersion,
+} from '../utils/adcp-version-config';
 import { getValidator, hasSchemaBundle, resolveBundleKey, getMcpProfileInputSchema } from '../validation/schema-loader';
 import { TOOL_INPUT_SHAPES } from '../schemas';
 import { TaskTypeValues } from '../types/enums.generated';
@@ -4265,8 +4269,7 @@ function compareAdcpRelease(left: ParsedAdcpRelease, right: ParsedAdcpRelease): 
 const PUSH_OPERATION_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,255}$/;
 
 function releaseRequiresPushOperationId(release: string): boolean {
-  const bundle = resolveBundleKey(release);
-  return bundle === '3.2.0-beta.5' || bundle === '3.2-beta.5';
+  return isAdcpVersionAtLeast(resolveBundleKey(release), '3.2.0-beta.5');
 }
 
 function pushOperationIdError(

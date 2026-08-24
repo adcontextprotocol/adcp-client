@@ -284,6 +284,32 @@ describe('conformance: schemaToArbitrary', { concurrency: false }, () => {
     }
   });
 
+  test('if/else: removes fields forbidden outside the discriminator branch', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        format_kind: { enum: ['image', 'coordinated_placements'] },
+        component_assets: { type: 'object' },
+      },
+      allOf: [
+        {
+          if: {
+            properties: { format_kind: { const: 'coordinated_placements' } },
+            required: ['format_kind'],
+          },
+          then: { required: ['component_assets'] },
+          else: { not: { required: ['component_assets'] } },
+        },
+      ],
+    };
+    const validate = makeAjv().compile(schema);
+    const samples = fc.sample(schemaToArbitrary(schema), { numRuns: 100, seed: 42 });
+    assert.ok(
+      samples.every(sample => validate(sample)),
+      JSON.stringify(validate.errors)
+    );
+  });
+
   test('fixtures: scalar creative_id draws from the pool', () => {
     const pool = ['cre_abc', 'cre_def', 'cre_ghi'];
     const schema = {

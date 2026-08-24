@@ -15,6 +15,22 @@
 import { ADCP_VERSION, COMPATIBLE_ADCP_VERSIONS, parseAdcpMajorVersion } from '../version';
 import { ConfigurationError } from '../errors';
 import { hasSchemaBundle, resolveBundleKey, toReleasePrecisionWire } from '../validation/schema-loader';
+import { gte as semverGte, valid as validSemver } from 'semver';
+
+function comparableAdcpSemver(version: string): string | undefined {
+  const match = /^v?(\d+)\.(\d+)(?:\.(\d+))?((?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/.exec(version.trim());
+  if (!match) return undefined;
+  const normalized = `${match[1]}.${match[2]}.${match[3] ?? '0'}${match[4] ?? ''}`;
+  return validSemver(normalized) ?? undefined;
+}
+
+/** Compare full-semver and release-precision AdCP identifiers safely. */
+export function isAdcpVersionAtLeast(version: string | undefined, minimum: string): boolean {
+  if (version === undefined) return false;
+  const comparable = comparableAdcpSemver(version);
+  const comparableMinimum = comparableAdcpSemver(minimum);
+  return comparable !== undefined && comparableMinimum !== undefined && semverGte(comparable, comparableMinimum);
+}
 
 /**
  * Resolve and validate a configured `adcpVersion`. Returns the value to store

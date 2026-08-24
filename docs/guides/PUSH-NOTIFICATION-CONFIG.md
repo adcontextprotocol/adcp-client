@@ -1,6 +1,6 @@
 # Push Notification Config
 
-Push notification config tells the AdCP agent where to send async task status updates via webhook. In AdCP 3.2.0-beta.5 it is application-layer request data on MCP, A2A, and REST. The client injects it automatically when `webhookUrlTemplate` is configured.
+Push notification config tells the AdCP agent where to send async task status updates via webhook. Since AdCP 3.2.0-beta.5 it is application-layer request data on MCP, A2A, and REST. The client injects it automatically when `webhookUrlTemplate` is configured.
 
 ## How It Works
 

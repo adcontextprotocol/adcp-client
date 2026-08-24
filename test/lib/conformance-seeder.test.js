@@ -272,7 +272,7 @@ describe('conformance: seedFixtures', () => {
     let proposalSequence = 0;
     const { server, port } = await startAgent({
       adcpVersion: '3.2.0-beta.5',
-      // This regression fixture must stay valid against the selected beta.1
+      // This regression fixture must stay valid against the selected beta.5
       // response schemas. Strict mode turns schema drift into a test failure
       // instead of the SDK's usual non-blocking validation warning.
       validation: { responses: 'strict' },
@@ -419,7 +419,7 @@ describe('conformance: seedFixtures', () => {
       brand_id: 'compact_brand',
     });
     assert.equal(observed.bought.length, 1);
-    assert.equal(observed.bought[0].adcp_version, '3.2-beta.5');
+    assert.equal(observed.bought[0].adcp_version, '3.2-beta.6');
     assert.equal(observed.bought[0].adcp_major_version, 3);
     assert.match(observed.bought[0].idempotency_key, /^[0-9a-f-]{36}$/);
     assert.equal(observed.bought[0].feed_version, 'feed-compact-1');

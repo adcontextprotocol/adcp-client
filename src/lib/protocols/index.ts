@@ -71,6 +71,7 @@ import { resolveBundleKey, toReleasePrecisionWire, validateAdcpVersionWire } fro
 import { buildAgentSigningContext, CAPABILITY_OP, ensureCapabilityLoaded } from '../signing/client';
 import { withResponseSizeLimit } from './responseSizeLimit';
 import { preparedProtocolToolCallFor } from './prepared-call-context';
+import { isAdcpVersionAtLeast } from '../utils/adcp-version-config';
 import {
   withTransportDiagnostics,
   type TransportActivityHandler as TransportActivityHandlerFn,
@@ -461,8 +462,8 @@ export function prepareProtocolToolCall(
   applyPublishedSchemaCompatibility(options.toolName, argsWithVersion, args);
   const effectiveBundle =
     typeof argsWithVersion.adcp_version === 'string' ? resolveBundleKey(argsWithVersion.adcp_version) : undefined;
-  const usesBeta5ApplicationRegistration =
-    options.serverVersion !== 'v2' && (effectiveBundle === '3.2.0-beta.5' || effectiveBundle === '3.2-beta.5');
+  const usesApplicationRegistration =
+    options.serverVersion !== 'v2' && isAdcpVersionAtLeast(effectiveBundle, '3.2.0-beta.5');
 
   let pushNotificationConfig: PushNotificationConfig | undefined;
   let applicationPushNotificationConfig: PushNotificationConfig | undefined;
@@ -485,7 +486,7 @@ export function prepareProtocolToolCall(
         ...(options.webhookToken && { token: options.webhookToken }),
       };
     }
-    if (usesBeta5ApplicationRegistration && pushNotificationConfig) {
+    if (usesApplicationRegistration && pushNotificationConfig) {
       operationId = options.operationId ?? randomUUID();
       applicationPushNotificationConfig = {
         ...pushNotificationConfig,

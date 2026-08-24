@@ -12,7 +12,9 @@ import type {
   ImageFormatDeclaration,
   NativeInFeedFormatDeclaration,
   ResponsiveCreativeFormatDeclaration,
+  SellerRenderedStatefulDisplayFormatDeclaration,
   SponsoredPlacementFormatDeclaration,
+  CoordinatedPlacementsFormatDeclaration,
   VASTVideoFormatDeclaration,
 } from '../../types/tools.generated';
 import type { CanonicalFormatDeclaration as CanonicalBaseFormatDeclaration } from './legacy-metadata';
@@ -35,6 +37,8 @@ interface CanonicalFormatDeclarationMap {
   native_in_feed: WithCommonDeclaration<NativeInFeedFormatDeclaration>;
   responsive_creative: WithCommonDeclaration<ResponsiveCreativeFormatDeclaration>;
   agent_placement: WithCommonDeclaration<AgentPlacementFormatDeclaration>;
+  seller_rendered_stateful_display: WithCommonDeclaration<SellerRenderedStatefulDisplayFormatDeclaration>;
+  coordinated_placements: WithCommonDeclaration<CoordinatedPlacementsFormatDeclaration>;
   custom: WithCommonDeclaration<CustomFormatDeclaration>;
 }
 
@@ -185,6 +189,20 @@ export function agentPlacementFormatDeclaration(
   return canonicalFormatDeclaration('agent_placement', params, fields);
 }
 
+export function sellerRenderedStatefulDisplayFormatDeclaration(
+  params: CanonicalFormatParams<'seller_rendered_stateful_display'>,
+  fields: CanonicalFormatDeclarationFields<'seller_rendered_stateful_display'> = {}
+): CanonicalFormatDeclaration<'seller_rendered_stateful_display'> {
+  return canonicalFormatDeclaration('seller_rendered_stateful_display', params, fields);
+}
+
+export function coordinatedPlacementsFormatDeclaration(
+  params: CanonicalFormatParams<'coordinated_placements'>,
+  fields: CanonicalFormatDeclarationFields<'coordinated_placements'> = {}
+): CanonicalFormatDeclaration<'coordinated_placements'> {
+  return canonicalFormatDeclaration('coordinated_placements', params, fields);
+}
+
 export function customFormatDeclaration(
   format_shape: string,
   format_schema: NonNullable<CanonicalFormatDeclarationFields<'custom'>['format_schema']>,
@@ -224,6 +242,8 @@ export const CanonicalFormat = {
   nativeInFeed: nativeInFeedFormatDeclaration,
   responsiveCreative: responsiveCreativeFormatDeclaration,
   agentPlacement: agentPlacementFormatDeclaration,
+  sellerRenderedStatefulDisplay: sellerRenderedStatefulDisplayFormatDeclaration,
+  coordinatedPlacements: coordinatedPlacementsFormatDeclaration,
   custom: customFormatDeclaration,
   productCard,
   productCardDetailed,

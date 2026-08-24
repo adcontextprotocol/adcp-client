@@ -451,9 +451,10 @@ test('customHeaders signing-reserved keys are stripped before signing', async ()
       /keyid="attacker"/,
       'attacker-supplied Signature-Input was overwritten'
     );
-    assert.match(
+    assert.match(call.headers['content-digest'], /^sha-256=:[A-Za-z0-9+/]{43}=:/);
+    assert.notStrictEqual(
       call.headers['content-digest'],
-      /sha-256=:[^A]/,
+      'sha-256=:AAAA:',
       'signer recomputed Content-Digest from the real body'
     );
     assert.strictEqual(call.headers['x-benign-header'], 'yes', 'non-reserved customHeaders still pass through');

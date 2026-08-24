@@ -150,11 +150,11 @@ describe('refine_proposals server integration', () => {
       supported_dimensions: ['total_budget', 'alternatives'],
       max_alternatives: 4,
     });
-    assert.equal(capabilities.structuredContent.adcp_version, '3.2-beta.5');
+    assert.equal(capabilities.structuredContent.adcp_version, '3.2-beta.6');
     assert.ok(capabilities.structuredContent.media_buy.lifecycle_tools.includes('refine_proposals'));
 
     const response = await call(server, 'refine_proposals', request('version-envelope-key-0001'), 'buyer-a');
-    assert.equal(response.structuredContent.adcp_version, '3.2-beta.5');
+    assert.equal(response.structuredContent.adcp_version, '3.2-beta.6');
   });
 
   test('rejects an explicit pre-3.2 server pin', () => {
@@ -311,7 +311,7 @@ describe('refine_proposals server integration', () => {
     assert.equal(response.isError, undefined);
     assert.equal(response.structuredContent.status, 'submitted');
     assert.equal(response.structuredContent.task_id, 'proposal-task-1');
-    assert.equal(response.structuredContent.adcp_version, '3.2-beta.5');
+    assert.equal(response.structuredContent.adcp_version, '3.2-beta.6');
     assert.equal(response.structuredContent.results, undefined);
     assert.equal(response.structuredContent.products, undefined);
   });

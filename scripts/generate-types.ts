@@ -72,6 +72,7 @@ const PRIORITY_CANONICAL_SCHEMAS = [
   'core/forecast-point.json',
   'core/targeting-overlay-support.json',
   'core/targeting-overlay-requirements.json',
+  'core/canonical-format-option.json',
   'core/delivery-metric-aggregate.json',
   'core/cancellation-policy.json',
   'media-buy/package-update.json',
@@ -93,6 +94,8 @@ const PRIORITY_CANONICAL_SCHEMAS = [
   'formats/canonical/native_in_feed.json',
   'formats/canonical/responsive_creative.json',
   'formats/canonical/agent_placement.json',
+  'formats/canonical/seller_rendered_stateful_display.json',
+  'formats/canonical/coordinated_placements.json',
   // Present in the signed 3.2 manifest but omitted from index.json's legacy
   // governance task aggregation. Keep its public validators available until
   // the index and manifest converge upstream.
@@ -140,6 +143,7 @@ const PRIORITY_CANONICAL_TYPE_NAMES = new Set([
   'ForecastPoint',
   'TargetingOverlaySupport',
   'TargetingOverlayRequirements',
+  'CanonicalFormatOption',
   'DeliveryMetricAggregate',
   'CancellationPolicy',
   'PackageUpdate',
@@ -157,6 +161,8 @@ const PRIORITY_CANONICAL_TYPE_NAMES = new Set([
   'CanonicalFormatNativeInFeed',
   'CanonicalFormatResponsiveCreative',
   'CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement',
+  'CanonicalFormatSellerRenderedStatefulDisplay',
+  'CanonicalFormatCoordinatedPlacements',
   'SizeModeMutex',
   'Fixed',
   'MultiSize',
@@ -903,12 +909,68 @@ function normalizePostalAreaForCodegen(schema: any): any {
   };
 }
 
+/**
+ * Keep the optional, closed qualifier object on VendorMetricValue visible to
+ * json-schema-to-typescript.
+ *
+ * jsts drops an anonymous object when all of its properties are optional and
+ * `additionalProperties` is false. Giving this schema-owned object the same
+ * semantic title as the canonical qualifier makes jsts emit the field and
+ * reuse the existing qualifier shape without changing wire validation.
+ */
+export function nameVendorMetricValueQualifierForCodegen(schema: any): any {
+  if (schema?.title !== 'Vendor Metric Value') return schema;
+  const qualifier = schema.properties?.qualifier;
+  if (!qualifier || typeof qualifier !== 'object' || Array.isArray(qualifier)) return schema;
+
+  return {
+    ...schema,
+    properties: {
+      ...schema.properties,
+      qualifier: {
+        ...qualifier,
+        title: 'Canonical Metric Qualifier',
+      },
+    },
+  };
+}
+
+/**
+ * Keep the compact format-option discriminator aligned with the authoritative
+ * canonical-kind vocabulary. The beta.6 option document retained a stale
+ * inline enum while canonical-format-kind.json added two promoted formats.
+ */
+export function normalizeCanonicalFormatOptionKindsForCodegen(schema: any): any {
+  if (schema?.title !== 'Canonical Format Option') return schema;
+  const formatKind = schema.properties?.format_kind;
+  if (!formatKind || typeof formatKind !== 'object' || Array.isArray(formatKind)) return schema;
+
+  const vocabularyPath = path.join(LATEST_CACHE_DIR, 'core/canonical-format-kind.json');
+  const vocabulary = JSON.parse(readFileSync(vocabularyPath, 'utf8')) as { enum?: unknown };
+  if (!Array.isArray(vocabulary.enum) || !vocabulary.enum.every(value => typeof value === 'string')) {
+    throw new Error('canonical-format-kind.json must contain a string enum for code generation.');
+  }
+
+  return {
+    ...schema,
+    properties: {
+      ...schema.properties,
+      format_kind: {
+        ...formatKind,
+        enum: [...vocabulary.enum],
+      },
+    },
+  };
+}
+
 export function enforceStrictSchema(schema: any): any {
   if (!schema || typeof schema !== 'object') {
     return schema;
   }
 
   schema = normalizePostalAreaForCodegen(schema);
+  schema = nameVendorMetricValueQualifierForCodegen(schema);
+  schema = normalizeCanonicalFormatOptionKindsForCodegen(schema);
   schema = expandConditionalRequiredDiscriminator(schema);
   schema = preservePostalCountrySystemRequiredness(schema);
   schema = dropValidationOnlyAnyOf(schema);

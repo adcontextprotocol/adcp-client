@@ -105,6 +105,7 @@ import {
   type EstablishedProposalTransitionResult,
   type ProposalSnapshotEntry as DurableProposalSnapshotEntry,
 } from './established-proposal-store';
+import { beta6ReportingRequestIssue } from './reporting-version';
 
 type ActiveLegacyPurchaseOperation = Exclude<LegacyPurchaseOperation, { state: 'available' }>;
 
@@ -2990,6 +2991,17 @@ export class MediaBuyLifecycleCoordinator {
     }
   }
 
+  private assertBeta6ReportingRequest(operation: string, toolName: string, input: unknown): void {
+    if (compareRelease(this.negotiated_version, '3.2.0-beta.6') >= 0) return;
+    const issue = beta6ReportingRequestIssue(toolName, input);
+    if (!issue) return;
+    throw this.unsupported(
+      operation,
+      issue.field,
+      `The negotiated ${this.negotiated_version} seller cannot represent ${issue.detail}. No request was sent.`
+    );
+  }
+
   private assertProposalLifecycleAvailable(operation: string): void {
     if (compareRelease(this.negotiated_version, '3.0') >= 0) return;
     throw this.unsupported(
@@ -5132,6 +5144,7 @@ export class MediaBuyLifecycleCoordinator {
     this.assertActive('listProducts');
     const input = record(params);
     const lifecycle = this.selectLifecycle('list_products');
+    this.assertBeta6ReportingRequest('listProducts', 'list_products', input);
     this.assertLegacyReferenceShapes('listProducts', input);
     if (lifecycle === 'compact') {
       this.assertValidCompactRequest('list_products', params, lifecycle);
@@ -5213,6 +5226,7 @@ export class MediaBuyLifecycleCoordinator {
     this.assertActive('requestProposals');
     const input = record(params);
     const lifecycle = this.selectLifecycle('request_proposals');
+    this.assertBeta6ReportingRequest('requestProposals', 'request_proposals', input);
     this.assertLegacyReferenceShapes('requestProposals', input);
     if (lifecycle === 'compact') {
       this.assertValidCompactRequest('request_proposals', params, lifecycle, true);
@@ -8227,6 +8241,7 @@ export class MediaBuyLifecycleCoordinator {
   ): Promise<CompatibilityTaskResult<CompatibleRefineProposalsResponse, CompatibleRefineProposalsWireResponse>> {
     this.assertActive('refineProposals');
     const lifecycle = this.selectLifecycle('refine_proposals');
+    this.assertBeta6ReportingRequest('refineProposals', 'refine_proposals', params);
     this.assertValidCompactRequest('refine_proposals', params, lifecycle, true);
     if (lifecycle === 'compact') {
       const proposalIds = params.refinements.map(refinement => refinement.proposal_id);
@@ -8789,6 +8804,7 @@ export class MediaBuyLifecycleCoordinator {
     this.assertActive('buyProducts');
     const input = record(params);
     const lifecycle = this.selectLifecycle('buy_products');
+    this.assertBeta6ReportingRequest('buyProducts', 'buy_products', input);
     this.assertLegacyReferenceShapes('buyProducts', input);
     if (lifecycle === 'compact') {
       this.assertValidCompactRequest('buy_products', params, lifecycle, true);
@@ -8940,6 +8956,7 @@ export class MediaBuyLifecycleCoordinator {
     this.assertActive('acceptProposal');
     const input = record(params);
     const lifecycle = this.selectLifecycle('accept_proposal');
+    this.assertBeta6ReportingRequest('acceptProposal', 'accept_proposal', input);
     this.assertLegacyReferenceShapes('acceptProposal', input);
     if (lifecycle === 'compact') {
       const proposalId = optionalString(input.proposal_id);
@@ -9468,6 +9485,7 @@ export class MediaBuyLifecycleCoordinator {
     this.assertActive('controlMediaBuy');
     const input = record(params);
     const lifecycle = this.selectLifecycle('control_media_buy');
+    this.assertBeta6ReportingRequest('controlMediaBuy', 'control_media_buy', input);
     this.assertLegacyReferenceShapes('controlMediaBuy', input);
     const canceledControlConflicts = [
       'name',
@@ -9804,6 +9822,7 @@ export class MediaBuyLifecycleCoordinator {
     }
     this.assertSharedToolAdvertised('get_media_buy_delivery');
     const input = record(params);
+    this.assertBeta6ReportingRequest('getMediaBuyDelivery', 'get_media_buy_delivery', input);
     if (compareRelease(this.negotiated_version, '3.1') < 0) {
       this.assertCompactWireFieldsAbsent('getMediaBuyDelivery', input, [
         'include_window_breakdown',

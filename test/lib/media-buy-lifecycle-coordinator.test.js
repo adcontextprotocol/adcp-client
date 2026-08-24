@@ -3724,7 +3724,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /served AdCP 3\.3, which is newer than the client pin 3\.2\.0-beta\.5/
+      /served AdCP 3\.3, which is newer than the client pin 3\.2\.0-beta\.6/
     );
   });
 
@@ -11050,6 +11050,118 @@ describe('MediaBuyLifecycleCoordinator mutation boundaries', () => {
       }
       assert.equal(readbacks, version === '3.0' ? 0 : version === '3.1' ? 2 : 4);
     }
+  });
+
+  test('beta.6 delivery metric and sorting requests fail closed for older sellers', async () => {
+    for (const version of ['3.2.0-beta.5', '3.2.0-beta.6']) {
+      const agent = clientWithCaps(capabilities({ version, tools: [...COMPACT_TOOLS, 'get_media_buy_delivery'] }));
+      let readbacks = 0;
+      agent.getMediaBuyDelivery = async () => {
+        readbacks += 1;
+        return completed('get_media_buy_delivery', { media_buy_deliveries: [] });
+      };
+      const coordinator = await agent.negotiateMediaBuyLifecycle();
+      const requests = [
+        [{ requested_metrics: ['viewable_rate'] }, 'requested_metrics'],
+        [
+          { reporting_dimensions: { placement: { sort_by: 'viewable_rate' } } },
+          'reporting_dimensions.placement.sort_by',
+        ],
+        [
+          { reporting_dimensions: { placement: { sort_direction: 'asc' } } },
+          'reporting_dimensions.placement.sort_direction',
+        ],
+        [{ reporting_dimensions: { format: {} } }, 'reporting_dimensions.format'],
+      ];
+
+      for (const [request, feature] of requests) {
+        if (version === '3.2.0-beta.5') {
+          await assert.rejects(
+            coordinator.getMediaBuyDelivery(request),
+            error => error instanceof MediaBuyLifecycleCompatibilityError && error.feature === feature
+          );
+        } else {
+          await coordinator.getMediaBuyDelivery(request);
+        }
+      }
+      assert.equal(readbacks, version === '3.2.0-beta.5' ? 0 : requests.length);
+    }
+  });
+
+  test('beta.6 metric identities fail closed across compact beta.5 requests', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.2.0-beta.5', tools: COMPACT_TOOLS }));
+    let calls = 0;
+    for (const method of [
+      'listProducts',
+      'requestProposals',
+      'refineProposals',
+      'buyProducts',
+      'acceptProposal',
+      'controlMediaBuy',
+    ]) {
+      agent[method] = async () => {
+        calls += 1;
+        return completed('unexpected', {});
+      };
+    }
+    const coordinator = await agent.negotiateMediaBuyLifecycle();
+    const cases = [
+      [
+        () =>
+          coordinator.listProducts({
+            criteria: { offer_filters: { required_metrics: ['viewable_rate'] } },
+          }),
+        'criteria.offer_filters.required_metrics',
+      ],
+      [
+        () =>
+          coordinator.requestProposals({
+            criteria: { offer_filters: { required_metrics: ['quartile_100'] } },
+          }),
+        'criteria.offer_filters.required_metrics',
+      ],
+      [
+        () =>
+          coordinator.refineProposals({
+            refinements: [
+              {
+                proposal_id: 'proposal-1',
+                criteria: { offer_filters: { required_metrics: ['time_based_views'] } },
+              },
+            ],
+          }),
+        'refinements[0].criteria.offer_filters.required_metrics',
+      ],
+      [
+        () =>
+          coordinator.buyProducts({
+            purchases: [
+              {
+                committed_metrics: [
+                  { scope: 'standard', metric_id: 'measurable_impressions', committed_at: '2026-08-24T00:00:00Z' },
+                ],
+              },
+            ],
+          }),
+        'purchases[0].committed_metrics[0].metric_id',
+      ],
+      [
+        () => coordinator.acceptProposal({ reporting_webhook: { requested_metrics: ['viewed_seconds'] } }),
+        'reporting_webhook.requested_metrics',
+      ],
+      [
+        () => coordinator.controlMediaBuy({ reporting_webhook: { requested_metrics: ['quartile_25'] } }),
+        'reporting_webhook.requested_metrics',
+      ],
+    ];
+
+    for (const [invoke, feature] of cases) {
+      await assert.rejects(
+        invoke(),
+        error => error instanceof MediaBuyLifecycleCompatibilityError && error.feature === feature
+      );
+    }
+    assert.equal(calls, 0);
   });
 
   test('product field selection is gated by the exact established enum', async () => {
