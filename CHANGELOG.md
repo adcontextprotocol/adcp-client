@@ -1,5 +1,20 @@
 # Changelog
 
+## 14.0.0-beta.9
+
+### Minor Changes
+
+- 712e984: comply: add `storyboard_start_offset` to distribute coverage across budget-limited runs (adcontextprotocol/adcp#6632). When `timeout_ms` truncates a run, execution previously always started from the same list head, so consecutive truncated runs re-graded the same prefix while tail storyboards were never exercised. The new option rotates the runnable storyboard list (modulo length, relative order preserved) so callers can vary the starting point between runs. The timeout-budget observation now also lists `storyboards_not_started` ids so per-run coverage gaps are inspectable, not just countable.
+- 7c1d551: Add seller-version result provenance, version-aware tool JSON Schema lookup,
+  legacy forecast timestamp normalization, and asynchronous server-side custom
+  format resolution.
+- f884156: Project standard `extensions_supported` and top-level capability `ext` fields through both server construction APIs, and document Zod `safeExtend` migration for refined public schemas.
+
+### Patch Changes
+
+- 24b217a: Restore complete list-creatives assignment rows and typed, composable public Zod object schemas.
+- 7c1d551: Derive server `supported_protocols` from registered domain handler groups so overlapping creative/media-buy tool names and utility handlers cannot advertise unsupported domains.
+
 ## 14.0.0-beta.8
 
 ### Major Changes
