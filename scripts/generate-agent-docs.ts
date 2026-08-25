@@ -1268,6 +1268,8 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`    timestamp: string;`);
   ln(`    clarificationRounds: number;`);
   ln(`    adcpVersion?: string;        // Seller-served release-precision response adcp_version`);
+  ln(`    serverVersion?: 'v2' | 'v3'; // Seller wire generation selected by capability discovery`);
+  ln(`    serverVersionSynthetic?: boolean; // True when generation came from the SDK fallback`);
   ln(`  };`);
   ln(`  conversation?: Message[];`);
   ln(`}`);
