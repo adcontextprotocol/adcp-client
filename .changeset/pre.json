@@ -65,6 +65,7 @@
     "tidy-lemurs-test-lifecycles",
     "tidy-owls-validate-bidding",
     "tidy-protocols-derive",
+    "tidy-schemas-compose",
     "tidy-webhooks-recover",
     "tiny-cats-validate-commitments",
     "tiny-schema-facades",

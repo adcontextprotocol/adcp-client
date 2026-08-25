@@ -1,5 +1,11 @@
 # Changelog
 
+## 14.0.0-beta.10
+
+### Patch Changes
+
+- 15e2710: Restore composable product discovery Zod schemas and align their parse results with the public SDK request and product types.
+
 ## 14.0.0-beta.9
 
 ### Minor Changes
