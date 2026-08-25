@@ -63,6 +63,7 @@
 import type { Account, NoAccountCtx } from '../account';
 import type { RequestContext } from '../context';
 import type { TaskHandoff } from '../async-outcome';
+import type { ResponseWithSummary } from '../response-summary';
 import type { RequireCacheScopeWhenProducts, ServerPayload } from '../../../types/server-payload';
 import type {
   GetProductsRequest,
@@ -162,7 +163,15 @@ export type RefineProposalsPayload = AdcpToolMap['refine_proposals']['result'];
  * with `{ creatives: [...] }` to form `SyncCreativesSuccess`.
  */
 export type SyncCreativesRow = SyncCreativesSuccess['creatives'][number];
-export type GetProductsHandlerResult = GetProductsPayload | TaskHandoff<GetProductsPayload>;
+/**
+ * Native product discovery result. Use `withResponseSummary(payload, text)`
+ * for a synchronous MCP text override while the SDK retains payload projection
+ * and validation; task handoffs continue to resolve to structured payloads.
+ */
+export type GetProductsHandlerResult =
+  | GetProductsPayload
+  | ResponseWithSummary<GetProductsPayload>
+  | TaskHandoff<GetProductsPayload>;
 export type CreateMediaBuyHandlerResult = CreateMediaBuyPayload | TaskHandoff<CreateMediaBuySuccessPayload>;
 export type UpdateMediaBuyHandlerResult = UpdateMediaBuyPayload | TaskHandoff<UpdateMediaBuyPayload>;
 export type SyncCreativesHandlerResult = SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>;

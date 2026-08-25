@@ -139,6 +139,8 @@ import type {
 import { createPostgresTaskRegistry, getDecisioningTaskRegistryMigration } from './postgres-task-registry';
 import type { PgQueryable } from '../../postgres-task-store';
 import { isTaskHandoff, _extractHandoffEntry, type TaskHandoff } from '../async-outcome';
+import { _extractResponseSummaryEntry } from '../response-summary';
+import { productsResponse } from '../../responses';
 import { TOOL_ENTITY_FIELDS } from './entity-hydration.generated';
 import { z } from 'zod';
 import { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord, type TaskStatus } from './task-registry';
@@ -4378,6 +4380,9 @@ async function projectSync<TResult, TWire, TCtxMeta = unknown>(
 ): Promise<TWire | AdcpErrorResponse> {
   try {
     const result = await runWithTokenRefresh(fn, refresh);
+    if (_extractResponseSummaryEntry(result)) {
+      throw new TypeError('withResponseSummary is supported only for synchronous getProducts results');
+    }
     const wire = mapResult(result as TResult);
     // Single-chokepoint runtime strip: ctx_metadata MUST NEVER cross to the
     // buyer. Defense-in-depth (compile-time WireShape<T> + runtime walk).
@@ -4544,6 +4549,11 @@ async function routeIfHandoff<TInner, TWire>(
   result: TInner | TaskHandoff<TInner>,
   project: (inner: TInner) => TWire | Promise<TWire>
 ): Promise<TWire | SubmittedEnvelope> {
+  const rejectResponseSummary = (value: unknown): void => {
+    if (_extractResponseSummaryEntry(value)) {
+      throw new TypeError('withResponseSummary is supported only for synchronous getProducts results');
+    }
+  };
   if (isTaskHandoff<TInner>(result)) {
     const entry = _extractHandoffEntry(result);
     if (!entry) {
@@ -4551,6 +4561,7 @@ async function routeIfHandoff<TInner, TWire>(
       // but didn't go through ctx.handoffToTask. Treat as a sync
       // success arm with an empty body (caller-supplied projection
       // shapes the result; this branch is defensive).
+      rejectResponseSummary(result);
       return await project(result as unknown as TInner);
     }
     const { fn: taskFn, options } = entry;
@@ -4559,12 +4570,14 @@ async function routeIfHandoff<TInner, TWire>(
       opts,
       async taskId => {
         const inner = await taskFn(buildHandoffContext(taskRegistry, taskId));
+        rejectResponseSummary(inner);
         return await project(inner);
       },
       options?.task_id
     );
   }
   rejectHandRolledSubmitted(result);
+  rejectResponseSummary(result);
   return await project(result);
 }
 
@@ -5954,7 +5967,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             // refine_products iff buying_mode='refine' AND
             // capabilities.refine AND the manager implements it.
             type GetProductsPayload = import('../specialisms/sales').GetProductsPayload;
-            let result: GetProductsPayload | TaskHandoff<GetProductsPayload>;
+            type GetProductsHandlerResult = import('../specialisms/sales').GetProductsHandlerResult;
+            let result: GetProductsHandlerResult;
             if (proposalManager) {
               const useRefine =
                 buyingMode === 'refine' &&
@@ -5964,10 +5978,16 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 ? await proposalManager.refineProducts!(canonicalParams, reqCtx as never)
                 : await proposalManager.getProducts(canonicalParams, reqCtx as never);
             } else {
-              result = (await sales!.getProducts!(canonicalParams, reqCtx)) as unknown as
-                | GetProductsPayload
-                | TaskHandoff<GetProductsPayload>;
+              result = (await sales!.getProducts!(canonicalParams, reqCtx)) as GetProductsHandlerResult;
             }
+            const summarized = _extractResponseSummaryEntry<GetProductsPayload>(result);
+            if (
+              summarized &&
+              (isTaskHandoff(summarized.payload) || _extractResponseSummaryEntry(summarized.payload) !== undefined)
+            ) {
+              throw new TypeError('withResponseSummary may wrap only a synchronous getProducts payload');
+            }
+            const resultForRouting = summarized?.payload ?? result;
             const projectProducts = async (terminalResult: GetProductsPayload) => {
               const preparedProjection = preparePerProductProjectionCatalogs(terminalResult, legacyFormatConverter);
               const requestLegacyFormatConverter = await resolveLegacyProductFormats(
@@ -6011,14 +6031,20 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                   ctx: reqCtx as unknown as { account: { id: string } },
                 });
               }
-              return asProductResponseForWire(
+              const wireResponse = asProductResponseForWire(
                 canonicalResult,
                 responseWireMode,
                 canonicalFormatLegacyResolver,
                 shouldEmitTransitionalDualCreativeWire(ctx.servedAdcpVersion, params)
               ) as unknown as import('../../../types/tools.generated').GetProductsResponse;
+              return summarized
+                ? productsResponse(
+                    wireResponse as unknown as Parameters<typeof productsResponse>[0],
+                    summarized.summary
+                  )
+                : wireResponse;
             };
-            const isHandoff = isTaskHandoff<GetProductsPayload>(result);
+            const isHandoff = isTaskHandoff<GetProductsPayload>(resultForRouting);
             if (buyingMode === 'wholesale' && isHandoff) {
               throw new AdcpError('INVALID_REQUEST', {
                 message:
@@ -6028,8 +6054,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               });
             }
             if (!isHandoff && push.url === undefined) {
-              rejectHandRolledSubmitted(result);
-              return projectProducts(result as GetProductsPayload);
+              rejectHandRolledSubmitted(resultForRouting);
+              return projectProducts(resultForRouting as GetProductsPayload);
             }
             const accountId = reqCtx.account?.id;
             if (accountId === undefined) {
@@ -6054,7 +6080,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 observability,
                 logger,
               },
-              result,
+              resultForRouting as GetProductsPayload | TaskHandoff<GetProductsPayload>,
               projectProducts
             );
           },

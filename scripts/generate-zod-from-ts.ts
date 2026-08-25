@@ -186,10 +186,11 @@ function postProcessTS7056Annotations(content: string): string {
     if (objectShape) {
       if (tsType) {
         const widened = `${tsType} & Record<string, unknown>`;
+        const typedObjectShape = `{ [K in keyof ${tsType}]-?: undefined extends ${tsType}[K] ? z.ZodOptional<z.ZodType<Exclude<${tsType}[K], undefined>, Exclude<${tsType}[K], undefined>>> : z.ZodType<${tsType}[K], ${tsType}[K]> }`;
         const objectShapeType =
           name === 'PreviewCreativeRequestSchema'
             ? `{ request_type: z.ZodType<PreviewCreativeRequest['request_type'], PreviewCreativeRequest['request_type']> } & Record<string, z.ZodType>`
-            : `{ [K in keyof ${tsType}]-?: z.ZodType<${tsType}[K], ${tsType}[K]> }`;
+            : typedObjectShape;
         annotation = `z.ZodObject<${objectShapeType}, z.core.$loose> & z.ZodType<${widened}, ${widened}>`;
         typesToImport[typeSource].add(tsType);
       } else {
