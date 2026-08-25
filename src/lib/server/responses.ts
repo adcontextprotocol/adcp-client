@@ -103,6 +103,16 @@ export interface McpToolResponse {
   structuredContent?: Record<string, unknown>;
 }
 
+// Explicit summaries are framework metadata, not wire data. Keep the marker
+// out-of-band so later framework-owned response rewrites can preserve an
+// adopter disclosure without serializing bookkeeping into structuredContent.
+const explicitResponseSummaries = new WeakMap<object, string>();
+
+/** @internal */
+export function _getExplicitResponseSummary(response: McpToolResponse): string | undefined {
+  return explicitResponseSummaries.get(response);
+}
+
 // MCP SDK requires structuredContent to have an index signature ({ [x: string]: unknown }).
 // Generated AdCP types are TypeScript interfaces without index signatures. At runtime,
 // JSON objects are always Records — this bridge is safe.
@@ -263,10 +273,12 @@ export function productsResponse(
   const structured = completedStructuredContent(data);
   const defaultSummary =
     data.unchanged === true ? 'Product feed unchanged' : `Found ${(data.products ?? []).length} products`;
-  return {
+  const response: McpToolResponse = {
     content: [{ type: 'text', text: summary ?? defaultSummary }],
     structuredContent: structured,
   };
+  if (summary !== undefined) explicitResponseSummaries.set(response, summary);
+  return response;
 }
 
 /**

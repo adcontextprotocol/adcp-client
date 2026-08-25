@@ -167,6 +167,9 @@ export {
 
 export { isCanonicalV1Translatable } from './canonical-properties';
 
+export { normalizeLegacyGetProductsResponse } from './legacy-normalization';
+export type { LegacyProductNormalizationInput, NormalizedLegacyProduct } from './legacy-normalization';
+
 export {
   CreativeFormatProjectionError,
   CreativeFormatCapabilityError,

@@ -70,9 +70,10 @@ GetProductsResponseSchema.pick({ status: true });
 
 // Published-package consumer composition must preserve the concrete field
 // bindings, not only expose the ZodObject helper names.
-ProductSchema.safeExtend({
+const ProductOutputExtensionsSchema = z.object({
   publisher_properties: z.array(PublisherPropertySelectorSchema),
 });
+ProductSchema.safeExtend(ProductOutputExtensionsSchema.shape);
 const ExtendedGetProductsResponseSchema = GetProductsResponseSchema.extend({
   products: z.array(ProductSchema),
 }).partial();
@@ -84,7 +85,18 @@ type IsAny<T> = 0 extends 1 & T ? true : false;
 type Assert<T extends true> = T;
 type ExtendedProduct = NonNullable<z.output<typeof ExtendedGetProductsResponseSchema>['products']>[number];
 type ExtendedProductIsTyped = Assert<IsAny<ExtendedProduct> extends false ? true : false>;
+const PickedProductPublisherPropertiesSchema = ProductSchema.pick({ publisher_properties: true });
+type PickedPublisherProperties = z.output<typeof PickedProductPublisherPropertiesSchema>['publisher_properties'];
+type PickedPublisherPropertiesIsTyped = Assert<IsAny<PickedPublisherProperties> extends false ? true : false>;
 void (null as unknown as ExtendedProductIsTyped);
+void (null as unknown as PickedPublisherPropertiesIsTyped);
+type InferredPackage = z.infer<typeof PackageSchema>;
+declare const inferredPackage: InferredPackage;
+const inferredPackageAsPublic: Package = inferredPackage;
+declare const publicPackage: Package;
+const publicPackageAsInferred: InferredPackage = publicPackage;
+void inferredPackageAsPublic;
+void publicPackageAsInferred;
 
 // Pass 4 (`unwrapNamedRecordUnionIntersections`) target schemas: the
 // `SizeModeMutexSchema.and(z.object(...))` form previously left these as
@@ -120,6 +132,9 @@ const packageRequest: PackageRequest = PackageRequestSchema.parse(unknownInput);
 const packageUpdate: PackageUpdate = PackageUpdateSchema.parse(unknownInput);
 const productsResponse: GetProductsResponse = GetProductsResponseSchema.parse(unknownInput);
 const getProductsRequest: GetProductsRequest = GetProductsRequestSchema.parse(unknownInput);
+const minimalGetProductsRequestInput: z.input<typeof GetProductsRequestSchema> = {
+  buying_mode: 'brief',
+};
 const productFormat: ProductFormatDeclaration = ProductFormatDeclarationSchema.parse(unknownInput);
 const placement: Placement = PlacementSchema.parse(unknownInput);
 const format: Format = FormatSchema.parse(unknownInput);
@@ -138,6 +153,7 @@ void [
   packageUpdate,
   productsResponse,
   getProductsRequest,
+  minimalGetProductsRequestInput,
   productFormat,
   placement,
   format,

@@ -176,6 +176,35 @@ serve(() => createAdcpServerFromPlatform(platform, { name: 'My Publisher', versi
 - **Idempotency, signing, async tasks, status normalization, lifecycle state** are framework-owned. Synchronous terminal responses do not emit completion webhooks by default; the inline result is authoritative. Adopters write the business decisions.
 - **Catches handler errors** — unhandled exceptions return `SERVICE_UNAVAILABLE` instead of crashing. Throw a typed error class (see § "Returning errors from handlers") to surface a structured envelope.
 
+### Customizing human-readable MCP response text
+
+Native platform handlers normally return only structured domain payloads, and
+the framework writes a default MCP `content[].text` summary. When a disclosure
+or other adopter-authored explanation must remain visible in text-first MCP
+clients, wrap a synchronous `getProducts` result with
+`withResponseSummary(payload, text)`:
+
+```typescript
+import { withResponseSummary } from '@adcp/sdk/server';
+
+getProducts: async (req, ctx) =>
+  withResponseSummary(
+    {
+      products: await catalog.search(req),
+      cache_scope: 'public',
+      ext: { example_vendor: { demo: true } },
+    },
+    'Synthetic sample data for demonstration only.'
+  ),
+```
+
+The wrapper is not a protocol envelope. The SDK still projects and validates
+the payload, writes only the supplied text to MCP `content[]`, and never copies
+the summary into `structuredContent`. Use it only for synchronous
+`getProducts` payloads and trusted, static disclosures. Summary text is capped
+at 4096 UTF-8 bytes and may be cached; never include credentials, buyer input,
+upstream/LLM output, or other secrets.
+
 ### Identity, multi-tenant, and lifecycle helpers (6.7)
 
 Six helper families adopters reach for. Pick what your agent shape needs:

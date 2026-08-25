@@ -67,6 +67,7 @@ import {
   AccountNotFoundError,
   defineSalesPlatform,
   defineSalesCorePlatform,
+  withResponseSummary,
   defineSalesIngestionPlatform,
   defineAudiencePlatform,
   defineSignalsPlatform,
@@ -506,6 +507,14 @@ function _sales_platform_handler_results_accept_task_handoff() {
   void updateResult;
   void syncResult;
   return sales;
+}
+
+function _get_products_handler_accepts_sdk_owned_response_summary() {
+  const result: GetProductsHandlerResult = withResponseSummary(
+    { products: [], cache_scope: 'public' },
+    'Synthetic sample data for demonstration only.'
+  );
+  return result;
 }
 
 function _get_products_canonical_payload_preserves_cache_scope_invariant() {

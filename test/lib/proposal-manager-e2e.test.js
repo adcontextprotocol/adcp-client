@@ -8,7 +8,11 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { createAdcpServerFromPlatform, InMemoryProposalStore } = require('../../dist/lib/server/index.js');
+const {
+  createAdcpServerFromPlatform,
+  InMemoryProposalStore,
+  withResponseSummary,
+} = require('../../dist/lib/server/index.js');
 const { createIdempotencyStore, memoryBackend } = require('../../dist/lib/server/idempotency/index.js');
 
 function buildPlatform({ proposalManager, sales, capabilities = {} }) {
@@ -114,6 +118,253 @@ test('e2e: getProducts routes through ProposalManager when wired', async () => {
   );
   assert.strictEqual(calls.manager, 1, 'manager.getProducts should fire');
   assert.strictEqual(calls.sales, 0, 'sales.getProducts should NOT fire when manager is wired');
+});
+
+test('e2e: native getProducts can customize MCP text without changing structured payload', async () => {
+  const disclosure = 'Synthetic sample data for demonstration only.';
+  const sales = {
+    getProducts: async () =>
+      withResponseSummary(
+        {
+          products: [],
+          cache_scope: 'public',
+          ext: { example_vendor: { storefront: { demo: true } } },
+        },
+        disclosure
+      ),
+  };
+  const server = createAdcpServerFromPlatform(buildPlatform({ proposalManager: undefined, sales }), {
+    name: 'e2e',
+    version: '1.0',
+    validation: { requests: 'off', responses: 'strict' },
+  });
+
+  const response = await server.dispatchTestRequest(
+    { method: 'tools/call', params: { name: 'get_products', arguments: { buying_mode: 'brief' } } },
+    { authInfo }
+  );
+
+  assert.strictEqual(response.content[0].text, disclosure);
+  assert.deepStrictEqual(response.structuredContent.ext, {
+    example_vendor: { storefront: { demo: true } },
+  });
+  assert.strictEqual(response.structuredContent.status, 'completed');
+  assert.strictEqual('summary' in response.structuredContent, false);
+  assert.strictEqual('payload' in response.structuredContent, false);
+});
+
+test('e2e: native getProducts summary survives sandbox seeded-product merging', async () => {
+  const disclosure = JSON.stringify({ disclosure: 'synthetic' });
+  const platform = buildPlatform({
+    proposalManager: undefined,
+    sales: {
+      getProducts: async () => withResponseSummary({ products: [], cache_scope: 'public' }, disclosure),
+    },
+  });
+  platform.accounts.resolve = async () => ({ id: 'acct_1', mode: 'sandbox', metadata: {} });
+  const server = createAdcpServerFromPlatform(platform, {
+    name: 'e2e',
+    version: '1.0',
+    validation: { requests: 'off', responses: 'off' },
+    idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
+    testController: {
+      getSeededProducts: () => [
+        {
+          product_id: 'seed_1',
+          name: 'Seeded product',
+          description: 'Sandbox fixture',
+          publisher_properties: [],
+          format_options: [{ format_kind: 'image', params: {} }],
+          delivery_type: 'guaranteed',
+          pricing_options: [],
+          reporting_capabilities: {},
+        },
+      ],
+    },
+  });
+
+  const request = {
+    method: 'tools/call',
+    params: {
+      name: 'get_products',
+      arguments: {
+        buying_mode: 'brief',
+        idempotency_key: 'summary-replay-key-0001',
+        account: { brand: { domain: 'example.com' }, operator: 'example.com', sandbox: true },
+        context: { correlation_id: 'buyer-value' },
+      },
+    },
+  };
+  const response = await server.dispatchTestRequest(request, { authInfo });
+
+  assert.strictEqual(response.content[0].text, disclosure);
+  assert.deepStrictEqual(
+    response.structuredContent.products.map(product => product.product_id),
+    ['seed_1']
+  );
+  assert.strictEqual(response.structuredContent.sandbox, true);
+
+  const replayed = await server.dispatchTestRequest(request, { authInfo });
+  assert.strictEqual(replayed.structuredContent.replayed, true);
+  assert.strictEqual(replayed.content[0].text, disclosure);
+});
+
+test('e2e: response summaries reject unsafe text and async wrappers', async () => {
+  assert.doesNotThrow(() => withResponseSummary({ products: [] }, 'x'.repeat(4096)));
+  assert.throws(() => withResponseSummary({ products: [] }, 'x'.repeat(4097)), /exceeds 4096 UTF-8 bytes/);
+  assert.throws(() => withResponseSummary({ products: [] }, 'unsafe\u0000text'), /unsafe control characters/);
+
+  let handoffRan = false;
+  const sales = {
+    getProducts: async (_request, ctx) =>
+      withResponseSummary(
+        ctx.handoffToTask(async () => {
+          handoffRan = true;
+          return { products: [], cache_scope: 'public' };
+        }),
+        'Must not reach task storage.'
+      ),
+  };
+  const server = createAdcpServerFromPlatform(buildPlatform({ proposalManager: undefined, sales }), {
+    name: 'e2e',
+    version: '1.0',
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  const response = await server.dispatchTestRequest(
+    { method: 'tools/call', params: { name: 'get_products', arguments: { buying_mode: 'brief' } } },
+    { authInfo }
+  );
+
+  assert.strictEqual(response.isError, true);
+  assert.strictEqual(handoffRan, false);
+  assert.notStrictEqual(response.content[0].text, 'Must not reach task storage.');
+  assert.strictEqual(response.structuredContent?.task_id, undefined);
+
+  const nestedServer = createAdcpServerFromPlatform(
+    buildPlatform({
+      proposalManager: undefined,
+      sales: {
+        getProducts: async () =>
+          withResponseSummary(
+            withResponseSummary({ products: [], cache_scope: 'public' }, 'Inner summary.'),
+            'Outer summary.'
+          ),
+      },
+    }),
+    {
+      name: 'e2e',
+      version: '1.0',
+      validation: { requests: 'off', responses: 'off' },
+    }
+  );
+  const nestedResponse = await nestedServer.dispatchTestRequest(
+    { method: 'tools/call', params: { name: 'get_products', arguments: { buying_mode: 'brief' } } },
+    { authInfo }
+  );
+  assert.strictEqual(nestedResponse.isError, true);
+  assert.notStrictEqual(nestedResponse.content[0].text, 'Outer summary.');
+
+  const terminalSummary = '{"disclosure":"terminal"}';
+  const terminalServer = createAdcpServerFromPlatform(
+    buildPlatform({
+      proposalManager: undefined,
+      sales: {
+        getProducts: async (_request, ctx) =>
+          ctx.handoffToTask(async () => withResponseSummary({ products: [], cache_scope: 'public' }, terminalSummary)),
+      },
+    }),
+    {
+      name: 'e2e',
+      version: '1.0',
+      validation: { requests: 'off', responses: 'off' },
+    }
+  );
+  const submitted = await terminalServer.dispatchTestRequest(
+    { method: 'tools/call', params: { name: 'get_products', arguments: { buying_mode: 'brief' } } },
+    { authInfo }
+  );
+  const taskId = submitted.structuredContent?.task_id;
+  assert.strictEqual(typeof taskId, 'string');
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const failedTask = await terminalServer.dispatchTestRequest(
+    { method: 'tools/call', params: { name: 'tasks_get', arguments: { task_id: taskId } } },
+    { authInfo }
+  );
+  assert.strictEqual(failedTask.structuredContent.status, 'failed');
+  assert.strictEqual(JSON.stringify(failedTask).includes(terminalSummary), false);
+});
+
+test('e2e: response summaries fail closed outside native getProducts', async () => {
+  const platform = buildPlatform({
+    proposalManager: undefined,
+    sales: { getProducts: async () => ({ products: [], cache_scope: 'public' }) },
+  });
+  platform.capabilities.adcp_version = '3.2.0-beta.6';
+  platform.mediaBuyLifecycle = {
+    listProducts: async () =>
+      withResponseSummary({ products: [], feed_version: 'feed_1' }, 'Unsupported summary text.'),
+  };
+  const server = createAdcpServerFromPlatform(platform, {
+    name: 'e2e',
+    version: '1.0',
+    validation: { requests: 'off', responses: 'off' },
+    mcpToolProfile: 'all',
+  });
+
+  const response = await server.dispatchTestRequest(
+    { method: 'tools/call', params: { name: 'list_products', arguments: {} } },
+    { authInfo }
+  );
+
+  assert.strictEqual(response.isError, true);
+  assert.notStrictEqual(response.content[0].text, 'Unsupported summary text.');
+  assert.notDeepStrictEqual(response.structuredContent, {
+    adcp_version: '3.2-beta.6',
+  });
+
+  const proposalStore = new InMemoryProposalStore();
+  proposalStore.putDraft({
+    proposalId: 'summary_misuse',
+    accountId: 'acct_1',
+    recipes: new Map(),
+    proposalPayload: { proposal_id: 'summary_misuse' },
+  });
+  proposalStore.commit('summary_misuse', {
+    expiresAt: new Date(Date.now() + 60_000),
+    proposalPayload: { proposal_id: 'summary_misuse' },
+  });
+  const mutationServer = createAdcpServerFromPlatform(
+    buildPlatform({
+      proposalManager: undefined,
+      sales: {
+        getProducts: async () => ({ products: [], cache_scope: 'public' }),
+        createMediaBuy: async () =>
+          withResponseSummary(
+            { media_buy_id: 'mb_invalid', buyer_ref: 'br', packages: [], status: 'pending_creative' },
+            'Unsupported mutation summary.'
+          ),
+      },
+    }),
+    {
+      name: 'e2e',
+      version: '1.0',
+      proposalStore,
+      validation: { requests: 'off', responses: 'off' },
+    }
+  );
+  const mutationResponse = await mutationServer.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: { proposal_id: 'summary_misuse', idempotency_key: 'summary-misuse-key-0001' },
+      },
+    },
+    { authInfo }
+  );
+  assert.strictEqual(mutationResponse.isError, true);
+  assert.notStrictEqual(mutationResponse.content[0].text, 'Unsupported mutation summary.');
 });
 
 test('e2e: getProducts persists drafts to store after manager returns', async () => {

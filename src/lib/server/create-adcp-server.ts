@@ -128,6 +128,7 @@ import {
   syncGovernanceResponse,
   reportUsageResponse,
   toStructuredContent,
+  _getExplicitResponseSummary,
   type McpToolResponse,
 } from './responses';
 
@@ -2248,21 +2249,9 @@ function deepMergePlainObjects(target: unknown, source: unknown): unknown {
 function stampReplayed(response: McpToolResponse): void {
   if (!response.structuredContent || typeof response.structuredContent !== 'object') return;
   const sc = response.structuredContent as Record<string, unknown>;
+  const mirrorsStructuredContent = contentTextMirrorsStructuredContent(response, sc);
   sc.replayed = true;
-  if (Array.isArray(response.content)) {
-    const first = response.content[0];
-    if (first && first.type === 'text' && typeof first.text === 'string') {
-      try {
-        const parsed = JSON.parse(first.text);
-        if (parsed && typeof parsed === 'object') {
-          parsed.replayed = true;
-          first.text = JSON.stringify(parsed);
-        }
-      } catch {
-        // Text isn't JSON — leave it alone (implausible for AdCP responses).
-      }
-    }
-  }
+  syncContentJsonText(response, sc, mirrorsStructuredContent);
 }
 
 /**
@@ -2327,21 +2316,9 @@ function stampBridge(response: McpToolResponse, callback: string, tool: string, 
   if (!response.structuredContent || typeof response.structuredContent !== 'object') return;
   const marker: BridgeMarker = { callback, tool, merged_count: mergedCount };
   const sc = response.structuredContent as Record<string, unknown>;
+  const mirrorsStructuredContent = contentTextMirrorsStructuredContent(response, sc);
   sc._bridge = marker;
-  if (Array.isArray(response.content)) {
-    const first = response.content[0];
-    if (first && first.type === 'text' && typeof first.text === 'string') {
-      try {
-        const parsed = JSON.parse(first.text);
-        if (parsed && typeof parsed === 'object') {
-          parsed._bridge = marker;
-          first.text = JSON.stringify(parsed);
-        }
-      } catch {
-        // Text isn't JSON — leave it alone (implausible for AdCP responses).
-      }
-    }
-  }
+  syncContentJsonText(response, sc, mirrorsStructuredContent);
 }
 
 /**
@@ -2356,22 +2333,9 @@ function stripEnvelopeEcho(response: McpToolResponse): McpToolResponse {
   const cloned = cloneFormattedResponse(response);
   if (cloned.structuredContent && typeof cloned.structuredContent === 'object') {
     const sc = cloned.structuredContent as Record<string, unknown>;
+    const mirrorsStructuredContent = contentTextMirrorsStructuredContent(cloned, sc);
     delete sc.context;
-  }
-  if (Array.isArray(cloned.content)) {
-    for (const item of cloned.content) {
-      if (item && item.type === 'text' && typeof item.text === 'string') {
-        try {
-          const parsed = JSON.parse(item.text);
-          if (parsed && typeof parsed === 'object') {
-            delete parsed.context;
-            item.text = JSON.stringify(parsed);
-          }
-        } catch {
-          // Text isn't JSON — leave it alone
-        }
-      }
-    }
+    syncContentJsonText(cloned, sc, mirrorsStructuredContent);
   }
   return cloned;
 }
@@ -3556,23 +3520,9 @@ function sanitizeAdcpErrorEnvelope(response: McpToolResponse): void {
   }
   if (!changed) return;
 
+  const mirrorsStructuredContent = contentTextMirrorsStructuredContent(response, sc);
   sc.adcp_error = filtered;
-  if (Array.isArray(response.content)) {
-    const first = response.content[0];
-    if (first && first.type === 'text' && typeof first.text === 'string') {
-      try {
-        const parsed = JSON.parse(first.text);
-        if (parsed && typeof parsed === 'object') {
-          parsed.adcp_error = filtered;
-          first.text = JSON.stringify(parsed);
-        }
-      } catch {
-        // Text isn't JSON — leave it alone. adcpError()-emitted envelopes
-        // always serialize to JSON, so the only hit here would be a seller
-        // who hand-rolled a non-JSON content[0] (implausible for AdCP).
-      }
-    }
-  }
+  syncContentJsonText(response, sc, mirrorsStructuredContent);
 }
 
 /**
@@ -3656,15 +3606,19 @@ function enrichErrorTwoLayer(
   const envValid = env != null && typeof env === 'object' && typeof env.code === 'string';
   const payloadList = sc.errors;
   const payloadValid = Array.isArray(payloadList) && payloadList.length > 0;
-  if (payloadValid && sanitizePayloadErrors(sc)) syncContentJsonText(response, sc);
+  const mirrorsBeforePayloadSanitization = contentTextMirrorsStructuredContent(response, sc);
+  if (payloadValid && sanitizePayloadErrors(sc)) {
+    syncContentJsonText(response, sc, mirrorsBeforePayloadSanitization);
+  }
 
   // Path A: envelope present, payload missing → synthesise payload-layer
   // `errors[]` from the envelope. The `adcpError()` builder always lands
   // here; hand-rolled `{adcp_error: {...}}` envelopes too.
   if (envValid && !payloadValid) {
+    const mirrorsStructuredContent = contentTextMirrorsStructuredContent(response, sc);
     sc.errors = [projectEnvelopeToPayloadError(env)];
     applyArmDiscriminators(sc, descriptor);
-    syncContentJsonText(response, sc);
+    syncContentJsonText(response, sc, mirrorsStructuredContent);
     return;
   }
 
@@ -3680,9 +3634,10 @@ function enrichErrorTwoLayer(
       // (already warned about by the dispatcher's `isErrorArm` branch)
       // shouldn't synthesise a half-formed envelope.
       if (typeof projected.code === 'string' && typeof projected.message === 'string') {
+        const mirrorsStructuredContent = contentTextMirrorsStructuredContent(response, sc);
         sc.adcp_error = projected;
         applyArmDiscriminators(sc, descriptor);
-        syncContentJsonText(response, sc);
+        syncContentJsonText(response, sc, mirrorsStructuredContent);
       }
     }
     return;
@@ -3717,26 +3672,27 @@ function applyArmDiscriminators(sc: Record<string, unknown>, descriptor: ErrorAr
 }
 
 /**
- * Mirror a mutated `structuredContent` back into the L2 JSON text fallback
- * so MCP clients reading either transport layer see the same shape. Silent
- * no-op when the L2 text isn't a JSON envelope (legitimate for non-JSON
- * `content[0].text` summaries from `wrapErrorArm`).
+ * Detect the framework's JSON-bodied L2 fallback before mutating L3. Merely
+ * parsing as JSON is insufficient: an adopter-authored summary may itself be
+ * a JSON object and must remain exact text.
  */
-function syncContentJsonText(response: McpToolResponse, structuredContent: Record<string, unknown>): void {
-  if (!Array.isArray(response.content)) return;
+function contentTextMirrorsStructuredContent(
+  response: McpToolResponse,
+  structuredContent: Record<string, unknown>
+): boolean {
+  if (!Array.isArray(response.content)) return false;
   const first = response.content[0];
-  if (!first || first.type !== 'text' || typeof first.text !== 'string') return;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(first.text);
-  } catch {
-    // Not a JSON-bodied L2 fallback (e.g. wrapErrorArm's "CODE: message"
-    // summary). Leave it alone — the L3 structuredContent is the
-    // authoritative carrier; readers that fall back to L2 prose can
-    // still extract the code via pattern match.
-    return;
-  }
-  if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+  return first?.type === 'text' && first.text === JSON.stringify(structuredContent);
+}
+
+function syncContentJsonText(
+  response: McpToolResponse,
+  structuredContent: Record<string, unknown>,
+  mirroredBeforeMutation: boolean
+): void {
+  if (!mirroredBeforeMutation || !Array.isArray(response.content)) return;
+  const first = response.content[0];
+  if (!first || first.type !== 'text') return;
   first.text = JSON.stringify(structuredContent);
 }
 
@@ -3777,8 +3733,9 @@ function normalizeGetProductsCacheScope(
   // auth context cannot contain an account-specific overlay, so it is cacheable
   // as the public layer. Any account or auth context makes omission ambiguous;
   // strict response validation should surface that.
+  const mirrorsStructuredContent = contentTextMirrorsStructuredContent(response, sc);
   sc.cache_scope = 'public';
-  syncContentJsonText(response, sc);
+  syncContentJsonText(response, sc, mirrorsStructuredContent);
   return undefined;
 }
 
@@ -3792,22 +3749,9 @@ function injectContextIntoResponse(response: McpToolResponse, context: unknown):
   if (context === null || typeof context !== 'object' || Array.isArray(context)) return;
   const sc = response.structuredContent as Record<string, unknown> | undefined;
   if (sc && typeof sc === 'object' && !('context' in sc)) {
+    const mirrorsStructuredContent = contentTextMirrorsStructuredContent(response, sc);
     sc.context = context;
-    // Keep the L2 text fallback (JSON body) in sync with structuredContent
-    if (Array.isArray(response.content)) {
-      const first = response.content[0];
-      if (first && first.type === 'text' && typeof first.text === 'string') {
-        try {
-          const parsed = JSON.parse(first.text);
-          if (parsed && typeof parsed === 'object' && !('context' in parsed)) {
-            parsed.context = context;
-            first.text = JSON.stringify(parsed);
-          }
-        } catch {
-          // Text isn't JSON — leave it alone
-        }
-      }
-    }
+    syncContentJsonText(response, sc, mirrorsStructuredContent);
   }
 }
 
@@ -3857,21 +3801,9 @@ function injectEnvelopeStatusIntoResponse(response: McpToolResponse, toolName: s
   // should set `status` themselves; this injector only fills in the default
   // when the handler hasn't.
   const status = response.isError === true ? 'failed' : 'completed';
+  const mirrorsStructuredContent = contentTextMirrorsStructuredContent(response, sc);
   sc.status = status;
-  if (Array.isArray(response.content)) {
-    const first = response.content[0];
-    if (first && first.type === 'text' && typeof first.text === 'string') {
-      try {
-        const parsed = JSON.parse(first.text);
-        if (parsed && typeof parsed === 'object' && !('status' in parsed)) {
-          parsed.status = status;
-          first.text = JSON.stringify(parsed);
-        }
-      } catch {
-        // Text isn't JSON — leave it alone
-      }
-    }
-  }
+  syncContentJsonText(response, sc, mirrorsStructuredContent);
 }
 
 const MEDIA_BUY_RESPONSE_TOOLS_REQUIRING_STATUS_SPLIT = new Set([
@@ -3899,9 +3831,10 @@ function normalizeMediaBuyStatusCollision(response: McpToolResponse, toolName: s
   const looksLikeMediaBuyPayload =
     typeof sc.media_buy_id === 'string' || 'media_buy_status' in sc || Array.isArray(sc.packages);
   if (!looksLikeMediaBuyPayload) return;
+  const mirrorsStructuredContent = contentTextMirrorsStructuredContent(response, sc);
   if (sc.media_buy_status === undefined) sc.media_buy_status = status;
   delete sc.status;
-  syncContentJsonText(response, sc);
+  syncContentJsonText(response, sc, mirrorsStructuredContent);
 }
 
 function injectVersionIntoResponse(response: McpToolResponse, servedVersion: string | undefined): void {
@@ -3913,21 +3846,9 @@ function injectVersionIntoResponse(response: McpToolResponse, servedVersion: str
   const wireVersion = toReleasePrecisionVersion(servedVersion);
   const sc = response.structuredContent as Record<string, unknown> | undefined;
   if (sc && typeof sc === 'object' && !('adcp_version' in sc)) {
+    const mirrorsStructuredContent = contentTextMirrorsStructuredContent(response, sc);
     sc.adcp_version = wireVersion;
-    if (Array.isArray(response.content)) {
-      const first = response.content[0];
-      if (first && first.type === 'text' && typeof first.text === 'string') {
-        try {
-          const parsed = JSON.parse(first.text);
-          if (parsed && typeof parsed === 'object' && !('adcp_version' in parsed)) {
-            parsed.adcp_version = wireVersion;
-            first.text = JSON.stringify(parsed);
-          }
-        } catch {
-          // Text isn't JSON — leave it alone
-        }
-      }
-    }
+    syncContentJsonText(response, sc, mirrorsStructuredContent);
   }
 }
 
@@ -6562,7 +6483,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                     | undefined;
                   if (sc && typeof sc === 'object') {
                     const merged = mergeSeededProductsIntoResponse(sc, seeded);
-                    formatted = wrap(merged);
+                    formatted = wrap(merged, _getExplicitResponseSummary(formatted));
                     stampBridge(formatted, 'getSeededProducts', toolName, seeded.length);
                   }
                 }

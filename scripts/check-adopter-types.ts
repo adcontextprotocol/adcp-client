@@ -61,6 +61,7 @@ import type {
   GetMediaBuysPayload,
   GetAccountFinancialsHandlerResult,
   GetBrandIdentityPayload,
+  GetProductsHandlerResult,
   GetProductsPayload,
   LegacyGetRightsPayload,
   ListAccountsHandlerResult,
@@ -84,8 +85,13 @@ import type {
   LegacyUpdateRightsPayload,
   UpdateMediaBuyPayload,
 } from '@adcp/sdk/server';
-import { createAdcpServerFromPlatform, defineOperationalPlatform } from '@adcp/sdk/server';
+import {
+  createAdcpServerFromPlatform,
+  defineOperationalPlatform,
+  withResponseSummary,
+} from '@adcp/sdk/server';
 import { createAdcpServer as createLegacyAdcpServer } from '@adcp/sdk/server/legacy/v5';
+import { normalizeLegacyGetProductsResponse } from '@adcp/sdk/v2/projection';
 import { createSingleAgentClient, extractAdcpErrorFromMcp, extractAdcpErrorFromTransport } from '@adcp/sdk';
 import type {
   CreateMediaBuyPayload as TypesCreateMediaBuyPayload,
@@ -118,6 +124,7 @@ import type {
   LegacyProduct,
   LegacyGetProductsResponse,
   MediaBuyAvailableAction,
+  Package,
   ProductCardFields,
   ProductCardDetailedFields,
   SLAWindow,
@@ -180,9 +187,10 @@ void publicSchemas.PackageSchema.safeParse({});
 
 // Issue #2674: exercise the packed declarations through the same composition
 // patterns used by real adopters, not only through bare helper access.
-const _compatibleProductSchema = publicSchemas.ProductSchema.safeExtend({
+const _productOutputExtensionsSchema = z.object({
   publisher_properties: z.array(publicSchemas.PublisherPropertySelectorSchema),
 });
+const _compatibleProductSchema = publicSchemas.ProductSchema.safeExtend(_productOutputExtensionsSchema.shape);
 const _composedProductsResponseSchema = publicSchemas.GetProductsResponseSchema.extend({
   status: z.literal('completed'),
   products: z.array(_compatibleProductSchema),
@@ -198,10 +206,51 @@ type _IsAny<T> = 0 extends 1 & T ? true : false;
 type _Assert<T extends true> = T;
 type _ComposedProduct = NonNullable<z.output<typeof _composedProductsResponseSchema>['products']>[number];
 type _ComposedProductIsTyped = _Assert<_IsAny<_ComposedProduct> extends false ? true : false>;
+const _pickedProductPublisherPropertiesSchema = publicSchemas.ProductSchema.pick({ publisher_properties: true });
+type _PickedPublisherProperties = z.output<
+  typeof _pickedProductPublisherPropertiesSchema
+>['publisher_properties'];
+type _PickedPublisherPropertiesIsTyped = _Assert<_IsAny<_PickedPublisherProperties> extends false ? true : false>;
 void (null as unknown as _ComposedProductIsTyped);
+void (null as unknown as _PickedPublisherPropertiesIsTyped);
+type _InferredPackage = z.infer<typeof publicSchemas.PackageSchema>;
+declare const _inferredPackage: _InferredPackage;
+const _inferredPackageAsPublic: Package = _inferredPackage;
+declare const _publicPackage: Package;
+const _publicPackageAsInferred: _InferredPackage = _publicPackage;
+void _inferredPackageAsPublic;
+void _publicPackageAsInferred;
 const _packedGetProductsRequest: LegacyGetProductsRequest =
   publicSchemas.GetProductsRequestSchema.parse(_unknownPackedInput);
 void _packedGetProductsRequest;
+const _minimalPackedGetProductsRequestInput: z.input<typeof publicSchemas.GetProductsRequestSchema> = {
+  buying_mode: 'brief',
+};
+void _minimalPackedGetProductsRequestInput;
+const _summarizedProducts: GetProductsHandlerResult = withResponseSummary(
+  { products: [], cache_scope: 'public' },
+  'Synthetic sample data for demonstration only.'
+);
+// @ts-expect-error — the published wrapper must retain its payload type.
+const _invalidSummarizedProducts: GetProductsHandlerResult = withResponseSummary(
+  { products: 'not-an-array', cache_scope: 'public' },
+  'Invalid fixture.'
+);
+const _normalizedRecoveredProducts = normalizeLegacyGetProductsResponse({ products: [] });
+const _invalidForecastNormalization = normalizeLegacyGetProductsResponse({
+  products: [{ forecast: [] }],
+});
+type _NormalizedRecoveredProductsIsTyped = _Assert<
+  _IsAny<typeof _normalizedRecoveredProducts> extends false ? true : false
+>;
+// @ts-expect-error — an array forecast selects the unknown safety overload.
+const _invalidForecastNormalizationAsTyped: { products: Array<{ forecast: Record<string, unknown> }> } =
+  _invalidForecastNormalization;
+void _summarizedProducts;
+void _invalidSummarizedProducts;
+void _normalizedRecoveredProducts;
+void _invalidForecastNormalizationAsTyped;
+void (null as unknown as _NormalizedRecoveredProductsIsTyped);
 
 const _wireFields = publicSchemas.GetProductsRequestSchema.parse({
   buying_mode: 'wholesale',
