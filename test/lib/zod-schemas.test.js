@@ -17,6 +17,43 @@ describe('Zod Schema Validation', () => {
     assert.equal(typeof sdk.ADCP_VERSION, 'string', 'package root should expose its version');
   });
 
+  test('get_products wire schema preserves legacy fields and relaxed disclosure positions', async () => {
+    if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
+    const parsed = schemas.GetProductsRequestSchema.parse({
+      buying_mode: 'wholesale',
+      fields: ['format_ids'],
+      brand: {
+        domain: 'buyer.example',
+        brand_kit_override: {
+          logo: {
+            asset_type: 'image',
+            url: 'https://buyer.example/logo.png',
+            width: 100,
+            height: 100,
+            provenance: {
+              disclosure: {
+                required: true,
+                jurisdictions: [
+                  {
+                    country: 'US',
+                    regulation: 'example_rule',
+                    render_guidance: { positions: [] },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+    });
+
+    assert.deepEqual(parsed.fields, ['format_ids']);
+    assert.deepEqual(
+      parsed.brand.brand_kit_override.logo.provenance.disclosure.jurisdictions[0].render_guidance.positions,
+      []
+    );
+  });
+
   test('beta.4 enforces flexible-window and outcome-target constraints', async () => {
     if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
     assert.equal(

@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.2.0-beta.6
-// Generated at: 2026-08-24T06:28:26.392Z
+// Generated at: 2026-08-25T15:01:23.730Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -2601,7 +2601,7 @@ export interface Provenance {
            *
            * @minItems 1
            */
-          positions?: [DisclosurePosition, ...DisclosurePosition[]];
+          positions?: DisclosurePosition[];
           ext?: ExtensionObject;
         };
       },
@@ -2636,7 +2636,7 @@ export interface Provenance {
            *
            * @minItems 1
            */
-          positions?: [DisclosurePosition, ...DisclosurePosition[]];
+          positions?: DisclosurePosition[];
           ext?: ExtensionObject;
         };
       }[]

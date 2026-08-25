@@ -31,6 +31,26 @@ function writeFileIfChanged(filePath: string, newContent: string): boolean {
   return hasChanged;
 }
 
+/**
+ * Keep the generated types involved in #2674 aligned with their public Zod
+ * arrays. The runtime compatibility profile deliberately accepts empty arrays,
+ * so retaining jsts non-empty tuples makes schema parse results unassignable to
+ * the corresponding exported types.
+ */
+export function relaxZodCompatibilityArrayTypes(content: string): string {
+  // Disclosure positions are also emitted as a simple ZodArray after the
+  // compatibility tuple-relaxation pass.
+  // get_products composition replaces this complete selector array in one
+  // safeExtend call. Its runtime schema is intentionally an ordinary ZodArray,
+  // so the public Product field must not retain jsts' non-empty tuple wrapper.
+  return content
+    .replace(/positions\?: \[DisclosurePosition, \.\.\.DisclosurePosition\[\]\];/g, 'positions?: DisclosurePosition[];')
+    .replace(
+      /publisher_properties: \[\s*PublisherPropertySelector & \{\s*\},\s*\.\.\.\(PublisherPropertySelector & \{\s*\}\)\[\]\s*\];/g,
+      'publisher_properties: (PublisherPropertySelector & {})[];'
+    );
+}
+
 // Schema cache configuration
 const SCHEMA_CACHE_DIR = path.join(__dirname, '../schemas/cache');
 const LATEST_CACHE_DIR = path.join(SCHEMA_CACHE_DIR, 'latest');
@@ -4108,19 +4128,21 @@ async function generateTypes() {
   // residual jsts under-resolution artifacts (*Asset1, AssetVariant1, CreativeAsset1) —
   // see applyKnownJstsAliases for the rationale. Finally, restore the asset_type
   // discriminator on Individual*Asset slot aliases that jsts collapses (#1498).
-  const processedCoreTypes = hardenTrustedMatchGeneratedTypes(
-    applyIndividualAssetDiscriminators(
-      addBackwardCompatTypeAliases(
-        simplifyForecastRange(
-          simplifyPriceBreakdown(
-            widenMediaBuyFeaturesIndexSignature(
-              widenPostalAreaSupportIndexSignature(
-                fixTypedIndexSignatures(
-                  removeResidualInlineIndexSignatureArms(
-                    applyKnownJstsAliases(
-                      namePostalAreaCountryBranch(
-                        renameKnownNumberedSemanticTypes(
-                          removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))
+  const processedCoreTypes = relaxZodCompatibilityArrayTypes(
+    hardenTrustedMatchGeneratedTypes(
+      applyIndividualAssetDiscriminators(
+        addBackwardCompatTypeAliases(
+          simplifyForecastRange(
+            simplifyPriceBreakdown(
+              widenMediaBuyFeaturesIndexSignature(
+                widenPostalAreaSupportIndexSignature(
+                  fixTypedIndexSignatures(
+                    removeResidualInlineIndexSignatureArms(
+                      applyKnownJstsAliases(
+                        namePostalAreaCountryBranch(
+                          renameKnownNumberedSemanticTypes(
+                            removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))
+                          )
                         )
                       )
                     )
@@ -4136,9 +4158,8 @@ async function generateTypes() {
   const coreChanged = writeFileIfChanged(coreTypesPath, processedCoreTypes);
 
   const toolTypesPath = path.join(libOutputDir, 'tools.generated.ts');
-  const processedToolTypes = addCanonicalToolTypeAliases(
-    applyIndividualAssetDiscriminators(addBackwardCompatTypeAliases(toolTypes)),
-    tools
+  const processedToolTypes = relaxZodCompatibilityArrayTypes(
+    addCanonicalToolTypeAliases(applyIndividualAssetDiscriminators(addBackwardCompatTypeAliases(toolTypes)), tools)
   );
   const toolsChanged = writeFileIfChanged(toolTypesPath, processedToolTypes);
 
