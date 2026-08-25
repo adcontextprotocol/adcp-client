@@ -545,6 +545,17 @@ export interface ComplyOptions extends TestOptions {
   tracks?: ComplianceTrack[];
   /** Timeout in milliseconds — stops new storyboards from starting when exceeded. */
   timeout_ms?: number;
+  /**
+   * Rotate the runnable storyboard list to start at this offset (modulo the
+   * list length) before sequential execution. Ordering is otherwise
+   * unchanged: the list wraps, so every storyboard still runs when the
+   * budget allows. Intended for budget-limited runs (`timeout_ms`): without
+   * rotation, consecutive truncated runs re-grade the same prefix and the
+   * tail storyboards are never exercised (adcontextprotocol/adcp#6632).
+   * Callers distribute coverage by varying the offset between runs (e.g.,
+   * a persisted per-agent run counter). Non-negative integer; default 0.
+   */
+  storyboard_start_offset?: number;
   /** AbortSignal for external cancellation (e.g., graceful shutdown). */
   signal?: AbortSignal;
   /** Original agent alias or identifier (used in fix_command instead of resolved URL). */
@@ -1152,6 +1163,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     storyboards: explicitStoryboards,
     tracks: trackFilter,
     timeout_ms,
+    storyboard_start_offset,
     signal: externalSignal,
     webhook_receiver,
     webhook_replay_receiver,
@@ -1178,6 +1190,17 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
   if (timeout_ms !== undefined) {
     if (typeof timeout_ms !== 'number' || !Number.isFinite(timeout_ms) || timeout_ms <= 0) {
       throw new TypeError(`timeout_ms must be a positive finite number, got: ${timeout_ms}`);
+    }
+  }
+
+  // Validate storyboard_start_offset
+  if (storyboard_start_offset !== undefined) {
+    if (
+      typeof storyboard_start_offset !== 'number' ||
+      !Number.isInteger(storyboard_start_offset) ||
+      storyboard_start_offset < 0
+    ) {
+      throw new TypeError(`storyboard_start_offset must be a non-negative integer, got: ${storyboard_start_offset}`);
     }
   }
 
@@ -1386,6 +1409,15 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       missingToolStoryboards.push(...applicability.missing);
     }
 
+    // Distribute coverage across budget-limited runs: rotate the execution
+    // starting point so consecutive `timeout_ms`-truncated runs don't
+    // re-grade the same prefix while the tail is never exercised
+    // (adcontextprotocol/adcp#6632). Rotation preserves relative order and
+    // is a no-op at offset 0 / when unset.
+    if (storyboard_start_offset !== undefined && storyboard_start_offset > 0) {
+      runnableStoryboards = rotateStoryboardsForOffset(runnableStoryboards, storyboard_start_offset);
+    }
+
     // Run storyboards
     const storyboardResults: StoryboardResult[] = [];
     const executedStoryboards: Storyboard[] = [];
@@ -1420,7 +1452,12 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     }
     if (stoppedForTimeoutBudget) {
       allObservations.push(
-        buildComplyTimeoutBudgetObservation(timeout_ms!, storyboardResults.length, runnableStoryboards.length)
+        buildComplyTimeoutBudgetObservation(
+          timeout_ms!,
+          storyboardResults.length,
+          runnableStoryboards.length,
+          runnableStoryboards.slice(storyboardResults.length).map(sb => sb.id)
+        )
       );
     }
 
@@ -1574,10 +1611,24 @@ function hasComplyTimeoutBudgetExpired(start: number, timeout_ms: number | undef
   return timeout_ms !== undefined && now - start >= timeout_ms;
 }
 
+/**
+ * Rotate a storyboard list to start at `offset % length`, preserving relative
+ * order (the head wraps to the tail). Pure and deterministic: offset 0, an
+ * offset that is a multiple of the length, or an empty list all return the
+ * input order. See `ComplyOptions.storyboard_start_offset`.
+ */
+export function rotateStoryboardsForOffset<T>(items: readonly T[], offset: number): T[] {
+  if (items.length === 0) return [...items];
+  const shift = offset % items.length;
+  if (shift === 0) return [...items];
+  return [...items.slice(shift), ...items.slice(0, shift)];
+}
+
 function buildComplyTimeoutBudgetObservation(
   timeout_ms: number,
   storyboardsExecuted: number,
-  storyboardsSelected: number
+  storyboardsSelected: number,
+  storyboardsNotStarted: readonly string[] = []
 ): AdvisoryObservation {
   return {
     category: 'performance',
@@ -1590,6 +1641,9 @@ function buildComplyTimeoutBudgetObservation(
       storyboards_executed: storyboardsExecuted,
       storyboards_selected: storyboardsSelected,
       storyboards_remaining: Math.max(0, storyboardsSelected - storyboardsExecuted),
+      // Which storyboards never started — so budget-limited coverage gaps
+      // are inspectable per-run instead of only countable (adcp#6632).
+      storyboards_not_started: [...storyboardsNotStarted],
     },
     source: { kind: 'profile', code: 'timeout-budget-exceeded' },
   };
