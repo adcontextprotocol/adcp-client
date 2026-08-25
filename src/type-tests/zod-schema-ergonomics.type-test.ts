@@ -14,7 +14,9 @@ import {
   PackageSchema,
   PackageRequestSchema,
   PackageUpdateSchema,
+  GetProductsRequestSchema,
   GetProductsResponseSchema,
+  PublisherPropertySelectorSchema,
   ProductFormatDeclarationSchema,
   PlacementSchema,
   FormatSchema,
@@ -29,6 +31,7 @@ import {
 import type { Format, AvailablePackage, PackageUpdate } from '../lib/types/core.generated';
 import type {
   GetProductsResponse,
+  GetProductsRequest,
   Package,
   PackageRequest,
   Product,
@@ -41,6 +44,8 @@ import type {
   GetAdCPCapabilitiesResponse,
   ListTransformersResponse,
 } from '../lib/types/tools.generated';
+
+declare const unknownInput: unknown;
 
 const ProductWithCacheSchema = ProductSchema.extend({
   _cached_at: z.string().datetime(),
@@ -62,6 +67,24 @@ PackageSchema.pick({ package_id: true });
 PackageRequestSchema.extend({ _buyer_note: z.string().optional() });
 PackageUpdateSchema.omit({ paused: true });
 GetProductsResponseSchema.pick({ status: true });
+
+// Published-package consumer composition must preserve the concrete field
+// bindings, not only expose the ZodObject helper names.
+ProductSchema.safeExtend({
+  publisher_properties: z.array(PublisherPropertySelectorSchema),
+});
+const ExtendedGetProductsResponseSchema = GetProductsResponseSchema.extend({
+  products: z.array(ProductSchema),
+}).partial();
+const extendedProductsResponse = ExtendedGetProductsResponseSchema.safeParse(unknownInput);
+if (extendedProductsResponse.success) {
+  extendedProductsResponse.data.products?.map(item => item.product_id);
+}
+type IsAny<T> = 0 extends 1 & T ? true : false;
+type Assert<T extends true> = T;
+type ExtendedProduct = NonNullable<z.output<typeof ExtendedGetProductsResponseSchema>['products']>[number];
+type ExtendedProductIsTyped = Assert<IsAny<ExtendedProduct> extends false ? true : false>;
+void (null as unknown as ExtendedProductIsTyped);
 
 // Pass 4 (`unwrapNamedRecordUnionIntersections`) target schemas: the
 // `SizeModeMutexSchema.and(z.object(...))` form previously left these as
@@ -91,12 +114,12 @@ void MediaBuyFeaturesExtended;
 // Beta.6 expansion pushed these declarations across TS7056's serialization
 // threshold. Their explicit annotations must retain parse output types and,
 // for object schemas, the public composition helpers.
-declare const unknownInput: unknown;
 const product: Product = ProductSchema.parse(unknownInput);
 const mediaPackage: Package = PackageSchema.parse(unknownInput);
 const packageRequest: PackageRequest = PackageRequestSchema.parse(unknownInput);
 const packageUpdate: PackageUpdate = PackageUpdateSchema.parse(unknownInput);
 const productsResponse: GetProductsResponse = GetProductsResponseSchema.parse(unknownInput);
+const getProductsRequest: GetProductsRequest = GetProductsRequestSchema.parse(unknownInput);
 const productFormat: ProductFormatDeclaration = ProductFormatDeclarationSchema.parse(unknownInput);
 const placement: Placement = PlacementSchema.parse(unknownInput);
 const format: Format = FormatSchema.parse(unknownInput);
@@ -114,6 +137,7 @@ void [
   packageRequest,
   packageUpdate,
   productsResponse,
+  getProductsRequest,
   productFormat,
   placement,
   format,

@@ -2157,12 +2157,7 @@ export type Product = {
      *
      * @minItems 1
      */
-    publisher_properties: [
-      PublisherPropertySelector & {
-      },
-      ...(PublisherPropertySelector & {
-      })[]
-    ];
+    publisher_properties: (PublisherPropertySelector & {})[];
     /**
      * Advertising channels this product is sold as. Products inherit from their properties' supported_channels but may narrow the scope. For example, a product covering YouTube properties might be sold as ['ctv'] even though those properties support ['olv', 'social', 'ctv'].
      */

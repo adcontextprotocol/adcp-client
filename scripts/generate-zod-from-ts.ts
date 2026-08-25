@@ -99,6 +99,7 @@ const TS7056_SCHEMAS: Array<{
   { name: 'AudienceEvidenceSchema' },
   { name: 'AudienceEvidenceSelectionSchema' },
   { name: 'ProductSchema', tsType: 'Product', objectShape: true },
+  { name: 'GetProductsRequestSchema', tsType: 'GetProductsRequest', objectShape: true },
   { name: 'GetProductsAsyncInputRequiredSchema' },
   { name: 'WholesaleFeedEventSchema' },
   { name: 'PackageRequestSchema', tsType: 'PackageRequest', objectShape: true },
@@ -154,8 +155,10 @@ const TS7056_SCHEMAS: Array<{
 
 function postProcessTS7056Annotations(content: string): string {
   let result = content;
-  const toolTypesToImport = new Set<string>();
-  const coreTypesToImport = new Set<string>();
+  const typesToImport = {
+    tools: new Set<string>(),
+    core: new Set<string>(),
+  };
   for (const { name, tsType, objectShape, typeSource = 'tools' } of TS7056_SCHEMAS) {
     const pattern = new RegExp(`export const ${name} = `);
     if (!pattern.test(result)) {
@@ -168,7 +171,11 @@ function postProcessTS7056Annotations(content: string): string {
     // annotated as ZodObjects so call sites that use `.shape`, `.extend()`,
     // `.pick()`, or `.omit()` keep working. When a TS type is available,
     // keep the shape keys and field value types tied to that type so
-    // downstream helpers like customToolFor() still infer typed args.
+    // downstream helpers like customToolFor() still infer typed args. Use the
+    // concrete loose-object config: `any` makes every derived schema infer as
+    // `any` in Zod 4. The trailing ZodType keeps exact parse output for
+    // intersection/union-backed TypeScript contracts whose common object keys
+    // alone cannot reconstruct the full public type.
     //
     // Intersection-shaped schemas (`z.object().passthrough().and(z.union(...))`)
     // use the 2-type-param `z.ZodType<Output, Input>` form. `z.input<typeof X>`
@@ -183,8 +190,8 @@ function postProcessTS7056Annotations(content: string): string {
           name === 'PreviewCreativeRequestSchema'
             ? `{ request_type: z.ZodType<PreviewCreativeRequest['request_type'], PreviewCreativeRequest['request_type']> } & Record<string, z.ZodType>`
             : `{ [K in keyof ${tsType}]-?: z.ZodType<${tsType}[K], ${tsType}[K]> }`;
-        annotation = `z.ZodObject<${objectShapeType}, any> & z.ZodType<${widened}, ${widened}>`;
-        (typeSource === 'core' ? coreTypesToImport : toolTypesToImport).add(tsType);
+        annotation = `z.ZodObject<${objectShapeType}, z.core.$loose> & z.ZodType<${widened}, ${widened}>`;
+        typesToImport[typeSource].add(tsType);
       } else {
         annotation =
           name === 'ProductSchema'
@@ -194,7 +201,7 @@ function postProcessTS7056Annotations(content: string): string {
     } else if (tsType) {
       const widened = `${tsType} & Record<string, unknown>`;
       annotation = `z.ZodType<${widened}, ${widened}>`;
-      (typeSource === 'core' ? coreTypesToImport : toolTypesToImport).add(tsType);
+      typesToImport[typeSource].add(tsType);
     } else {
       annotation = 'z.ZodType';
     }
@@ -205,13 +212,13 @@ function postProcessTS7056Annotations(content: string): string {
   }
   // Inject `import type { ... } from './tools.generated'` for the typed-zod
   // entries. The compound schemas reference response types defined there.
-  if (toolTypesToImport.size > 0 || coreTypesToImport.size > 0) {
+  if (typesToImport.tools.size > 0 || typesToImport.core.size > 0) {
     const importStatements = [
-      toolTypesToImport.size > 0
-        ? `import type { ${[...toolTypesToImport].join(', ')} } from './tools.generated';`
+      typesToImport.tools.size > 0
+        ? `import type { ${[...typesToImport.tools].join(', ')} } from './tools.generated';`
         : undefined,
-      coreTypesToImport.size > 0
-        ? `import type { ${[...coreTypesToImport].join(', ')} } from './core.generated';`
+      typesToImport.core.size > 0
+        ? `import type { ${[...typesToImport.core].join(', ')} } from './core.generated';`
         : undefined,
     ]
       .filter(Boolean)

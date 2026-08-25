@@ -30,6 +30,27 @@ function runGeneratorHarness(source) {
   }
 }
 
+test('issue #2674 array fields match their relaxed public Zod types', () => {
+  const result = runGeneratorHarness(`
+import { writeFileSync } from 'node:fs';
+import { relaxZodCompatibilityArrayTypes } from __GENERATOR__;
+
+const input = \`export type Product = {
+  publisher_properties: [
+    PublisherPropertySelector & {},
+    ...(PublisherPropertySelector & {})[]
+  ];
+  placements?: [Placement, ...Placement[]];
+};
+positions?: [DisclosurePosition, ...DisclosurePosition[]];\`;
+writeFileSync(__OUTPUT__, JSON.stringify({ output: relaxZodCompatibilityArrayTypes(input) }));
+`);
+
+  assert.match(result.output, /publisher_properties: \(PublisherPropertySelector & \{\}\)\[\];/);
+  assert.match(result.output, /positions\?: DisclosurePosition\[\];/);
+  assert.match(result.output, /placements\?: \[Placement, \.\.\.Placement\[\]\];/);
+});
+
 test('PostalCountrySystem propagates unconditional requirements into every anyOf branch', () => {
   const result = runGeneratorHarness(`
 import { writeFileSync } from 'node:fs';

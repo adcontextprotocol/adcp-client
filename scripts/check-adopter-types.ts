@@ -111,6 +111,7 @@ import type {
 import type {
   AccountReference,
   CreativeBrief,
+  DisclosurePosition,
   FormatSchemaReferenceResult,
   CreateMediaBuyPayload as RootCreateMediaBuyPayload,
   GetProductsPayload as RootGetProductsPayload,
@@ -122,7 +123,9 @@ import type {
   SLAWindow,
   SlaWindow,
   UpdateMediaBuyPayload as RootUpdateMediaBuyPayload,
+  LegacyGetProductsRequest,
 } from '@adcp/sdk';
+import { z } from 'zod';
 import type {
   AdCPVersionEnvelope,
   AudienceCharacteristic,
@@ -174,6 +177,69 @@ void publicSchemas.PackageRequestSchema.extend({});
 void publicSchemas.PackageUpdateSchema.omit({ paused: true });
 void publicSchemas.GetProductsResponseSchema.pick({ status: true });
 void publicSchemas.PackageSchema.safeParse({});
+
+// Issue #2674: exercise the packed declarations through the same composition
+// patterns used by real adopters, not only through bare helper access.
+const _compatibleProductSchema = publicSchemas.ProductSchema.safeExtend({
+  publisher_properties: z.array(publicSchemas.PublisherPropertySelectorSchema),
+});
+const _composedProductsResponseSchema = publicSchemas.GetProductsResponseSchema.extend({
+  status: z.literal('completed'),
+  products: z.array(_compatibleProductSchema),
+})
+  .partial()
+  .extend({ products: z.array(_compatibleProductSchema.partial()).optional() });
+declare const _unknownPackedInput: unknown;
+const _composedProductsResponse = _composedProductsResponseSchema.safeParse(_unknownPackedInput);
+if (_composedProductsResponse.success) {
+  _composedProductsResponse.data.products?.map(product => product.product_id);
+}
+type _IsAny<T> = 0 extends 1 & T ? true : false;
+type _Assert<T extends true> = T;
+type _ComposedProduct = NonNullable<z.output<typeof _composedProductsResponseSchema>['products']>[number];
+type _ComposedProductIsTyped = _Assert<_IsAny<_ComposedProduct> extends false ? true : false>;
+void (null as unknown as _ComposedProductIsTyped);
+const _packedGetProductsRequest: LegacyGetProductsRequest =
+  publicSchemas.GetProductsRequestSchema.parse(_unknownPackedInput);
+void _packedGetProductsRequest;
+
+const _wireFields = publicSchemas.GetProductsRequestSchema.parse({
+  buying_mode: 'wholesale',
+  fields: ['format_ids'],
+  brand: {
+    domain: 'buyer.example',
+    brand_kit_override: {
+      logo: {
+        asset_type: 'image',
+        url: 'https://buyer.example/logo.png',
+        width: 100,
+        height: 100,
+        provenance: {
+          disclosure: {
+            required: true,
+            jurisdictions: [
+              {
+                country: 'US',
+                regulation: 'example_rule',
+                render_guidance: { positions: ['overlay'] },
+              },
+            ],
+          },
+        },
+      },
+    },
+  },
+});
+type _WireFieldSupportsLegacy = _Assert<
+  'format_ids' extends NonNullable<LegacyGetProductsRequest['fields']>[number] ? true : false
+>;
+const _wireField: NonNullable<LegacyGetProductsRequest['fields']>[number] | undefined = _wireFields.fields?.[0];
+const _disclosurePosition: DisclosurePosition | undefined =
+  _wireFields.brand?.brand_kit_override?.logo?.provenance?.disclosure?.jurisdictions?.[0]?.render_guidance
+    ?.positions?.[0];
+void _wireField;
+void _disclosurePosition;
+void (null as unknown as _WireFieldSupportsLegacy);
 
 type PackedAssignedPackage = NonNullable<
   NonNullable<ListCreativesResponse['creatives'][number]['assignments']>['assigned_packages']

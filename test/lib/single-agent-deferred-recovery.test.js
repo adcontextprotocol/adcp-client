@@ -1912,6 +1912,10 @@ test('resumed v2 submitted continuations keep v2 polling semantics', async () =>
             pricing_options: [
               { pricing_option_id: 'submitted-price', pricing_model: 'cpm', currency: 'USD', fixed_price: 5 },
             ],
+            forecast: {
+              generated_at: '2026-08-23T22:00:00+02:00',
+              valid_until: { $date: '2026-08-24T02:30:00+02:30' },
+            },
           },
         ],
       },
@@ -1931,6 +1935,8 @@ test('resumed v2 submitted continuations keep v2 polling semantics', async () =>
     assert.equal(submitted.status, 'submitted');
     const completed = await submitted.submitted.waitForCompletion(0);
     assert.equal(completed.status, 'completed');
+    assert.equal(completed.data.products[0].forecast.generated_at, '2026-08-23T20:00:00Z');
+    assert.equal(completed.data.products[0].forecast.valid_until, '2026-08-24T00:00:00Z');
     const selected = completed.data.products[0].format_options[0];
     let capturedPurchase;
     restarted.getCapabilities = async () => ({ features: { canonicalCreatives: false } });
