@@ -342,6 +342,94 @@ export function normalizeProductChannels(product: any): any {
   return { ...product, channels: [...new Set(normalized)] };
 }
 
+const LEGACY_ZONED_TIMESTAMP =
+  /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:[Zz]|\s*UTC|([+-])(\d{2})(?::?(\d{2}))?)$/i;
+
+function normalizeLegacyZonedTimestamp(value: unknown): unknown {
+  let candidate = value;
+  if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+    const entries = Object.entries(candidate as Record<string, unknown>);
+    if (entries.length === 0) return undefined;
+    if (entries.length !== 1 || (entries[0]![0] !== '$date' && entries[0]![0] !== 'value')) return value;
+    candidate = entries[0]![1];
+  }
+  if (candidate === null) return undefined;
+  if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+    return Object.keys(candidate as Record<string, unknown>).length === 0 ? undefined : value;
+  }
+  if (typeof candidate !== 'string') return value;
+
+  const match = LEGACY_ZONED_TIMESTAMP.exec(candidate.trim());
+  if (!match) return value;
+  const [
+    ,
+    yearText,
+    monthText,
+    dayText,
+    hourText,
+    minuteText,
+    secondText,
+    fraction = '',
+    sign,
+    offsetHourText,
+    offsetMinuteText,
+  ] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  const offsetHours = offsetHourText === undefined ? 0 : Number(offsetHourText);
+  const offsetMinutes = offsetMinuteText === undefined ? 0 : Number(offsetMinuteText);
+  if (sign === '-' && offsetHours === 0 && offsetMinutes === 0) return value;
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31 ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59 ||
+    offsetHours > 23 ||
+    offsetMinutes > 59
+  ) {
+    return value;
+  }
+
+  const local = new Date(0);
+  local.setUTCFullYear(year, month - 1, day);
+  local.setUTCHours(hour, minute, second, 0);
+  if (
+    local.getUTCFullYear() !== year ||
+    local.getUTCMonth() !== month - 1 ||
+    local.getUTCDate() !== day ||
+    local.getUTCHours() !== hour ||
+    local.getUTCMinutes() !== minute ||
+    local.getUTCSeconds() !== second
+  ) {
+    return value;
+  }
+
+  const offset = (offsetHours * 60 + offsetMinutes) * 60_000 * (sign === '-' ? -1 : 1);
+  const utc = new Date(local.getTime() - offset);
+  if (utc.getUTCFullYear() < 0 || utc.getUTCFullYear() > 9999) return value;
+  return `${utc.toISOString().slice(0, 19)}${fraction}Z`;
+}
+
+/** Normalize optional forecast timestamps at the v2.5 compatibility boundary. */
+export function normalizeLegacyProductForecast(product: any): any {
+  if (!product?.forecast || typeof product.forecast !== 'object' || Array.isArray(product.forecast)) return product;
+  const forecast = { ...product.forecast };
+  for (const field of ['generated_at', 'valid_until'] as const) {
+    if (!(field in forecast)) continue;
+    const normalized = normalizeLegacyZonedTimestamp(forecast[field]);
+    if (normalized === undefined) delete forecast[field];
+    else forecast[field] = normalized;
+  }
+  return { ...product, forecast };
+}
+
 /**
  * Normalize all products in a get_products response to v3
  */
@@ -365,7 +453,9 @@ export function normalizeGetProductsResponse(response: any): any {
 
   return {
     ...response,
-    products: response.products.map((p: any) => normalizeProductChannels(normalizeProductPricing(p))),
+    products: response.products.map((p: any) =>
+      normalizeLegacyProductForecast(normalizeProductChannels(normalizeProductPricing(p)))
+    ),
   };
 }
 

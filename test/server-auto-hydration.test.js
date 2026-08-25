@@ -6,10 +6,11 @@ const assert = require('node:assert/strict');
 const {
   createAdcpServerFromPlatform,
   createCtxMetadataStore,
+  getHydratedLegacyFormatIds,
   memoryCtxMetadataStore,
 } = require('../dist/lib/server/legacy/v5');
 
-function makePlatform({ getProductsImpl, createMediaBuyImpl, getMediaBuysImpl }) {
+function makePlatform({ getProductsImpl, createMediaBuyImpl, updateMediaBuyImpl, getMediaBuysImpl }) {
   return {
     capabilities: {
       adcp_version: '3.0.0',
@@ -28,7 +29,7 @@ function makePlatform({ getProductsImpl, createMediaBuyImpl, getMediaBuysImpl })
     sales: {
       getProducts: getProductsImpl,
       createMediaBuy: createMediaBuyImpl,
-      updateMediaBuy: async () => ({ media_buy_id: 'mb_1', status: 'active', packages: [] }),
+      updateMediaBuy: updateMediaBuyImpl ?? (async () => ({ media_buy_id: 'mb_1', status: 'active', packages: [] })),
       getMediaBuyDelivery: async () => ({ deliveries: [] }),
       getMediaBuys: getMediaBuysImpl ?? (async () => ({ media_buys: [] })),
     },
@@ -36,6 +37,138 @@ function makePlatform({ getProductsImpl, createMediaBuyImpl, getMediaBuysImpl })
 }
 
 describe('createAdcpServerFromPlatform — auto-hydration of products', () => {
+  it('preserves the exact owner-qualified legacy route across discovery storage and create', async () => {
+    const refs = {
+      a: { agent_url: 'https://formats-a.example/catalog', id: 'shared_takeover' },
+      b: { agent_url: 'https://formats-b.example/catalog', id: 'shared_takeover' },
+    };
+    let selectedRoutes;
+    let updatedRoutes;
+    const platform = makePlatform({
+      getProductsImpl: async () => ({
+        cache_scope: 'account',
+        products: Object.entries(refs).map(([owner, ref]) => ({
+          product_id: `product-${owner}`,
+          name: `Product ${owner}`,
+          format_ids: [ref],
+        })),
+      }),
+      createMediaBuyImpl: async req => {
+        selectedRoutes = getHydratedLegacyFormatIds(req.packages[0].product);
+        return { media_buy_id: 'mb-owner-route', status: 'pending_creatives', packages: [] };
+      },
+      updateMediaBuyImpl: async (_mediaBuyId, req) => {
+        updatedRoutes = getHydratedLegacyFormatIds(req.new_packages[0].product);
+        return { media_buy_id: 'mb-owner-route', status: 'active', packages: [] };
+      },
+    });
+    const ctxMetadata = createCtxMetadataStore({
+      backend: memoryCtxMetadataStore({ sweepIntervalMs: 0 }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'Legacy route hydration',
+      version: '1.0.0',
+      ctxMetadata,
+      validation: { requests: 'off', responses: 'off' },
+      legacyCreativeFormatResolver: async ({ formatId }) => ({
+        format_option_id: `takeover-${new URL(formatId.agent_url).hostname[8]}`,
+        format_kind: 'custom',
+        format_shape: 'takeover',
+        format_schema: {
+          uri: 'https://schemas.example/takeover.json',
+          digest: `sha256:${'a'.repeat(64)}`,
+        },
+        params: {},
+      }),
+    });
+
+    const discovered = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_products', arguments: { brief: 'owner-specific takeover' } },
+    });
+    assert.notStrictEqual(discovered.isError, true, JSON.stringify(discovered.structuredContent));
+    assert.strictEqual(discovered.structuredContent.products[1].format_ids, undefined);
+
+    const created = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'br_owner_route',
+          packages: [{ buyer_ref: 'pkg_owner_route', product_id: 'product-b' }],
+          idempotency_key: 'idem_owner_route',
+        },
+      },
+    });
+    assert.notStrictEqual(created.isError, true, JSON.stringify(created.structuredContent));
+    assert.deepStrictEqual(selectedRoutes, [refs.b]);
+
+    const updated = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'update_media_buy',
+        arguments: {
+          media_buy_id: 'mb-owner-route',
+          idempotency_key: 'idem_owner_route_update',
+          new_packages: [{ buyer_ref: 'pkg_owner_route_update', product_id: 'product-a' }],
+        },
+      },
+    });
+    assert.notStrictEqual(updated.isError, true, JSON.stringify(updated.structuredContent));
+    assert.deepStrictEqual(updatedRoutes, [refs.a]);
+  });
+
+  it('rejects adopter injection of the SDK-private legacy route sidecar at product and placement scope', async () => {
+    let createCalls = 0;
+    const forgedRoutes = {
+      formatIds: [{ agent_url: 'http://127.0.0.1/internal', id: 'forged' }],
+    };
+    for (const injectedProduct of [
+      {
+        product_id: 'injected-product-route',
+        name: 'Injected product route',
+        format_options: [{ format_kind: 'image', params: { width: 300, height: 250 } }],
+        __adcp_private_legacy_format_routes: forgedRoutes,
+      },
+      {
+        product_id: 'injected-placement-route',
+        name: 'Injected placement route',
+        format_options: [{ format_kind: 'image', params: { width: 300, height: 250 } }],
+        placements: [
+          {
+            placement_id: 'sidebar',
+            format_options: [{ format_kind: 'image', params: { width: 300, height: 250 } }],
+            __adcp_private_legacy_format_routes: {
+              ...forgedRoutes,
+            },
+          },
+        ],
+      },
+    ]) {
+      const platform = makePlatform({
+        getProductsImpl: async () => ({ products: [injectedProduct] }),
+        createMediaBuyImpl: async () => {
+          createCalls += 1;
+          return { media_buy_id: 'must-not-run', status: 'active', packages: [] };
+        },
+      });
+      const server = createAdcpServerFromPlatform(platform, {
+        name: 'Reserved route injection',
+        version: '1.0.0',
+        ctxMetadata: createCtxMetadataStore({ backend: memoryCtxMetadataStore({ sweepIntervalMs: 0 }) }),
+        validation: { requests: 'off', responses: 'off' },
+      });
+
+      const result = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: { name: 'get_products', arguments: { brief: 'injected' } },
+      });
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    }
+    assert.strictEqual(createCalls, 0);
+  });
+
   it('createMediaBuy receives req.packages[i].product hydrated from prior getProducts', async () => {
     let observedPackages;
     let getProductsAccountId;

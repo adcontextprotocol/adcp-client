@@ -95,11 +95,22 @@ void unchangedServerGetProductsPayload;
 
 declare const publicTypesGetProductsPayload: TypesGetProductsPayload;
 declare const decisioningGetProductsPayload: DecisioningGetProductsPayload;
-// @ts-expect-error DecisioningPlatform is canonical-only; the raw wire alias may contain legacy-only products.
 const decisioningPayloadFromPublicAlias: DecisioningGetProductsPayload = publicTypesGetProductsPayload;
+const legacyDecisioningPayload: DecisioningGetProductsPayload = {
+  cache_scope: 'account',
+  products: [
+    {
+      product_id: 'legacy-product',
+      name: 'Legacy product',
+      format_ids: [{ agent_url: 'https://formats.example/catalog', id: 'custom' }],
+      projectionCatalogs: [],
+    },
+  ],
+};
 // @ts-expect-error Generated Product's empty oneOf marker interfaces prevent structural recovery of the canonical arm.
 const publicAliasFromDecisioningPayload: TypesGetProductsPayload = decisioningGetProductsPayload;
 void decisioningPayloadFromPublicAlias;
+void legacyDecisioningPayload;
 void publicAliasFromDecisioningPayload;
 
 // @ts-expect-error get_products payloads with products must declare cache_scope.

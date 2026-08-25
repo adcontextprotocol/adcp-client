@@ -111,7 +111,10 @@ export class PlatformConfigError extends Error {
 // arm). When adcontextprotocol/adcp#3392 lands, the same shape extends
 // to `update_media_buy`, `build_creative`, `sync_catalogs`, `get_products`.
 
-export function validatePlatform(platform: DecisioningPlatform): void {
+export function validatePlatform(
+  platform: DecisioningPlatform,
+  effectiveFields: Partial<Record<keyof DecisioningPlatform, unknown>> = {}
+): void {
   const claimed = platform.capabilities?.specialisms ?? [];
   const errors: string[] = [];
 
@@ -139,7 +142,7 @@ export function validatePlatform(platform: DecisioningPlatform): void {
     const required = SPECIALISM_REQUIREMENTS[specialism];
     if (!required) continue; // forward-compat for unknown specialisms
     for (const field of required) {
-      if (platform[field] == null) {
+      if (platform[field] == null && effectiveFields[field] == null) {
         errors.push(`capabilities.specialisms claims '${specialism}'; platform.${String(field)} is missing`);
       }
     }

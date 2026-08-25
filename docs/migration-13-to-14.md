@@ -689,6 +689,42 @@ The outer `status` remains the asynchronous task state (`completed`, `working`, 
 
 Regenerated 3.2 types include new tools, error codes, canonical formats, measurement surfaces, and more exact intersections/tuples. If application code imported broad generated types or runtime schemas, expect TypeScript to reveal newly exhaustive unions.
 
+Tool JSON Schema discovery is now version-aware. Use the schema subpath when
+an agent or gateway must publish the exact bundled contract for a negotiated
+release:
+
+```ts
+import { getToolInputSchema, getToolResponseSchema } from '@adcp/sdk/schemas';
+
+const request = getToolInputSchema('create_media_buy', { adcpVersion: '3.0' });
+const response = getToolResponseSchema('create_media_buy', {
+  adcpVersion: '3.2.0-beta.6',
+  variant: 'sync',
+});
+
+if (!request || !response) throw new Error('Tool schema is not present in the selected bundle');
+console.log(request.resolvedVersion, request.schema);
+```
+
+The returned record reports the requested version, selected bundle key, and
+exact release recorded by that bundle. A missing bundle throws an actionable
+configuration error; a tool or response variant absent from an installed
+bundle returns `undefined`. Neither case silently falls back to the current
+schema.
+
+Every `TaskResult.metadata` now exposes the selected seller wire generation as
+`serverVersion: 'v2' | 'v3'`. `serverVersionSynthetic` distinguishes an
+authoritative capability declaration (`false`) from the SDK's compatibility
+fallback (`true`). Both fields survive submitted/deferred continuations and
+durable restart recovery. `adcpVersion` remains the distinct, release-precision
+value echoed by a seller response.
+
+The v2.5 `get_products` response adapter also accepts explicitly zoned legacy
+forecast timestamps, including offset variants and single `$date`/`value`
+wrappers. It converts them to UTC RFC 3339 without losing fractional precision;
+ambiguous or unzoned values remain untouched, and the preserved seller wire
+object is not mutated.
+
 SDK 14 also adds semantic refinements to public object schemas. Behavior when
 composing a refined schema varies across supported Zod 4 releases: `.extend()`
 may throw during module initialization or may succeed with version-specific

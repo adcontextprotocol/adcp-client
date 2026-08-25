@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-08-24
+> Generated at: 2026-08-25
 > @adcp/sdk v14.0.0-beta.8
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -39,6 +39,8 @@ interface TaskResult<T = any> {
     timestamp: string;
     clarificationRounds: number;
     adcpVersion?: string;        // Seller-served release-precision response adcp_version
+    serverVersion?: 'v2' | 'v3'; // Seller wire generation selected by capability discovery
+    serverVersionSynthetic?: boolean; // True when generation came from the SDK fallback
   };
   conversation?: Message[];
 }

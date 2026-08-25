@@ -33,16 +33,15 @@ import type { MaybePromise } from '../../create-adcp-server';
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
 import type { GetProductsResponse } from '../../../types/tools.generated';
-import type {
-  CanonicalCreativeResponse,
-  CanonicalGetProductsRequest,
-  CanonicalProduct,
-} from '../../../v2/projection/creative-delivery';
+import type { CanonicalCreativeResponse, CanonicalGetProductsRequest } from '../../../v2/projection/creative-delivery';
 import type { RequireCacheScopeWhenProducts, ServerPayload } from '../../../types/server-payload';
 import type { TaskHandoff } from '../async-outcome';
+import type { GetProductsProjectionInput } from '../specialisms/sales';
 
 export type ProposalGetProductsPayload = RequireCacheScopeWhenProducts<
-  Omit<ServerPayload<CanonicalCreativeResponse<GetProductsResponse>>, 'products'> & { products?: CanonicalProduct[] }
+  Omit<ServerPayload<CanonicalCreativeResponse<GetProductsResponse>>, 'products'> & {
+    products?: GetProductsProjectionInput[];
+  }
 >;
 export type LegacyProposalGetProductsPayload = RequireCacheScopeWhenProducts<ServerPayload<GetProductsResponse>>;
 

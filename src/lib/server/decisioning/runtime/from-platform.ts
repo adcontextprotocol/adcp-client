@@ -180,7 +180,17 @@ import {
   projectMediaBuyCreativesForDelivery,
   stripLegacyCreativeIdentity,
 } from '../../../v2/projection/creative-delivery';
-import { projectV1ProductToV2, type LegacyFormatConverter } from '../../../v2/projection/v1-to-v2';
+import {
+  projectV1ProductToV2,
+  type LegacyFormatConversionContext,
+  type LegacyFormatConverter,
+  type LegacyFormatResolutionContext,
+  type LegacyFormatResolver,
+} from '../../../v2/projection/v1-to-v2';
+import {
+  legacyFormatConverterFromCatalogSnapshots,
+  type ProjectionCatalogSnapshot,
+} from '../../../v2/projection/catalog-snapshot';
 import type {
   CanonicalSyncCreativeAsset,
   CanonicalCreateMediaBuyRequest,
@@ -814,10 +824,7 @@ function asCanonicalListCreativesRequest(
   return { ...withLegacyFilter, fields } as CanonicalListCreativesRequest;
 }
 
-function asCanonicalProductResponse<T extends { products?: unknown[] }>(
-  response: T,
-  legacyFormatConverter: LegacyFormatConverter | undefined
-): T {
+function assertSafeGetProductsResponse(response: unknown): void {
   try {
     assertSafeSemanticPayload(response, 'get_products');
   } catch (error) {
@@ -828,6 +835,13 @@ function asCanonicalProductResponse<T extends { products?: unknown[] }>(
       suggestion: 'Return an acyclic data-only product response without enumerable accessors.',
     });
   }
+}
+
+function asCanonicalProductResponse<T extends { products?: unknown[] }>(
+  response: T,
+  legacyFormatConverter: LegacyFormatConverter | undefined
+): T {
+  assertSafeGetProductsResponse(response);
   validateDualProductFormatDeclarations(response, legacyFormatConverter);
   const projected = toCanonicalOnlyResponse(response as T & { products?: V1Product[] }, {
     legacyFormatConverter,
@@ -854,7 +868,403 @@ function asCanonicalProductResponse<T extends { products?: unknown[] }>(
   return canonicalResponse;
 }
 
+function legacyFormatResolutionKey(context: LegacyFormatConversionContext): string {
+  const formatId = context.formatId;
+  return JSON.stringify([
+    context.productId,
+    context.field,
+    formatId.agent_url,
+    formatId.id,
+    formatId.width ?? null,
+    formatId.height ?? null,
+    formatId.duration_ms ?? null,
+  ]);
+}
+
+function preparePerProductProjectionCatalogs<T extends { products?: unknown[] }>(
+  response: T,
+  fallback: LegacyFormatConverter | undefined
+): { response: T; converter: LegacyFormatConverter | undefined } {
+  assertSafeGetProductsResponse(response);
+  if (!Array.isArray(response.products)) return { response, converter: fallback };
+  assertNoReservedLegacyRouteMetadata(response.products, 'products');
+
+  const converters = new Map<string, LegacyFormatConverter>();
+  const productIdCounts = new Map<string, number>();
+  for (const product of response.products) {
+    if (!product || typeof product !== 'object' || Array.isArray(product)) continue;
+    const productId = (product as Record<string, unknown>).product_id;
+    if (typeof productId === 'string') productIdCounts.set(productId, (productIdCounts.get(productId) ?? 0) + 1);
+  }
+  let strippedCatalogMetadata = false;
+  const products = response.products.map(product => {
+    if (!product || typeof product !== 'object' || Array.isArray(product)) return product;
+    const record = product as Record<string, unknown>;
+    if (!Object.prototype.hasOwnProperty.call(record, 'projectionCatalogs')) return product;
+    strippedCatalogMetadata = true;
+    const { projectionCatalogs, ...wireProduct } = record;
+    if (!Array.isArray(projectionCatalogs)) {
+      throw new AdcpError('INVALID_REQUEST', {
+        message: 'get_products projectionCatalogs must be an array of immutable catalog snapshots.',
+        field: `products[${String(record.product_id ?? '?')}].projectionCatalogs`,
+      });
+    }
+    if (typeof record.product_id === 'string' && (productIdCounts.get(record.product_id) ?? 0) > 1) {
+      throw new AdcpError('INVALID_REQUEST', {
+        message: 'get_products projection catalogs require unique product identifiers.',
+        field: `products[${record.product_id}].projectionCatalogs`,
+      });
+    }
+    if (projectionCatalogs.length > 0 && typeof record.product_id === 'string') {
+      if (converters.has(record.product_id)) {
+        throw new AdcpError('INVALID_REQUEST', {
+          message: 'get_products cannot attach different projection catalogs to duplicate product identifiers.',
+          field: `products[${record.product_id}].projectionCatalogs`,
+        });
+      }
+      const converter = legacyFormatConverterFromCatalogSnapshots(
+        projectionCatalogs as readonly ProjectionCatalogSnapshot[]
+      );
+      if (converter) {
+        converters.set(record.product_id, converter);
+        const placements = wireProduct.placements;
+        if (Array.isArray(placements)) {
+          for (let placementIndex = 0; placementIndex < placements.length; placementIndex++) {
+            const placement = placements[placementIndex];
+            if (!placement || typeof placement !== 'object' || Array.isArray(placement)) continue;
+            const placementRecord = placement as Record<string, unknown>;
+            const placementId =
+              typeof placementRecord.placement_id === 'string' ? placementRecord.placement_id : String(placementIndex);
+            const projectionProductId = `${record.product_id}:placement:${placementId}`;
+            if (converters.has(projectionProductId)) {
+              throw new AdcpError('INVALID_REQUEST', {
+                message: 'get_products projection catalog scopes resolve to a duplicate product identifier.',
+                field: `products[${record.product_id}].placements[${placementIndex}]`,
+              });
+            }
+            converters.set(projectionProductId, converter);
+          }
+        }
+      }
+    }
+    return wireProduct;
+  });
+
+  const converter: LegacyFormatConverter | undefined =
+    converters.size === 0
+      ? fallback
+      : context => {
+          const productConverter = converters.get(context.productId);
+          const resolved = productConverter?.(context);
+          return resolved === undefined ? fallback?.(context) : resolved;
+        };
+  return {
+    response: (strippedCatalogMetadata ? { ...response, products } : response) as T,
+    converter,
+  };
+}
+
+const DEFAULT_LEGACY_FORMAT_RESOLVER_TIMEOUT_MS = 10_000;
+const DEFAULT_LEGACY_FORMAT_RESOLVER_CONCURRENCY = 8;
+const MAX_LEGACY_FORMAT_RESOLVER_TIMEOUT_MS = 2_147_483_647;
+const MAX_LEGACY_FORMAT_RESOLVER_CONCURRENCY = 64;
+
+function legacyFormatResolverLimit(
+  value: number | undefined,
+  fallback: number,
+  field: string,
+  maximum?: number
+): number {
+  if (value === undefined) return fallback;
+  if (!Number.isSafeInteger(value) || value <= 0 || (maximum !== undefined && value > maximum)) {
+    const range = maximum === undefined ? 'a positive safe integer' : `an integer between 1 and ${maximum}`;
+    throw new PlatformConfigError(`${field} must be ${range}.`);
+  }
+  return value;
+}
+
+function legacyFormatResolverAbortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new Error('legacyCreativeFormatResolver was aborted before projection completed.');
+}
+
+function createLegacyFormatResolverSignal(
+  requestSignal: AbortSignal | undefined,
+  timeoutMs: number
+): { signal: AbortSignal; dispose(): void } {
+  const controller = new AbortController();
+  const abortFromRequest = () => controller.abort(requestSignal?.reason);
+  if (requestSignal?.aborted) abortFromRequest();
+  else requestSignal?.addEventListener('abort', abortFromRequest, { once: true });
+  const timeout = controller.signal.aborted
+    ? undefined
+    : setTimeout(
+        () => controller.abort(new Error(`legacyCreativeFormatResolver exceeded its ${timeoutMs}ms deadline.`)),
+        timeoutMs
+      );
+  return {
+    signal: controller.signal,
+    dispose() {
+      if (timeout !== undefined) clearTimeout(timeout);
+      requestSignal?.removeEventListener('abort', abortFromRequest);
+    },
+  };
+}
+
+async function invokeLegacyFormatResolver(
+  resolver: LegacyFormatResolver,
+  context: Omit<LegacyFormatResolutionContext, 'signal'>,
+  signal: AbortSignal
+): Promise<Awaited<ReturnType<LegacyFormatResolver>>> {
+  if (signal.aborted) throw legacyFormatResolverAbortError(signal);
+  let abortListener: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    abortListener = () => reject(legacyFormatResolverAbortError(signal));
+    signal.addEventListener('abort', abortListener, { once: true });
+  });
+  try {
+    return await Promise.race([Promise.resolve().then(() => resolver({ ...context, signal })), aborted]);
+  } finally {
+    if (abortListener) signal.removeEventListener('abort', abortListener);
+  }
+}
+
+async function resolveLegacyProductFormats<T extends { products?: unknown[] }>(
+  response: T,
+  converter: LegacyFormatConverter | undefined,
+  resolver: LegacyFormatResolver | undefined,
+  requestContext: {
+    servedAdcpVersion?: string;
+    accountId?: string;
+    signal?: AbortSignal;
+    timeoutMs: number;
+    concurrency: number;
+  }
+): Promise<LegacyFormatConverter | undefined> {
+  if (!resolver) return converter;
+  assertSafeGetProductsResponse(response);
+  if (!Array.isArray(response.products)) return converter;
+
+  const resolutions = new Map<
+    string,
+    Awaited<ReturnType<LegacyFormatResolver>> | { readonly resolutionError: unknown }
+  >();
+  const pending: Array<(signal: AbortSignal) => Promise<void>> = [];
+  const scanScope = (projectionProduct: V1Product, resolverProductId: string, resolverFieldPrefix: string): void => {
+    if (Array.isArray((projectionProduct as unknown as V2Product).format_options)) return;
+    for (let index = 0; index < projectionProduct.format_ids.length; index++) {
+      const formatId = projectionProduct.format_ids[index];
+      if (!formatId || typeof formatId !== 'object' || Array.isArray(formatId)) continue;
+      const projectionField = `products[${projectionProduct.product_id}].format_ids[${index}]`;
+      const resolverField = `${resolverFieldPrefix}.format_ids[${index}]`;
+      const projectionContext: LegacyFormatConversionContext = {
+        formatId: formatId as V1FormatId,
+        productId: projectionProduct.product_id,
+        field: projectionField,
+      };
+      const contextAwareConverter: LegacyFormatConverter | undefined = converter
+        ? context => converter({ ...context, field: projectionField })
+        : undefined;
+      const alreadyProjected = projectV1ProductToV2(
+        { ...projectionProduct, format_ids: [formatId] },
+        { legacyFormatConverter: contextAwareConverter }
+      );
+      if (alreadyProjected.diagnostics.length === 0) continue;
+
+      let resolverEligible = false;
+      projectV1ProductToV2(
+        { ...projectionProduct, format_ids: [formatId] },
+        {
+          legacyFormatConverter: () => {
+            resolverEligible = true;
+            return {
+              format_option_id: '__legacy_resolver_probe__',
+              format_kind: 'custom',
+              format_shape: '__legacy_resolver_probe__',
+              format_schema: {
+                uri: 'https://adcontextprotocol.org/schemas/legacy-resolver-probe.json',
+                digest: `sha256:${'0'.repeat(64)}`,
+              },
+              params: {},
+            };
+          },
+        }
+      );
+      if (!resolverEligible) continue;
+
+      const key = legacyFormatResolutionKey(projectionContext);
+      const frozenFormatId = Object.freeze({ ...(formatId as V1FormatId) });
+      pending.push(async signal => {
+        try {
+          const value = await invokeLegacyFormatResolver(
+            resolver,
+            {
+              formatId: frozenFormatId,
+              productId: resolverProductId,
+              field: resolverField,
+              operation: 'get_products',
+              ...(requestContext.servedAdcpVersion !== undefined && {
+                servedAdcpVersion: requestContext.servedAdcpVersion,
+              }),
+              ...(requestContext.accountId !== undefined && { accountId: requestContext.accountId }),
+            },
+            signal
+          );
+          resolutions.set(key, value);
+        } catch (error) {
+          resolutions.set(key, { resolutionError: error });
+        }
+      });
+    }
+  };
+
+  for (const product of response.products) {
+    if (!isProjectionProductInput(product)) continue;
+    if (Array.isArray(product.format_ids)) {
+      scanScope(product as V1Product, product.product_id, `products[${product.product_id}]`);
+    }
+    const placements = (product as unknown as Record<string, unknown>).placements;
+    if (!Array.isArray(placements)) continue;
+    for (let placementIndex = 0; placementIndex < placements.length; placementIndex++) {
+      const placement = placements[placementIndex];
+      if (!placement || typeof placement !== 'object' || Array.isArray(placement)) continue;
+      const placementRecord = placement as Record<string, unknown>;
+      if (Array.isArray(placementRecord.format_options) || !Array.isArray(placementRecord.format_ids)) continue;
+      const placementId =
+        typeof placementRecord.placement_id === 'string' ? placementRecord.placement_id : String(placementIndex);
+      scanScope(
+        {
+          product_id: `${product.product_id}:placement:${placementId}`,
+          name: typeof placementRecord.name === 'string' ? placementRecord.name : placementId,
+          description: `Nested placement ${placementId}`,
+          format_ids: placementRecord.format_ids as V1FormatId[],
+        },
+        product.product_id,
+        `products[${product.product_id}].placements[${placementIndex}]`
+      );
+    }
+  }
+  const resolverSignal = createLegacyFormatResolverSignal(requestContext.signal, requestContext.timeoutMs);
+  try {
+    let nextJob = 0;
+    const workerCount = Math.min(requestContext.concurrency, pending.length);
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        while (nextJob < pending.length) {
+          const job = pending[nextJob++];
+          if (job) await job(resolverSignal.signal);
+        }
+      })
+    );
+  } finally {
+    resolverSignal.dispose();
+  }
+  if (resolutions.size === 0) return converter;
+
+  return context => {
+    const resolved = resolutions.get(legacyFormatResolutionKey(context));
+    if (resolved !== undefined) {
+      if (typeof resolved === 'object' && resolved !== null && 'resolutionError' in resolved) {
+        throw resolved.resolutionError;
+      }
+      return resolved;
+    }
+    return converter?.(context);
+  };
+}
+
 const authoredFormatIdsByOwner = new WeakMap<object, readonly V1FormatId[]>();
+const STORED_LEGACY_FORMAT_ROUTES = '__adcp_private_legacy_format_routes';
+
+function assertNoReservedLegacyRouteMetadata(value: unknown, path: string): void {
+  const visited = new WeakSet<object>();
+  const visit = (current: unknown, currentPath: string): void => {
+    if (current === null || typeof current !== 'object' || visited.has(current)) return;
+    visited.add(current);
+    for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(current))) {
+      if (!descriptor.enumerable || !('value' in descriptor)) continue;
+      const childPath = Array.isArray(current) ? `${currentPath}[${key}]` : `${currentPath}.${key}`;
+      if (key === STORED_LEGACY_FORMAT_ROUTES) {
+        throw new AdcpError('INVALID_REQUEST', {
+          message: 'get_products returned a field reserved for SDK-private route persistence.',
+          field: childPath,
+        });
+      }
+      visit(descriptor.value, childPath);
+    }
+  };
+  visit(value, path);
+}
+
+interface StoredLegacyFormatRoutes {
+  formatIds?: readonly V1FormatId[];
+  placements?: readonly (StoredLegacyFormatRoutes | null)[];
+}
+
+function captureStoredLegacyFormatRoutes(value: unknown): StoredLegacyFormatRoutes | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const formatIds = authoredFormatIdsByOwner.get(record);
+  const placements = Array.isArray(record.placements)
+    ? record.placements.map(placement => captureStoredLegacyFormatRoutes(placement) ?? null)
+    : undefined;
+  if (!formatIds && !placements?.some(Boolean)) return undefined;
+  return {
+    ...(formatIds && { formatIds: formatIds.map(ref => cloneWireData(ref)) }),
+    ...(placements?.some(Boolean) && { placements }),
+  };
+}
+
+function restoreStoredLegacyFormatRoutes(value: unknown, routes: unknown): void {
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    routes === null ||
+    typeof routes !== 'object' ||
+    Array.isArray(routes)
+  ) {
+    return;
+  }
+  const record = value as Record<string, unknown>;
+  const routeRecord = routes as Record<string, unknown>;
+  if (
+    Array.isArray(routeRecord.formatIds) &&
+    routeRecord.formatIds.length > 0 &&
+    routeRecord.formatIds.every(ref => isValidStoredLegacyFormatRef(ref))
+  ) {
+    authoredFormatIdsByOwner.set(
+      record,
+      routeRecord.formatIds.map(ref => cloneWireData(ref as V1FormatId))
+    );
+  }
+  if (Array.isArray(record.placements) && Array.isArray(routeRecord.placements)) {
+    const count = Math.min(record.placements.length, routeRecord.placements.length);
+    for (let index = 0; index < count; index++) {
+      restoreStoredLegacyFormatRoutes(record.placements[index], routeRecord.placements[index]);
+    }
+  }
+}
+
+function isValidStoredLegacyFormatRef(value: unknown): value is V1FormatId {
+  if (legacyFormatRefKey(value) === undefined) return false;
+  const ref = value as Record<string, unknown>;
+  if (ref.agent_url === '' || ref.id === '') return false;
+  for (const field of ['width', 'height', 'duration_ms'] as const) {
+    const fieldValue = ref[field];
+    if (fieldValue !== undefined && (!Number.isInteger(fieldValue) || (fieldValue as number) <= 0)) return false;
+  }
+  return true;
+}
+
+/** Read exact SDK-private legacy routes restored on an auto-hydrated product or placement. */
+export function getHydratedLegacyFormatIds(value: unknown): readonly V1FormatId[] | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const refs = authoredFormatIdsByOwner.get(value);
+  return refs?.map(ref => cloneWireData(ref));
+}
+
 type LegacyDropDiagnostic = Extract<ProjectionDiagnostic, { code: 'LEGACY_FORMAT_ID_DROPPED_UNMAPPED' }>;
 const resolvedLegacyDropDiagnosticsByResponse = new WeakMap<object, readonly LegacyDropDiagnostic[]>();
 
@@ -1535,6 +1945,16 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * declaration (normally `format_kind: 'custom'` + shape/schema).
    */
   legacyCreativeFormatConverter?: LegacyFormatConverter;
+  /**
+   * Resolve seller-specific legacy product formats asynchronously before the
+   * canonical `get_products` projection. The resolver receives only the exact
+   * format tuple plus non-secret request routing context and fails closed.
+   */
+  legacyCreativeFormatResolver?: LegacyFormatResolver;
+  /** Shared resolver-phase deadline in milliseconds. Defaults to 10 seconds. */
+  legacyCreativeFormatResolverTimeoutMs?: number;
+  /** Maximum concurrent resolver calls within one get_products response (1–64). Defaults to 8. */
+  legacyCreativeFormatResolverConcurrency?: number;
   /** Resolve persisted canonical custom formats when this server emits a legacy wire response. */
   canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver;
   /**
@@ -1961,7 +2381,6 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     RequiredCapabilitiesFor<P['capabilities']['specialisms'][number]>,
   opts: RequiredOptsFor<P>
 ): DecisioningAdcpServer {
-  validatePlatform(platform);
   // Runtime-only compatibility for pre-13 JavaScript/config objects. The
   // public type exposes these raw handler groups only under legacyHandlers;
   // retaining the hidden fallback avoids turning a type migration into an
@@ -1973,6 +2392,11 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     governance: opts.legacyHandlers?.governance ?? runtimeLegacyOptions.governance,
     brandRights: opts.legacyHandlers?.brandRights ?? runtimeLegacyOptions.brandRights,
   };
+  validatePlatform(platform, {
+    creative: legacyHandlers.creative,
+    campaignGovernance: legacyHandlers.governance,
+    brandRights: legacyHandlers.brandRights,
+  });
 
   // Specialism→required-tools coverage check (adcp-client#1299).
   //
@@ -1992,7 +2416,14 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // flagged.
   {
     const specialisms = (platform.capabilities as { specialisms?: readonly string[] }).specialisms;
-    const issues = validateSpecialismRequiredTools(platform, specialisms);
+    const effectiveSpecialismSurface = {
+      ...platform,
+      mediaBuy: legacyHandlers.mediaBuy,
+      creative: platform.creative ?? legacyHandlers.creative,
+      governance: legacyHandlers.governance,
+      brandRights: platform.brandRights ?? legacyHandlers.brandRights,
+    };
+    const issues = validateSpecialismRequiredTools(effectiveSpecialismSurface, specialisms);
     if (issues.length > 0) {
       const messages = issues.map(formatSpecialismIssue);
       if (opts.strictSpecialismValidation === true) {
@@ -2605,6 +3036,21 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         opts.mediaBuyStore,
         opts.proposalStore,
         opts.legacyCreativeFormatConverter,
+        opts.legacyCreativeFormatResolver,
+        {
+          timeoutMs: legacyFormatResolverLimit(
+            opts.legacyCreativeFormatResolverTimeoutMs,
+            DEFAULT_LEGACY_FORMAT_RESOLVER_TIMEOUT_MS,
+            'legacyCreativeFormatResolverTimeoutMs',
+            MAX_LEGACY_FORMAT_RESOLVER_TIMEOUT_MS
+          ),
+          concurrency: legacyFormatResolverLimit(
+            opts.legacyCreativeFormatResolverConcurrency,
+            DEFAULT_LEGACY_FORMAT_RESOLVER_CONCURRENCY,
+            'legacyCreativeFormatResolverConcurrency',
+            MAX_LEGACY_FORMAT_RESOLVER_CONCURRENCY
+          ),
+        },
         opts.canonicalFormatLegacyResolver,
         defaultCreativeWireMode
       ),
@@ -4510,8 +4956,15 @@ async function autoStoreResources(
     const ctxMeta = obj['ctx_metadata'];
     // Strip ctx_metadata from the resource before storing — round-trip
     // restores it on hydration. Keeping a pristine wire copy in `resource`.
-    const { ctx_metadata: _stripped, ...wireResource } = obj as Record<string, unknown>;
+    const {
+      ctx_metadata: _stripped,
+      [STORED_LEGACY_FORMAT_ROUTES]: _reservedRouteMetadata,
+      ...wireResource
+    } = obj as Record<string, unknown>;
     void _stripped;
+    void _reservedRouteMetadata;
+    const legacyFormatRoutes = kind === 'product' ? captureStoredLegacyFormatRoutes(obj) : undefined;
+    if (legacyFormatRoutes) wireResource[STORED_LEGACY_FORMAT_ROUTES] = legacyFormatRoutes;
     try {
       // Use `setResource` (not `setEntry`) so a publisher's prior
       // `ctx.ctxMetadata.set(kind, id, blob)` is preserved when the
@@ -4656,10 +5109,13 @@ async function hydratePackagesWithProducts(
     if (!entry?.resource || typeof entry.resource !== 'object') continue;
     let hydrated: Record<string, unknown>;
     try {
-      hydrated = asCanonicalSemanticServerRequest(entry.resource, 'hydrate_product', legacyFormatConverter) as Record<
+      const storedResource = entry.resource as Record<string, unknown>;
+      const { [STORED_LEGACY_FORMAT_ROUTES]: storedLegacyFormatRoutes, ...resource } = storedResource;
+      hydrated = asCanonicalSemanticServerRequest(resource, 'hydrate_product', legacyFormatConverter) as Record<
         string,
         unknown
       >;
+      restoreStoredLegacyFormatRoutes(hydrated, storedLegacyFormatRoutes);
     } catch {
       logger.warn(
         `[adcp/decisioning] auto-hydrate product:${productId} skipped: stored creative format has no canonical representation`
@@ -5288,6 +5744,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   mediaBuyStore: MediaBuyStore | undefined,
   proposalStore: import('../proposal').ProposalStore | undefined,
   legacyFormatConverter: LegacyFormatConverter | undefined,
+  legacyFormatResolver: LegacyFormatResolver | undefined,
+  legacyFormatResolverOptions: { timeoutMs: number; concurrency: number },
   canonicalFormatLegacyResolver: CanonicalFormatLegacyResolver | undefined,
   creativeWireMode: 'canonical' | 'legacy'
 ): MediaBuyHandlers<Account> | undefined {
@@ -5511,7 +5969,22 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 | TaskHandoff<GetProductsPayload>;
             }
             const projectProducts = async (terminalResult: GetProductsPayload) => {
-              const canonicalResult = asCanonicalProductResponse(terminalResult, legacyFormatConverter);
+              const preparedProjection = preparePerProductProjectionCatalogs(terminalResult, legacyFormatConverter);
+              const requestLegacyFormatConverter = await resolveLegacyProductFormats(
+                preparedProjection.response,
+                preparedProjection.converter,
+                legacyFormatResolver,
+                {
+                  ...(ctx.servedAdcpVersion !== undefined && { servedAdcpVersion: ctx.servedAdcpVersion }),
+                  ...(reqCtx.account?.id !== undefined && { accountId: reqCtx.account.id }),
+                  ...(ctx.signal !== undefined && { signal: ctx.signal }),
+                  ...legacyFormatResolverOptions,
+                }
+              );
+              const canonicalResult = asCanonicalProductResponse(
+                preparedProjection.response,
+                requestLegacyFormatConverter
+              );
               // Auto-store products: persist each Product's wire shape +
               // ctx_metadata so subsequent createMediaBuy / updateMediaBuy
               // calls referencing product_id can hydrate the full Product
@@ -5533,7 +6006,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               // cross the buyer-facing response boundary.
               if (proposalStore) {
                 await maybePersistDraftAfterGetProducts({
-                  response: terminalResult,
+                  response: terminalResult as unknown as import('../proposal').ProposalGetProductsPayload,
                   store: proposalStore,
                   ctx: reqCtx as unknown as { account: { id: string } },
                 });
@@ -5744,6 +6217,20 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           reqCtx.account?.id,
           'update_media_buy',
           params,
+          logger,
+          legacyFormatConverter
+        );
+        await hydratePackagesWithProducts(
+          ctxMetadataStore,
+          reqCtx.account?.id,
+          (params as { packages?: unknown[] }).packages,
+          logger,
+          legacyFormatConverter
+        );
+        await hydratePackagesWithProducts(
+          ctxMetadataStore,
+          reqCtx.account?.id,
+          (params as { new_packages?: unknown[] }).new_packages,
           logger,
           legacyFormatConverter
         );

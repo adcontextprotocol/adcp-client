@@ -821,6 +821,110 @@ describe('createAdcpServer', () => {
       assert.ok(caps.supported_protocols.includes('sponsored_intelligence'));
     });
 
+    it('derives supported_protocols from domain handler groups, not overlapping or utility tool names (#2680)', async () => {
+      const cases = [
+        {
+          name: 'sales-only',
+          config: {
+            mediaBuy: {
+              getProducts: async () => ({ products: [] }),
+              syncCreatives: async () => ({ creatives: [] }),
+            },
+          },
+          tools: ['get_adcp_capabilities', 'get_products', 'sync_creatives'],
+          protocols: ['media_buy'],
+        },
+        {
+          name: 'creative-only',
+          config: {
+            creative: {
+              buildCreative: async () => ({}),
+              listCreativeFormats: async () => ({ formats: [] }),
+            },
+          },
+          tools: ['build_creative', 'get_adcp_capabilities', 'list_creative_formats'],
+          protocols: ['creative'],
+        },
+        {
+          name: 'signals-only',
+          config: { signals: { getSignals: async () => ({ signals: [] }) } },
+          tools: ['get_adcp_capabilities', 'get_signals'],
+          protocols: ['signals'],
+        },
+        {
+          name: 'mixed',
+          config: {
+            mediaBuy: {
+              getProducts: async () => ({ products: [] }),
+              syncCreatives: async () => ({ creatives: [] }),
+            },
+            creative: {
+              buildCreative: async () => ({}),
+              listCreativeFormats: async () => ({ formats: [] }),
+            },
+            signals: { getSignals: async () => ({ signals: [] }) },
+          },
+          tools: [
+            'build_creative',
+            'get_adcp_capabilities',
+            'get_products',
+            'get_signals',
+            'list_creative_formats',
+            'sync_creatives',
+          ],
+          protocols: ['media_buy', 'signals', 'creative'],
+        },
+        {
+          name: 'utility-only',
+          config: {
+            accounts: { listAccounts: async () => ({ accounts: [] }) },
+            eventTracking: { logEvent: async () => ({}) },
+          },
+          tools: ['get_adcp_capabilities', 'list_accounts', 'log_event'],
+          protocols: [],
+        },
+        {
+          name: 'overlap-only-media-buy-group',
+          config: {
+            mediaBuy: { listCreativeFormats: async () => ({ formats: [] }) },
+          },
+          tools: ['get_adcp_capabilities', 'list_creative_formats'],
+          protocols: [],
+        },
+        {
+          name: 'sales-social-ingestion',
+          config: {
+            capabilities: { specialisms: ['sales-social'] },
+            mediaBuy: { syncCreatives: async () => ({ creatives: [] }) },
+          },
+          tools: ['get_adcp_capabilities', 'sync_creatives'],
+          protocols: ['media_buy'],
+        },
+        {
+          name: 'bare-sales-specialism',
+          config: {
+            capabilities: { specialisms: ['sales-guaranteed'] },
+          },
+          tools: ['get_adcp_capabilities'],
+          protocols: [],
+        },
+      ];
+
+      for (const fixture of cases) {
+        const server = createAdcpServer({
+          name: fixture.name,
+          version: '1.0.0',
+          mcpToolProfile: 'all',
+          ...fixture.config,
+        });
+        const listed = await server.dispatchTestRequest({ method: 'tools/list' });
+        const caps = await callTool(server, 'get_adcp_capabilities', {});
+
+        assert.deepStrictEqual(listed.tools.map(tool => tool.name).sort(), fixture.tools, `${fixture.name} tools/list`);
+        assert.deepStrictEqual(caps.supported_protocols, fixture.protocols, `${fixture.name} supported_protocols`);
+      }
+    });
+
     it('promotes explicitly declared measurement capabilities into supported_protocols', async () => {
       const server = createAdcpServer({
         name: 'Test',
@@ -2870,7 +2974,7 @@ describe('createAdcpServer', () => {
   });
 
   describe('eventTracking domain', () => {
-    it('registers event tracking tools in their own domain without advertising experimental measurement', async () => {
+    it('registers event tracking utilities without advertising an unrelated protocol domain', async () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
@@ -2888,8 +2992,7 @@ describe('createAdcpServer', () => {
       assert.ok(tools.includes('sync_catalogs'));
 
       const caps = await callTool(server, 'get_adcp_capabilities', {});
-      assert.ok(caps.supported_protocols.includes('media_buy'));
-      assert.ok(!caps.supported_protocols.includes('measurement'));
+      assert.deepStrictEqual(caps.supported_protocols, []);
     });
   });
 

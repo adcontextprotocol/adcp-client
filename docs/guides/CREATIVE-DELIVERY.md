@@ -237,6 +237,54 @@ delivery task options. The configured converter applies consistently to
 discovery, `createMediaBuyLegacy()`, `updateMediaBuyLegacy()`,
 `syncCreativesLegacy()`, async continuations, and webhooks. Server adopters use
 the `legacyCreativeFormatConverter` option on `createAdcpServerFromPlatform()`.
+When product-format lookup requires a database or seller catalog call, use the
+asynchronous `legacyCreativeFormatResolver` instead:
+
+```ts
+createAdcpServerFromPlatform(platform, {
+  name: 'Seller',
+  version: '1.0.0',
+  legacyCreativeFormatResolver: async ({ formatId, accountId, servedAdcpVersion, signal }) =>
+    catalog.resolveCanonicalDeclaration(formatId, { accountId, servedAdcpVersion, signal }),
+  legacyCreativeFormatResolverTimeoutMs: 10_000,
+  legacyCreativeFormatResolverConcurrency: 8,
+});
+```
+
+The resolver runs only after bundled/standard projection fails, receives the
+exact owner-qualified format tuple plus non-secret request context, and may
+resolve independent formats concurrently. Returning no declaration, throwing,
+or returning a malformed declaration fails closed with `INVALID_REQUEST`.
+The SDK runs at most eight lookups concurrently and aborts the shared resolver
+phase after ten seconds by default. Resolvers should honor the supplied
+`signal`; tune the timeout and 1–64 concurrency options for the backing catalog.
+
+When a `SalesPlatform.getProducts` implementation already has owner-scoped
+catalog snapshots, attach them directly to each returned product instead of
+performing another lookup:
+
+```ts
+import { getHydratedLegacyFormatIds } from '@adcp/sdk/server';
+
+const sales = {
+  getProducts: async () => ({
+    cache_scope: 'account',
+    products: [{ ...legacyProduct, projectionCatalogs: [publisherSnapshot] }],
+  }),
+  createMediaBuy: async request => {
+    const exactSellerRoutes = getHydratedLegacyFormatIds(request.packages[0].product);
+    return proxyCreateToLegacySeller(request, exactSellerRoutes);
+  },
+};
+```
+
+`projectionCatalogs` is framework-only metadata: the SDK consumes it before
+projection and never emits it on the buyer wire. With `ctxMetadata` storage
+configured, the SDK persists the resolved owner-qualified routes privately and
+restores them for hydrated create packages and update `packages`/
+`new_packages`. Read them with `getHydratedLegacyFormatIds`; they remain absent
+from serialized canonical products and buyer responses.
+
 Modern server platform handlers always receive canonical creatives. An invalid
 explicit conversion is rejected with `INVALID_REQUEST`; an unmapped legacy ref
 without a converter is never guessed as one of the 12 standard canonical

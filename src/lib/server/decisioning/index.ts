@@ -245,6 +245,7 @@ export type {
   MediaBuyLifecycleCorePlatform,
   MediaBuyLifecycleProposalPlatform,
   GetProductsPayload,
+  GetProductsProjectionInput,
   LegacyGetProductsPayload,
   GetProductsHandlerResult,
   CreateMediaBuyPayload,
@@ -341,6 +342,7 @@ export type {
 // new shape. Subject to change before 6.0 GA.
 export {
   createAdcpServerFromPlatform,
+  getHydratedLegacyFormatIds,
   getAllAdcpMigrations,
   type CreateAdcpServerFromPlatformOptions,
   type LegacyDecisioningHandlerGroups,

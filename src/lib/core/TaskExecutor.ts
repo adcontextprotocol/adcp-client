@@ -790,6 +790,17 @@ function trustedDeferredServerTaskId(state: DeferredTaskState): string | undefin
   );
 }
 
+function attachDeferredServerVersion<T>(result: TaskResult<T>, state: DeferredTaskState): TaskResult<T> {
+  result.metadata = {
+    ...result.metadata,
+    serverVersion: state.serverVersion,
+    ...(state.serverVersionSynthetic !== undefined && {
+      serverVersionSynthetic: state.serverVersionSynthetic,
+    }),
+  };
+  return attachMatch(result);
+}
+
 interface DeferredFinalizationLease {
   finalize<T>(result: TaskResult<T>): Promise<void>;
   release(completionHandlerPublished?: boolean): Promise<void>;
@@ -1108,6 +1119,11 @@ export class TaskExecutor {
       clarificationRounds: args.clarificationRounds ?? 0,
       status: args.status,
     };
+    const taskState = this.activeTasks.get(args.taskId);
+    if (taskState?.serverVersion !== undefined) meta.serverVersion = taskState.serverVersion;
+    if (taskState?.serverVersionSynthetic !== undefined) {
+      meta.serverVersionSynthetic = taskState.serverVersionSynthetic;
+    }
     if (args.inputRequest) meta.inputRequest = args.inputRequest;
     const key = this.activeTasks.get(args.taskId)?.idempotencyKey;
     if (key) meta.idempotency_key = key;
@@ -1237,6 +1253,8 @@ export class TaskExecutor {
       maxAttempts: options.maxClarifications || this.config.defaultMaxClarifications || 3,
       options,
       agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+      serverVersion: effectiveServerVersion,
+      serverVersionSynthetic: targetCapabilities?._synthetic ?? serverVersion === undefined,
       idempotencyKey,
     };
     this.activeTasks.set(taskId, taskState);
@@ -2766,6 +2784,7 @@ export class TaskExecutor {
           ...(serverContextId !== undefined && { contextId: serverContextId }),
           a2aTaskId,
           serverVersion,
+          serverVersionSynthetic: this.activeTasks.get(taskId)?.serverVersionSynthetic,
           agentId: agent.id,
           taskName,
           params: durableDeferredSnapshot(params),
@@ -2907,6 +2926,7 @@ export class TaskExecutor {
           ...(serverContextId !== undefined && { contextId: serverContextId }),
           a2aTaskId,
           serverVersion,
+          serverVersionSynthetic: this.activeTasks.get(taskId)?.serverVersionSynthetic,
           agentId: agent.id,
           taskName,
           params: durableDeferredSnapshot(params),
@@ -3613,6 +3633,10 @@ export class TaskExecutor {
         clarificationRounds: 0,
         status,
         a2aTaskId: state.a2aTaskId,
+        serverVersion: state.serverVersion,
+        ...(state.serverVersionSynthetic !== undefined && {
+          serverVersionSynthetic: state.serverVersionSynthetic,
+        }),
         ...(state.contextId !== undefined && { contextId: state.contextId }),
         ...(state.settlementServerTaskId !== undefined && { serverTaskId: state.settlementServerTaskId }),
       },
@@ -3825,7 +3849,7 @@ export class TaskExecutor {
       if (normalizedFinalized.serverTaskId === undefined) {
         throw new Error('The finalized deferred settlement does not contain its trusted seller task identity.');
       }
-      const finalized = attachMatch(normalizedFinalized.result);
+      const finalized = attachDeferredServerVersion(normalizedFinalized.result, state);
       if (state.settlementCompletionHandlerPublished === true) {
         markCompletionHandlerAlreadyPublished(finalized);
       }
@@ -3900,7 +3924,7 @@ export class TaskExecutor {
           );
         }
         return {
-          result: recovered.result,
+          result: attachDeferredServerVersion(recovered.result, currentRoute.state),
           ...(currentRoute.state.clientContext !== undefined && {
             clientContext: structuredClone(currentRoute.state.clientContext),
           }),
@@ -3957,7 +3981,7 @@ export class TaskExecutor {
         true
       );
       return {
-        result: attachMatch(recoveredPending),
+        result: attachDeferredServerVersion(recoveredPending, state),
         ...(state.clientContext !== undefined && { clientContext: structuredClone(state.clientContext) }),
         settlementOperationId: committedOperationId,
         settlementServerTaskId: state.settlementPendingTaskId,
@@ -3996,7 +4020,7 @@ export class TaskExecutor {
           markCompletionHandlerAlreadyPublished(recovered);
         }
         return {
-          result: attachMatch(recovered),
+          result: attachDeferredServerVersion(recovered, state),
           ...(state.clientContext !== undefined && { clientContext: structuredClone(state.clientContext) }),
           settlementOperationId: committedOperationId,
           ...(state.settlementServerTaskId !== undefined && {
@@ -4198,6 +4222,7 @@ export class TaskExecutor {
         state.clientContext,
         state.settlementResumeAuthorizationRequired === true
       );
+      resumed = attachDeferredServerVersion(resumed, state);
       const observedResumedServerTaskId = resumed.metadata.serverTaskId;
       if (requiresSettlement && !TERMINAL_TASK_STATUSES.has(resumed.status as TaskStatus)) {
         resumed = attachMatch(
@@ -4231,6 +4256,9 @@ export class TaskExecutor {
               : {}),
           a2aTaskId: nextA2ATaskId,
           serverVersion: state.serverVersion,
+          ...(state.serverVersionSynthetic !== undefined && {
+            serverVersionSynthetic: state.serverVersionSynthetic,
+          }),
           agentId: state.agentId,
           taskName: state.taskName,
           params: durableDeferredSnapshot(state.params),
@@ -4514,7 +4542,7 @@ export class TaskExecutor {
         }
       }
       return {
-        result: attachMatch(settledResult),
+        result: attachDeferredServerVersion(settledResult, state),
         ...(state.clientContext !== undefined && { clientContext: structuredClone(state.clientContext) }),
         ...(state.settlementOperationId !== undefined && {
           settlementOperationId: state.settlementOperationId,
