@@ -474,6 +474,8 @@ export interface CallerMutationScope {
  */
 export interface HandlerContext<TAccount = unknown> {
   account?: TAccount;
+  /** Transport cancellation signal for the current request. */
+  signal?: AbortSignal;
   /**
    * AdCP release selected for this request after applying the buyer pin to
    * `capabilities.adcp.supported_versions`. This may be older than the
@@ -5525,6 +5527,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         const ctx: HandlerContext<TAccount> = {
           store: stateStore,
           servedAdcpVersion: requestRelease.validationVersion,
+          ...(extra?.signal !== undefined && { signal: extra.signal }),
         };
         if (extra?.authInfo) {
           ctx.authInfo = extra.authInfo;

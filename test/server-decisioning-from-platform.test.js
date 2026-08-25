@@ -1344,9 +1344,11 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
         adcpVersion: '3.1.18',
         capabilities: { supported_versions: ['3.0.25', '3.1.18'] },
         validation: { requests: 'off', responses: 'off' },
+        legacyCreativeFormatResolverConcurrency: 2,
         legacyCreativeFormatResolver: async context => {
           calls.push(context);
           assert.strictEqual(Object.isFrozen(context.formatId), true);
+          assert.strictEqual(context.signal.aborted, false);
           inFlight += 1;
           maxInFlight = Math.max(maxInFlight, inFlight);
           await new Promise(resolve => setImmediate(resolve));
@@ -1380,7 +1382,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
 
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
     assert.strictEqual(calls.length, 3, 'known AAO and dual-declared formats must not invoke the adopter resolver');
-    assert.ok(maxInFlight >= 2, 'independent format resolutions should run concurrently');
+    assert.strictEqual(maxInFlight, 2, 'format resolution must honor the configured concurrency bound');
     assert.deepStrictEqual(
       calls.map(({ operation, servedAdcpVersion, accountId, formatId }) => ({
         operation,
@@ -1595,6 +1597,134 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       assert.strictEqual(result.isError, true);
       assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
     }
+  });
+
+  it('bounds asynchronous legacy format resolution with a shared aborting deadline', async () => {
+    const base = buildPlatform();
+    assert.throws(
+      () =>
+        createAdcpServerFromPlatform(buildPlatform(), {
+          name: 'invalid-legacy-format-resolution-limit',
+          version: '1.0.0',
+          legacyCreativeFormatResolverConcurrency: 0,
+          legacyCreativeFormatResolver: async () => null,
+        }),
+      /legacyCreativeFormatResolverConcurrency must be an integer between 1 and 64/
+    );
+    assert.throws(
+      () =>
+        createAdcpServerFromPlatform(buildPlatform(), {
+          name: 'invalid-legacy-format-resolution-timeout',
+          version: '1.0.0',
+          legacyCreativeFormatResolverTimeoutMs: 2_147_483_648,
+          legacyCreativeFormatResolver: async () => null,
+        }),
+      /legacyCreativeFormatResolverTimeoutMs must be an integer between 1 and 2147483647/
+    );
+    let resolverSignal;
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async () => ({
+            cache_scope: 'account',
+            products: [
+              {
+                product_id: 'deadline-custom',
+                name: 'Deadline custom',
+                format_ids: [{ agent_url: 'https://formats.example/catalog', id: 'hung_custom' }],
+              },
+            ],
+          }),
+        },
+      }),
+      {
+        name: 'bounded-async-legacy-format-resolution',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+        legacyCreativeFormatResolverTimeoutMs: 20,
+        legacyCreativeFormatResolverConcurrency: 1,
+        legacyCreativeFormatResolver: ({ signal }) => {
+          resolverSignal = signal;
+          return new Promise(() => {});
+        },
+      }
+    );
+
+    const startedAt = Date.now();
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: { account: { account_id: 'acc_test' }, brief: 'deadline custom format' },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(resolverSignal?.aborted, true);
+    assert.ok(Date.now() - startedAt < 1_000, 'hung resolver must not stall the get_products response');
+  });
+
+  it('cancels legacy format resolution with the request and does not start queued lookups', async () => {
+    const base = buildPlatform();
+    let resolverCalls = 0;
+    let resolverStartedResolve;
+    const resolverStarted = new Promise(resolve => {
+      resolverStartedResolve = resolve;
+    });
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async () => ({
+            cache_scope: 'account',
+            products: [
+              {
+                product_id: 'cancelled-custom',
+                name: 'Cancelled custom',
+                format_ids: [
+                  { agent_url: 'https://formats.example/catalog', id: 'first' },
+                  { agent_url: 'https://formats.example/catalog', id: 'second' },
+                  { agent_url: 'https://formats.example/catalog', id: 'third' },
+                ],
+              },
+            ],
+          }),
+        },
+      }),
+      {
+        name: 'request-cancelled-legacy-format-resolution',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+        legacyCreativeFormatResolverTimeoutMs: 10_000,
+        legacyCreativeFormatResolverConcurrency: 1,
+        legacyCreativeFormatResolver: () => {
+          resolverCalls += 1;
+          resolverStartedResolve();
+          return new Promise(() => {});
+        },
+      }
+    );
+    const controller = new AbortController();
+    const resultPromise = server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'get_products',
+          arguments: { account: { account_id: 'acc_test' }, brief: 'cancelled custom format' },
+        },
+      },
+      { signal: controller.signal }
+    );
+    await resolverStarted;
+    const startedAt = Date.now();
+    controller.abort(new Error('buyer cancelled'));
+    const result = await resultPromise;
+
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(resolverCalls, 1, 'queued lookups must not invoke the resolver after cancellation');
+    assert.ok(Date.now() - startedAt < 1_000, 'request cancellation must promptly settle the response');
   });
 
   it('rejects format-agnostic modern products while preserving nested 3.0 response projection', async () => {

@@ -244,8 +244,10 @@ asynchronous `legacyCreativeFormatResolver` instead:
 createAdcpServerFromPlatform(platform, {
   name: 'Seller',
   version: '1.0.0',
-  legacyCreativeFormatResolver: async ({ formatId, accountId, servedAdcpVersion }) =>
-    catalog.resolveCanonicalDeclaration(formatId, { accountId, servedAdcpVersion }),
+  legacyCreativeFormatResolver: async ({ formatId, accountId, servedAdcpVersion, signal }) =>
+    catalog.resolveCanonicalDeclaration(formatId, { accountId, servedAdcpVersion, signal }),
+  legacyCreativeFormatResolverTimeoutMs: 10_000,
+  legacyCreativeFormatResolverConcurrency: 8,
 });
 ```
 
@@ -253,6 +255,9 @@ The resolver runs only after bundled/standard projection fails, receives the
 exact owner-qualified format tuple plus non-secret request context, and may
 resolve independent formats concurrently. Returning no declaration, throwing,
 or returning a malformed declaration fails closed with `INVALID_REQUEST`.
+The SDK runs at most eight lookups concurrently and aborts the shared resolver
+phase after ten seconds by default. Resolvers should honor the supplied
+`signal`; tune the timeout and 1–64 concurrency options for the backing catalog.
 
 When a `SalesPlatform.getProducts` implementation already has owner-scoped
 catalog snapshots, attach them directly to each returned product instead of

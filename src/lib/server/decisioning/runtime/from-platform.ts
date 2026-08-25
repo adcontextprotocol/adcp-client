@@ -184,6 +184,7 @@ import {
   projectV1ProductToV2,
   type LegacyFormatConversionContext,
   type LegacyFormatConverter,
+  type LegacyFormatResolutionContext,
   type LegacyFormatResolver,
 } from '../../../v2/projection/v1-to-v2';
 import {
@@ -963,11 +964,83 @@ function preparePerProductProjectionCatalogs<T extends { products?: unknown[] }>
   };
 }
 
+const DEFAULT_LEGACY_FORMAT_RESOLVER_TIMEOUT_MS = 10_000;
+const DEFAULT_LEGACY_FORMAT_RESOLVER_CONCURRENCY = 8;
+const MAX_LEGACY_FORMAT_RESOLVER_TIMEOUT_MS = 2_147_483_647;
+const MAX_LEGACY_FORMAT_RESOLVER_CONCURRENCY = 64;
+
+function legacyFormatResolverLimit(
+  value: number | undefined,
+  fallback: number,
+  field: string,
+  maximum?: number
+): number {
+  if (value === undefined) return fallback;
+  if (!Number.isSafeInteger(value) || value <= 0 || (maximum !== undefined && value > maximum)) {
+    const range = maximum === undefined ? 'a positive safe integer' : `an integer between 1 and ${maximum}`;
+    throw new PlatformConfigError(`${field} must be ${range}.`);
+  }
+  return value;
+}
+
+function legacyFormatResolverAbortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new Error('legacyCreativeFormatResolver was aborted before projection completed.');
+}
+
+function createLegacyFormatResolverSignal(
+  requestSignal: AbortSignal | undefined,
+  timeoutMs: number
+): { signal: AbortSignal; dispose(): void } {
+  const controller = new AbortController();
+  const abortFromRequest = () => controller.abort(requestSignal?.reason);
+  if (requestSignal?.aborted) abortFromRequest();
+  else requestSignal?.addEventListener('abort', abortFromRequest, { once: true });
+  const timeout = controller.signal.aborted
+    ? undefined
+    : setTimeout(
+        () => controller.abort(new Error(`legacyCreativeFormatResolver exceeded its ${timeoutMs}ms deadline.`)),
+        timeoutMs
+      );
+  return {
+    signal: controller.signal,
+    dispose() {
+      if (timeout !== undefined) clearTimeout(timeout);
+      requestSignal?.removeEventListener('abort', abortFromRequest);
+    },
+  };
+}
+
+async function invokeLegacyFormatResolver(
+  resolver: LegacyFormatResolver,
+  context: Omit<LegacyFormatResolutionContext, 'signal'>,
+  signal: AbortSignal
+): Promise<Awaited<ReturnType<LegacyFormatResolver>>> {
+  if (signal.aborted) throw legacyFormatResolverAbortError(signal);
+  let abortListener: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    abortListener = () => reject(legacyFormatResolverAbortError(signal));
+    signal.addEventListener('abort', abortListener, { once: true });
+  });
+  try {
+    return await Promise.race([Promise.resolve().then(() => resolver({ ...context, signal })), aborted]);
+  } finally {
+    if (abortListener) signal.removeEventListener('abort', abortListener);
+  }
+}
+
 async function resolveLegacyProductFormats<T extends { products?: unknown[] }>(
   response: T,
   converter: LegacyFormatConverter | undefined,
   resolver: LegacyFormatResolver | undefined,
-  requestContext: { servedAdcpVersion?: string; accountId?: string }
+  requestContext: {
+    servedAdcpVersion?: string;
+    accountId?: string;
+    signal?: AbortSignal;
+    timeoutMs: number;
+    concurrency: number;
+  }
 ): Promise<LegacyFormatConverter | undefined> {
   if (!resolver) return converter;
   assertSafeGetProductsResponse(response);
@@ -977,7 +1050,7 @@ async function resolveLegacyProductFormats<T extends { products?: unknown[] }>(
     string,
     Awaited<ReturnType<LegacyFormatResolver>> | { readonly resolutionError: unknown }
   >();
-  const pending: Promise<void>[] = [];
+  const pending: Array<(signal: AbortSignal) => Promise<void>> = [];
   const scanScope = (projectionProduct: V1Product, resolverProductId: string, resolverFieldPrefix: string): void => {
     if (Array.isArray((projectionProduct as unknown as V2Product).format_options)) return;
     for (let index = 0; index < projectionProduct.format_ids.length; index++) {
@@ -1022,26 +1095,27 @@ async function resolveLegacyProductFormats<T extends { products?: unknown[] }>(
 
       const key = legacyFormatResolutionKey(projectionContext);
       const frozenFormatId = Object.freeze({ ...(formatId as V1FormatId) });
-      pending.push(
-        Promise.resolve()
-          .then(() =>
-            resolver({
+      pending.push(async signal => {
+        try {
+          const value = await invokeLegacyFormatResolver(
+            resolver,
+            {
               formatId: frozenFormatId,
               productId: resolverProductId,
               field: resolverField,
               operation: 'get_products',
-              ...requestContext,
-            })
-          )
-          .then(
-            value => {
-              resolutions.set(key, value);
+              ...(requestContext.servedAdcpVersion !== undefined && {
+                servedAdcpVersion: requestContext.servedAdcpVersion,
+              }),
+              ...(requestContext.accountId !== undefined && { accountId: requestContext.accountId }),
             },
-            error => {
-              resolutions.set(key, { resolutionError: error });
-            }
-          )
-      );
+            signal
+          );
+          resolutions.set(key, value);
+        } catch (error) {
+          resolutions.set(key, { resolutionError: error });
+        }
+      });
     }
   };
 
@@ -1071,7 +1145,21 @@ async function resolveLegacyProductFormats<T extends { products?: unknown[] }>(
       );
     }
   }
-  await Promise.all(pending);
+  const resolverSignal = createLegacyFormatResolverSignal(requestContext.signal, requestContext.timeoutMs);
+  try {
+    let nextJob = 0;
+    const workerCount = Math.min(requestContext.concurrency, pending.length);
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        while (nextJob < pending.length) {
+          const job = pending[nextJob++];
+          if (job) await job(resolverSignal.signal);
+        }
+      })
+    );
+  } finally {
+    resolverSignal.dispose();
+  }
   if (resolutions.size === 0) return converter;
 
   return context => {
@@ -1863,6 +1951,10 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * format tuple plus non-secret request routing context and fails closed.
    */
   legacyCreativeFormatResolver?: LegacyFormatResolver;
+  /** Shared resolver-phase deadline in milliseconds. Defaults to 10 seconds. */
+  legacyCreativeFormatResolverTimeoutMs?: number;
+  /** Maximum concurrent resolver calls within one get_products response (1–64). Defaults to 8. */
+  legacyCreativeFormatResolverConcurrency?: number;
   /** Resolve persisted canonical custom formats when this server emits a legacy wire response. */
   canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver;
   /**
@@ -2945,6 +3037,20 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         opts.proposalStore,
         opts.legacyCreativeFormatConverter,
         opts.legacyCreativeFormatResolver,
+        {
+          timeoutMs: legacyFormatResolverLimit(
+            opts.legacyCreativeFormatResolverTimeoutMs,
+            DEFAULT_LEGACY_FORMAT_RESOLVER_TIMEOUT_MS,
+            'legacyCreativeFormatResolverTimeoutMs',
+            MAX_LEGACY_FORMAT_RESOLVER_TIMEOUT_MS
+          ),
+          concurrency: legacyFormatResolverLimit(
+            opts.legacyCreativeFormatResolverConcurrency,
+            DEFAULT_LEGACY_FORMAT_RESOLVER_CONCURRENCY,
+            'legacyCreativeFormatResolverConcurrency',
+            MAX_LEGACY_FORMAT_RESOLVER_CONCURRENCY
+          ),
+        },
         opts.canonicalFormatLegacyResolver,
         defaultCreativeWireMode
       ),
@@ -5639,6 +5745,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   proposalStore: import('../proposal').ProposalStore | undefined,
   legacyFormatConverter: LegacyFormatConverter | undefined,
   legacyFormatResolver: LegacyFormatResolver | undefined,
+  legacyFormatResolverOptions: { timeoutMs: number; concurrency: number },
   canonicalFormatLegacyResolver: CanonicalFormatLegacyResolver | undefined,
   creativeWireMode: 'canonical' | 'legacy'
 ): MediaBuyHandlers<Account> | undefined {
@@ -5870,6 +5977,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 {
                   ...(ctx.servedAdcpVersion !== undefined && { servedAdcpVersion: ctx.servedAdcpVersion }),
                   ...(reqCtx.account?.id !== undefined && { accountId: reqCtx.account.id }),
+                  ...(ctx.signal !== undefined && { signal: ctx.signal }),
+                  ...legacyFormatResolverOptions,
                 }
               );
               const canonicalResult = asCanonicalProductResponse(

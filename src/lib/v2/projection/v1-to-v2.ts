@@ -132,6 +132,8 @@ export interface LegacyFormatResolutionContext extends LegacyFormatConversionCon
   operation: 'get_products';
   servedAdcpVersion?: string;
   accountId?: string;
+  /** Aborts when the request is cancelled or the SDK resolver deadline expires. */
+  signal?: AbortSignal;
 }
 
 /**
