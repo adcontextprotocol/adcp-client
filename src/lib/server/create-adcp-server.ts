@@ -3354,9 +3354,12 @@ function hasDomainHandler(entries: readonly HandlerEntry[], handlers: object | u
  */
 function detectProtocolsFromHandlers<TAccount>(config: AdcpServerConfig<TAccount>): AdcpProtocol[] {
   const protocols: AdcpProtocol[] = [];
+  const declaresSalesSpecialism = config.capabilities?.specialisms?.some(specialism => specialism.startsWith('sales-'));
+  const hasAnyMediaBuyHandler = hasDomainHandler(MEDIA_BUY_ENTRIES, config.mediaBuy);
   if (
     hasDomainHandler(MEDIA_BUY_PROTOCOL_ENTRIES, config.mediaBuy) ||
-    hasDomainHandler(PROPOSAL_NEGOTIATION_ENTRIES, config.proposalNegotiation)
+    hasDomainHandler(PROPOSAL_NEGOTIATION_ENTRIES, config.proposalNegotiation) ||
+    (declaresSalesSpecialism && hasAnyMediaBuyHandler)
   ) {
     protocols.push('media_buy');
   }

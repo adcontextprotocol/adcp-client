@@ -891,6 +891,23 @@ describe('createAdcpServer', () => {
           tools: ['get_adcp_capabilities', 'list_creative_formats'],
           protocols: [],
         },
+        {
+          name: 'sales-social-ingestion',
+          config: {
+            capabilities: { specialisms: ['sales-social'] },
+            mediaBuy: { syncCreatives: async () => ({ creatives: [] }) },
+          },
+          tools: ['get_adcp_capabilities', 'sync_creatives'],
+          protocols: ['media_buy'],
+        },
+        {
+          name: 'bare-sales-specialism',
+          config: {
+            capabilities: { specialisms: ['sales-guaranteed'] },
+          },
+          tools: ['get_adcp_capabilities'],
+          protocols: [],
+        },
       ];
 
       for (const fixture of cases) {
