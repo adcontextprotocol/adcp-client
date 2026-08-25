@@ -1873,6 +1873,58 @@ export function applyCodegenSchemaWorkarounds(schema: any, schemaName: string): 
     return normalizePostalAreaForCodegen(schema);
   }
 
+  if (schemaName === 'ListCreativesResponse') {
+    const assignedPackages =
+      schema.properties?.creatives?.items?.properties?.assignments?.properties?.assigned_packages?.items;
+    if (assignedPackages && typeof assignedPackages === 'object' && !Array.isArray(assignedPackages)) {
+      // Assigned-package rows already declare their complete public identity
+      // and approval fields at the root. Fold the structural indicator overlay
+      // into that root, then remove runtime-only conditional keywords that make
+      // jsts emit only the overlay fields. Ajv still validates the untouched
+      // signed schema, including every conditional.
+      const structuralProperties = (assignedPackages.allOf ?? []).reduce(
+        (properties: Record<string, any>, member: any) =>
+          mergeCodegenPropertyMaps(
+            properties,
+            member && typeof member === 'object' && !Array.isArray(member) ? member.properties : undefined
+          ),
+        {}
+      );
+      const cleanedAssignedPackages = {
+        ...assignedPackages,
+        properties: mergeCodegenPropertyMaps(assignedPackages.properties, structuralProperties),
+      };
+      for (const keyword of ['allOf', 'dependencies', 'not', 'if', 'then', 'else']) {
+        delete cleanedAssignedPackages[keyword];
+      }
+      return {
+        ...schema,
+        properties: {
+          ...schema.properties,
+          creatives: {
+            ...schema.properties.creatives,
+            items: {
+              ...schema.properties.creatives.items,
+              properties: {
+                ...schema.properties.creatives.items.properties,
+                assignments: {
+                  ...schema.properties.creatives.items.properties.assignments,
+                  properties: {
+                    ...schema.properties.creatives.items.properties.assignments.properties,
+                    assigned_packages: {
+                      ...schema.properties.creatives.items.properties.assignments.properties.assigned_packages,
+                      items: cleanedAssignedPackages,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      };
+    }
+  }
+
   if (schemaName === 'GetMediaBuysResponse') {
     const item = schema.properties?.media_buys?.items;
     if (item && typeof item === 'object' && !Array.isArray(item)) {

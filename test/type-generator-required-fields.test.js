@@ -136,6 +136,44 @@ writeFileSync(__OUTPUT__, JSON.stringify({
   assert.deepEqual(result.indicatorKinds, ['creative_fatigue', 'creative_quality_opportunity']);
 });
 
+test('ListCreativesResponse keeps assigned-package identity alongside indicator refinements', () => {
+  const result = runGeneratorHarness(`
+import { readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { applyCodegenSchemaWorkarounds } from __GENERATOR__;
+
+const source = JSON.parse(
+  readFileSync(path.join(__REPO_ROOT__, 'schemas/cache/latest/creative/list-creatives-response.json'), 'utf8')
+);
+const transformed = applyCodegenSchemaWorkarounds(source, 'ListCreativesResponse');
+const assignment = transformed.properties.creatives.items.properties.assignments
+  .properties.assigned_packages.items;
+writeFileSync(__OUTPUT__, JSON.stringify({
+  hasAllOf: Array.isArray(assignment.allOf),
+  required: assignment.required,
+  properties: Object.keys(assignment.properties),
+}));
+`);
+
+  assert.equal(result.hasAllOf, false);
+  assert.ok(result.required.includes('package_id'));
+  assert.ok(result.required.includes('assigned_date'));
+  for (const field of [
+    'package_id',
+    'media_buy_id',
+    'assigned_date',
+    'approval_status',
+    'rejection_reason',
+    'approval_scopes',
+    'indicators',
+    'indicator_types_evaluated',
+    'indicators_as_of',
+    'indicators_evaluated_scope',
+  ]) {
+    assert.ok(result.properties.includes(field), `${field} should remain in the assignment shape`);
+  }
+});
+
 test('refine_proposals result overlays preserve the canonical proposal base', () => {
   const result = runGeneratorHarness(`
 import { readFileSync, writeFileSync } from 'node:fs';

@@ -129,6 +129,7 @@ import type {
   CanonicalFormatBase as ToolCanonicalFormatBase,
   CommercialTerms,
   ExplicitPackagesWithFixedAllocation,
+  ListCreativesResponse,
   Placement,
   PostalCountrySystem,
   ProductFormatDeclaration,
@@ -163,6 +164,24 @@ import type {
 import { createCanonicalReferenceResolver as createSubpathCanonicalReferenceResolver } from '@adcp/sdk/canonical-references';
 import { customToolFor, customToolForSchema, TOOL_INPUT_SCHEMAS, TOOL_INPUT_SHAPES, TOOL_REQUEST_SCHEMAS } from '@adcp/sdk/schemas';
 import * as publicSchemas from '@adcp/sdk/schemas';
+
+// Public schema declarations must retain their object helpers and complete
+// parse outputs after packing, not just while compiling inside the repository.
+void publicSchemas.ProductSchema.shape.reporting_capabilities;
+void publicSchemas.ProductSchema.extend({});
+void publicSchemas.PackageSchema.pick({ package_id: true });
+void publicSchemas.PackageRequestSchema.extend({});
+void publicSchemas.PackageUpdateSchema.omit({ paused: true });
+void publicSchemas.GetProductsResponseSchema.pick({ status: true });
+void publicSchemas.PackageSchema.safeParse({});
+
+type PackedAssignedPackage = NonNullable<
+  NonNullable<ListCreativesResponse['creatives'][number]['assignments']>['assigned_packages']
+>[number];
+declare const _packedAssignment: PackedAssignedPackage;
+const _packedAssignmentId: string = _packedAssignment.package_id;
+const _packedAssignedDate: string = _packedAssignment.assigned_date;
+void [_packedAssignmentId, _packedAssignedDate, _packedAssignment.approval_status, _packedAssignment.indicators];
 
 declare const _server: AdcpServer;
 void _server;

@@ -11,6 +11,10 @@ import {
   CanonicalFormatImageSchema,
   MediaBuyFeaturesSchema,
   ProductSchema,
+  PackageSchema,
+  PackageRequestSchema,
+  PackageUpdateSchema,
+  GetProductsResponseSchema,
   ProductFormatDeclarationSchema,
   PlacementSchema,
   FormatSchema,
@@ -22,8 +26,12 @@ import {
   GetAdCPCapabilitiesResponseSchema,
   ListTransformersResponseSchema,
 } from '../lib/types/schemas.generated';
-import type { Format, AvailablePackage } from '../lib/types/core.generated';
+import type { Format, AvailablePackage, PackageUpdate } from '../lib/types/core.generated';
 import type {
+  GetProductsResponse,
+  Package,
+  PackageRequest,
+  Product,
   ProductFormatDeclaration,
   Placement,
   Transformer,
@@ -48,6 +56,12 @@ const ProductIdentifierSchema = ProductSchema.pick({
   product_id: true,
 });
 void ProductIdentifierSchema;
+
+void ProductSchema.shape.reporting_capabilities;
+PackageSchema.pick({ package_id: true });
+PackageRequestSchema.extend({ _buyer_note: z.string().optional() });
+PackageUpdateSchema.omit({ paused: true });
+GetProductsResponseSchema.pick({ status: true });
 
 // Pass 4 (`unwrapNamedRecordUnionIntersections`) target schemas: the
 // `SizeModeMutexSchema.and(z.object(...))` form previously left these as
@@ -78,6 +92,11 @@ void MediaBuyFeaturesExtended;
 // threshold. Their explicit annotations must retain parse output types and,
 // for object schemas, the public composition helpers.
 declare const unknownInput: unknown;
+const product: Product = ProductSchema.parse(unknownInput);
+const mediaPackage: Package = PackageSchema.parse(unknownInput);
+const packageRequest: PackageRequest = PackageRequestSchema.parse(unknownInput);
+const packageUpdate: PackageUpdate = PackageUpdateSchema.parse(unknownInput);
+const productsResponse: GetProductsResponse = GetProductsResponseSchema.parse(unknownInput);
 const productFormat: ProductFormatDeclaration = ProductFormatDeclarationSchema.parse(unknownInput);
 const placement: Placement = PlacementSchema.parse(unknownInput);
 const format: Format = FormatSchema.parse(unknownInput);
@@ -90,6 +109,11 @@ const transformerResponse: ListTransformersResponseCreativeAgent =
 const capabilities: GetAdCPCapabilitiesResponse = GetAdCPCapabilitiesResponseSchema.parse(unknownInput);
 const listTransformers: ListTransformersResponse = ListTransformersResponseSchema.parse(unknownInput);
 void [
+  product,
+  mediaPackage,
+  packageRequest,
+  packageUpdate,
+  productsResponse,
   productFormat,
   placement,
   format,

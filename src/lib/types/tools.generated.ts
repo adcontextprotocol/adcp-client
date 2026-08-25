@@ -20303,10 +20303,47 @@ export interface ListedCreativeNamedFormatReference {
      * Bounded package assignment projection. Under assignment_projection: matching, contains only assignments carrying a requested indicator type; otherwise contains active assignments up to assignment_limit. The response ceiling is enforced via verifier_constraints rather than maxItems, so payloads from 3.1 sellers remain schema-valid.
      */
     assigned_packages?: {
-      indicator_types_evaluated?: ('creative_fatigue' | 'creative_quality_opportunity')[];
-      indicators?: {
+      /**
+       * Package identifier
+       */
+      package_id: string;
+      /**
+       * Media buy containing this package. A seller advertising list_creatives in media_buy.relationship_notifications.projection_tasks MUST include this field on every assignment row, including rows where indicators is omitted as unknown, so buyers can key and reread the relationship unambiguously when package IDs are reused across media buys.
+       */
+      media_buy_id?: string;
+      /**
+       * When this assignment was created
+       * @format date-time
+       */
+      assigned_date: string;
+      approval_status?: CreativeApprovalStatus;
+      /**
+       * Human-readable explanation when approval_status is rejected. Mirrors get_media_buys for the same relationship.
+       */
+      rejection_reason?: string;
+      /**
+       * Complete, disjoint publisher/placement approval partition when approval_status is partially_approved. A normalized scope appears once. For one publisher, use either one publisher-wide row or placement-specific rows, never both. Omit when one approval_status applies uniformly to the whole assignment. The same scoped outcomes are mirrored on get_media_buys.
+       */
+      approval_scopes?: ScopedCreativeApproval[];
+      /**
+       * Current seller indicators that are true for this creative in this package assignment. The package assignment supplies the default delivery scope; an indicator may narrow further with scope. Omitted means unknown or not evaluated. A present empty array means the seller completed the evaluation identified by indicators_evaluated_scope at indicators_as_of and asserts no current indicator in that evaluated scope.
+       */
+      indicators?: (Indicator & {
         type?: 'creative_fatigue' | 'creative_quality_opportunity';
-      }[];
+      })[];
+      /**
+       * Indicator types covered by this assignment snapshot. Required whenever indicators is present; omitted types remain unknown.
+       */
+      indicator_types_evaluated?: (IndicatorType & ('creative_fatigue' | 'creative_quality_opportunity'))[];
+      /**
+       * When the seller last completed the evaluation represented by indicators for this relationship. Required whenever indicators is present, including an empty array.
+       * @format date-time
+       */
+      indicators_as_of?: string;
+      /**
+       * Optional publisher or placement scopes covered by this evaluation. Omit when indicators covers the whole package–creative assignment. When present, scopes not listed remain unknown; every returned indicator.scope entry MUST be contained by this set.
+       */
+      indicators_evaluated_scope?: IndicatorScope[];
     }[];
   };
   /**
@@ -20592,10 +20629,47 @@ export interface ListedCreativeCanonicalFormatKind {
      * Bounded package assignment projection. Under assignment_projection: matching, contains only assignments carrying a requested indicator type; otherwise contains active assignments up to assignment_limit. The response ceiling is enforced via verifier_constraints rather than maxItems, so payloads from 3.1 sellers remain schema-valid.
      */
     assigned_packages?: {
-      indicator_types_evaluated?: ('creative_fatigue' | 'creative_quality_opportunity')[];
-      indicators?: {
+      /**
+       * Package identifier
+       */
+      package_id: string;
+      /**
+       * Media buy containing this package. A seller advertising list_creatives in media_buy.relationship_notifications.projection_tasks MUST include this field on every assignment row, including rows where indicators is omitted as unknown, so buyers can key and reread the relationship unambiguously when package IDs are reused across media buys.
+       */
+      media_buy_id?: string;
+      /**
+       * When this assignment was created
+       * @format date-time
+       */
+      assigned_date: string;
+      approval_status?: CreativeApprovalStatus;
+      /**
+       * Human-readable explanation when approval_status is rejected. Mirrors get_media_buys for the same relationship.
+       */
+      rejection_reason?: string;
+      /**
+       * Complete, disjoint publisher/placement approval partition when approval_status is partially_approved. A normalized scope appears once. For one publisher, use either one publisher-wide row or placement-specific rows, never both. Omit when one approval_status applies uniformly to the whole assignment. The same scoped outcomes are mirrored on get_media_buys.
+       */
+      approval_scopes?: ScopedCreativeApproval[];
+      /**
+       * Current seller indicators that are true for this creative in this package assignment. The package assignment supplies the default delivery scope; an indicator may narrow further with scope. Omitted means unknown or not evaluated. A present empty array means the seller completed the evaluation identified by indicators_evaluated_scope at indicators_as_of and asserts no current indicator in that evaluated scope.
+       */
+      indicators?: (Indicator & {
         type?: 'creative_fatigue' | 'creative_quality_opportunity';
-      }[];
+      })[];
+      /**
+       * Indicator types covered by this assignment snapshot. Required whenever indicators is present; omitted types remain unknown.
+       */
+      indicator_types_evaluated?: (IndicatorType & ('creative_fatigue' | 'creative_quality_opportunity'))[];
+      /**
+       * When the seller last completed the evaluation represented by indicators for this relationship. Required whenever indicators is present, including an empty array.
+       * @format date-time
+       */
+      indicators_as_of?: string;
+      /**
+       * Optional publisher or placement scopes covered by this evaluation. Omit when indicators covers the whole package–creative assignment. When present, scopes not listed remain unknown; every returned indicator.scope entry MUST be contained by this set.
+       */
+      indicators_evaluated_scope?: IndicatorScope[];
     }[];
   };
   /**
