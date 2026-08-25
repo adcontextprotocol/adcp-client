@@ -1277,6 +1277,326 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     ]);
   });
 
+  it('resolves seller-owned legacy product formats asynchronously with exact owner routing', async () => {
+    const base = buildPlatform();
+    const calls = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const product = (product_id, agent_url, id) => ({
+      product_id,
+      name: product_id,
+      description: 'Legacy custom format',
+      format_ids: [{ agent_url, id }],
+      delivery_type: 'non_guaranteed',
+      publisher_properties: [{ publisher_domain: 'seller.example', selection_type: 'all' }],
+      reporting_capabilities: {
+        available_reporting_frequencies: ['daily'],
+        expected_delay_minutes: 60,
+        timezone: 'UTC',
+        supports_webhooks: false,
+        available_metrics: ['impressions'],
+        date_range_support: 'date_range',
+      },
+      pricing_options: [
+        { pricing_option_id: `${product_id}-cpm`, pricing_model: 'cpm', fixed_price: 5, currency: 'USD' },
+      ],
+    });
+    const ownerA = product('owner-a', 'https://formats-a.example/catalog', 'shared_takeover');
+    ownerA.placements = [
+      {
+        placement_id: 'companion',
+        name: 'Companion placement',
+        format_ids: [{ agent_url: 'https://formats-c.example/catalog', id: 'shared_takeover' }],
+      },
+    ];
+    const dualDeclared = product('dual-declared', 'https://formats-d.example/catalog', 'shared_takeover');
+    dualDeclared.format_options = [
+      {
+        format_option_id: 'takeover-d',
+        format_kind: 'custom',
+        format_shape: 'takeover_d',
+        format_schema: {
+          uri: 'https://schemas.example/takeover-d.json',
+          digest: `sha256:${'d'.repeat(64)}`,
+        },
+        params: {},
+        v1_format_ref: dualDeclared.format_ids,
+      },
+    ];
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async () => ({
+            cache_scope: 'account',
+            products: [
+              ownerA,
+              product('owner-b', 'https://formats-b.example/catalog', 'shared_takeover'),
+              product('known-aao', 'https://creative.adcontextprotocol.org/', 'display_300x250_image'),
+              dualDeclared,
+            ],
+          }),
+        },
+      }),
+      {
+        name: 'async-legacy-format-resolution',
+        version: '1.0.0',
+        adcpVersion: '3.1.18',
+        capabilities: { supported_versions: ['3.0.25', '3.1.18'] },
+        validation: { requests: 'off', responses: 'off' },
+        legacyCreativeFormatResolver: async context => {
+          calls.push(context);
+          assert.strictEqual(Object.isFrozen(context.formatId), true);
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise(resolve => setImmediate(resolve));
+          inFlight -= 1;
+          const owner = new URL(context.formatId.agent_url).hostname.split('-')[1].split('.')[0];
+          return {
+            format_option_id: `takeover-${owner}`,
+            format_kind: 'custom',
+            format_shape: `takeover_${owner}`,
+            format_schema: {
+              uri: `https://schemas.example/takeover-${owner}.json`,
+              digest: `sha256:${(owner === 'a' ? 'a' : 'b').repeat(64)}`,
+            },
+            params: {},
+          };
+        },
+      }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          adcp_version: '3.1.18',
+          account: { account_id: 'acc_async_formats' },
+          brief: 'custom takeovers',
+        },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(calls.length, 3, 'known AAO and dual-declared formats must not invoke the adopter resolver');
+    assert.ok(maxInFlight >= 2, 'independent format resolutions should run concurrently');
+    assert.deepStrictEqual(
+      calls.map(({ operation, servedAdcpVersion, accountId, formatId }) => ({
+        operation,
+        servedAdcpVersion,
+        accountId,
+        owner: formatId.agent_url,
+      })),
+      [
+        {
+          operation: 'get_products',
+          servedAdcpVersion: '3.1',
+          accountId: 'acc_async_formats',
+          owner: 'https://formats-a.example/catalog',
+        },
+        {
+          operation: 'get_products',
+          servedAdcpVersion: '3.1',
+          accountId: 'acc_async_formats',
+          owner: 'https://formats-c.example/catalog',
+        },
+        {
+          operation: 'get_products',
+          servedAdcpVersion: '3.1',
+          accountId: 'acc_async_formats',
+          owner: 'https://formats-b.example/catalog',
+        },
+      ]
+    );
+    const products = result.structuredContent.products;
+    assert.strictEqual(products[0].format_options[0].format_option_id, 'takeover-a');
+    assert.strictEqual(products[0].placements[0].format_options[0].format_option_id, 'takeover-c');
+    assert.deepStrictEqual(products[0].placements[0].format_options[0].v1_format_ref, [
+      { agent_url: 'https://formats-c.example/catalog', id: 'shared_takeover' },
+    ]);
+    assert.strictEqual(products[1].format_options[0].format_option_id, 'takeover-b');
+    assert.deepStrictEqual(products[0].format_options[0].v1_format_ref, [
+      { agent_url: 'https://formats-a.example/catalog', id: 'shared_takeover' },
+    ]);
+    assert.deepStrictEqual(products[1].format_options[0].v1_format_ref, [
+      { agent_url: 'https://formats-b.example/catalog', id: 'shared_takeover' },
+    ]);
+    assert.strictEqual(products[3].format_options[0].format_option_id, 'takeover-d');
+
+    calls.length = 0;
+    const v30Result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          adcp_version: '3.0.25',
+          account: { account_id: 'acc_async_formats' },
+          brief: 'custom takeovers on 3.0',
+        },
+      },
+    });
+    assert.notStrictEqual(v30Result.isError, true, JSON.stringify(v30Result.structuredContent));
+    assert.strictEqual(calls.length, 3);
+    assert.ok(calls.every(call => call.servedAdcpVersion === '3.0'));
+    assert.deepStrictEqual(v30Result.structuredContent.products[0].format_ids[0], {
+      agent_url: 'https://formats-a.example/catalog',
+      id: 'shared_takeover',
+    });
+  });
+
+  it('consumes per-product catalog snapshots for top-level and placement formats without emitting metadata', async () => {
+    const base = buildPlatform();
+    const topRef = { agent_url: 'https://catalog-owner.example/formats', id: 'homepage' };
+    const placementRef = { agent_url: 'https://catalog-owner.example/formats', id: 'companion' };
+    const snapshot = {
+      source: 'publisher',
+      publisher_domain: 'catalog-owner.example',
+      formats: [
+        {
+          format_option_id: 'homepage-canonical',
+          format_kind: 'custom',
+          format_shape: 'homepage',
+          format_schema: {
+            uri: 'https://catalog-owner.example/schemas/homepage.json',
+            digest: `sha256:${'e'.repeat(64)}`,
+          },
+          params: {},
+          v1_format_ref: [topRef],
+        },
+        {
+          format_option_id: 'companion-canonical',
+          format_kind: 'custom',
+          format_shape: 'companion',
+          format_schema: {
+            uri: 'https://catalog-owner.example/schemas/companion.json',
+            digest: `sha256:${'f'.repeat(64)}`,
+          },
+          params: {},
+          v1_format_ref: [placementRef],
+        },
+      ],
+    };
+    let resolverCalls = 0;
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async () => ({
+            cache_scope: 'account',
+            products: [
+              {
+                product_id: 'snapshot-product',
+                name: 'Snapshot product',
+                format_ids: [topRef],
+                placements: [{ placement_id: 'companion', format_ids: [placementRef] }],
+                projectionCatalogs: [snapshot],
+              },
+            ],
+          }),
+        },
+      }),
+      {
+        name: 'per-product-projection-snapshot',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+        legacyCreativeFormatResolver: async () => {
+          resolverCalls += 1;
+          throw new Error('snapshot-backed formats must not invoke the resolver');
+        },
+      }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: { account: { account_id: 'acc_test' }, brief: 'snapshot formats' },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(resolverCalls, 0);
+    const projected = result.structuredContent.products[0];
+    assert.strictEqual(projected.projectionCatalogs, undefined);
+    assert.strictEqual(projected.format_options[0].format_option_id, 'homepage-canonical');
+    assert.strictEqual(projected.placements[0].format_options[0].format_option_id, 'companion-canonical');
+  });
+
+  it('rejects duplicate product ids when only one row carries projection catalogs', async () => {
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async () => ({
+            cache_scope: 'account',
+            products: [
+              { product_id: 'duplicate', name: 'Catalog row', format_options: [], projectionCatalogs: [{}] },
+              { product_id: 'duplicate', name: 'Plain row', format_options: [] },
+            ],
+          }),
+        },
+      }),
+      { name: 'duplicate-projection-scope', version: '1.0.0', validation: { requests: 'off', responses: 'off' } }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_products', arguments: { account: { account_id: 'acc_test' }, brief: 'duplicates' } },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+  });
+
+  it('fails closed when asynchronous legacy product format resolution is unavailable or invalid', async () => {
+    const base = buildPlatform();
+    for (const resolver of [
+      async () => null,
+      async () => ({ format_kind: 'custom', params: {} }),
+      () => {
+        throw new Error('catalog unavailable synchronously');
+      },
+      async () => {
+        throw new Error('catalog unavailable');
+      },
+    ]) {
+      const server = createAdcpServerFromPlatform(
+        buildPlatform({
+          sales: {
+            ...base.sales,
+            getProducts: async () => ({
+              cache_scope: 'account',
+              products: [
+                {
+                  product_id: 'unresolved-custom',
+                  name: 'Unresolved custom',
+                  description: 'Must not cross the canonical boundary',
+                  format_ids: [{ agent_url: 'https://formats.example/catalog', id: 'unknown_custom' }],
+                },
+              ],
+            }),
+          },
+        }),
+        {
+          name: 'failed-async-legacy-format-resolution',
+          version: '1.0.0',
+          validation: { requests: 'off', responses: 'off' },
+          legacyCreativeFormatResolver: resolver,
+        }
+      );
+      const result = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'get_products',
+          arguments: { account: { account_id: 'acc_test' }, brief: 'unresolved custom format' },
+        },
+      });
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    }
+  });
+
   it('rejects format-agnostic modern products while preserving nested 3.0 response projection', async () => {
     const base = buildPlatform();
     let modernProduct = {
@@ -2724,6 +3044,7 @@ describe('CreativeBuilderPlatform + AudiencePlatform wiring', () => {
       legacyHandlers: {
         creative: {
           buildCreative: async () => ({ creative_manifest: { manifest_id: 'mf_1', assets: [] } }),
+          listCreativeFormats: async () => ({ formats: [] }),
         },
       },
     });
@@ -2735,11 +3056,18 @@ describe('CreativeBuilderPlatform + AudiencePlatform wiring', () => {
     return result.structuredContent;
   }
 
-  it('omits media_buy capabilities for a creative-only platform (#2438)', async () => {
+  it('omits media_buy capabilities when creative-only handlers use overlapping tool names (#2438, #2680)', async () => {
     const caps = await getCapabilities(buildCreativeOnlyPlatform());
 
     assert.deepStrictEqual(caps.supported_protocols, ['creative']);
     assert.strictEqual(caps.media_buy, undefined);
+  });
+
+  it('accepts creative specialisms implemented through the merged legacy handler seam (#2680)', async () => {
+    const caps = await getCapabilities(buildCreativeOnlyPlatform({ specialisms: ['creative-generative'] }));
+
+    assert.deepStrictEqual(caps.supported_protocols, ['creative']);
+    assert.ok(caps.specialisms.includes('creative-generative'));
   });
 
   it('preserves a media_buy null override for a creative-only platform (#2438)', async () => {

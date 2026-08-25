@@ -173,7 +173,7 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.strictEqual(result.structuredContent?.creative?.preview, undefined);
     assert.strictEqual(result.structuredContent?.request_signing?.protocol_methods_required_for, undefined);
     assert.strictEqual(result.structuredContent?.identity?.brand_json_url, undefined);
-    assert.deepStrictEqual(result.structuredContent?.supported_protocols, ['media_buy', 'creative']);
+    assert.deepStrictEqual(result.structuredContent?.supported_protocols, ['media_buy']);
     assert.deepStrictEqual(result.structuredContent?.specialisms, ['sales-non-guaranteed']);
     assert.deepStrictEqual(result.structuredContent?.media_buy?.supported_pricing_models, ['cpm']);
   });

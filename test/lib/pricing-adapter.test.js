@@ -441,5 +441,49 @@ describe('pricing adapter utilities', () => {
       assert.ok(Array.isArray(normalized.products), 'Should still be an array');
       assert.strictEqual(normalized.products.length, 0);
     });
+
+    test('normalizes explicitly zoned legacy forecast timestamps without losing fractional precision (#2677)', () => {
+      const vectors = [
+        ['2026-08-23T22:00:00+02:00', '2026-08-23T20:00:00Z'],
+        ['2026-08-24t02:30:00.123456+02:30', '2026-08-24T00:00:00.123456Z'],
+        [' 2026-08-23 22:00:00.123456+0200 ', '2026-08-23T20:00:00.123456Z'],
+        ['2026-08-23t20:00:00z', '2026-08-23T20:00:00Z'],
+        ['2026-08-23T20:00:00 UTC', '2026-08-23T20:00:00Z'],
+        ['2026-08-23T22:00:00+02', '2026-08-23T20:00:00Z'],
+        [{ $date: '2026-08-23T20:00:00Z' }, '2026-08-23T20:00:00Z'],
+        [{ value: '2026-08-24T02:30:00+02:30' }, '2026-08-24T00:00:00Z'],
+      ];
+
+      for (const [input, expected] of vectors) {
+        const response = {
+          products: [{ product_id: 'legacy', forecast: { generated_at: input, valid_until: input } }],
+        };
+        const auditCopy = structuredClone(response);
+        const normalized = normalizeGetProductsResponse(response);
+
+        assert.strictEqual(normalized.products[0].forecast.generated_at, expected);
+        assert.strictEqual(normalized.products[0].forecast.valid_until, expected);
+        assert.deepStrictEqual(response, auditCopy, 'normalization must not mutate the preserved seller wire object');
+      }
+    });
+
+    test('omits null and empty forecast timestamps but leaves ambiguous values untouched (#2677)', () => {
+      const ambiguous = { $date: '2026-08-23T20:00:00Z', value: '2026-08-24T00:00:00Z' };
+      const unknownOffset = '2026-08-23T20:00:00-00:00';
+      const expandedUtcYear = '9999-12-31T23:59:59-23:59';
+      const normalized = normalizeGetProductsResponse({
+        products: [
+          { product_id: 'empty', forecast: { generated_at: null, valid_until: { value: {} } } },
+          { product_id: 'ambiguous', forecast: { generated_at: ambiguous, valid_until: '2026-08-23T20:00:00' } },
+          { product_id: 'unknown-offset', forecast: { generated_at: unknownOffset, valid_until: expandedUtcYear } },
+        ],
+      });
+
+      assert.deepStrictEqual(normalized.products[0].forecast, {});
+      assert.deepStrictEqual(normalized.products[1].forecast.generated_at, ambiguous);
+      assert.strictEqual(normalized.products[1].forecast.valid_until, '2026-08-23T20:00:00');
+      assert.strictEqual(normalized.products[2].forecast.generated_at, unknownOffset);
+      assert.strictEqual(normalized.products[2].forecast.valid_until, expandedUtcYear);
+    });
   });
 });

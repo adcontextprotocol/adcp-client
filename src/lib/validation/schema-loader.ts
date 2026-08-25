@@ -842,6 +842,50 @@ export function getValidator(
   return compiled;
 }
 
+export interface ResolvedToolSchemaDocument {
+  toolName: string;
+  direction: Direction;
+  requestedVersion: string;
+  /** Loader key used to select the installed schema bundle. */
+  bundleKey: string;
+  /** Exact protocol release recorded by the resolved bundle, when available. */
+  resolvedVersion: string;
+  schema: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Return an unmodified tool JSON Schema from the same version-aware bundle
+ * resolver used by runtime validation. Unlike `getValidator().schema`, response
+ * documents are not relaxed for extensible envelopes, so callers can publish
+ * the protocol-authored schema verbatim from an on-demand discovery tool.
+ */
+export function getToolSchemaDocument(
+  toolName: string,
+  direction: Direction,
+  version: string = ADCP_VERSION
+): ResolvedToolSchemaDocument | undefined {
+  const state = ensureInit(version);
+  const file = state.fileIndex.get(`${toolName}::${direction}`);
+  if (!file) return undefined;
+  const schema = loadJson(file) as Record<string, unknown>;
+  let resolvedVersion = state.version;
+  try {
+    const index = loadJson(path.join(state.root, 'index.json')) as Record<string, unknown>;
+    if (typeof index.adcp_version === 'string') resolvedVersion = index.adcp_version;
+  } catch {
+    // Legacy/external bundles may omit index.json; the resolved key remains an
+    // accurate identifier for the schema directory selected by the loader.
+  }
+  return {
+    toolName,
+    direction,
+    requestedVersion: version,
+    bundleKey: state.version,
+    resolvedVersion,
+    schema,
+  };
+}
+
 /**
  * Compile an arbitrary schema from the cached bundle by path, e.g.
  * `core/mcp-webhook-payload.json`. Used by storyboard webhook assertions
@@ -1020,6 +1064,7 @@ export function getMcpToolSchema(
       profile === 'all'
         ? path.resolve(mcpRoot, protocolVersion)
         : path.resolve(mcpRoot, protocolVersion, 'profiles', profile);
+    if (!manifestRoot.startsWith(`${mcpRoot}${path.sep}`)) continue;
     const manifestFile = path.join(manifestRoot, 'manifest.json');
     if (!existsSync(manifestFile)) continue;
     const manifest = loadJson(manifestFile) as {
@@ -1066,6 +1111,7 @@ export function getMcpToolSummary(
       profile === 'all'
         ? path.resolve(mcpRoot, protocolVersion)
         : path.resolve(mcpRoot, protocolVersion, 'profiles', profile);
+    if (!manifestRoot.startsWith(`${mcpRoot}${path.sep}`)) continue;
     const manifestFile = path.join(manifestRoot, 'manifest.json');
     if (!existsSync(manifestFile)) continue;
     const manifest = loadJson(manifestFile) as {

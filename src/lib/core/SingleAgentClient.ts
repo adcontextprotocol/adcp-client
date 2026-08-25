@@ -434,6 +434,8 @@ interface DeferredClientFinalizationContext {
   readonly taskType: string;
   readonly handlerName?: keyof AsyncHandlerConfig;
   readonly canonical: boolean;
+  readonly serverVersion?: 'v2' | 'v3';
+  readonly serverVersionSynthetic?: boolean;
   readonly productPolicyRequest: Readonly<Record<string, unknown>>;
   readonly projectionCatalogs?: readonly ProjectionCatalogSnapshot[];
   readonly routingSnapshot?: CanonicalCreativeRoutingSnapshot;
@@ -451,6 +453,8 @@ function isDeferredClientFinalizationContext(value: unknown): value is DeferredC
     !!context.productPolicyRequest &&
     typeof context.productPolicyRequest === 'object' &&
     !Array.isArray(context.productPolicyRequest) &&
+    (context.serverVersion === undefined || context.serverVersion === 'v2' || context.serverVersion === 'v3') &&
+    (context.serverVersionSynthetic === undefined || typeof context.serverVersionSynthetic === 'boolean') &&
     (context.projectionCatalogs === undefined || Array.isArray(context.projectionCatalogs)) &&
     (context.handlerName === undefined || typeof context.handlerName === 'string')
   );
@@ -4331,6 +4335,10 @@ export class SingleAgentClient {
       taskType,
       handlerName,
       canonical: canonicalCreativeInvocation,
+      serverVersion,
+      ...(capabilityDiscoveryContext.capabilities?._synthetic !== undefined && {
+        serverVersionSynthetic: capabilityDiscoveryContext.capabilities._synthetic,
+      }),
       productPolicyRequest: productPolicyRequestSnapshot(normalizedParams),
       ...(projectionCatalogs !== undefined && { projectionCatalogs }),
       ...(routingSnapshot !== undefined && { routingSnapshot }),
@@ -4407,6 +4415,15 @@ export class SingleAgentClient {
     transformCompletedResponse?: (data: T) => T,
     legacyFormatConverter?: LegacyFormatConverter
   ): Promise<TaskResult<T>> {
+    if (context.serverVersion !== undefined) {
+      result.metadata = {
+        ...result.metadata,
+        serverVersion: context.serverVersion,
+        ...(context.serverVersionSynthetic !== undefined && {
+          serverVersionSynthetic: context.serverVersionSynthetic,
+        }),
+      };
+    }
     const completionHandlerAlreadyPublished = hasCompletionHandlerAlreadyPublished(result);
     const settlementAcknowledger = (
       result as TaskResult<T> & {
@@ -5705,6 +5722,8 @@ export class SingleAgentClient {
         timestamp: new Date().toISOString(),
         clarificationRounds: 0,
         status: 'completed',
+        serverVersion: capabilities.version,
+        serverVersionSynthetic: capabilities._synthetic,
       },
     };
   }
@@ -7057,6 +7076,8 @@ export class SingleAgentClient {
   ): Promise<TaskResult<T>> {
     throwIfAborted(options?.signal);
     const startTime = Date.now();
+    let detectedServerVersion: 'v2' | 'v3' | undefined;
+    let detectedServerVersionSynthetic: boolean | undefined;
     try {
       const normalizedParams = normalizeRequestParams(taskName, params, {
         skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
@@ -7087,6 +7108,8 @@ export class SingleAgentClient {
         [CAPABILITY_DISCOVERY_CONTEXT]: capabilityDiscoveryContext,
       };
       const serverVersion = await this.detectServerVersion(detectionOptions);
+      detectedServerVersion = serverVersion;
+      detectedServerVersionSynthetic = capabilityDiscoveryContext.capabilities?._synthetic;
       this.assertRequestSupportedByTargetVersion(
         taskName,
         normalizedParams,
@@ -7123,6 +7146,10 @@ export class SingleAgentClient {
         taskType: taskName,
         ...(handlerName !== undefined && { handlerName }),
         canonical: false,
+        serverVersion,
+        ...(capabilityDiscoveryContext.capabilities?._synthetic !== undefined && {
+          serverVersionSynthetic: capabilityDiscoveryContext.capabilities._synthetic,
+        }),
         productPolicyRequest: productPolicyRequestSnapshot(normalizedParams),
         ...(effectiveOptions?.taskId !== undefined && { optionTaskId: effectiveOptions.taskId }),
         ...(effectiveOptions?.contextId !== undefined && { optionContextId: effectiveOptions.contextId }),
@@ -7184,6 +7211,10 @@ export class SingleAgentClient {
           timestamp: new Date().toISOString(),
           clarificationRounds: 0,
           status: 'failed',
+          ...(detectedServerVersion !== undefined && { serverVersion: detectedServerVersion }),
+          ...(detectedServerVersionSynthetic !== undefined && {
+            serverVersionSynthetic: detectedServerVersionSynthetic,
+          }),
         },
         conversation: [],
         debug_logs: [],

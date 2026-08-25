@@ -47,6 +47,8 @@ export type {
   BareFormatIdResolveOptions,
   LegacyFormatConversionContext,
   LegacyFormatConverter,
+  LegacyFormatResolutionContext,
+  LegacyFormatResolver,
 } from './v1-to-v2';
 
 export { projectV2ProductToV1 } from './v2-to-v1';

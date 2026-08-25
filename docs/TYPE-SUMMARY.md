@@ -39,6 +39,8 @@ interface TaskResult<T = any> {
     timestamp: string;
     clarificationRounds: number;
     adcpVersion?: string;        // Seller-served release-precision response adcp_version
+    serverVersion?: 'v2' | 'v3'; // Seller wire generation selected by capability discovery
+    serverVersionSynthetic?: boolean; // True when generation came from the SDK fallback
   };
   conversation?: Message[];
 }

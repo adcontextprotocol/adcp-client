@@ -32,9 +32,9 @@
  * deterministic for that single format_id.
  *
  * **Scope (prototype)**:
- *   - AAO catalog only — seller-specific catalogs (publisher's own
- *     `list_creative_formats`) require an AgentClient hook the auto-
- *     negotiation surface will provide in the full 8.0 enablement.
+ *   - AAO catalog plus explicit adopter resolvers for seller-specific
+ *     formats. Network-backed resolution remains outside this pure module;
+ *     server integrations can use `LegacyFormatResolver` before projection.
  *   - Param extraction is dimensions-only (`width`, `height`,
  *     `duration_ms`). Full canonical-specific params (slots, codecs,
  *     char limits, platform_extensions) are not constructed. A v2
@@ -126,6 +126,22 @@ export interface LegacyFormatConversionContext {
 export type LegacyFormatConverter = (
   context: LegacyFormatConversionContext
 ) => V2ProductFormatDeclaration | null | undefined;
+
+/** Safe request context supplied to an asynchronous seller-specific resolver. */
+export interface LegacyFormatResolutionContext extends LegacyFormatConversionContext {
+  operation: 'get_products';
+  servedAdcpVersion?: string;
+  accountId?: string;
+}
+
+/**
+ * Asynchronous counterpart to {@link LegacyFormatConverter}. Intended for
+ * catalog/database lookups that must complete before a server projects a
+ * legacy `get_products` result onto its canonical wire boundary.
+ */
+export type LegacyFormatResolver = (
+  context: LegacyFormatResolutionContext
+) => PromiseLike<V2ProductFormatDeclaration | null | undefined> | V2ProductFormatDeclaration | null | undefined;
 
 export interface V1ToV2ProjectionOptions {
   legacyFormatConverter?: LegacyFormatConverter;

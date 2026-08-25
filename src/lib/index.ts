@@ -1735,6 +1735,8 @@ export {
   CreativeFormatProjectionError,
   type LegacyFormatConversionContext,
   type LegacyFormatConverter,
+  type LegacyFormatResolutionContext,
+  type LegacyFormatResolver,
   legacyFormatConverterFromCatalogSnapshots,
   canonicalFormatLegacyResolverFromCatalogSnapshots,
   canonicalFormatLegacyResolverFromRoutes,
@@ -2025,7 +2027,7 @@ export {
   VERSION_INFO,
 } from './version';
 export type { AdcpVersion } from './version';
-export { resolveAdcpVersion } from './utils/adcp-version-config';
+export { listBundledAdcpVersions, resolveAdcpVersion } from './utils/adcp-version-config';
 
 // ====== OBSERVABILITY ======
 // OpenTelemetry tracing utilities (no-op if @opentelemetry/api not installed)

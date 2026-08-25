@@ -102,6 +102,8 @@ import type {
   CanonicalProduct,
   CanonicalUpdateMediaBuyRequest,
 } from '../../../v2/projection/creative-delivery';
+import type { ProjectionCatalogSnapshot } from '../../../v2/projection/catalog-snapshot';
+import type { V1ProductInput } from '../../../v2/projection/types';
 
 type SyncCreative = CanonicalSyncCreativeAsset;
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
@@ -110,8 +112,12 @@ type ExclusivePayload<TLeft, TRight> =
   | (TRight & { [K in Exclude<keyof TLeft, keyof TRight>]?: never });
 type LegacyMediaBuyStatusInput<T> = T & { status?: MediaBuyStatus };
 
+export type GetProductsProjectionInput = (CanonicalProduct | V1ProductInput) & {
+  /** Exact owner-scoped aliases used only while projecting this product; never emitted on the wire. */
+  projectionCatalogs?: readonly ProjectionCatalogSnapshot[];
+};
 type CanonicalGetProductsPayload = Omit<ServerPayload<CanonicalCreativeResponse<GetProductsResponse>>, 'products'> & {
-  products?: CanonicalProduct[];
+  products?: GetProductsProjectionInput[];
 };
 export type GetProductsPayload = RequireCacheScopeWhenProducts<CanonicalGetProductsPayload>;
 type CreateMediaBuySuccessPayload = LegacyMediaBuyStatusInput<

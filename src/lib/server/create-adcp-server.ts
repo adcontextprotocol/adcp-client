@@ -402,14 +402,6 @@ import {
   isStandardErrorCode,
   type ErrorRecovery,
 } from '../types/error-codes';
-import {
-  MEDIA_BUY_TOOLS,
-  SIGNALS_TOOLS,
-  GOVERNANCE_TOOLS,
-  CREATIVE_TOOLS,
-  SPONSORED_INTELLIGENCE_TOOLS,
-  BRAND_RIGHTS_TOOLS,
-} from '../utils/capabilities';
 
 // ---------------------------------------------------------------------------
 // Logger
@@ -3259,6 +3251,10 @@ const MEDIA_BUY_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'listCreatives', toolName: 'list_creatives' },
 ];
 
+const MEDIA_BUY_PROTOCOL_ENTRIES = MEDIA_BUY_ENTRIES.filter(
+  ({ handlerKey }) => !['listCreativeFormats', 'syncCreatives', 'listCreatives'].includes(handlerKey)
+);
+
 const PROPOSAL_NEGOTIATION_ENTRIES: HandlerEntry[] = [{ handlerKey: 'refineProposals', toolName: 'refine_proposals' }];
 
 const EVENT_TRACKING_ENTRIES: HandlerEntry[] = [
@@ -3339,23 +3335,34 @@ const BRAND_RIGHTS_ENTRIES: HandlerEntry[] = [
 // Protocol detection
 // ---------------------------------------------------------------------------
 
-const TOOL_PROTOCOL_MAP: [readonly string[], AdcpProtocol][] = [
-  [MEDIA_BUY_TOOLS, 'media_buy'],
-  [SIGNALS_TOOLS, 'signals'],
-  [GOVERNANCE_TOOLS, 'governance'],
-  [CREATIVE_TOOLS, 'creative'],
-  [SPONSORED_INTELLIGENCE_TOOLS, 'sponsored_intelligence'],
-  [BRAND_RIGHTS_TOOLS, 'brand'],
-];
+function hasDomainHandler(entries: readonly HandlerEntry[], handlers: object | undefined): boolean {
+  if (handlers === undefined) return false;
+  const candidate = handlers as Record<string, unknown>;
+  return entries.some(({ handlerKey }) => typeof candidate[handlerKey] === 'function');
+}
 
-function detectProtocols(toolNames: string[]): AdcpProtocol[] {
-  const nameSet = new Set(toolNames);
+/**
+ * Derive buyer-visible protocol domains from the handler group that owns each
+ * operation, not from the flattened tools/list catalog. Several compatibility
+ * tools intentionally appear in more than one protocol's discovery list
+ * (`list_creative_formats`, `list_creatives`, and `sync_creatives`), so tool
+ * names alone cannot distinguish a creative agent from a media-buy seller.
+ * Utility groups (accounts, tasks, event tracking, protocol helpers, custom
+ * tools) do not independently activate a protocol domain.
+ */
+function detectProtocolsFromHandlers<TAccount>(config: AdcpServerConfig<TAccount>): AdcpProtocol[] {
   const protocols: AdcpProtocol[] = [];
-  for (const [tools, protocol] of TOOL_PROTOCOL_MAP) {
-    if (tools.some(t => nameSet.has(t))) {
-      protocols.push(protocol);
-    }
+  if (
+    hasDomainHandler(MEDIA_BUY_PROTOCOL_ENTRIES, config.mediaBuy) ||
+    hasDomainHandler(PROPOSAL_NEGOTIATION_ENTRIES, config.proposalNegotiation)
+  ) {
+    protocols.push('media_buy');
   }
+  if (hasDomainHandler(SIGNALS_ENTRIES, config.signals)) protocols.push('signals');
+  if (hasDomainHandler(GOVERNANCE_ENTRIES, config.governance)) protocols.push('governance');
+  if (hasDomainHandler(CREATIVE_ENTRIES, config.creative)) protocols.push('creative');
+  if (hasDomainHandler(SI_ENTRIES, config.sponsoredIntelligence)) protocols.push('sponsored_intelligence');
+  if (hasDomainHandler(BRAND_RIGHTS_ENTRIES, config.brandRights)) protocols.push('brand');
   return protocols;
 }
 
@@ -7755,7 +7762,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   }
 
   // --- Auto-register get_adcp_capabilities ---
-  const protocols = detectProtocols([...registeredToolNames]);
+  const protocols = detectProtocolsFromHandlers(config);
 
   // Idempotency capability declaration. Spec defines a discriminated
   // union (`get-adcp-capabilities-response.json` `adcp.idempotency.oneOf`):

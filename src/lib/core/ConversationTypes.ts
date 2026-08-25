@@ -252,6 +252,10 @@ export interface TaskState {
     name: string;
     protocol: 'mcp' | 'a2a';
   };
+  /** Seller wire generation selected for this task. */
+  serverVersion?: 'v2' | 'v3';
+  /** True when seller-version detection used the SDK's compatibility heuristic. */
+  serverVersionSynthetic?: boolean;
   /**
    * Idempotency key for this task, when the tool is mutating. Tracked on
    * state so internal retries reuse the same key (the whole point of the
@@ -462,6 +466,10 @@ export interface TaskResultMetadata {
    * configuration pin, when detecting same-major downshift.
    */
   adcpVersion?: string;
+  /** Seller wire generation used for this request after capability discovery. */
+  serverVersion?: 'v2' | 'v3';
+  /** True when {@link serverVersion} came from the SDK's synthetic fallback. */
+  serverVersionSynthetic?: boolean;
   /**
    * Buyer-side product property policy enforcement summary for `get_products`.
    * Present when the client evaluates a configured product property policy or

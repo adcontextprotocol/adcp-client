@@ -147,6 +147,8 @@ export interface DeferredTaskState {
   a2aTaskId: string;
   /** Seller wire generation used for the original task and every continuation. */
   serverVersion: 'v2' | 'v3';
+  /** True when the original seller-version decision used the SDK's synthetic fallback. */
+  serverVersionSynthetic?: boolean;
   /** Trusted agent identifier resolved through current client configuration. */
   agentId: string;
   /** Task/tool name. */
