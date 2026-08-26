@@ -292,7 +292,12 @@ describe('createA2AAdapter', () => {
       const res = await postJsonRpc(
         app,
         { jsonrpc: '2.0', id: 1, method: 'SendMessage', params },
-        { 'A2A-Version': '1.0' },
+        {
+          'A2A-Version': '1.0',
+          'A2A-Extensions': `https://attacker.example/?extension=${encodeURIComponent(
+            'https://adcontextprotocol.org/extensions/adcp/v3'
+          )}`,
+        },
         false
       );
       assert.strictEqual(res.body.result.task.status.state, 'TASK_STATE_FAILED');

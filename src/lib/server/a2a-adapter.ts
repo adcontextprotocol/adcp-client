@@ -454,7 +454,9 @@ class AdcpA2AAgentExecutor implements AgentExecutor {
   async execute(requestContext: RequestContext, eventBus: ExecutionEventBus): Promise<void> {
     const { taskId, contextId, userMessage } = requestContext;
     const authInfo = getAdcpAuthInfo(requestContext.context);
-    const requestedAdcpExtension = requestContext.context.requestedExtensions?.includes(ADCP_A2A_EXTENSION) ?? false;
+    const requestedExtensions = requestContext.context.requestedExtensions;
+    const requestedAdcpExtension =
+      Array.isArray(requestedExtensions) && requestedExtensions.some(extension => extension === ADCP_A2A_EXTENSION);
     const legacyWire = requestContext.context.requestedVersion.startsWith('0.');
 
     this.taskContextIds.set(taskId, contextId);
