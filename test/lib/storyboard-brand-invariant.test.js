@@ -76,6 +76,24 @@ describe('applyBrandInvariant', () => {
     assert.deepStrictEqual(result.account.brand, BRAND);
   });
 
+  test('preserves an authored wholesale get_products account scope (#2654)', () => {
+    const overlayBrand = { domain: 'account-overlay.example' };
+    const result = applyBrandInvariant(
+      {
+        buying_mode: 'wholesale',
+        account: { brand: overlayBrand, operator: 'pinnacle-agency.example' },
+      },
+      { brand: BRAND },
+      'get_products'
+    );
+
+    assert.deepStrictEqual(result.brand, BRAND, 'the run-scoped top-level brand remains invariant');
+    assert.deepStrictEqual(result.account, {
+      brand: overlayBrand,
+      operator: 'pinnacle-agency.example',
+    });
+  });
+
   test('passes through when no brand is configured (e.g. security probes)', () => {
     const input = { list_id: 'pl-1' };
     const result = applyBrandInvariant(input, {});
