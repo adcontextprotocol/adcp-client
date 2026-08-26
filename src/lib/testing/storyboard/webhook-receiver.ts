@@ -30,8 +30,9 @@ const MAX_BODY_BYTES = 1_048_576; // 1 MiB
  * Caps on cumulative capture state. `MAX_CAPTURED_TOTAL` bounds the total
  * number of webhooks retained for the run; `MAX_CAPTURED_PER_KEY` bounds
  * per-(step_id, operation_id) deliveries — a publisher stuck in a retry
- * loop can't exhaust memory. Once a cap is hit the receiver returns 503
- * (signalling back-pressure to the sender) and drops the capture.
+ * loop can't exhaust memory. Once a cap is hit the receiver stops retaining
+ * bodies but continues the configured retry-status sequence (or returns 204
+ * when no rejection remains), so the cap cannot trap a sender in a retry loop.
  */
 const MAX_CAPTURED_TOTAL = 1000;
 const MAX_CAPTURED_PER_KEY = 100;
@@ -203,11 +204,13 @@ export async function createWebhookReceiver(options: CreateWebhookReceiverOption
     timer: NodeJS.Timeout;
   }> = [];
   const waitAllTimers: Array<{
+    filter: WebhookFilter;
     resolve: (result: CapturedWebhook[]) => void;
     timer: NodeJS.Timeout;
   }> = [];
   const retryPolicies = new Map<string, { policy: RetryReplayPolicy; delivered: number }>();
   const deliveryCounts = new Map<string, number>();
+  let closed = false;
 
   const server = createServer((req, res) =>
     handleRequest(req, res, { captured, waiters, retryPolicies, deliveryCounts })
@@ -240,9 +243,14 @@ export async function createWebhookReceiver(options: CreateWebhookReceiverOption
     set_retry_replay: (key, policy) => {
       retryPolicies.set(retryKeyString(key), { policy, delivered: 0 });
     },
-    wait: (filter, timeout_ms) => wait(filter, timeout_ms, captured, waiters),
-    wait_all: (filter, timeout_ms) => waitAll(filter, timeout_ms, captured, waitAllTimers),
-    close: () => closeServer(server, waiters, waitAllTimers),
+    wait: (filter, timeout_ms) =>
+      closed ? Promise.resolve({ timed_out: true }) : wait(filter, timeout_ms, captured, waiters),
+    wait_all: (filter, timeout_ms) =>
+      closed ? Promise.resolve([]) : waitAll(filter, timeout_ms, captured, waitAllTimers),
+    close: () => {
+      closed = true;
+      return closeServer(server, captured, waiters, waitAllTimers);
+    },
   };
 }
 
@@ -504,7 +512,11 @@ function waitAll(
   filter: WebhookFilter,
   timeout_ms: number,
   captured: CapturedWebhook[],
-  waitAllTimers: Array<{ resolve: (result: CapturedWebhook[]) => void; timer: NodeJS.Timeout }>
+  waitAllTimers: Array<{
+    filter: WebhookFilter;
+    resolve: (result: CapturedWebhook[]) => void;
+    timer: NodeJS.Timeout;
+  }>
 ): Promise<CapturedWebhook[]> {
   return new Promise<CapturedWebhook[]>(resolve => {
     const timer = setTimeout(
@@ -516,7 +528,7 @@ function waitAll(
       Math.max(0, timeout_ms)
     );
     timer.unref?.();
-    waitAllTimers.push({ resolve, timer });
+    waitAllTimers.push({ filter, resolve, timer });
   });
 }
 
@@ -526,27 +538,32 @@ function waitAll(
 
 function closeServer(
   server: Server,
+  captured: CapturedWebhook[],
   waiters: Array<{ filter: WebhookFilter; resolve: (r: WebhookWaitResult) => void; timer: NodeJS.Timeout }>,
-  waitAllTimers: Array<{ resolve: (result: CapturedWebhook[]) => void; timer: NodeJS.Timeout }>
+  waitAllTimers: Array<{
+    filter: WebhookFilter;
+    resolve: (result: CapturedWebhook[]) => void;
+    timer: NodeJS.Timeout;
+  }>
 ): Promise<void> {
-  while (waiters.length > 0) {
-    const w = waiters.pop()!;
-    clearTimeout(w.timer);
-    w.resolve({ timed_out: true });
-  }
-  while (waitAllTimers.length > 0) {
-    const pending = waitAllTimers.pop()!;
-    clearTimeout(pending.timer);
-    pending.resolve([]);
-  }
-  // Force-close keep-alive sockets so shutdown doesn't hang up to
-  // keepAliveTimeout waiting for idle connections to drain.
-  server.closeAllConnections?.();
   return new Promise<void>((resolve, reject) => {
     server.close(err => {
       if (err && (err as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') reject(err);
       else resolve();
     });
+    // Stop accepting new sockets before force-closing existing keep-alive
+    // connections; the opposite order leaves a small acceptance race.
+    server.closeAllConnections?.();
+    while (waiters.length > 0) {
+      const w = waiters.pop()!;
+      clearTimeout(w.timer);
+      w.resolve({ timed_out: true });
+    }
+    while (waitAllTimers.length > 0) {
+      const pending = waitAllTimers.pop()!;
+      clearTimeout(pending.timer);
+      pending.resolve(captured.filter(w => matchesFilter(w, pending.filter)));
+    }
   });
 }
 
