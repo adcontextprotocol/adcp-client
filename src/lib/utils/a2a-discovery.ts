@@ -1,12 +1,12 @@
 /**
  * A2A Agent Card Discovery Utilities
  *
- * Supports both /.well-known/agent.json (current A2A spec)
- * and /.well-known/agent-card.json (legacy) for agent card discovery.
+ * Supports both /.well-known/agent-card.json (A2A 1.0)
+ * and /.well-known/agent.json (legacy) for agent card discovery.
  */
 
 /** A2A agent card well-known paths, preferred first */
-export const A2A_CARD_PATHS = ['/.well-known/agent.json', '/.well-known/agent-card.json'] as const;
+export const A2A_CARD_PATHS = ['/.well-known/agent-card.json', '/.well-known/agent.json'] as const;
 
 /** Matches either well-known agent card path at end of string (case-insensitive) */
 const AGENT_CARD_PATH_REGEX = /\/\.well-known\/agent(-card)?\.json$/i;

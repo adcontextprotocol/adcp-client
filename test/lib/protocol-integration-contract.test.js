@@ -1,6 +1,13 @@
 // Protocol Integration Contract Tests - Tests against protocol specifications and mock servers
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
+const { Role } = require('@a2a-js/sdk');
+
+const ADCP_A2A_EXTENSION = 'https://adcontextprotocol.org/extensions/adcp/v3';
+
+function a2aDataPart(message) {
+  return message?.parts?.find(part => part.content?.$case === 'data')?.content?.value;
+}
 
 /**
  * Integration Contract Testing Strategy
@@ -50,7 +57,7 @@ class MockA2AServer {
     }
 
     // Extract skill name from request
-    const skillName = requestBody.params?.message?.parts?.[0]?.data?.skill;
+    const skillName = a2aDataPart(requestBody.params?.message)?.skill;
     const mockResponse = this.responses.get(skillName) || this.getDefaultResponse();
 
     return {
@@ -69,8 +76,8 @@ class MockA2AServer {
       errors.push("Must have jsonrpc: '2.0'");
     }
 
-    if (request.method !== 'message/send') {
-      errors.push("Must use 'message/send' method for A2A skill calls");
+    if (request.method !== 'SendMessage') {
+      errors.push("Must use the A2A 1.0 'SendMessage' method for skill calls");
     }
 
     if (!request.params?.message) {
@@ -79,37 +86,36 @@ class MockA2AServer {
       const message = request.params.message;
 
       // Validate message structure
-      if (message.kind !== 'message') {
-        errors.push("Message must have kind: 'message'");
-      }
-
       if (!message.messageId) {
         errors.push('Message must have messageId');
       }
 
-      if (message.role !== 'user') {
-        errors.push("Message role must be 'user' for client requests");
+      if (message.role !== Role.ROLE_USER) {
+        errors.push('Message role must be ROLE_USER for client requests');
+      }
+
+      if (!message.extensions?.includes(ADCP_A2A_EXTENSION)) {
+        errors.push('Message must activate the AdCP A2A profile extension');
       }
 
       if (!Array.isArray(message.parts) || message.parts.length === 0) {
         errors.push('Message must have non-empty parts array');
       } else {
         // Validate data part
-        const dataPart = message.parts.find(p => p.kind === 'data');
+        const dataPart = a2aDataPart(message);
         if (!dataPart) {
           errors.push('Message must have at least one data part');
         } else {
-          if (!dataPart.data?.skill) {
+          if (!dataPart.skill) {
             errors.push('Data part must have skill name');
           }
 
-          if (dataPart.data?.parameters === undefined) {
-            errors.push("Data part must have 'parameters' field");
+          if (dataPart.input === undefined) {
+            errors.push("Data part must have the AdCP profile 'input' field");
           }
 
-          // Check for deprecated fields
-          if (dataPart.data?.input !== undefined) {
-            errors.push("Data part uses deprecated 'input' field, use 'parameters' instead");
+          if (dataPart.parameters !== undefined) {
+            errors.push("Data part uses the legacy 'parameters' field");
           }
         }
       }
@@ -244,7 +250,7 @@ describe('A2A Integration Contract Tests', { skip: process.env.CI ? 'Slow tests 
     mockServer = new MockA2AServer();
 
     // Mock the A2A SDK to use our test server
-    const originalA2AClient = require('@a2a-js/sdk/client').A2AClient;
+    const originalA2AClient = require('../../dist/lib/protocols/a2a').legacyA2AClientTestShim;
 
     originalA2AClient.fromCardUrl = async (cardUrl, options) => {
       return {
@@ -253,7 +259,7 @@ describe('A2A Integration Contract Tests', { skip: process.env.CI ? 'Slow tests 
           const jsonRpcRequest = {
             jsonrpc: '2.0',
             id: 'test-request-id',
-            method: 'message/send',
+            method: 'SendMessage',
             params: payload,
           };
 
@@ -304,18 +310,18 @@ describe('A2A Integration Contract Tests', { skip: process.env.CI ? 'Slow tests 
 
     const requestBody = requests[0].body;
     assert.strictEqual(requestBody.jsonrpc, '2.0');
-    assert.strictEqual(requestBody.method, 'message/send');
+    assert.strictEqual(requestBody.method, 'SendMessage');
 
     const message = requestBody.params.message;
-    assert.strictEqual(message.kind, 'message');
-    assert.strictEqual(message.role, 'user');
+    assert.strictEqual(message.role, Role.ROLE_USER);
     assert.ok(message.messageId);
+    assert.deepStrictEqual(message.extensions, [ADCP_A2A_EXTENSION]);
 
-    const dataPart = message.parts.find(p => p.kind === 'data');
+    const dataPart = a2aDataPart(message);
     assert.ok(dataPart, 'Should have data part');
-    assert.strictEqual(dataPart.data.skill, 'get_products');
-    assert.deepStrictEqual(dataPart.data.parameters, { category: 'electronics', limit: 5 });
-    assert.strictEqual(dataPart.data.input, undefined, "Should not use deprecated 'input' field");
+    assert.strictEqual(dataPart.skill, 'get_products');
+    assert.deepStrictEqual(dataPart.input, { category: 'electronics', limit: 5 });
+    assert.strictEqual(dataPart.parameters, undefined, "Should not use the legacy 'parameters' field");
 
     // Verify response handling
     assert.ok(result);
@@ -326,7 +332,7 @@ describe('A2A Integration Contract Tests', { skip: process.env.CI ? 'Slow tests 
     setupA2AIntegrationTest();
 
     // Temporarily modify our implementation to send malformed request
-    const originalA2AClient = require('@a2a-js/sdk/client').A2AClient;
+    const originalA2AClient = require('../../dist/lib/protocols/a2a').legacyA2AClientTestShim;
 
     originalA2AClient.fromCardUrl = async () => ({
       sendMessage: async payload => {
@@ -485,15 +491,22 @@ describe('Cross-Protocol Integration Tests', () => {
     // Both should format requests correctly for their respective protocols
     const expectedA2AMessage = {
       messageId: 'test-msg-001',
-      kind: 'message',
-      role: 'user',
+      role: Role.ROLE_USER,
+      contextId: '',
+      taskId: '',
+      extensions: [ADCP_A2A_EXTENSION],
+      referenceTaskIds: [],
       parts: [
         {
-          kind: 'data',
-          data: {
-            skill: 'get_products',
-            parameters: testParameters,
+          content: {
+            $case: 'data',
+            value: {
+              skill: 'get_products',
+              input: testParameters,
+            },
           },
+          mediaType: 'application/json',
+          filename: '',
         },
       ],
     };
@@ -512,7 +525,7 @@ describe('Cross-Protocol Integration Tests', () => {
 
     const a2aValidation = mockA2AServer.validateA2ARequest({
       jsonrpc: '2.0',
-      method: 'message/send',
+      method: 'SendMessage',
       params: { message: expectedA2AMessage },
     });
 
@@ -527,7 +540,7 @@ describe('Cross-Protocol Integration Tests', () => {
 
     // Verify parameter consistency
     assert.deepStrictEqual(
-      expectedA2AMessage.parts[0].data.parameters,
+      expectedA2AMessage.parts[0].content.value.input,
       expectedMCPRequest.params.arguments,
       'Parameters should be identical across protocols'
     );

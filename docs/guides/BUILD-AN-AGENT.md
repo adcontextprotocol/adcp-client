@@ -271,23 +271,30 @@ non-empty bearer is an authentication bypass, not a safe example simplification.
 
 Both transports share the same `AdcpServer` — handlers, idempotency store, state store, and `resolveAccount` all run the same pipeline regardless of which transport received the request. Changes to handlers are picked up by both at once.
 
-**Skill addressing.** A2A clients send a `Message` with a single `DataPart`: `{ kind: 'data', data: { skill: 'get_products', input: { brief: '...' } } }`. `skill` matches an AdCP tool name; `input` is the tool arguments. The legacy key `parameters` (shipped by `src/lib/protocols/a2a.ts` before the adapter landed) is accepted as an alias for `input` so same-SDK clients and servers talk cleanly.
+**Skill addressing.** AdCP 3.2 uses A2A 1.0 and requires clients to activate `https://adcontextprotocol.org/extensions/adcp/v3`. Clients send a `Message` with one structured DataPart whose value is `{ skill: 'get_products', input: { brief: '...' } }`. `skill` matches an AdCP tool name; `input` is the tool arguments. The server's A2A 0.3 compatibility path accepts the older `parameters` alias, but 1.0 clients must use `input`.
 
-**Two lifecycles, one response.** A2A's `Task.state` tracks the *transport call* (did the HTTP request complete?). AdCP's `status` inside the artifact tracks the *work* (submitted / completed / failed). Don't conflate them — a `completed` A2A task can carry a `submitted`, `input-required`, or `auth-required` AdCP response. The v0 adapter has no durable, principal-bound continuation dispatcher, so handler-produced pause arms are completed, nonresumable artifact results. Leaving the A2A task live would let continuation-only input re-enter the ordinary mutation pipeline as a fresh request.
+**Two lifecycles, one response.** A2A's `Task.state` tracks the *transport call* (did the request complete?). AdCP's `status` inside the artifact tracks the *work* (submitted / completed / failed). Don't conflate them — a completed A2A task can carry a `submitted`, `input-required`, or `auth-required` AdCP response. The adapter has no durable, principal-bound continuation dispatcher, so handler-produced pause arms are completed, nonresumable artifact results. Leaving the A2A task live would let continuation-only input re-enter the ordinary mutation pipeline as a fresh request.
 
 **Handler return → A2A `Task.state` + artifact:**
 
 | Handler returned… | A2A `Task.state` | Artifact payload |
 |---|---|---|
 | Success arm | `completed` | DataPart with the typed AdCP response |
-| Submitted arm (`status:'submitted'`) | `completed` | DataPart with the AdCP response; `adcp_task_id` on `artifact.metadata` |
+| Submitted arm (`status:'submitted'`) | `completed` | DataPart with the typed AdCP response, including its `task_id` |
 | Pause arm (`status:'input-required'` / `'auth-required'`) | `completed` | DataPart with the nonresumable AdCP pause response |
-| Error arm (`errors: [...]`) | `failed` | DataPart with the Error arm payload |
+| Error arm (`errors: [...]`) | `completed` | DataPart with the Error arm payload |
 | `adcpError('CODE', ...)` | `failed` | DataPart with `adcp_error` |
 
-**A2A `Task.id` vs AdCP `task_id`.** A2A owns its `Task.id` (SDK-generated per `message/send`). The AdCP-level `task_id` — present when the handler returned a Submitted arm — rides on `artifact.metadata.adcp_task_id`, off the DataPart's payload so the `data` still validates cleanly against the AdCP response schema. Buyers resuming the A2A side poll via `tasks/get` using the A2A `Task.id`; buyers reaching for AdCP-side async state use `adcp_task_id`.
+**A2A `Task.id` vs AdCP `task_id`.** A2A owns its transport `Task.id`. The AdCP-level `task_id` is part of the typed Submitted response and identifies the asynchronous ad-tech work. Use A2A `GetTask` only for the A2A transport task; query AdCP work by sending the profile's `get_task_status` invocation with the AdCP `task_id`.
 
-**v0 scope.** `message/send`, `tasks/get`, `tasks/cancel`, `GET /.well-known/agent-card.json`. Streaming (`message/stream`), push notifications, and `input-required` mid-flight interrupts are explicit "not yet" — tracked for v1. Pin a minor version while the surface stabilises.
+**A2A scope.** The adapter exposes A2A 1.0 `SendMessage`, `GetTask`, `CancelTask`, and `GET /.well-known/agent-card.json`. Streaming, push notifications, and resumable mid-flight `input-required` interrupts are not yet implemented by this adapter.
+
+**Production task storage.** Pass `taskStore` when creating the A2A adapter in
+production. The SDK's in-memory A2A store is intentionally limited to
+`NODE_ENV=test` or `NODE_ENV=development`; it is not bounded or durable. The
+adapter redacts secret-shaped fields before every task-store write, including
+credentials carried in request history, but the application-owned store must
+still provide capacity limits, retention, and tenant/owner isolation.
 
 ### Reading tool results (client side)
 

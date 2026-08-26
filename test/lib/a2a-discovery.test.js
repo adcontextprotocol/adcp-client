@@ -59,16 +59,16 @@ test('buildCardUrls', async t => {
   await t.test('returns both paths for a base URL', () => {
     const urls = buildCardUrls('https://example.com');
     assert.deepStrictEqual(urls, [
-      'https://example.com/.well-known/agent.json',
       'https://example.com/.well-known/agent-card.json',
+      'https://example.com/.well-known/agent.json',
     ]);
   });
 
   await t.test('strips trailing slash before appending paths', () => {
     const urls = buildCardUrls('https://example.com/');
     assert.deepStrictEqual(urls, [
-      'https://example.com/.well-known/agent.json',
       'https://example.com/.well-known/agent-card.json',
+      'https://example.com/.well-known/agent.json',
     ]);
   });
 

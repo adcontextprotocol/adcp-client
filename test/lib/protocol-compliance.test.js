@@ -1,6 +1,15 @@
 // Protocol Compliance Tests - Tests message format validation for A2A and MCP protocols
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
+const { Role } = require('@a2a-js/sdk');
+
+const ADCP_A2A_EXTENSION = 'https://adcontextprotocol.org/extensions/adcp/v3';
+
+function dataPartValue(message) {
+  const part = message.parts[0];
+  assert.strictEqual(part.content?.$case, 'data', 'Part must contain A2A 1.0 data content');
+  return part.content.value;
+}
 
 // Import protocol functions
 const { callA2ATool, closeA2AConnections } = require('../../dist/lib/protocols/a2a.js');
@@ -50,8 +59,8 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
       },
     };
 
-    // Mock the A2AClient.fromCardUrl method
-    const originalA2AClient = require('@a2a-js/sdk/client').A2AClient;
+    // Replace the local factory seam with a deterministic SDK client.
+    const originalA2AClient = require('../../dist/lib/protocols/a2a').legacyA2AClientTestShim;
     originalA2AClient.fromCardUrl = async () => mockA2AClient;
   }
 
@@ -75,26 +84,22 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
 
       const message = sentMessage.message;
 
-      // Validate critical A2A message fields that were missing in the bug
-      assert.strictEqual(message.kind, 'message', 'Message must have kind: "message"');
+      // Validate the A2A 1.0 protobuf-shaped request handed to the official client.
       assert.ok(message.messageId, 'Message must have messageId');
-      assert.strictEqual(message.role, 'user', 'Message must have role: "user"');
+      assert.strictEqual(message.role, Role.ROLE_USER, 'Message must have the user role');
       assert.ok(Array.isArray(message.parts), 'Message must have parts array');
+      assert.deepStrictEqual(message.extensions, [ADCP_A2A_EXTENSION]);
 
       // Validate parts structure
       assert.strictEqual(message.parts.length, 1, 'Should have exactly one part');
-      const part = message.parts[0];
-
-      assert.strictEqual(part.kind, 'data', 'Part must have kind: "data"');
-      assert.ok(part.data, 'Part must have data property');
-      assert.strictEqual(part.data.skill, toolName, 'Part data must have correct skill');
-      assert.deepStrictEqual(part.data.parameters, parameters, 'Part data must use "parameters" not "input"');
+      const data = dataPartValue(message);
+      assert.strictEqual(data.skill, toolName, 'Part data must have correct skill');
+      assert.deepStrictEqual(data.input, parameters, 'AdCP 3.2 profile data must use the input field');
     });
 
-    test('should reject attempt to use deprecated "input" field', async () => {
+    test('should use the AdCP 3.2 input field rather than the legacy parameters field', async () => {
       setupA2AMocks();
 
-      // This test ensures we don't regress to using "input" instead of "parameters"
       const agentUrl = 'https://test-agent.example.com';
       const toolName = 'get_products';
       const parameters = { category: 'electronics' };
@@ -102,12 +107,10 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
       await callA2ATool(agentUrl, toolName, parameters);
 
       const sentMessage = capturedMessages[0];
-      const part = sentMessage.message.parts[0];
+      const data = dataPartValue(sentMessage.message);
 
-      // Verify we're using "parameters" not "input"
-      assert.ok(part.data.parameters, 'Should use "parameters" field');
-      assert.strictEqual(part.data.input, undefined, 'Should not have deprecated "input" field');
-      assert.deepStrictEqual(part.data.parameters, parameters, 'Parameters should contain the parameters data');
+      assert.deepStrictEqual(data.input, parameters, 'Input should contain the AdCP invocation data');
+      assert.strictEqual(data.parameters, undefined, 'A2A 1.0 must not emit the legacy parameters alias');
     });
 
     test('should validate messageId format and uniqueness', async () => {
@@ -142,10 +145,10 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
       await callA2ATool('https://test.com', 'skill_without_params', {});
 
       const sentMessage = capturedMessages[0];
-      const part = sentMessage.message.parts[0];
+      const data = dataPartValue(sentMessage.message);
 
-      assert.deepStrictEqual(part.data.parameters, {}, 'Empty parameters should result in empty parameters object');
-      assert.strictEqual(part.data.skill, 'skill_without_params', 'Skill name should be preserved');
+      assert.deepStrictEqual(data.input, {}, 'Empty input should result in an empty object');
+      assert.strictEqual(data.skill, 'skill_without_params', 'Skill name should be preserved');
     });
 
     test('should handle complex nested parameters', async () => {
@@ -167,13 +170,9 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
       await callA2ATool('https://test.com', 'complex_search', complexParams);
 
       const sentMessage = capturedMessages[0];
-      const part = sentMessage.message.parts[0];
+      const data = dataPartValue(sentMessage.message);
 
-      assert.deepStrictEqual(
-        part.data.parameters,
-        complexParams,
-        'Complex nested parameters should be preserved exactly'
-      );
+      assert.deepStrictEqual(data.input, complexParams, 'Complex nested input should be preserved exactly');
     });
   });
 
@@ -187,7 +186,7 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
       setupA2AMocks();
 
       // Then re-override fromCardUrl to capture the fetchImpl option
-      const originalA2AClient = require('@a2a-js/sdk/client').A2AClient;
+      const originalA2AClient = require('../../dist/lib/protocols/a2a').legacyA2AClientTestShim;
       originalA2AClient.fromCardUrl = async (cardUrl, options) => {
         capturedFetchImpl = options?.fetchImpl;
         return mockA2AClient;
@@ -203,7 +202,7 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
     test('should not provide fetchImpl when no auth token', async () => {
       let capturedOptions;
 
-      const originalA2AClient = require('@a2a-js/sdk/client').A2AClient;
+      const originalA2AClient = require('../../dist/lib/protocols/a2a').legacyA2AClientTestShim;
       originalA2AClient.fromCardUrl = async (cardUrl, options) => {
         capturedOptions = options;
         return mockA2AClient;
@@ -233,7 +232,7 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
         }),
       };
 
-      const originalA2AClient = require('@a2a-js/sdk/client').A2AClient;
+      const originalA2AClient = require('../../dist/lib/protocols/a2a').legacyA2AClientTestShim;
       originalA2AClient.fromCardUrl = async () => errorClient;
 
       await assert.rejects(
@@ -262,7 +261,7 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
         }),
       };
 
-      const originalA2AClient = require('@a2a-js/sdk/client').A2AClient;
+      const originalA2AClient = require('../../dist/lib/protocols/a2a').legacyA2AClientTestShim;
       originalA2AClient.fromCardUrl = async () => errorClient;
 
       await assert.rejects(
@@ -323,7 +322,7 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
         }),
       };
 
-      const originalA2AClient = require('@a2a-js/sdk/client').A2AClient;
+      const originalA2AClient = require('../../dist/lib/protocols/a2a').legacyA2AClientTestShim;
       originalA2AClient.fromCardUrl = async () => failedTaskClient;
 
       const response = await callA2ATool('https://test.com', 'get_products', { brief: 'x' });
@@ -353,7 +352,7 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
         }),
       };
 
-      const originalA2AClient = require('@a2a-js/sdk/client').A2AClient;
+      const originalA2AClient = require('../../dist/lib/protocols/a2a').legacyA2AClientTestShim;
       originalA2AClient.fromCardUrl = async () => textOnlyClient;
 
       await assert.rejects(
@@ -381,7 +380,7 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
         }),
       };
 
-      const originalA2AClient = require('@a2a-js/sdk/client').A2AClient;
+      const originalA2AClient = require('../../dist/lib/protocols/a2a').legacyA2AClientTestShim;
       originalA2AClient.fromCardUrl = async () => emptyArtifactsClient;
 
       await assert.rejects(
@@ -417,7 +416,7 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
         }),
       };
 
-      const originalA2AClient = require('@a2a-js/sdk/client').A2AClient;
+      const originalA2AClient = require('../../dist/lib/protocols/a2a').legacyA2AClientTestShim;
       originalA2AClient.fromCardUrl = async () => rejectedTaskClient;
 
       const response = await callA2ATool('https://test.com', 'get_products', {});
@@ -442,8 +441,9 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
       const requestLog = debugLogs.find(log => log.type === 'info' && log.message.includes('Calling skill'));
       assert.ok(requestLog, 'Should have request debug log');
       assert.ok(requestLog.actualPayload, 'Should include actual payload in debug log');
-      assert.strictEqual(requestLog.actualPayload.message.parts[0].data.skill, 'debug_test');
-      assert.deepStrictEqual(requestLog.actualPayload.message.parts[0].data.parameters, testParams);
+      const data = dataPartValue(requestLog.actualPayload.message);
+      assert.strictEqual(data.skill, 'debug_test');
+      assert.deepStrictEqual(data.input, testParams);
 
       // Find response log
       const responseLog = debugLogs.find(log => log.type === 'success' && log.message.includes('Response received'));
@@ -461,67 +461,65 @@ describe('Schema Validation Utilities', () => {
    */
 
   test('should validate A2A message schema compliance', () => {
-    // This would test a utility function that validates A2A messages
     const validMessage = {
       message: {
         messageId: 'msg_123_abc',
-        role: 'user',
-        kind: 'message',
+        role: Role.ROLE_USER,
+        extensions: [ADCP_A2A_EXTENSION],
         parts: [
           {
-            kind: 'data',
-            data: {
-              skill: 'test_skill',
-              parameters: { param: 'value' },
+            content: {
+              $case: 'data',
+              value: {
+                skill: 'test_skill',
+                input: { param: 'value' },
+              },
             },
           },
         ],
       },
     };
 
-    // In real implementation: assert.ok(validateA2AMessageSchema(validMessage));
-    assert.ok(
-      validMessage.message.kind === 'message',
-      'Placeholder validation - should implement full schema validation'
-    );
+    assert.strictEqual(validMessage.message.role, Role.ROLE_USER);
+    assert.ok(validMessage.message.extensions.includes(ADCP_A2A_EXTENSION));
+    assert.deepStrictEqual(dataPartValue(validMessage.message).input, { param: 'value' });
   });
 
   test('should identify common A2A message format errors', () => {
     const invalidMessages = [
-      // Missing kind field
+      // Missing required AdCP profile activation.
       {
         message: {
           messageId: 'msg_123',
-          role: 'user',
-          parts: [{ kind: 'data', data: { skill: 'test', parameters: {} } }],
+          role: Role.ROLE_USER,
+          extensions: [],
+          parts: [{ content: { $case: 'data', value: { skill: 'test', input: {} } } }],
         },
       },
-      // Using deprecated 'input' instead of 'parameters'
+      // Using the legacy parameters alias instead of input.
       {
         message: {
           messageId: 'msg_123',
-          role: 'user',
-          kind: 'message',
-          parts: [{ kind: 'data', data: { skill: 'test', input: {} } }],
+          role: Role.ROLE_USER,
+          extensions: [ADCP_A2A_EXTENSION],
+          parts: [{ content: { $case: 'data', value: { skill: 'test', parameters: {} } } }],
         },
       },
-      // Invalid part kind
+      // Invalid protobuf oneof case.
       {
         message: {
           messageId: 'msg_123',
-          role: 'user',
-          kind: 'message',
-          parts: [{ kind: 'invalid', data: { skill: 'test', parameters: {} } }],
+          role: Role.ROLE_USER,
+          extensions: [ADCP_A2A_EXTENSION],
+          parts: [{ content: { $case: 'invalid', value: { skill: 'test', input: {} } } }],
         },
       },
     ];
 
-    // In real implementation, each should fail schema validation
     invalidMessages.forEach((msg, index) => {
-      // Placeholder checks - replace with real schema validation
-      if (index === 0) assert.strictEqual(msg.message.kind, undefined, 'Should detect missing kind');
-      if (index === 1) assert.ok(msg.message.parts[0].data.input !== undefined, 'Should detect deprecated input field');
-      if (index === 2) assert.strictEqual(msg.message.parts[0].kind, 'invalid', 'Should detect invalid part kind');
+      if (index === 0) assert.ok(!msg.message.extensions.includes(ADCP_A2A_EXTENSION));
+      if (index === 1) assert.strictEqual(msg.message.parts[0].content.value.input, undefined);
+      if (index === 2) assert.strictEqual(msg.message.parts[0].content.$case, 'invalid');
     });
   });
 });

@@ -452,6 +452,54 @@ describe('SingleAgentClient RFC 9421 webhook receiver', () => {
     }
   });
 
+  test('authenticates an A2A 1.0 Task response envelope with JSON-encoded DataParts', async () => {
+    const { client, callbackUrl, signer } = await registeredA2ARfcClient();
+    const payload = {
+      task: {
+        id: 'a2a-v1-transport-task',
+        contextId: 'a2a-v1-context',
+        status: { state: 'TASK_STATE_COMPLETED', timestamp: new Date().toISOString() },
+        artifacts: [
+          {
+            artifactId: 'a2a-v1-result',
+            parts: [
+              {
+                data: {
+                  operation_id: 'op-a2a-1',
+                  task_id: 'adcp-v1-work-task',
+                  task_type: 'create_media_buy',
+                  status: 'completed',
+                  idempotency_key: 'a2a_v1_webhook_event_0001',
+                  result: { media_buy_id: 'buy-a2a-v1', packages: [] },
+                },
+                mediaType: 'application/json',
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const rawBody = JSON.stringify(payload);
+    const signed = signWebhook(
+      { method: 'POST', url: callbackUrl, headers: { 'content-type': 'application/json' }, body: rawBody },
+      signer
+    );
+    const parsed = await client.verifyAndParseWebhook({
+      rawBody,
+      headers: signed.headers,
+      taskType: 'create_media_buy',
+      operationId: 'op-a2a-1',
+      requestMethod: 'POST',
+      requestUrl: callbackUrl,
+    });
+
+    assert.strictEqual(parsed.ok, true);
+    assert.strictEqual(parsed.protocol, 'a2a');
+    assert.strictEqual(parsed.metadata.taskId, 'adcp-v1-work-task');
+    assert.strictEqual(parsed.metadata.status, 'completed');
+    assert.strictEqual(parsed.result.media_buy_id, 'buy-a2a-v1');
+  });
+
   test('prefers a terminal Task artifact over stale status-message data and preserves A2A idempotency', async () => {
     const { client, callbackUrl, signer } = await registeredA2ARfcClient();
     const payload = a2aTaskWebhook('completed', {

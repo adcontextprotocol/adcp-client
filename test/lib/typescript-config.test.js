@@ -20,7 +20,7 @@ test('TypeScript avoids install-location mappings and pins the local declaration
   assert.equal(tsconfig.compilerOptions.moduleResolution, 'node');
   assert.equal(tsconfig.compilerOptions.paths?.['structured-headers'], undefined);
   assert.equal(examplesConfig.compilerOptions.paths?.['structured-headers'], undefined);
-  assert.equal(packageJson.dependencies['structured-headers'], '2.0.2');
+  assert.equal(packageJson.dependencies['structured-headers'], '2.0.3');
 });
 
 test('a nested CommonJS source package compiles with structured-headers hoisted to an ancestor', () => {

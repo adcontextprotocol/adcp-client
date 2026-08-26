@@ -2,8 +2,8 @@
  * Integration check that A2A agent-card discovery honors `maxResponseBytes`.
  *
  * The cap is installed in `buildFetchImpl` and handed to the A2A SDK's
- * `A2AClient.fromCardUrl(cardUrl, { fetchImpl })`. That path fetches
- * `/.well-known/agent.json` through our wrapped fetch, so an oversized
+ * the SDK client factory. That path fetches
+ * `/.well-known/agent-card.json` through our wrapped fetch, so an oversized
  * agent-card must abort with `ResponseTooLargeError` before the body is
  * parsed — which is what we want, because the JSON parse buffers the
  * full body in memory otherwise and is exactly the DoS surface the cap
@@ -22,14 +22,14 @@ const http = require('node:http');
 const { wrapFetchWithSizeLimit, withResponseSizeLimit } = require('../../dist/lib/protocols/responseSizeLimit');
 const { ResponseTooLargeError } = require('../../dist/lib/errors');
 
-const { A2AClient } = require('@a2a-js/sdk/client');
+const { legacyA2AClientTestShim: A2AClient } = require('../../dist/lib/protocols/a2a');
 
 let server;
 let baseUrl;
 
 before(async () => {
   server = http.createServer((req, res) => {
-    if (req.url === '/.well-known/agent.json') {
+    if (req.url === '/.well-known/agent-card.json') {
       // Minimum-viable agent card the A2A SDK will accept (`url` is required
       // for the service endpoint), padded with a hostile-vendor blob in a
       // free-form field. 5 MB is well over any reasonable discovery cap and
@@ -37,8 +37,15 @@ before(async () => {
       const padding = 'x'.repeat(5 * 1024 * 1024);
       const body = JSON.stringify({
         name: 'oversized',
-        url: `${baseUrl}/a2a`,
         description: padding,
+        version: '1.0.0',
+        supportedInterfaces: [
+          { url: `${baseUrl}/a2a`, protocolBinding: 'JSONRPC', protocolVersion: '1.0', tenant: '' },
+        ],
+        capabilities: { streaming: false, pushNotifications: false },
+        defaultInputModes: ['application/json'],
+        defaultOutputModes: ['application/json'],
+        skills: [],
       });
       res.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) });
       res.end(body);
@@ -66,7 +73,7 @@ describe('A2A agent-card discovery — maxResponseBytes', () => {
 
     await assert.rejects(
       withResponseSizeLimit(64 * 1024, async () =>
-        A2AClient.fromCardUrl(`${baseUrl}/.well-known/agent.json`, { fetchImpl: wrappedFetch })
+        A2AClient.fromCardUrl(`${baseUrl}/.well-known/agent-card.json`, { fetchImpl: wrappedFetch })
       ),
       err => {
         assert.ok(
@@ -91,7 +98,7 @@ describe('A2A agent-card discovery — maxResponseBytes', () => {
     // tightens the wrapper doesn't silently start rejecting legitimate cards.
     const wrappedFetch = wrapFetchWithSizeLimit((input, init) => fetch(input, init));
     const card = await withResponseSizeLimit(16 * 1024 * 1024, () =>
-      A2AClient.fromCardUrl(`${baseUrl}/.well-known/agent.json`, { fetchImpl: wrappedFetch })
+      A2AClient.fromCardUrl(`${baseUrl}/.well-known/agent-card.json`, { fetchImpl: wrappedFetch })
     );
     // `fromCardUrl` returns an A2AClient instance built from the parsed card.
     // We don't care about the client beyond "construction succeeded" — the

@@ -1,6 +1,14 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const express = require('express');
+const { Role, SendMessageRequest, TaskState } = require('@a2a-js/sdk');
+const {
+  ClientFactory,
+  DefaultAgentCardResolver,
+  JsonRpcTransportFactory,
+  ServiceParameters,
+  withA2AExtensions,
+} = require('@a2a-js/sdk/client');
 const { createAdcpServer: _createAdcpServer } = require('../dist/lib/server/create-adcp-server');
 const { createA2AAdapter } = require('../dist/lib/server/a2a-adapter');
 const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning/runtime/from-platform');
@@ -67,13 +75,19 @@ async function close(server) {
   });
 }
 
-async function postJsonRpc(app, body, headers = {}) {
+async function postJsonRpc(app, body, headers = {}, includeLegacyExtension = true) {
   const server = await listen(app);
   try {
     const port = server.address().port;
     const res = await fetch(`http://127.0.0.1:${port}/`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...headers },
+      headers: {
+        'content-type': 'application/json',
+        ...(includeLegacyExtension && {
+          'x-a2a-extensions': 'https://adcontextprotocol.org/extensions/adcp/v3',
+        }),
+        ...headers,
+      },
       body: JSON.stringify(body),
     });
     const json = await res.json();
@@ -83,11 +97,11 @@ async function postJsonRpc(app, body, headers = {}) {
   }
 }
 
-async function getAgentCard(app) {
+async function getAgentCard(app, headers = {}) {
   const server = await listen(app);
   try {
     const port = server.address().port;
-    const res = await fetch(`http://127.0.0.1:${port}/.well-known/agent-card.json`);
+    const res = await fetch(`http://127.0.0.1:${port}/.well-known/agent-card.json`, { headers });
     return { status: res.status, body: await res.json() };
   } finally {
     await close(server);
@@ -181,6 +195,111 @@ function createComplianceDecisioningServer({ principalMode = 'sandbox' } = {}) {
 }
 
 describe('createA2AAdapter', () => {
+  describe('A2A 1.0 official client', () => {
+    it('negotiates the required AdCP extension and completes a native round trip', async () => {
+      const app = express();
+      const server = await listen(app);
+      try {
+        const port = server.address().port;
+        const baseUrl = `http://127.0.0.1:${port}`;
+        const adcp = createAdcpServer({ mediaBuy: { getProducts: async () => ({ products: [] }) } });
+        const a2a = createA2AAdapter({ server: adcp, agentCard: baseCard({ url: `${baseUrl}/a2a` }) });
+        app.use(express.json());
+        app.use('/.well-known/agent-card.json', a2a.agentCardHandler);
+        app.use('/a2a', a2a.jsonRpcHandler);
+
+        let activatedExtension;
+        const fetchImpl = async (input, init) => {
+          const response = await fetch(input, init);
+          if ((init?.method ?? 'GET') === 'POST') {
+            activatedExtension = response.headers.get('a2a-extensions');
+          }
+          return response;
+        };
+        const legacyCompat = { enabled: true };
+        const factory = new ClientFactory({
+          transports: [new JsonRpcTransportFactory({ fetchImpl, legacyCompat })],
+          cardResolver: new DefaultAgentCardResolver({ fetchImpl, legacyCompat }),
+        });
+        const client = await factory.createFromUrl(`${baseUrl}/.well-known/agent-card.json`, '');
+        assert.strictEqual(client.protocolVersion, '1.0');
+
+        const result = await client.sendMessage(
+          {
+            tenant: '',
+            message: {
+              messageId: randomUuid(),
+              contextId: '',
+              taskId: '',
+              role: Role.ROLE_USER,
+              parts: [
+                {
+                  content: {
+                    $case: 'data',
+                    value: { skill: 'get_products', input: { buying_mode: 'brief', brief: 'display' } },
+                  },
+                  metadata: undefined,
+                  filename: '',
+                  mediaType: 'application/json',
+                },
+              ],
+              metadata: undefined,
+              extensions: ['https://adcontextprotocol.org/extensions/adcp/v3'],
+              referenceTaskIds: [],
+            },
+            configuration: undefined,
+            metadata: undefined,
+          },
+          {
+            serviceParameters: ServiceParameters.create(
+              withA2AExtensions('https://adcontextprotocol.org/extensions/adcp/v3')
+            ),
+          }
+        );
+
+        assert.strictEqual(result.status.state, TaskState.TASK_STATE_COMPLETED);
+        assert.strictEqual(activatedExtension, 'https://adcontextprotocol.org/extensions/adcp/v3');
+      } finally {
+        await close(server);
+      }
+    });
+
+    it('rejects a native request that does not activate the required AdCP extension', async () => {
+      const adcp = createAdcpServer({ mediaBuy: { getProducts: async () => ({ products: [] }) } });
+      const app = mountAdapter(createA2AAdapter({ server: adcp, agentCard: baseCard() }));
+      const params = SendMessageRequest.toJSON({
+        tenant: '',
+        message: {
+          messageId: randomUuid(),
+          contextId: '',
+          taskId: '',
+          role: Role.ROLE_USER,
+          parts: [
+            {
+              content: { $case: 'data', value: { skill: 'get_products', input: { buying_mode: 'brief' } } },
+              metadata: undefined,
+              filename: '',
+              mediaType: 'application/json',
+            },
+          ],
+          metadata: undefined,
+          extensions: [],
+          referenceTaskIds: [],
+        },
+        configuration: undefined,
+        metadata: undefined,
+      });
+      const res = await postJsonRpc(
+        app,
+        { jsonrpc: '2.0', id: 1, method: 'SendMessage', params },
+        { 'A2A-Version': '1.0' },
+        false
+      );
+      assert.strictEqual(res.body.result.task.status.state, 'TASK_STATE_FAILED');
+      assert.strictEqual(res.body.result.task.artifacts[0].parts[0].data.reason, 'REQUIRED_EXTENSION_MISSING');
+    });
+  });
+
   describe('agent card', () => {
     it('exposes seller identity fields and auto-seeds skills from registered tools', async () => {
       const adcp = createAdcpServer({
@@ -202,6 +321,31 @@ describe('createA2AAdapter', () => {
       assert.strictEqual(res.body.capabilities.streaming, false);
       assert.strictEqual(res.body.capabilities.pushNotifications, false);
       assert.deepStrictEqual(res.body.provider, { organization: 'Test Co', url: 'https://example.com' });
+
+      const nativeCard = await a2a.getAgentCard();
+      assert.strictEqual(nativeCard.supportedInterfaces[0].protocolVersion, '1.0');
+      assert.strictEqual(nativeCard.supportedInterfaces[0].protocolBinding, 'JSONRPC');
+      assert.ok(
+        nativeCard.capabilities.extensions.some(
+          extension =>
+            extension.uri === 'https://adcontextprotocol.org/extensions/adcp/v3' && extension.required === true
+        ),
+        'AdCP 3.2 profile is advertised as a required A2A 1.0 extension'
+      );
+
+      const nativeWire = await getAgentCard(app, { 'A2A-Version': '1.0' });
+      assert.strictEqual(nativeWire.status, 200);
+      assert.deepStrictEqual(nativeWire.body.securitySchemes.bearer, {
+        httpAuthSecurityScheme: { scheme: 'bearer' },
+      });
+      assert.ok(Array.isArray(nativeWire.body.supportedInterfaces));
+      assert.strictEqual(nativeWire.body.supportedInterfaces[0].protocolBinding, 'JSONRPC');
+      assert.strictEqual(
+        nativeWire.body.capabilities.extensions.find(
+          extension => extension.uri === 'https://adcontextprotocol.org/extensions/adcp/v3'
+        ).required,
+        true
+      );
     });
 
     it('omits comply_test_controller from public A2A agent-card skills', async () => {
@@ -285,7 +429,10 @@ describe('createA2AAdapter', () => {
         const port = server.address().port;
         const res = await fetch(`http://127.0.0.1:${port}${path}`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: {
+            'content-type': 'application/json',
+            'x-a2a-extensions': 'https://adcontextprotocol.org/extensions/adcp/v3',
+          },
           body: JSON.stringify(body),
         });
         return { status: res.status, body: await res.json() };
@@ -565,19 +712,24 @@ describe('createA2AAdapter', () => {
         },
       });
       const app = mountAdapter(createA2AAdapter({ server: adcp, agentCard: baseCard() }));
-      const res = await postJsonRpc(app, {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'message/send',
-        params: {
-          message: {
-            kind: 'message',
-            messageId: randomUuid(),
-            role: 'user',
-            parts: [{ kind: 'data', data: { skill: 'get_products', parameters: { brief: 'premium' } } }],
+      const res = await postJsonRpc(
+        app,
+        {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'message/send',
+          params: {
+            message: {
+              kind: 'message',
+              messageId: randomUuid(),
+              role: 'user',
+              parts: [{ kind: 'data', data: { skill: 'get_products', parameters: { brief: 'premium' } } }],
+            },
           },
         },
-      });
+        {},
+        false
+      );
       assert.strictEqual(res.body.result.status.state, 'completed');
       assert.strictEqual(sawBrief, 'premium', 'parameters alias threaded into handler args');
     });
@@ -637,7 +789,7 @@ describe('createA2AAdapter', () => {
       assert.strictEqual(res.body.result.status.state, 'failed');
       const dataPart = res.body.result.artifacts[0].parts[0];
       assert.strictEqual(dataPart.data.reason, 'HANDLER_THREW');
-      assert.match(dataPart.data.message, /method not found/i);
+      assert.strictEqual(dataPart.data.message, 'The A2A tool invocation failed.');
     });
   });
 

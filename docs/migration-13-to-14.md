@@ -15,6 +15,23 @@ convergence, webhook retry horizons, and crash-safe continuation generation
 replacement. Beta.6 adds coordinated placements, seller-rendered stateful
 display, creative component assets, and A2A 1.0 request-signing method names.
 
+### A2A 1.0 peer upgrade
+
+SDK 14's AdCP 3.2 transport requires `@a2a-js/sdk` 1.x. Upgrade the peer
+alongside the AdCP SDK:
+
+```bash
+npm install @adcp/sdk@beta @a2a-js/sdk@^1.0.1
+```
+
+The client and server use the official 1.0 Agent Card and JSON-RPC APIs and
+activate the required `https://adcontextprotocol.org/extensions/adcp/v3`
+profile. Wire interoperability with 0.3 agents remains available through the
+1.x SDK's compatibility layer; applications should not keep the 0.3 package
+installed. Existing `createA2AAdapter()` card options remain accepted, but
+`preferredTransport` and `protocolVersion` are deprecated because the adapter
+now advertises JSON-RPC 1.0 plus its 0.3 compatibility interface.
+
 ### Beta.5 task webhook registration and polling
 
 `push_notification_config` is now an AdCP application-layer field across MCP,

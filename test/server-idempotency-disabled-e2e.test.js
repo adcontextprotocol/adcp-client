@@ -203,7 +203,10 @@ describe('idempotency: disabled — A2A wire roundtrip', () => {
       const port = server.address().port;
       const res = await fetch(`http://127.0.0.1:${port}/`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          'x-a2a-extensions': 'https://adcontextprotocol.org/extensions/adcp/v3',
+        },
         body: JSON.stringify(body),
       });
       return { status: res.status, body: await res.json() };

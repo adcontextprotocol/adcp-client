@@ -33,7 +33,7 @@ delete privateJwk.use;
  *   back at `/rpc` on the same host, so the A2A client sends JSON-RPC
  *   `message/send` calls there.
  * - POST `/rpc` — accepts JSON-RPC; for `message/send` it pulls the first
- *   data-kind part (which is where AdCP puts `{skill, parameters}`) and
+ *   data-kind part (which is where AdCP puts `{skill, input}`) and
  *   synthesizes a completed Task result whose artifact echoes JSON payload.
  *
  * Every inbound JSON-RPC request is recorded alongside the skill the
@@ -261,6 +261,7 @@ test('A2A: webhook authentication payload is signed even when the operation is o
       schemes: ['HMAC-SHA256'],
       credentials: 'placeholder_secret_min_32_characters_required',
     });
+    assert.strictEqual(call.body.params.message.parts[0].data.input, undefined);
     const applicationPush = call.body.params.message.parts[0].data.parameters.push_notification_config;
     assert.strictEqual(applicationPush.authentication.credentials, 'placeholder_secret_min_32_characters_required');
     assert.match(applicationPush.operation_id, /^[A-Za-z0-9_.:-]{1,255}$/);

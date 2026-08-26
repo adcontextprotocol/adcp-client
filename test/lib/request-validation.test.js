@@ -156,7 +156,7 @@ describe('SingleAgentClient Request Validation', () => {
 
     test('should forward brand_manifest URL to v2 agents from manifest object', async () => {
       const capturedCalls = [];
-      const A2AClient = require('@a2a-js/sdk/client').A2AClient;
+      const A2AClient = require('../../dist/lib/protocols/a2a').legacyA2AClientTestShim;
       const originalFromCardUrl = A2AClient.fromCardUrl;
 
       A2AClient.fromCardUrl = async () => ({

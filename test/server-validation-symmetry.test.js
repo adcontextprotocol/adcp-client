@@ -85,7 +85,10 @@ async function a2aCall(baseUrl, skill, input) {
   };
   const res = await fetch(`${baseUrl}/a2a`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'x-a2a-extensions': 'https://adcontextprotocol.org/extensions/adcp/v3',
+    },
     body: JSON.stringify(body),
   });
   return res.json();

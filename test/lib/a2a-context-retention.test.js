@@ -41,7 +41,7 @@ function installA2AStub() {
     },
   };
 
-  const { A2AClient } = require('@a2a-js/sdk/client');
+  const { legacyA2AClientTestShim: A2AClient } = require('../../dist/lib/protocols/a2a');
   const originalFromCardUrl = A2AClient.fromCardUrl;
   A2AClient.fromCardUrl = async () => stubClient;
 
@@ -97,8 +97,8 @@ describe('A2A wire envelope carries contextId/taskId when a session is supplied'
 
       assert.strictEqual(stub.captured.length, 1);
       const msg = stub.captured[0].message;
-      assert.strictEqual(msg.contextId, undefined, 'no contextId on first send');
-      assert.strictEqual(msg.taskId, undefined, 'no taskId on first send');
+      assert.strictEqual(msg.contextId, '', 'A2A 1.0 uses the empty string when no contextId is supplied');
+      assert.strictEqual(msg.taskId, '', 'A2A 1.0 uses the empty string when no taskId is supplied');
     } finally {
       stub.restore();
     }
@@ -121,7 +121,7 @@ describe('A2A wire envelope carries contextId/taskId when a session is supplied'
 
       assert.strictEqual(stub.captured.length, 1);
       assert.strictEqual(stub.captured[0].message.contextId, 'ctx-resume-42');
-      assert.strictEqual(stub.captured[0].message.taskId, undefined);
+      assert.strictEqual(stub.captured[0].message.taskId, '');
     } finally {
       stub.restore();
     }
@@ -188,7 +188,7 @@ describe('AgentClient auto-retains contextId/taskId across sends', () => {
       await client.executeTask('probe', {});
 
       assert.strictEqual(stub.captured.length, 2);
-      assert.strictEqual(stub.captured[0].message.contextId, undefined, 'first send has no session');
+      assert.strictEqual(stub.captured[0].message.contextId, '', 'first send has no session');
       assert.strictEqual(stub.captured[1].message.contextId, 'ctx-server-1', 'second send uses server contextId');
     } finally {
       stub.restore();
@@ -254,7 +254,7 @@ describe('AgentClient auto-retains contextId/taskId across sends', () => {
 
       await client.executeTask('probe', {});
       assert.strictEqual(stub.captured[1].message.taskId, 'a2a-deferred-resume');
-      assert.strictEqual(stub.captured[2].message.taskId, undefined, 'completed task must not be rethreaded');
+      assert.strictEqual(stub.captured[2].message.taskId, '', 'completed task must not be rethreaded');
     } finally {
       stub.restore();
     }
@@ -295,7 +295,7 @@ describe('AgentClient auto-retains contextId/taskId across sends', () => {
 
       await client.executeTask('probe', {});
       assert.strictEqual(stub.captured[2].message.contextId, 'ctx-two-lifecycle');
-      assert.strictEqual(stub.captured[2].message.taskId, undefined);
+      assert.strictEqual(stub.captured[2].message.taskId, '');
     } finally {
       stub.restore();
     }
@@ -317,8 +317,8 @@ describe('AgentClient auto-retains contextId/taskId across sends', () => {
       assert.strictEqual(client.getPendingTaskId(), undefined);
 
       await client.executeTask('probe', {});
-      assert.strictEqual(stub.captured[1].message.contextId, undefined, 'post-reset send opens fresh session');
-      assert.strictEqual(stub.captured[1].message.taskId, undefined);
+      assert.strictEqual(stub.captured[1].message.contextId, '', 'post-reset send opens fresh session');
+      assert.strictEqual(stub.captured[1].message.taskId, '');
     } finally {
       stub.restore();
     }
@@ -398,7 +398,7 @@ describe('AgentClient auto-retains contextId/taskId across sends', () => {
       assert.strictEqual(stub.captured[1].message.contextId, 'ctx-B');
       assert.strictEqual(
         stub.captured[1].message.taskId,
-        undefined,
+        '',
         'stale pendingTaskId from conversation A must not leak into conversation B'
       );
     } finally {
@@ -460,7 +460,7 @@ describe('AgentClient.withSession narrows pendingTaskId auto-thread (regression 
       assert.strictEqual(stub.captured[1].message.contextId, 'ctx-shared', 'context continuity preserved');
       assert.strictEqual(
         stub.captured[1].message.taskId,
-        undefined,
+        '',
         'different skill MUST NOT auto-thread the prior task handle'
       );
     } finally {

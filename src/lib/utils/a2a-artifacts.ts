@@ -30,8 +30,17 @@ export function getLatestA2ADataPartFromTask(result: unknown): A2ADataPartExtrac
       const part = parts[partIndex];
       if (part == null || typeof part !== 'object' || Array.isArray(part)) continue;
       const record = part as Record<string, unknown>;
-      if (record.kind !== 'data') continue;
-      const data = record.data;
+      const content = record.content;
+      const data =
+        record.kind === 'data'
+          ? record.data
+          : record.kind === undefined && Object.hasOwn(record, 'data')
+            ? record.data
+            : content != null && typeof content === 'object' && !Array.isArray(content)
+              ? (content as { $case?: unknown; value?: unknown }).$case === 'data'
+                ? (content as { value?: unknown }).value
+                : undefined
+              : undefined;
       if (data == null || typeof data !== 'object' || Array.isArray(data)) continue;
       return {
         artifact: artifact as Record<string, unknown>,
