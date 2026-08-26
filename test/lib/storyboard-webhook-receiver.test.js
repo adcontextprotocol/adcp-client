@@ -171,10 +171,16 @@ describe('createWebhookReceiver', () => {
     assert.strictEqual(result[0].step_id, 'captured_before_close');
   });
 
-  test('waits registered after close resolve immediately', async () => {
+  test('waits registered after close resolve immediately and preserve retained matches', async () => {
     const receiver = await createWebhookReceiver();
+    await post(`${receiver.base_url}/step/retained/op-late`, {
+      idempotency_key: 'evt_retained12345678',
+    });
     await receiver.close();
 
+    const retained = await receiver.wait({ step_id: 'retained' }, 60_000);
+    assert.strictEqual(retained.webhook.step_id, 'retained');
+    assert.strictEqual((await receiver.wait_all({ step_id: 'retained' }, 60_000)).length, 1);
     assert.deepStrictEqual(await receiver.wait({ step_id: 'late' }, 60_000), { timed_out: true });
     assert.deepStrictEqual(await receiver.wait_all({ step_id: 'late' }, 60_000), []);
   });

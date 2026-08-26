@@ -243,10 +243,15 @@ export async function createWebhookReceiver(options: CreateWebhookReceiverOption
     set_retry_replay: (key, policy) => {
       retryPolicies.set(retryKeyString(key), { policy, delivered: 0 });
     },
-    wait: (filter, timeout_ms) =>
-      closed ? Promise.resolve({ timed_out: true }) : wait(filter, timeout_ms, captured, waiters),
+    wait: (filter, timeout_ms) => {
+      if (!closed) return wait(filter, timeout_ms, captured, waiters);
+      const already = captured.find(w => matchesFilter(w, filter));
+      return Promise.resolve(already ? { webhook: already } : { timed_out: true });
+    },
     wait_all: (filter, timeout_ms) =>
-      closed ? Promise.resolve([]) : waitAll(filter, timeout_ms, captured, waitAllTimers),
+      closed
+        ? Promise.resolve(captured.filter(w => matchesFilter(w, filter)))
+        : waitAll(filter, timeout_ms, captured, waitAllTimers),
     close: () => {
       closed = true;
       return closeServer(server, captured, waiters, waitAllTimers);
