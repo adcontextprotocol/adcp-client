@@ -71,13 +71,13 @@ test('Protocol Discovery Accept Headers', async t => {
   });
 
   await t.test('A2A discovery supports both well-known paths', async () => {
-    // agent.json is the current A2A spec path; agent-card.json is legacy
-    const currentPath = '/.well-known/agent.json';
-    const legacyPath = '/.well-known/agent-card.json';
+    // agent-card.json is the A2A 1.0 path; agent.json remains a legacy fallback
+    const currentPath = '/.well-known/agent-card.json';
+    const legacyPath = '/.well-known/agent.json';
     const incorrectPath = '/.well-known/a2a-server';
 
-    assert.strictEqual(currentPath, '/.well-known/agent.json');
-    assert.strictEqual(legacyPath, '/.well-known/agent-card.json');
+    assert.strictEqual(currentPath, '/.well-known/agent-card.json');
+    assert.strictEqual(legacyPath, '/.well-known/agent.json');
     assert.notStrictEqual(currentPath, incorrectPath, 'Should not use old incorrect path');
   });
 

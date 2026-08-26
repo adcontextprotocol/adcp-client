@@ -91,11 +91,10 @@ import type {
 import { type MutatingRequestInput, generateIdempotencyKey, requestUsesIdempotency } from '../utils/idempotency';
 
 import type { MCPWebhookPayload, AdCPAsyncResponseData, TaskStatus } from '../types/core.generated';
-import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
-import { A2AClient as A2AClientImpl } from '@a2a-js/sdk/client';
-// A2A SDK client used untyped — wire shapes are validated at runtime, matching
-// the prior CommonJS `require('@a2a-js/sdk/client')` behaviour.
-const A2AClient: any = A2AClientImpl;
+import type { Client as A2AClient } from '@a2a-js/sdk/client';
+import { createA2AClientFromCardUrl } from '../protocols/a2a';
+type A2ATask = Record<string, any>;
+type TaskStatusUpdateEvent = Record<string, any>;
 
 import {
   TaskExecutor,
@@ -270,6 +269,67 @@ type InternalReadRequestOptions = ReadRequestOptions & {
   [CAPABILITY_DISCOVERY_CONTEXT]?: CapabilityDiscoveryContext;
 };
 type UnprojectedPreDispatchHook<T> = BeforeProtocolDispatchHook<T>;
+
+function a2aUrlString(input: string | URL | Request): string {
+  return typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+}
+
+function a2aScopedHeaders(
+  input: string | URL | Request,
+  requestHeaders: HeadersInit | undefined,
+  configuredAgentUrl: string,
+  agentHeaders: Record<string, string> | undefined,
+  authToken: string | undefined
+): Record<string, string> {
+  const normalized: Record<string, string> = {};
+  new Headers(requestHeaders).forEach((value, key) => {
+    normalized[key] = value;
+  });
+  const sameOrigin = new URL(a2aUrlString(input)).origin === new URL(configuredAgentUrl).origin;
+  if (!sameOrigin) {
+    for (const key of Object.keys(normalized)) {
+      if (!['accept', 'content-type', 'a2a-version', 'a2a-extensions'].includes(key.toLowerCase())) {
+        delete normalized[key];
+      }
+    }
+    return normalized;
+  }
+  return {
+    ...normalized,
+    ...agentHeaders,
+    ...(authToken && {
+      Authorization: `Bearer ${authToken}`,
+      'x-adcp-auth': authToken,
+    }),
+  };
+}
+
+function sameA2AProtocolVersion(left: unknown, right: unknown): boolean {
+  if (typeof left !== 'string' || typeof right !== 'string') return false;
+  const normalize = (value: string) => value.split('.').slice(0, 2).join('.');
+  return normalize(left) === normalize(right);
+}
+
+function selectA2AJsonRpcUrl(agentCard: any, protocolVersion: string, configuredAgentUrl: string): string | undefined {
+  const interfaces = Array.isArray(agentCard?.supportedInterfaces)
+    ? agentCard.supportedInterfaces.filter(
+        (candidate: any) => candidate?.protocolBinding === 'JSONRPC' && typeof candidate?.url === 'string'
+      )
+    : [];
+  const selected =
+    interfaces.find((candidate: any) => sameA2AProtocolVersion(candidate.protocolVersion, protocolVersion)) ??
+    interfaces.find((candidate: any) => sameA2AProtocolVersion(candidate.protocolVersion, '1.0')) ??
+    interfaces[0];
+  if (!selected) return undefined;
+  const resolved = new URL(selected.url, configuredAgentUrl);
+  if (resolved.origin !== new URL(configuredAgentUrl).origin) {
+    throw new Error(
+      `A2A Agent Card selected a cross-origin JSON-RPC endpoint (${resolved.origin}); ` +
+        `configure that endpoint explicitly before sending credentials`
+    );
+  }
+  return resolved.toString();
+}
 
 function creativeSchemaSupport(value: unknown, depth = 0): CreativeFormatWireMode {
   if (depth > 24 || value === null || typeof value !== 'object') return 'unknown';
@@ -2601,14 +2661,7 @@ export class SingleAgentClient {
     let got401 = false;
 
     const fetchImpl = async (url: string | URL | Request, requestInit?: RequestInit) => {
-      const headers: Record<string, string> = {
-        ...(requestInit?.headers as Record<string, string>),
-        ...this.normalizedAgent.headers,
-        ...(authToken && {
-          Authorization: `Bearer ${authToken}`,
-          'x-adcp-auth': authToken,
-        }),
-      };
+      const headers = a2aScopedHeaders(url, requestInit?.headers, agentUri, this.normalizedAgent.headers, authToken);
 
       const response = await withAbortSignal<Response>(
         [readOptions?.signal, requestInit?.signal],
@@ -2627,11 +2680,11 @@ export class SingleAgentClient {
     const cardUrls = buildCardUrls(agentUri);
 
     try {
-      let client: InstanceType<typeof A2AClient> | undefined;
+      let client: A2AClient | undefined;
       let lastError: Error = new Error(`A2A agent card not found at ${cardUrls.join(', ')}`);
       for (const cardUrl of cardUrls) {
         try {
-          client = await withResponseSizeLimit(maxResponseBytes, () => A2AClient.fromCardUrl(cardUrl, { fetchImpl }));
+          client = await withResponseSizeLimit(maxResponseBytes, () => createA2AClientFromCardUrl(cardUrl, fetchImpl));
           break;
         } catch (err: unknown) {
           lastError = err as Error;
@@ -2641,14 +2694,21 @@ export class SingleAgentClient {
       if (!client) {
         throw lastError;
       }
-      const agentCard = await withResponseSizeLimit(maxResponseBytes, async () =>
-        client.agentCardPromise ? client.agentCardPromise : client.agentCard
-      );
+      const agentCard = await withResponseSizeLimit(maxResponseBytes, async () => {
+        const compatibleClient = client as unknown as {
+          getAgentCard?: () => Promise<any>;
+          agentCardPromise?: Promise<any>;
+          agentCard?: any;
+        };
+        return typeof compatibleClient.getAgentCard === 'function'
+          ? compatibleClient.getAgentCard()
+          : (compatibleClient.agentCardPromise ?? compatibleClient.agentCard);
+      });
 
-      // Use the canonical URL from the agent card, falling back to computed base URL
-      if (agentCard?.url) {
-        return agentCard.url;
-      }
+      // Persist only the JSON-RPC interface negotiated by the official
+      // client, and never widen credential scope based on untrusted card data.
+      const canonicalUrl = selectA2AJsonRpcUrl(agentCard, client.protocolVersion, agentUri);
+      if (canonicalUrl) return canonicalUrl;
 
       return this.computeBaseUrl(agentUri);
     } catch (error: unknown) {
@@ -3827,8 +3887,9 @@ export class SingleAgentClient {
     // 1. Check for A2A Task or TaskStatusUpdateEvent before considering MCP.
     // Native A2A events also carry a top-level `status`, so MCP's broad
     // candidate detector must never get first refusal.
-    if ('kind' in payload && (payload.kind === 'task' || payload.kind === 'status-update')) {
-      const a2aPayload = payload as unknown as A2ATask | TaskStatusUpdateEvent;
+    const normalizedA2APayload = normalizeA2AWebhookEnvelope(payload);
+    if (normalizedA2APayload) {
+      const a2aPayload = normalizedA2APayload as A2ATask | TaskStatusUpdateEvent;
       const statusMessageData = latestA2AWebhookMessageData(a2aPayload.status?.message?.parts);
       const artifactExtraction = a2aPayload.kind === 'task' ? getLatestA2ADataPartFromTask(a2aPayload) : undefined;
       const artifactData = artifactExtraction?.data;
@@ -3915,11 +3976,7 @@ export class SingleAgentClient {
       const result = Object.hasOwn(adcpData, 'result')
         ? (adcpData.result as AdCPAsyncResponseData | undefined)
         : (adcpData as AdCPAsyncResponseData);
-      const textParts = Array.isArray(a2aPayload.status?.message?.parts)
-        ? a2aPayload.status.message.parts
-            .filter(part => part.kind === 'text' && 'text' in part)
-            .map(part => ('text' in part ? part.text : ''))
-        : [];
+      const textParts = latestA2AWebhookTextParts(a2aPayload.status?.message?.parts);
 
       return {
         operation_id: operationId,
@@ -7871,35 +7928,15 @@ export class SingleAgentClient {
       const { wrapFetchWithSizeLimit } = await import('../protocols/responseSizeLimit');
       const authToken = await ensureReadAuthToken();
       const agentHeaders = this.normalizedAgent.headers ?? {};
-      const sizeLimitedFetch = wrapFetchWithSizeLimit((input, init) =>
-        transport?.trustedFetchFn ? transport.trustedFetchFn(input, init) : fetch(input as RequestInfo | URL, init)
+      const configuredAgentUrl = this.normalizedAgent.agent_uri;
+      const sizeLimitedFetch = wrapFetchWithSizeLimit(
+        createAgentTransportFetch(configuredAgentUrl, {
+          trustedFetchFn: transport?.trustedFetchFn,
+          allowPrivateIp: transport?.allowPrivateIp,
+        })
       );
-      const normalizeHeaders = (headers?: HeadersInit): Record<string, string> => {
-        const normalized: Record<string, string> = {};
-        if (!headers) return normalized;
-        if (headers instanceof Headers) {
-          headers.forEach((value, key) => {
-            normalized[key] = value;
-          });
-        } else if (Array.isArray(headers)) {
-          for (const [key, value] of headers) {
-            normalized[key] = value;
-          }
-        } else {
-          Object.assign(normalized, headers);
-        }
-        return normalized;
-      };
-      const buildHeaders = (requestInit?: RequestInit): Record<string, string> => ({
-        ...normalizeHeaders(requestInit?.headers),
-        ...agentHeaders,
-        ...(authToken && {
-          Authorization: `Bearer ${authToken}`,
-          'x-adcp-auth': authToken,
-        }),
-      });
       const fetchImpl = async (url: string | URL | Request, requestInit?: RequestInit) => {
-        const headers = buildHeaders(requestInit);
+        const headers = a2aScopedHeaders(url, requestInit?.headers, configuredAgentUrl, agentHeaders, authToken);
         return withAbortSignal<Response>([options?.signal, requestInit?.signal], requestTimeoutMs, signal =>
           sizeLimitedFetch(url as RequestInfo | URL, { ...requestInit, headers, signal })
         );
@@ -7907,14 +7944,14 @@ export class SingleAgentClient {
 
       const cardUrls = buildCardUrls(this.normalizedAgent.agent_uri);
 
-      let client: InstanceType<typeof A2AClient> | undefined;
+      let client: A2AClient | undefined;
       let lastCardError: Error = new Error(`A2A agent card not found at ${cardUrls.join(', ')}`);
       for (const cardUrl of cardUrls) {
         try {
           // Wrap A2A card discovery so `transport.maxResponseBytes` applies
           // to agent-card fetches and the deferred `agentCardPromise` read
           // below — both fire fetches that would otherwise bypass the cap.
-          client = await withResponseSizeLimit(maxResponseBytes, () => A2AClient.fromCardUrl(cardUrl, { fetchImpl }));
+          client = await withResponseSizeLimit(maxResponseBytes, () => createA2AClientFromCardUrl(cardUrl, fetchImpl));
           break;
         } catch (err: unknown) {
           lastCardError = err as Error;
@@ -7923,9 +7960,16 @@ export class SingleAgentClient {
       if (!client) {
         throw lastCardError;
       }
-      const agentCard = await withResponseSizeLimit(maxResponseBytes, async () =>
-        client.agentCardPromise ? client.agentCardPromise : client.agentCard
-      );
+      const agentCard = await withResponseSizeLimit(maxResponseBytes, async () => {
+        const compatibleClient = client as unknown as {
+          getAgentCard?: () => Promise<any>;
+          agentCardPromise?: Promise<any>;
+          agentCard?: any;
+        };
+        return typeof compatibleClient.getAgentCard === 'function'
+          ? compatibleClient.getAgentCard()
+          : (compatibleClient.agentCardPromise ?? compatibleClient.agentCard);
+      });
 
       const tools = agentCard?.skills
         ? agentCard.skills.map(
@@ -7945,7 +7989,7 @@ export class SingleAgentClient {
         : [];
 
       return {
-        name: agentCard?.displayName || agentCard?.name || this.normalizedAgent.name,
+        name: agentCard?.name || this.normalizedAgent.name,
         description: agentCard?.description,
         protocol: this.normalizedAgent.protocol,
         url: this.normalizedAgent.agent_uri,
@@ -8934,14 +8978,55 @@ function isBareDeliveryReport(payload: Record<string, unknown>): boolean {
   );
 }
 
+/**
+ * Accept both A2A 1.0 JSON/protobuf envelopes and the SDK's 0.3 compatibility
+ * objects. A2A 1.0 removes the `kind` discriminator and wraps response/event
+ * variants in a oneof (`task`, `statusUpdate`, or an in-memory `payload`).
+ */
+function normalizeA2AWebhookEnvelope(payload: Record<string, unknown>): Record<string, any> | undefined {
+  if (payload.kind === 'task' || payload.kind === 'status-update') return payload;
+
+  const oneof = isObjectRecord(payload.payload) ? payload.payload : undefined;
+  const oneofCase = oneof?.$case;
+  const oneofValue = isObjectRecord(oneof?.value) ? oneof.value : undefined;
+  if (oneofValue && oneofCase === 'task') return { ...oneofValue, kind: 'task' };
+  if (oneofValue && oneofCase === 'statusUpdate') return { ...oneofValue, kind: 'status-update' };
+
+  if (isObjectRecord(payload.task)) return { ...payload.task, kind: 'task' };
+  if (isObjectRecord(payload.statusUpdate)) return { ...payload.statusUpdate, kind: 'status-update' };
+
+  if (typeof payload.id === 'string' && isObjectRecord(payload.status) && Array.isArray(payload.artifacts)) {
+    return { ...payload, kind: 'task' };
+  }
+  if (typeof payload.taskId === 'string' && isObjectRecord(payload.status) && !('artifact' in payload)) {
+    return { ...payload, kind: 'status-update' };
+  }
+  return undefined;
+}
+
+function a2aWebhookPartValue(part: unknown, expectedCase: 'data' | 'text'): unknown {
+  if (!isObjectRecord(part)) return undefined;
+  if (part.kind === expectedCase) return part[expectedCase];
+  if (part.kind === undefined && Object.hasOwn(part, expectedCase)) return part[expectedCase];
+  const content = isObjectRecord(part.content) ? part.content : undefined;
+  return content?.$case === expectedCase ? content.value : undefined;
+}
+
 function latestA2AWebhookMessageData(parts: unknown): Record<string, unknown> | undefined {
   if (!Array.isArray(parts)) return undefined;
   for (let index = parts.length - 1; index >= 0; index -= 1) {
-    const part = parts[index];
-    if (!isObjectRecord(part) || part.kind !== 'data' || !isObjectRecord(part.data)) continue;
-    return part.data;
+    const data = a2aWebhookPartValue(parts[index], 'data');
+    if (!isObjectRecord(data)) continue;
+    return data;
   }
   return undefined;
+}
+
+function latestA2AWebhookTextParts(parts: unknown): string[] {
+  if (!Array.isArray(parts)) return [];
+  return parts
+    .map(part => a2aWebhookPartValue(part, 'text'))
+    .filter((value): value is string => typeof value === 'string');
 }
 
 type SignedWebhookRoute = {
@@ -8954,15 +9039,16 @@ function extractSignedWebhookRoute(
   payload: unknown
 ): ({ ok: true } & SignedWebhookRoute) | { ok: false; message: string } {
   if (!isObjectRecord(payload)) return { ok: true };
+  const normalizedA2A = normalizeA2AWebhookEnvelope(payload);
   const records: Record<string, unknown>[] = [payload];
-  if (payload.kind === 'task' || payload.kind === 'status-update') {
+  if (normalizedA2A) {
     records.length = 0;
-    const status = isObjectRecord(payload.status) ? payload.status : undefined;
+    const status = isObjectRecord(normalizedA2A.status) ? normalizedA2A.status : undefined;
     const message = isObjectRecord(status?.message) ? status.message : undefined;
     const messageData = latestA2AWebhookMessageData(message?.parts);
     if (messageData) records.push(messageData);
-    if (payload.kind === 'task') {
-      const artifactData = getLatestA2ADataPartFromTask(payload as unknown as A2ATask)?.data;
+    if (normalizedA2A.kind === 'task') {
+      const artifactData = getLatestA2ADataPartFromTask(normalizedA2A as unknown as A2ATask)?.data;
       if (artifactData) records.push(artifactData);
     }
   }
@@ -8998,11 +9084,17 @@ function legacyA2AArtifactStatus(
 ): NormalizedWebhookPayload['status'] | undefined {
   if (payload.kind !== 'task' || !isObjectRecord(artifact) || typeof artifact.name !== 'string') return undefined;
   const transportState = payload.status?.state;
-  if (artifact.name === 'result' && transportState === 'completed') return 'completed';
+  if (
+    artifact.name === 'result' &&
+    (transportState === 'completed' || transportState === 'TASK_STATE_COMPLETED' || transportState === 3)
+  )
+    return 'completed';
   if (artifact.name !== 'error') return undefined;
-  if (transportState === 'failed' || transportState === 'rejected' || transportState === 'canceled') {
-    return transportState;
-  }
+  if (transportState === 'failed' || transportState === 'TASK_STATE_FAILED' || transportState === 4) return 'failed';
+  if (transportState === 'rejected' || transportState === 'TASK_STATE_REJECTED' || transportState === 7)
+    return 'rejected';
+  if (transportState === 'canceled' || transportState === 'TASK_STATE_CANCELED' || transportState === 5)
+    return 'canceled';
   return undefined;
 }
 

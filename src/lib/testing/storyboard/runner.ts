@@ -7220,10 +7220,9 @@ function findPriorProbe(priorStepResults: Map<string, StoryboardStepResult>): Ht
  * Reduce the captured fetch traffic for an A2A step into the
  * `A2ATaskEnvelope` validations consume. The A2A SDK fires multiple
  * requests per call (`/.well-known/agent-card.json` discovery on
- * fresh clients, then a `message/send` POST), and a single dispatch
- * may also poll `tasks/get` afterwards. We pick the capture whose
- * REQUEST body declares `method: 'message/send'`; if no capture
- * declares the method we fall back to the last POST with a
+ * fresh clients, then a `SendMessage` POST), and a single dispatch
+ * may also poll `GetTask` afterwards. We prefer a response carrying
+ * an A2A Task; if none does, we fall back to the last POST with a
  * JSON-RPC-shaped body. GET captures and non-JSON bodies are
  * skipped — `undefined` here surfaces as `not_applicable` in the
  * validator, which is more useful than a garbage envelope.
@@ -7248,11 +7247,11 @@ function parseLastA2aMessageSendCapture(captures: readonly RawHttpCapture[]): A2
     if (lastPostIdx === -1) lastPostIdx = i;
     // The fetch wrapper doesn't capture the request body, so disambiguate
     // by parsing the response and checking for an A2A `Task` shape on
-    // the result. `tasks/get` and `message/send` both return tasks, but
-    // only `message/send` is the immediate response we want to assert
+    // the result. `GetTask` and `SendMessage` both return tasks, but
+    // only `SendMessage` is the immediate response we want to assert
     // on for submitted-arm shape checks. When the runner adds polling,
-    // we'd need request-body capture to distinguish reliably; for v0
-    // the last POST is `message/send` because the SDK doesn't poll
+    // we'd need request-body capture to distinguish reliably; currently
+    // the last POST is `SendMessage` because the SDK doesn't poll
     // synchronously after a Task with terminal state.
     if (messageSendIdx === -1) {
       const env = tryParseJsonRpcEnvelope(cap.body);
@@ -7274,13 +7273,14 @@ function parseLastA2aMessageSendCapture(captures: readonly RawHttpCapture[]): A2
   // `envelope.result` keeps presence-of-key fidelity for validators
   // that need to distinguish "result was null" from "result was
   // omitted". Both paths run through `redactSecrets`.
-  const redactedResult = envelope.result !== undefined ? redactSecrets(envelope.result) : null;
+  const redactedWireResult = envelope.result !== undefined ? redactSecrets(envelope.result) : null;
+  const redactedResult = normalizeCapturedA2AResult(redactedWireResult);
   return {
     result: redactedResult,
     envelope: {
       ...(envelope.jsonrpc !== undefined && { jsonrpc: envelope.jsonrpc }),
       ...(envelope.id !== undefined && { id: envelope.id }),
-      ...(envelope.result !== undefined && { result: redactedResult }),
+      ...(envelope.result !== undefined && { result: redactedWireResult }),
       ...(envelope.error !== undefined && { error: redactSecrets(envelope.error) }),
     },
     http_status: cap.status,
@@ -7304,12 +7304,17 @@ function tryParseJsonRpcEnvelope(
 }
 
 function isTaskShape(result: unknown): boolean {
-  return (
-    result != null &&
-    typeof result === 'object' &&
-    !Array.isArray(result) &&
-    (result as { kind?: unknown }).kind === 'task'
-  );
+  if (result == null || typeof result !== 'object' || Array.isArray(result)) return false;
+  const record = result as Record<string, unknown>;
+  if (record.kind === 'task') return true;
+  if (record.task != null && typeof record.task === 'object' && !Array.isArray(record.task)) return true;
+  return typeof record.id === 'string' && record.status != null && typeof record.status === 'object';
+}
+
+function normalizeCapturedA2AResult(result: unknown): unknown {
+  if (result == null || typeof result !== 'object' || Array.isArray(result)) return result;
+  const record = result as Record<string, unknown>;
+  return record.task != null && typeof record.task === 'object' && !Array.isArray(record.task) ? record.task : result;
 }
 
 // ────────────────────────────────────────────────────────────

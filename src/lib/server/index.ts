@@ -448,8 +448,12 @@ export type {
   A2AAdapter,
   A2AAdapterOptions,
   A2AAgentCardOverrides,
+  A2AAgentCapabilitiesOverride,
+  A2AAgentSkillOverride,
   A2AMountOptions,
   ExpressAppLike,
+  LegacyHttpSecurityScheme,
+  LegacySecurityScheme,
 } from './a2a-adapter';
 
 export { createWebhookEmitter, memoryWebhookDeliveryStore, memoryWebhookKeyStore } from './webhook-emitter';

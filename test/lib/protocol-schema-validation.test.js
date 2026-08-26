@@ -31,16 +31,12 @@ function validateA2AMessagePayload(payload) {
   const message = payload.message;
 
   // Validate message structure according to A2A specification
-  if (message.kind !== 'message') {
-    errors.push('Message must have kind: "message"');
-  }
-
   if (!message.messageId || typeof message.messageId !== 'string') {
     errors.push('Message must have a valid messageId string');
   }
 
-  if (message.role !== 'user' && message.role !== 'agent') {
-    errors.push('Message role must be "user" or "agent"');
+  if (message.role !== 'ROLE_USER' && message.role !== 'ROLE_AGENT') {
+    errors.push('Message role must be "ROLE_USER" or "ROLE_AGENT"');
   }
 
   if (!Array.isArray(message.parts)) {
@@ -48,33 +44,30 @@ function validateA2AMessagePayload(payload) {
   } else {
     // Validate each part
     message.parts.forEach((part, index) => {
-      if (part.kind === 'data') {
+      if (Object.hasOwn(part, 'data')) {
         if (!part.data) {
           errors.push(`Part ${index}: data parts must have a data property`);
         } else {
-          // Check for deprecated 'input' field
-          if (part.data.input !== undefined) {
-            errors.push(`Part ${index}: Use 'parameters' instead of deprecated 'input' field`);
+          if (part.data.parameters !== undefined) {
+            errors.push(`Part ${index}: Use 'input' instead of legacy 'parameters' field`);
           }
 
           if (!part.data.skill) {
             errors.push(`Part ${index}: data parts must have a skill property`);
           }
 
-          if (part.data.parameters === undefined && part.data.input === undefined) {
-            errors.push(`Part ${index}: data parts must have a 'parameters' property`);
+          if (part.data.input === undefined) {
+            errors.push(`Part ${index}: data parts must have an 'input' property`);
           }
         }
-      } else if (part.kind === 'text') {
+      } else if (Object.hasOwn(part, 'text')) {
         if (typeof part.text !== 'string') {
           errors.push(`Part ${index}: text parts must have a text string property`);
         }
-      } else if (part.kind === 'file') {
-        if (!part.file) {
-          errors.push(`Part ${index}: file parts must have a file property`);
-        }
+      } else if (Object.hasOwn(part, 'url') || Object.hasOwn(part, 'raw')) {
+        // A2A 1.0 file parts are represented by the URL or raw oneof arm.
       } else {
-        errors.push(`Part ${index}: unknown part kind "${part.kind}"`);
+        errors.push(`Part ${index}: unknown Part content arm`);
       }
     });
   }
@@ -122,14 +115,12 @@ describe('A2A Schema Validation', () => {
     const validPayload = {
       message: {
         messageId: 'msg_1234567890_abcdef',
-        role: 'user',
-        kind: 'message',
+        role: 'ROLE_USER',
         parts: [
           {
-            kind: 'data',
             data: {
               skill: 'get_products',
-              parameters: {
+              input: {
                 category: 'electronics',
                 limit: 10,
               },
@@ -144,16 +135,14 @@ describe('A2A Schema Validation', () => {
     assert.strictEqual(result.errors.length, 0);
   });
 
-  test('should detect missing kind field', () => {
+  test('should detect an invalid role', () => {
     const invalidPayload = {
       message: {
         messageId: 'msg_123',
         role: 'user',
-        // Missing kind: 'message'
         parts: [
           {
-            kind: 'data',
-            data: { skill: 'test', parameters: {} },
+            data: { skill: 'test', input: {} },
           },
         ],
       },
@@ -161,21 +150,19 @@ describe('A2A Schema Validation', () => {
 
     const result = validateA2AMessagePayload(invalidPayload);
     assert.strictEqual(result.valid, false);
-    assert.ok(result.errors.some(err => err.includes('kind: "message"')));
+    assert.ok(result.errors.some(err => err.includes('ROLE_USER')));
   });
 
-  test('should detect deprecated input field', () => {
+  test('should detect legacy parameters field', () => {
     const invalidPayload = {
       message: {
         messageId: 'msg_123',
-        role: 'user',
-        kind: 'message',
+        role: 'ROLE_USER',
         parts: [
           {
-            kind: 'data',
             data: {
               skill: 'get_products',
-              input: { category: 'electronics' }, // Should be 'parameters'
+              parameters: { category: 'electronics' },
             },
           },
         ],
@@ -184,25 +171,22 @@ describe('A2A Schema Validation', () => {
 
     const result = validateA2AMessagePayload(invalidPayload);
     assert.strictEqual(result.valid, false);
-    assert.ok(result.errors.some(err => err.includes("Use 'parameters' instead of deprecated 'input'")));
+    assert.ok(result.errors.some(err => err.includes("Use 'input' instead of legacy 'parameters'")));
   });
 
   test('should validate multiple parts correctly', () => {
     const multiPartPayload = {
       message: {
         messageId: 'msg_123',
-        role: 'user',
-        kind: 'message',
+        role: 'ROLE_USER',
         parts: [
           {
-            kind: 'text',
             text: 'Please get products for electronics category',
           },
           {
-            kind: 'data',
             data: {
               skill: 'get_products',
-              parameters: { category: 'electronics' },
+              input: { category: 'electronics' },
             },
           },
         ],
@@ -217,12 +201,10 @@ describe('A2A Schema Validation', () => {
     const invalidPayload = {
       message: {
         messageId: 'msg_123',
-        role: 'user',
-        kind: 'message',
+        role: 'ROLE_USER',
         parts: [
           {
-            kind: 'invalid_kind',
-            data: { skill: 'test', parameters: {} },
+            invalidKind: { skill: 'test', input: {} },
           },
         ],
       },
@@ -230,23 +212,19 @@ describe('A2A Schema Validation', () => {
 
     const result = validateA2AMessagePayload(invalidPayload);
     assert.strictEqual(result.valid, false);
-    assert.ok(result.errors.some(err => err.includes('unknown part kind')));
+    assert.ok(result.errors.some(err => err.includes('unknown Part content arm')));
   });
 
   test('should validate file parts structure', () => {
     const filePartPayload = {
       message: {
         messageId: 'msg_123',
-        role: 'user',
-        kind: 'message',
+        role: 'ROLE_USER',
         parts: [
           {
-            kind: 'file',
-            file: {
-              name: 'test.pdf',
-              mimeType: 'application/pdf',
-              uri: 'https://example.com/test.pdf',
-            },
+            url: 'https://example.com/test.pdf',
+            filename: 'test.pdf',
+            mediaType: 'application/pdf',
           },
         ],
       },
@@ -256,16 +234,14 @@ describe('A2A Schema Validation', () => {
     assert.strictEqual(result.valid, true, `File part validation should pass: ${result.errors.join(', ')}`);
   });
 
-  test('should detect missing file property in file parts', () => {
+  test('should detect a part with no content arm', () => {
     const invalidPayload = {
       message: {
         messageId: 'msg_123',
-        role: 'user',
-        kind: 'message',
+        role: 'ROLE_USER',
         parts: [
           {
-            kind: 'file',
-            // Missing file property
+            filename: 'test.pdf',
           },
         ],
       },
@@ -273,7 +249,7 @@ describe('A2A Schema Validation', () => {
 
     const result = validateA2AMessagePayload(invalidPayload);
     assert.strictEqual(result.valid, false);
-    assert.ok(result.errors.some(err => err.includes('file parts must have a file property')));
+    assert.ok(result.errors.some(err => err.includes('unknown Part content arm')));
   });
 });
 
@@ -378,12 +354,10 @@ describe('Cross-Protocol Validation Utilities', () => {
     const a2aPayload = {
       message: {
         messageId: 'msg_123',
-        role: 'user',
-        kind: 'message',
+        role: 'ROLE_USER',
         parts: [
           {
-            kind: 'data',
-            data: { skill: 'get_products', parameters: parameters },
+            data: { skill: 'get_products', input: parameters },
           },
         ],
       },
@@ -407,7 +381,7 @@ describe('Cross-Protocol Validation Utilities', () => {
 
     // Parameters should be identical
     assert.deepStrictEqual(
-      a2aPayload.message.parts[0].data.parameters,
+      a2aPayload.message.parts[0].data.input,
       mcpPayload.params.arguments,
       'Parameters should be consistent across protocols'
     );

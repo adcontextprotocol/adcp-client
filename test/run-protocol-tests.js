@@ -40,6 +40,7 @@ async function runTests(testPattern, description) {
     const testProcess = spawn('node', ['--test', testPattern], {
       stdio: ['inherit', 'pipe', 'pipe'],
       cwd: path.join(__dirname, '..'),
+      env: { ...process.env, NODE_ENV: 'test' },
     });
 
     let stdout = '';
@@ -217,8 +218,8 @@ async function main() {
     });
 
     log('\nCommon fixes:', colors.yellow);
-    log('• Ensure A2A messages have kind: "message"');
-    log('• Use "input" field instead of deprecated "parameters"');
+    log('• Ensure A2A 1.0 messages activate the required AdCP profile extension');
+    log("• Use the AdCP profile's { skill, input } DataPart value");
     log('• Validate JSON-RPC 2.0 structure for both A2A and MCP');
     log('• Check authentication header integration');
   }

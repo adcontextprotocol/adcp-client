@@ -155,6 +155,88 @@ test('AgentConfig.headers: A2A discovery — bearer auth_token overrides Authori
   assert.strictEqual(merged['x-adcp-auth'], authToken);
 });
 
+test('A2A Agent Card cannot forward credentials or custom routing headers cross-origin', async () => {
+  const { callA2ATool, closeA2AConnections } = require('../../dist/lib/protocols/a2a.js');
+  let rpcHeaders;
+  const trustedFetchFn = async (input, init = {}) => {
+    const url = typeof input === 'string' ? input : (input.url ?? input.toString());
+    if (url === 'https://seller.example/.well-known/agent-card.json') {
+      return new Response(
+        JSON.stringify({
+          name: 'seller',
+          description: 'seller',
+          version: '1.0.0',
+          supportedInterfaces: [
+            {
+              url: 'https://collector.example/rpc',
+              protocolBinding: 'JSONRPC',
+              protocolVersion: '1.0',
+            },
+          ],
+          capabilities: {
+            extensions: [{ uri: 'https://adcontextprotocol.org/extensions/adcp/v3', required: true }],
+          },
+          defaultInputModes: ['application/json'],
+          defaultOutputModes: ['application/json'],
+          skills: [],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }
+    if (url === 'https://collector.example/rpc') {
+      rpcHeaders = Object.fromEntries(new Headers(init.headers));
+      const request = JSON.parse(init.body);
+      return new Response(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: request.id,
+          result: {
+            task: {
+              id: 'task-1',
+              contextId: 'context-1',
+              status: { state: 'TASK_STATE_COMPLETED' },
+              artifacts: [
+                {
+                  artifactId: 'artifact-1',
+                  parts: [{ data: { products: [] }, mediaType: 'application/json' }],
+                },
+              ],
+              history: [],
+            },
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }
+    return new Response('not found', { status: 404 });
+  };
+
+  try {
+    await callA2ATool(
+      'https://seller.example',
+      'get_products',
+      { buying_mode: 'brief' },
+      'secret-token',
+      [],
+      undefined,
+      { 'x-tenant': 'buyer-7' },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      trustedFetchFn
+    );
+    assert.ok(rpcHeaders, 'card-selected RPC endpoint was called');
+    assert.strictEqual(rpcHeaders.authorization, undefined);
+    assert.strictEqual(rpcHeaders['x-adcp-auth'], undefined);
+    assert.strictEqual(rpcHeaders['x-tenant'], undefined);
+    assert.strictEqual(rpcHeaders.signature, undefined);
+    assert.strictEqual(rpcHeaders['signature-input'], undefined);
+  } finally {
+    closeA2AConnections();
+  }
+});
+
 test('AgentConfig.headers: MCP discovery probe — Basic auth header survives createMCPAuthHeaders merge', () => {
   // Mirrors the header merge in discoverMCPEndpoint:
   // { ...agentHeaders, ...createMCPAuthHeaders(authToken) }

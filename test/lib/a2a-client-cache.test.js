@@ -1,7 +1,7 @@
 const { describe, test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 
-const sdkA2AClient = require('@a2a-js/sdk/client').A2AClient;
+const sdkA2AClient = require('../../dist/lib/protocols/a2a').legacyA2AClientTestShim;
 const { callA2ATool, closeA2AConnections } = require('../../dist/lib/protocols/a2a.js');
 
 const originalFromCardUrl = sdkA2AClient.fromCardUrl;

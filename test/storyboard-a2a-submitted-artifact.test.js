@@ -60,7 +60,7 @@ describe('a2a_submitted_artifact', () => {
     assert.strictEqual(result.json_pointer, '/result/status/state');
     assert.strictEqual(result.expected, 'completed');
     assert.strictEqual(result.actual.failures[0].actual, 'submitted');
-    assert.match(result.error, /A2A 0\.3\.0 forbids 'submitted' as a terminal state/);
+    assert.match(result.error, /A2A forbids 'submitted' as a terminal state/);
   });
 
   it('fails when adcp_task_id is missing from artifact.metadata', () => {

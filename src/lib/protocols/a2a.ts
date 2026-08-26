@@ -1,5 +1,13 @@
 // Official A2A client implementation - NO FALLBACKS
-import { A2AClient as A2AClientImpl } from '@a2a-js/sdk/client';
+import {
+  ClientFactory,
+  DefaultAgentCardResolver,
+  JsonRpcTransportFactory,
+  ServiceParameters,
+  withA2AExtensions,
+  type Client,
+} from '@a2a-js/sdk/client';
+import { Role, TaskState, type SendMessageRequest, type TaskPushNotificationConfig } from '@a2a-js/sdk';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { PushNotificationConfig } from '../types/tools.generated';
 import type { DebugLogEntry } from '../types/adcp';
@@ -22,14 +30,10 @@ import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
 import { createAgentTransportFetch } from '../net/agent-transport-fetch';
 import { isLikelyPrivateUrl } from '../net/address-guards';
 
-// The A2A SDK client is used untyped: request/response shapes are validated at
-// runtime against the AdCP wire contract, not against the SDK's exported
-// types. Preserves the prior behaviour of the CommonJS `require` form.
-const A2AClient: any = A2AClientImpl;
-
-if (!A2AClient) {
-  throw new Error('A2A SDK client is required. Please install @a2a-js/sdk');
-}
+const ADCP_A2A_EXTENSION = 'https://adcontextprotocol.org/extensions/adcp/v3';
+const defaultTestFromCardUrl = (cardUrl: string, options: { fetchImpl: typeof fetch }) =>
+  createNativeA2AClientFromCardUrl(cardUrl, options.fetchImpl);
+export const legacyA2AClientTestShim = { fromCardUrl: defaultTestFromCardUrl };
 
 /**
  * Per-call state flowed through AsyncLocalStorage so concurrent callers
@@ -57,12 +61,12 @@ const callContextStorage = new AsyncLocalStorage<A2ACallContext>();
  * Process-global singleton — not suitable for multi-tenant servers that
  * want per-tenant isolation (use separate processes or explicit cache keys).
  */
-const a2aClientCache = new Map<string, InstanceType<typeof A2AClient>>();
-const pendingA2AClients = new Map<string, Promise<InstanceType<typeof A2AClient>>>();
+const a2aClientCache = new Map<string, Client>();
+const pendingA2AClients = new Map<string, Promise<Client>>();
 const MAX_CACHED_A2A_CLIENTS = 20;
 let a2aClientGeneration = 0;
 
-function getCachedA2AClient(cacheKey: string): InstanceType<typeof A2AClient> | undefined {
+function getCachedA2AClient(cacheKey: string): Client | undefined {
   const client = a2aClientCache.get(cacheKey);
   if (!client) return undefined;
   a2aClientCache.delete(cacheKey);
@@ -173,10 +177,10 @@ export function closeA2AConnections(): void {
 const CANCEL_TIMEOUT_MS = 5000;
 
 /**
- * Fire-and-forget A2A tasks/cancel for an in-flight task (A2A 0.3.0 §7.4).
+ * Fire-and-forget A2A CancelTask for an in-flight task.
  *
- * Sends a raw JSON-RPC 2.0 POST directly to the agent endpoint with the same
- * auth header shape as `callA2AToolImpl` (Bearer + x-adcp-auth). Does NOT
+ * Uses the official A2A 1.0 client with the same auth header shape as
+ * `callA2AToolImpl` (Bearer + x-adcp-auth). Does NOT
  * enter `callContextStorage` — debug-log capture and 401-cache-eviction are
  * intentionally skipped for best-effort cancellation.
  *
@@ -212,8 +216,8 @@ export async function cancelA2ATask(
   allowPrivateIp?: boolean
 ): Promise<void> {
   // Defense-in-depth (ad-tech-protocol-expert review of #1640): the cancel
-  // POST is JSON-RPC at the bare A2A endpoint. Calling this on an MCP agent
-  // would POST `tasks/cancel` JSON-RPC at an MCP endpoint and 404. The
+  // request targets the discovered A2A endpoint. Calling this on an MCP agent
+  // would attempt A2A discovery against an MCP endpoint. The
   // single call site (`pollTaskCompletion`) already gates on
   // `agent.protocol === 'a2a'`; this assertion catches future call sites
   // that forget the gate.
@@ -259,18 +263,18 @@ export async function cancelA2ATask(
     return requestFetch(input, { ...init, headers, signal }) as Promise<Response>;
   };
 
-  let client: InstanceType<typeof A2AClient> | undefined;
+  let client: Client | undefined;
   let lastError: unknown;
   for (const cardUrl of buildCardUrls(agentUrl)) {
     try {
-      client = await A2AClient.fromCardUrl(cardUrl, { fetchImpl });
+      client = await createA2AClientFromCardUrl(cardUrl, fetchImpl);
       break;
     } catch (err) {
       lastError = err;
     }
   }
   if (!client) throw lastError instanceof Error ? lastError : new Error('A2A agent card discovery failed');
-  await client.cancelTask({ id: taskId });
+  await client.cancelTask({ tenant: '', id: taskId, metadata: undefined });
 }
 
 async function getOrCreateA2AClient(
@@ -278,7 +282,7 @@ async function getOrCreateA2AClient(
   authToken: string | undefined,
   customHeaders?: Record<string, string>,
   bypassCache = false
-): Promise<InstanceType<typeof A2AClient>> {
+): Promise<Client> {
   const signingContext = signingContextStorage.getStore();
   const callContext = callContextStorage.getStore();
   const fetchFn = callContext?.fetchFn;
@@ -320,10 +324,7 @@ async function getOrCreateA2AClient(
   return promise;
 }
 
-async function createA2AClient(
-  agentUrl: string,
-  authToken: string | undefined
-): Promise<InstanceType<typeof A2AClient>> {
+async function createA2AClient(agentUrl: string, authToken: string | undefined): Promise<Client> {
   const fetchImpl = buildFetchImpl(authToken, agentUrl);
   const cardUrls = buildCardUrls(agentUrl);
 
@@ -334,11 +335,11 @@ async function createA2AClient(
     timestamp: new Date().toISOString(),
   });
 
-  let client: InstanceType<typeof A2AClient> | undefined;
+  let client: Client | undefined;
   let lastError: Error = new Error(`A2A agent card not found at ${cardUrls.join(', ')}`);
   for (const cardUrl of cardUrls) {
     try {
-      client = await A2AClient.fromCardUrl(cardUrl, { fetchImpl });
+      client = await createA2AClientFromCardUrl(cardUrl, fetchImpl);
       break;
     } catch (err: unknown) {
       lastError = err as Error;
@@ -348,6 +349,123 @@ async function createA2AClient(
   if (!client) throw lastError;
 
   return client;
+}
+
+export async function createA2AClientFromCardUrl(cardUrl: string, fetchImpl: typeof fetch): Promise<Client> {
+  // Keep the long-standing unit-test seam while production uses the v1
+  // factory. Existing tests replace this shim with deterministic stubs;
+  // never consult it outside tests.
+  if (process.env.NODE_ENV === 'test' && legacyA2AClientTestShim.fromCardUrl !== defaultTestFromCardUrl) {
+    return legacyA2AClientTestShim.fromCardUrl(cardUrl, { fetchImpl }) as unknown as Client;
+  }
+  return createNativeA2AClientFromCardUrl(cardUrl, fetchImpl);
+}
+
+async function createNativeA2AClientFromCardUrl(cardUrl: string, fetchImpl: typeof fetch): Promise<Client> {
+  const legacyCompat = { enabled: true } as const;
+  const factory = new ClientFactory({
+    transports: [new JsonRpcTransportFactory({ fetchImpl, legacyCompat })],
+    cardResolver: new DefaultAgentCardResolver({ fetchImpl, legacyCompat }),
+  });
+  return factory.createFromUrl(cardUrl, '');
+}
+
+function toA2APushNotificationConfig(config: PushNotificationConfig): TaskPushNotificationConfig {
+  const authentication = config.authentication as { schemes?: string[]; credentials?: string } | undefined;
+  return {
+    tenant: '',
+    id: '',
+    taskId: '',
+    url: config.url,
+    token: config.token ?? '',
+    authentication: authentication
+      ? {
+          scheme: authentication.schemes?.[0] ?? '',
+          credentials: authentication.credentials ?? '',
+        }
+      : undefined,
+  };
+}
+
+function normalizeA2APart(part: any): Record<string, unknown> {
+  switch (part?.content?.$case) {
+    case 'data':
+      return { kind: 'data', data: part.content.value, metadata: part.metadata };
+    case 'text':
+      return { kind: 'text', text: part.content.value, metadata: part.metadata };
+    case 'url':
+      return {
+        kind: 'file',
+        file: { uri: part.content.value, name: part.filename, mimeType: part.mediaType },
+        metadata: part.metadata,
+      };
+    case 'raw':
+      return {
+        kind: 'file',
+        file: { bytes: part.content.value, name: part.filename, mimeType: part.mediaType },
+        metadata: part.metadata,
+      };
+    default:
+      return part;
+  }
+}
+
+function taskStateName(state: TaskState | undefined): string | undefined {
+  switch (state) {
+    case TaskState.TASK_STATE_SUBMITTED:
+      return 'submitted';
+    case TaskState.TASK_STATE_WORKING:
+      return 'working';
+    case TaskState.TASK_STATE_COMPLETED:
+      return 'completed';
+    case TaskState.TASK_STATE_FAILED:
+      return 'failed';
+    case TaskState.TASK_STATE_CANCELED:
+      return 'canceled';
+    case TaskState.TASK_STATE_INPUT_REQUIRED:
+      return 'input-required';
+    case TaskState.TASK_STATE_REJECTED:
+      return 'rejected';
+    case TaskState.TASK_STATE_AUTH_REQUIRED:
+      return 'auth-required';
+    default:
+      return undefined;
+  }
+}
+
+function normalizeA2AResult(result: any): { result: unknown } {
+  if (result && typeof result === 'object' && ('result' in result || 'error' in result)) {
+    return result;
+  }
+  if (result && Array.isArray(result.artifacts)) {
+    return {
+      result: {
+        ...result,
+        kind: 'task',
+        status: result.status
+          ? {
+              ...result.status,
+              state: taskStateName(result.status.state),
+              message: result.status.message
+                ? {
+                    ...result.status.message,
+                    kind: 'message',
+                    parts: result.status.message.parts.map(normalizeA2APart),
+                  }
+                : undefined,
+            }
+          : undefined,
+        artifacts: result.artifacts.map((artifact: any) => ({
+          ...artifact,
+          parts: artifact.parts?.map(normalizeA2APart) ?? [],
+        })),
+      },
+    };
+  }
+  if (result && Array.isArray(result.parts)) {
+    return { result: { ...result, kind: 'message', parts: result.parts.map(normalizeA2APart) } };
+  }
+  return { result };
 }
 
 function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
@@ -374,6 +492,9 @@ function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
   // headers included, since the signer re-reads the final header record).
   const baseFetch = async (url: string | URL | Request, options?: RequestInit): Promise<Response> => {
     const context = callContextStorage.getStore();
+    const urlString = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url;
+    const credentialOrigin = new URL(agentUrl).origin;
+    const sameOrigin = new URL(urlString).origin === credentialOrigin;
 
     const existingHeaders: Record<string, string> = {};
     if (options?.headers) {
@@ -390,11 +511,22 @@ function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
       }
     }
 
+    // Agent Cards are untrusted and may advertise an RPC or extended-card URL
+    // on another origin. The transport fetch still applies DNS/IP validation
+    // there, but credentials, tenant routing, traces, and request signatures
+    // are scoped to the explicitly configured agent origin.
+    if (!sameOrigin) {
+      for (const key of Object.keys(existingHeaders)) {
+        if (!['accept', 'content-type', 'a2a-version', 'a2a-extensions'].includes(key.toLowerCase())) {
+          delete existingHeaders[key];
+        }
+      }
+    }
+
     // Only inject trace context headers for actual tool requests, not discovery.
     // The agent card endpoint is external/untrusted — don't leak trace IDs to it.
-    const urlString = typeof url === 'string' ? url : url.toString();
     const isDiscoveryRequest = isAgentCardPath(urlString);
-    const traceHeaders = isDiscoveryRequest ? {} : injectTraceHeaders();
+    const traceHeaders = isDiscoveryRequest || !sameOrigin ? {} : injectTraceHeaders();
     const requestTimeoutMs = isDiscoveryRequest
       ? resolveRequestTimeoutMs(context?.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS)
       : resolveRequestTimeoutMs(context?.requestTimeoutMs);
@@ -403,11 +535,12 @@ function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
     const headers: Record<string, string> = {
       ...existingHeaders,
       ...traceHeaders,
-      ...context?.customHeaders,
-      ...(authToken && {
-        Authorization: `Bearer ${authToken}`,
-        'x-adcp-auth': authToken,
-      }),
+      ...(sameOrigin ? context?.customHeaders : undefined),
+      ...(sameOrigin &&
+        authToken && {
+          Authorization: `Bearer ${authToken}`,
+          'x-adcp-auth': authToken,
+        }),
     };
 
     context?.debugLogs.push({
@@ -446,7 +579,7 @@ function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
 }
 
 /**
- * Terminal A2A task states per A2A 0.3.0 §3.4. Only these can carry the
+ * Terminal A2A task states. Only these can carry the
  * AdCP-mandated artifact + DataPart envelope (per transport-errors §A2A
  * Binding); intermediate states (`working`, `submitted`, `input-required`,
  * `auth-required`) carry no completion artifact.
@@ -559,60 +692,62 @@ async function callA2AToolImpl(
       context.customHeaders,
       !!context.signal || context.requestTimeoutMs !== undefined
     );
+    const legacyWire = client.protocolVersion?.startsWith('0.') ?? false;
+    const invocation = legacyWire ? { skill: toolName, parameters } : { skill: toolName, input: parameters };
 
-    const requestPayload: {
-      message: {
-        messageId: string;
-        role: string;
-        kind: string;
-        parts: Array<{ kind: string; data: { skill: string; parameters: Record<string, unknown> } }>;
-        contextId?: string;
-        taskId?: string;
-      };
-      configuration?: { pushNotificationConfig: PushNotificationConfig };
-    } = {
+    const requestPayload: SendMessageRequest = {
+      tenant: '',
       message: {
         messageId: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        role: 'user',
-        kind: 'message',
+        role: Role.ROLE_USER,
         parts: [
           {
-            kind: 'data',
-            data: {
-              skill: toolName,
-              parameters: parameters,
+            content: {
+              $case: 'data',
+              value: invocation,
             },
+            metadata: undefined,
+            filename: '',
+            mediaType: 'application/json',
           },
         ],
-        ...(session?.contextId && { contextId: session.contextId }),
-        ...(session?.taskId && { taskId: session.taskId }),
+        contextId: session?.contextId ?? '',
+        taskId: session?.taskId ?? '',
+        metadata: undefined,
+        extensions: legacyWire ? [] : [ADCP_A2A_EXTENSION],
+        referenceTaskIds: [],
       },
+      configuration: pushNotificationConfig
+        ? {
+            acceptedOutputModes: ['application/json'],
+            taskPushNotificationConfig: toA2APushNotificationConfig(pushNotificationConfig),
+            returnImmediately: false,
+          }
+        : undefined,
+      metadata: undefined,
     };
-
-    if (pushNotificationConfig) {
-      requestPayload.configuration = {
-        pushNotificationConfig: pushNotificationConfig,
-      };
-    }
 
     const payloadSize = JSON.stringify(requestPayload).length;
     const redactedParameters = redactArgsForLog(parameters);
+    const redactedInvocation = legacyWire
+      ? { skill: toolName, parameters: redactedParameters }
+      : { skill: toolName, input: redactedParameters };
     const redactedPayload = {
       ...requestPayload,
       message: {
         ...requestPayload.message,
         parts: [
           {
-            kind: 'data',
-            data: { skill: toolName, parameters: redactedParameters },
+            content: { $case: 'data', value: redactedInvocation },
+            metadata: undefined,
+            filename: '',
+            mediaType: 'application/json',
           },
         ],
       },
       ...(requestPayload.configuration && {
         configuration: {
-          pushNotificationConfig: redactPushNotificationConfigForDebug(
-            requestPayload.configuration.pushNotificationConfig
-          )!,
+          taskPushNotificationConfig: redactPushNotificationConfigForDebug(pushNotificationConfig),
         },
       }),
     };
@@ -633,7 +768,11 @@ async function callA2AToolImpl(
       skill: toolName,
     });
 
-    const messageResponse = await client.sendMessage(requestPayload);
+    const result = await client.sendMessage(requestPayload, {
+      ...(legacyWire ? {} : { serviceParameters: ServiceParameters.create(withA2AExtensions(ADCP_A2A_EXTENSION)) }),
+      signal: context.signal,
+    });
+    const messageResponse: any = normalizeA2AResult(result);
 
     debugLogs.push({
       type: messageResponse?.error ? 'error' : 'success',

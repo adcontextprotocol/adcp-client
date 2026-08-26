@@ -2078,21 +2078,17 @@ function validateAnyOf(validation: StoryboardValidation, contributions: Set<stri
 // ────────────────────────────────────────────────────────────
 
 /**
- * Assert the A2A `Task` envelope produced by the seller for an AdCP
- * `submitted` arm matches the cross-transport contract established in
- * adcp-client#899:
+ * Assert the A2A 1.0 `Task` produced by the seller for an AdCP
+ * `submitted` arm matches the AdCP 3.2 profile:
  *
- *   1. `Task.state === 'completed'` — A2A Task.state tracks the HTTP
+ *   1. `Task.state === 'TASK_STATE_COMPLETED'` — A2A Task.state tracks the
  *      transport call, not the AdCP work. The HTTP request returned
  *      successfully with a queued AdCP task; emitting `'submitted'`
- *      here would be a non-conformant terminal transition per A2A
- *      0.3.0 (`submitted` is the INITIAL state, never terminal).
+ *      here would be a non-conformant terminal transition (`submitted`
+ *      is the initial state, never terminal).
  *
- *   2. `artifact.metadata.adcp_task_id` is a non-empty string — the
- *      AdCP-level async handle rides on the artifact's metadata field,
- *      not buried in `data.adcp_task_id`. Buyers resume the AdCP task
- *      by reading metadata; conflating it into the AdCP payload
- *      pollutes the typed response shape.
+ *   2. `artifact.parts[0].data.task_id` is a non-empty string — the
+ *      AdCP-level async handle is part of the typed Submitted response.
  *
  *   3. `artifact.parts[0].data.status === 'submitted'` — the AdCP
  *      payload preserves its native `status` discriminator so buyers
@@ -2104,8 +2100,7 @@ function validateAnyOf(validation: StoryboardValidation, contributions: Set<stri
  * the step on transports that don't carry the envelope.
  *
  * Failure messages name the offending field so an agent that
- * regressed to the pre-#899 shape (`Task.state: 'submitted'` with
- * `final: true`, `adcp_task_id` in `data` instead of `metadata`) gets
+ * regressed to an invalid terminal `submitted` transport state gets
  * a specific diagnostic, not a generic "wire-shape rejected".
  */
 function validateA2ASubmittedArtifact(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
@@ -2157,7 +2152,8 @@ function validateA2ASubmittedArtifact(validation: StoryboardValidation, ctx: Val
   }
   const task = result as Record<string, unknown>;
 
-  if (task.kind !== 'task') {
+  const isA2A1 = task.kind === undefined;
+  if (!isA2A1 && task.kind !== 'task') {
     failures.push({
       pointer: '/result/kind',
       expected: 'task',
@@ -2179,7 +2175,7 @@ function validateA2ASubmittedArtifact(validation: StoryboardValidation, ctx: Val
     });
   }
 
-  // Task.contextId non-empty — A2A 0.3.0 binds follow-ups (subsequent
+  // Task.contextId non-empty — A2A binds follow-ups (subsequent
   // sends, status streams) to the context; an empty contextId
   // breaks correlation across calls.
   if (typeof task.contextId !== 'string' || task.contextId.length === 0) {
@@ -2187,8 +2183,7 @@ function validateA2ASubmittedArtifact(validation: StoryboardValidation, ctx: Val
       pointer: '/result/contextId',
       expected: 'non-empty string',
       actual: task.contextId,
-      detail:
-        'A2A `Task.contextId` must be a non-empty string — A2A 0.3.0 requires it on every Task to correlate follow-up sends and status streams.',
+      detail: 'A2A `Task.contextId` must be a non-empty string to correlate follow-up sends and status streams.',
     });
   }
 
@@ -2201,14 +2196,15 @@ function validateA2ASubmittedArtifact(validation: StoryboardValidation, ctx: Val
     status != null && typeof status === 'object' && !Array.isArray(status)
       ? (status as Record<string, unknown>).state
       : undefined;
-  if (state !== 'completed') {
+  const completedState = isA2A1 ? 'TASK_STATE_COMPLETED' : 'completed';
+  if (state !== completedState) {
     failures.push({
       pointer: '/result/status/state',
-      expected: 'completed',
+      expected: completedState,
       actual: state,
       detail:
-        `Expected Task.state === 'completed' (HTTP-call lifecycle); got ${JSON.stringify(state)}. ` +
-        "A2A 0.3.0 forbids 'submitted' as a terminal state — for AdCP submitted arms the transport call has completed; the AdCP task lives on artifact metadata.",
+        `Expected Task.state === ${JSON.stringify(completedState)} (transport lifecycle); got ${JSON.stringify(state)}. ` +
+        "A2A forbids 'submitted' as a terminal state — for AdCP submitted arms the transport call has completed while the typed response carries the AdCP work handle.",
     });
   }
 
@@ -2247,13 +2243,13 @@ function validateA2ASubmittedArtifact(validation: StoryboardValidation, ctx: Val
         });
       }
 
-      // Invariant 2 — adcp_task_id on artifact.metadata.
+      // A2A 0.3 compatibility carried the work handle in artifact metadata.
       const metadata = artifact.metadata;
       const metadataTaskId =
         metadata != null && typeof metadata === 'object' && !Array.isArray(metadata)
           ? (metadata as Record<string, unknown>).adcp_task_id
           : undefined;
-      if (typeof metadataTaskId !== 'string' || metadataTaskId.length === 0) {
+      if (!isA2A1 && (typeof metadataTaskId !== 'string' || metadataTaskId.length === 0)) {
         failures.push({
           pointer: '/result/artifacts/0/metadata/adcp_task_id',
           expected: 'non-empty string',
@@ -2282,7 +2278,7 @@ function validateA2ASubmittedArtifact(validation: StoryboardValidation, ctx: Val
             detail: 'First artifact part must be an object.',
           });
         } else {
-          if (firstPart.kind !== 'data') {
+          if (firstPart.kind !== 'data' && !Object.hasOwn(firstPart, 'data')) {
             failures.push({
               pointer: '/result/artifacts/0/parts/0/kind',
               expected: 'data',
@@ -2303,6 +2299,18 @@ function validateA2ASubmittedArtifact(validation: StoryboardValidation, ctx: Val
               detail:
                 `Expected the AdCP payload's status to round-trip as 'submitted'; got ${JSON.stringify(dataStatus)}. ` +
                 'The DataPart must carry the AdCP tool response verbatim — buyers read the ad-tech state from `data.status`, not from `Task.state`.',
+            });
+          }
+          const dataTaskId =
+            data != null && typeof data === 'object' && !Array.isArray(data)
+              ? (data as Record<string, unknown>).task_id
+              : undefined;
+          if (isA2A1 && (typeof dataTaskId !== 'string' || dataTaskId.length === 0)) {
+            failures.push({
+              pointer: '/result/artifacts/0/parts/0/data/task_id',
+              expected: 'non-empty string',
+              actual: dataTaskId,
+              detail: 'AdCP 3.2 Submitted responses must retain their typed `task_id` inside the DataPart.',
             });
           }
           // Dual-write detection: catches the pre-#899 regression
