@@ -75,6 +75,51 @@ describe('createWebhookReceiver', () => {
     }
   });
 
+  test('capture cap does not mask retry-replay acceptance (#2653)', async () => {
+    const receiver = await createWebhookReceiver();
+    try {
+      receiver.set_retry_replay({ step_id: 'trigger', operation_id: 'op-cap' }, { count: 100, http_status: 503 });
+      const url = `${receiver.base_url}/step/trigger/op-cap`;
+      for (let i = 0; i < 100; i++) {
+        const res = await post(url, { idempotency_key: 'evt_stable0123456789' });
+        assert.strictEqual(res.status, 503);
+      }
+
+      const accepted = await post(url, { idempotency_key: 'evt_stable0123456789' });
+      assert.strictEqual(accepted.status, 204);
+      assert.strictEqual(receiver.all().length, 100, 'the accepted overflow delivery is not retained');
+    } finally {
+      await receiver.close();
+    }
+  });
+
+  test('global capture cap does not mask retry-replay acceptance after prior steps (#2653)', async () => {
+    const receiver = await createWebhookReceiver();
+    try {
+      for (let step = 0; step < 10; step++) {
+        for (let batch = 0; batch < 4; batch++) {
+          const responses = await Promise.all(
+            Array.from({ length: 25 }, () =>
+              post(`${receiver.base_url}/step/prior_${step}/op-${step}`, {
+                idempotency_key: `evt_prior${step}abcdef012345`,
+              })
+            )
+          );
+          assert.ok(responses.every(res => res.status === 204));
+        }
+      }
+      assert.strictEqual(receiver.all().length, 1000);
+
+      receiver.set_retry_replay({ step_id: 'trigger', operation_id: 'op-global-cap' }, { count: 1, http_status: 503 });
+      const url = `${receiver.base_url}/step/trigger/op-global-cap`;
+      assert.strictEqual((await post(url, { idempotency_key: 'evt_stable0123456789' })).status, 503);
+      assert.strictEqual((await post(url, { idempotency_key: 'evt_stable0123456789' })).status, 204);
+      assert.strictEqual(receiver.all().length, 1000, 'overflow deliveries are not retained');
+    } finally {
+      await receiver.close();
+    }
+  });
+
   test('wait resolves on first match; wait_all returns every match after delay', async () => {
     const receiver = await createWebhookReceiver();
     try {
@@ -102,6 +147,42 @@ describe('createWebhookReceiver', () => {
     } finally {
       await receiver.close();
     }
+  });
+
+  test('close drains pending wait_all timers immediately (#2653)', async () => {
+    const receiver = await createWebhookReceiver();
+    const pending = receiver.wait_all({ step_id: 'nobody' }, 60_000);
+
+    await receiver.close();
+    const result = await Promise.race([pending, delay(250).then(() => 'still-pending')]);
+    assert.deepStrictEqual(result, []);
+  });
+
+  test('close preserves matches already captured by a pending wait_all', async () => {
+    const receiver = await createWebhookReceiver();
+    const pending = receiver.wait_all({ step_id: 'captured_before_close' }, 60_000);
+    await post(`${receiver.base_url}/step/captured_before_close/op-close`, {
+      idempotency_key: 'evt_close0123456789ab',
+    });
+
+    await receiver.close();
+    const result = await pending;
+    assert.strictEqual(result.length, 1);
+    assert.strictEqual(result[0].step_id, 'captured_before_close');
+  });
+
+  test('waits registered after close resolve immediately and preserve retained matches', async () => {
+    const receiver = await createWebhookReceiver();
+    await post(`${receiver.base_url}/step/retained/op-late`, {
+      idempotency_key: 'evt_retained12345678',
+    });
+    await receiver.close();
+
+    const retained = await receiver.wait({ step_id: 'retained' }, 60_000);
+    assert.strictEqual(retained.webhook.step_id, 'retained');
+    assert.strictEqual((await receiver.wait_all({ step_id: 'retained' }, 60_000)).length, 1);
+    assert.deepStrictEqual(await receiver.wait({ step_id: 'late' }, 60_000), { timed_out: true });
+    assert.deepStrictEqual(await receiver.wait_all({ step_id: 'late' }, 60_000), []);
   });
 
   test('filter scopes by step_id, operation_id, and body path', async () => {
