@@ -14,7 +14,7 @@ import {
   PackageSchema,
   PackageRequestSchema,
   PackageUpdateSchema,
-  GetProductsRequestSchema,
+  GetProductsRequestSchema as LegacyGetProductsRequestSchema,
   GetProductsResponseSchema,
   PublisherPropertySelectorSchema,
   ProductFormatDeclarationSchema,
@@ -28,7 +28,9 @@ import {
   GetAdCPCapabilitiesResponseSchema,
   ListTransformersResponseSchema,
 } from '../lib/types/schemas.generated';
+import { GetProductsRequestSchema } from '../lib/schemas';
 import type { Format, AvailablePackage, PackageUpdate } from '../lib/types/core.generated';
+import type { CanonicalGetProductsRequest } from '../lib/v2/projection/creative-delivery';
 import type {
   GetProductsResponse,
   GetProductsRequest,
@@ -74,6 +76,15 @@ const ProductOutputExtensionsSchema = z.object({
   publisher_properties: z.array(PublisherPropertySelectorSchema),
 });
 ProductSchema.safeExtend(ProductOutputExtensionsSchema.shape);
+const ConsumerProductSchema = ProductSchema.safeExtend({
+  publisher_properties: z.array(z.object({ property_id: z.string() })).optional(),
+});
+declare const consumerProduct: z.output<typeof ConsumerProductSchema>;
+const consumerProductId: string = consumerProduct.product_id;
+void consumerProductId;
+const ProductChannelsSchema = ProductSchema.pick({ channels: true });
+const productChannelsInput: z.input<typeof ProductChannelsSchema> = {};
+void productChannelsInput;
 const ExtendedGetProductsResponseSchema = GetProductsResponseSchema.extend({
   products: z.array(ProductSchema),
 }).partial();
@@ -131,9 +142,14 @@ const mediaPackage: Package = PackageSchema.parse(unknownInput);
 const packageRequest: PackageRequest = PackageRequestSchema.parse(unknownInput);
 const packageUpdate: PackageUpdate = PackageUpdateSchema.parse(unknownInput);
 const productsResponse: GetProductsResponse = GetProductsResponseSchema.parse(unknownInput);
-const getProductsRequest: GetProductsRequest = GetProductsRequestSchema.parse(unknownInput);
+const getProductsRequest: GetProductsRequest = LegacyGetProductsRequestSchema.parse(unknownInput);
 const minimalGetProductsRequestInput: z.input<typeof GetProductsRequestSchema> = {
   buying_mode: 'brief',
+};
+const extendedGetProductsRequest = GetProductsRequestSchema.extend({
+  local_extension: z.string().optional(),
+}).parse({ buying_mode: 'wholesale' }) satisfies CanonicalGetProductsRequest & {
+  local_extension?: string;
 };
 const productFormat: ProductFormatDeclaration = ProductFormatDeclarationSchema.parse(unknownInput);
 const placement: Placement = PlacementSchema.parse(unknownInput);
@@ -154,6 +170,7 @@ void [
   productsResponse,
   getProductsRequest,
   minimalGetProductsRequestInput,
+  extendedGetProductsRequest,
   productFormat,
   placement,
   format,

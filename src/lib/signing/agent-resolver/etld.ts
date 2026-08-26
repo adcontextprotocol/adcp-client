@@ -1,10 +1,10 @@
 /**
  * eTLD+1 computation against a pinned, dated PSL snapshot. Backed by
  * `tldts`, which ships its PSL bundled into the published package — pinning
- * the dependency in `package.json` pins the snapshot. Runtime PSL fetches are
- * never performed: a runtime fetch creates both a denial-of-service oracle
- * (PSL host outage stalls verification) and a non-deterministic eTLD+1
- * across deployments running on different snapshot ages
+ * the resolved version in `package-lock.json` pins this repository's snapshot.
+ * Runtime PSL fetches are never performed: a runtime fetch creates both a
+ * denial-of-service oracle (PSL host outage stalls verification) and a
+ * non-deterministic eTLD+1 across deployments running on different snapshot ages
  * (security.mdx §"Quickstart: implement a `brand_json_url`-based verifier"
  * step 3).
  *

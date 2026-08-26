@@ -36,12 +36,15 @@ import { writeFileSync } from 'node:fs';
 import { relaxZodCompatibilityArrayTypes } from __GENERATOR__;
 
 const input = \`export type Product = {
+} & (NamedFormatProduct | CanonicalFormatProduct) & {
   publisher_properties: [
     PublisherPropertySelector & {},
     ...(PublisherPropertySelector & {})[]
   ];
   placements?: [Placement, ...Placement[]];
 };
+export interface NamedFormatProduct {}
+export interface CanonicalFormatProduct {}
 positions?: [DisclosurePosition, ...DisclosurePosition[]];\`;
 writeFileSync(__OUTPUT__, JSON.stringify({ output: relaxZodCompatibilityArrayTypes(input) }));
 `);
@@ -49,6 +52,26 @@ writeFileSync(__OUTPUT__, JSON.stringify({ output: relaxZodCompatibilityArrayTyp
   assert.match(result.output, /publisher_properties: \(PublisherPropertySelector & \{\}\)\[\];/);
   assert.match(result.output, /positions\?: DisclosurePosition\[\];/);
   assert.match(result.output, /placements\?: \[Placement, \.\.\.Placement\[\]\];/);
+  assert.doesNotMatch(result.output, /NamedFormatProduct \| CanonicalFormatProduct/);
+});
+
+test('issue #2674 preserves Product marker fields when either marker becomes non-empty', () => {
+  const result = runGeneratorHarness(`
+import { writeFileSync } from 'node:fs';
+import { relaxZodCompatibilityArrayTypes } from __GENERATOR__;
+
+const input = \`export type Product = {} & (NamedFormatProduct | CanonicalFormatProduct) & {
+  product_id: string;
+};
+export interface NamedFormatProduct {
+  named_format_id: string;
+}
+export interface CanonicalFormatProduct {}\`;
+writeFileSync(__OUTPUT__, JSON.stringify({ output: relaxZodCompatibilityArrayTypes(input) }));
+`);
+
+  assert.match(result.output, /NamedFormatProduct \| CanonicalFormatProduct/);
+  assert.match(result.output, /named_format_id: string;/);
 });
 
 test('PostalCountrySystem propagates unconditional requirements into every anyOf branch', () => {

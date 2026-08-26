@@ -43,7 +43,25 @@ export function relaxZodCompatibilityArrayTypes(content: string): string {
   // get_products composition replaces this complete selector array in one
   // safeExtend call. Its runtime schema is intentionally an ordinary ZodArray,
   // so the public Product field must not retain jsts' non-empty tuple wrapper.
-  return content
+  const productMarkersAreEmpty =
+    /export interface NamedFormatProduct\s*\{\s*\}/.test(content) &&
+    /export interface CanonicalFormatProduct\s*\{\s*\}/.test(content);
+  const productMarkersNormalized = productMarkersAreEmpty
+    ? content
+        // These marker interfaces are currently empty, so retaining their union
+        // in the Product intersection makes indexed access such as Product[K]
+        // collapse to never. Inspect the declarations before removing the exact
+        // marker-only codegen forms so future marker fields remain in Product.
+        .replace(
+          /export type Product = \{\s*\} & \(NamedFormatProduct \| CanonicalFormatProduct\) & \{/g,
+          'export type Product = {'
+        )
+        .replace(
+          /export type Product = \(NamedFormatProduct \| CanonicalFormatProduct\) & \{/g,
+          'export type Product = {'
+        )
+    : content;
+  return productMarkersNormalized
     .replace(/positions\?: \[DisclosurePosition, \.\.\.DisclosurePosition\[\]\];/g, 'positions?: DisclosurePosition[];')
     .replace(
       /publisher_properties: \[\s*PublisherPropertySelector & \{\s*\},\s*\.\.\.\(PublisherPropertySelector & \{\s*\}\)\[\]\s*\];/g,

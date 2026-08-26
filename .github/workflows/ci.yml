@@ -239,6 +239,12 @@ jobs:
           node-version: '20.x'
           cache: 'npm'
 
+      - name: Setup pnpm release-age resolver
+        if: steps.detect.outputs.changed == 'true'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.2
+
       - name: Install dependencies
         if: steps.detect.outputs.changed == 'true'
         run: npm ci

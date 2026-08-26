@@ -127,6 +127,7 @@ import type {
   Package,
   ProductCardFields,
   ProductCardDetailedFields,
+  GetProductsRequest,
   SLAWindow,
   SlaWindow,
   UpdateMediaBuyPayload as RootUpdateMediaBuyPayload,
@@ -191,6 +192,9 @@ const _productOutputExtensionsSchema = z.object({
   publisher_properties: z.array(publicSchemas.PublisherPropertySelectorSchema),
 });
 const _compatibleProductSchema = publicSchemas.ProductSchema.safeExtend(_productOutputExtensionsSchema.shape);
+const _consumerProductSchema = publicSchemas.ProductSchema.safeExtend({
+  publisher_properties: z.array(z.object({ property_id: z.string() })).optional(),
+});
 const _composedProductsResponseSchema = publicSchemas.GetProductsResponseSchema.extend({
   status: z.literal('completed'),
   products: z.array(_compatibleProductSchema),
@@ -213,6 +217,12 @@ type _PickedPublisherProperties = z.output<
 type _PickedPublisherPropertiesIsTyped = _Assert<_IsAny<_PickedPublisherProperties> extends false ? true : false>;
 void (null as unknown as _ComposedProductIsTyped);
 void (null as unknown as _PickedPublisherPropertiesIsTyped);
+declare const _consumerProduct: z.output<typeof _consumerProductSchema>;
+const _consumerProductId: string = _consumerProduct.product_id;
+void _consumerProductId;
+const _productChannelsSchema = publicSchemas.ProductSchema.pick({ channels: true });
+const _productChannelsInput: z.input<typeof _productChannelsSchema> = {};
+void _productChannelsInput;
 type _InferredPackage = z.infer<typeof publicSchemas.PackageSchema>;
 declare const _inferredPackage: _InferredPackage;
 const _inferredPackageAsPublic: Package = _inferredPackage;
@@ -220,13 +230,19 @@ declare const _publicPackage: Package;
 const _publicPackageAsInferred: _InferredPackage = _publicPackage;
 void _inferredPackageAsPublic;
 void _publicPackageAsInferred;
-const _packedGetProductsRequest: LegacyGetProductsRequest =
+const _packedGetProductsRequest: GetProductsRequest =
   publicSchemas.GetProductsRequestSchema.parse(_unknownPackedInput);
 void _packedGetProductsRequest;
 const _minimalPackedGetProductsRequestInput: z.input<typeof publicSchemas.GetProductsRequestSchema> = {
   buying_mode: 'brief',
 };
 void _minimalPackedGetProductsRequestInput;
+const _extendedPackedGetProductsRequest = publicSchemas.GetProductsRequestSchema.extend({
+  local_extension: z.string().optional(),
+}).parse({ buying_mode: 'wholesale' }) satisfies GetProductsRequest & {
+  local_extension?: string;
+};
+void _extendedPackedGetProductsRequest;
 const _summarizedProducts: GetProductsHandlerResult = withResponseSummary(
   { products: [], cache_scope: 'public' },
   'Synthetic sample data for demonstration only.'
@@ -252,7 +268,7 @@ void _normalizedRecoveredProducts;
 void _invalidForecastNormalizationAsTyped;
 void (null as unknown as _NormalizedRecoveredProductsIsTyped);
 
-const _wireFields = publicSchemas.GetProductsRequestSchema.parse({
+const _wireFields = publicSchemas.LegacyGetProductsRequestSchema.parse({
   buying_mode: 'wholesale',
   fields: ['format_ids'],
   brand: {
@@ -283,10 +299,20 @@ type _WireFieldSupportsLegacy = _Assert<
   'format_ids' extends NonNullable<LegacyGetProductsRequest['fields']>[number] ? true : false
 >;
 const _wireField: NonNullable<LegacyGetProductsRequest['fields']>[number] | undefined = _wireFields.fields?.[0];
+const _canonicalGetProductsFields: z.input<typeof publicSchemas.GetProductsRequestSchema> = {
+  buying_mode: 'wholesale',
+  fields: ['format_options'],
+};
+const _legacyGetProductsFields: z.input<typeof publicSchemas.LegacyGetProductsRequestSchema> = {
+  buying_mode: 'wholesale',
+  fields: ['format_ids'],
+};
 const _disclosurePosition: DisclosurePosition | undefined =
   _wireFields.brand?.brand_kit_override?.logo?.provenance?.disclosure?.jurisdictions?.[0]?.render_guidance
     ?.positions?.[0];
 void _wireField;
+void _canonicalGetProductsFields;
+void _legacyGetProductsFields;
 void _disclosurePosition;
 void (null as unknown as _WireFieldSupportsLegacy);
 

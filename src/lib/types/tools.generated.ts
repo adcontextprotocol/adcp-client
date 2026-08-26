@@ -2139,7 +2139,6 @@ export interface ContextObject {
  * Represents available advertising inventory
  */
 export type Product = {
-} & (NamedFormatProduct | CanonicalFormatProduct) & {
     /**
      * Opaque identifier for this buyable product. For a non-custom wholesale product, sellers MUST reuse the ID for the same logical catalog offer within the seller and declared cache_scope across reads and wholesale-feed webhooks; feed and pricing versions communicate temporal catalog mutation, while retirement or replacement may end the identity. Concurrent or request-bound configurations whose effective targeting, disclosed targeting modifications, forecast assumptions, terms, or overlay support differ MUST use distinguishable configured product IDs. For is_custom: true, the ID identifies only the request-specific discovery/refinement lineage and is not stable across independent contexts. Sellers MUST keep every issued configured ID resolvable for its promised lifetime. Pricing variants within one logical product are distinguished by pricing_option_id: a seller MUST mint a new pricing_option_id whenever a binding fixed price, floor, currency, model, or priced applicability changes, and MUST NOT reinterpret an issued option ID at a new price. Selecting product_id plus pricing_option_id in create_media_buy accepts that returned configuration and commercial option.
      */

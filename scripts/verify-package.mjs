@@ -10,6 +10,9 @@
  * `require`, asserting each exposes a known runtime symbol. It also compiles
  * the exact schema surface through both declaration formats and runs a modern
  * MCP negotiation under Bun, whose ESM/CJS interoperability differs from Node's.
+ * A pnpm resolver pass enforces the same seven-day minimum release age used by
+ * security-conscious adopters, and the npm runtime pass pins selected direct
+ * dependencies to their declared compatibility floors.
  *
  * Why a temp dir outside the repo: installing inside the workspace would let
  * the monorepo dedupe peers against the repo's own node_modules, so a missing
@@ -22,7 +25,7 @@
  * Exits non-zero on any failure.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -87,6 +90,37 @@ try {
   console.log(`   → ${tgz}`);
   console.log(`   ${(tarballBytes / 1024 / 1024).toFixed(1)} MiB`);
 
+  // Reproduce pnpm consumers that quarantine newly-published dependency
+  // versions. The SDK prerelease itself and the security-motivated jose floor
+  // are explicit exceptions; every other direct/transitive resolution must
+  // have aged for seven days. This catches fresh transitive floors that a
+  // manifest-only timestamp check cannot see.
+  const releaseAgeDir = path.join(tmpDir, 'release-age-consumer');
+  mkdirSync(releaseAgeDir);
+  writeFileSync(
+    path.join(releaseAgeDir, 'package.json'),
+    JSON.stringify(
+      {
+        name: 'adcp-release-age-consumer',
+        version: '1.0.0',
+        private: true,
+        dependencies: { '@adcp/sdk': `file:${tarballPath}` },
+      },
+      null,
+      2
+    )
+  );
+  writeFileSync(
+    path.join(releaseAgeDir, 'pnpm-workspace.yaml'),
+    ['minimumReleaseAge: 10080', 'minimumReleaseAgeExclude:', "  - '@adcp/sdk'", "  - 'jose@6.2.10'", ''].join('\n')
+  );
+  console.log('🕰️  pnpm seven-day minimum-release-age resolution:');
+  run('pnpm', ['install', '--lockfile-only', '--frozen-lockfile=false'], {
+    cwd: releaseAgeDir,
+    stdio: 'inherit',
+  });
+  console.log('  packed artifact resolves without admitting unapproved fresh dependencies');
+
   const packedPaths = new Set(run('tar', ['-tf', tarballPath]).trim().split('\n'));
   const requiredGuides = [
     'package/docs/migration-12-to-14.md',
@@ -106,11 +140,19 @@ try {
   }
   console.log('   migration guides referenced by README are present');
 
-  console.log(`📥 Installing tarball + peer floors:\n   ${peerFloors.join('\n   ')}`);
-  run('npm', ['install', '--no-audit', '--no-fund', '--loglevel=error', tarballPath, ...peerFloors], {
+  const runtimeFloors = ['tldts@7.0.0'];
+  console.log(`📥 Installing tarball + runtime/peer floors:\n   ${[...runtimeFloors, ...peerFloors].join('\n   ')}`);
+  run('npm', ['install', '--no-audit', '--no-fund', '--loglevel=error', tarballPath, ...runtimeFloors, ...peerFloors], {
     cwd: tmpDir,
     stdio: 'inherit',
   });
+  const installedTldtsVersion = JSON.parse(
+    readFileSync(path.join(tmpDir, 'node_modules', 'tldts', 'package.json'), 'utf8')
+  ).version;
+  if (installedTldtsVersion !== '7.0.0') {
+    throw new Error(`expected tldts compatibility floor 7.0.0, got ${installedTldtsVersion}`);
+  }
+  console.log('  tldts compatibility floor 7.0.0 installed');
 
   // Cover the barrel, a zod-free enum entry, and the server subpath — the last
   // adds real ESM/CJS load coverage of the @a2a-js/sdk peer through a dedicated
@@ -119,6 +161,7 @@ try {
     { specifier: '@adcp/sdk', symbol: 'EventTypeValues' },
     { specifier: '@adcp/sdk/enums', symbol: 'EventTypeValues' },
     { specifier: '@adcp/sdk/server', symbol: 'A2AInvocationError' },
+    { specifier: '@adcp/sdk/signing/server', symbol: 'resolveAgent' },
     { specifier: '@adcp/sdk/testing', symbol: 'mergeSeedProductLegacy' },
     { specifier: '@adcp/sdk/schemas', symbol: 'CreativeAssetSchema' },
   ];

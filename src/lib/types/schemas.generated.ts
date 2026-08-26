@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-25T20:09:37.947Z
+// Generated at: 2026-08-26T10:45:39.051Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -2752,10 +2752,6 @@ export const CanonicalFormatCoordinatedPlacementsSchema: z.ZodObject<{ [K in key
             });
           }), "shared_slots": z.array(z.object({ "asset_group_id": z.string().regex(new RegExp("^[a-z0-9_]+$")), "asset_type": z.enum(["image","video","audio","text","markdown","url","html","css","javascript","vast","daast","webhook","brief","catalog","published_post","zip","card","object","pixel_tracker","vast_tracker","daast_tracker"]), "required": z.boolean().optional(), "min": z.number().int().gte(0).optional(), "max": z.number().int().gte(1).optional(), "consumed_by": z.array(z.string()).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Component IDs that consume this shared asset. Every value MUST resolve to `components[].component_id`.") }).catchall(z.any())).describe("Manifest slots supplied once and consumed by one or more coordinated components.").optional() }).catchall(z.any()).describe("One creative manifest atomically supplies assets for multiple declared product placements. Each component binds to a public `Product.placements[]` entry and either declares an inline non-custom canonical format or references a sibling format option on the same product. Components cannot nest coordinated placements. The manifest supplies component slots under `component_assets.<component_id>`; `shared_slots` assets are supplied once at top level. Inventory exclusivity remains `Product.exclusivity`, not a creative-format parameter. Ordinary products whose placements accept independently assigned creatives do not need this canonical.");
 
-export const NamedFormatProductSchema = z.object({}).passthrough();
-
-export const CanonicalFormatProductSchema = z.object({}).passthrough();
-
 export const PublisherPropertySelectorSchema = z.union([z.object({
         publisher_domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/).optional(),
         publisher_domains: z.array(z.string()).optional(),
@@ -2968,6 +2964,10 @@ export const ReplaceTargetingValueSchema = z.object({
 }).passthrough();
 
 export const RemoveTargetingSetValuesSchema = z.object({}).passthrough();
+
+export const NamedFormatProductSchema = z.object({}).passthrough();
+
+export const CanonicalFormatProductSchema = z.object({}).passthrough();
 
 export const PriceGuidanceSchema = z.object({
     p25: z.number().optional(),
@@ -13337,7 +13337,7 @@ export const SyncCatalogsResponseSchema = z.object({
 }).passthrough().and(z.union([SyncCatalogsSuccessSchema, SyncCatalogsErrorSchema, SyncCatalogsSubmittedSchema]));
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const ProductSchema: z.ZodObject<{ [K in keyof Product]-?: undefined extends Product[K] ? z.ZodOptional<z.ZodType<Exclude<Product[K], undefined>, Exclude<Product[K], undefined>>> : z.ZodType<Product[K], Product[K]> }, z.core.$loose> & z.ZodType<Product & Record<string, unknown>, Product & Record<string, unknown>> = z.object({
+export const ProductSchema: z.ZodObject<{ [K in keyof Product]-?: K extends 'publisher_properties' ? z.ZodType : undefined extends Product[K] ? z.ZodOptional<z.ZodType<Exclude<Product[K], undefined>, Exclude<Product[K], undefined>>> : z.ZodType<Product[K], Product[K]> }, z.core.$loose> & z.ZodType<Product & Record<string, unknown>, Product & Record<string, unknown>> = z.object({
     product_id: z.string(),
     name: z.string(),
     description: z.string(),

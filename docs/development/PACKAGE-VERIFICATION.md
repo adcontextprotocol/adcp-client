@@ -92,8 +92,10 @@ façade contract becomes unsafe.
 
 ## `npm run verify:package` — clean-room dual-format smoke
 
-`scripts/verify-package.mjs` packs a tarball, installs it plus its **required**
-peers pinned to their **range floors** into a throwaway dir under `os.tmpdir()`
+`scripts/verify-package.mjs` packs a tarball and first installs it with pnpm's
+seven-day `minimumReleaseAge` policy in a throwaway project. It then installs
+the tarball plus its **required** peers pinned to their **range floors** and
+`tldts@7.0.0` into another throwaway dir under `os.tmpdir()`
 (outside the workspace, so npm resolution is honest and not monorepo-deduped),
 then loads the main, enums, server, testing, and schemas entry points through
 both a real ESM `import` and a real CJS `require`, asserting each loads and
@@ -102,9 +104,10 @@ surface from `.mts` and `.cts` consumers. `server` is included so the
 `@a2a-js/sdk` peer gets real ESM/CJS load coverage through a dedicated
 entrypoint. Optional peers
 (`peerDependenciesMeta`) are **not** installed — no tested subpath loads them,
-so pinning them would add only install weight and registry-flake surface. It
-uses `npm install` in the temp dir (never workspace pnpm/catalog) and cleans up
-on exit. Requires a prior `npm run build:lib`.
+so pinning them would add only install weight and registry-flake surface. The
+floor/load smoke uses `npm install` (never workspace pnpm/catalog), and both
+temporary projects are cleaned up on exit. Requires pnpm 11, plus a prior
+`npm run build:lib`.
 
 This is what catches a peer floor that is declared lower than the code needs:
 CJS named-import interop can mask a too-low pin, but a real ESM import surfaces
