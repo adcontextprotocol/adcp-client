@@ -123,14 +123,21 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
   },
 
   get_products(data) {
-    const d = data as Record<string, unknown> | undefined;
+    const d = asRecord(data);
     const products = d?.products as Array<Record<string, unknown>> | undefined;
-    if (!products?.[0]) return {};
-    const extracted: Record<string, unknown> = { products };
-    if (products[0].product_id) extracted.product_id = products[0].product_id;
+    const extracted: Record<string, unknown> = {};
+    if (products?.[0]) {
+      extracted.products = products;
+      if (products[0].product_id) extracted.product_id = products[0].product_id;
+    }
     // Extract proposal_id if proposals are returned
     const proposals = d?.proposals as Array<Record<string, unknown>> | undefined;
     if (proposals?.[0]?.proposal_id) extracted.proposal_id = proposals[0].proposal_id;
+    // Wholesale conditional-fetch steps need the response's scope and version
+    // metadata even when `unchanged: true` legitimately omits product rows.
+    if (d?.wholesale_feed_version !== undefined) extracted.wholesale_feed_version = d.wholesale_feed_version;
+    if (d?.pricing_version !== undefined) extracted.pricing_version = d.pricing_version;
+    if (d?.cache_scope !== undefined) extracted.cache_scope = d.cache_scope;
     return extracted;
   },
 

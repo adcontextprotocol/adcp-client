@@ -7676,15 +7676,26 @@ export function applyBrandInvariant(
       const acct = existingAccount as Record<string, unknown>;
       const isNaturalKeyVariant = 'brand' in acct || 'operator' in acct;
       if (isNaturalKeyVariant) {
-        const merged: Record<string, unknown> = { ...acct, brand };
+        // Wholesale cache-scope storyboards deliberately address a different
+        // natural-key account to prove public/account token isolation. Keep
+        // that explicitly authored account identity while still enforcing the
+        // run-scoped top-level brand. Other tools and buying modes retain the
+        // cross-step account-brand invariant from #579.
+        const preserveWholesaleAccountBrand =
+          taskName === 'get_products' && request.buying_mode === 'wholesale' && acct.brand !== undefined;
+        const merged: Record<string, unknown> = {
+          ...acct,
+          brand: preserveWholesaleAccountBrand ? acct.brand : brand,
+        };
         // The natural-key arm of AccountReference requires `operator` (per
         // schemas/cache/{version}/core/account-ref.json). A fixture or earlier
         // context-extraction step that produced `{brand, sandbox}` without
         // operator would otherwise be passed through and rejected by a
         // strict-validating seller. Default operator to brand.domain — same
         // convention `resolveAccount` uses for synthetic refs.
-        if (typeof merged.operator !== 'string' && typeof brand.domain === 'string') {
-          merged.operator = brand.domain;
+        const accountBrand = merged.brand as { domain?: unknown } | undefined;
+        if (typeof merged.operator !== 'string' && typeof accountBrand?.domain === 'string') {
+          merged.operator = accountBrand.domain;
         }
         result.account = merged;
       }

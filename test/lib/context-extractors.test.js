@@ -5,6 +5,41 @@ const { extractContext, extractContextWithProvenance } = require('../../dist/lib
 const { proposalTermsDigest } = require('../../dist/lib/negotiation/verification.js');
 
 describe('context extractors', () => {
+  describe('get_products', () => {
+    it('extracts wholesale scope and version metadata with product rows (#2654)', () => {
+      const products = [{ product_id: 'prod_overlay' }];
+      const result = extractContext('get_products', {
+        products,
+        wholesale_feed_version: 'feed-account-v2',
+        pricing_version: 'pricing-account-v4',
+        cache_scope: 'account',
+      });
+
+      assert.deepStrictEqual(result, {
+        products,
+        product_id: 'prod_overlay',
+        wholesale_feed_version: 'feed-account-v2',
+        pricing_version: 'pricing-account-v4',
+        cache_scope: 'account',
+      });
+    });
+
+    it('extracts wholesale metadata from unchanged responses without product rows (#2654)', () => {
+      const result = extractContext('get_products', {
+        unchanged: true,
+        wholesale_feed_version: 'feed-public-v1',
+        pricing_version: 'pricing-public-v1',
+        cache_scope: 'public',
+      });
+
+      assert.deepStrictEqual(result, {
+        wholesale_feed_version: 'feed-public-v1',
+        pricing_version: 'pricing-public-v1',
+        cache_scope: 'public',
+      });
+    });
+  });
+
   describe('build_creative', () => {
     it('preserves single creative_manifest extraction', () => {
       const data = {

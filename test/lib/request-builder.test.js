@@ -38,6 +38,53 @@ function withDateNow(iso, fn) {
 }
 
 describe('Request Builder', () => {
+  describe('get_products', () => {
+    test('keeps the resolved context account authoritative for wholesale probes (#2654)', () => {
+      const contextAccount = { account_id: 'account-overlay-resolved' };
+      const result = buildRequest(
+        step('get_products', {
+          sample_request: {
+            buying_mode: 'wholesale',
+            account: { account_id: '$context.account_id' },
+            if_wholesale_feed_version: '$context.wholesale_feed_version',
+            context: { correlation_id: 'scope-probe' },
+          },
+        }),
+        {
+          account: contextAccount,
+          wholesale_feed_version: 'public-v1',
+        },
+        DEFAULT_OPTIONS
+      );
+
+      assert.deepStrictEqual(result.account, contextAccount);
+      assert.strictEqual(result.buying_mode, 'wholesale');
+      assert.strictEqual(result.if_wholesale_feed_version, 'public-v1');
+      assert.deepStrictEqual(result.context, { correlation_id: 'scope-probe' });
+    });
+
+    test('preserves an authored wholesale account over a different context account (#2654)', () => {
+      const overlayAccount = {
+        brand: { domain: 'account-overlay.example' },
+        operator: 'pinnacle-agency.example',
+      };
+      const result = buildRequest(
+        step('get_products', {
+          sample_request: {
+            buying_mode: 'wholesale',
+            account: overlayAccount,
+            filters: { pricing_currencies: ['USD'] },
+          },
+        }),
+        { account: { account_id: 'stale-context-account' } },
+        DEFAULT_OPTIONS
+      );
+
+      assert.deepStrictEqual(result.account, overlayAccount);
+      assert.deepStrictEqual(result.filters, { pricing_currencies: ['USD'] });
+    });
+  });
+
   describe('build_creative', () => {
     test('does not mix a legacy target_format_id into a canonical single target', () => {
       const result = buildRequest(

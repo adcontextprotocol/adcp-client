@@ -75,10 +75,20 @@ const FALLBACK_CALLER_AGENT_URL = 'https://e2e-orchestrator.adcontextprotocol.or
 const FIXTURE_AWARE_ENRICHERS = new Set<string>([
   'create_media_buy', // merges discovery-derived product_id / pricing_option_id INTO fixture packages[0]
   'comply_test_controller', // forces account.sandbox: true regardless of fixture
+  'get_products', // preserves wholesale fixture fields while keeping resolved account scope authoritative
   'update_media_buy', // resolves account via resolveAccount(options) so sandbox routing matches create_media_buy
   'get_media_buys', // resolves account via resolveAccount(options) so sandbox routing matches create_media_buy
   'get_media_buy_delivery', // resolves account via resolveAccount(options) so sandbox routing matches create_media_buy
 ]);
+
+function hasUnresolvedContextReference(value: unknown): boolean {
+  if (typeof value === 'string') return /^\$context\.\w+$/.test(value);
+  if (Array.isArray(value)) return value.some(hasUnresolvedContextReference);
+  if (value && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).some(hasUnresolvedContextReference);
+  }
+  return false;
+}
 
 /**
  * Placeholder identifiers that the upstream universal compliance
@@ -272,18 +282,43 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   // ── Product Discovery ──────────────────────────────────
 
   get_products(step, context, options) {
+    // Fixture-aware: wholesale storyboards author cache validators, filters,
+    // and account identities that must survive enrichment together. Resolve
+    // placeholders before selecting the account. A fully resolved fixture
+    // account remains authoritative (scope-isolation storyboards deliberately
+    // switch accounts between steps); only an unresolved fixture reference
+    // falls back to the context/run account (#2654).
+    const fixtureFields = step.sample_request
+      ? omitEnvelopeFields(
+          injectContext({ ...(step.sample_request as Record<string, unknown>) }, context) as Record<string, unknown>
+        )
+      : {};
+    const fixtureAccount = fixtureFields.account;
+    const resolvedAccount =
+      fixtureAccount !== undefined && !hasUnresolvedContextReference(fixtureAccount)
+        ? fixtureAccount
+        : (context.account ?? resolveAccount(options));
+
+    if (fixtureFields.buying_mode === 'wholesale') {
+      return {
+        ...fixtureFields,
+        account: resolvedAccount,
+      };
+    }
+
     // If the step is a "refine" step, build a refine request
     if (step.sample_request?.buying_mode === 'refine' && context.products) {
       return {
+        ...fixtureFields,
         buying_mode: 'refine',
-        refine: [
+        refine: fixtureFields.refine ?? [
           {
             scope: 'request',
             ask: 'Only guaranteed packages with premium placement.',
           },
         ],
-        brand: resolveBrand(options),
-        account: context.account ?? resolveAccount(options),
+        brand: fixtureFields.brand ?? resolveBrand(options),
+        account: resolvedAccount,
       };
     }
 
@@ -291,6 +326,8 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
       buying_mode: 'brief',
       brief: options.brief || 'Show me all available advertising products across all channels',
       brand: resolveBrand(options),
+      ...fixtureFields,
+      account: resolvedAccount,
     };
   },
 
