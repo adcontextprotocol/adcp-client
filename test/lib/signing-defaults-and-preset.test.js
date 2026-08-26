@@ -577,6 +577,48 @@ describe('createAgentSignedFetch preset', () => {
     assert.ok(headers.get('signature'), 'Signature header should be present');
   });
 
+  it('preserves provider purpose binding through the agent signing wrapper', async () => {
+    let signCalls = 0;
+    const { upstream } = makeCapturingUpstream();
+    const signedFetch = buildAgentSigningFetch({
+      signing: {
+        kind: 'provider',
+        provider: {
+          keyid: 'wrong-purpose-provider',
+          algorithm: 'ed25519',
+          adcpUse: 'governance-signing',
+          fingerprint: 'wrong-purpose-provider',
+          sign: async () => {
+            signCalls += 1;
+            return new Uint8Array(64);
+          },
+        },
+        agent_url: 'https://buyer.example.com',
+      },
+      getCapability: () => ({
+        requestSigning: { supported: true, required_for: ['create_media_buy'] },
+        fetchedAt: Math.floor(Date.now() / 1000),
+      }),
+      upstream,
+    });
+
+    await assert.rejects(
+      () =>
+        signedFetch('https://seller.example.com/mcp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/call',
+            params: { name: 'create_media_buy', arguments: {} },
+          }),
+        }),
+      /requires 'request-signing'/
+    );
+    assert.strictEqual(signCalls, 0, 'purpose mismatch must fail before invoking the provider');
+  });
+
   it('signs when the capability cache lists the operation as required_for', async () => {
     const cache = new CapabilityCache();
     const { buildCapabilityCacheKey } = require('../../dist/lib/signing/index.js');

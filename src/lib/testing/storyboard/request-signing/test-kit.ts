@@ -27,11 +27,27 @@ export interface RateAbuseContract {
   window_seconds: number;
 }
 
+export interface FunctionalDispatchContract {
+  signing_keyid: string;
+  signer_agent_url: string;
+  operation_selection: {
+    capability_path: 'request_signing';
+    sign_required_for: boolean;
+    sign_supported_for: boolean;
+  };
+  content_digest_policy_source: 'request_signing.covers_content_digest';
+  preserve_transport_auth: boolean;
+  fresh_signature_per_dispatch: boolean;
+  bootstrap_operations_unsigned: string[];
+  unavailable_behavior: 'not_applicable';
+}
+
 export interface SignedRequestsRunnerContract {
   id: string;
   endpoint_scope: 'sandbox' | string;
   harness_mode: 'black_box' | 'white_box';
   runner_signing_keys: RunnerSigningKey[];
+  functional_dispatch?: FunctionalDispatchContract;
   stateful_vector_contract: {
     replay_window: ReplayWindowContract;
     revocation: RevocationContract;
@@ -56,12 +72,61 @@ export function loadSignedRequestsRunnerContract(
   const path = join(cacheDir, 'test-kits', 'signed-requests-runner.yaml');
   if (!existsSync(path)) return undefined;
   const raw = parse(readFileSync(path, 'utf-8')) as Record<string, unknown>;
+  const functionalDispatch = parseFunctionalDispatch(raw.functional_dispatch);
   return {
     id: assertString(raw.id, 'id'),
     endpoint_scope: assertString(raw.endpoint_scope, 'endpoint_scope'),
     harness_mode: parseHarnessMode(raw.harness_mode),
     runner_signing_keys: parseSigningKeys(raw.runner_signing_keys),
+    ...(functionalDispatch && { functional_dispatch: functionalDispatch }),
     stateful_vector_contract: parseStatefulContracts(raw.stateful_vector_contract),
+  };
+}
+
+function parseFunctionalDispatch(raw: unknown): FunctionalDispatchContract | undefined {
+  if (raw === undefined) return undefined;
+  const r = asObject(raw, 'functional_dispatch');
+  const selection = asObject(r.operation_selection, 'functional_dispatch.operation_selection');
+  const capabilityPath = assertString(
+    selection.capability_path,
+    'functional_dispatch.operation_selection.capability_path'
+  );
+  if (capabilityPath !== 'request_signing') {
+    throw new Error('functional_dispatch.operation_selection.capability_path must be "request_signing"');
+  }
+  const digestSource = assertString(r.content_digest_policy_source, 'functional_dispatch.content_digest_policy_source');
+  if (digestSource !== 'request_signing.covers_content_digest') {
+    throw new Error('functional_dispatch.content_digest_policy_source must be "request_signing.covers_content_digest"');
+  }
+  const unavailable = assertString(r.unavailable_behavior, 'functional_dispatch.unavailable_behavior');
+  if (unavailable !== 'not_applicable') {
+    throw new Error('functional_dispatch.unavailable_behavior must be "not_applicable"');
+  }
+  return {
+    signing_keyid: assertString(r.signing_keyid, 'functional_dispatch.signing_keyid'),
+    signer_agent_url: assertString(r.signer_agent_url, 'functional_dispatch.signer_agent_url'),
+    operation_selection: {
+      capability_path: 'request_signing',
+      sign_required_for: assertBoolean(
+        selection.sign_required_for,
+        'functional_dispatch.operation_selection.sign_required_for'
+      ),
+      sign_supported_for: assertBoolean(
+        selection.sign_supported_for,
+        'functional_dispatch.operation_selection.sign_supported_for'
+      ),
+    },
+    content_digest_policy_source: 'request_signing.covers_content_digest',
+    preserve_transport_auth: assertBoolean(r.preserve_transport_auth, 'functional_dispatch.preserve_transport_auth'),
+    fresh_signature_per_dispatch: assertBoolean(
+      r.fresh_signature_per_dispatch,
+      'functional_dispatch.fresh_signature_per_dispatch'
+    ),
+    bootstrap_operations_unsigned: assertStringArray(
+      r.bootstrap_operations_unsigned,
+      'functional_dispatch.bootstrap_operations_unsigned'
+    ),
+    unavailable_behavior: 'not_applicable',
   };
 }
 
@@ -147,5 +212,17 @@ function assertString(v: unknown, where: string): string {
 
 function assertNumber(v: unknown, where: string): number {
   if (typeof v !== 'number') throw new Error(`${where} must be number`);
+  return v;
+}
+
+function assertBoolean(v: unknown, where: string): boolean {
+  if (typeof v !== 'boolean') throw new Error(`${where} must be boolean`);
+  return v;
+}
+
+function assertStringArray(v: unknown, where: string): string[] {
+  if (!Array.isArray(v) || v.some(item => typeof item !== 'string')) {
+    throw new Error(`${where} must be string[]`);
+  }
   return v;
 }

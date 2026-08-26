@@ -146,8 +146,7 @@ function carriesWebhookAuthentication(body: unknown): boolean {
  *      `sign_supported: true` (defaults off).
  *
  * Returns false when the capability is unknown (cold cache) except for ops
- * in `always_sign`, so the priming `get_adcp_capabilities` call itself is
- * never signed.
+ * in `always_sign`.
  */
 export function shouldSignOperation(
   operation: string | undefined,
@@ -268,10 +267,12 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
 function freezeProviderIdentity(provider: AgentRequestSigningConfigProvider['provider']) {
   const keyid = provider.keyid;
   const algorithm = provider.algorithm;
+  const adcpUse = provider.adcpUse;
   const fingerprint = provider.fingerprint;
   return {
     keyid,
     algorithm,
+    adcpUse,
     fingerprint,
     sign: (payload: Uint8Array) => provider.sign(payload),
   };

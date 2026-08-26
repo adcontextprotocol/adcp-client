@@ -2,7 +2,8 @@
  * CLI plumbing for `adcp storyboard run --no-sandbox`.
  *
  * Asserts the flag is parsed without value, surfaces in the dry-run header,
- * threads through to options.sandbox = false, and is a no-op when omitted.
+ * threads through to options.sandbox = false, while an explicit --sandbox
+ * selects sandbox routing without changing the historical omitted default.
  * Uses --dry-run + --url so we never make network calls.
  */
 
@@ -10,6 +11,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
+const { sandboxRunOptions } = require('../../bin/adcp-storyboard-sandbox.js');
 
 const CLI = path.resolve(__dirname, '../../bin/adcp.js');
 
@@ -73,7 +75,31 @@ test('storyboard run --help mentions --no-sandbox', () => {
   assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}. stderr: ${result.stderr}`);
   const help = `${result.stdout}\n${result.stderr}`;
   assert.match(help, /--no-sandbox/, 'help text should advertise --no-sandbox');
+  assert.match(help, /--sandbox/, 'help text should advertise explicit sandbox mode');
   assert.match(help, /account\.sandbox=false/, 'help should name the wire field affected');
+});
+
+test('--sandbox and --no-sandbox are mutually exclusive', () => {
+  const result = runCli(['storyboard', 'run', 'test-mcp', '--sandbox', '--no-sandbox', '--dry-run']);
+  assert.strictEqual(result.status, 2);
+  assert.match(result.stderr, /mutually exclusive/);
+});
+
+test('shared runner routing maps explicit sandbox flags without changing the omitted default', () => {
+  assert.deepStrictEqual(sandboxRunOptions({}), {});
+  assert.deepStrictEqual(sandboxRunOptions({ sandbox: true }), { sandbox: true });
+  assert.deepStrictEqual(sandboxRunOptions({ noSandbox: true }), {
+    sandbox: false,
+    disable_sandbox: true,
+  });
+  assert.throws(() => sandboxRunOptions({ sandbox: true, noSandbox: true }), /mutually exclusive/);
+
+  const source = require('node:fs').readFileSync(CLI, 'utf8');
+  assert.strictEqual(
+    source.match(/\.\.\.sandboxRunOptions\(opts\)/g)?.length,
+    6,
+    'every storyboard run and step option builder must use the shared sandbox routing helper'
+  );
 });
 
 test('resolveAccount honors options.sandbox=false (final wire-shape contract)', async () => {

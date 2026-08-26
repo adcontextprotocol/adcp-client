@@ -71,11 +71,17 @@ export function loadRequestSigningVectors(options: LoadVectorsOptions = {}): Loa
           },
         }
       : {},
-    keys: loadKeys(join(sourceDir, 'keys.json')),
+    keys: loadRequestSigningKeys(options),
     sourceDir,
   };
   VECTOR_CACHE.set(sourceDir, loaded);
   return loaded;
+}
+
+/** Load only the shared signing keyset, without requiring the grader vectors. */
+export function loadRequestSigningKeys(options: LoadVectorsOptions = {}): TestKeyset {
+  const cacheDir = getComplianceCacheDir(options);
+  return loadKeys(join(cacheDir, 'test-vectors', 'request-signing', 'keys.json'));
 }
 
 /** Test-only: clear the memoization cache so a fresh cache path is reread. */

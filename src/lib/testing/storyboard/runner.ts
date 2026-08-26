@@ -18,6 +18,7 @@ import {
 } from '../../protocols';
 import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
 import { defaultStoryboardResponseProjection, executeStoryboardTask } from './task-map';
+import { applyFunctionalRequestSigning } from './request-signing/functional-dispatch';
 import {
   extractContextWithProvenance,
   injectContext,
@@ -1271,6 +1272,10 @@ export async function runStoryboard(
   return withMCPConnectionScope(
     async () => {
       options = applyStoryboardVersionOptions(storyboard, options);
+      options = applyFunctionalRequestSigning(options, {
+        ...(options.complianceDir && { complianceDir: options.complianceDir }),
+        ...(options.adcpVersion && { version: options.adcpVersion }),
+      });
       // adcp#6735 — a declared prerequisites.test_kit is a loading directive,
       // not decoration: resolve it into options.test_kit (caller-supplied
       // kits win) so from_test_kit / $test_kit.* references get the
@@ -4322,6 +4327,10 @@ export async function runStoryboardStep(
     async () => {
       validateStoryboardShape(storyboard);
       options = applyStoryboardVersionOptions(storyboard, options);
+      options = applyFunctionalRequestSigning(options, {
+        ...(options.complianceDir && { complianceDir: options.complianceDir }),
+        ...(options.adcpVersion && { version: options.adcpVersion }),
+      });
       // adcp#6735 — same declared-kit resolution as runStoryboard, so the
       // printed fix_command path exercises the step with its real credential.
       options = resolveDeclaredTestKit(storyboard, options);
@@ -5256,6 +5265,7 @@ async function executeStep(
     taskResult?.adcp_error?.code === 'request_signature_required' &&
     Array.isArray(requiredForSigning) &&
     requiredForSigning.includes(effectiveStep.task) &&
+    options.functional_request_signing === undefined &&
     runState.storyboardRequiresRequestSigner !== true
   ) {
     const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
