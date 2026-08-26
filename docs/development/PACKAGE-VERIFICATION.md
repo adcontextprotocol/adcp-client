@@ -106,8 +106,8 @@ entrypoint. Optional peers
 (`peerDependenciesMeta`) are **not** installed — no tested subpath loads them,
 so pinning them would add only install weight and registry-flake surface. The
 floor/load smoke uses `npm install` (never workspace pnpm/catalog), and both
-temporary projects are cleaned up on exit. Requires pnpm 11, plus a prior
-`npm run build:lib`.
+temporary projects are cleaned up on exit. Requires pnpm 10.19 or newer, plus a
+prior `npm run build:lib`.
 
 This is what catches a peer floor that is declared lower than the code needs:
 CJS named-import interop can mask a too-low pin, but a real ESM import surfaces
