@@ -1,5 +1,19 @@
 # Changelog
 
+## 14.0.0-beta.12
+
+### Minor Changes
+
+- 367c69f: Sign ordinary sandbox storyboard requests with the existing compliance test
+  key when the bundled `signed-requests-runner` contract enables functional
+  dispatch. Capability-driven signing covers required and supported operations,
+  preserves existing transport authentication, and leaves older bundles on the
+  explicit `not_applicable` compatibility path.
+
+### Patch Changes
+
+- a950bf9: Restore composable product discovery schema declarations and relax the compatible `tldts` dependency floor for release-age-gated consumers.
+
 ## 14.0.0-beta.11
 
 ### Major Changes
