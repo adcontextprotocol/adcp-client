@@ -7,6 +7,7 @@ import type { ControllerDetection } from './test-controller';
 import type { WebhookReceiver } from './storyboard/webhook-receiver';
 import type { AdcpVersion } from '../version';
 import type { TransportOptions, VersionEnvelopeMode } from '../protocols';
+import type { AgentRequestSigningConfig } from '../types/adcp';
 
 // Test scenarios that can be run
 export type TestScenario =
@@ -83,6 +84,15 @@ export interface TestOptions {
    * enforce a request-scoped network policy without replacing global fetch.
    */
   transport?: TransportOptions;
+  /**
+   * RFC 9421 identity used for ordinary functional test/storyboard calls.
+   * Distinct from `StoryboardRunOptions.request_signing`, which configures
+   * the dedicated verifier-vector grader. Compliance runners populate this
+   * automatically from `signed-requests-runner.yaml > functional_dispatch`
+   * only for sandbox runs; callers may provide their own key/provider for a
+   * different trusted environment.
+   */
+  functional_request_signing?: AgentRequestSigningConfig;
   /**
    * AdCP protocol version the test client should speak. Storyboard runners
    * set this from the compliance cache version instead of relying on the

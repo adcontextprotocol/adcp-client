@@ -23,18 +23,28 @@ import { classifyProbeUrl } from '../utils/probe-policy';
 import { SsrfRefusedError } from '../net/ssrf-fetch';
 import { ADCP_VERSION } from '../version';
 import type { VersionEnvelopeMode } from '../protocols';
+import type { AgentRequestSigningConfig } from '../types/adcp';
+import { createHmac, hkdfSync, randomBytes } from 'node:crypto';
 import { validateIncomingResponse } from '../validation/client-hooks';
 import { extractVersionUnsupportedDetails } from '../utils/error-extraction';
+import { buildAgentSigningContext } from '../signing/client';
+import type { VerifierCapability } from '../signing/types';
 
 const TEST_CLIENT_VERSION_OPTIONS = Symbol('adcp.testClientVersionOptions');
+const TEST_CLIENT_SCOPE_SALT = randomBytes(32);
 
 interface TestClientVersionOptions {
+  agentUrl: string;
+  protocol: 'mcp' | 'a2a';
   adcpVersion: string;
   wireAdcpVersion?: string;
   versionEnvelope: VersionEnvelopeMode;
   strictResponseSchemaValidation: boolean;
   authMode?: string;
+  requestScopeMode?: string;
+  requestSigningMode?: string;
   fetchFn?: typeof fetch;
+  allowPrivateIp?: boolean;
   maxResponseBytes?: number;
   requestTimeoutMs?: number;
 }
@@ -155,6 +165,7 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
     oauth_tokens?: import('../types/adcp').AgentOAuthTokens;
     oauth_client?: import('../types/adcp').AgentOAuthClient;
     oauth_client_credentials?: import('../types/adcp').AgentOAuthClientCredentials;
+    request_signing?: AgentRequestSigningConfig;
     headers?: Record<string, string>;
   } = {
     id: 'test',
@@ -193,6 +204,10 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
     }
   }
 
+  if (options.functional_request_signing) {
+    agentConfig.request_signing = options.functional_request_signing;
+  }
+
   const multiClient = new ADCPMultiAgentClient([agentConfig], {
     headers,
     validation: {
@@ -208,14 +223,21 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
 
   const client = multiClient.agent('test');
   const authMode = authReuseMode(options);
+  const requestScopeMode = requestScopeReuseMode(options);
+  const requestSigningMode = requestSigningReuseMode(options.functional_request_signing);
   Object.defineProperty(client, TEST_CLIENT_VERSION_OPTIONS, {
     value: {
+      agentUrl,
+      protocol,
       adcpVersion: multiClient.getAdcpVersion(),
       ...(options.wireAdcpVersion !== undefined && { wireAdcpVersion: options.wireAdcpVersion }),
       versionEnvelope: options.versionEnvelope ?? 'auto',
       strictResponseSchemaValidation: options.strictResponseSchemaValidation !== false,
       ...(authMode !== undefined && { authMode }),
+      ...(requestScopeMode !== undefined && { requestScopeMode }),
+      ...(requestSigningMode !== undefined && { requestSigningMode }),
       ...(options.transport?.trustedFetchFn && { fetchFn: options.transport.trustedFetchFn }),
+      ...(options.transport?.allowPrivateIp !== undefined && { allowPrivateIp: options.transport.allowPrivateIp }),
       ...(options.transport?.maxResponseBytes !== undefined && {
         maxResponseBytes: options.transport.maxResponseBytes,
       }),
@@ -245,7 +267,7 @@ export function getOrCreateClient(agentUrl: string, options: TestOptions): TestC
 
 export function getOrCreateClientResolution(agentUrl: string, options: TestOptions): TestClientResolution {
   const shared = options._client as TestClient | undefined;
-  if (shared && isExecutableTestClient(shared) && testClientMatchesVersionOptions(shared, options)) {
+  if (shared && isExecutableTestClient(shared) && testClientMatchesVersionOptions(shared, agentUrl, options)) {
     return { client: shared, reusedShared: true };
   }
   return { client: createTestClient(agentUrl, options.protocol || 'mcp', options), reusedShared: false };
@@ -258,14 +280,17 @@ function isExecutableTestClient(client: unknown): client is TestClient {
   return Object.entries(candidate).some(([key, value]) => key !== 'getAgentInfo' && typeof value === 'function');
 }
 
-function testClientMatchesVersionOptions(client: TestClient, options: TestOptions): boolean {
+function testClientMatchesVersionOptions(client: TestClient, agentUrl: string, options: TestOptions): boolean {
   const effectiveOptions = withTestKitAuthDefaults(options);
   const meta = (client as unknown as { [TEST_CLIENT_VERSION_OPTIONS]?: TestClientVersionOptions })[
     TEST_CLIENT_VERSION_OPTIONS
   ];
   const expectedAuthMode = authReuseMode(effectiveOptions);
+  const expectedRequestScopeMode = requestScopeReuseMode(effectiveOptions);
+  const expectedRequestSigningMode = requestSigningReuseMode(effectiveOptions.functional_request_signing);
   if (!meta) {
     return (
+      expectedRequestSigningMode === undefined &&
       effectiveOptions.adcpVersion === undefined &&
       effectiveOptions.versionEnvelope === undefined &&
       effectiveOptions.transport === undefined
@@ -275,12 +300,17 @@ function testClientMatchesVersionOptions(client: TestClient, options: TestOption
   const expectedWireAdcpVersion = effectiveOptions.wireAdcpVersion;
   const expectedVersionEnvelope = effectiveOptions.versionEnvelope ?? 'auto';
   return (
+    meta.agentUrl === agentUrl &&
+    meta.protocol === (effectiveOptions.protocol ?? 'mcp') &&
     meta.adcpVersion === expectedAdcpVersion &&
     meta.wireAdcpVersion === expectedWireAdcpVersion &&
     meta.versionEnvelope === expectedVersionEnvelope &&
     meta.strictResponseSchemaValidation === (effectiveOptions.strictResponseSchemaValidation !== false) &&
     meta.authMode === expectedAuthMode &&
+    meta.requestScopeMode === expectedRequestScopeMode &&
+    meta.requestSigningMode === expectedRequestSigningMode &&
     meta.fetchFn === effectiveOptions.transport?.trustedFetchFn &&
+    meta.allowPrivateIp === effectiveOptions.transport?.allowPrivateIp &&
     meta.maxResponseBytes === effectiveOptions.transport?.maxResponseBytes &&
     meta.requestTimeoutMs === effectiveOptions.transport?.requestTimeoutMs
   );
@@ -323,6 +353,56 @@ function authReuseMode(options: TestOptions): string | undefined {
   return options.auth?.type;
 }
 
+function requestScopeReuseMode(options: TestOptions): string | undefined {
+  const headers = options.headers
+    ? Object.fromEntries(
+        Object.entries(options.headers)
+          .map(([name, value]) => [name.toLowerCase(), value] as const)
+          .sort(([a], [b]) => a.localeCompare(b))
+      )
+    : undefined;
+  if (!options.auth && !headers && !options.test_session_id && !options.userAgent) return undefined;
+  return testClientScopeDisambiguator(
+    JSON.stringify({
+      auth: options.auth,
+      headers,
+      testSessionId: options.test_session_id,
+      userAgent: options.userAgent,
+    })
+  );
+}
+
+function testClientScopeDisambiguator(value: string): string {
+  return Buffer.from(hkdfSync('sha256', value, TEST_CLIENT_SCOPE_SALT, 'adcp-test-client-cache', 8)).toString('hex');
+}
+
+function requestSigningReuseMode(config: AgentRequestSigningConfig | undefined): string | undefined {
+  if (!config) return undefined;
+  const kind = config.kind === 'provider' ? 'provider' : 'inline';
+  const identity =
+    config.kind === 'provider'
+      ? {
+          algorithm: config.provider.algorithm,
+          keyid: config.provider.keyid,
+          adcpUse: config.provider.adcpUse,
+          fingerprint: config.provider.fingerprint,
+        }
+      : { algorithm: config.alg, keyid: config.kid, privateKey: config.private_key };
+  const fingerprint = createHmac('sha256', '')
+    .update(
+      JSON.stringify({
+        identity,
+        agentUrl: config.agent_url,
+        jwksUri: config.jwks_uri,
+        signSupported: config.sign_supported === true,
+        alwaysSign: config.always_sign ?? [],
+      })
+    )
+    .digest('hex')
+    .slice(0, 16);
+  return `${kind}:${fingerprint}`;
+}
+
 /**
  * Return a pre-discovered profile from options (set by comply()) or discover fresh.
  */
@@ -331,12 +411,44 @@ export async function getOrDiscoverProfile(
   options: TestOptions
 ): Promise<{ profile: AgentProfile; step: TestStepResult }> {
   if (options._profile) {
+    seedTestClientSigningCapability(client, options._profile, options.adcpVersion);
     return {
       profile: options._profile,
       step: { step: 'Discover agent capabilities', passed: true, duration_ms: 0 },
     };
   }
   return discoverAgentProfile(client, options.signal, options.adcpVersion);
+}
+
+/**
+ * Reuse the already-observed capability advertisement for signing decisions.
+ * This avoids a second discovery call whose failure could otherwise downgrade
+ * a functional compliance dispatch to unsigned.
+ */
+export function seedTestClientSigningCapability(client: TestClient, profile: AgentProfile, adcpVersion?: string): void {
+  const raw = profile.raw_capabilities;
+  if (!raw || typeof raw !== 'object') return;
+  const clientAccess = client as unknown as {
+    getAgent?: TestClient['getAgent'];
+    getAdcpVersion?: TestClient['getAdcpVersion'];
+  };
+  if (typeof clientAccess.getAgent !== 'function') return;
+  const agent = clientAccess.getAgent.call(client);
+  const meta = (client as unknown as { [TEST_CLIENT_VERSION_OPTIONS]?: TestClientVersionOptions })[
+    TEST_CLIENT_VERSION_OPTIONS
+  ];
+  const effectiveVersion =
+    meta?.wireAdcpVersion ??
+    meta?.adcpVersion ??
+    (typeof clientAccess.getAdcpVersion === 'function' ? clientAccess.getAdcpVersion.call(client) : undefined) ??
+    adcpVersion;
+  const signingContext = buildAgentSigningContext(agent, { adcpVersion: effectiveVersion });
+  if (!signingContext) return;
+  signingContext.cache.set(signingContext.capabilityCacheKey, {
+    requestSigning: (raw as { request_signing?: VerifierCapability }).request_signing,
+    adcpVersion: profile.adcp_major_versions?.[0],
+    fetchedAt: Math.floor(Date.now() / 1000),
+  });
 }
 
 /**
@@ -561,6 +673,7 @@ export async function discoverAgentProfile(
     }
   }
 
+  seedTestClientSigningCapability(client, profile, schemaAdcpVersion);
   return { profile, step };
 }
 

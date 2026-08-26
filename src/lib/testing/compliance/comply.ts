@@ -8,7 +8,7 @@
  * Resolution priority: explicit storyboards > capability-driven.
  */
 
-import { createTestClient, discoverAgentProfile } from '../client';
+import { createTestClient, discoverAgentProfile, seedTestClientSigningCapability } from '../client';
 import type { TestOptions, TestResult, AgentProfile, TestStepResult } from '../types';
 import { collectDetachedAssertionFailures, mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
 import { applyAdcpVersionRunOptions, runStoryboard } from '../storyboard/runner';
@@ -64,6 +64,7 @@ import { redactOAuthUrlForOutput, redactOAuthUrlsInText } from '../storyboard/oa
 import { LIBRARY_VERSION } from '../../version';
 import { validationFailsStep } from '../storyboard/validations';
 import { isLikelyPrivateUrl } from '../../net/address-guards';
+import { applyFunctionalRequestSigning } from '../storyboard/request-signing/functional-dispatch';
 
 /**
  * All compliance tracks in display order.
@@ -1218,6 +1219,10 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       sandbox: testOptions.sandbox !== false,
       test_session_id: testOptions.test_session_id || `comply-${Date.now()}`,
     });
+    effectiveOptions = applyFunctionalRequestSigning(effectiveOptions, {
+      ...(complianceDir !== undefined && { complianceDir }),
+      version: complianceIndex.adcp_version,
+    });
 
     // Check for abort before starting
     signal?.throwIfAborted();
@@ -1269,6 +1274,11 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       discoveryOptions === effectiveOptions
         ? discoveryClient
         : createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', effectiveOptions);
+    // Negotiation may replace the discovery client with one configured for a
+    // different wire version. Seed that selected client from the capability
+    // response we already trust so its first functional dispatch cannot be
+    // downgraded by a redundant, transiently failing discovery probe.
+    seedTestClientSigningCapability(client, profile, complianceIndex.adcp_version);
     effectiveOptions._client = client;
     effectiveOptions._profile = profile;
 

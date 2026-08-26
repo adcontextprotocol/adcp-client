@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner');
+const { createTestClient } = require('../../dist/lib/testing/client');
 const { closeMCPConnections } = require('../../dist/lib/protocols/mcp');
 
 function buildClient(errorCode = 'request_signature_required') {
@@ -244,6 +245,35 @@ describe('unsigned functional request-signing guard (adcp-client#2373)', () => {
 
     assert.notEqual(result.skipped, true);
     assert.equal(result.passed, false);
+  });
+
+  test('does not skip a rejection after a functional signer was configured', async () => {
+    const signing = {
+      kind: 'provider',
+      provider: {
+        keyid: 'configured-test-signer',
+        algorithm: 'ed25519',
+        fingerprint: 'configured-test-signer',
+        sign: async () => new Uint8Array(64),
+      },
+      agent_url: 'https://compliance-runner.example',
+    };
+    const client = createTestClient('https://stub.example/mcp', 'mcp', {
+      functional_request_signing: signing,
+    });
+    client.executeTask = buildClient().executeTask;
+    const result = await runStoryboard('https://stub.example/mcp', buildStoryboard(), {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ['create_media_buy'],
+      functional_request_signing: signing,
+      _client: client,
+      _profile: buildProfile(),
+    });
+    const step = result.phases[0].steps[0];
+
+    assert.notEqual(step.skipped, true);
+    assert.equal(step.passed, false);
   });
 
   test('uses the routed agent profile when only the secondary requires the task signature', async () => {

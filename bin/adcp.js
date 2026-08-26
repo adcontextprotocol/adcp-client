@@ -53,6 +53,7 @@ const { scheduleVersionCheck } = require('./adcp-version-check.js');
 const { formatStoryboardResultsAsJUnit } = require('../dist/lib/testing/storyboard/junit.js');
 const { LIBRARY_VERSION } = require('../dist/lib/version.js');
 const { appendBuiltInVersionUnsupportedHint } = require('./adcp-version-unsupported-hint.js');
+const { sandboxRunOptions } = require('./adcp-storyboard-sandbox.js');
 const {
   createCLIOAuthProvider,
   hasValidOAuthTokens,
@@ -1053,12 +1054,14 @@ function parseAgentOptions(args) {
   // transport/version behavior against a known schema-invalid legacy seller.
   // Normal local compliance runs remain strict by default.
   const strictResponseSchemaValidation = !args.includes('--no-strict-response-schema-validation');
-  // `--no-sandbox` forces `account.sandbox: false` (production) on every
-  // request the runner builds. The default behavior leaves the field unset
-  // (spec-equivalent to false), but agents that key sandbox routing on
-  // field PRESENCE rather than VALUE behave differently. Setting the flag
-  // makes the production intent explicit on the wire.
+  // Direct storyboard runs can explicitly choose sandbox or production
+  // routing. Leaving both flags absent preserves the historical wire shape.
+  const sandbox = args.includes('--sandbox');
   const noSandbox = args.includes('--no-sandbox');
+  if (sandbox && noSandbox) {
+    console.error('Error: --sandbox and --no-sandbox are mutually exclusive.');
+    process.exit(2);
+  }
 
   // `--asserts-seeded-state` declares that the operator has provisioned
   // initial test state out-of-band (HTTP admin endpoint, pre-test script,
@@ -1238,6 +1241,7 @@ function parseAgentOptions(args) {
     dryRun,
     allowHttp,
     strictResponseSchemaValidation,
+    sandbox,
     noSandbox,
     assertsSeededState,
     mediaBuyLifecycleCompatibility,
@@ -2049,6 +2053,9 @@ RUN OPTIONS (full assessment):
                       after this budget, without aborting an active storyboard
                       (default: max(120, 10 × selected storyboard count))
   --brief TEXT        Custom brief for product discovery
+  --sandbox           Explicitly run against sandbox accounts. Sets
+                      account.sandbox=true and enables sandbox-only runner
+                      facilities such as functional request signing.
   --no-sandbox        Force production-path responses (#841). Sets
                       account.sandbox=false on every request AND stamps
                       ext.adcp.disable_sandbox=true to signal adopters
@@ -2916,7 +2923,7 @@ async function handleStoryboardRun(args) {
     ...(fileComplianceOptions.adcpVersion && { adcpVersion: fileComplianceOptions.adcpVersion }),
     ...(fileComplianceOptions.schemaRoot && { schemaRoot: fileComplianceOptions.schemaRoot }),
     ...(!opts.strictResponseSchemaValidation && { strictResponseSchemaValidation: false }),
-    ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
+    ...sandboxRunOptions(opts),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(opts.mediaBuyLifecycleCompatibility && {
       mediaBuyLifecycleCompatibility: opts.mediaBuyLifecycleCompatibility,
@@ -3755,27 +3762,17 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
       createAgent,
       storyboards: storyboardsSpec,
       compliance: resolveOptions,
-      ...(opts.complianceVersion ||
-      opts.schemaRoot ||
-      !opts.strictResponseSchemaValidation ||
-      opts.noSandbox ||
-      opts.assertsSeededState ||
-      opts.mediaBuyLifecycleCompatibility ||
-      opts.loadedTestKit !== undefined
-        ? {
-            runStoryboardOptions: {
-              ...(opts.complianceVersion && !opts.complianceDir && { adcpVersion: opts.complianceVersion }),
-              ...(opts.schemaRoot && { schemaRoot: opts.schemaRoot }),
-              ...(!opts.strictResponseSchemaValidation && { strictResponseSchemaValidation: false }),
-              ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
-              ...(opts.assertsSeededState && { assertsSeededState: true }),
-              ...(opts.mediaBuyLifecycleCompatibility && {
-                mediaBuyLifecycleCompatibility: opts.mediaBuyLifecycleCompatibility,
-              }),
-              ...(opts.loadedTestKit !== undefined && { test_kit: opts.loadedTestKit }),
-            },
-          }
-        : {}),
+      runStoryboardOptions: {
+        ...sandboxRunOptions(opts),
+        ...(opts.complianceVersion && !opts.complianceDir && { adcpVersion: opts.complianceVersion }),
+        ...(opts.schemaRoot && { schemaRoot: opts.schemaRoot }),
+        ...(!opts.strictResponseSchemaValidation && { strictResponseSchemaValidation: false }),
+        ...(opts.assertsSeededState && { assertsSeededState: true }),
+        ...(opts.mediaBuyLifecycleCompatibility && {
+          mediaBuyLifecycleCompatibility: opts.mediaBuyLifecycleCompatibility,
+        }),
+        ...(opts.loadedTestKit !== undefined && { test_kit: opts.loadedTestKit }),
+      },
       onStoryboardComplete:
         jsonOutput || format === 'junit'
           ? undefined
@@ -4204,7 +4201,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     ...(runAdcpVersion && { adcpVersion: runAdcpVersion }),
     ...(runSchemaRoot && { schemaRoot: runSchemaRoot }),
     ...(!opts.strictResponseSchemaValidation && { strictResponseSchemaValidation: false }),
-    ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
+    ...sandboxRunOptions(opts),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(opts.mediaBuyLifecycleCompatibility && {
       mediaBuyLifecycleCompatibility: opts.mediaBuyLifecycleCompatibility,
@@ -4488,7 +4485,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
     ...(runAdcpVersion && { adcpVersion: runAdcpVersion }),
     ...(runSchemaRoot && { schemaRoot: runSchemaRoot }),
     ...(!opts.strictResponseSchemaValidation && { strictResponseSchemaValidation: false }),
-    ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
+    ...sandboxRunOptions(opts),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(opts.mediaBuyLifecycleCompatibility && {
       mediaBuyLifecycleCompatibility: opts.mediaBuyLifecycleCompatibility,
@@ -4703,7 +4700,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     ...(authOption && { auth: authOption }),
     ...(opts.allowHttp && { allow_http: true }),
     ...(webhookReceiverOpts ?? {}),
-    ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
+    ...sandboxRunOptions(opts),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(opts.mediaBuyLifecycleCompatibility && {
       mediaBuyLifecycleCompatibility: opts.mediaBuyLifecycleCompatibility,
@@ -4941,6 +4938,7 @@ async function handleStoryboardStepCmd(args) {
     context,
     ...(contributions && { contributions }),
     request,
+    ...sandboxRunOptions(opts),
     ...(complianceVersion && { adcpVersion: complianceVersion }),
     ...(opts.complianceDir && { complianceDir: opts.complianceDir }),
     ...(schemaRoot && { schemaRoot }),

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, hkdfSync, randomBytes } from 'node:crypto';
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
 import type { AgentConfig, AgentRequestSigningConfig } from '../types/adcp';
 import {
@@ -11,6 +11,8 @@ import type { SigningProvider } from './provider';
 import type { AdcpSignAlg } from './types';
 import { ADCP_VERSION } from '../version';
 
+const CAPABILITY_SCOPE_SALT = randomBytes(32);
+
 /**
  * Snapshot of the signing identity captured at context-build time. The
  * transport layer reads from this snapshot rather than from `provider.*`
@@ -22,6 +24,7 @@ import { ADCP_VERSION } from '../version';
 export interface AgentSigningIdentitySnapshot {
   keyid: string;
   algorithm: AdcpSignAlg;
+  adcpUse?: string;
   /** Defensively hashed disambiguator — see {@link buildAgentSigningContext}. */
   fingerprint: string;
 }
@@ -91,7 +94,12 @@ export function buildAgentSigningContext(
   const identity = snapshotIdentity(signing);
   const cacheFingerprint = deriveCacheFingerprint(identity);
   const adcpVersion = options.adcpVersion ?? ADCP_VERSION;
-  const capabilityCacheKey = buildCapabilityCacheKey(agent.agent_uri, agent.auth_token, cacheFingerprint, adcpVersion);
+  const capabilityCacheKey = buildCapabilityCacheKey(
+    agent.agent_uri,
+    capabilityPrincipalScope(agent),
+    cacheFingerprint,
+    adcpVersion
+  );
   // Transport-connection cache-key suffix binds to the defensively hashed
   // identity, not just the advertised `kid`. Two tenants that misconfigure
   // the same `kid` string but hold distinct keys must not collide on a
@@ -116,6 +124,47 @@ export function buildAgentSigningContext(
 }
 
 /**
+ * Bind capability advertisements to the effective authenticated/routed
+ * principal. Basic and routing credentials live in headers, while OAuth
+ * credentials live outside `auth_token`; hashing the complete scope prevents
+ * one principal from reusing another principal's signing policy.
+ */
+function capabilityPrincipalScope(agent: AgentConfig): string | undefined {
+  const credentials = agent.oauth_client_credentials;
+  const headers = agent.headers
+    ? Object.fromEntries(
+        Object.entries(agent.headers)
+          .map(([name, value]) => [name.toLowerCase(), value] as const)
+          .sort(([a], [b]) => a.localeCompare(b))
+      )
+    : undefined;
+  const scope = {
+    protocol: agent.protocol,
+    authToken: agent.auth_token,
+    oauthAccessToken: agent.oauth_tokens?.access_token,
+    oauthClientId: agent.oauth_client?.client_id,
+    oauthResource: agent.oauth_resource,
+    oauthClientCredentials: credentials
+      ? {
+          tokenEndpoint: credentials.token_endpoint,
+          clientId: credentials.client_id,
+          scope: credentials.scope,
+          resource: credentials.resource,
+          audience: credentials.audience,
+        }
+      : undefined,
+    headers,
+  };
+  return capabilityScopeDisambiguator(JSON.stringify(scope));
+}
+
+function capabilityScopeDisambiguator(value: string): string {
+  return Buffer.from(hkdfSync('sha256', value, CAPABILITY_SCOPE_SALT, 'adcp-signing-capability-cache', 32)).toString(
+    'hex'
+  );
+}
+
+/**
  * Snapshot the signing identity at context-build time. For provider configs,
  * reads `keyid` / `algorithm` / `fingerprint` once and freezes them. For
  * inline configs, derives a fingerprint from the private scalar — same
@@ -127,12 +176,14 @@ function snapshotIdentity(signing: AgentRequestSigningConfig): AgentSigningIdent
     return {
       keyid: provider.keyid,
       algorithm: provider.algorithm,
+      ...(provider.adcpUse !== undefined && { adcpUse: provider.adcpUse }),
       fingerprint: provider.fingerprint,
     };
   }
   return {
     keyid: signing.kid,
     algorithm: signing.alg,
+    ...(typeof signing.private_key.adcp_use === 'string' && { adcpUse: signing.private_key.adcp_use }),
     fingerprint: inlineFingerprint(signing.kid, signing.private_key.d),
   };
 }
@@ -155,6 +206,8 @@ function deriveCacheFingerprint(identity: AgentSigningIdentitySnapshot): string 
     .update(identity.algorithm)
     .update('\0')
     .update(identity.keyid)
+    .update('\0')
+    .update(identity.adcpUse ?? '')
     .update('\0')
     .update(identity.fingerprint)
     .digest('hex')
