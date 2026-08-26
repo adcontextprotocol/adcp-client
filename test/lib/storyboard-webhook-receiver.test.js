@@ -75,6 +75,24 @@ describe('createWebhookReceiver', () => {
     }
   });
 
+  test('capture cap does not mask retry-replay acceptance (#2653)', async () => {
+    const receiver = await createWebhookReceiver();
+    try {
+      receiver.set_retry_replay({ step_id: 'trigger', operation_id: 'op-cap' }, { count: 100, http_status: 503 });
+      const url = `${receiver.base_url}/step/trigger/op-cap`;
+      for (let i = 0; i < 100; i++) {
+        const res = await post(url, { idempotency_key: 'evt_stable0123456789' });
+        assert.strictEqual(res.status, 503);
+      }
+
+      const accepted = await post(url, { idempotency_key: 'evt_stable0123456789' });
+      assert.strictEqual(accepted.status, 204);
+      assert.strictEqual(receiver.all().length, 100, 'the accepted overflow delivery is not retained');
+    } finally {
+      await receiver.close();
+    }
+  });
+
   test('wait resolves on first match; wait_all returns every match after delay', async () => {
     const receiver = await createWebhookReceiver();
     try {
@@ -102,6 +120,15 @@ describe('createWebhookReceiver', () => {
     } finally {
       await receiver.close();
     }
+  });
+
+  test('close drains pending wait_all timers immediately (#2653)', async () => {
+    const receiver = await createWebhookReceiver();
+    const pending = receiver.wait_all({ step_id: 'nobody' }, 60_000);
+
+    await receiver.close();
+    const result = await Promise.race([pending, delay(250).then(() => 'still-pending')]);
+    assert.deepStrictEqual(result, []);
   });
 
   test('filter scopes by step_id, operation_id, and body path', async () => {

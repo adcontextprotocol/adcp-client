@@ -202,6 +202,10 @@ export async function createWebhookReceiver(options: CreateWebhookReceiverOption
     resolve: (result: WebhookWaitResult) => void;
     timer: NodeJS.Timeout;
   }> = [];
+  const waitAllTimers: Array<{
+    resolve: (result: CapturedWebhook[]) => void;
+    timer: NodeJS.Timeout;
+  }> = [];
   const retryPolicies = new Map<string, { policy: RetryReplayPolicy; delivered: number }>();
   const deliveryCounts = new Map<string, number>();
 
@@ -237,8 +241,8 @@ export async function createWebhookReceiver(options: CreateWebhookReceiverOption
       retryPolicies.set(retryKeyString(key), { policy, delivered: 0 });
     },
     wait: (filter, timeout_ms) => wait(filter, timeout_ms, captured, waiters),
-    wait_all: (filter, timeout_ms) => waitAll(filter, timeout_ms, captured),
-    close: () => closeServer(server, waiters),
+    wait_all: (filter, timeout_ms) => waitAll(filter, timeout_ms, captured, waitAllTimers),
+    close: () => closeServer(server, waiters, waitAllTimers),
   };
 }
 
@@ -299,21 +303,21 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, state: Handler
 
     const key = retryKeyString({ step_id, operation_id });
     const deliveryIndex = (state.deliveryCounts.get(key) ?? 0) + 1;
+    const status = nextResponseStatus(state.retryPolicies, key);
 
-    // Back-pressure on capture exhaustion — signal 503 so a conformant
-    // sender retries later, drop the capture so the runner's memory
-    // footprint stays bounded. Drops a delivery quietly is worse than
-    // surfacing a clearly observable refusal.
-    const perKey = countPerKey(state.captured, step_id, operation_id);
+    // Stop retaining bodies once a capture cap is exhausted, but preserve the
+    // configured retry-replay status sequence. Unconditionally returning 503
+    // here masks the policy's eventual 2xx forever and can amplify a sender's
+    // retries after the runner has already reached its memory bound (#2653).
+    const perKey = state.deliveryCounts.get(key) ?? 0;
     if (state.captured.length >= MAX_CAPTURED_TOTAL || perKey >= MAX_CAPTURED_PER_KEY) {
-      res.statusCode = 503;
-      res.setHeader('retry-after', '1');
+      res.statusCode = status;
+      if (status === 429 || status >= 500) res.setHeader('retry-after', '1');
       res.end();
       return;
     }
 
     state.deliveryCounts.set(key, deliveryIndex);
-    const status = nextResponseStatus(state.retryPolicies, key);
 
     const webhook: CapturedWebhook = {
       id: randomUUID(),
@@ -376,12 +380,6 @@ function redactHeaders(headers: Record<string, string>): Record<string, string> 
     out[k] = SECRET_HEADER_PATTERN.test(k) ? '[redacted]' : v;
   }
   return out;
-}
-
-function countPerKey(captured: ReadonlyArray<CapturedWebhook>, step_id: string, operation_id: string): number {
-  let n = 0;
-  for (const w of captured) if (w.step_id === step_id && w.operation_id === operation_id) n++;
-  return n;
 }
 
 function parseBody(raw: string, contentType: string | undefined): Pick<CapturedWebhook, 'body' | 'parse_error'> {
@@ -502,15 +500,23 @@ function wait(
  * Waits a minimum of `timeout_ms` even if matches arrive earlier — callers
  * that need "resolve on first match" should use `wait` instead.
  */
-function waitAll(filter: WebhookFilter, timeout_ms: number, captured: CapturedWebhook[]): Promise<CapturedWebhook[]> {
+function waitAll(
+  filter: WebhookFilter,
+  timeout_ms: number,
+  captured: CapturedWebhook[],
+  waitAllTimers: Array<{ resolve: (result: CapturedWebhook[]) => void; timer: NodeJS.Timeout }>
+): Promise<CapturedWebhook[]> {
   return new Promise<CapturedWebhook[]>(resolve => {
     const timer = setTimeout(
       () => {
+        const idx = waitAllTimers.findIndex(entry => entry.timer === timer);
+        if (idx >= 0) waitAllTimers.splice(idx, 1);
         resolve(captured.filter(w => matchesFilter(w, filter)));
       },
       Math.max(0, timeout_ms)
     );
     timer.unref?.();
+    waitAllTimers.push({ resolve, timer });
   });
 }
 
@@ -520,12 +526,18 @@ function waitAll(filter: WebhookFilter, timeout_ms: number, captured: CapturedWe
 
 function closeServer(
   server: Server,
-  waiters: Array<{ filter: WebhookFilter; resolve: (r: WebhookWaitResult) => void; timer: NodeJS.Timeout }>
+  waiters: Array<{ filter: WebhookFilter; resolve: (r: WebhookWaitResult) => void; timer: NodeJS.Timeout }>,
+  waitAllTimers: Array<{ resolve: (result: CapturedWebhook[]) => void; timer: NodeJS.Timeout }>
 ): Promise<void> {
   while (waiters.length > 0) {
     const w = waiters.pop()!;
     clearTimeout(w.timer);
     w.resolve({ timed_out: true });
+  }
+  while (waitAllTimers.length > 0) {
+    const pending = waitAllTimers.pop()!;
+    clearTimeout(pending.timer);
+    pending.resolve([]);
   }
   // Force-close keep-alive sockets so shutdown doesn't hang up to
   // keepAliveTimeout waiting for idle connections to drain.
