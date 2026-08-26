@@ -17,9 +17,9 @@ describe('Zod Schema Validation', () => {
     assert.equal(typeof sdk.ADCP_VERSION, 'string', 'package root should expose its version');
   });
 
-  test('get_products wire schema preserves legacy fields and relaxed disclosure positions', async () => {
-    if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
-    const parsed = schemas.GetProductsRequestSchema.parse({
+  test('get_products schemas split canonical and legacy field selection', async () => {
+    const publicSchemas = await import('../../dist/lib/schemas/index.js');
+    const request = {
       buying_mode: 'wholesale',
       fields: ['format_ids'],
       brand: {
@@ -45,9 +45,15 @@ describe('Zod Schema Validation', () => {
           },
         },
       },
-    });
+    };
+    const parsed = publicSchemas.LegacyGetProductsRequestSchema.parse(request);
 
     assert.deepEqual(parsed.fields, ['format_ids']);
+    assert.equal(publicSchemas.GetProductsRequestSchema.safeParse(request).success, false);
+    const canonicalJsonSchema = z.toJSONSchema(publicSchemas.GetProductsRequestSchema);
+    const canonicalFieldsJson = JSON.stringify(canonicalJsonSchema.properties.fields);
+    assert.doesNotMatch(canonicalFieldsJson, /format_ids/);
+    assert.match(canonicalFieldsJson, /format_options/);
     assert.deepEqual(
       parsed.brand.brand_kit_override.logo.provenance.disclosure.jurisdictions[0].render_guidance.positions,
       []

@@ -84,7 +84,7 @@ const TS7056_SCHEMAS: Array<{
   name: string;
   tsType?: string;
   objectShape?: boolean;
-  typeSource?: 'tools' | 'core';
+  typeSource?: 'tools' | 'core' | 'v2-projection';
 }> = [
   { name: 'AdCPAsyncResponseDataSchema' },
   { name: 'MCPWebhookPayloadSchema' },
@@ -99,7 +99,11 @@ const TS7056_SCHEMAS: Array<{
   { name: 'AudienceEvidenceSchema' },
   { name: 'AudienceEvidenceSelectionSchema' },
   { name: 'ProductSchema', tsType: 'Product', objectShape: true },
-  { name: 'GetProductsRequestSchema', tsType: 'GetProductsRequest', objectShape: true },
+  {
+    name: 'GetProductsRequestSchema',
+    tsType: 'GetProductsRequest',
+    objectShape: true,
+  },
   { name: 'GetProductsAsyncInputRequiredSchema' },
   { name: 'WholesaleFeedEventSchema' },
   { name: 'PackageRequestSchema', tsType: 'PackageRequest', objectShape: true },
@@ -158,6 +162,7 @@ function postProcessTS7056Annotations(content: string): string {
   const typesToImport = {
     tools: new Set<string>(),
     core: new Set<string>(),
+    v2Projection: new Set<string>(),
   };
   for (const { name, tsType, objectShape, typeSource = 'tools' } of TS7056_SCHEMAS) {
     const pattern = new RegExp(`export const ${name} = `);
@@ -190,9 +195,12 @@ function postProcessTS7056Annotations(content: string): string {
         const objectShapeType =
           name === 'PreviewCreativeRequestSchema'
             ? `{ request_type: z.ZodType<PreviewCreativeRequest['request_type'], PreviewCreativeRequest['request_type']> } & Record<string, z.ZodType>`
-            : typedObjectShape;
+            : name === 'ProductSchema'
+              ? `{ [K in keyof Product]-?: K extends 'publisher_properties' ? z.ZodType : undefined extends Product[K] ? z.ZodOptional<z.ZodType<Exclude<Product[K], undefined>, Exclude<Product[K], undefined>>> : z.ZodType<Product[K], Product[K]> }`
+              : typedObjectShape;
         annotation = `z.ZodObject<${objectShapeType}, z.core.$loose> & z.ZodType<${widened}, ${widened}>`;
-        typesToImport[typeSource].add(tsType);
+        const importBucket = typeSource === 'v2-projection' ? typesToImport.v2Projection : typesToImport[typeSource];
+        importBucket.add(tsType);
       } else {
         annotation =
           name === 'ProductSchema'
@@ -202,7 +210,8 @@ function postProcessTS7056Annotations(content: string): string {
     } else if (tsType) {
       const widened = `${tsType} & Record<string, unknown>`;
       annotation = `z.ZodType<${widened}, ${widened}>`;
-      typesToImport[typeSource].add(tsType);
+      const importBucket = typeSource === 'v2-projection' ? typesToImport.v2Projection : typesToImport[typeSource];
+      importBucket.add(tsType);
     } else {
       annotation = 'z.ZodType';
     }
@@ -213,13 +222,16 @@ function postProcessTS7056Annotations(content: string): string {
   }
   // Inject `import type { ... } from './tools.generated'` for the typed-zod
   // entries. The compound schemas reference response types defined there.
-  if (typesToImport.tools.size > 0 || typesToImport.core.size > 0) {
+  if (typesToImport.tools.size > 0 || typesToImport.core.size > 0 || typesToImport.v2Projection.size > 0) {
     const importStatements = [
       typesToImport.tools.size > 0
         ? `import type { ${[...typesToImport.tools].join(', ')} } from './tools.generated';`
         : undefined,
       typesToImport.core.size > 0
         ? `import type { ${[...typesToImport.core].join(', ')} } from './core.generated';`
+        : undefined,
+      typesToImport.v2Projection.size > 0
+        ? `import type { ${[...typesToImport.v2Projection].join(', ')} } from '../v2/projection/creative-delivery';`
         : undefined,
     ]
       .filter(Boolean)

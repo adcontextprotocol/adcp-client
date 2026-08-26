@@ -600,7 +600,7 @@
     "secure-json-parse": "^4.1.0",
     "semver": "^7.8.5",
     "structured-headers": "2.0.3",
-    "tldts": "^7.4.11",
+    "tldts": "^7.0.0",
     "undici": "^6.28.0",
     "ws": "^8.21.3",
     "yaml": "^2.9.0"
