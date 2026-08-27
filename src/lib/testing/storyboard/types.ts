@@ -534,10 +534,11 @@ export interface StoryboardPhase {
    */
   depends_on?: string[];
   /**
-   * Skip expression evaluated against the runtime context. Current grammar:
-   *   - `"!test_kit.auth.api_key"` — true when field is missing/falsy
-   *   - `"test_kit.auth.api_key"`  — true when field is present/truthy
-   * Other expressions are rejected (unknown → fail closed: phase runs).
+   * Skip expression evaluated at the phase boundary against accumulated
+   * `context.*` values and runner `test_kit.*` values. The closed grammar
+   * supports truthiness/`!`, `==`/`!=`, boolean or quoted string literals,
+   * and `||`. Malformed or unsupported expressions are rejected before the
+   * storyboard dispatches any agent calls.
    */
   skip_if?: string;
   /**

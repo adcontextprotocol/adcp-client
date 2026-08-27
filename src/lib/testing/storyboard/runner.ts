@@ -85,6 +85,7 @@ import { readBrandJsonUrl } from '../../signing/agent-resolver/capabilities-type
 import { selectAgentByUrl } from '../../signing/agent-resolver/select-agent';
 import { resolveDeclaredTestKit, selectProbeTask, validateTestKit } from './test-kit';
 import { validateStoryboardShape } from './loader';
+import { evaluatePhaseCondition, phaseConditionUsesContext } from './phase-condition';
 import { trustedStoryboardComplianceRoot } from './provenance';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
 import { createWebhookReceiver, type WebhookReceiver, type WebhookWaitResult } from './webhook-receiver';
@@ -2813,9 +2814,10 @@ async function executeStoryboardPass(
     storyboard,
     phaseCapabilitySkipDetails
   );
-  const capabilitySkippedPhaseIds = new Set([
+  const preflightExcludedPhaseIds = new Set([
     ...phaseCapabilitySkipDetails.keys(),
-    ...storyboard.phases.filter(phase => shouldSkipPhase(phase, options)).map(phase => phase.id),
+    ...storyboard.phases.filter(phase => shouldSkipPhaseBeforeRun(phase, options)).map(phase => phase.id),
+    ...storyboard.phases.filter(phase => phaseUsesRuntimeContext(phase)).map(phase => phase.id),
   ]);
   let creativeAssetFixtureGap = preflightRemainingCreativeAssetDirectives(
     allSteps,
@@ -2839,7 +2841,7 @@ async function executeStoryboardPass(
       storyboardRequiresPublisherAuthRunner:
         storyboard.requires?.includes('trusted_match_publisher_auth_runner') === true,
     },
-    capabilitySkippedPhaseIds
+    preflightExcludedPhaseIds
   );
   let creativeAssetFixtureGapRecorded = false;
   if (!hasExecutableSteps) {
@@ -3023,7 +3025,7 @@ async function executeStoryboardPass(
       context,
       options,
       buildExecutionState(),
-      capabilitySkippedPhaseIds
+      preflightExcludedPhaseIds
     );
   }
 
@@ -3178,7 +3180,7 @@ async function executeStoryboardPass(
     let phaseAbsent = false;
     let presenceDetected = false;
 
-    if (shouldSkipPhase(phase, options)) {
+    if (shouldSkipPhase(phase, options, context)) {
       phaseResults.push({
         phase_id: phase.id,
         phase_title: phase.title,
@@ -3187,6 +3189,47 @@ async function executeStoryboardPass(
         duration_ms: 0,
       });
       continue;
+    }
+
+    // A context-gated phase cannot be preflighted until the context it reads
+    // is complete. Once its guard resolves to "run", make the phase eligible
+    // and inspect all of its creative directives before dispatching its first
+    // step. This preserves the no-partial-side-effects preflight contract
+    // without treating an unavailable future context key as a reason to skip.
+    if (phaseUsesRuntimeContext(phase)) {
+      preflightExcludedPhaseIds.delete(phase.id);
+      const firstPhaseStepIndex = allSteps.find(target => target.phaseId === phase.id)?.globalIndex ?? 0;
+      creativeAssetFixtureGap = preflightRemainingCreativeAssetDirectives(
+        allSteps,
+        firstPhaseStepIndex - 1,
+        context,
+        options,
+        buildExecutionState(),
+        preflightExcludedPhaseIds
+      );
+      if (creativeAssetFixtureGap?.target.phaseId === phase.id) {
+        const gapStep = buildCreativeAssetFixtureUnavailableStep(
+          creativeAssetFixtureGap.target.step,
+          phase.id,
+          context,
+          allSteps,
+          buildExecutionState(),
+          creativeAssetFixtureGap.failure
+        );
+        gapStep.storyboard_id = storyboard.id;
+        priorStepResults.set(gapStep.step_id, gapStep);
+        skippedCount++;
+        creativeAssetFixtureGapRecorded = true;
+        phaseResults.push({
+          phase_id: phase.id,
+          phase_title: phase.title,
+          passed: true,
+          steps: [gapStep],
+          duration_ms: Date.now() - phaseStart,
+        });
+        priorPhaseIds.push(phase.id);
+        continue;
+      }
     }
 
     // Pre-empt OAuth-metadata probes when the agent's capabilities never
@@ -3684,7 +3727,7 @@ async function executeStoryboardPass(
             context,
             options,
             stepExecutionState,
-            capabilitySkippedPhaseIds
+            preflightExcludedPhaseIds
           );
         }
         if (creativeAssetFixtureGap) {
@@ -4058,7 +4101,8 @@ async function runMultiPass(
   );
   const preSeedExcludedPhaseIds = new Set([
     ...phaseCapabilitySkipDetails.keys(),
-    ...storyboard.phases.filter(phase => shouldSkipPhase(phase, options)).map(phase => phase.id),
+    ...storyboard.phases.filter(phase => shouldSkipPhaseBeforeRun(phase, options)).map(phase => phase.id),
+    ...storyboard.phases.filter(phase => phaseUsesRuntimeContext(phase)).map(phase => phase.id),
   ]);
   const preSeedFixtureGap = preflightRemainingCreativeAssetDirectives(
     flattenSteps(storyboard),
@@ -7362,28 +7406,26 @@ function agentAdvertisesOauth(profile: AgentProfile | undefined): boolean {
   return typeof endpoint === 'string' && endpoint.length > 0;
 }
 
-/**
- * Evaluate a phase's `skip_if` expression against the runtime options. Only
- * a tiny grammar is supported today; unknown expressions fail closed (phase runs).
- */
-function shouldSkipPhase(phase: StoryboardPhase, options: StoryboardRunOptions): boolean {
+/** Evaluate a phase guard against the context available at its boundary. */
+function shouldSkipPhase(phase: StoryboardPhase, options: StoryboardRunOptions, context: StoryboardContext): boolean {
   const expr = phase.skip_if?.trim();
   if (!expr) return false;
-  const match = /^(!?)test_kit\.([a-zA-Z0-9_.]+)$/.exec(expr);
-  if (!match) return false; // unknown grammar → run the phase
-  const negated = match[1] === '!';
-  const path = match[2]!.split('.');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic test-kit shape
-  let value: any = (options as { test_kit?: unknown }).test_kit;
-  for (const segment of path) {
-    if (value == null || typeof value !== 'object') {
-      value = undefined;
-      break;
-    }
-    value = (value as Record<string, unknown>)[segment];
-  }
-  const truthy = Boolean(value);
-  return negated ? !truthy : truthy;
+  return evaluatePhaseCondition(expr, { context, test_kit: options.test_kit });
+}
+
+/**
+ * Preflight only guards whose inputs cannot change during the run. Runtime
+ * context guards are deliberately deferred to their phase boundary.
+ */
+function shouldSkipPhaseBeforeRun(phase: StoryboardPhase, options: StoryboardRunOptions): boolean {
+  const expr = phase.skip_if?.trim();
+  if (!expr || phaseConditionUsesContext(expr)) return false;
+  return evaluatePhaseCondition(expr, { test_kit: options.test_kit });
+}
+
+function phaseUsesRuntimeContext(phase: StoryboardPhase): boolean {
+  const expr = phase.skip_if?.trim();
+  return expr ? phaseConditionUsesContext(expr) : false;
 }
 
 /**

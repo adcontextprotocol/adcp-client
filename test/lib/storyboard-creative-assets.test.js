@@ -1083,6 +1083,118 @@ describe('$build_assets_from_format', () => {
     );
   });
 
+  test('defers creative preflight for a runtime-context guarded phase', async () => {
+    const calls = [];
+    const storyboard = {
+      id: 'creative_asset_runtime_guard_preflight',
+      version: '1.0.0',
+      title: 'Creative asset runtime guard preflight',
+      category: 'compliance',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      context: { skip_creative: true },
+      phases: [
+        {
+          id: 'context_skipped',
+          title: 'Context skipped',
+          skip_if: 'context.skip_creative',
+          steps: [
+            {
+              id: 'skipped_sync',
+              title: 'Skipped sync',
+              task: 'sync_creatives',
+              sample_request: {
+                creatives: [
+                  {
+                    creative_id: 'creative-1',
+                    assets: {
+                      [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+                        slots: [{ asset_group_id: 'video_main', asset_type: 'video', required: true }],
+                      },
+                    },
+                  },
+                ],
+              },
+              validations: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = await runStoryboard('https://seller.example/mcp', storyboard, runnerOptions(calls));
+
+    assert.deepStrictEqual(calls, []);
+    assert.deepStrictEqual(result.phases[0].steps, []);
+    assert.strictEqual(
+      result.phases.flatMap(phase => phase.steps).some(step => step.skip_reason === 'fixture_unavailable'),
+      false
+    );
+  });
+
+  test('preflights a runnable runtime-context phase before its first dispatch', async () => {
+    const calls = [];
+    const storyboard = {
+      id: 'creative_asset_runtime_guard_runnable',
+      version: '1.0.0',
+      title: 'Creative asset runnable runtime guard',
+      category: 'compliance',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      context: { skip_creative: false },
+      phases: [
+        {
+          id: 'context_runnable',
+          title: 'Context runnable',
+          skip_if: 'context.skip_creative',
+          steps: [
+            {
+              id: 'would_dispatch_first',
+              title: 'Would dispatch first',
+              task: 'list_creatives',
+              sample_request: {},
+              validations: [],
+            },
+            {
+              id: 'unavailable_sync',
+              title: 'Unavailable sync',
+              task: 'sync_creatives',
+              sample_request: {
+                creatives: [
+                  {
+                    creative_id: 'creative-1',
+                    assets: {
+                      [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: {
+                        slots: [{ asset_group_id: 'video_main', asset_type: 'video', required: true }],
+                      },
+                    },
+                  },
+                ],
+              },
+              validations: [],
+            },
+          ],
+        },
+      ],
+    };
+    const options = runnerOptions(calls);
+    options.agentTools = ['list_creatives', 'sync_creatives'];
+    options._profile.tools = options.agentTools;
+
+    const result = await runStoryboard('https://seller.example/mcp', storyboard, options);
+
+    assert.deepStrictEqual(calls, []);
+    assert.deepStrictEqual(
+      result.phases[0].steps.map(step => step.step_id),
+      ['unavailable_sync']
+    );
+    assert.strictEqual(result.phases[0].steps[0].skip_reason, 'fixture_unavailable');
+  });
+
   test('does not let a missing requires_contract probe become fixture_unavailable', async () => {
     const calls = [];
     const storyboard = {

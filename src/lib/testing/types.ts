@@ -267,6 +267,8 @@ export interface TestOptions {
   /**
    * Fictional-entity test-kit data loaded from `test-kits/<name>.yaml`.
    * Storyboard phases may skip based on fields here (e.g. `skip_if: "!test_kit.auth.api_key"`).
+   * Guards are evaluated together with the accumulated storyboard `context.*`
+   * at each phase boundary.
    */
   test_kit?: {
     auth?: {
