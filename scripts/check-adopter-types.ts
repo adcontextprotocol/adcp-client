@@ -143,6 +143,7 @@ import type {
   ListCreativesResponse,
   Placement,
   PostalCountrySystem,
+  PublisherPropertySelector,
   ProductFormatDeclaration,
   ProtocolEnvelope,
   SelectedPlacements,
@@ -192,8 +193,36 @@ const _productOutputExtensionsSchema = z.object({
   publisher_properties: z.array(publicSchemas.PublisherPropertySelectorSchema),
 });
 const _compatibleProductSchema = publicSchemas.ProductSchema.safeExtend(_productOutputExtensionsSchema.shape);
+const _stagedCompatibleProductSchema = _compatibleProductSchema.safeExtend({
+  placements: z.array(z.object({ placement_id: z.string(), name: z.string() })).optional(),
+});
 const _consumerProductSchema = publicSchemas.ProductSchema.safeExtend({
   publisher_properties: z.array(z.object({ property_id: z.string() })).optional(),
+});
+const _stagedConsumerProductSchema = _consumerProductSchema.safeExtend({
+  placements: z.array(z.object({ placement_id: z.string(), name: z.string() })).optional(),
+});
+function _acceptZodObject<T extends z.ZodObject>(schema: T): T {
+  return schema;
+}
+_acceptZodObject(publicSchemas.ProductSchema);
+_acceptZodObject(_stagedConsumerProductSchema);
+_acceptZodObject(_stagedCompatibleProductSchema);
+declare const _stagedConsumerProduct: z.output<typeof _stagedConsumerProductSchema>;
+const _stagedPublisherProperties: Array<{ property_id: string }> | undefined =
+  _stagedConsumerProduct.publisher_properties;
+void _stagedPublisherProperties;
+publicSchemas.ProductSchema.safeExtend({
+  // @ts-expect-error Product compatibility bridges still require Zod schemas.
+  publisher_properties: 123,
+});
+publicSchemas.ProductSchema.safeExtend({
+  // @ts-expect-error Product compatibility bridges still require Zod schemas.
+  placements: 123,
+});
+publicSchemas.ProductSchema.safeExtend({
+  // @ts-expect-error Unbridged Product fields retain normal safeExtend compatibility checks.
+  name: z.number(),
 });
 const _composedProductsResponseSchema = publicSchemas.GetProductsResponseSchema.extend({
   status: z.literal('completed'),
@@ -207,22 +236,52 @@ if (_composedProductsResponse.success) {
   _composedProductsResponse.data.products?.map(product => product.product_id);
 }
 type _IsAny<T> = 0 extends 1 & T ? true : false;
+type _IsNever<T> = [T] extends [never] ? true : false;
 type _Assert<T extends true> = T;
 type _ComposedProduct = NonNullable<z.output<typeof _composedProductsResponseSchema>['products']>[number];
 type _ComposedProductIsTyped = _Assert<_IsAny<_ComposedProduct> extends false ? true : false>;
+type _ProductWithPlacementsPublisherProperties = z.output<
+  typeof _productWithPlacementsSchema
+>['publisher_properties'];
+type _ProductWithPlacementsPublisherPropertiesIsTyped = _Assert<
+  _IsAny<_ProductWithPlacementsPublisherProperties> extends false
+    ? _IsNever<_ProductWithPlacementsPublisherProperties> extends false
+      ? true
+      : false
+    : false
+>;
 const _pickedProductPublisherPropertiesSchema = publicSchemas.ProductSchema.pick({ publisher_properties: true });
 type _PickedPublisherProperties = z.output<
   typeof _pickedProductPublisherPropertiesSchema
 >['publisher_properties'];
-type _PickedPublisherPropertiesIsTyped = _Assert<_IsAny<_PickedPublisherProperties> extends false ? true : false>;
+type _PickedPublisherPropertiesIsTyped = _Assert<
+  _IsAny<_PickedPublisherProperties> extends false
+    ? _IsNever<_PickedPublisherProperties> extends false
+      ? true
+      : false
+    : false
+>;
+declare const _pickedPublisherProperties: _PickedPublisherProperties;
+const _pickedPublisherPropertiesAsPublic: PublisherPropertySelector[] = _pickedPublisherProperties;
 void (null as unknown as _ComposedProductIsTyped);
+void (null as unknown as _ProductWithPlacementsPublisherPropertiesIsTyped);
 void (null as unknown as _PickedPublisherPropertiesIsTyped);
+void _pickedPublisherPropertiesAsPublic;
 declare const _consumerProduct: z.output<typeof _consumerProductSchema>;
 const _consumerProductId: string = _consumerProduct.product_id;
 void _consumerProductId;
 const _productChannelsSchema = publicSchemas.ProductSchema.pick({ channels: true });
 const _productChannelsInput: z.input<typeof _productChannelsSchema> = {};
 void _productChannelsInput;
+const _productWithPlacementsSchema = publicSchemas.ProductSchema.safeExtend({
+  placements: z.array(z.object({
+    placement_id: z.string(),
+    name: z.string(),
+  })).optional(),
+});
+declare const _productWithPlacements: z.output<typeof _productWithPlacementsSchema>;
+const _productPublisherProperties: PublisherPropertySelector[] = _productWithPlacements.publisher_properties;
+void _productPublisherProperties;
 type _InferredPackage = z.infer<typeof publicSchemas.PackageSchema>;
 declare const _inferredPackage: _InferredPackage;
 const _inferredPackageAsPublic: Package = _inferredPackage;
