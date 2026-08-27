@@ -19438,6 +19438,8 @@ export type Transformer = (CanonicalTransformerOutputs | NamedFormatTransformerO
 /**
  * Descriptor for one configuration knob a transformer exposes. Returned inside transformer.json `params[]` from list_transformers. The descriptor declares the knob's shape; the buyer supplies its value in build_creative `config` keyed by `field`. For `value_source: enumerable` params (e.g. account-specific voices), the legal `options[]` are account-scoped and dynamic — they are returned only when the param's `field` is named in the list_transformers `expand_params` request, and may be paginated via `options_cursor`.
  */
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
 export type TransformerParam = {
 } & {
   /**
@@ -19477,8 +19479,7 @@ export type TransformerParam = {
     /**
      * The value the buyer passes in `config` for this field.
      */
-    value: {
-    };
+    value: JsonValue;
     /**
      * Human-readable label for this option.
      */
@@ -19496,8 +19497,7 @@ export type TransformerParam = {
   /**
    * The value applied when the buyer omits this field from `config`. Type matches `type`.
    */
-  default?: {
-  };
+  default?: JsonValue;
   /**
    * Whether the buyer MUST supply this field in `config`. When false and no `default` is declared, the agent chooses.
    */

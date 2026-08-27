@@ -972,6 +972,7 @@ export type {
   BuildCreativeResponse as LegacyBuildCreativeResponse,
   BuildCreativeSuccess as LegacyBuildCreativeSuccess,
   BuildCreativeMultiSuccess as LegacyBuildCreativeMultiSuccess,
+  BuildCreativeVariantSuccess as LegacyBuildCreativeVariantSuccess,
   BuildCreativeError as LegacyBuildCreativeError,
   PreviewCreativeRequest as LegacyPreviewCreativeRequest,
   PreviewCreativeResponse as LegacyPreviewCreativeResponse,
@@ -1390,6 +1391,7 @@ export type {
   LegacyListCreativeFormatsServerPayload,
   LegacyBuildCreativePayload,
   LegacyBuildCreativeMultiPayload,
+  LegacyBuildCreativeVariantPayload,
   LegacyPreviewCreativePayload,
   SyncCreativesPayload,
   SyncCreativesSuccessPayload,
@@ -1833,17 +1835,19 @@ export type {
 } from './utils/signal-discovery-helpers';
 
 // ====== BUILD CREATIVE RETURN BUILDERS ======
-// Typed factories for the four return shapes accepted by the framework
+// Typed factories for the five return shapes accepted by the framework
 // from `build_creative` handlers. `.single` / `.multi` emit bare manifests
 // the framework auto-wraps; `.singleEnveloped` / `.multiEnveloped` emit
 // the shaped envelope when the handler needs to attach `sandbox` /
-// `expires_at` / `preview`. SHAPE-GOTCHAS §5.
+// `expires_at` / `preview`; `.variantEnveloped` preserves multiplicity.
+// SHAPE-GOTCHAS §5.
 export {
   buildCreativeReturn,
   singleBuildCreativeReturn,
   multiBuildCreativeReturn,
   singleEnvelopedBuildCreativeReturn,
   multiEnvelopedBuildCreativeReturn,
+  variantEnvelopedBuildCreativeReturn,
 } from './utils/build-creative-return-builders';
 
 // ====== PREVIEW CREATIVE BUILDERS ======

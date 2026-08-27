@@ -2124,15 +2124,26 @@ describe('createAdcpServer', () => {
       }
     });
 
+    it('rejects unmarked legacy task registries before their shifted write signatures can run', () => {
+      assert.throws(
+        () => createAdcpServer({ name: 'Test', version: '1.0.0', taskRegistry: {} }),
+        /taskRegistry\.scopeVersion must be 1/
+      );
+    });
+
     it('does not require custom AdCP task registries to implement list', async () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
         taskRegistry: {
+          scopeVersion: 1,
           async create() {
             return { taskId: 'task_1' };
           },
           async getTask() {
+            return null;
+          },
+          async _getTaskUnsafe() {
             return null;
           },
           async complete() {},
@@ -2140,6 +2151,7 @@ describe('createAdcpServer', () => {
           async updateProgress() {},
           _registerBackground() {},
           async awaitTask() {},
+          async _awaitTaskUnsafe() {},
         },
       });
 
@@ -2230,7 +2242,13 @@ describe('createAdcpServer', () => {
         accountId: 'acct_1',
         ownerScope: 'account:acct_1',
       });
-      await taskRegistry.complete(owned.taskId, { creatives: [{ creative_id: 'cr_1' }] });
+      await taskRegistry.complete(
+        owned.taskId,
+        { accountId: 'acct_1', ownerScope: 'account:acct_1' },
+        {
+          creatives: [{ creative_id: 'cr_1' }],
+        }
+      );
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
@@ -2261,7 +2279,13 @@ describe('createAdcpServer', () => {
         accountId: 'acct_1',
         ownerScope: 'account:acct_1',
       });
-      await taskRegistry.complete(owned.taskId, { creatives: [{ creative_id: 'cr_1' }] });
+      await taskRegistry.complete(
+        owned.taskId,
+        { accountId: 'acct_1', ownerScope: 'account:acct_1' },
+        {
+          creatives: [{ creative_id: 'cr_1' }],
+        }
+      );
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
@@ -2302,10 +2326,14 @@ describe('createAdcpServer', () => {
         version: '1.0.0',
         validation: { responses: 'strict' },
         taskRegistry: {
+          scopeVersion: 1,
           async create() {
             return { taskId: invalidTask.taskId };
           },
           async getTask(taskId) {
+            return taskId === invalidTask.taskId ? invalidTask : null;
+          },
+          async _getTaskUnsafe(taskId) {
             return taskId === invalidTask.taskId ? invalidTask : null;
           },
           async list() {
@@ -2316,6 +2344,7 @@ describe('createAdcpServer', () => {
           async updateProgress() {},
           _registerBackground() {},
           async awaitTask() {},
+          async _awaitTaskUnsafe() {},
         },
         resolveAccountFromAuth: async () => ({ id: 'acct_1' }),
       });
@@ -2338,7 +2367,13 @@ describe('createAdcpServer', () => {
         ownerScope: 'api_key:buyer-1',
         hasWebhook: true,
       });
-      await taskRegistry.complete(owned.taskId, { creatives: [{ creative_id: 'cr_1' }] });
+      await taskRegistry.complete(
+        owned.taskId,
+        { accountId: 'acct_1', ownerScope: 'api_key:buyer-1' },
+        {
+          creatives: [{ creative_id: 'cr_1' }],
+        }
+      );
       const other = await taskRegistry.create({
         tool: 'activate_signal',
         accountId: 'acct_2',
@@ -2382,7 +2417,12 @@ describe('createAdcpServer', () => {
       });
       const failure = { code: 'SERVICE_UNAVAILABLE', message: 'seller unavailable', recovery: 'transient' };
       const failureArtifact = { errors: [failure] };
-      await taskRegistry.fail(failed.taskId, failure, failureArtifact);
+      await taskRegistry.fail(
+        failed.taskId,
+        { accountId: 'acct_1', ownerScope: 'api_key:buyer-1' },
+        failure,
+        failureArtifact
+      );
       const failedWithoutResult = await callTool(server, 'get_task_status', { task_id: failed.taskId }, buyerOne);
       assert.strictEqual(failedWithoutResult.status, 'failed');
       assert.strictEqual(failedWithoutResult.result, undefined);
@@ -2439,7 +2479,13 @@ describe('createAdcpServer', () => {
         ownerScope: 'api_key:buyer-1',
         overrideTaskId: opaqueTaskId,
       });
-      await taskRegistry.complete(opaque.taskId, { creatives: [{ creative_id: 'cr_opaque' }] });
+      await taskRegistry.complete(
+        opaque.taskId,
+        { accountId: 'acct_1', ownerScope: 'api_key:buyer-1' },
+        {
+          creatives: [{ creative_id: 'cr_opaque' }],
+        }
+      );
       const opaqueStatus = await callTool(server, 'get_task_status', { task_id: opaqueTaskId }, buyerOne);
       assert.strictEqual(opaqueStatus.task_id, opaqueTaskId);
 
@@ -2466,6 +2512,7 @@ describe('createAdcpServer', () => {
         updatedAt: now,
       };
       const taskRegistry = {
+        scopeVersion: 1,
         create: async () => ({ taskId: record.taskId }),
         getTask: async taskId => (taskId === record.taskId ? record : null),
         complete: async () => {},
@@ -2512,7 +2559,13 @@ describe('createAdcpServer', () => {
           accountId: 'acct_1',
           ownerScope: 'api_key:buyer-1',
         });
-        await taskRegistry.complete(task.taskId, { outcome: 'completed' });
+        await taskRegistry.complete(
+          task.taskId,
+          { accountId: 'acct_1', ownerScope: 'api_key:buyer-1' },
+          {
+            outcome: 'completed',
+          }
+        );
         tasks.push(task);
       }
       const server = createAdcpServer({
@@ -2544,7 +2597,13 @@ describe('createAdcpServer', () => {
         accountId: 'acct_1',
         ownerScope: 'api_key:buyer-1',
       });
-      await taskRegistry.complete(owned.taskId, { event_sources: [{ event_source_id: 'evt_1' }] });
+      await taskRegistry.complete(
+        owned.taskId,
+        { accountId: 'acct_1', ownerScope: 'api_key:buyer-1' },
+        {
+          event_sources: [{ event_source_id: 'evt_1' }],
+        }
+      );
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
@@ -2571,7 +2630,13 @@ describe('createAdcpServer', () => {
         accountId: 'acct_shared',
         ownerScope: 'api_key:buyer-1',
       });
-      await taskRegistry.complete(owned.taskId, { creatives: [{ creative_id: 'cr_1' }] });
+      await taskRegistry.complete(
+        owned.taskId,
+        { accountId: 'acct_shared', ownerScope: 'api_key:buyer-1' },
+        {
+          creatives: [{ creative_id: 'cr_1' }],
+        }
+      );
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
@@ -2595,13 +2660,25 @@ describe('createAdcpServer', () => {
         accountId: 'acct_shared',
         ownerScope: 'session:channel-a',
       });
-      await taskRegistry.complete(channelA.taskId, { creatives: [{ creative_id: 'cr_a' }] });
+      await taskRegistry.complete(
+        channelA.taskId,
+        { accountId: 'acct_shared', ownerScope: 'session:channel-a' },
+        {
+          creatives: [{ creative_id: 'cr_a' }],
+        }
+      );
       const channelB = await taskRegistry.create({
         tool: 'sync_creatives',
         accountId: 'acct_shared',
         ownerScope: 'session:channel-b',
       });
-      await taskRegistry.complete(channelB.taskId, { creatives: [{ creative_id: 'cr_b' }] });
+      await taskRegistry.complete(
+        channelB.taskId,
+        { accountId: 'acct_shared', ownerScope: 'session:channel-b' },
+        {
+          creatives: [{ creative_id: 'cr_b' }],
+        }
+      );
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
@@ -2670,10 +2747,14 @@ describe('createAdcpServer', () => {
         name: 'Test',
         version: '1.0.0',
         taskRegistry: {
+          scopeVersion: 1,
           async create() {
             return { taskId: 'unused' };
           },
           async getTask(taskId) {
+            return tasks.find(task => task.taskId === taskId) ?? null;
+          },
+          async _getTaskUnsafe(taskId) {
             return tasks.find(task => task.taskId === taskId) ?? null;
           },
           async list() {
@@ -2684,6 +2765,7 @@ describe('createAdcpServer', () => {
           async updateProgress() {},
           _registerBackground() {},
           async awaitTask() {},
+          async _awaitTaskUnsafe() {},
         },
         resolveAccountFromAuth: async () => ({ id: 'acct_1' }),
       });
@@ -2716,10 +2798,14 @@ describe('createAdcpServer', () => {
         name: 'Test',
         version: '1.0.0',
         taskRegistry: {
+          scopeVersion: 1,
           async create() {
             return { taskId: task.taskId };
           },
           async getTask(taskId) {
+            return taskId === task.taskId ? task : null;
+          },
+          async _getTaskUnsafe(taskId) {
             return taskId === task.taskId ? task : null;
           },
           async list() {
@@ -2730,6 +2816,7 @@ describe('createAdcpServer', () => {
           async updateProgress() {},
           _registerBackground() {},
           async awaitTask() {},
+          async _awaitTaskUnsafe() {},
         },
         resolveAccountFromAuth: async () => ({ id: 'acct_shared' }),
       });
@@ -2746,7 +2833,13 @@ describe('createAdcpServer', () => {
         accountId: 'acct_auth',
         ownerScope: 'api_key:buyer-1',
       });
-      await taskRegistry.complete(owned.taskId, { creatives: [{ creative_id: 'cr_1' }] });
+      await taskRegistry.complete(
+        owned.taskId,
+        { accountId: 'acct_auth', ownerScope: 'api_key:buyer-1' },
+        {
+          creatives: [{ creative_id: 'cr_1' }],
+        }
+      );
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
@@ -2788,10 +2881,14 @@ describe('createAdcpServer', () => {
         name: 'Test',
         version: '1.0.0',
         taskRegistry: {
+          scopeVersion: 1,
           async create() {
             return { taskId: task.taskId };
           },
           async getTask(taskId) {
+            return taskId === task.taskId ? task : null;
+          },
+          async _getTaskUnsafe(taskId) {
             return taskId === task.taskId ? task : null;
           },
           async list() {
@@ -2802,6 +2899,7 @@ describe('createAdcpServer', () => {
           async updateProgress() {},
           _registerBackground() {},
           async awaitTask() {},
+          async _awaitTaskUnsafe() {},
         },
         resolveAccount: async ref => ({ id: ref.account_id }),
       });
@@ -2840,7 +2938,13 @@ describe('createAdcpServer', () => {
         accountId: 'acct_1',
         ownerScope: 'api_key:buyer-1',
       });
-      await taskRegistry.complete(owned.taskId, { creatives: [{ creative_id: 'cr_1' }] });
+      await taskRegistry.complete(
+        owned.taskId,
+        { accountId: 'acct_1', ownerScope: 'api_key:buyer-1' },
+        {
+          creatives: [{ creative_id: 'cr_1' }],
+        }
+      );
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
@@ -2880,7 +2984,13 @@ describe('createAdcpServer', () => {
     it('fails closed when task polling has no account scope', async () => {
       const taskRegistry = createInMemoryTaskRegistry();
       const owned = await taskRegistry.create({ tool: 'sync_creatives', accountId: 'acct_1' });
-      await taskRegistry.complete(owned.taskId, { creatives: [{ creative_id: 'cr_1' }] });
+      await taskRegistry.complete(
+        owned.taskId,
+        { accountId: 'acct_1', ownerScope: 'account:acct_1' },
+        {
+          creatives: [{ creative_id: 'cr_1' }],
+        }
+      );
       const other = await taskRegistry.create({ tool: 'activate_signal', accountId: 'acct_2' });
       const server = createAdcpServer({ name: 'Test', version: '1.0.0', taskRegistry });
 

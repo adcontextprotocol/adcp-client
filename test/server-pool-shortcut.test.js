@@ -7,7 +7,7 @@ const { createAdcpServerFromPlatform, getAllAdcpMigrations } = require('../dist/
 
 describe('createAdcpServerFromPlatform — pool shortcut', () => {
   it('getAllAdcpMigrations returns concatenated DDL for all three tables', () => {
-    const ddl = getAllAdcpMigrations();
+    const ddl = getAllAdcpMigrations({ taskRegistryNamespace: 'tenant:pool-shortcut-test' });
     assert.match(ddl, /adcp_idempotency/);
     assert.match(ddl, /adcp_ctx_metadata/);
     assert.match(ddl, /CREATE TABLE/);
@@ -17,6 +17,10 @@ describe('createAdcpServerFromPlatform — pool shortcut', () => {
       tableMatches && tableMatches.length >= 3,
       `expected ≥3 CREATE TABLE statements, got ${tableMatches?.length}`
     );
+  });
+
+  it('getAllAdcpMigrations gives JavaScript callers an actionable missing-namespace error', () => {
+    assert.throws(() => getAllAdcpMigrations(), /requires \{ taskRegistryNamespace \}/);
   });
 
   it('opts.pool wires idempotency + ctxMetadata + taskRegistry without explicit per-store opts', () => {
@@ -60,6 +64,7 @@ describe('createAdcpServerFromPlatform — pool shortcut', () => {
       name: 'pool-shortcut-test',
       version: '1.0.0',
       pool: mockPool,
+      taskRegistryNamespace: 'tenant:pool-shortcut-test',
       validation: { requests: 'off', responses: 'off' },
     });
     assert.ok(server);
@@ -130,6 +135,7 @@ describe('createAdcpServerFromPlatform — pool shortcut', () => {
       name: 'override-test',
       version: '1.0.0',
       pool: mockPool,
+      taskRegistryNamespace: 'tenant:override-test',
       ctxMetadata: explicitCtxMetadata, // explicit wins
       validation: { requests: 'off', responses: 'off' },
     });
@@ -140,5 +146,44 @@ describe('createAdcpServerFromPlatform — pool shortcut', () => {
     });
 
     assert.equal(explicitCtxMetadataAccessed, true, 'explicit ctxMetadata should be used, not pool-derived default');
+  });
+
+  it('requires a trusted task registry namespace for the pool shortcut', () => {
+    const mockPool = {
+      async query() {
+        return { rows: [], rowCount: 0 };
+      },
+    };
+    const platform = {
+      capabilities: {
+        adcp_version: '3.0.0',
+        specialisms: ['sales-non-guaranteed'],
+        pricingModels: ['cpm'],
+        channels: ['display'],
+        formats: [],
+      },
+      accounts: {
+        resolution: 'derived',
+        resolve: async () => ({ id: 'pub_main', operator: 'mypub', ctx_metadata: {} }),
+      },
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1', status: 'active', packages: [] }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1', status: 'active', packages: [] }),
+        getMediaBuyDelivery: async () => ({ deliveries: [] }),
+        getMediaBuys: async () => ({ media_buys: [] }),
+      },
+    };
+
+    assert.throws(
+      () =>
+        createAdcpServerFromPlatform(platform, {
+          name: 'missing-namespace',
+          version: '1.0.0',
+          pool: mockPool,
+          validation: { requests: 'off', responses: 'off' },
+        }),
+      /taskRegistryNamespace is required/
+    );
   });
 });

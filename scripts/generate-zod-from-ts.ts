@@ -361,6 +361,27 @@ function postProcessTuplesToArrays(content: string): string {
 }
 
 /**
+ * ts-to-zod narrows `unknown` properties nested in an open object to another
+ * open object. Transformer parameter defaults and enumerable option values
+ * are explicitly arbitrary JSON, including scalars and null, so restore the
+ * TypeScript contract on this one schema.
+ */
+export function postProcessTransformerParamJsonValues(content: string): string {
+  const start = content.indexOf('export const TransformerParamSchema =');
+  if (start < 0) return content;
+  const end = content.indexOf('\nexport const ', start + 1);
+  const blockEnd = end < 0 ? content.length : end;
+  const block = content
+    .slice(start, blockEnd)
+    .replace(/value:\s*(?:z\.object\(\{\}\)\.passthrough\(\)|JsonValueSchema)/, 'value: z.json()')
+    .replace(
+      /default:\s*(?:z\.object\(\{\}\)\.passthrough\(\)|JsonValueSchema)\.optional\(\),/,
+      'default: z.json().optional(),'
+    );
+  return content.slice(0, start) + block + content.slice(blockEnd);
+}
+
+/**
  * Post-process generated Zod schemas to remove z.undefined() from unions.
  *
  * ts-to-zod generates z.undefined() in unions for TypeScript types like
@@ -3157,6 +3178,10 @@ async function generateZodSchemas() {
     // Agents may return extra/platform-specific fields not in the schema. Without passthrough,
     // Zod strips those fields, causing data loss for consumers who need them.
     zodSchemas = postProcessForPassthrough(zodSchemas);
+
+    // Preserve arbitrary JSON transformer values after ts-to-zod narrows
+    // nested `unknown` properties to open objects.
+    zodSchemas = postProcessTransformerParamJsonValues(zodSchemas);
 
     // String-only JSON Schema constraints on object|string unions must stay
     // attached to the string arm; applying them to z.union() crashes Zod.

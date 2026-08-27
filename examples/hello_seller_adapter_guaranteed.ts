@@ -1355,7 +1355,7 @@ const mediaBuyStore = createMediaBuyStore({ store: stateStore });
 // instance persists across requests — a fresh registry per request would
 // lose every submitted task between create_media_buy and the buyer's
 // first tasks_get poll. SWAP `createInMemoryTaskRegistry()` for
-// `createPostgresTaskRegistry({ pool })` in production; in-memory
+// `createPostgresTaskRegistry({ pool, namespace: tenantId })` in production; in-memory
 // in-flight tasks are lost on process restart.
 const taskRegistry = createInMemoryTaskRegistry();
 

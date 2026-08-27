@@ -117,7 +117,7 @@ const SUCCESS_PAYLOAD_FIELD_GROUPS_BY_TOOL: Readonly<Record<string, readonly (re
   sync_catalogs: [['catalogs']],
   sync_creatives: [['creatives']],
   list_creatives: [['query_summary', 'pagination', 'creatives']],
-  build_creative: [['creative_manifest'], ['creative_manifests']],
+  build_creative: [['creative_manifest'], ['creative_manifests'], ['creatives']],
   preview_creative: [['response_type', 'previews']],
   get_creative_delivery: [['currency', 'reporting_period', 'creatives']],
   validate_input: [['results']],

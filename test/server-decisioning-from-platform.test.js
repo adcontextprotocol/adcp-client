@@ -20,6 +20,7 @@ const { StaticJwksResolver, InMemoryReplayStore, InMemoryRevocationStore } = req
 const { getSchemaValidatorByRef } = require('../dist/lib/validation/schema-loader');
 const { toCanonicalOnlyResponse } = require('../dist/lib/v2/projection');
 const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/idempotency');
+const { createInMemoryTaskRegistry } = require('../dist/lib/server/decisioning/runtime/task-registry');
 
 const PRODUCTS_ONLY_BRIEF_VECTORS = JSON.parse(
   readFileSync(
@@ -3301,6 +3302,73 @@ describe('CreativeBuilderPlatform + AudiencePlatform wiring', () => {
     assert.ok(sawReq, 'creative.buildCreative should be invoked');
   });
 
+  it('passes the BuildCreativeVariantSuccess arm through without manifest wrapping (#2706)', async () => {
+    const variantResponse = {
+      creatives: [
+        {
+          build_creative_id: 'build-1',
+          variants: [
+            {
+              build_variant_id: 'variant-1',
+              creative_manifest: {
+                format_id: { id: 'standard', agent_url: 'https://creative.example/' },
+                assets: {},
+              },
+              variant_axis_value: 'voice-1',
+              recommended: true,
+              rank: 1,
+            },
+          ],
+        },
+      ],
+      items_total: 1,
+      items_returned: 1,
+      leaves_total: 2,
+      leaves_returned: 1,
+      budget_status: 'capped',
+      errors: [{ code: 'BUDGET_CAP_REACHED', message: 'Spend cap reached', recovery: 'correctable' }],
+    };
+    const platform = {
+      ...buildCreativeOnlyPlatform({ specialisms: ['creative-generative'] }),
+      creative: { buildCreativeLegacy: async () => variantResponse },
+    };
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'variant-builder',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'strict' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'build_creative', arguments: {} },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.deepStrictEqual(result.structuredContent.creatives, variantResponse.creatives);
+    assert.strictEqual(result.structuredContent.status, 'completed');
+    assert.strictEqual(result.structuredContent.budget_status, 'capped');
+    assert.strictEqual(result.structuredContent.errors[0].code, 'BUDGET_CAP_REACHED');
+    assert.strictEqual(result.structuredContent.creative_manifest, undefined);
+  });
+
+  it('keeps malformed creative variant groups rejected by strict response validation (#2706)', async () => {
+    const platform = {
+      ...buildCreativeOnlyPlatform({ specialisms: ['creative-generative'] }),
+      creative: { buildCreativeLegacy: async () => ({ creatives: [{}] }) },
+    };
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'invalid-variant-builder',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'strict' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'build_creative', arguments: {} },
+    });
+
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+  });
+
   it('preview_creative dispatches canonical capability and creative-library routes through previewCreative', async () => {
     const seen = [];
     const platform = {
@@ -3800,9 +3868,9 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(result.structuredContent.proposals, undefined);
 
     const taskId = result.structuredContent.task_id;
-    await server.awaitTask(taskId);
+    await server.awaitTaskUnsafe(taskId);
 
-    const finalRecord = await server.getTaskState(taskId);
+    const finalRecord = await server.getTaskStateUnsafe(taskId);
     assert.strictEqual(finalRecord.status, 'completed');
     assert.deepStrictEqual(finalRecord.result, {
       products: [
@@ -3850,9 +3918,9 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(result.structuredContent.signals, undefined);
 
     const taskId = result.structuredContent.task_id;
-    await server.awaitTask(taskId);
+    await server.awaitTaskUnsafe(taskId);
 
-    const finalRecord = await server.getTaskState(taskId);
+    const finalRecord = await server.getTaskStateUnsafe(taskId);
     assert.strictEqual(finalRecord.status, 'completed');
     assert.deepStrictEqual(finalRecord.result, {
       signals: [{ signal_agent_segment_id: 'sig_async', name: 'Async signal' }],
@@ -3941,7 +4009,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     );
 
     releaseTask();
-    await server.awaitTask(taskId);
+    await server.awaitTaskUnsafe(taskId);
 
     const completed = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -4064,7 +4132,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     );
 
     releaseTask();
-    await server.awaitTask(taskId);
+    await server.awaitTaskUnsafe(taskId);
 
     const completed = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -4251,9 +4319,9 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     );
 
     const taskId = result.structuredContent.task_id;
-    await server.awaitTask(taskId);
+    await server.awaitTaskUnsafe(taskId);
 
-    const finalRecord = await server.getTaskState(taskId);
+    const finalRecord = await server.getTaskStateUnsafe(taskId);
     assert.strictEqual(finalRecord.status, 'completed');
     assert.deepStrictEqual(finalRecord.result, { media_buy_id: 'mb_final', status: 'active' });
   });
@@ -4298,8 +4366,8 @@ describe('HITL dual-method dispatch — *Task variants', () => {
 
     const submitted = await dispatchCreate(server);
     assert.strictEqual(submitted.structuredContent.status, 'submitted');
-    await server.awaitTask(submitted.structuredContent.task_id);
-    const finalRecord = await server.getTaskState(submitted.structuredContent.task_id);
+    await server.awaitTaskUnsafe(submitted.structuredContent.task_id);
+    const finalRecord = await server.getTaskStateUnsafe(submitted.structuredContent.task_id);
 
     assert.strictEqual(finalRecord.status, 'completed');
     const creative = finalRecord.result.packages[0].creatives[0];
@@ -4335,7 +4403,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(submitted.structuredContent.media_buy_id, undefined);
 
     const taskId = submitted.structuredContent.task_id;
-    await server.awaitTask(taskId);
+    await server.awaitTaskUnsafe(taskId);
 
     const polled = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -4451,8 +4519,8 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     });
     assert.strictEqual(slowResult.structuredContent.status, 'submitted');
     assert.ok(slowResult.structuredContent.task_id);
-    await server.awaitTask(slowResult.structuredContent.task_id);
-    const finalSlow = await server.getTaskState(slowResult.structuredContent.task_id);
+    await server.awaitTaskUnsafe(slowResult.structuredContent.task_id);
+    const finalSlow = await server.getTaskStateUnsafe(slowResult.structuredContent.task_id);
     assert.strictEqual(finalSlow.result.media_buy_id, 'mb_hitl_slow');
   });
 
@@ -4498,9 +4566,9 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(result.structuredContent.status, 'submitted');
     const taskId = result.structuredContent.task_id;
 
-    await server.awaitTask(taskId);
+    await server.awaitTaskUnsafe(taskId);
 
-    const finalRecord = await server.getTaskState(taskId);
+    const finalRecord = await server.getTaskStateUnsafe(taskId);
     assert.strictEqual(finalRecord.status, 'failed');
     assert.strictEqual(finalRecord.error.code, 'GOVERNANCE_DENIED');
     assert.strictEqual(finalRecord.error.recovery, 'terminal');
@@ -4523,9 +4591,9 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     const result = await dispatchCreate(server);
     const taskId = result.structuredContent.task_id;
 
-    await server.awaitTask(taskId);
+    await server.awaitTaskUnsafe(taskId);
 
-    const finalRecord = await server.getTaskState(taskId);
+    const finalRecord = await server.getTaskStateUnsafe(taskId);
     assert.strictEqual(finalRecord.status, 'failed');
     assert.strictEqual(finalRecord.error.code, 'SERVICE_UNAVAILABLE');
     assert.strictEqual(finalRecord.error.recovery, 'transient');
@@ -6336,7 +6404,7 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
         },
       },
     });
-    await server.awaitTask(result.structuredContent.task_id);
+    await server.awaitTaskUnsafe(result.structuredContent.task_id);
 
     const create = events.find(e => e.kind === 'create');
     const transition = events.find(e => e.kind === 'transition');
@@ -6363,14 +6431,11 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
       const inner = require('../dist/lib/server/decisioning/runtime/task-registry').createInMemoryTaskRegistry();
       return {
         ...inner,
-        create: opts => inner.create(opts),
-        getTask: id => inner.getTask(id),
         complete: async () => {
-          throw new Error('connection refused');
+          const error = new Error('secret connection details');
+          error.name = 'secret error classification';
+          throw error;
         },
-        fail: (id, err) => inner.fail(id, err),
-        _registerBackground: (id, p) => inner._registerBackground(id, p),
-        awaitTask: id => inner.awaitTask(id),
       };
     })();
     const server = createAdcpServerFromPlatform(platform, {
@@ -6403,7 +6468,7 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
         },
       },
     });
-    await server.awaitTask(result.structuredContent.task_id);
+    await server.awaitTaskUnsafe(result.structuredContent.task_id);
     assert.strictEqual(transitions.length, 1);
     assert.strictEqual(transitions[0].status, 'failed');
     assert.strictEqual(transitions[0].errorCode, 'REGISTRY_WRITE_FAILED');
@@ -6411,6 +6476,10 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
     assert.ok(
       errors.find(e => e.includes('registry write failed')),
       'error logged'
+    );
+    assert.ok(
+      errors.every(e => !e.includes('secret')),
+      'registry error details are not logged'
     );
   });
 
@@ -6440,7 +6509,7 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
         },
       },
     });
-    await server.awaitTask(result.structuredContent.task_id);
+    await server.awaitTaskUnsafe(result.structuredContent.task_id);
     assert.strictEqual(transitions.length, 1);
     assert.strictEqual(transitions[0].status, 'failed');
     assert.strictEqual(transitions[0].errorCode, 'GOVERNANCE_DENIED');
@@ -6479,7 +6548,7 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
         },
       },
     });
-    await server.awaitTask(result.structuredContent.task_id);
+    await server.awaitTaskUnsafe(result.structuredContent.task_id);
     assert.strictEqual(emits.length, 1);
     assert.strictEqual(emits[0].url, 'https://buyer.example.com/webhook');
     assert.strictEqual(emits[0].status, 'completed');
@@ -6641,7 +6710,7 @@ describe('HITL push notification webhook on terminal state', () => {
 
     assert.strictEqual(result.structuredContent.status, 'submitted');
     const taskId = result.structuredContent.task_id;
-    await server.awaitTask(taskId);
+    await server.awaitTaskUnsafe(taskId);
 
     assert.strictEqual(emits.length, 1, 'one webhook emitted on terminal completion');
     const emit = emits[0];
@@ -6743,7 +6812,7 @@ describe('HITL push notification webhook on terminal state', () => {
         },
       },
     });
-    await server.awaitTask(result.structuredContent.task_id);
+    await server.awaitTaskUnsafe(result.structuredContent.task_id);
 
     assert.strictEqual(emits.length, 1);
     assert.strictEqual(emits[0].payload.status, 'failed');
@@ -6781,7 +6850,7 @@ describe('HITL push notification webhook on terminal state', () => {
         },
       },
     });
-    await server.awaitTask(result.structuredContent.task_id);
+    await server.awaitTaskUnsafe(result.structuredContent.task_id);
 
     assert.strictEqual(emits.length, 0, "no webhook when buyer didn't opt in");
   });
@@ -6918,7 +6987,7 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
     const emits = [];
     const server = makeServer({ emits });
     const result = await dispatchWithUrl(server, 'https://buyer.example.com/webhook');
-    await server.awaitTask(result.structuredContent.task_id);
+    await server.awaitTaskUnsafe(result.structuredContent.task_id);
     assert.strictEqual(emits.length, 1);
     assert.strictEqual(emits[0].url, 'https://buyer.example.com/webhook');
   });
@@ -6928,7 +6997,7 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
     const emits = [];
     const server = makeServer({ emits });
     const result = await dispatchWithUrl(server, 'http://buyer.example.com/webhook');
-    await server.awaitTask(result.structuredContent.task_id);
+    await server.awaitTaskUnsafe(result.structuredContent.task_id);
     assert.strictEqual(emits.length, 1);
   });
 
@@ -6993,7 +7062,7 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
     const emits = [];
     const server = makeServer({ emits });
     const result = await dispatchWithUrl(server, 'https://buyer.example.com/webhook', 'tok_abc-123:xyz.456');
-    await server.awaitTask(result.structuredContent.task_id);
+    await server.awaitTaskUnsafe(result.structuredContent.task_id);
     assert.strictEqual(emits.length, 1);
     assert.strictEqual(emits[0].payload.token, 'tok_abc-123:xyz.456');
   });
@@ -7048,7 +7117,7 @@ describe('tasks_get wire tool (B9)', () => {
         },
       },
     });
-    await server.awaitTask(result.structuredContent.task_id);
+    await server.awaitTaskUnsafe(result.structuredContent.task_id);
     return result.structuredContent.task_id;
   }
 
@@ -7174,7 +7243,7 @@ describe('tasks_get wire tool (B9)', () => {
       assert.strictEqual(crossTenant.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');
 
       releaseTask();
-      await server.awaitTask(taskId);
+      await server.awaitTaskUnsafe(taskId);
 
       const completed = await server.dispatchTestRequest({
         method: 'tools/call',
@@ -7188,7 +7257,7 @@ describe('tasks_get wire tool (B9)', () => {
       assert.deepStrictEqual(completed.structuredContent.result, { media_buy_id: 'mb_42', status: 'active' });
     } finally {
       releaseTask();
-      if (taskId) await server.awaitTask(taskId);
+      if (taskId) await server.awaitTaskUnsafe(taskId);
     }
   });
 
@@ -7235,7 +7304,7 @@ describe('tasks_get wire tool (B9)', () => {
       },
     });
     const taskId = submitted.structuredContent.task_id;
-    await server.awaitTask(taskId);
+    await server.awaitTaskUnsafe(taskId);
 
     const status = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -7434,9 +7503,46 @@ describe('tasks_get wire tool (B9)', () => {
     assert.strictEqual(result.isError, true);
     assert.strictEqual(result.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');
   });
+
+  it('fails closed when a custom registry returns a record outside the requested scope', async () => {
+    const inner = createInMemoryTaskRegistry();
+    const taskRegistry = {
+      ...inner,
+      getTask: async () => ({
+        taskId: 'task_known',
+        tool: 'create_media_buy',
+        accountId: 'acc_owner',
+        ownerScope: 'account:acc_owner',
+        status: 'completed',
+        result: { media_buy_id: 'mb_private' },
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:01:00.000Z',
+      }),
+    };
+    const server = createAdcpServerFromPlatform(
+      buildHitlPlatform(async () => ({ media_buy_id: 'unused' })),
+      {
+        name: 'p',
+        version: '0.0.1',
+        validation: { requests: 'off', responses: 'off' },
+        taskRegistry,
+      }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'tasks_get',
+        arguments: { task_id: 'task_known', account: { account_id: 'acc_attacker' } },
+      },
+    });
+
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');
+  });
 });
 
-describe('getTaskState account-scoping (B7)', () => {
+describe('getTaskState account/principal scoping (B7)', () => {
   // Cross-tenant leak protection. getTaskState must filter by account when
   // an `expectedAccountId` is supplied — adopters wrapping it as `tasks/get`
   // pass `ctx.account.id` to scope reads.
@@ -7484,7 +7590,7 @@ describe('getTaskState account-scoping (B7)', () => {
         },
       },
     });
-    await server.awaitTask(result.structuredContent.task_id);
+    await server.awaitTaskUnsafe(result.structuredContent.task_id);
     return result.structuredContent.task_id;
   }
 
@@ -7495,7 +7601,10 @@ describe('getTaskState account-scoping (B7)', () => {
       validation: { requests: 'off', responses: 'off' },
     });
     const taskId = await createTaskFor(server, 'acc_owner');
-    const record = await server.getTaskState(taskId, 'acc_owner');
+    const record = await server.getTaskState(taskId, {
+      accountId: 'acc_owner',
+      ownerScope: 'account:acc_owner',
+    });
     assert.ok(record);
     assert.strictEqual(record.accountId, 'acc_owner');
   });
@@ -7507,18 +7616,50 @@ describe('getTaskState account-scoping (B7)', () => {
       validation: { requests: 'off', responses: 'off' },
     });
     const taskId = await createTaskFor(server, 'acc_owner');
-    const record = await server.getTaskState(taskId, 'acc_other');
+    const record = await server.getTaskState(taskId, {
+      accountId: 'acc_other',
+      ownerScope: 'account:acc_other',
+    });
     assert.strictEqual(record, null, 'cross-tenant probe must not leak the task');
   });
 
-  it('unscoped read still works (ops/test contexts)', async () => {
+  it('fails closed when a custom registry returns a mismatched record', async () => {
+    const inner = createInMemoryTaskRegistry();
+    const taskRegistry = {
+      ...inner,
+      getTask: async () => ({
+        taskId: 'task_known',
+        tool: 'create_media_buy',
+        accountId: 'acc_owner',
+        ownerScope: 'session:owner',
+        status: 'completed',
+        result: { media_buy_id: 'mb_private' },
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:01:00.000Z',
+      }),
+    };
+    const server = createAdcpServerFromPlatform(buildHitlPlatform(), {
+      name: 't',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      taskRegistry,
+    });
+
+    const record = await server.getTaskState('task_known', {
+      accountId: 'acc_attacker',
+      ownerScope: 'session:attacker',
+    });
+    assert.strictEqual(record, null);
+  });
+
+  it('explicitly unsafe read remains available to ops/test contexts', async () => {
     const server = createAdcpServerFromPlatform(buildHitlPlatform(), {
       name: 't',
       version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
     });
     const taskId = await createTaskFor(server, 'acc_owner');
-    const record = await server.getTaskState(taskId);
+    const record = await server.getTaskStateUnsafe(taskId);
     assert.ok(record);
     assert.strictEqual(record.accountId, 'acc_owner');
   });

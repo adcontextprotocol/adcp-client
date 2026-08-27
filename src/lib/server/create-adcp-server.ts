@@ -332,6 +332,7 @@ import type {
   ProvidePerformanceFeedbackResponse,
   BuildCreativeSuccess,
   BuildCreativeMultiSuccess,
+  BuildCreativeVariantSuccess,
   BuildCreativeResponse,
   GetCreativeDeliveryResponse,
   ListCreativesResponse,
@@ -708,7 +709,10 @@ export interface AdcpToolMap {
   };
   build_creative: {
     params: z.input<typeof BuildCreativeRequestSchema>;
-    result: ServerPayload<BuildCreativeSuccess> | ServerPayload<BuildCreativeMultiSuccess>;
+    result:
+      | ServerPayload<BuildCreativeSuccess>
+      | ServerPayload<BuildCreativeMultiSuccess>
+      | ServerPayload<BuildCreativeVariantSuccess>;
     response: BuildCreativeResponse;
   };
   preview_creative: {
@@ -4433,6 +4437,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     testController: testControllerBridge,
     responseEnhancer,
   } = config;
+  if (taskRegistry !== undefined && taskRegistry.scopeVersion !== 1) {
+    throw new Error(
+      'createAdcpServer: taskRegistry.scopeVersion must be 1. Migrate custom registries to the account/principal-scoped TaskRegistry signatures before use.'
+    );
+  }
   if (!['auto', 'media-buy', 'all'].includes(mcpToolProfile)) {
     throw new Error(
       `createAdcpServer: mcpToolProfile must be "auto", "media-buy", or "all"; got ${JSON.stringify(mcpToolProfile)}`
@@ -7428,7 +7437,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         if (error) return finalizeProtocolTaskToolResponse('get_task_status', params ?? {}, error);
         let task: TaskRecord | null = null;
         try {
-          task = taskId && taskRegistry !== undefined ? await taskRegistry.getTask(taskId) : null;
+          task =
+            taskId && taskRegistry !== undefined && accountId !== undefined && ownerScope !== undefined
+              ? await taskRegistry.getTask(taskId, { accountId, ownerScope })
+              : null;
         } catch (err) {
           const reason = err instanceof Error ? err.message : String(err);
           logger.error('Task registry read failed during task poll', { tool: 'get_task_status', error: reason });

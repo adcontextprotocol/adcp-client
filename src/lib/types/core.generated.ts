@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.2.0-beta.6
-// Generated at: 2026-08-26T10:39:00.240Z
+// Generated at: 2026-08-27T15:41:03.381Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -32000,6 +32000,8 @@ export interface TasksListResponse {
 /**
  * Descriptor for one configuration knob a transformer exposes. Returned inside transformer.json `params[]` from list_transformers. The descriptor declares the knob's shape; the buyer supplies its value in build_creative `config` keyed by `field`. For `value_source: enumerable` params (e.g. account-specific voices), the legal `options[]` are account-scoped and dynamic — they are returned only when the param's `field` is named in the list_transformers `expand_params` request, and may be paginated via `options_cursor`.
  */
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
 export interface TransformerParam {
   /**
    * The config key. Buyers set the value under this exact key in build_creative `config`.
@@ -32037,7 +32039,7 @@ export interface TransformerParam {
     /**
      * The value the buyer passes in `config` for this field.
      */
-    value: unknown;
+    value: JsonValue;
     /**
      * Human-readable label for this option.
      */
@@ -32054,7 +32056,7 @@ export interface TransformerParam {
   /**
    * The value applied when the buyer omits this field from `config`. Type matches `type`.
    */
-  default?: unknown;
+  default?: JsonValue;
   /**
    * Whether the buyer MUST supply this field in `config`. When false and no `default` is declared, the agent chooses.
    */

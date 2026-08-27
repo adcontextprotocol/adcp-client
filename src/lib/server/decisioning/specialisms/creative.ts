@@ -24,6 +24,7 @@ import type {
   BuildCreativeRequest,
   BuildCreativeSuccess,
   BuildCreativeMultiSuccess,
+  BuildCreativeVariantSuccess,
   PreviewCreativeRequest as LegacyPreviewCreativeRequest,
   PreviewCreativeResponse as LegacyPreviewCreativeResponse,
   ListCreativeFormatsRequest,
@@ -41,6 +42,7 @@ type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
 export type LegacyBuildCreativePayload = ServerPayload<BuildCreativeSuccess>;
 export type LegacyBuildCreativeMultiPayload = ServerPayload<BuildCreativeMultiSuccess>;
+export type BuildCreativeVariantPayload = ServerPayload<BuildCreativeVariantSuccess>;
 export type PreviewCreativePayload = ServerPayload<CanonicalPreviewCreativeResponse>;
 export type LegacyPreviewCreativePayload = ServerPayload<LegacyPreviewCreativeResponse>;
 export type LegacyListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsResponse>;
@@ -58,11 +60,11 @@ export type LegacyListCreativeFormatsPayload = ServerPayload<ListCreativeFormats
  *     `CreativeManifest[]`. Framework wraps as
  *     `{ creative_manifests: [...] }`. Use this for multi-format
  *     requests (`target_format_ids`) when you don't need rich metadata.
- *   - **Fully-shaped envelope**: return a `BuildCreativePayload` (single)
- *     or `BuildCreativeMultiPayload` (multi) with `sandbox` /
- *     `expires_at` / `preview` populated. Framework passes through
- *     unchanged. Detected by the presence of `creative_manifest` (single
- *     envelope) or `creative_manifests` (multi envelope) at the top level.
+ *   - **Fully-shaped envelope**: return a `BuildCreativePayload` (single),
+ *     `BuildCreativeMultiPayload` (multi), or `BuildCreativeVariantPayload`
+ *     (multiplicity) with any response metadata populated. Framework passes
+ *     it through unchanged. Detected by `creative_manifest`,
+ *     `creative_manifests`, or `creatives` at the top level.
  *
  * Adopters route on `req.target_format_ids` (multi) vs `req.target_format_id`
  * (single) and return the matching arm. Returning a `CreativeManifest[]`
@@ -74,7 +76,8 @@ export type LegacyBuildCreativeReturn =
   | CreativeManifest
   | CreativeManifest[]
   | LegacyBuildCreativePayload
-  | LegacyBuildCreativeMultiPayload;
+  | LegacyBuildCreativeMultiPayload
+  | BuildCreativeVariantPayload;
 
 // Re-export SyncCreativesRow so creative-specialism adopters don't need to
 // reach into the sales module to import the shared row type.
@@ -125,9 +128,8 @@ export interface CreativeBuilderPlatform<TCtxMeta = Record<string, unknown>> {
    *
    * Return shape is discriminated; see {@link BuildCreativeReturn}:
    * single `CreativeManifest`, `CreativeManifest[]` for multi-format
-   * requests, OR a fully-shaped `BuildCreativePayload` /
-   * `BuildCreativeMultiPayload` payload when you need to set
-   * `sandbox` / `expires_at` / `preview`.
+   * requests, OR a fully-shaped `BuildCreativePayload`,
+   * `BuildCreativeMultiPayload`, or `BuildCreativeVariantPayload` response.
    */
   buildCreativeLegacy(req: BuildCreativeRequest, ctx: Ctx<TCtxMeta>): Promise<LegacyBuildCreativeReturn>;
 

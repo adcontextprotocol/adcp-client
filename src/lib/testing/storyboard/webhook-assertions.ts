@@ -93,10 +93,18 @@ export const WEBHOOK_ASSERTION_TASKS: Set<string> = new Set([
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const DEFAULT_NO_WEBHOOK_TIMEOUT_SECONDS = 5;
-const DEFAULT_RETRY_REPLAY_TIMEOUT_SECONDS = 90;
+// Leave enough headroom for setup/report serialization inside the documented
+// 120-second isolated-run budget, even when a remote receiver is unreachable.
+const DEFAULT_RETRY_REPLAY_TIMEOUT_SECONDS = 60;
 const DEFAULT_RETRY_COUNT = 3;
 const DEFAULT_RETRY_HTTP_STATUS = 503;
 const DEFAULT_MIN_DELIVERIES = 2;
+
+function webhookTimeoutDetail(receiver: WebhookReceiver, base: string): string {
+  return receiver.mode === 'loopback_mock' && receiver.all().length === 0 && receiver.challenges().length === 0
+    ? `${base} No request reached the loopback receiver; an out-of-process agent must use webhook_receiver.mode="proxy_url".`
+    : base;
+}
 const DEFAULT_WEBHOOK_SIGNING_TAG = 'adcp/webhook-signing/v1';
 
 /**
@@ -142,6 +150,70 @@ interface FlatStep {
   step: StoryboardStep;
   phaseId: string;
   globalIndex: number;
+}
+
+function collectNotificationConfigs(
+  value: unknown,
+  configs: Record<string, unknown>[] = []
+): Record<string, unknown>[] {
+  if (!value || typeof value !== 'object') return configs;
+  if (Array.isArray(value)) {
+    for (const item of value) collectNotificationConfigs(item, configs);
+    return configs;
+  }
+  const record = value as Record<string, unknown>;
+  if (Array.isArray(record.notification_configs)) {
+    for (const config of record.notification_configs) {
+      if (config && typeof config === 'object' && !Array.isArray(config)) {
+        configs.push(config as Record<string, unknown>);
+      }
+    }
+  }
+  for (const nested of Object.values(record)) collectNotificationConfigs(nested, configs);
+  return configs;
+}
+
+function notificationSetupMatchesAssertion(setup: StoryboardStep, assertion: StoryboardStep): boolean {
+  const configs = collectNotificationConfigs(setup.sample_request);
+  if (configs.length === 0) return false;
+  const filter =
+    assertion.filter && typeof assertion.filter === 'object'
+      ? (assertion.filter as Record<string, unknown>)
+      : undefined;
+  const body = filter?.body && typeof filter.body === 'object' ? (filter.body as Record<string, unknown>) : undefined;
+  const subscriberId = filter?.subscriber_id ?? body?.subscriber_id;
+  const eventType = filter?.notification_type ?? body?.notification_type ?? filter?.event ?? body?.event;
+
+  // A setup failure is only an implicit prerequisite when the assertion names
+  // a subscriber or event configured by that setup. Other webhook assertions
+  // retain their own trigger dependency and cannot be masked by an unrelated
+  // failed registration elsewhere in the storyboard.
+  if (typeof subscriberId !== 'string' && typeof eventType !== 'string') return false;
+  return configs.some(config => {
+    const subscriberMatches = typeof subscriberId !== 'string' || config.subscriber_id === subscriberId;
+    const eventMatches =
+      typeof eventType !== 'string' || (Array.isArray(config.event_types) && config.event_types.includes(eventType));
+    return subscriberMatches && eventMatches;
+  });
+}
+
+function failedNotificationSetup(
+  step: StoryboardStep,
+  allSteps: FlatStep[],
+  priorStepResults: Map<string, StoryboardStepResult>
+): StoryboardStepResult | undefined {
+  const currentIndex = allSteps.find(entry => entry.step.id === step.id)?.globalIndex ?? Number.POSITIVE_INFINITY;
+  const setup = [...allSteps]
+    .reverse()
+    .find(
+      entry =>
+        entry.globalIndex < currentIndex &&
+        (entry.step.task === 'sync_accounts' || entry.step.task === 'sync_agent_notification_configs') &&
+        notificationSetupMatchesAssertion(entry.step, step)
+    );
+  if (!setup) return undefined;
+  const result = priorStepResults.get(setup.step.id);
+  return result && (result.skipped || !result.passed) ? result : undefined;
 }
 
 type GetNextPreview = (currentStepId: string) => StoryboardStepPreview | undefined;
@@ -225,6 +297,17 @@ export async function executeWebhookAssertionStep(
       detail:
         `Step "${step.task}" requires an ephemeral webhook receiver. Pass ` +
         '`webhook_receiver` on runStoryboard options to enable.',
+      extraction,
+      request: requestRecord,
+      next,
+    });
+  }
+
+  const failedSetup = failedNotificationSetup(step, allSteps, runState.priorStepResults);
+  if (failedSetup) {
+    return skippedResult(step, phaseId, context, start, {
+      skip_reason: 'prerequisite_failed',
+      detail: `Notification setup step "${failedSetup.step_id}" did not complete successfully.`,
       extraction,
       request: requestRecord,
       next,
@@ -420,7 +503,7 @@ async function runExpectWebhook(
     return singleFailure(
       step,
       'no_webhook_received',
-      `No webhook matching filter arrived within ${timeoutMs}ms.`,
+      webhookTimeoutDetail(receiver, `No webhook matching filter arrived within ${timeoutMs}ms.`),
       'webhook delivery matching filter',
       null
     );
@@ -490,8 +573,11 @@ async function runExpectRetryKeysStable(
     return singleFailure(
       step,
       'insufficient_retries',
-      `Observed ${matches.length} deliveries; expected at least ${minDeliveries}. ` +
-        'The sender may not be retrying on 5xx responses.',
+      webhookTimeoutDetail(
+        receiver,
+        `Observed ${matches.length} deliveries; expected at least ${minDeliveries}. ` +
+          'The sender may not be retrying on 5xx responses.'
+      ),
       `≥ ${minDeliveries} deliveries`,
       matches.length
     );
@@ -575,7 +661,7 @@ async function runExpectSignatureValid(
     return singleFailure(
       step,
       'no_webhook_received',
-      `No webhook matching filter arrived within ${timeoutMs}ms.`,
+      webhookTimeoutDetail(receiver, `No webhook matching filter arrived within ${timeoutMs}ms.`),
       'signed webhook delivery matching filter',
       null
     );

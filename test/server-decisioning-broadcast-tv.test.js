@@ -178,8 +178,8 @@ describe('BroadcastTvSeller — HITL via *Task variants', () => {
     assert.strictEqual(result.structuredContent.status, 'submitted');
     const taskId = result.structuredContent.task_id;
 
-    await server.awaitTask(taskId);
-    const final = await server.getTaskState(taskId);
+    await server.awaitTaskUnsafe(taskId);
+    const final = await server.getTaskStateUnsafe(taskId);
     assert.strictEqual(final.status, 'completed');
     assert.strictEqual(final.result.status, 'pending_start');
     assert.ok(final.result.media_buy_id.startsWith('mb_WCBS_'));
@@ -214,7 +214,7 @@ describe('BroadcastTvSeller — HITL via *Task variants', () => {
       });
 
       const taskId = result.structuredContent.task_id;
-      await server.awaitTask(taskId);
+      await server.awaitTaskUnsafe(taskId);
       await new Promise(r => setTimeout(r, 60));
 
       const activations = received.filter(e => e.resource_type === 'media_buy' && e.payload.status === 'active');
@@ -266,9 +266,9 @@ describe('BroadcastTvSeller — HITL via *Task variants', () => {
     });
 
     const taskId = result.structuredContent.task_id;
-    await server.awaitTask(taskId);
+    await server.awaitTaskUnsafe(taskId);
 
-    const final = await server.getTaskState(taskId);
+    const final = await server.getTaskStateUnsafe(taskId);
     assert.strictEqual(final.status, 'completed');
     // Task result is the wire-shape `{ creatives: [...] }` envelope (framework
     // wraps the per-creative rows when the handoff resolves).

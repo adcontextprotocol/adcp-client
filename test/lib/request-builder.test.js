@@ -1077,6 +1077,31 @@ describe('Request Builder', () => {
     });
   });
 
+  describe('check_governance', () => {
+    test('preserves an authored delivery request without injecting intent-only fields (#2705)', () => {
+      const fixture = {
+        phase: 'delivery',
+        caller: 'https://buyer-agent.example/',
+        governance_context: 'signed-context',
+        planned_delivery: { impressions: 1000 },
+        delivery_metrics: { impressions: 750 },
+      };
+      const result = buildRequest(step('check_governance', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
+
+      assert.deepStrictEqual(result, fixture);
+      assert.strictEqual(result.plan_id, undefined);
+      assert.strictEqual(result.tool, undefined);
+      assert.strictEqual(result.payload, undefined);
+    });
+
+    test('keeps the intent fallback for an un-authored request', () => {
+      const result = buildRequest(step('check_governance'), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.plan_id, 'unknown');
+      assert.strictEqual(result.tool, 'get_products');
+      assert.ok(result.payload);
+    });
+  });
+
   describe('sync_governance', () => {
     test('fallback credentials satisfy schema minLength of 32', () => {
       // Regression: the hardcoded 'test-governance-token' is 21 chars,

@@ -352,6 +352,7 @@ interface LoaderState {
 }
 
 const states: Map<string, LoaderState> = new Map();
+const schemaRefValidators = new Map<string, ValidateFunction>();
 const externalSchemaRoots: Map<string, string> = new Map();
 const scopedExternalSchemaRoots = new AsyncLocalStorage<Map<string, string>>();
 
@@ -362,6 +363,9 @@ function stateCacheKey(bundleKey: string, root: string): string {
 function clearStatesForBundle(bundleKey: string): void {
   for (const [stateKey, state] of states) {
     if (state.version === bundleKey) states.delete(stateKey);
+  }
+  for (const cacheKey of schemaRefValidators.keys()) {
+    if (cacheKey.startsWith(`${bundleKey}\0`)) schemaRefValidators.delete(cacheKey);
   }
 }
 
@@ -895,15 +899,18 @@ export function getSchemaValidatorByRef(
   schemaRef: string,
   version: string = ADCP_VERSION
 ): ValidateFunction | undefined {
-  const s = ensureInit(version);
+  // Keep remote schema-ref validation out of the shared tool-validator AJV,
+  // which intentionally collects all errors for developer diagnostics.
+  const bundleKey = resolveBundleKey(version);
+  const root = resolveSchemaRoot(version);
   const normalized = normalizeSchemaRef(schemaRef);
   if (!normalized) return undefined;
 
-  const cacheKey = `schema-ref::${normalized}`;
-  const cached = s.validators.get(cacheKey);
+  const cacheKey = `${stateCacheKey(bundleKey, root)}\0schema-ref::${normalized}`;
+  const cached = schemaRefValidators.get(cacheKey);
   if (cached) return cached;
 
-  const file = path.join(s.root, normalized);
+  const file = path.join(root, normalized);
   if (!existsSync(file)) return undefined;
 
   // Use an isolated AJV instance for arbitrary schema refs. Tool response
@@ -912,13 +919,16 @@ export function getSchemaValidatorByRef(
   // shared tool-validator registry with unrelaxed response schemas.
   const ajv = new Ajv({
     strict: false,
-    allErrors: true,
+    // Schema-ref validators process remote webhook payloads. Fail on the
+    // first violation so deeply nested hostile input cannot amplify error
+    // collection into CPU or memory exhaustion.
+    allErrors: false,
     allowUnionTypes: true,
   });
   addFormats(ajv);
   const dependencySchemas: LoadedSchema[] = [];
   const registeredIds = new Set<string>();
-  for (const schemaFile of walkJsonFiles(s.root)) {
+  for (const schemaFile of walkJsonFiles(root)) {
     if (schemaFile.includes(`${path.sep}bundled${path.sep}`)) continue;
     if (
       [...TRANSPORT_PROJECTION_DIRECTORIES].some(directory => schemaFile.includes(`${path.sep}${directory}${path.sep}`))
@@ -937,7 +947,7 @@ export function getSchemaValidatorByRef(
   }
   const rawSchema = loadJson(file);
   const compiled = ajv.compile(rawSchema);
-  s.validators.set(cacheKey, compiled);
+  schemaRefValidators.set(cacheKey, compiled);
   return compiled;
 }
 
@@ -1146,6 +1156,7 @@ export function _resetValidationLoader(version?: string): void {
   mcpToolSummaryCache.clear();
   if (version === undefined) {
     states.clear();
+    schemaRefValidators.clear();
   } else {
     clearStatesForBundle(resolveBundleKey(version));
   }

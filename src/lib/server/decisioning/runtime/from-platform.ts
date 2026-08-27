@@ -105,6 +105,7 @@ import type {
   BrandReference,
   BuildCreativeMultiSuccess,
   BuildCreativeSuccess,
+  BuildCreativeVariantSuccess,
   CreativeManifest,
   GetAdCPCapabilitiesResponse,
   PaymentTerms,
@@ -143,7 +144,14 @@ import { _extractResponseSummaryEntry } from '../response-summary';
 import { productsResponse } from '../../responses';
 import { TOOL_ENTITY_FIELDS } from './entity-hydration.generated';
 import { z } from 'zod';
-import { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord, type TaskStatus } from './task-registry';
+import {
+  createInMemoryTaskRegistry,
+  taskRecordMatchesScope,
+  type TaskRegistry,
+  type TaskRecord,
+  type TaskRegistryScope,
+  type TaskStatus,
+} from './task-registry';
 import { protocolForTool, SPEC_WEBHOOK_TASK_TYPES } from './protocol-for-tool';
 
 /**
@@ -1967,6 +1975,12 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    */
   taskRegistry?: TaskRegistry;
   /**
+   * Trusted tenant/deployment namespace for the `pool` task-registry shortcut.
+   * Required when `pool` supplies the registry. Use the same value with the
+   * migration helper so legacy rows remain reachable after upgrade.
+   */
+  taskRegistryNamespace?: string;
+  /**
    * Override the framework's status-change event bus for this server.
    * Defaults to a fresh per-server `createInMemoryStatusChangeBus()` so
    * tests get isolation without touching the module-level singleton from
@@ -2090,7 +2104,7 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * explicitly keep override priority — the explicit values win, and the
    * pool fills only the unset ones.
    *
-   * Run `getAllAdcpMigrations()` once per database to create the three
+   * Run `getAllAdcpMigrations({ taskRegistryNamespace })` once per database to create the three
    * required tables (idempotency cache, ctx-metadata cache, task registry).
    *
    * @example
@@ -2102,12 +2116,14 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * } from '@adcp/sdk/server';
    *
    * const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-   * await pool.query(getAllAdcpMigrations());
+   * const taskRegistryNamespace = 'tenant:my-agent';
+   * await pool.query(getAllAdcpMigrations({ taskRegistryNamespace }));
    *
    * const server = createAdcpServerFromPlatform(myPlatform, {
    *   name: 'my-agent',
    *   version: '1.0.0',
    *   pool,                                // wires all three persistence stores
+   *   taskRegistryNamespace,
    * });
    * ```
    *
@@ -2329,28 +2345,23 @@ export type RequiredOptsFor<P extends DecisioningPlatform<any, any>> = P extends
 export interface DecisioningAdcpServer extends AdcpServer {
   /**
    * Read the current lifecycle state for a HITL task. Returns `null` if the
-   * `taskId` is unknown OR (when `expectedAccountId` is supplied) the
-   * task's owning account doesn't match.
-   *
-   * **Multi-tenant isolation: pass `expectedAccountId` whenever the caller
-   * has a buyer-derived account in scope.** Adopters wrapping this method
-   * in a `tasks/get` wire handler MUST pass `ctx.account.id` to scope reads
-   * — without it, any caller with a known `task_id` reads any tenant's
-   * task lifecycle, including its `result` and `error` payloads. The
-   * unscoped form (single-arg) is for ops / test harnesses that hold no
-   * buyer account in scope.
+   * `taskId` is unknown or the account/principal scope does not match.
    *
    * Async to accommodate storage-backed task registries
    * (`createPostgresTaskRegistry`); the in-memory impl resolves synchronously.
    */
-  getTaskState<TResult = unknown>(taskId: string, expectedAccountId?: string): Promise<TaskRecord<TResult> | null>;
+  getTaskState<TResult = unknown>(taskId: string, scope: TaskRegistryScope): Promise<TaskRecord<TResult> | null>;
+  /** Administrative/test access; null when task_id is ambiguous across scopes. Never expose to buyer traffic. */
+  getTaskStateUnsafe<TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null>;
   /**
    * Await any in-flight background completion for `taskId` (HITL handoff
    * function still running). Resolves immediately if the task is terminal
    * or has no registered background. Used by tests + the `tasks/get` wire
    * path for deterministic settlement.
    */
-  awaitTask(taskId: string): Promise<void>;
+  awaitTask(taskId: string, scope: TaskRegistryScope): Promise<void>;
+  /** Administrative/test wait across all scopes with this task_id. Never expose to buyer traffic. */
+  awaitTaskUnsafe(taskId: string): Promise<void>;
   /**
    * Per-server status-change bus. Delegates to the same internal bus the
    * framework uses for MCP Resources subscription projection.
@@ -2516,13 +2527,27 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     opts.pool && opts.ctxMetadata === undefined
       ? createCtxMetadataStore({ backend: pgCtxMetadataStore(opts.pool) })
       : undefined;
+  if (opts.pool && opts.taskRegistry === undefined && opts.taskRegistryNamespace === undefined) {
+    throw new PlatformConfigError(
+      'taskRegistryNamespace is required when opts.pool supplies the task registry. ' +
+        'Use the same trusted namespace with getAllAdcpMigrations({ taskRegistryNamespace }) or ' +
+        'getDecisioningTaskRegistryMigration({ namespace }).'
+    );
+  }
   const pooledTaskRegistry: TaskRegistry | undefined =
-    opts.pool && opts.taskRegistry === undefined ? createPostgresTaskRegistry({ pool: opts.pool }) : undefined;
+    opts.pool && opts.taskRegistry === undefined
+      ? createPostgresTaskRegistry({ pool: opts.pool, namespace: opts.taskRegistryNamespace! })
+      : undefined;
 
   // Effective resolved values. Explicit > pooled > default.
   const effectiveIdempotency: IdempotencyStore | 'disabled' | undefined = opts.idempotency ?? pooledIdempotency;
   const effectiveCtxMetadata: CtxMetadataStore | undefined = opts.ctxMetadata ?? pooledCtxMetadata;
   const taskRegistry = opts.taskRegistry ?? pooledTaskRegistry ?? buildDefaultTaskRegistry();
+  if (taskRegistry.scopeVersion !== 1) {
+    throw new PlatformConfigError(
+      'taskRegistry.scopeVersion must be 1. Migrate custom registries to the account/principal-scoped TaskRegistry signatures before use.'
+    );
+  }
   const baseBus = opts.statusChangeBus ?? createInMemoryStatusChangeBus();
   const taskWebhookEmit = opts.taskWebhookEmitter?.emit;
 
@@ -3580,20 +3605,15 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   return Object.assign(server, {
     getTaskState: async <TResult = unknown>(
       taskId: string,
-      expectedAccountId?: string
+      scope: TaskRegistryScope
     ): Promise<TaskRecord<TResult> | null> => {
-      const record = await taskRegistry.getTask<TResult>(taskId);
-      if (record == null) return null;
-      // Tenant boundary: if caller specified the expected account and the
-      // task's owner doesn't match, treat as not-found. Returning null
-      // here mirrors the "not-found / cross-tenant" envelope and avoids
-      // principal-enumeration via task_id probing.
-      if (expectedAccountId !== undefined && record.accountId !== expectedAccountId) {
-        return null;
-      }
-      return record;
+      const record = await taskRegistry.getTask<TResult>(taskId, scope);
+      return record && taskRecordMatchesScope(record, scope) ? record : null;
     },
-    awaitTask: (taskId: string): Promise<void> => taskRegistry.awaitTask(taskId),
+    getTaskStateUnsafe: <TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null> =>
+      taskRegistry._getTaskUnsafe<TResult>(taskId),
+    awaitTask: (taskId: string, scope: TaskRegistryScope): Promise<void> => taskRegistry.awaitTask(taskId, scope),
+    awaitTaskUnsafe: (taskId: string): Promise<void> => taskRegistry._awaitTaskUnsafe(taskId),
     statusChange: statusChangeBus,
   });
 }
@@ -3603,7 +3623,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
 // ---------------------------------------------------------------------------
 
 /**
- * Custom tool exposing `taskRegistry.getTask(taskId)` over the wire so
+ * Custom tool exposing a scoped `taskRegistry.getTask(taskId, scope)` over the wire so
  * buyer agents can poll HITL task state. Snake-case `tasks_get` (MCP tool
  * names disallow `/`) approximates the spec's `tasks/get` method.
  *
@@ -3613,13 +3633,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
  * handles the protocol-level `tasks/get` natively. Until then, this
  * custom tool is the buyer-facing polling surface.
  *
- * **Tenant scoping.** The tool reads from `taskRegistry.getTask`
- * directly. Adopters with multi-tenant deployments MUST pass `account`
- * in the request so the framework's account-resolution flow scopes the
- * read; the handler then verifies `record.accountId` matches the
- * resolved account before returning the task. Single-tenant agents
- * (`resolution: 'derived'`) get scoping for free via the auth-derived
- * resolver.
+ * **Tenant scoping.** The handler resolves both the trusted account and
+ * authenticated owner scope before the registry read. Postgres-backed
+ * deployments additionally isolate each server/tenant through the registry
+ * namespace configured by `taskRegistryNamespace`.
  */
 function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
   platform: P,
@@ -3855,9 +3872,27 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
         }
       }
 
+      if (resolvedAccountId === undefined) {
+        return adcpError('REFERENCE_NOT_FOUND', {
+          message: `Task ${args.task_id} not found`,
+          field: 'task_id',
+        });
+      }
+      const ownerCtx: HandlerContext<Account> = {
+        store: {} as HandlerContext<Account>['store'],
+        ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
+        ...(agent !== undefined && { agent }),
+        ...(sessionKey !== undefined && { sessionKey }),
+        account: resolvedAccount ?? ({ id: resolvedAccountId } as Account),
+      };
+      const expectedOwnerScope = taskOwnerScopeFor(ownerCtx, resolvedAccountId);
+
       let record;
       try {
-        record = await taskRegistry.getTask(args.task_id);
+        record = await taskRegistry.getTask(args.task_id, {
+          accountId: resolvedAccountId,
+          ownerScope: expectedOwnerScope,
+        });
       } catch (err) {
         logger.error?.('Task registry read failed during tasks_get poll', {
           error: err instanceof Error ? err.message : String(err),
@@ -3870,45 +3905,17 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
           field: 'task_id',
         });
       }
-      // Tenant boundary. Two checks to close the auth-derived bypass:
-      //   1. If we resolved an account, the task's owning account must match.
-      //   2. If we did NOT resolve an account but the task IS owned by an
-      //      account, refuse to leak. This catches the unauthenticated /
-      //      `'explicit'`-mode-misconfigured caller that hits the auth-derived
-      //      branch and would otherwise read any task by id.
-      if (resolvedAccountId === undefined && record.accountId) {
+      if (
+        !taskRecordMatchesScope(record, {
+          accountId: resolvedAccountId,
+          ownerScope: expectedOwnerScope,
+        })
+      ) {
         return adcpError('REFERENCE_NOT_FOUND', {
           message: `Task ${args.task_id} not found`,
           field: 'task_id',
         });
       }
-      if (resolvedAccountId !== undefined && record.accountId !== resolvedAccountId) {
-        return adcpError('REFERENCE_NOT_FOUND', {
-          message: `Task ${args.task_id} not found`,
-          field: 'task_id',
-        });
-      }
-      if (resolvedAccountId !== undefined) {
-        const ownerCtx: HandlerContext<Account> = {
-          store: {} as HandlerContext<Account>['store'],
-          ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
-          ...(agent !== undefined && { agent }),
-          ...(sessionKey !== undefined && { sessionKey }),
-          account: resolvedAccount ?? ({ id: resolvedAccountId } as Account),
-        };
-        const expectedOwnerScope = taskOwnerScopeFor(ownerCtx, resolvedAccountId);
-        if (
-          record.ownerScope === undefined
-            ? expectedOwnerScope !== `account:${resolvedAccountId}`
-            : record.ownerScope !== expectedOwnerScope
-        ) {
-          return adcpError('REFERENCE_NOT_FOUND', {
-            message: `Task ${args.task_id} not found`,
-            field: 'task_id',
-          });
-        }
-      }
-
       // Spec shape: `tasks-get-response.json` requires task_id, task_type,
       // status, created_at, updated_at, protocol. Optional: completed_at
       // (terminal states), error (failed tasks — top-level, NOT inside
@@ -4215,11 +4222,13 @@ function wrapBusWithObservability(bus: StatusChangeBus, observability: Decisioni
  *
  * ```ts
  * const pool = new Pool({ connectionString: process.env.DATABASE_URL });
- * await pool.query(getAllAdcpMigrations());
+ * const taskRegistryNamespace = 'tenant:my-agent';
+ * await pool.query(getAllAdcpMigrations({ taskRegistryNamespace }));
  *
  * createAdcpServerFromPlatform(myPlatform, {
  *   name: '...', version: '...',
  *   pool,
+ *   taskRegistryNamespace,
  * });
  * ```
  *
@@ -4229,8 +4238,17 @@ function wrapBusWithObservability(bus: StatusChangeBus, observability: Decisioni
  *
  * @public
  */
-export function getAllAdcpMigrations(): string {
-  return [getIdempotencyMigration(), getCtxMetadataMigration(), getDecisioningTaskRegistryMigration()].join('\n\n');
+export function getAllAdcpMigrations(options: { taskRegistryNamespace: string }): string {
+  if (!options) {
+    throw new PlatformConfigError(
+      'getAllAdcpMigrations requires { taskRegistryNamespace }; use a stable, trusted deployment or tenant namespace.'
+    );
+  }
+  return [
+    getIdempotencyMigration(),
+    getCtxMetadataMigration(),
+    getDecisioningTaskRegistryMigration({ namespace: options.taskRegistryNamespace }),
+  ].join('\n\n');
 }
 
 function buildDefaultTaskRegistry(): TaskRegistry {
@@ -4242,9 +4260,9 @@ function buildDefaultTaskRegistry(): TaskRegistry {
       'createAdcpServerFromPlatform: in-memory task registry refused outside ' +
         '{NODE_ENV=test, NODE_ENV=development}. Production deployments need a ' +
         'durable task registry — pick one of:\n' +
-        '  1. (Recommended) Pass `taskRegistry: createPostgresTaskRegistry({ pool })` ' +
+        '  1. (Recommended) Pass `taskRegistry: createPostgresTaskRegistry({ pool, namespace: tenantId })` ' +
         'to keep HITL tasks across restarts. See `@adcp/sdk/server/decisioning` ' +
-        'for `getDecisioningTaskRegistryMigration()` — run it once against your DB.\n' +
+        'for `getDecisioningTaskRegistryMigration({ namespace })` — run it once against your DB.\n' +
         '  2. Pass `taskRegistry: createInMemoryTaskRegistry()` explicitly if you ' +
         'accept that in-flight tasks are lost on process restart. The explicit ' +
         'pass-in is the contract — saying "yes I want in-memory in production" ' +
@@ -4441,7 +4459,7 @@ async function projectSync<TResult, TWire, TCtxMeta = unknown>(
  * wired `webhooks` on `serve()`, the framework emits a signed RFC 9421
  * webhook to that URL on terminal state with the task lifecycle payload.
  * Buyers don't need to poll — they receive completion via push. Polling via
- * `server.getTaskState(taskId)` continues to work for harnesses + the
+ * `server.getTaskState(taskId, scope)` continues to work for harnesses + the
  * forthcoming wire-level `tasks/get`.
  */
 interface DispatchHitlOpts {
@@ -4569,7 +4587,12 @@ async function routeIfHandoff<TInner, TWire>(
       taskRegistry,
       opts,
       async taskId => {
-        const inner = await taskFn(buildHandoffContext(taskRegistry, taskId));
+        const inner = await taskFn(
+          buildHandoffContext(taskRegistry, taskId, {
+            accountId: opts.accountId,
+            ownerScope: opts.ownerScope ?? `account:${opts.accountId}`,
+          })
+        );
         rejectResponseSummary(inner);
         return await project(inner);
       },
@@ -4637,6 +4660,10 @@ async function dispatchHitl<TResult>(
   // Webhook delivery is gated on the registry write succeeding so the
   // buyer's view (via webhook OR getTaskState) is always consistent.
   const completion: Promise<void> = (async () => {
+    const registryScope = {
+      accountId: opts.accountId,
+      ownerScope: opts.ownerScope ?? `account:${opts.accountId}`,
+    };
     let result: TResult | undefined;
     let taskFnError: unknown;
     try {
@@ -4659,12 +4686,12 @@ async function dispatchHitl<TResult>(
         stripImplementationConfig(result as Record<string, unknown>);
       }
       try {
-        await taskRegistry.complete(taskId, result as TResult);
+        await taskRegistry.complete(taskId, registryScope, result as TResult);
       } catch (registryErr) {
         opts.logger.error(
           `[adcp/decisioning] task ${taskId} (${opts.tool}) completed but registry write failed — ` +
             `manual reconciliation required. Webhook not emitted; buyer state will diverge until resolved. ` +
-            `Error: ${registryErr instanceof Error ? registryErr.message : String(registryErr)}`
+            `Error type: ${registryErr instanceof Error ? 'Error' : typeof registryErr}`
         );
         fireTransition('failed', 'REGISTRY_WRITE_FAILED');
         return;
@@ -4688,12 +4715,12 @@ async function dispatchHitl<TResult>(
     );
     const failureArtifact = { errors: [structured] };
     try {
-      await taskRegistry.fail(taskId, structured, failureArtifact);
+      await taskRegistry.fail(taskId, registryScope, structured, failureArtifact);
     } catch (registryErr) {
       opts.logger.error(
         `[adcp/decisioning] task ${taskId} (${opts.tool}) failed AND registry fail-write also failed — ` +
           `manual reconciliation required. Webhook not emitted. ` +
-          `taskFn error: ${structured.message}; registry error: ${registryErr instanceof Error ? registryErr.message : String(registryErr)}`
+          `Task error code: ${structured.code}; registry error type: ${registryErr instanceof Error ? 'Error' : typeof registryErr}`
       );
       fireTransition('failed', 'REGISTRY_WRITE_FAILED');
       return;
@@ -4703,7 +4730,11 @@ async function dispatchHitl<TResult>(
       task: { task_id: taskId, status: 'failed', result: failureArtifact, error: structured },
     });
   })();
-  taskRegistry._registerBackground(taskId, completion);
+  taskRegistry._registerBackground(
+    taskId,
+    { accountId: opts.accountId, ownerScope: opts.ownerScope ?? `account:${opts.accountId}` },
+    completion
+  );
 
   return { status: 'submitted', task_id: taskId };
 }
@@ -6561,12 +6592,14 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
 
 /**
  * Project an adopter `buildCreative` return value into the wire response
- * shape. Handles the four legal adopter shapes per `BuildCreativeReturn`:
+ * shape. Handles the five legal adopter shapes per `BuildCreativeReturn`:
  *
  *   - Already-shaped Single envelope (`creative_manifest` field present) →
  *     passthrough. Adopter set `sandbox` / `expires_at` / `preview` themselves.
  *   - Already-shaped Multi envelope (`creative_manifests` field present) →
  *     passthrough. Same metadata-controlled case for multi-format requests.
+ *   - Already-shaped multiplicity envelope (`creatives` field present) →
+ *     passthrough. Used for best-of-N, variant-axis, and catalog fan-out.
  *   - Bare array → wrap as `{ creative_manifests: <array> }` (multi, no metadata).
  *   - Plain `CreativeManifest` → wrap as `{ creative_manifest: <obj> }`
  *     (single, no metadata).
@@ -6577,8 +6610,11 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
  * `{ creative_manifest: { creative_manifest, sandbox: true } }`. Same
  * concern applies symmetrically for Multi.
  */
-function projectBuildCreativeReturn(ret: unknown): BuildCreativeSuccess | BuildCreativeMultiSuccess {
+function projectBuildCreativeReturn(
+  ret: unknown
+): BuildCreativeSuccess | BuildCreativeMultiSuccess | BuildCreativeVariantSuccess {
   if (ret != null && typeof ret === 'object' && !Array.isArray(ret)) {
+    if ('creatives' in ret) return ret as BuildCreativeVariantSuccess;
     if ('creative_manifest' in ret) return ret as BuildCreativeSuccess;
     if ('creative_manifests' in ret) return ret as BuildCreativeMultiSuccess;
   }

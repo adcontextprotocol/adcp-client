@@ -201,6 +201,7 @@ export type {
   BuildCreativeSuccess,
   BuildCreativeError,
   BuildCreativeMultiSuccess,
+  BuildCreativeVariantSuccess,
   BuildCreativeAsyncSubmitted,
   CreativeManifest,
   PreviewCreativeRequest,
