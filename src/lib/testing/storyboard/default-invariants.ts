@@ -1208,7 +1208,11 @@ export function registerDefaultInvariants(): void {
       // monotonic's graphs intentionally enumerate only spec-stable enum
       // values, but those new offline states are exactly what this invariant
       // needs to observe.
-      for (const ob of extractImpairmentObservations(stepResult.task, body as Record<string, unknown>)) {
+      for (const ob of extractImpairmentObservations(
+        stepResult.task,
+        body as Record<string, unknown>,
+        stepResult.request?.payload
+      )) {
         const key = `${ob.resource_type}:${ob.resource_id}`;
         state.resourceStatus.set(key, { status: ob.status, stepId: stepResult.step_id });
         const offline = IMPAIRMENT_OFFLINE_STATUS.get(ob.resource_type);
@@ -1454,7 +1458,8 @@ export function registerDefaultInvariants(): void {
    */
   function extractImpairmentObservations(
     task: string,
-    body: Record<string, unknown>
+    body: Record<string, unknown>,
+    requestPayload?: unknown
   ): { resource_type: string; resource_id: string; status: string }[] {
     const out: { resource_type: string; resource_id: string; status: string }[] = [];
     if (task === 'sync_creatives' || task === 'list_creatives') {
@@ -1497,6 +1502,17 @@ export function registerDefaultInvariants(): void {
         const status = health ? asString(health.status) : undefined;
         if (id && status) out.push({ resource_type: 'event_source', resource_id: id, status });
       }
+    } else if (task === 'comply_test_controller' && body.success === true && isObject(requestPayload)) {
+      // `force_audience_status` is the deterministic compliance surface for
+      // seller-initiated audience transitions. The transition response is a
+      // StateTransitionSuccess, so the authoritative status is
+      // `current_state`; the entity id remains in the request params. Pair
+      // the runner's recorded request and response instead of inventing a
+      // protocol-visible audience read task solely for grading.
+      if (requestPayload.scenario !== 'force_audience_status' || !isObject(requestPayload.params)) return out;
+      const id = asString(requestPayload.params.audience_id);
+      const status = asString(body.current_state);
+      if (id && status) out.push({ resource_type: 'audience', resource_id: id, status });
     }
     return out;
   }
