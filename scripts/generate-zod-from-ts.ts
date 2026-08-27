@@ -159,6 +159,7 @@ const TS7056_SCHEMAS: Array<{
 
 function postProcessTS7056Annotations(content: string): string {
   let result = content;
+  const productObjectShapeType = `{ [K in keyof Product]-?: K extends 'publisher_properties' ? z.ZodType<PublisherPropertySelector[], PublisherPropertySelector[]> : undefined extends Product[K] ? z.ZodOptional<z.ZodType<Exclude<Product[K], undefined>, Exclude<Product[K], undefined>>> : z.ZodType<Product[K], Product[K]> }`;
   const typesToImport = {
     tools: new Set<string>(),
     core: new Set<string>(),
@@ -196,11 +197,21 @@ function postProcessTS7056Annotations(content: string): string {
           name === 'PreviewCreativeRequestSchema'
             ? `{ request_type: z.ZodType<PreviewCreativeRequest['request_type'], PreviewCreativeRequest['request_type']> } & Record<string, z.ZodType>`
             : name === 'ProductSchema'
-              ? `{ [K in keyof Product]-?: K extends 'publisher_properties' ? z.ZodType : undefined extends Product[K] ? z.ZodOptional<z.ZodType<Exclude<Product[K], undefined>, Exclude<Product[K], undefined>>> : z.ZodType<Product[K], Product[K]> }`
+              ? 'ProductSchemaShape'
               : typedObjectShape;
-        annotation = `z.ZodObject<${objectShapeType}, z.core.$loose> & z.ZodType<${widened}, ${widened}>`;
+        // Product composition has two deliberate compatibility bridges:
+        // adopters replace publisher selectors with resolved properties and
+        // older placement views with their local output shape. Keep normal
+        // safeExtend compatibility checks for every other existing field and
+        // preserve the bridges across staged composition.
+        const objectType =
+          name === 'ProductSchema'
+            ? `ProductSchemaObject<${objectShapeType}>`
+            : `z.ZodObject<${objectShapeType}, z.core.$loose>`;
+        annotation = `${objectType} & z.ZodType<${widened}, ${widened}>`;
         const importBucket = typeSource === 'v2-projection' ? typesToImport.v2Projection : typesToImport[typeSource];
         importBucket.add(tsType);
+        if (name === 'ProductSchema') typesToImport.tools.add('PublisherPropertySelector');
       } else {
         annotation =
           name === 'ProductSchema'
@@ -236,7 +247,30 @@ function postProcessTS7056Annotations(content: string): string {
     ]
       .filter(Boolean)
       .join('\n');
-    result = result.replace(/import { z } from "zod";\n/, `import { z } from "zod";\n${importStatements}\n`);
+    const productSchemaHelperTypes = `type ProductSchemaShape = ${productObjectShapeType};
+type ProductSchemaSafeExtendShape<
+  Base extends z.core.$ZodShape,
+  U extends z.core.$ZodShape,
+> = {
+  [K in keyof U]: K extends 'publisher_properties' | 'placements'
+    ? U[K]
+    : K extends keyof Base
+      ? z.core.output<U[K]> extends z.core.output<Base[K]>
+        ? z.core.input<U[K]> extends z.core.input<Base[K]>
+          ? U[K]
+          : never
+        : never
+      : U[K];
+};
+type ProductSchemaObject<Shape extends z.core.$ZodShape> = {
+  safeExtend<U extends z.core.$ZodShape>(
+    shape: ProductSchemaSafeExtendShape<Shape, U>
+  ): ProductSchemaObject<Omit<Shape, keyof U> & U>;
+} & z.ZodObject<Shape, z.core.$loose>;`;
+    result = result.replace(
+      /import { z } from "zod";\n/,
+      `import { z } from "zod";\n${importStatements}\n${productSchemaHelperTypes}\n`
+    );
   }
   return result;
 }

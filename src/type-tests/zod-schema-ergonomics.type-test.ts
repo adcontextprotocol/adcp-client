@@ -37,6 +37,7 @@ import type {
   Package,
   PackageRequest,
   Product,
+  PublisherPropertySelector,
   ProductFormatDeclaration,
   Placement,
   Transformer,
@@ -75,16 +76,57 @@ GetProductsResponseSchema.pick({ status: true });
 const ProductOutputExtensionsSchema = z.object({
   publisher_properties: z.array(PublisherPropertySelectorSchema),
 });
-ProductSchema.safeExtend(ProductOutputExtensionsSchema.shape);
+const CompatibleProductSchema = ProductSchema.safeExtend(ProductOutputExtensionsSchema.shape);
+const StagedCompatibleProductSchema = CompatibleProductSchema.safeExtend({
+  placements: z.array(z.object({ placement_id: z.string(), name: z.string() })).optional(),
+});
 const ConsumerProductSchema = ProductSchema.safeExtend({
   publisher_properties: z.array(z.object({ property_id: z.string() })).optional(),
 });
+const StagedConsumerProductSchema = ConsumerProductSchema.safeExtend({
+  placements: z.array(z.object({ placement_id: z.string(), name: z.string() })).optional(),
+});
+function acceptZodObject<T extends z.ZodObject>(schema: T): T {
+  return schema;
+}
+acceptZodObject(ProductSchema);
+acceptZodObject(StagedConsumerProductSchema);
+acceptZodObject(StagedCompatibleProductSchema);
 declare const consumerProduct: z.output<typeof ConsumerProductSchema>;
 const consumerProductId: string = consumerProduct.product_id;
 void consumerProductId;
+declare const stagedConsumerProduct: z.output<typeof StagedConsumerProductSchema>;
+const stagedPublisherProperties: Array<{ property_id: string }> | undefined =
+  stagedConsumerProduct.publisher_properties;
+void stagedPublisherProperties;
+ProductSchema.safeExtend({
+  // @ts-expect-error Product compatibility bridges still require Zod schemas.
+  publisher_properties: 123,
+});
+ProductSchema.safeExtend({
+  // @ts-expect-error Product compatibility bridges still require Zod schemas.
+  placements: 123,
+});
+ProductSchema.safeExtend({
+  // @ts-expect-error Unbridged Product fields retain normal safeExtend compatibility checks.
+  name: z.number(),
+});
 const ProductChannelsSchema = ProductSchema.pick({ channels: true });
 const productChannelsInput: z.input<typeof ProductChannelsSchema> = {};
 void productChannelsInput;
+const ProductWithPlacementsSchema = ProductSchema.safeExtend({
+  placements: z
+    .array(
+      z.object({
+        placement_id: z.string(),
+        name: z.string(),
+      })
+    )
+    .optional(),
+});
+declare const productWithPlacements: z.output<typeof ProductWithPlacementsSchema>;
+const productPublisherProperties: PublisherPropertySelector[] = productWithPlacements.publisher_properties;
+void productPublisherProperties;
 const ExtendedGetProductsResponseSchema = GetProductsResponseSchema.extend({
   products: z.array(ProductSchema),
 }).partial();
@@ -93,14 +135,33 @@ if (extendedProductsResponse.success) {
   extendedProductsResponse.data.products?.map(item => item.product_id);
 }
 type IsAny<T> = 0 extends 1 & T ? true : false;
+type IsNever<T> = [T] extends [never] ? true : false;
 type Assert<T extends true> = T;
 type ExtendedProduct = NonNullable<z.output<typeof ExtendedGetProductsResponseSchema>['products']>[number];
 type ExtendedProductIsTyped = Assert<IsAny<ExtendedProduct> extends false ? true : false>;
+type ProductWithPlacementsPublisherProperties = z.output<typeof ProductWithPlacementsSchema>['publisher_properties'];
+type ProductWithPlacementsPublisherPropertiesIsTyped = Assert<
+  IsAny<ProductWithPlacementsPublisherProperties> extends false
+    ? IsNever<ProductWithPlacementsPublisherProperties> extends false
+      ? true
+      : false
+    : false
+>;
 const PickedProductPublisherPropertiesSchema = ProductSchema.pick({ publisher_properties: true });
 type PickedPublisherProperties = z.output<typeof PickedProductPublisherPropertiesSchema>['publisher_properties'];
-type PickedPublisherPropertiesIsTyped = Assert<IsAny<PickedPublisherProperties> extends false ? true : false>;
+type PickedPublisherPropertiesIsTyped = Assert<
+  IsAny<PickedPublisherProperties> extends false
+    ? IsNever<PickedPublisherProperties> extends false
+      ? true
+      : false
+    : false
+>;
+declare const pickedPublisherProperties: PickedPublisherProperties;
+const pickedPublisherPropertiesAsPublic: PublisherPropertySelector[] = pickedPublisherProperties;
 void (null as unknown as ExtendedProductIsTyped);
+void (null as unknown as ProductWithPlacementsPublisherPropertiesIsTyped);
 void (null as unknown as PickedPublisherPropertiesIsTyped);
+void pickedPublisherPropertiesAsPublic;
 type InferredPackage = z.infer<typeof PackageSchema>;
 declare const inferredPackage: InferredPackage;
 const inferredPackageAsPublic: Package = inferredPackage;
