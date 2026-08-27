@@ -12,6 +12,7 @@ import type { Storyboard } from './types';
 import { MUTATING_TASKS } from '../../utils/idempotency';
 import { validateFixtureResolutionDeclarations } from './fixture-resolution';
 import { valid as validSemver } from 'semver';
+import { parsePhaseCondition } from './phase-condition';
 
 /**
  * Supported `branch_set.semantics` values. Extend when AdCP adds `all_of`,
@@ -76,6 +77,7 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
   validateRequiredAnyOfTools(storyboard);
   validatePhaseDependsOn(storyboard);
   for (const phase of storyboard.phases) {
+    validatePhaseSkipIf(storyboard.id, phase);
     validateBranchSet(storyboard.id, phase);
     if (!phase.steps) continue;
     for (const step of phase.steps) {
@@ -88,6 +90,19 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
       validateAdvisoryDeclarations(storyboard.id, phase, step);
       validatePeerSubstitutesFor(storyboard.id, phase, step);
     }
+  }
+}
+
+function validatePhaseSkipIf(storyboardId: string, phase: Storyboard['phases'][number]): void {
+  if (phase.skip_if === undefined) return;
+  if (typeof phase.skip_if !== 'string') {
+    throw new Error(`[${storyboardId}] phase '${phase.id}': skip_if must be a string`);
+  }
+  try {
+    parsePhaseCondition(phase.skip_if);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`[${storyboardId}] phase '${phase.id}': ${detail}`);
   }
 }
 
