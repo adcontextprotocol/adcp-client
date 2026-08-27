@@ -17,6 +17,7 @@ const { describe, test, it } = require('node:test');
 const assert = require('node:assert');
 
 const { getAssertion, resolveAssertions } = require('../../dist/lib/testing/storyboard/assertions.js');
+const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
 // Side-effect import that should register all three built-ins.
 require('../../dist/lib/testing/storyboard/default-invariants.js');
 
@@ -1863,6 +1864,249 @@ describe('default-invariants: impairment.coherence', () => {
       out[1].output.every(o => o.passed),
       `propagated impairment should pass; got ${JSON.stringify(out[1].output)}`
     );
+  });
+
+  test('inverse: successful force_audience_status response is consumed by the runner', () => {
+    const out = run([
+      step({
+        step_id: 'suspend',
+        task: 'comply_test_controller',
+        request: {
+          transport: 'mcp',
+          operation: 'comply_test_controller',
+          payload: {
+            scenario: 'force_audience_status',
+            params: { audience_id: 'aud-1', status: 'suspended' },
+          },
+        },
+        response: {
+          status: 'completed',
+          success: true,
+          previous_state: 'ready',
+          current_state: 'suspended',
+        },
+      }),
+      step({
+        step_id: 'buy',
+        task: 'get_media_buys',
+        response: {
+          media_buys: [
+            mb('mb-1', {
+              status: 'active',
+              health: 'ok',
+              impairments: [],
+              packages: [{ targeting_overlay: { audience_include: ['aud-1'] } }],
+            }),
+          ],
+        },
+      }),
+    ]);
+    const inverse = out[1].output.find(o => o.hint && o.hint.violation === 'inverse');
+    assert.ok(inverse, 'controller-observed suspension must participate in inverse grading');
+    assert.equal(inverse.passed, false);
+    assert.equal(inverse.hint.resource_type, 'audience');
+    assert.equal(inverse.hint.resource_id, 'aud-1');
+    assert.equal(inverse.hint.resource_status, 'suspended');
+    assert.equal(inverse.hint.resource_step_id, 'suspend');
+  });
+
+  test('forward: force_audience_status current_state is authoritative over requested status', () => {
+    const out = run([
+      step({
+        step_id: 'force-request',
+        task: 'comply_test_controller',
+        request: {
+          transport: 'mcp',
+          operation: 'comply_test_controller',
+          payload: {
+            scenario: 'force_audience_status',
+            params: { audience_id: 'aud-1', status: 'suspended' },
+          },
+        },
+        response: {
+          status: 'completed',
+          success: true,
+          previous_state: 'processing',
+          current_state: 'ready',
+        },
+      }),
+      step({
+        step_id: 'buy',
+        task: 'get_media_buys',
+        response: {
+          media_buys: [
+            mb('mb-1', {
+              status: 'active',
+              health: 'impaired',
+              impairments: [{ resource_type: 'audience', resource_id: 'aud-1' }],
+            }),
+          ],
+        },
+      }),
+    ]);
+    const forward = out[1].output.find(o => o.hint && o.hint.violation === 'forward');
+    assert.ok(forward, 'response current_state=ready must make the impairment a forward violation');
+    assert.equal(forward.passed, false);
+    assert.equal(forward.hint.resource_status, 'ready');
+    assert.equal(forward.hint.resource_step_id, 'force-request');
+  });
+
+  test('inverse: force_audience_status ready → suspended → ready tracks impairment and recovery', () => {
+    const ctx = makeCtx();
+    spec.onStart(ctx);
+
+    const controllerStep = (stepId, previousState, currentState) =>
+      step({
+        step_id: stepId,
+        task: 'comply_test_controller',
+        request: {
+          transport: 'mcp',
+          operation: 'comply_test_controller',
+          payload: {
+            scenario: 'force_audience_status',
+            params: { audience_id: 'aud-1', status: currentState },
+          },
+        },
+        response: {
+          status: 'completed',
+          success: true,
+          previous_state: previousState,
+          current_state: currentState,
+        },
+      });
+    const snapshotStep = (stepId, health, impairments) =>
+      step({
+        step_id: stepId,
+        task: 'get_media_buys',
+        response: {
+          media_buys: [
+            mb('mb-1', {
+              status: 'active',
+              health,
+              impairments,
+              packages: [{ targeting_overlay: { audience_include: ['aud-1'] } }],
+            }),
+          ],
+        },
+      });
+
+    const outputs = [
+      controllerStep('ready', 'processing', 'ready'),
+      snapshotStep('ready-buy', 'ok', []),
+      controllerStep('suspend', 'ready', 'suspended'),
+      snapshotStep('suspended-buy', 'impaired', [
+        { resource_type: 'audience', resource_id: 'aud-1', package_ids: ['pkg-1'] },
+      ]),
+      controllerStep('recover', 'suspended', 'ready'),
+      snapshotStep('recovered-buy', 'ok', []),
+    ].map(s => spec.onStep(ctx, s));
+
+    assert.ok(
+      outputs.flat().every(o => o.passed),
+      `expected coherent lifecycle; got ${JSON.stringify(outputs)}`
+    );
+    const summary = spec.onEnd(ctx);
+    assert.equal(summary[0].observation_count, 1);
+    assert.equal(summary[0].status, 'pass');
+  });
+
+  test('runner integration: captured force_audience_status requests drive ready → suspended → ready grading', async () => {
+    let audienceStatus = 'processing';
+    const calls = [];
+    const client = {
+      getAgentInfo: async () => ({
+        name: 'audience-controller-stub',
+        tools: [{ name: 'comply_test_controller' }, { name: 'get_media_buys' }],
+      }),
+      executeTask: async (task, params) => {
+        calls.push({ task, params });
+        if (task === 'comply_test_controller') {
+          const previousState = audienceStatus;
+          audienceStatus = params.params.status;
+          return {
+            success: true,
+            data: {
+              status: 'completed',
+              success: true,
+              previous_state: previousState,
+              current_state: audienceStatus,
+            },
+          };
+        }
+        if (task === 'get_media_buys') {
+          const suspended = audienceStatus === 'suspended';
+          return {
+            success: true,
+            data: {
+              media_buys: [
+                mb('mb-1', {
+                  health: suspended ? 'impaired' : 'ok',
+                  impairments: suspended ? [{ resource_type: 'audience', resource_id: 'aud-1' }] : [],
+                  packages: [{ targeting_overlay: { audience_include: ['aud-1'] } }],
+                }),
+              ],
+            },
+          };
+        }
+        return { success: false, error: `unexpected task: ${task}` };
+      },
+    };
+    const controllerStep = (id, status) => ({
+      id,
+      title: id,
+      task: 'comply_test_controller',
+      sample_request: {
+        scenario: 'force_audience_status',
+        params: { audience_id: 'aud-1', status },
+      },
+    });
+    const snapshotStep = id => ({ id, title: id, task: 'get_media_buys', sample_request: {} });
+    const storyboard = {
+      id: 'force_audience_status_impairment_integration',
+      version: '1.0.0',
+      title: 'Forced audience impairment integration',
+      category: 'test',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      invariants: ['impairment.coherence'],
+      phases: [
+        {
+          id: 'lifecycle',
+          title: 'Audience lifecycle',
+          steps: [
+            controllerStep('ready', 'ready'),
+            snapshotStep('ready-buy'),
+            controllerStep('suspend', 'suspended'),
+            snapshotStep('suspended-buy'),
+            controllerStep('recover', 'ready'),
+            snapshotStep('recovered-buy'),
+          ],
+        },
+      ],
+    };
+
+    const result = await runStoryboard('https://stub.example/mcp', storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ['comply_test_controller', 'get_media_buys'],
+      _profile: {
+        name: 'audience-controller-stub',
+        tools: [{ name: 'comply_test_controller' }, { name: 'get_media_buys' }],
+      },
+      _client: client,
+    });
+
+    assert.equal(result.overall_passed, true, JSON.stringify(result));
+    assert.equal(calls.length, 6);
+    const suspendResult = result.phases[0].steps.find(s => s.step_id === 'suspend');
+    assert.equal(suspendResult.request.payload.scenario, 'force_audience_status');
+    assert.equal(suspendResult.request.payload.params.audience_id, 'aud-1');
+    assert.equal(suspendResult.response.current_state, 'suspended');
+    const summary = result.assertions.find(a => a.assertion_id === 'impairment.coherence' && a.scope === 'storyboard');
+    assert.equal(summary.observation_count, 1);
+    assert.equal(summary.status, 'pass');
   });
 
   test('inverse: suspended audience listed under audience_exclude is NOT a dependency (no failure)', () => {
