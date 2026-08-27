@@ -1,5 +1,17 @@
 # Changelog
 
+## 14.0.0-beta.13
+
+### Major Changes
+
+- c860b2d: Repair AdCP 3.2 compliance execution across webhook proof-of-control, wholesale signal account overlays, account/principal/tenant-scoped task storage, governance delivery requests, transformer JSON values, creative variant responses, and dual creative selector routes. TaskRegistry lifecycle methods and DecisioningAdcpServer task accessors now require an explicit scope.
+
+### Patch Changes
+
+- d8f9da8: Teach the storyboard runner's `impairment.coherence` invariant to observe successful `force_audience_status` controller transitions, including audience suspension and recovery, without adding a protocol-visible audience read task.
+- f327a32: Evaluate storyboard phase `skip_if` guards against accumulated runtime context, preserve test-kit guards, and reject unsupported expressions before dispatch.
+- fd68fed: Preserve concrete Product schema fields through consumer `safeExtend` composition.
+
 ## 14.0.0-beta.12
 
 ### Minor Changes
