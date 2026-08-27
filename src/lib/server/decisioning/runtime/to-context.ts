@@ -30,7 +30,7 @@
 import type { HandlerContext } from '../../create-adcp-server';
 import type { Account } from '../account';
 import type { RequestContext, CtxMetadataAccessor } from '../context';
-import type { TaskRegistry } from './task-registry';
+import type { TaskRegistry, TaskRegistryScope } from './task-registry';
 import {
   _createTaskHandoff,
   type TaskHandoffContext,
@@ -184,12 +184,16 @@ export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
  * `heartbeat()` remains a no-op stub (v6.1); it is a liveness / TTL-reset
  * signal for operator infrastructure, not buyer-facing.
  */
-export function buildHandoffContext(taskRegistry: TaskRegistry, taskId: string): TaskHandoffContext {
+export function buildHandoffContext(
+  taskRegistry: TaskRegistry,
+  taskId: string,
+  scope: TaskRegistryScope
+): TaskHandoffContext {
   return {
     id: taskId,
     update: async progress => {
       try {
-        await taskRegistry.updateProgress(taskId, progress);
+        await taskRegistry.updateProgress(taskId, scope, progress);
       } catch {
         // Swallow — a transient registry write failure must not abort the
         // adopter's background handoff function. The buyer-facing impact is

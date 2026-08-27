@@ -75,6 +75,7 @@ const FALLBACK_CALLER_AGENT_URL = 'https://e2e-orchestrator.adcontextprotocol.or
 const FIXTURE_AWARE_ENRICHERS = new Set<string>([
   'create_media_buy', // merges discovery-derived product_id / pricing_option_id INTO fixture packages[0]
   'comply_test_controller', // forces account.sandbox: true regardless of fixture
+  'check_governance', // preserves the authored intent-vs-delivery request shape
   'get_products', // preserves wholesale fixture fields while keeping resolved account scope authoritative
   'update_media_buy', // resolves account via resolveAccount(options) so sandbox routing matches create_media_buy
   'get_media_buys', // resolves account via resolveAccount(options) so sandbox routing matches create_media_buy
@@ -841,13 +842,35 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     };
   },
 
-  check_governance(step, context, options) {
+  check_governance(step, context, options, runnerVars) {
     // `caller` names the CALLER-AGENT's URL, not the brand — governance agents
     // use it for agent identity (rate limits, audit, JWS issuer correlation).
     // The brand belongs inside `payload`, where governance rules about the
     // advertised entity are evaluated. Using the fallback harness-orchestrator
     // URL keeps the semantics honest when no sample_request is authored.
-    return {
+    const fixture =
+      step.sample_request !== undefined
+        ? omitEnvelopeFields(
+            injectContext({ ...(step.sample_request as Record<string, unknown>) }, context, runnerVars) as Record<
+              string,
+              unknown
+            >
+          )
+        : undefined;
+    const isDelivery =
+      fixture?.phase === 'delivery' ||
+      fixture?.planned_delivery !== undefined ||
+      fixture?.delivery_metrics !== undefined ||
+      fixture?.governance_context !== undefined;
+
+    if (fixture && isDelivery) {
+      return {
+        ...fixture,
+        caller: fixture.caller ?? FALLBACK_CALLER_AGENT_URL,
+      };
+    }
+
+    const fallback = {
       plan_id: context.plan_id ?? 'unknown',
       caller: FALLBACK_CALLER_AGENT_URL,
       tool: 'get_products',
@@ -859,6 +882,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
         total_budget: options.budget ?? 10000,
       },
     };
+    return fixture ? { ...fallback, ...fixture } : fallback;
   },
 
   get_account_financials(_step, context, options) {

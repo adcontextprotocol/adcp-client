@@ -12,9 +12,9 @@ When you wire `pool` on `createAdcpServerFromPlatform`, the framework creates an
 | `adcp_ctx_metadata` | Adapter-internal state round-trip cache | Lifetime of referenced resource (often months) | Bounded by your active product / media-buy / creative count |
 | `adcp_decisioning_tasks` | HITL task lifecycle (submitted → working → completed/failed) | Until terminal + manual cleanup | Bounded by HITL request volume |
 
-**Run `getAllAdcpMigrations()` once per database at deploy time.** Idempotent: safe to re-run on every boot.
+**Run `getAllAdcpMigrations({ taskRegistryNamespace })` once per database at deploy time.** The namespace must be stable and unique per hosted tenant. The migration is idempotent and safe to re-run on every boot.
 
-`getAllAdcpMigrations()` installs one default idempotency table. The official
+`getAllAdcpMigrations({ taskRegistryNamespace })` installs one default idempotency table. The official
 `serve()` path automatically includes its canonical, server-controlled host in
 every resolved idempotency principal, so multiple hosted agents remain isolated
 when they share that table. Low-level integrations that do not enter through
@@ -87,13 +87,15 @@ CREATE INDEX idx_adcp_ctx_metadata_expires_at
 
 ### `adcp_decisioning_tasks`
 
-This DDL is returned by `getDecisioningTaskRegistryMigration()` (exported from `@adcp/sdk/server/decisioning`). Call `await pool.query(getDecisioningTaskRegistryMigration())` once at boot — it is idempotent (`CREATE TABLE IF NOT EXISTS`). Pass `{ tableName: 'your_tasks' }` to override the default `adcp_decisioning_tasks` name; constraint and index names derive from the table name automatically. Use `getAllAdcpMigrations()` from `@adcp/sdk/server` when you want one call to install all three SDK tables at once.
+This DDL is returned by `getDecisioningTaskRegistryMigration()` (exported from `@adcp/sdk/server/decisioning`). Call `await pool.query(getDecisioningTaskRegistryMigration({ namespace: taskRegistryNamespace }))` once at boot, using the same stable trusted namespace passed to the registry. Existing rows are backfilled into that namespace, and the migration is idempotent. Pass `{ tableName: 'your_tasks', namespace: taskRegistryNamespace }` to override the default table name. Use `getAllAdcpMigrations({ taskRegistryNamespace })` from `@adcp/sdk/server` when you want one call to install all three SDK tables at once.
 
 ```sql
 CREATE TABLE adcp_decisioning_tasks (
-  task_id        TEXT PRIMARY KEY,
+  registry_namespace TEXT NOT NULL,
+  task_id        TEXT NOT NULL,
   tool           TEXT NOT NULL,
   account_id     TEXT NOT NULL,
+  owner_scope    TEXT NOT NULL,
   status         TEXT NOT NULL DEFAULT 'submitted',
   status_message TEXT,
   result         JSONB,
@@ -104,7 +106,8 @@ CREATE TABLE adcp_decisioning_tasks (
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT adcp_decisioning_tasks_valid_status CHECK (
     status IN ('submitted', 'working', 'completed', 'failed')
-  )
+  ),
+  PRIMARY KEY (registry_namespace, account_id, owner_scope, task_id)
 );
 CREATE INDEX idx_adcp_decisioning_tasks_account_id ON adcp_decisioning_tasks(account_id);
 CREATE INDEX idx_adcp_decisioning_tasks_status_created ON adcp_decisioning_tasks(status, created_at);
@@ -112,8 +115,8 @@ CREATE INDEX idx_adcp_decisioning_tasks_status_created ON adcp_decisioning_tasks
 
 The four-value status constraint is intentionally narrow. The five additional spec-defined states (`input-required`, `canceled`, `rejected`, `auth-required`, `unknown`) are reserved for adopter-emitted transitions via a forthcoming `taskRegistry.transition()` API; a migration will widen this constraint when that API ships.
 
-- **PK on `task_id`** — primary lookup path.
-- **Index on `account_id`** — tenant-scoped reads (`getTaskState(taskId, expectedAccountId)` and ops queries).
+- **Composite PK on registry namespace, account, owner, and task ID** — prevents task identifiers from crossing hosted-tenant, account, or authenticated-principal boundaries.
+- **Index on `account_id`** — tenant-scoped operational queries.
 - **Index on `(status, created_at)`** — "pending tasks oldest first" queue queries for cron / monitoring.
 - **CHECK constraint on status** — guards against invalid transitions writing bad rows.
 

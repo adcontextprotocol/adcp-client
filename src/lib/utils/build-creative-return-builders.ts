@@ -1,14 +1,16 @@
-// Typed factory helpers for `build_creative` return values. Four shapes:
+// Typed factory helpers for `build_creative` return values. Five shapes:
 //   1. bare `CreativeManifest`            — auto-wrapped as `{ creative_manifest }`
 //   2. bare `CreativeManifest[]`          — auto-wrapped as `{ creative_manifests }`
 //   3. shaped `BuildCreativeSuccess`      — passthrough
 //   4. shaped `BuildCreativeMultiSuccess` — passthrough multi-format
+//   5. shaped `BuildCreativeVariantSuccess` — passthrough multiplicity
 //
 // Adopters writing the shaped envelope by hand consistently miss the
 // distinction between single (`creative_manifest`) and multi
 // (`creative_manifests`) field names. SHAPE-GOTCHAS §5.
 
 import type { BuildCreativeSuccess, BuildCreativeMultiSuccess, CreativeManifest } from '../types/core.generated';
+import type { BuildCreativeVariantSuccess } from '../types/tools.generated';
 
 type SingleEnvelopeFields = Omit<BuildCreativeSuccess, 'creative_manifest'> & { manifest: CreativeManifest };
 type MultiEnvelopeFields = Omit<BuildCreativeMultiSuccess, 'creative_manifests'> & { manifests: CreativeManifest[] };
@@ -38,10 +40,16 @@ export function multiEnvelopedBuildCreativeReturn(fields: MultiEnvelopeFields): 
   return { ...rest, creative_manifests: manifests as [CreativeManifest, ...CreativeManifest[]] };
 }
 
-/** Grouped accessor for the four `build_creative` return shapes. */
+/** Shaped multiplicity response. Passed through with its top-level `creatives` array intact. */
+export function variantEnvelopedBuildCreativeReturn(fields: BuildCreativeVariantSuccess): BuildCreativeVariantSuccess {
+  return fields;
+}
+
+/** Grouped accessor for the five `build_creative` return shapes. */
 export const buildCreativeReturn = {
   single: singleBuildCreativeReturn,
   multi: multiBuildCreativeReturn,
   singleEnveloped: singleEnvelopedBuildCreativeReturn,
   multiEnveloped: multiEnvelopedBuildCreativeReturn,
+  variantEnveloped: variantEnvelopedBuildCreativeReturn,
 } as const;

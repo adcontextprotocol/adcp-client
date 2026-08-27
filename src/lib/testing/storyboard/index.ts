@@ -97,6 +97,7 @@ export type { AssertionSpec, AssertionContext, RegisterAssertionOptions } from '
 export { createWebhookReceiver } from './webhook-receiver';
 export type {
   CapturedWebhook,
+  CapturedWebhookChallenge,
   CreateWebhookReceiverOptions,
   RetryReplayPolicy,
   WebhookFilter,

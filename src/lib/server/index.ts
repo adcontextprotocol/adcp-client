@@ -48,6 +48,7 @@ export type {
   AcquireRightsRejectedPayload as LegacyAcquireRightsRejectedPayload,
   BuildCreativeMultiPayload as LegacyBuildCreativeMultiPayload,
   BuildCreativePayload as LegacyBuildCreativePayload,
+  BuildCreativeVariantPayload as LegacyBuildCreativeVariantPayload,
   CalibrateContentPayload as LegacyCalibrateContentPayload,
   CheckGovernancePayload,
   CreateCollectionListPayload,

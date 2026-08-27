@@ -267,7 +267,7 @@ sales: SalesPlatform<MyMeta> = {
 **The buyer gets terminal state two ways:**
 
 1. **Webhook push** — buyer included `push_notification_config: { url, token }` in the original request. Framework signs (RFC 9421) + delivers to that URL with the spec's `mcp-webhook-payload.json` envelope on terminal state. URL is validated server-side: rejects RFC 1918, loopback, link-local, CGNAT, IPv6 unique-local, alternate IPv4 forms, and IPv4-mapped IPv6 before delivery (SSRF guard). Bad URLs FAIL FAST with `INVALID_REQUEST` at the request boundary — buyers see their config error immediately, not as silent webhook drops.
-2. **Polling** — framework auto-registers a `tasks_get` custom tool. Buyers call it with `{ task_id, account }` and receive the spec-flat lifecycle shape (`task_id`, `task_type`, `status`, `created_at`, `updated_at`, `completed_at` on terminal, `result` on completed, top-level `error: { code, message, details? }` on failed). Tenant-scoped — passes `account` through `accounts.resolve(ref, ctx)` and refuses cross-tenant probes with `REFERENCE_NOT_FOUND`. You don't write this tool; it's wired in by the framework. Programmatic access for ops / cron code is via `server.getTaskState(taskId, accountId)`.
+2. **Polling** — framework auto-registers a `tasks_get` custom tool. Buyers call it with `{ task_id, account }` and receive the spec-flat lifecycle shape (`task_id`, `task_type`, `status`, `created_at`, `updated_at`, `completed_at` on terminal, `result` on completed, top-level `error: { code, message, details? }` on failed). Tenant-scoped — passes `account` through `accounts.resolve(ref, ctx)` and refuses cross-tenant probes with `REFERENCE_NOT_FOUND`. You don't write this tool; it's wired in by the framework. Scoped application code uses `server.getTaskState(taskId, { accountId, ownerScope })`; explicitly trusted ops and test code can use `server.getTaskStateUnsafe(taskId)`.
 
 **Sync-only tools that need long-running completion** use `publishStatusChange(...)` for lifecycle updates instead of HITL. The per-tool wire response schemas don't include `Submitted` arms for `update_media_buy`, `build_creative`, `sync_catalogs`, or `get_products` (a spec inconsistency tracked as [adcp#3392](https://github.com/adcontextprotocol/adcp/issues/3392) — the Submitted schemas exist but aren't rolled into each tool's response `oneOf`). Until the spec consolidates, long-running work on those tools publishes status changes (`media_buy` → `active` → `completed`) on the event bus and buyers subscribe. When adcp#3392 lands, the SDK will widen the unified shape to `update_media_buy`, `build_creative`, and `sync_catalogs` — but NOT to `get_products` (see "Proposal generation" below).
 
@@ -528,7 +528,7 @@ Same pattern for stdio + http transports — `authenticate` runs at the transpor
 
 The framework's default in-memory `TaskRegistry` is gated by `NODE_ENV` — refuses to construct outside `{test, development}` unless `ADCP_DECISIONING_ALLOW_INMEMORY_TASKS=1` is explicitly set. Every HITL-eligible production deployment needs a durable task registry so task state survives process restarts and load-balancer failover.
 
-Ship `createPostgresTaskRegistry({ pool, tableName? })`:
+Ship `createPostgresTaskRegistry({ pool, namespace, tableName? })`:
 
 ```ts
 import { Pool } from 'pg';
@@ -540,19 +540,20 @@ import {
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-// Once at boot — idempotent CREATE TABLE IF NOT EXISTS, safe to re-run
-await pool.query(getDecisioningTaskRegistryMigration());
+const taskRegistryNamespace = 'tenant:my-agent';
+// Once at boot — idempotent and safe to re-run with the same namespace
+await pool.query(getDecisioningTaskRegistryMigration({ namespace: taskRegistryNamespace }));
 
 const server = createAdcpServerFromPlatform(platform, {
   name: 'My Ad Network',
   version: '1.0.0',
-  taskRegistry: createPostgresTaskRegistry({ pool }),
+  taskRegistry: createPostgresTaskRegistry({ pool, namespace: taskRegistryNamespace }),
 });
 ```
 
 Cross-instance reads work — process A allocates the task, process B reads the lifecycle for `tasks_get`. Terminal-state idempotency is enforced via SQL `WHERE status = 'submitted'` so concurrent webhook deliveries can't race to overwrite each other. Background-completion tracking (`_registerBackground`) is process-local — promises don't serialize, so production HITL flows that span process boundaries drive completion via webhook → an explicit `complete()` / `fail()` from the receiving process.
 
-Custom backend? Implement the `TaskRegistry` interface (8 methods) for Redis / DynamoDB / Spanner / etc. — the framework awaits each call so all 4 mutators (`create`, `complete`, `fail`, `getTask`) can be storage-backed.
+Custom backend? Implement the scoped `TaskRegistry` interface for Redis / DynamoDB / Spanner / etc. The framework awaits every storage method; apply both `accountId` and `ownerScope` on every read and write, then set `scopeVersion: 1`. Keep the explicitly named unsafe methods limited to trusted administrative and test paths.
 
 **Adopter `*Task` return size cap.** Postgres-backed registries cap `result` / `error` JSONB rows at 4MB. Returns over the cap surface via `onTaskTransition` with `errorCode: 'REGISTRY_WRITE_FAILED'` and skip webhook delivery (registry state is inconsistent, so the framework refuses to push). Offload large payloads to blob storage and return references in the result body instead. The cap protects the DB write path only — adopter code that serializes `result` for logs/metrics MUST impose its own bound.
 

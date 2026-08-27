@@ -11,6 +11,7 @@ import type {
   ActivateSignalSuccess,
   BuildCreativeMultiSuccess,
   BuildCreativeSuccess,
+  BuildCreativeVariantSuccess,
   CalibrateContentResponse,
   CheckGovernanceResponse,
   CreateCollectionListResponse,
@@ -129,6 +130,7 @@ export type SyncAudiencesPayload = ServerPayload<SyncAudiencesSuccess>;
 
 export type BuildCreativePayload = ServerPayload<BuildCreativeSuccess>;
 export type BuildCreativeMultiPayload = ServerPayload<BuildCreativeMultiSuccess>;
+export type BuildCreativeVariantPayload = ServerPayload<BuildCreativeVariantSuccess>;
 export type CanonicalPreviewCreativePayload = ServerPayload<CanonicalCreativeResponse<PreviewCreativeResponse>>;
 /** @deprecated Use `CanonicalPreviewCreativePayload` for canonical preview handlers. */
 export type PreviewCreativePayload = ServerPayload<PreviewCreativeResponse>;

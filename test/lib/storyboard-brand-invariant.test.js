@@ -252,6 +252,23 @@ describe('applyBrandInvariant', () => {
         brand: BRAND,
       });
     });
+
+    test('preserves authored wholesale signal-feed account overlays (#2702)', () => {
+      const overlayBrand = { domain: 'wholesale-signal-feed.example' };
+      const result = applyBrandInvariant(
+        {
+          discovery_mode: 'wholesale',
+          account: { brand: overlayBrand, operator: 'signal-operator.example' },
+        },
+        { brand: BRAND },
+        'get_signals'
+      );
+
+      assert.deepStrictEqual(result.account, {
+        brand: overlayBrand,
+        operator: 'signal-operator.example',
+      });
+    });
   });
 
   // ── AccountReference oneOf safety ──────────────────────────

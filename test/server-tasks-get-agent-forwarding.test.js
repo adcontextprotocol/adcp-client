@@ -75,7 +75,7 @@ async function createCompletedTask(server, accountId) {
       },
     },
   });
-  await server.awaitTask(result.structuredContent.task_id);
+  await server.awaitTaskUnsafe(result.structuredContent.task_id);
   return result.structuredContent.task_id;
 }
 

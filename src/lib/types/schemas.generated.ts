@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-27T04:39:30.483Z
+// Generated at: 2026-08-27T16:04:46.208Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -35,6 +35,7 @@ import { fullFormats as adcpJsonSchemaFormats } from "ajv-formats/dist/formats.j
 
 const adcpDateTimeFormat = adcpJsonSchemaFormats["date-time"] as { validate: (value: string) => boolean };
 const adcpJsonSchemaDateTime = (value: string): boolean => adcpDateTimeFormat.validate(value);
+import { type JsonValue } from "./tools.generated";
 
 export const AccountCurrencyModeSchema = z.union([z.literal("fixed"), z.literal("per_media_buy")]);
 
@@ -6643,6 +6644,8 @@ export const TasksListResponseSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const JsonValueSchema: z.ZodSchema<JsonValue> = z.lazy(() => z.union([z.string(), z.number(), z.boolean(), z.array(JsonValueSchema), z.record(z.string(), JsonValueSchema)]).nullable());
+
 export const TransformerParamSchema = z.object({}).passthrough().merge(z.object({
     field: z.string(),
     type: z.union([z.literal("string"), z.literal("number"), z.literal("integer"), z.literal("boolean")]),
@@ -6652,12 +6655,12 @@ export const TransformerParamSchema = z.object({}).passthrough().merge(z.object(
     minimum: z.number().optional(),
     maximum: z.number().optional(),
     options: z.array(z.object({
-        value: z.object({}).passthrough(),
+        value: z.json(),
         label: z.string().optional(),
         metadata: z.object({}).passthrough().optional()
     }).passthrough()).optional(),
     options_cursor: z.string().optional(),
-    default: z.object({}).passthrough().optional(),
+    default: z.json().optional(),
     required: z.boolean().optional(),
     description: z.string().optional()
 }).passthrough());

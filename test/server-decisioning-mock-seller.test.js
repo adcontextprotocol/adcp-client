@@ -219,9 +219,9 @@ describe('MockSeller worked example — unified hybrid shape', () => {
       assert.ok(result.structuredContent.task_id.startsWith('task_'));
       const taskId = result.structuredContent.task_id;
 
-      await server.awaitTask(taskId);
+      await server.awaitTaskUnsafe(taskId);
 
-      const final = await server.getTaskState(taskId);
+      const final = await server.getTaskStateUnsafe(taskId);
       assert.strictEqual(final.status, 'completed');
       assert.strictEqual(final.result.status, 'active');
     });
@@ -238,9 +238,9 @@ describe('MockSeller worked example — unified hybrid shape', () => {
       assert.strictEqual(result.structuredContent.status, 'submitted');
       const taskId = result.structuredContent.task_id;
 
-      await server.awaitTask(taskId);
+      await server.awaitTaskUnsafe(taskId);
 
-      const final = await server.getTaskState(taskId);
+      const final = await server.getTaskStateUnsafe(taskId);
       assert.strictEqual(final.status, 'failed');
       assert.strictEqual(final.error.code, 'INVALID_REQUEST');
       assert.strictEqual(final.error.recovery, 'correctable');

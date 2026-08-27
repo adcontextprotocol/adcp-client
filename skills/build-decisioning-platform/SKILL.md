@@ -289,13 +289,15 @@ import { Pool } from 'pg';
 import { createAdcpServerFromPlatform, getAllAdcpMigrations, serve } from '@adcp/sdk/server';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-await pool.query(getAllAdcpMigrations()); // one DDL call, all 3 tables
+const taskRegistryNamespace = 'tenant:my-agent';
+await pool.query(getAllAdcpMigrations({ taskRegistryNamespace })); // one DDL call, all 3 tables
 
 const platform = new MyPlatform(myAdServer);
 const server = createAdcpServerFromPlatform(platform, {
   name: 'My Sales Agent',
   version: '1.0.0',
   pool, // wires idempotency + ctxMetadata + taskRegistry
+  taskRegistryNamespace,
 });
 
 serve(() => server, { port: process.env.PORT });
@@ -310,7 +312,7 @@ For dev / single-process: omit `pool` entirely. Framework defaults to in-memory 
 Things you set up once at deploy time:
 
 - [ ] `DATABASE_URL` env var pointing at your Postgres instance
-- [ ] Run `getAllAdcpMigrations()` once per database (idempotent — safe to re-run)
+- [ ] Run `getAllAdcpMigrations({ taskRegistryNamespace })` once per database with a stable, trusted namespace (idempotent — safe to re-run)
 - [ ] OAuth provider config — see `advanced/OAUTH.md` if buyers authenticate via OIDC
 - [ ] `ADCP_VERSION` env (default `3.0.0`) if pinning a specific spec version
 

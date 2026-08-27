@@ -69,6 +69,27 @@ export function relaxZodCompatibilityArrayTypes(content: string): string {
     );
 }
 
+/** Preserve arbitrary JSON values when jsts sees them through aggregate roots. */
+export function normalizeTransformerParamJsonValueTypes(content: string): string {
+  const interfaceStart = content.indexOf('export interface TransformerParam {');
+  const typeStart = content.indexOf('export type TransformerParam =');
+  const start =
+    interfaceStart === -1 ? typeStart : typeStart === -1 ? interfaceStart : Math.min(interfaceStart, typeStart);
+  if (start === -1) return content;
+  const end = content.indexOf('\nexport ', start + 1);
+  const blockEnd = end === -1 ? content.length : end;
+  const block = content
+    .slice(start, blockEnd)
+    .replace(/value: \{\s*\};/, 'value: JsonValue;')
+    .replace(/default\?: \{\s*\};/, 'default?: JsonValue;')
+    .replace(/value: unknown;/, 'value: JsonValue;')
+    .replace(/default\?: unknown;/, 'default?: JsonValue;');
+  if (!block.includes('JsonValue')) return content;
+  const alias =
+    'export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };\n\n';
+  return content.slice(0, start) + alias + block + content.slice(blockEnd);
+}
+
 // Schema cache configuration
 const SCHEMA_CACHE_DIR = path.join(__dirname, '../schemas/cache');
 const LATEST_CACHE_DIR = path.join(SCHEMA_CACHE_DIR, 'latest');
@@ -4146,20 +4167,22 @@ async function generateTypes() {
   // residual jsts under-resolution artifacts (*Asset1, AssetVariant1, CreativeAsset1) —
   // see applyKnownJstsAliases for the rationale. Finally, restore the asset_type
   // discriminator on Individual*Asset slot aliases that jsts collapses (#1498).
-  const processedCoreTypes = relaxZodCompatibilityArrayTypes(
-    hardenTrustedMatchGeneratedTypes(
-      applyIndividualAssetDiscriminators(
-        addBackwardCompatTypeAliases(
-          simplifyForecastRange(
-            simplifyPriceBreakdown(
-              widenMediaBuyFeaturesIndexSignature(
-                widenPostalAreaSupportIndexSignature(
-                  fixTypedIndexSignatures(
-                    removeResidualInlineIndexSignatureArms(
-                      applyKnownJstsAliases(
-                        namePostalAreaCountryBranch(
-                          renameKnownNumberedSemanticTypes(
-                            removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))
+  const processedCoreTypes = normalizeTransformerParamJsonValueTypes(
+    relaxZodCompatibilityArrayTypes(
+      hardenTrustedMatchGeneratedTypes(
+        applyIndividualAssetDiscriminators(
+          addBackwardCompatTypeAliases(
+            simplifyForecastRange(
+              simplifyPriceBreakdown(
+                widenMediaBuyFeaturesIndexSignature(
+                  widenPostalAreaSupportIndexSignature(
+                    fixTypedIndexSignatures(
+                      removeResidualInlineIndexSignatureArms(
+                        applyKnownJstsAliases(
+                          namePostalAreaCountryBranch(
+                            renameKnownNumberedSemanticTypes(
+                              removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))
+                            )
                           )
                         )
                       )
@@ -4176,8 +4199,10 @@ async function generateTypes() {
   const coreChanged = writeFileIfChanged(coreTypesPath, processedCoreTypes);
 
   const toolTypesPath = path.join(libOutputDir, 'tools.generated.ts');
-  const processedToolTypes = relaxZodCompatibilityArrayTypes(
-    addCanonicalToolTypeAliases(applyIndividualAssetDiscriminators(addBackwardCompatTypeAliases(toolTypes)), tools)
+  const processedToolTypes = normalizeTransformerParamJsonValueTypes(
+    relaxZodCompatibilityArrayTypes(
+      addCanonicalToolTypeAliases(applyIndividualAssetDiscriminators(addBackwardCompatTypeAliases(toolTypes)), tools)
+    )
   );
   const toolsChanged = writeFileIfChanged(toolTypesPath, processedToolTypes);
 

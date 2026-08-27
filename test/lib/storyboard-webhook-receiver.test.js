@@ -36,6 +36,86 @@ async function post(url, body, headers) {
 }
 
 describe('createWebhookReceiver', () => {
+  test('echoes proof-of-control challenges on the registered callback URL (#2701)', async () => {
+    const receiver = await createWebhookReceiver();
+    try {
+      const challenge = 'proof-control-token-0000000000000001';
+      const callbackUrl = `${receiver.base_url}/step/register/op-1`;
+      const challengeBody = {
+        type: 'webhook.challenge',
+        challenge,
+        account_id: 'acct_123',
+        subscriber_id: 'buyer-primary',
+        seller_agent_url: 'https://seller.example/adcp',
+        delivery_auth: { mode: 'rfc9421' },
+        event_types: ['creative.status_changed'],
+      };
+      const response = await post(callbackUrl, challengeBody, {
+        signature: 'sig1=:c2lnbmF0dXJl:',
+        'signature-input': 'sig1=("@method" "@target-uri");keyid="seller-key"',
+      });
+      assert.strictEqual(response.status, 200);
+      assert.deepStrictEqual(await response.json(), { challenge });
+      assert.strictEqual(receiver.all().length, 0, 'challenge probes are not webhook deliveries');
+      assert.strictEqual(receiver.challenges().length, 1, 'challenge metadata is retained for grading');
+      assert.deepStrictEqual(receiver.challenges()[0].body, challengeBody);
+      assert.ok(receiver.challenges()[0].headers['signature-input']);
+
+      const malformed = await post(callbackUrl, { ...challengeBody, challenge: 'too-short' });
+      assert.strictEqual(malformed.status, 400);
+      const missingRequired = await post(callbackUrl, { type: 'webhook.challenge', challenge });
+      assert.strictEqual(missingRequired.status, 400);
+      const obsoleteRoute = await post(`${receiver.base_url}/challenge`, challengeBody);
+      assert.strictEqual(obsoleteRoute.status, 404);
+    } finally {
+      await receiver.close();
+    }
+  });
+
+  test('accepts the agent-level proof-of-control challenge arm', async () => {
+    const receiver = await createWebhookReceiver();
+    try {
+      const challenge = 'agent-proof-control-token-000000000001';
+      const body = {
+        type: 'webhook.challenge',
+        scope: 'agent',
+        challenge,
+        subscriber_id: 'registry-cache',
+        seller_agent_url: 'https://seller.example/adcp',
+        delivery_auth: { mode: 'rfc9421' },
+        event_types: ['capabilities.changed'],
+      };
+      const response = await post(`${receiver.base_url}/step/register_agent/op-2`, body);
+
+      assert.strictEqual(response.status, 200);
+      assert.deepStrictEqual(await response.json(), { challenge });
+      assert.deepStrictEqual(receiver.challenges()[0].body, body);
+      assert.strictEqual(receiver.all().length, 0);
+    } finally {
+      await receiver.close();
+    }
+  });
+
+  test('rejects oversized challenge envelopes before retaining them', async () => {
+    const receiver = await createWebhookReceiver();
+    try {
+      const response = await post(`${receiver.base_url}/step/register/op-large`, {
+        type: 'webhook.challenge',
+        challenge: 'proof-control-token-0000000000000001',
+        account_id: 'x'.repeat(17_000),
+        subscriber_id: 'buyer-primary',
+        seller_agent_url: 'https://seller.example/adcp',
+        delivery_auth: { mode: 'rfc9421' },
+        event_types: ['creative.status_changed'],
+      });
+
+      assert.strictEqual(response.status, 413);
+      assert.strictEqual(receiver.challenges().length, 0);
+    } finally {
+      await receiver.close();
+    }
+  });
+
   test('per-step URL routing captures step_id + operation_id from path', async () => {
     const receiver = await createWebhookReceiver();
     try {
@@ -156,6 +236,15 @@ describe('createWebhookReceiver', () => {
     await receiver.close();
     const result = await Promise.race([pending, delay(250).then(() => 'still-pending')]);
     assert.deepStrictEqual(result, []);
+  });
+
+  test('close resolves a pending first-match waiter immediately (#2701)', async () => {
+    const receiver = await createWebhookReceiver();
+    const pending = receiver.wait({ step_id: 'nobody' }, 60_000);
+
+    await receiver.close();
+    const result = await Promise.race([pending, delay(250).then(() => 'still-pending')]);
+    assert.deepStrictEqual(result, { timed_out: true });
   });
 
   test('close preserves matches already captured by a pending wait_all', async () => {
@@ -1129,6 +1218,120 @@ describe('runStoryboard: expect_no_webhook step task', () => {
     const esmAssertions = await import('../../dist/lib/testing/storyboard/webhook-assertions.mjs');
     assert.strictEqual(webhookAssertions.WEBHOOK_ASSERTION_TASKS.has('expect_no_webhook'), true);
     assert.strictEqual(esmAssertions.WEBHOOK_ASSERTION_TASKS.has('expect_no_webhook'), true);
+  });
+});
+
+describe('executeWebhookAssertionStep prerequisites', () => {
+  test('fails immediately when an earlier account notification setup failed (#2701)', async () => {
+    const receiver = await createWebhookReceiver();
+    try {
+      const setup = {
+        id: 'register_notifications',
+        title: 'Register notifications',
+        task: 'sync_accounts',
+        sample_request: {
+          accounts: [
+            {
+              notification_configs: [
+                {
+                  subscriber_id: 'buyer-primary',
+                  url: 'https://receiver.example/',
+                  event_types: ['creative.status_changed'],
+                },
+              ],
+            },
+          ],
+        },
+      };
+      const assertion = {
+        id: 'assert_notification',
+        title: 'Assert notification',
+        task: 'expect_webhook',
+        filter: { subscriber_id: 'buyer-primary' },
+        timeout_seconds: 60,
+      };
+      const runState = {
+        contributions: new Set(),
+        priorStepResults: new Map([
+          ['register_notifications', { step_id: 'register_notifications', passed: false, skipped: false }],
+        ]),
+        priorProbes: new Map(),
+        agentUrl: '',
+        webhookReceiver: { ...receiver, wait: async () => ({ timed_out: true }) },
+        runnerVars: createRunnerVariables({ webhookBase: receiver.base_url }),
+      };
+      const started = Date.now();
+      const result = await executeWebhookAssertionStep(
+        assertion,
+        'assertions',
+        {},
+        [
+          { step: setup, phaseId: 'setup', globalIndex: 0 },
+          { step: assertion, phaseId: 'assertions', globalIndex: 1 },
+        ],
+        {},
+        runState
+      );
+
+      assert.strictEqual(result.skipped, true);
+      assert.strictEqual(result.skip.reason, 'prerequisite_failed');
+      assert.match(result.skip.detail, /register_notifications/);
+      assert.ok(Date.now() - started < 250, 'must not enter the webhook timeout');
+    } finally {
+      await receiver.close();
+    }
+  });
+
+  test('requires every supplied discriminator to match a failed notification setup (#2701)', async () => {
+    const receiver = await createWebhookReceiver();
+    try {
+      const setup = {
+        id: 'register_other_notifications',
+        title: 'Register other notifications',
+        task: 'sync_accounts',
+        sample_request: {
+          accounts: [
+            {
+              notification_configs: [{ subscriber_id: 'other', event_types: ['creative.status_changed'] }],
+            },
+          ],
+        },
+      };
+      const assertion = {
+        id: 'assert_notification',
+        title: 'Assert notification',
+        task: 'expect_no_webhook',
+        triggered_by: 'trigger',
+        filter: { subscriber_id: 'buyer-primary', notification_type: 'creative.status_changed' },
+        timeout_seconds: 0,
+      };
+      const runState = {
+        contributions: new Set(),
+        priorStepResults: new Map([
+          ['register_other_notifications', { step_id: 'register_other_notifications', passed: false, skipped: false }],
+          ['trigger', { step_id: 'trigger', passed: true, skipped: false }],
+        ]),
+        priorProbes: new Map(),
+        agentUrl: '',
+        webhookReceiver: { ...receiver, wait: async () => ({ timed_out: true }) },
+        runnerVars: createRunnerVariables({ webhookBase: receiver.base_url }),
+      };
+      const result = await executeWebhookAssertionStep(
+        assertion,
+        'assertions',
+        {},
+        [
+          { step: setup, phaseId: 'setup', globalIndex: 0 },
+          { step: assertion, phaseId: 'assertions', globalIndex: 1 },
+        ],
+        {},
+        runState
+      );
+
+      assert.notStrictEqual(result.skip?.reason, 'prerequisite_failed');
+    } finally {
+      await receiver.close();
+    }
   });
 });
 

@@ -41,6 +41,7 @@ import type {
   GetCreativeDeliveryResponse,
   BuildCreativeSuccess,
   BuildCreativeMultiSuccess,
+  BuildCreativeVariantSuccess,
 } from '../../../types/tools.generated';
 import type {
   CanonicalSyncCreativeAsset,
@@ -63,11 +64,13 @@ export type GetCreativeDeliveryPayload = ServerPayload<CanonicalCreativeResponse
 export type LegacyGetCreativeDeliveryPayload = ServerPayload<GetCreativeDeliveryResponse>;
 export type LegacyBuildCreativePayload = ServerPayload<BuildCreativeSuccess>;
 export type LegacyBuildCreativeMultiPayload = ServerPayload<BuildCreativeMultiSuccess>;
+export type BuildCreativeVariantPayload = ServerPayload<BuildCreativeVariantSuccess>;
 export type LegacyBuildCreativeReturn =
   | CreativeManifest
   | CreativeManifest[]
   | LegacyBuildCreativePayload
-  | LegacyBuildCreativeMultiPayload;
+  | LegacyBuildCreativeMultiPayload
+  | BuildCreativeVariantPayload;
 
 interface CreativeAdServerPlatformBase<TCtxMeta> {
   /**

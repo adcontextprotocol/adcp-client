@@ -76,6 +76,7 @@ import {
 import type { ComplyControllerConfig } from '../../testing/comply-controller';
 import type { CanonicalListCreativesResponse } from '../../v2/projection/creative-delivery';
 import type { PostalArea } from '../../types/core.generated';
+import type { BuildCreativeVariantSuccess, TransformerParam } from '../../types/tools.generated';
 import { getAccountMode } from '../account-mode';
 
 // ── AdcpError construction ────────────────────────────────────────────
@@ -1085,8 +1086,30 @@ function _build_creative_return_factories_pin_arm(): void {
   const enveloped = buildCreativeReturn.singleEnveloped({ manifest: m, sandbox: true });
   void bare;
   void enveloped;
+  const variants: BuildCreativeVariantSuccess = {} as BuildCreativeVariantSuccess;
+  const variantEnvelope = buildCreativeReturn.variantEnveloped(variants);
+  void variantEnvelope;
   // @ts-expect-error — `creative_manifest` is the wire field, not the helper input.
   singleEnvelopedBuildCreativeReturn({ creative_manifest: m });
+}
+
+function _transformer_param_accepts_json_values(): void {
+  const param: TransformerParam = {
+    field: 'voice',
+    type: 'string',
+    value_source: 'enumerable',
+    default: null,
+    options: [{ value: ['voice-a', { locale: 'en-GB', weight: 1 }, true, null] }],
+  };
+  void param;
+  const invalid: TransformerParam = {
+    field: 'voice',
+    type: 'string',
+    value_source: 'enumerable',
+    // @ts-expect-error — functions are JavaScript values, not JSON values.
+    default: () => true,
+  };
+  void invalid;
 }
 
 function _media_buy_delivery_notification_factories_inject_discriminator(): void {

@@ -7686,13 +7686,15 @@ export function applyBrandInvariant(
       const acct = existingAccount as Record<string, unknown>;
       const isNaturalKeyVariant = 'brand' in acct || 'operator' in acct;
       if (isNaturalKeyVariant) {
-        // Wholesale cache-scope storyboards deliberately address a different
+        // Wholesale discovery storyboards deliberately address a different
         // natural-key account to prove public/account token isolation. Keep
-        // that explicitly authored account identity while still enforcing the
-        // run-scoped top-level brand. Other tools and buying modes retain the
-        // cross-step account-brand invariant from #579.
+        // that explicitly authored account identity for product and signal
+        // feeds while still enforcing the run-scoped top-level brand. Other
+        // tools and discovery modes retain the cross-step invariant from #579.
         const preserveWholesaleAccountBrand =
-          taskName === 'get_products' && request.buying_mode === 'wholesale' && acct.brand !== undefined;
+          ((taskName === 'get_products' && request.buying_mode === 'wholesale') ||
+            (taskName === 'get_signals' && request.discovery_mode === 'wholesale')) &&
+          acct.brand !== undefined;
         const merged: Record<string, unknown> = {
           ...acct,
           brand: preserveWholesaleAccountBrand ? acct.brand : brand,

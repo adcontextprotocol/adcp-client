@@ -5,7 +5,7 @@
  * restart and doesn't share state across instances behind a load balancer —
  * fine for tests and local dev, broken for production HITL paths
  * (`createMediaBuyTask`, `syncCreativesTask`, etc.). Wire this in via
- * `createAdcpServerFromPlatform({ taskRegistry: createPostgresTaskRegistry({ pool }) })`
+ * `createAdcpServerFromPlatform({ taskRegistry: createPostgresTaskRegistry({ pool, namespace }) })`
  * to persist task lifecycle across requests, processes, and crashes.
  *
  * @example
@@ -19,13 +19,14 @@
  *
  * const pool = new Pool({ connectionString: process.env.DATABASE_URL });
  *
- * // Run once at boot — idempotent CREATE TABLE IF NOT EXISTS.
- * await pool.query(getDecisioningTaskRegistryMigration());
+ * const taskRegistryNamespace = 'tenant:my-agent';
+ * // Run once at boot, using the same trusted namespace as the registry.
+ * await pool.query(getDecisioningTaskRegistryMigration({ namespace: taskRegistryNamespace }));
  *
  * const server = createAdcpServerFromPlatform(platform, {
  *   name: 'My Ad Network',
  *   version: '1.0.0',
- *   taskRegistry: createPostgresTaskRegistry({ pool }),
+ *   taskRegistry: createPostgresTaskRegistry({ pool, namespace: taskRegistryNamespace }),
  * });
  * ```
  *
@@ -47,7 +48,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { AdcpStructuredError, TaskHandoffProgress } from '../async-outcome';
-import type { TaskRecord, TaskRegistry, TaskStatus } from './task-registry';
+import type { TaskRecord, TaskRegistry, TaskRegistryScope, TaskStatus } from './task-registry';
 
 /**
  * Minimal subset of the `pg.Pool` interface used by the registry.
@@ -61,6 +62,8 @@ export interface PgQueryable {
 export interface CreatePostgresTaskRegistryOptions {
   /** A `pg.Pool` instance (or any `PgQueryable`). */
   pool: PgQueryable;
+  /** Trusted deployment/tenant namespace. Use a distinct value per hosted tenant. */
+  namespace: string;
   /**
    * Table name. Defaults to `'adcp_decisioning_tasks'` (vendor-prefixed to
    * avoid collisions with the MCP-level `adcp_mcp_tasks` table from
@@ -78,12 +81,21 @@ const DEFAULT_TABLE = 'adcp_decisioning_tasks';
 
 /** Validates a SQL identifier to prevent injection via table names. */
 const VALID_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
+const VALID_NAMESPACE = /^[A-Za-z0-9_.:-]{1,255}$/;
 
 function assertValidIdentifier(name: string): void {
-  if (!VALID_IDENTIFIER.test(name)) {
+  if (!VALID_IDENTIFIER.test(name) || Buffer.byteLength(name, 'utf8') > 40) {
     throw new Error(
       `Invalid table name "${name}": must be lowercase letters, digits, ` +
-        `or underscores, starting with a letter or underscore.`
+        `or underscores, starting with a letter or underscore, and at most 40 bytes.`
+    );
+  }
+}
+
+function assertValidNamespace(namespace: unknown): asserts namespace is string {
+  if (typeof namespace !== 'string' || !VALID_NAMESPACE.test(namespace)) {
+    throw new Error(
+      'Invalid registry namespace: namespace is required and must be 1-255 ASCII letters, digits, dots, underscores, colons, or hyphens.'
     );
   }
 }
@@ -141,19 +153,22 @@ function safeStringify(value: unknown, taskId: string): string {
  * @example
  * ```typescript
  * import { getDecisioningTaskRegistryMigration } from '@adcp/sdk/server/decisioning';
- * await pool.query(getDecisioningTaskRegistryMigration());
- * await pool.query(getDecisioningTaskRegistryMigration({ tableName: 'my_tasks' }));
+ * await pool.query(getDecisioningTaskRegistryMigration({ namespace: tenantId }));
+ * await pool.query(getDecisioningTaskRegistryMigration({ tableName: 'my_tasks', namespace: tenantId }));
  * ```
  */
-export function getDecisioningTaskRegistryMigration(options?: { tableName?: string }): string {
+export function getDecisioningTaskRegistryMigration(options: { tableName?: string; namespace: string }): string {
+  assertValidNamespace(options?.namespace);
   const table = options?.tableName ?? DEFAULT_TABLE;
   assertValidIdentifier(table);
+  const namespace = options.namespace;
   return `
 CREATE TABLE IF NOT EXISTS ${table} (
-  task_id         TEXT PRIMARY KEY,
+  registry_namespace TEXT NOT NULL DEFAULT '${namespace}',
+  task_id         TEXT NOT NULL,
   tool            TEXT NOT NULL,
   account_id      TEXT NOT NULL,
-  owner_scope     TEXT,
+  owner_scope     TEXT NOT NULL,
   status          TEXT NOT NULL DEFAULT 'submitted',
   status_message  TEXT,
   result          JSONB,
@@ -183,6 +198,45 @@ CREATE INDEX IF NOT EXISTS idx_${table}_status_created
 
 ALTER TABLE ${table}
   ADD COLUMN IF NOT EXISTS owner_scope TEXT;
+
+ALTER TABLE ${table}
+  ADD COLUMN IF NOT EXISTS registry_namespace TEXT NOT NULL DEFAULT '__adcp_legacy_unscoped__';
+
+UPDATE ${table}
+  SET registry_namespace = '${namespace}'
+  WHERE registry_namespace = '__adcp_legacy_unscoped__';
+
+ALTER TABLE ${table}
+  ALTER COLUMN registry_namespace SET DEFAULT '${namespace}';
+
+UPDATE ${table}
+  SET owner_scope = 'account:' || account_id
+  WHERE owner_scope IS NULL;
+
+ALTER TABLE ${table}
+  ALTER COLUMN owner_scope SET NOT NULL;
+
+DO $$
+DECLARE
+  current_primary_key TEXT;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('adcp-task-registry:${table}'));
+  SELECT conname INTO current_primary_key
+    FROM pg_constraint
+    WHERE conrelid = '${table}'::regclass AND contype = 'p';
+  IF current_primary_key IS NOT NULL AND current_primary_key <> '${table}_scope_pkey' THEN
+    EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', '${table}', current_primary_key);
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = '${table}_scope_pkey'
+      AND conrelid = '${table}'::regclass
+  ) THEN
+    ALTER TABLE ${table}
+      ADD CONSTRAINT ${table}_scope_pkey
+      PRIMARY KEY (registry_namespace, account_id, owner_scope, task_id);
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_${table}_owner_account
   ON ${table}(owner_scope, account_id);
@@ -229,25 +283,17 @@ function rowToRecord<TResult>(row: DbTaskRow): TaskRecord<TResult> {
  * is enforced via SQL `WHERE status = 'submitted'` predicates so concurrent
  * webhook deliveries can't race to overwrite each other.
  *
- * **Multi-tenant deployments — accountId namespacing.** When sharing a
- * single Postgres registry across tenants in a `TenantRegistry`
- * deployment (one table for all tenants), prefix `account_id` per-tenant
- * to prevent cross-tenant collisions. If tenant A and tenant B both
- * resolve a buyer to literal `account_id: 'acme'`, their tasks land in
- * the same row keyspace and `tasks_get` can't distinguish ownership
- * by `account_id` alone (the tenant boundary upstream IS protected by
- * `accounts.resolve(ref, ctx)` returning each tenant's own Account, but
- * the registry sees the same `acme` string in both rows). Recommended
- * pattern: adopters' `accounts.resolve` returns
- * `id: \`tenant_${tenantId}_${accountId}\`` so the table-level keys
- * stay distinct. Alternative: separate `tableName` per tenant, one
- * `createPostgresTaskRegistry({ pool, tableName })` per `TenantRegistry`
- * tenant — heavier ops, stronger isolation.
+ * **Multi-tenant deployments.** `namespace` is a trusted deployment/tenant
+ * partition and participates in every query plus the primary key. Construct
+ * one registry per tenant with a stable unique namespace; never derive it
+ * from buyer request parameters. Tenants may safely share the same table.
  */
 export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptions): TaskRegistry {
   const table = opts.tableName ?? DEFAULT_TABLE;
   assertValidIdentifier(table);
   const pool = opts.pool;
+  const namespace = opts.namespace;
+  assertValidNamespace(namespace);
 
   // Process-local background tracking — see file header note. Promises
   // can't be persisted; cross-instance HITL completion happens via
@@ -255,6 +301,7 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
   const backgrounds = new Map<string, Promise<void>>();
 
   return {
+    scopeVersion: 1,
     async create(createOpts: {
       tool: string;
       accountId: string;
@@ -264,13 +311,14 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
     }): Promise<{ taskId: string }> {
       const taskId = createOpts.overrideTaskId ?? `task_${randomUUID()}`;
       const result = await pool.query(
-        `INSERT INTO ${table} (task_id, tool, account_id, owner_scope, status, has_webhook) VALUES ($1, $2, $3, $4, 'submitted', $5) ON CONFLICT (task_id) DO NOTHING`,
+        `INSERT INTO ${table} (task_id, tool, account_id, owner_scope, status, has_webhook, registry_namespace) VALUES ($1, $2, $3, $4, 'submitted', $5, $6) ON CONFLICT (registry_namespace, account_id, owner_scope, task_id) DO NOTHING`,
         [
           taskId,
           createOpts.tool,
           createOpts.accountId,
           createOpts.ownerScope ?? `account:${createOpts.accountId}`,
           createOpts.hasWebhook === true,
+          namespace,
         ]
       );
       if ((result.rowCount ?? 0) === 0) {
@@ -279,79 +327,99 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
       return { taskId };
     },
 
-    async getTask<TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null> {
+    async getTask<TResult = unknown>(taskId: string, scope: TaskRegistryScope): Promise<TaskRecord<TResult> | null> {
       const { rows } = await pool.query(
         `SELECT task_id, tool, account_id, owner_scope, status, status_message, result, error, progress, has_webhook, created_at, updated_at
-         FROM ${table} WHERE task_id = $1`,
-        [taskId]
+         FROM ${table} WHERE task_id = $1 AND registry_namespace = $2 AND account_id = $3 AND owner_scope = $4`,
+        [taskId, namespace, scope.accountId, scope.ownerScope]
       );
       if (rows.length === 0) return null;
       return rowToRecord<TResult>(rows[0] as unknown as DbTaskRow);
     },
 
-    async list(listOpts: { accountId: string; ownerScope?: string }): Promise<{ tasks: TaskRecord[] }> {
-      if (listOpts.ownerScope === undefined) return { tasks: [] };
+    async _getTaskUnsafe<TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null> {
+      const { rows } = await pool.query(
+        `SELECT task_id, tool, account_id, owner_scope, status, status_message, result, error, progress, has_webhook, created_at, updated_at
+         FROM ${table} WHERE task_id = $1 AND registry_namespace = $2 LIMIT 2`,
+        [taskId, namespace]
+      );
+      if (rows.length !== 1) return null;
+      return rowToRecord<TResult>(rows[0] as unknown as DbTaskRow);
+    },
+
+    async list(listOpts: { accountId: string; ownerScope: string }): Promise<{ tasks: TaskRecord[] }> {
       const { rows } = await pool.query(
         `SELECT task_id, tool, account_id, owner_scope, status, status_message, result, error, progress, has_webhook, created_at, updated_at
          FROM ${table}
-         WHERE account_id = $1 AND (owner_scope = $2 OR (owner_scope IS NULL AND $2 = $3))
+         WHERE registry_namespace = $1 AND account_id = $2 AND owner_scope = $3
          ORDER BY created_at DESC, task_id DESC`,
-        [listOpts.accountId, listOpts.ownerScope, `account:${listOpts.accountId}`]
+        [namespace, listOpts.accountId, listOpts.ownerScope]
       );
       return { tasks: rows.map(row => rowToRecord(row as unknown as DbTaskRow)) };
     },
 
-    async complete<TResult>(taskId: string, result: TResult): Promise<void> {
+    async complete<TResult>(taskId: string, scope: TaskRegistryScope, result: TResult): Promise<void> {
       const json = safeStringify(result, taskId);
       assertResultSize(json, taskId);
       await pool.query(
         `UPDATE ${table}
-         SET status = 'completed', result = $2::jsonb, updated_at = NOW()
-         WHERE task_id = $1 AND status NOT IN ('completed', 'failed', 'rejected', 'canceled')`,
-        [taskId, json]
+         SET status = 'completed', result = $5::jsonb, updated_at = NOW()
+         WHERE task_id = $1 AND registry_namespace = $2 AND account_id = $3 AND owner_scope = $4
+           AND status NOT IN ('completed', 'failed', 'rejected', 'canceled')`,
+        [taskId, namespace, scope.accountId, scope.ownerScope, json]
       );
     },
 
-    async fail(taskId: string, error: AdcpStructuredError, result?: unknown): Promise<void> {
+    async fail(taskId: string, scope: TaskRegistryScope, error: AdcpStructuredError, result?: unknown): Promise<void> {
       const errorJson = safeStringify(error, taskId);
       const resultJson = result === undefined ? undefined : safeStringify(result, taskId);
       assertResultSize(errorJson, taskId);
       if (resultJson !== undefined) assertResultSize(resultJson, taskId);
       await pool.query(
         `UPDATE ${table}
-         SET status = 'failed', error = $2::jsonb, result = $3::jsonb, status_message = $4, updated_at = NOW()
-         WHERE task_id = $1 AND status NOT IN ('completed', 'failed', 'rejected', 'canceled')`,
-        [taskId, errorJson, resultJson ?? null, error.message]
+         SET status = 'failed', error = $5::jsonb, result = $6::jsonb, status_message = $7, updated_at = NOW()
+         WHERE task_id = $1 AND registry_namespace = $2 AND account_id = $3 AND owner_scope = $4
+           AND status NOT IN ('completed', 'failed', 'rejected', 'canceled')`,
+        [taskId, namespace, scope.accountId, scope.ownerScope, errorJson, resultJson ?? null, error.message]
       );
     },
 
-    async updateProgress(taskId: string, progress: TaskHandoffProgress): Promise<void> {
+    async updateProgress(taskId: string, scope: TaskRegistryScope, progress: TaskHandoffProgress): Promise<void> {
       const json = safeStringify(progress, taskId);
       await pool.query(
         `UPDATE ${table}
-         SET progress = $2::jsonb,
+         SET progress = $5::jsonb,
              status = CASE WHEN status = 'submitted' THEN 'working' ELSE status END,
              updated_at = NOW()
-         WHERE task_id = $1 AND status NOT IN ('completed', 'failed', 'rejected', 'canceled')`,
-        [taskId, json]
+         WHERE task_id = $1 AND registry_namespace = $2 AND account_id = $3 AND owner_scope = $4
+           AND status NOT IN ('completed', 'failed', 'rejected', 'canceled')`,
+        [taskId, namespace, scope.accountId, scope.ownerScope, json]
       );
     },
 
-    _registerBackground(taskId: string, completion: Promise<void>): void {
+    _registerBackground(taskId: string, scope: TaskRegistryScope, completion: Promise<void>): void {
+      const backgroundKey = JSON.stringify([scope.accountId, scope.ownerScope, taskId]);
       const composed: Promise<void> = completion.then(
         () => {
-          if (backgrounds.get(taskId) === composed) backgrounds.delete(taskId);
+          if (backgrounds.get(backgroundKey) === composed) backgrounds.delete(backgroundKey);
         },
         () => {
-          if (backgrounds.get(taskId) === composed) backgrounds.delete(taskId);
+          if (backgrounds.get(backgroundKey) === composed) backgrounds.delete(backgroundKey);
         }
       );
-      backgrounds.set(taskId, composed);
+      backgrounds.set(backgroundKey, composed);
     },
 
-    async awaitTask(taskId: string): Promise<void> {
-      const pending = backgrounds.get(taskId);
+    async awaitTask(taskId: string, scope: TaskRegistryScope): Promise<void> {
+      const pending = backgrounds.get(JSON.stringify([scope.accountId, scope.ownerScope, taskId]));
       if (pending) await pending;
+    },
+
+    async _awaitTaskUnsafe(taskId: string): Promise<void> {
+      const pending = Array.from(backgrounds.entries())
+        .filter(([key]) => (JSON.parse(key) as [string, string, string])[2] === taskId)
+        .map(([, completion]) => completion);
+      await Promise.all(pending);
     },
   } satisfies TaskRegistry;
 }

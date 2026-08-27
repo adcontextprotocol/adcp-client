@@ -269,11 +269,12 @@ In-memory task registry refuses to construct outside `NODE_ENV=test/development`
 ```ts
 import { createPostgresTaskRegistry, getDecisioningTaskRegistryMigration } from '@adcp/sdk/server';
 
-await pool.query(getDecisioningTaskRegistryMigration());
+const taskRegistryNamespace = 'tenant:my-agent';
+await pool.query(getDecisioningTaskRegistryMigration({ namespace: taskRegistryNamespace }));
 
 createAdcpServerFromPlatform(platform, {
   name: '...', version: '...',
-  taskRegistry: createPostgresTaskRegistry({ pool }),
+  taskRegistry: createPostgresTaskRegistry({ pool, namespace: taskRegistryNamespace }),
 });
 ```
 

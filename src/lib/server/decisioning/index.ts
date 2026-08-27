@@ -179,6 +179,7 @@ export type {
   LegacyBuildCreativeReturn,
   LegacyBuildCreativePayload,
   LegacyBuildCreativeMultiPayload,
+  BuildCreativeVariantPayload,
   PreviewCreativePayload,
   LegacyPreviewCreativePayload,
   LegacyListCreativeFormatsPayload,
@@ -195,6 +196,7 @@ export type {
   LegacyBuildCreativeReturn as CreativeAdServerLegacyBuildCreativeReturn,
   LegacyBuildCreativePayload as CreativeAdServerLegacyBuildCreativePayload,
   LegacyBuildCreativeMultiPayload as CreativeAdServerLegacyBuildCreativeMultiPayload,
+  BuildCreativeVariantPayload as CreativeAdServerBuildCreativeVariantPayload,
   PreviewCreativePayload as CreativeAdServerPreviewCreativePayload,
   LegacyPreviewCreativePayload as CreativeAdServerLegacyPreviewCreativePayload,
   LegacyListCreativeFormatsPayload as CreativeAdServerLegacyListCreativeFormatsPayload,
@@ -356,6 +358,7 @@ export { PlatformConfigError, validatePlatform } from './runtime/validate-platfo
 export {
   createInMemoryTaskRegistry,
   type TaskRegistry,
+  type TaskRegistryScope,
   type TaskRecord,
   type TaskStatus,
 } from './runtime/task-registry';

@@ -11,6 +11,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning/runtime/from-platform');
 const { createInMemoryTaskRegistry } = require('../dist/lib/server/decisioning/runtime/task-registry');
+const ACC_1_SCOPE = { accountId: 'acc_1', ownerScope: 'account:acc_1' };
 
 function buildPlatform(overrides = {}) {
   return {
@@ -84,8 +85,8 @@ describe('ctx.handoffToTask options.task_id (#1554)', () => {
     assert.strictEqual(result.structuredContent.status, 'submitted');
     assert.strictEqual(result.structuredContent.task_id, FORCED_ID);
 
-    await server.awaitTask(FORCED_ID);
-    const record = await server.getTaskState(FORCED_ID);
+    await server.awaitTask(FORCED_ID, ACC_1_SCOPE);
+    const record = await server.getTaskState(FORCED_ID, ACC_1_SCOPE);
     assert.strictEqual(record.status, 'completed');
     assert.strictEqual(record.result.media_buy_id, 'mb_1');
   });
@@ -162,16 +163,56 @@ describe('createInMemoryTaskRegistry overrideTaskId collision guard (#1554)', ()
     assert.ok(taskId.startsWith('task_'));
   });
 
+  it('scopes reads and lifecycle writes by account plus principal (#2703)', async () => {
+    const registry = createInMemoryTaskRegistry();
+    const { taskId } = await registry.create({
+      tool: 'create_media_buy',
+      accountId: 'acct-owner',
+      ownerScope: 'api_key:buyer-owner',
+    });
+    const owner = { accountId: 'acct-owner', ownerScope: 'api_key:buyer-owner' };
+    const otherAccount = { accountId: 'acct-attacker', ownerScope: 'api_key:buyer-owner' };
+    const otherPrincipal = { accountId: 'acct-owner', ownerScope: 'api_key:buyer-attacker' };
+
+    assert.ok(await registry.getTask(taskId, owner));
+    assert.strictEqual(await registry.getTask(taskId, otherAccount), null);
+    assert.strictEqual(await registry.getTask(taskId, otherPrincipal), null);
+
+    await registry.updateProgress(taskId, otherAccount, { percent: 50 });
+    await registry.complete(taskId, otherPrincipal, { leaked: true });
+    assert.strictEqual((await registry.getTask(taskId, owner)).status, 'submitted');
+
+    await registry.complete(taskId, owner, { media_buy_id: 'mb-owner' });
+    const completed = await registry.getTask(taskId, owner);
+    assert.strictEqual(completed.status, 'completed');
+    assert.deepStrictEqual(completed.result, { media_buy_id: 'mb-owner' });
+  });
+
+  it('permits the same public task_id in separate account/principal partitions (#2703)', async () => {
+    const registry = createInMemoryTaskRegistry();
+    const first = { accountId: 'acct-a', ownerScope: 'api_key:buyer-a' };
+    const second = { accountId: 'acct-b', ownerScope: 'api_key:buyer-b' };
+    await registry.create({ tool: 't', ...first, overrideTaskId: 'task_shared' });
+    await registry.create({ tool: 't', ...second, overrideTaskId: 'task_shared' });
+
+    await registry.complete('task_shared', first, { owner: 'a' });
+    await registry.complete('task_shared', second, { owner: 'b' });
+
+    assert.deepStrictEqual((await registry.getTask('task_shared', first)).result, { owner: 'a' });
+    assert.deepStrictEqual((await registry.getTask('task_shared', second)).result, { owner: 'b' });
+    assert.strictEqual(await registry._getTaskUnsafe('task_shared'), null, 'unsafe reads fail closed when ambiguous');
+  });
+
   it('clear() removes existing tasks and preserves the registry instance', async () => {
     const registry = createInMemoryTaskRegistry();
     const registerBackground = registry._registerBackground;
     await registry.create({ tool: 't', accountId: 'a1', overrideTaskId: 'task_clear' });
-    registry._registerBackground('task_clear', new Promise(() => {}));
+    registry._registerBackground('task_clear', { accountId: 'a1', ownerScope: 'account:a1' }, new Promise(() => {}));
 
     registry.clear();
 
     assert.strictEqual(registry._registerBackground, registerBackground);
-    assert.strictEqual(await registry.getTask('task_clear'), null);
+    assert.strictEqual(await registry.getTask('task_clear', { accountId: 'a1', ownerScope: 'account:a1' }), null);
     await assert.doesNotReject(() => registry.create({ tool: 't', accountId: 'a1', overrideTaskId: 'task_clear' }));
   });
 });
@@ -193,12 +234,12 @@ describe('compliance.reset taskRegistry flush (#2154)', () => {
 
     const first = await dispatchCreate(server);
     assert.strictEqual(first.structuredContent.task_id, FORCED_ID);
-    await server.awaitTask(FORCED_ID);
-    assert.ok(await taskRegistry.getTask(FORCED_ID), 'pre-reset task is present');
+    await server.awaitTask(FORCED_ID, ACC_1_SCOPE);
+    assert.ok(await taskRegistry.getTask(FORCED_ID, ACC_1_SCOPE), 'pre-reset task is present');
 
     await server.compliance.reset();
 
-    assert.strictEqual(await taskRegistry.getTask(FORCED_ID), null, 'reset cleared task registry');
+    assert.strictEqual(await taskRegistry.getTask(FORCED_ID, ACC_1_SCOPE), null, 'reset cleared task registry');
     const second = await dispatchCreate(server);
     assert.strictEqual(second.structuredContent.task_id, FORCED_ID);
     assert.notStrictEqual(second.isError, true, JSON.stringify(second.structuredContent));

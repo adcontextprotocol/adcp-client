@@ -584,6 +584,67 @@ describe('executeStoryboardTask creative wire selection', () => {
     assert.deepEqual(calls, [{ method: 'raw', request: params }]);
     assert.equal(result.data.wire, 'dual');
   });
+
+  for (const [label, formatIds, formatOptions] of [
+    ['equivalent', [{ id: 'display', agent_url: 'https://seller.example/' }], [{ format_kind: 'display' }]],
+    ['conflicting', [{ id: 'video', agent_url: 'https://seller.example/' }], [{ format_kind: 'audio' }]],
+    ['unprojectable', [{ id: 'custom', agent_url: 'https://other.example/' }], undefined],
+  ]) {
+    test(`preserves ${label} co-present format selector routes at the receiver (#2707)`, async () => {
+      const calls = [];
+      const pkg = { package_id: 'pkg-1', format_ids: formatIds };
+      if (formatOptions) pkg.format_options = formatOptions;
+      const params = { packages: [pkg] };
+
+      await executeStoryboardTask(
+        {
+          getAdcpVersion: () => '3.2.0-beta.6',
+          createMediaBuy: async () => {
+            throw new Error('canonical projection must not drop an authored legacy route');
+          },
+          createMediaBuyLegacy: async request => {
+            calls.push(request);
+            return { data: { media_buy_id: 'mb-1' } };
+          },
+        },
+        'create_media_buy',
+        params
+      );
+
+      assert.deepStrictEqual(calls, [params]);
+      assert.strictEqual(calls[0].ext, undefined, '3.2 requests must not be stamped as legacy wire');
+    });
+  }
+
+  test('preserves format_ids on update_media_buy new_packages (#2707)', async () => {
+    const calls = [];
+    const params = {
+      media_buy_id: 'mb-1',
+      new_packages: [
+        {
+          package_id: 'pkg-new',
+          format_ids: [{ id: 'display', agent_url: 'https://seller.example/' }],
+        },
+      ],
+    };
+
+    await executeStoryboardTask(
+      {
+        getAdcpVersion: () => '3.2.0-beta.6',
+        updateMediaBuy: async () => {
+          throw new Error('canonical projection must not drop new_packages format_ids');
+        },
+        updateMediaBuyLegacy: async request => {
+          calls.push(request);
+          return { data: { media_buy_id: 'mb-1' } };
+        },
+      },
+      'update_media_buy',
+      params
+    );
+
+    assert.deepStrictEqual(calls, [params]);
+  });
 });
 
 describe('executeStoryboardTask creative asset directives', () => {

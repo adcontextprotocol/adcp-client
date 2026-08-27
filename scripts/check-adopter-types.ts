@@ -52,11 +52,13 @@ import type {
   ActivateSignalPayload,
   LegacyBuildCreativePayload,
   LegacyBuildCreativeMultiPayload,
+  LegacyBuildCreativeVariantPayload,
   CheckGovernancePayload,
   CreativeApprovedPayload,
   CreatePropertyListPayload,
   CreateMediaBuyPayload,
   CreateMediaBuyHandlerResult,
+  DecisioningAdcpServer,
   GetMediaBuyDeliveryPayload,
   GetMediaBuysPayload,
   GetAccountFinancialsHandlerResult,
@@ -82,6 +84,7 @@ import type {
   SyncCreativesHandlerResult,
   SyncEventSourcesPayload,
   SyncGovernanceHandlerResult,
+  TaskRegistry,
   LegacyUpdateRightsPayload,
   UpdateMediaBuyPayload,
 } from '@adcp/sdk/server';
@@ -96,6 +99,7 @@ import { createSingleAgentClient, extractAdcpErrorFromMcp, extractAdcpErrorFromT
 import type {
   CreateMediaBuyPayload as TypesCreateMediaBuyPayload,
   CreateMediaBuySuccess,
+  BuildCreativeVariantSuccess,
   CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement,
   CanonicalFormatBase,
   CanonicalFormatDAASTAudio,
@@ -390,6 +394,32 @@ void extractAdcpErrorFromMcp;
 void extractAdcpErrorFromTransport;
 void createAdcpServerFromPlatform;
 
+// Scoped task-registry migration: the explicitly unsafe admin/test escape
+// hatches must survive stripInternal in the declarations that adopters pack.
+declare const _decisioningServer: DecisioningAdcpServer;
+void _decisioningServer.getTaskStateUnsafe('task_1');
+void _decisioningServer.awaitTaskUnsafe('task_1');
+const _taskRegistry: TaskRegistry = {
+  scopeVersion: 1,
+  async create() {
+    return { taskId: 'task_1' };
+  },
+  async getTask() {
+    return null;
+  },
+  async _getTaskUnsafe() {
+    return null;
+  },
+  async complete() {},
+  async fail() {},
+  async updateProgress() {},
+  _registerBackground() {},
+  async awaitTask() {},
+  async _awaitTaskUnsafe() {},
+};
+void _taskRegistry._getTaskUnsafe('task_1');
+void _taskRegistry._awaitTaskUnsafe('task_1');
+
 const _createMediaBuyPayload: CreateMediaBuyPayload = {
   media_buy_id: 'mb_1',
   confirmed_at: '2026-01-01T00:00:00Z',
@@ -462,6 +492,7 @@ const _payloadResults: [
   Result<GetMediaBuyDeliveryPayload, Error>,
   Result<LegacyBuildCreativePayload, Error>,
   Result<LegacyBuildCreativeMultiPayload, Error>,
+  Result<LegacyBuildCreativeVariantPayload, Error>,
   Result<SyncAudiencesPayload, Error>,
   Result<ActivateSignalPayload, Error>,
   Result<GetBrandIdentityPayload, Error>,
@@ -485,6 +516,7 @@ const _payloadResults: [
   }),
   ok({ creative_manifest: creativeManifest }),
   ok({ creative_manifests: [] }),
+  ok({ creatives: [] } satisfies BuildCreativeVariantSuccess),
   ok({ audiences: [] }),
   ok({ deployments: [] }),
   ok({ brand_id: 'brand_1', house: { domain: 'acme.com', name: 'Acme' }, names: [{ en: 'Acme' }] }),

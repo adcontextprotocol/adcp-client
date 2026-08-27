@@ -18,6 +18,7 @@ function runGeneratorHarness(source) {
     script,
     source
       .replaceAll('__GENERATOR__', JSON.stringify(path.join(REPO_ROOT, 'scripts/generate-types.ts')))
+      .replaceAll('__ZOD_GENERATOR__', JSON.stringify(path.join(REPO_ROOT, 'scripts/generate-zod-from-ts.ts')))
       .replaceAll('__REPO_ROOT__', JSON.stringify(REPO_ROOT))
       .replaceAll('__OUTPUT__', JSON.stringify(output))
   );
@@ -72,6 +73,74 @@ writeFileSync(__OUTPUT__, JSON.stringify({ output: relaxZodCompatibilityArrayTyp
 
   assert.match(result.output, /NamedFormatProduct \| CanonicalFormatProduct/);
   assert.match(result.output, /named_format_id: string;/);
+});
+
+test('TransformerParam defaults and enumerable option values retain arbitrary JSON types (#2704)', () => {
+  const result = runGeneratorHarness(`
+import { writeFileSync } from 'node:fs';
+import { postProcessTransformerParamJsonValues } from __ZOD_GENERATOR__;
+
+const input = \`export const TransformerParamSchema = z.object({
+    options: z.array(z.object({ value: JsonValueSchema })).optional(),
+    default: JsonValueSchema.optional(),
+});
+export const NextSchema = z.object({ value: z.object({}).passthrough() });\`;
+writeFileSync(__OUTPUT__, JSON.stringify({ output: postProcessTransformerParamJsonValues(input) }));
+`);
+
+  assert.match(result.output, /value: z\.json\(\)/);
+  assert.match(result.output, /default: z\.json\(\)\.optional\(\)/);
+  assert.match(result.output, /NextSchema = z\.object\(\{ value: z\.object/);
+});
+
+test('TransformerParam public types use recursive JSON values in aggregate tool output (#2704)', () => {
+  const result = runGeneratorHarness(`
+import { writeFileSync } from 'node:fs';
+import { normalizeTransformerParamJsonValueTypes } from __GENERATOR__;
+
+const input = \`export type TransformerParam = {} & {
+  options?: { value: {}; label?: string }[];
+  default?: {};
+}
+export interface NextType { value: {}; }\`;
+writeFileSync(__OUTPUT__, JSON.stringify({ output: normalizeTransformerParamJsonValueTypes(input) }));
+`);
+
+  assert.match(result.output, /export type JsonValue = string \| number \| boolean \| null/);
+  assert.match(result.output, /value: JsonValue/);
+  assert.match(result.output, /default\?: JsonValue/);
+  assert.match(result.output, /NextType \{ value: \{\}/);
+});
+
+test('generated TransformerParamSchema accepts scalar, array, object, and null JSON values (#2704)', () => {
+  const { TransformerParamSchema } = require('../dist/lib/types/schemas.generated.js');
+  const values = ['voice-1', 1.25, true, null, ['a', 2], { provider: 'example' }];
+
+  for (const value of values) {
+    assert.strictEqual(
+      TransformerParamSchema.safeParse({
+        field: 'voice',
+        type: 'string',
+        value_source: 'enumerable',
+        default: value,
+        options: [{ value }],
+      }).success,
+      true,
+      `expected ${JSON.stringify(value)} to remain valid JSON`
+    );
+  }
+
+  for (const value of [undefined, () => true, 1n, Symbol('not-json'), Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.strictEqual(
+      TransformerParamSchema.safeParse({
+        field: 'voice',
+        type: 'string',
+        value_source: 'enumerable',
+        options: [{ value }],
+      }).success,
+      false
+    );
+  }
 });
 
 test('PostalCountrySystem propagates unconditional requirements into every anyOf branch', () => {

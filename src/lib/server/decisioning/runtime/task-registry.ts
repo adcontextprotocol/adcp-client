@@ -10,7 +10,7 @@
  *      state (`complete` / `fail`) from the method's return/throw.
  *
  * Adopters never call into the registry directly. Wire-level `tasks/get`
- * integration (so buyers can poll the lifecycle) reads via `getTask`;
+ * integration (so buyers can poll the lifecycle) reads via scoped `getTask`;
  * test harnesses use `awaitTask` to flush the background promise
  * deterministically.
  *
@@ -84,14 +84,27 @@ export interface TaskRecord<TResult = unknown, TError extends AdcpStructuredErro
 
 export interface TaskRegistryListOptions {
   accountId: string;
-  /**
-   * Caller ownership scope derived from buyer agent, credential, session,
-   * or the single-principal account fallback. Optional for source
-   * compatibility with older custom registries, but buyer-visible protocol
-   * task tools pass it whenever they can identify a caller and built-in
-   * registries fail closed when it is absent.
-   */
-  ownerScope?: string;
+  /** Caller ownership scope derived from authenticated server context. */
+  ownerScope: string;
+}
+
+/** Account/principal boundary required for buyer-visible task access. */
+export interface TaskRegistryScope {
+  accountId: string;
+  ownerScope: string;
+}
+
+/** Defense-in-depth boundary check for custom registry results. */
+export function taskRecordMatchesScope(record: TaskRecord, scope: TaskRegistryScope): boolean {
+  if (record.accountId !== scope.accountId) return false;
+  return (
+    record.ownerScope === scope.ownerScope ||
+    (record.ownerScope === undefined && scope.ownerScope === `account:${scope.accountId}`)
+  );
+}
+
+function taskStorageKey(taskId: string, scope: TaskRegistryScope): string {
+  return JSON.stringify([scope.accountId, scope.ownerScope, taskId]);
 }
 
 export interface TaskRegistryListResult<TResult = unknown> {
@@ -103,6 +116,9 @@ export interface TaskRegistryListResult<TResult = unknown> {
 // resolves immediately. The framework `await`s every call, so the
 // in-memory case pays one microtask per dispatch — negligible.
 export interface TaskRegistry {
+  /** Confirms that lifecycle methods use the account/principal-scoped v1 signatures. */
+  readonly scopeVersion: 1;
+
   /**
    * Allocate a new task record. Returns the `taskId` the framework hands
    * to `platform.xxxTask(taskId, ...)`. Initial status is `submitted`.
@@ -112,7 +128,8 @@ export interface TaskRegistry {
    *
    * `overrideTaskId` — when set, the registry uses this exact string as the
    * task id instead of minting a fresh one. Throws if the id is already
-   * registered (uniqueness is the caller's responsibility).
+   * registered in the same account/principal scope (uniqueness within that
+   * scope is the caller's responsibility).
    */
   create(opts: {
     tool: string;
@@ -122,8 +139,11 @@ export interface TaskRegistry {
     overrideTaskId?: string;
   }): Promise<{ taskId: string }>;
 
-  /** Read a task by id. Returns `null` if unknown. */
-  getTask<TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null>;
+  /** Read a task within its account/principal boundary. */
+  getTask<TResult = unknown>(taskId: string, scope: TaskRegistryScope): Promise<TaskRecord<TResult> | null>;
+
+  /** Administrative/test access; returns null when an id is ambiguous across scopes. Never expose to buyer traffic. */
+  _getTaskUnsafe<TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null>;
 
   /**
    * List tasks owned by a resolved account. Buyer-facing AdCP task
@@ -143,13 +163,13 @@ export interface TaskRegistry {
    * Mark a task `completed` with the method's return value. No-op if the
    * task is already terminal (idempotent).
    */
-  complete<TResult>(taskId: string, result: TResult): Promise<void>;
+  complete<TResult>(taskId: string, scope: TaskRegistryScope, result: TResult): Promise<void>;
 
   /**
    * Mark a task `failed` with the structured error and, when available, the
    * canonical terminal artifact. No-op if the task is already terminal.
    */
-  fail(taskId: string, error: AdcpStructuredError, result?: unknown): Promise<void>;
+  fail(taskId: string, scope: TaskRegistryScope, error: AdcpStructuredError, result?: unknown): Promise<void>;
 
   /**
    * Record intermediate progress from `TaskHandoffContext.update(...)`.
@@ -157,23 +177,24 @@ export interface TaskRegistry {
    * call. No-op on already-terminal tasks. The `progress` payload is
    * written to the record and surfaced to buyers polling `tasks_get`.
    */
-  updateProgress(taskId: string, progress: TaskHandoffProgress): Promise<void>;
+  updateProgress(taskId: string, scope: TaskRegistryScope, progress: TaskHandoffProgress): Promise<void>;
 
   /**
    * Register the background completion promise the framework spawned for
    * the `*Task` invocation. Tests await this for deterministic settlement;
    * production callers don't need it.
-   *
-   * @internal
    */
-  _registerBackground(taskId: string, completion: Promise<void>): void;
+  _registerBackground(taskId: string, scope: TaskRegistryScope, completion: Promise<void>): void;
 
   /**
    * Await any registered background completion for a task. Resolves
    * immediately if no background is registered or it has already settled.
    * Used by test harnesses + `tasks/get` integration.
    */
-  awaitTask(taskId: string): Promise<void>;
+  awaitTask(taskId: string, scope: TaskRegistryScope): Promise<void>;
+
+  /** Administrative/test wait across every scope sharing this public task id. Never expose to buyer traffic. */
+  _awaitTaskUnsafe(taskId: string): Promise<void>;
 
   /**
    * Optional test-harness flush. In-memory registries expose this so
@@ -189,6 +210,7 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
   const backgrounds = new Map<string, Promise<void>>();
 
   return {
+    scopeVersion: 1,
     async create(opts: {
       tool: string;
       accountId: string;
@@ -197,11 +219,13 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
       overrideTaskId?: string;
     }): Promise<{ taskId: string }> {
       const taskId = opts.overrideTaskId ?? `task_${randomUUID()}`;
-      if (tasks.has(taskId)) {
+      const scope = { accountId: opts.accountId, ownerScope: opts.ownerScope ?? `account:${opts.accountId}` };
+      const storageKey = taskStorageKey(taskId, scope);
+      if (tasks.has(storageKey)) {
         throw new Error(`task_id already registered: ${taskId}`);
       }
       const now = new Date().toISOString();
-      tasks.set(taskId, {
+      tasks.set(storageKey, {
         taskId,
         tool: opts.tool,
         accountId: opts.accountId,
@@ -214,25 +238,26 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
       return { taskId };
     },
 
-    async getTask<TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null> {
-      const record = tasks.get(taskId);
+    async getTask<TResult = unknown>(taskId: string, scope: TaskRegistryScope): Promise<TaskRecord<TResult> | null> {
+      const record = tasks.get(taskStorageKey(taskId, scope));
       return (record as TaskRecord<TResult> | undefined) ?? null;
     },
 
+    async _getTaskUnsafe<TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null> {
+      const matches = Array.from(tasks.values()).filter(record => record.taskId === taskId);
+      return matches.length === 1 ? (matches[0] as TaskRecord<TResult>) : null;
+    },
+
     async list(opts: TaskRegistryListOptions): Promise<TaskRegistryListResult> {
-      if (opts.ownerScope === undefined) return { tasks: [] };
       return {
         tasks: Array.from(tasks.values()).filter(
-          record =>
-            record.accountId === opts.accountId &&
-            (record.ownerScope === opts.ownerScope ||
-              (record.ownerScope === undefined && opts.ownerScope === `account:${opts.accountId}`))
+          record => record.accountId === opts.accountId && record.ownerScope === opts.ownerScope
         ),
       };
     },
 
-    async complete<TResult>(taskId: string, result: TResult): Promise<void> {
-      const existing = tasks.get(taskId);
+    async complete<TResult>(taskId: string, scope: TaskRegistryScope, result: TResult): Promise<void> {
+      const existing = tasks.get(taskStorageKey(taskId, scope));
       if (!existing) return;
       if (isTerminalTaskStatus(existing.status)) return;
       existing.status = 'completed';
@@ -240,8 +265,8 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
       existing.updatedAt = new Date().toISOString();
     },
 
-    async fail(taskId: string, error: AdcpStructuredError, result?: unknown): Promise<void> {
-      const existing = tasks.get(taskId);
+    async fail(taskId: string, scope: TaskRegistryScope, error: AdcpStructuredError, result?: unknown): Promise<void> {
+      const existing = tasks.get(taskStorageKey(taskId, scope));
       if (!existing) return;
       if (isTerminalTaskStatus(existing.status)) return;
       existing.status = 'failed';
@@ -251,8 +276,8 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
       existing.updatedAt = new Date().toISOString();
     },
 
-    async updateProgress(taskId: string, progress: TaskHandoffProgress): Promise<void> {
-      const existing = tasks.get(taskId);
+    async updateProgress(taskId: string, scope: TaskRegistryScope, progress: TaskHandoffProgress): Promise<void> {
+      const existing = tasks.get(taskStorageKey(taskId, scope));
       if (!existing) return;
       if (isTerminalTaskStatus(existing.status)) return;
       if (existing.status === 'submitted') existing.status = 'working';
@@ -260,21 +285,29 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
       existing.updatedAt = new Date().toISOString();
     },
 
-    _registerBackground(taskId: string, completion: Promise<void>): void {
+    _registerBackground(taskId: string, scope: TaskRegistryScope, completion: Promise<void>): void {
+      const storageKey = taskStorageKey(taskId, scope);
       const composed: Promise<void> = completion.then(
         () => {
-          if (backgrounds.get(taskId) === composed) backgrounds.delete(taskId);
+          if (backgrounds.get(storageKey) === composed) backgrounds.delete(storageKey);
         },
         () => {
-          if (backgrounds.get(taskId) === composed) backgrounds.delete(taskId);
+          if (backgrounds.get(storageKey) === composed) backgrounds.delete(storageKey);
         }
       );
-      backgrounds.set(taskId, composed);
+      backgrounds.set(storageKey, composed);
     },
 
-    async awaitTask(taskId: string): Promise<void> {
-      const pending = backgrounds.get(taskId);
+    async awaitTask(taskId: string, scope: TaskRegistryScope): Promise<void> {
+      const pending = backgrounds.get(taskStorageKey(taskId, scope));
       if (pending) await pending;
+    },
+
+    async _awaitTaskUnsafe(taskId: string): Promise<void> {
+      const pending = Array.from(backgrounds.entries())
+        .filter(([key]) => (JSON.parse(key) as [string, string, string])[2] === taskId)
+        .map(([, completion]) => completion);
+      await Promise.all(pending);
     },
 
     clear(): void {

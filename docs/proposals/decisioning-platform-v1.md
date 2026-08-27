@@ -378,8 +378,8 @@ sales: SalesPlatform = {
 - **`AdcpError`** class — throwable structured error carrying `code`, `recovery`, `field?`, `suggestion?`, `retry_after?`, `details?`. Mirrors `schemas/cache/3.0.0/core/error.json`. Required field: `recovery` (the wire schema makes it optional, but every adopter needs to declare buyer-recovery intent on every rejection).
 - **`ctx.runAsync(opts, fn)`** — in-process async opt-in. Races `fn()` against `submittedAfterMs` (default 30s). Fast path: returns the value normally (sync wire arm). Slow path: throws internal `TaskDeferredError` (the runtime catches and projects to submitted envelope with `task_id` / `message` / `partial_result`); meanwhile `fn()` keeps running and notifies the registry on resolve/throw.
 - **`ctx.startTask(opts?)`** — out-of-process async explicit. Returns a `TaskHandle` whose `taskId` is framework-issued. Adopter persists the taskId; webhook handler later calls `notify` directly (or `server.completeTask` once the wire path lands).
-- **`server.getTaskState(taskId)`** — read the registry record (status, result, error, partialResult, statusMessage, timestamps). The API the forthcoming `tasks/get` wire handler plugs into.
-- **`server.awaitTask(taskId)`** — await any registered background completion. Used by tests + the wire path for deterministic settlement.
+- **`server.getTaskState(taskId, scope)`** — read the registry record (status, result, error, partialResult, statusMessage, timestamps) within an explicit account/principal scope. The API the forthcoming `tasks/get` wire handler plugs into.
+- **`server.awaitTask(taskId, scope)`** — await any registered background completion within that scope. Used by tests + the wire path for deterministic settlement.
 
 ### Production hardening (round-6)
 
