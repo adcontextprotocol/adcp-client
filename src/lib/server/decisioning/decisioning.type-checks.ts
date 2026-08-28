@@ -862,7 +862,10 @@ const _check_opts_no_ct: _opts_no_ct extends CreateAdcpServerFromPlatformOptions
 const _explicit_legacy_handler_options: CreateAdcpServerFromPlatformOptions = {
   name: 'legacy-handler-fixture',
   version: '1.0.0',
-  legacyHandlers: { mediaBuy: {} },
+  legacyHandlers: {
+    mediaBuy: {},
+    signals: { getSignals: async () => ({ signals: [] }) },
+  },
 };
 const _primary_looking_raw_handler_options: CreateAdcpServerFromPlatformOptions = {
   name: 'raw-handler-fixture',
