@@ -150,6 +150,12 @@ import type {
   LandingPageRequirement,
   LiftDimension,
   LogoSlot,
+  MacroDialectFamily,
+  MacroMappingStatus,
+  MacroProcessingActor,
+  MacroProcessingOperation,
+  MacroResolutionReason,
+  MacroValueContext,
   MakegoodRemedy,
   MarkdownAssetRequirements,
   MarkdownFlavor,
@@ -175,6 +181,7 @@ import type {
   PaymentTerms,
   PerformanceBaseline,
   PerformanceStandardMetric,
+  PixelTrackingEvent,
   PlatformExtensionReference,
   PolicyCategory,
   PolicyEnforcementLevel,
@@ -197,6 +204,7 @@ import type {
   PurchaseType,
   ReachUnit,
   ReportingFrequency,
+  RepresentationSelectionStrategy,
   RequestProposalsResponse,
   Responsive,
   RestrictedAttribute,
@@ -226,6 +234,8 @@ import type {
   TaskStatus,
   TaskType,
   TextAssetRequirements,
+  TrackerExecutionActor,
+  TrackerFiringPath,
   TransportMode,
   TravelTimeUnit,
   UIDType,
@@ -234,6 +244,7 @@ import type {
   UniversalMacro,
   UpdateFrequency,
   VASTAssetRequirements,
+  VASTMediaDeliveryMethod,
   VASTTrackingEvent,
   VASTVersion,
   ValidationMode,
@@ -250,7 +261,7 @@ import type {
   WebhookSecurityMethod,
 } from './core.generated';
 
-export type { AccountCurrencyMode, AccountReference, AccountScope, AccountStatus, ActionNotAllowedReason, ActionSource, AdCPProtocol, AdCPSpecialism, AdCPVersionEnvelope, AdvertiserIndustry, AgeDeterminationBasis, AgeVerificationMethod, AssessmentStatus, AssetContentType, AssetVariant, AttestationClaim, AttributionMethodology, AttributionModel, AudienceConstraints, AudienceEvidenceMethodology, AudienceResolutionMethod, AudienceSource, AudienceStatus, AudienceSubjectType, AudioChannelLayout, AudioDistributionType, AuthenticationScheme, AvailabilityStatus, AvailableMetric, BillingParty, BinaryVerdict, BrandAgentType, BrandReference, BrowserFamily, BusinessEntity, C2PAWatermarkAction, CTVAdExperience, CanceledBy, CancellationPolicy, CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement, CanonicalFormatBase, CanonicalFormatCoordinatedPlacements, CanonicalFormatDAASTAudio, CanonicalFormatDisplayTag, CanonicalFormatHTML5Banner, CanonicalFormatHostedAudio, CanonicalFormatHostedVideo, CanonicalFormatImage, CanonicalFormatImageCarousel, CanonicalFormatNativeInFeed, CanonicalFormatOption, CanonicalFormatResponsiveCreative, CanonicalFormatSellerRenderedStatefulDisplay, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven, CanonicalFormatVASTVideo, CanonicalMediaBuyActionMode, CanonicalMediaBuyActionName, CanonicalProposal, CatalogAction, CatalogItemDeliveryMetrics, CatalogItemStatus, CatalogType, CloudStorageProtocol, CoBrandingRequirement, CollectionCadence, CollectionKind, CollectionRelationship, CollectionStatus, CompletionSource, ConsentBasis, ContentIDType, ContentRatingSystem, CountryFusedPostalCodeSystem, CreativeAction, CreativeActivationMethod, CreativeAgentCapability, CreativeApprovalStatus, CreativeAsset, CreativeBrief, CreativeEventReasonCode, CreativeIdentifierType, CreativeMotionLevel, CreativeQuality, CreativeSelectionStrategy, CreativeSortField, CreativeStatus, DAASTTrackingEvent, DAASTVersion, DayOfWeek, DelegationAuthority, DeliveryMetricAggregate, DeliveryMetrics, DeliveryStatus, DeliveryType, DemographicSystem, DerivativeType, DevicePlatform, DeviceType, DigitalSourceType, DimensionUnit, DisclosurePersistence, DisclosurePosition, DistanceUnit, DistributionIdentifierType, EmbeddedProvenanceMethod, ErrorCode, ErrorScope, EscalationSeverity, EventType, Exclusivity, ExtensionObject, FeatureCheckStatus, FeedFormat, FeedbackSource, Fixed, ForecastMethod, ForecastPoint, ForecastRangeUnit, ForecastableMetric, Format, FormatIDParameter, FormatReferenceStructuredObject, FrameRateType, FrequencyCapScope, GOPType, GenreTaxonomy, GeoDeliveryMetrics, GeographicTargetingLevel, GetProductsAsyncSubmitted, GovernanceDecision, GovernanceDomain, GovernanceMode, GovernancePhase, HTTPMethod, HistoryEntryType, ImageAsset, ImpairmentOfflineState, ImpairmentReasonCode, IndicatorType, InstallmentStatus, JavaScriptModuleType, KeywordDeliveryMetrics, LandingPageRequirement, LiftDimension, LogoSlot, MakegoodRemedy, MarkdownFlavor, MatchIDType, MatchType, MeasurementTerms, MediaBuyActionMode, MediaBuyHealth, MediaBuyStatus, MediaBuyValidAction, MediaChannel, MetricScope, MetricType, MetroAreaSystem, MoovAtomPosition, MultiSize, None, NotificationType, OfferingAvailabilityStatus, OutcomeType, Pacing, PackageUpdate, PaymentTerms, PerformanceBaseline, PerformanceStandardMetric, PlatformExtensionReference, PolicyCategory, PolicyEnforcementLevel, PostalCodeSystem, PostalCountrySystem, PreviewOutputFormat, PriceAdjustmentKind, PricingModel, PricingStructure, ProductionQuality, PropertyIdentifierTypes, PropertyType, ProposalDeclineReason, ProposalRefinementReason, ProposalStatus, ProtocolEnvelope, Provenance, PublisherIdentifierTypes, PublisherPropertySelector, PurchaseType, ReachUnit, ReportingFrequency, RequestProposalsResponse, Responsive, RestrictedAttribute, RightType, RightUse, RightsBillingPeriod, RightsConstraint, SISessionStatus, ScanType, ScopedCreativeApproval, SignalAvailabilityType, SignalDefinitionEnrichment, SignalSource, SignalTargetingExpression, SignalValueType, SizeModeMutex, SnapshotUnavailableReason, SocialPlacementSurface, SortDirection, SortMetric, SpecialCategory, SponsoredPlacementType, TMPResponseType, TalentRole, TargetingOverlayRequirements, TargetingOverlaySupport, TaskStatus, TaskType, TransportMode, TravelTimeUnit, UIDType, URLAssetType, UniversalMacro, UpdateFrequency, VASTTrackingEvent, VASTVersion, ValidationMode, VideoPlacementType, ViewThresholdBasis, ViewabilityStandard, WCAGLevel, WarningAffectedResource, WarningCode, WatermarkMediaType, WebhookResponseType, WebhookSecurityMethod } from './core.generated';
+export type { AccountCurrencyMode, AccountReference, AccountScope, AccountStatus, ActionNotAllowedReason, ActionSource, AdCPProtocol, AdCPSpecialism, AdCPVersionEnvelope, AdvertiserIndustry, AgeDeterminationBasis, AgeVerificationMethod, AssessmentStatus, AssetContentType, AssetVariant, AttestationClaim, AttributionMethodology, AttributionModel, AudienceConstraints, AudienceEvidenceMethodology, AudienceResolutionMethod, AudienceSource, AudienceStatus, AudienceSubjectType, AudioChannelLayout, AudioDistributionType, AuthenticationScheme, AvailabilityStatus, AvailableMetric, BillingParty, BinaryVerdict, BrandAgentType, BrandReference, BrowserFamily, BusinessEntity, C2PAWatermarkAction, CTVAdExperience, CanceledBy, CancellationPolicy, CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement, CanonicalFormatBase, CanonicalFormatCoordinatedPlacements, CanonicalFormatDAASTAudio, CanonicalFormatDisplayTag, CanonicalFormatHTML5Banner, CanonicalFormatHostedAudio, CanonicalFormatHostedVideo, CanonicalFormatImage, CanonicalFormatImageCarousel, CanonicalFormatNativeInFeed, CanonicalFormatOption, CanonicalFormatResponsiveCreative, CanonicalFormatSellerRenderedStatefulDisplay, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven, CanonicalFormatVASTVideo, CanonicalMediaBuyActionMode, CanonicalMediaBuyActionName, CanonicalProposal, CatalogAction, CatalogItemDeliveryMetrics, CatalogItemStatus, CatalogType, CloudStorageProtocol, CoBrandingRequirement, CollectionCadence, CollectionKind, CollectionRelationship, CollectionStatus, CompletionSource, ConsentBasis, ContentIDType, ContentRatingSystem, CountryFusedPostalCodeSystem, CreativeAction, CreativeActivationMethod, CreativeAgentCapability, CreativeApprovalStatus, CreativeAsset, CreativeBrief, CreativeEventReasonCode, CreativeIdentifierType, CreativeMotionLevel, CreativeQuality, CreativeSelectionStrategy, CreativeSortField, CreativeStatus, DAASTTrackingEvent, DAASTVersion, DayOfWeek, DelegationAuthority, DeliveryMetricAggregate, DeliveryMetrics, DeliveryStatus, DeliveryType, DemographicSystem, DerivativeType, DevicePlatform, DeviceType, DigitalSourceType, DimensionUnit, DisclosurePersistence, DisclosurePosition, DistanceUnit, DistributionIdentifierType, EmbeddedProvenanceMethod, ErrorCode, ErrorScope, EscalationSeverity, EventType, Exclusivity, ExtensionObject, FeatureCheckStatus, FeedFormat, FeedbackSource, Fixed, ForecastMethod, ForecastPoint, ForecastRangeUnit, ForecastableMetric, Format, FormatIDParameter, FormatReferenceStructuredObject, FrameRateType, FrequencyCapScope, GOPType, GenreTaxonomy, GeoDeliveryMetrics, GeographicTargetingLevel, GetProductsAsyncSubmitted, GovernanceDecision, GovernanceDomain, GovernanceMode, GovernancePhase, HTTPMethod, HistoryEntryType, ImageAsset, ImpairmentOfflineState, ImpairmentReasonCode, IndicatorType, InstallmentStatus, JavaScriptModuleType, KeywordDeliveryMetrics, LandingPageRequirement, LiftDimension, LogoSlot, MacroDialectFamily, MacroMappingStatus, MacroProcessingActor, MacroProcessingOperation, MacroResolutionReason, MacroValueContext, MakegoodRemedy, MarkdownFlavor, MatchIDType, MatchType, MeasurementTerms, MediaBuyActionMode, MediaBuyHealth, MediaBuyStatus, MediaBuyValidAction, MediaChannel, MetricScope, MetricType, MetroAreaSystem, MoovAtomPosition, MultiSize, None, NotificationType, OfferingAvailabilityStatus, OutcomeType, Pacing, PackageUpdate, PaymentTerms, PerformanceBaseline, PerformanceStandardMetric, PixelTrackingEvent, PlatformExtensionReference, PolicyCategory, PolicyEnforcementLevel, PostalCodeSystem, PostalCountrySystem, PreviewOutputFormat, PriceAdjustmentKind, PricingModel, PricingStructure, ProductionQuality, PropertyIdentifierTypes, PropertyType, ProposalDeclineReason, ProposalRefinementReason, ProposalStatus, ProtocolEnvelope, Provenance, PublisherIdentifierTypes, PublisherPropertySelector, PurchaseType, ReachUnit, ReportingFrequency, RepresentationSelectionStrategy, RequestProposalsResponse, Responsive, RestrictedAttribute, RightType, RightUse, RightsBillingPeriod, RightsConstraint, SISessionStatus, ScanType, ScopedCreativeApproval, SignalAvailabilityType, SignalDefinitionEnrichment, SignalSource, SignalTargetingExpression, SignalValueType, SizeModeMutex, SnapshotUnavailableReason, SocialPlacementSurface, SortDirection, SortMetric, SpecialCategory, SponsoredPlacementType, TMPResponseType, TalentRole, TargetingOverlayRequirements, TargetingOverlaySupport, TaskStatus, TaskType, TrackerExecutionActor, TrackerFiringPath, TransportMode, TravelTimeUnit, UIDType, URLAssetType, UniversalMacro, UpdateFrequency, VASTMediaDeliveryMethod, VASTTrackingEvent, VASTVersion, ValidationMode, VideoPlacementType, ViewThresholdBasis, ViewabilityStandard, WCAGLevel, WarningAffectedResource, WarningCode, WatermarkMediaType, WebhookResponseType, WebhookSecurityMethod } from './core.generated';
 
 // Tool Parameter and Response Types
 // Generated from official AdCP schemas
@@ -1528,6 +1539,87 @@ export interface ProductFilters {
      */
     response_types?: [TMPResponseType, ...TMPResponseType[]];
   };
+  /**
+   * Filter to products whose audience_activation.methods matches at least one requested entry (OR across entries). Within an entry every specified field must match (AND); omitted optional fields are wildcards; directions matches on non-empty intersection, and a method that omits directions matches any requested directions; vendor matches on domain, plus brand_id when specified. Fields inapplicable to the requested pattern (e.g. transport on a clean_room entry) make that entry unsatisfiable. Sellers MUST exclude products with no audience_activation declaration when this filter is present; exclusions MAY be reported via filter_diagnostics.excluded_by. Experimental: part of the media_buy.audience_activation surface — buyers SHOULD check the seller's experimental_features before filtering on it; sellers that do not list the feature ignore this filter.
+   *
+   * @minItems 1
+   */
+  audience_activation_methods?: [
+    (
+      | {
+          pattern: 'sync_audiences';
+        }
+      | {
+          pattern: 'tmp_identity_match';
+          /**
+           * Require this buyer agent on tmp_identity_match entries. Buyers typically filter on their own agent_url.
+           */
+          buyer_agent?: {
+            agent_url: string;
+          };
+        }
+      | {
+          pattern: 'file_transfer';
+          transport?: CloudStorageProtocol;
+          /**
+           * Require a non-empty intersection with the method's declared directions (file_transfer only).
+           *
+           * @minItems 1
+           */
+          directions?: ['buyer_to_seller' | 'seller_to_buyer', ...('buyer_to_seller' | 'seller_to_buyer')[]];
+          vendor?: BrandReference;
+        }
+      | {
+          pattern: 'dataset_query';
+          vendor?: BrandReference;
+        }
+      | {
+          pattern: 'clean_room';
+          vendor?: BrandReference;
+        }
+      | {
+          pattern: 'platform_distribution';
+          vendor?: BrandReference;
+        }
+    ),
+    ...(
+      | {
+          pattern: 'sync_audiences';
+        }
+      | {
+          pattern: 'tmp_identity_match';
+          /**
+           * Require this buyer agent on tmp_identity_match entries. Buyers typically filter on their own agent_url.
+           */
+          buyer_agent?: {
+            agent_url: string;
+          };
+        }
+      | {
+          pattern: 'file_transfer';
+          transport?: CloudStorageProtocol;
+          /**
+           * Require a non-empty intersection with the method's declared directions (file_transfer only).
+           *
+           * @minItems 1
+           */
+          directions?: ['buyer_to_seller' | 'seller_to_buyer', ...('buyer_to_seller' | 'seller_to_buyer')[]];
+          vendor?: BrandReference;
+        }
+      | {
+          pattern: 'dataset_query';
+          vendor?: BrandReference;
+        }
+      | {
+          pattern: 'clean_room';
+          vendor?: BrandReference;
+        }
+      | {
+          pattern: 'platform_distribution';
+          vendor?: BrandReference;
+        }
+    )[]
+  ];
   required_features?: MediaBuyFeatures;
   /**
    * @deprecated
@@ -1590,7 +1682,7 @@ export interface ProductFilters {
    */
   required_performance_standards?: [PerformanceStandard, ...PerformanceStandard[]];
   /**
-   * Filter to products whose `reporting_capabilities.available_metrics` is a superset of these metrics — i.e., products that commit to reporting all listed metrics in delivery responses. Use this for capability-level discovery (e.g., 'I need products that report `completed_views` for a CTV CPCV buy'); guarantee-level requirements with thresholds belong in `required_performance_standards` and `measurement_terms`. Sellers MUST silently exclude products that cannot meet this list (filter-not-fail; do not return an error). Superset evaluation follows the container-subsumption rule in `enums/available-metric.json` — a product declaring the `viewability` container satisfies a requirement for the `viewable_rate` leaf. The product's declared `available_metrics` becomes the binding reporting contract carried into the resulting media buy — the same metric vocabulary is used to compute `missing_metrics` on `get_media_buy_delivery`.
+   * Filter to products whose `reporting_capabilities.available_metrics` is a superset of these metrics — i.e., products that commit to reporting all listed metrics in delivery responses. Use this for capability-level discovery (e.g., 'I need products that report `completed_views` for a CTV CPCV buy'); guarantee-level requirements with thresholds belong in `required_performance_standards` and `measurement_terms`. Sellers MUST silently exclude products that cannot meet this list (filter-not-fail; do not return an error). Under the container-subsumption rule in `enums/available-metric.json`, `viewability` satisfies numeric leaves such as `viewable_rate`; structured distributions require explicit `viewed_seconds_percentiles` or `viewed_seconds_histogram` declarations. The product's declared `available_metrics` becomes the binding reporting contract carried into the resulting media buy — the same metric vocabulary is used to compute `missing_metrics` on `get_media_buy_delivery`.
    *
    * @minItems 1
    */
@@ -2576,6 +2668,22 @@ export type Product = {
       ];
     };
     /**
+     * How buyer audience data can reach this product's targeting. Absence means undeclared — buyers SHOULD treat it as needs-clarification rather than non-support, except under an audience_activation_methods filter, where sellers MUST exclude undeclared products. Declare when the product accepts buyer audiences. Experimental: sellers declaring this MUST list media_buy.audience_activation in experimental_features on get_adcp_capabilities.
+     */
+    audience_activation?: {
+      /**
+       * Activation capabilities available on this product, as an unordered set. Entries are usually independent options; a clean_room entry may compose with dataset_query or platform_distribution to declare how a targetable result leaves the room or reaches the buying platform.
+       *
+       * @minItems 1
+       */
+      methods: [AudienceActivationMethod, ...AudienceActivationMethod[]];
+      preferred_method?: AudienceActivationMethod;
+      /**
+       * Free-text caveats (onboarding lead times, data-format constraints, regional restrictions).
+       */
+      notes?: string;
+    };
+    /**
      * Instructions for submitting physical creative materials (print, static OOH, cinema). Present only for products requiring physical delivery outside the digital creative assignment flow. Buyer agents MUST validate url and email domains against the seller's known domains (from adagents.json) before submitting materials. Never auto-submit without human confirmation.
      */
     material_submission?: {
@@ -2600,7 +2708,7 @@ export type Product = {
  */
 export type PropertyID = string;
 /**
- * Inline format declaration on a product. The `format_kind` discriminator names which canonical format the product narrows; `params` carries the canonical's parameter schema (slots, dimensions, durations, codecs, character limits, platform_extensions, etc.). Optional `format_option_id` (stable identifier for routing when a product's `format_options` contains multiple declarations sharing the same `format_kind`), optional `publisher_domain` (namespace for the format option when it comes from a publisher adagents.json catalog), `display_name` (seller-controlled human-readable label for dashboard and catalog UIs), and `applies_to_channels` (subset of the product's declared channels this declaration applies to — lets a multi-channel product carry distinct format_options per channel). Discriminated-union shape generates clean tagged unions in TypeScript and Pydantic codegen. Replaces v1's named-format pattern (where products referenced a separately-defined format file via compound `format_id`). Canonical product-bound declarations are the AdCP 3.2 authoring path; v1 named formats remain only as deprecated 3.x compatibility projections.
+ * Inline format declaration on a product. The `format_kind` discriminator names which canonical format the product narrows; `params` carries only the canonical creative-shape parameters (slots, dimensions, durations, codecs, character limits, platform_extensions, etc.). Processing metadata such as `macro_resolution_capabilities` belongs at this declaration's top level rather than inside `params`. Optional `format_option_id` (stable identifier for routing when a product's `format_options` contains multiple declarations sharing the same `format_kind`), optional `publisher_domain` (namespace for the format option when it comes from a publisher adagents.json catalog), `display_name` (seller-controlled human-readable label for dashboard and catalog UIs), and `applies_to_channels` (subset of the product's declared channels this declaration applies to — lets a multi-channel product carry distinct format_options per channel). Discriminated-union shape generates clean tagged unions in TypeScript and Pydantic codegen. Replaces v1's named-format pattern (where products referenced a separately-defined format file via compound `format_id`). Canonical product-bound declarations are the AdCP 3.2 authoring path; v1 named formats remain only as deprecated 3.x compatibility projections.
  *
  * **Closed-set semantics (normative).** `format_options[]` is the closed set of accepted formats for this product. Sellers MUST reject `create_media_buy` requests targeting any `format_kind` (or format option reference) not present in this list — typically with `UNSUPPORTED_FEATURE` or a seller-specific code; the rejection is structural, not negotiable. `seller_preference` modulates *within* the accepted set (a soft ranking hint between equally-acceptable options), it is NOT an enforcement axis. A product wanting to say 'this format is the only one that works' lists exactly that one entry in `format_options[]`; everything else falls outside the set and is rejected by the closed-set rule.
  *
@@ -2614,6 +2722,7 @@ export type ProductFormatDeclaration = {
 } & {
 } & {
 } & {
+} & {
   /**
    * Stable identifier for this declaration within its namespace. REQUIRED when a product contains multiple declarations with the same format_kind and SHOULD be set on every entry. Publisher-backed options pair it with publisher_domain; product-local options omit publisher_domain. When a single declaration has a unique format_kind and no ID, buyers author canonically with format_kind plus params; they MUST NOT fall back to deprecated format_ids merely because this optional ID is absent. Examples: 'display_image_300x250', 'responsive_search', 'daily_pulse_homepage_image'.
    */
@@ -2622,6 +2731,17 @@ export type ProductFormatDeclaration = {
    * Namespace for `format_option_id` when this declaration references or narrows a publisher-declared format option from that publisher's adagents.json top-level `formats[]`. Product-local options omit this field and are selected by `format_option_id` within the target product.
    */
   publisher_domain?: string;
+  tracker_execution_contract?: TrackerExecutionContract;
+  /**
+   * Binding format-option processing capabilities for exact macro dialect identities, semantics, operations, actors, contexts, and encodings. Absence means undeclared, not supported on the opt-in declared-token path. Seller-wide capabilities are only a ceiling. This field does not claim that a buyer tracker asset is honored or fired.
+   *
+   * @minItems 1
+   */
+  macro_resolution_capabilities?: [MacroProcessingCapability, ...MacroProcessingCapability[]];
+  /**
+   * Completeness assertion for technical creative acceptance constraints in this declaration. When true, the declaring party asserts that every technical constraint within its authority is expressed by this declaration (including fetched custom-format and platform-extension schemas), and every omitted technical field means no constraint at that layer. A creative that satisfies the complete effective technical contract MUST NOT later be rejected for an undisclosed technical constraint. When false or absent, omitted technical constraints are undeclared: consumers MUST NOT interpret omission as support, no constraint, or a prose/default value. The effective product/placement contract is complete only when every applicable product, publisher, and placement declaration asserts true. This assertion is limited to technical acceptance; it does not waive policy, legal, security, malware, transport/fetch, corrupted-content, or materially misdeclared-asset checks. Creative size fields ending in `_kb` use exactly 1,000 bytes per KB and fields ending in `_mb` use exactly 1,000,000 bytes per MB.
+   */
+  technical_requirements_complete?: boolean;
   /**
    * Optional seller-controlled human-readable label for this format declaration. Used by buyer dashboards, catalog UIs, and reporting surfaces to show a seller's own naming ('Homepage Takeover', 'Branded Canvas', 'Reels Premium Video') rather than the raw `format_kind` or `format_option_id`. Has no machine semantics — buyer agents route on `format_kind` and `format_option_id`; `display_name` is purely for human presentation. Freeform; no enumeration. Sellers SHOULD keep it stable once published to avoid dashboard churn.
    */
@@ -2703,6 +2823,17 @@ export type ProductFormatDeclaration = {
      * Namespace for `format_option_id` when this declaration references or narrows a publisher-declared format option from that publisher's adagents.json top-level `formats[]`. Product-local options omit this field and are selected by `format_option_id` within the target product.
      */
     publisher_domain?: string;
+    tracker_execution_contract?: TrackerExecutionContract;
+    /**
+     * Binding format-option processing capabilities for exact macro dialect identities, semantics, operations, actors, contexts, and encodings. Absence means undeclared, not supported on the opt-in declared-token path. Seller-wide capabilities are only a ceiling. This field does not claim that a buyer tracker asset is honored or fired.
+     *
+     * @minItems 1
+     */
+    macro_resolution_capabilities?: [MacroProcessingCapability, ...MacroProcessingCapability[]];
+    /**
+     * Completeness assertion for technical creative acceptance constraints in this declaration. When true, the declaring party asserts that every technical constraint within its authority is expressed by this declaration (including fetched custom-format and platform-extension schemas), and every omitted technical field means no constraint at that layer. A creative that satisfies the complete effective technical contract MUST NOT later be rejected for an undisclosed technical constraint. When false or absent, omitted technical constraints are undeclared: consumers MUST NOT interpret omission as support, no constraint, or a prose/default value. The effective product/placement contract is complete only when every applicable product, publisher, and placement declaration asserts true. This assertion is limited to technical acceptance; it does not waive policy, legal, security, malware, transport/fetch, corrupted-content, or materially misdeclared-asset checks. Creative size fields ending in `_kb` use exactly 1,000 bytes per KB and fields ending in `_mb` use exactly 1,000,000 bytes per MB.
+     */
+    technical_requirements_complete?: boolean;
     /**
      * Optional seller-controlled human-readable label for this format declaration. Used by buyer dashboards, catalog UIs, and reporting surfaces to show a seller's own naming ('Homepage Takeover', 'Branded Canvas', 'Reels Premium Video') rather than the raw `format_kind` or `format_option_id`. Has no machine semantics — buyer agents route on `format_kind` and `format_option_id`; `display_name` is purely for human presentation. Freeform; no enumeration. Sellers SHOULD keep it stable once published to avoid dashboard churn.
      */
@@ -2784,6 +2915,17 @@ export type ProductFormatDeclaration = {
      * Namespace for `format_option_id` when this declaration references or narrows a publisher-declared format option from that publisher's adagents.json top-level `formats[]`. Product-local options omit this field and are selected by `format_option_id` within the target product.
      */
     publisher_domain?: string;
+    tracker_execution_contract?: TrackerExecutionContract;
+    /**
+     * Binding format-option processing capabilities for exact macro dialect identities, semantics, operations, actors, contexts, and encodings. Absence means undeclared, not supported on the opt-in declared-token path. Seller-wide capabilities are only a ceiling. This field does not claim that a buyer tracker asset is honored or fired.
+     *
+     * @minItems 1
+     */
+    macro_resolution_capabilities?: [MacroProcessingCapability, ...MacroProcessingCapability[]];
+    /**
+     * Completeness assertion for technical creative acceptance constraints in this declaration. When true, the declaring party asserts that every technical constraint within its authority is expressed by this declaration (including fetched custom-format and platform-extension schemas), and every omitted technical field means no constraint at that layer. A creative that satisfies the complete effective technical contract MUST NOT later be rejected for an undisclosed technical constraint. When false or absent, omitted technical constraints are undeclared: consumers MUST NOT interpret omission as support, no constraint, or a prose/default value. The effective product/placement contract is complete only when every applicable product, publisher, and placement declaration asserts true. This assertion is limited to technical acceptance; it does not waive policy, legal, security, malware, transport/fetch, corrupted-content, or materially misdeclared-asset checks. Creative size fields ending in `_kb` use exactly 1,000 bytes per KB and fields ending in `_mb` use exactly 1,000,000 bytes per MB.
+     */
+    technical_requirements_complete?: boolean;
     /**
      * Optional seller-controlled human-readable label for this format declaration. Used by buyer dashboards, catalog UIs, and reporting surfaces to show a seller's own naming ('Homepage Takeover', 'Branded Canvas', 'Reels Premium Video') rather than the raw `format_kind` or `format_option_id`. Has no machine semantics — buyer agents route on `format_kind` and `format_option_id`; `display_name` is purely for human presentation. Freeform; no enumeration. Sellers SHOULD keep it stable once published to avoid dashboard churn.
      */
@@ -2865,6 +3007,17 @@ export type ProductFormatDeclaration = {
      * Namespace for `format_option_id` when this declaration references or narrows a publisher-declared format option from that publisher's adagents.json top-level `formats[]`. Product-local options omit this field and are selected by `format_option_id` within the target product.
      */
     publisher_domain?: string;
+    tracker_execution_contract?: TrackerExecutionContract;
+    /**
+     * Binding format-option processing capabilities for exact macro dialect identities, semantics, operations, actors, contexts, and encodings. Absence means undeclared, not supported on the opt-in declared-token path. Seller-wide capabilities are only a ceiling. This field does not claim that a buyer tracker asset is honored or fired.
+     *
+     * @minItems 1
+     */
+    macro_resolution_capabilities?: [MacroProcessingCapability, ...MacroProcessingCapability[]];
+    /**
+     * Completeness assertion for technical creative acceptance constraints in this declaration. When true, the declaring party asserts that every technical constraint within its authority is expressed by this declaration (including fetched custom-format and platform-extension schemas), and every omitted technical field means no constraint at that layer. A creative that satisfies the complete effective technical contract MUST NOT later be rejected for an undisclosed technical constraint. When false or absent, omitted technical constraints are undeclared: consumers MUST NOT interpret omission as support, no constraint, or a prose/default value. The effective product/placement contract is complete only when every applicable product, publisher, and placement declaration asserts true. This assertion is limited to technical acceptance; it does not waive policy, legal, security, malware, transport/fetch, corrupted-content, or materially misdeclared-asset checks. Creative size fields ending in `_kb` use exactly 1,000 bytes per KB and fields ending in `_mb` use exactly 1,000,000 bytes per MB.
+     */
+    technical_requirements_complete?: boolean;
     /**
      * Optional seller-controlled human-readable label for this format declaration. Used by buyer dashboards, catalog UIs, and reporting surfaces to show a seller's own naming ('Homepage Takeover', 'Branded Canvas', 'Reels Premium Video') rather than the raw `format_kind` or `format_option_id`. Has no machine semantics — buyer agents route on `format_kind` and `format_option_id`; `display_name` is purely for human presentation. Freeform; no enumeration. Sellers SHOULD keep it stable once published to avoid dashboard churn.
      */
@@ -2938,6 +3091,199 @@ export type ProductFormatDeclaration = {
     | CoordinatedPlacementsFormatDeclaration
     | CustomFormatDeclaration
   );
+/**
+ * One exact first-class manifest tracker selector in a seller production execution contract. AdCP 3.2 supports pixel_tracker, vast_tracker, and daast_tracker only; URL-slot selectors are not part of this union.
+ */
+export type TrackerExecutionSelector =
+  | {
+    }
+  | VASTTrackerConstraints
+  | DAASTTrackerConstraints;
+/**
+ * Shared VAST TrackingEvents constraints used by tracker assets and production execution selectors. The target/event matrix is closed, progress alone carries offset, and selector version arrays may contain only versions in which the event exists.
+ */
+export type VASTTrackerConstraints = {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+  vast_event?:
+    | 'creativeView'
+    | 'loaded'
+    | 'start'
+    | 'firstQuartile'
+    | 'midpoint'
+    | 'thirdQuartile'
+    | 'complete'
+    | 'mute'
+    | 'unmute'
+    | 'pause'
+    | 'resume'
+    | 'rewind'
+    | 'skip'
+    | 'playerExpand'
+    | 'playerCollapse'
+    | 'fullscreen'
+    | 'exitFullscreen'
+    | 'progress'
+    | 'acceptInvitation'
+    | 'adExpand'
+    | 'adCollapse'
+    | 'minimize'
+    | 'overlayViewDuration'
+    | 'otherAdInteraction'
+    | 'interactiveStart'
+    | 'close'
+    | 'closeLinear';
+  target?: 'linear' | 'non_linear' | 'companion';
+  offset?: string;
+  vast_versions?: VastVersions;
+};
+/**
+ * @minItems 1
+ */
+export type VastVersions = [VASTVersion, ...VASTVersion[]];
+/**
+ * Shared DAAST tracker vocabulary and execution-selector constraints. The legacy asset vocabulary retains AdCP's historical close extension, while the closed standards selector matrix excludes it. Progress alone carries offset in selectors.
+ */
+export type DAASTTrackerConstraints = {
+} & {
+} & {
+} & {
+  daast_event?:
+    | 'creativeView'
+    | 'start'
+    | 'firstQuartile'
+    | 'midpoint'
+    | 'thirdQuartile'
+    | 'complete'
+    | 'mute'
+    | 'unmute'
+    | 'pause'
+    | 'resume'
+    | 'rewind'
+    | 'skip'
+    | 'progress'
+    | 'close';
+  target?: 'linear' | 'companion';
+  offset?: string;
+  daast_versions?: DaastVersions;
+};
+/**
+ * @minItems 1
+ */
+export type DaastVersions = [DAASTVersion, ...DAASTVersion[]];
+/**
+ * One exact processing capability for one governed dialect semantic, operation, actor, occurrence context, and encoding set. Entries are intentionally semantic-specific; they do not create a semantics × maximum-depth cross-product. Seller-wide capabilities are only a ceiling and the selected product format option is binding.
+ */
+export type MacroProcessingCapability = {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+  dialect: MacroDialectFamily;
+  dialect_namespace?: string;
+  dialect_revision?: string;
+  dialect_semantic: string;
+  mapping_status: 'verified_universal' | 'dialect_defined';
+  universal_semantic?: UniversalMacro;
+  operation: 'translate_to_native' | 'resolve_value';
+  performed_by: MacroProcessingActor;
+  /**
+   * @minItems 1
+   */
+  supported_contexts: [
+    MacroValueContext & {
+    },
+    ...(MacroValueContext & {
+    })[]
+  ];
+  /**
+   * Exact supported encoding profiles, not a maximum depth. Required for value resolution.
+   *
+   * @minItems 1
+   */
+  supported_encodings?: [MacroEncoding, ...MacroEncoding[]];
+  translation_target?: MacroTranslationTarget;
+} & {
+  dialect: MacroDialectFamily;
+  dialect_namespace?: string;
+  dialect_revision?: string;
+  dialect_semantic: string;
+  mapping_status: 'verified_universal' | 'dialect_defined';
+  universal_semantic?: UniversalMacro;
+  operation: 'translate_to_native' | 'resolve_value';
+  performed_by: MacroProcessingActor;
+  /**
+   * @minItems 1
+   */
+  supported_contexts: [
+    MacroValueContext & {
+    },
+    ...(MacroValueContext & {
+    })[]
+  ];
+  /**
+   * Exact supported encoding profiles, not a maximum depth. Required for value resolution.
+   *
+   * @minItems 1
+   */
+  supported_encodings?: [MacroEncoding, ...MacroEncoding[]];
+  translation_target?: MacroTranslationTarget;
+};
+/**
+ * Exact encoding profile applied to a concrete substitution value. `rfc3986` encodes UTF-8 bytes outside the RFC 3986 unreserved set once per depth. `iab_vast_uri` follows the cited IAB VAST macro registry, including its array serialization rules, and is exactly one pass.
+ */
+export type MacroEncoding = {
+} & {
+} & {
+} & {
+  kind: 'none' | 'rfc3986' | 'iab_vast_uri';
+  depth: number;
+} & {
+  kind: 'none' | 'rfc3986' | 'iab_vast_uri';
+  depth: number;
+} & {
+  kind: 'none' | 'rfc3986' | 'iab_vast_uri';
+  depth: number;
+} & {
+  kind: 'none' | 'rfc3986' | 'iab_vast_uri';
+  depth: number;
+};
+/**
+ * The exact downstream-native token produced by a `translate_to_native` operation. The output asset replaces the source declaration with a declaration for this token and its next operation.
+ */
+export type MacroTranslationTarget = {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+  token: string;
+  dialect: MacroDialectFamily;
+  dialect_namespace?: string;
+  dialect_revision?: string;
+  dialect_semantic: string;
+  mapping_status: MacroMappingStatus;
+  universal_semantic?: UniversalMacro;
+  next_operation: 'resolve_value';
+  performed_by: MacroProcessingActor;
+  encoding: MacroEncoding;
+};
 /**
  * A seller/platform-side connection or grant required by a product, format, or request. This is not the AdCP caller credential: the AdCP request is still authenticated once, and the seller uses these stored downstream connections to call a platform or service on the buyer's behalf. Use this shape for platforms that require more than one downstream grant, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
  */
@@ -4917,6 +5263,87 @@ export type ProductCardReferenceAsset = {
   description?: string;
 };
 /**
+ * URL reference carrying plain, AdCP, IAB, or declared vendor macro syntax. Buyers preserve token delimiters; the authoritative declaration determines the processing operation and encoding.
+ */
+export type MacroBearingURL = {
+} & string;
+/**
+ * The source-faithful contract for one occurrence of one macro token. It identifies the current dialect, verified mapping status, exact asset-field occurrence, next processing operation, actor, and encoding. Translation and concrete value resolution are separate operations: a translator emits the declared native token and replaces this declaration with the target declaration. Unknown tokens are always byte-preserved.
+ */
+export type MacroDeclaration = {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+} & {
+  /**
+   * Identifier unique within the enclosing asset, used to correlate validation results.
+   */
+  declaration_id: string;
+  /**
+   * Exact byte-preserved token expression at this occurrence, including delimiters.
+   */
+  token: string;
+  dialect: MacroDialectFamily;
+  /**
+   * Authority-controlled registry or mapping URI. Required for IAB VAST, IAB DAAST, and vendor dialects.
+   */
+  dialect_namespace?: string;
+  /**
+   * Immutable registry/mapping revision, release, commit, or digest. Required for IAB VAST, IAB DAAST, and vendor dialects.
+   */
+  dialect_revision?: string;
+  /**
+   * Exact semantic identifier in the cited dialect, such as `CACHEBUSTING`, `PLAYERSTATE`, or a documented vendor name. This is not inferred from token spelling.
+   */
+  dialect_semantic: string;
+  mapping_status: MacroMappingStatus;
+  universal_semantic?: UniversalMacro;
+  operation: MacroProcessingOperation;
+  performed_by?: MacroProcessingActor;
+  translation_target?: MacroTranslationTarget;
+  location: {
+    /**
+     * Asset field containing this occurrence.
+     */
+    field: 'url' | 'markup' | 'content' | 'ad_request_url' | 'clickthrough_url';
+    /**
+     * Zero-based occurrence of this exact token within the named field.
+     */
+    occurrence: number;
+    context: MacroValueContext;
+  };
+  encoding: MacroEncoding;
+  /**
+   * Whether terminal delivery must fail if the declared operation cannot complete.
+   */
+  required: boolean;
+  /**
+   * Action when the responsible actor has no value. Omission is legal only for a complete URL query-value occurrence; dialect sentinels require a cited dialect rule.
+   */
+  unavailable_behavior: 'preserve' | 'omit_parameter' | 'dialect_sentinel' | 'reject';
+};
+/**
+ * One way buyer audience data can reach a seller for targeting. The pattern field discriminates the entry; each pattern carries only its own fields. Two patterns are AdCP-canonical (sync_audiences, tmp_identity_match); the rest describe integration paths that move data outside the protocol while remaining discoverable through it. Vendor identity is a BrandRef domain so new platforms declare a domain rather than waiting on an enum change. Experimental (x-status: experimental): the audience-activation surface — this schema, product.audience_activation, audience_targeting.supported_activation_methods, and the audience_activation_methods product filter — is new and not yet field-tested across parties. Sellers that implement it MUST list media_buy.audience_activation in experimental_features. Per docs/reference/experimental-status, it MAY change between 3.x releases with notice.
+ */
+export type AudienceActivationMethod =
+  | AdCPAudienceSync
+  | TMPIdentityMatch
+  | FileTransfer
+  | DatasetQuery
+  | CleanRoom
+  | PlatformDistribution;
+/**
  * A proposed media plan with fixed or seller-optimized budget allocation across products. Represents the publisher's strategic recommendation for how to structure a campaign based on the brief. Proposals are actionable: committed proposals can be executed directly via create_media_buy by providing the proposal_id; draft proposals must first be finalized via get_products refine action 'finalize'.
  */
 export type Proposal = {
@@ -5519,6 +5946,19 @@ export interface NamedFormatProduct {
 export interface CanonicalFormatProduct {
 }
 /**
+ * Seller- or publisher-authored commitment describing which first-class manifest trackers the selected format option accepts and initiates in production. The seller-returned Product declaration is binding; publisher and placement declarations are upstream inputs that the seller resolves into that effective contract. Presence requires a stable format_option_id. Creative-agent capability projections, transformer inputs, and deprecated canonical_parameters MUST reject this seller-authority field rather than copying it.
+ */
+export interface TrackerExecutionContract {
+  /**
+   * Whether honored is the complete set. complete:true with an empty honored array explicitly supports no buyer-supplied trackers.
+   */
+  complete: boolean;
+  /**
+   * Exact tracker/event selectors the seller accepts and initiates once per manifest instance for each logical event occurrence. selector_id and structural selector identity are each unique within this array.
+   */
+  honored: TrackerExecutionSelector[];
+}
+/**
  * Optional seller-enforced creative-locale constraint for this format option. This is product/placement eligibility, not a new format kind or synthetic locale-specific format ID. Because legacy format_ids cannot preserve this constraint, declarations carrying locale_policy MUST set canonical_formats_only to true and MUST NOT carry v1_format_ref.
  */
 export interface CreativeLocalePolicy {
@@ -5553,6 +5993,63 @@ export interface HostedVideoFormatDeclaration {
 export interface VASTVideoFormatDeclaration {
   format_kind: 'video_vast';
   params: CanonicalFormatVASTVideo;
+}
+/**
+ * Technical acceptance constraints for alternative VAST MediaFile renditions. Each applicable resolved InLine linear creative needs at least one MediaFile satisfying all declared constraints.
+ */
+export interface VASTMediaFileRequirements {
+  /**
+   * Accepted values of the required `MediaFile@delivery` attribute. `progressive` identifies a directly downloadable media file; `streaming` identifies a streaming media resource.
+   *
+   * @minItems 1
+   */
+  delivery_methods?: [VASTMediaDeliveryMethod, ...VASTMediaDeliveryMethod[]];
+  /**
+   * Accepted MIME types from `MediaFile@type`, compared case-insensitively after trimming optional whitespace. Parameters are not accepted in this field. Examples: `video/mp4`, `video/webm`.
+   *
+   * @minItems 1
+   */
+  mime_types?: [string, ...string[]];
+  /**
+   * Accepted normalized container identifiers, such as `mp4`, `webm`, or `mpeg_ts`. A receiver MUST determine the container from authoritative metadata or safe byte inspection and MUST NOT guess it only from the media URI suffix.
+   *
+   * @minItems 1
+   */
+  containers?: [string, ...string[]];
+  /**
+   * Accepted codec identifiers for `MediaFile@codec`, using the codec syntax referenced by the applicable VAST version. A missing codec attribute does not satisfy a declared codec constraint unless safe inspection establishes the codec.
+   *
+   * @minItems 1
+   */
+  codecs?: [string, ...string[]];
+  /**
+   * Minimum accepted `MediaFile@width` in pixels.
+   */
+  min_width?: number;
+  /**
+   * Maximum accepted `MediaFile@width` in pixels.
+   */
+  max_width?: number;
+  /**
+   * Minimum accepted `MediaFile@height` in pixels.
+   */
+  min_height?: number;
+  /**
+   * Maximum accepted `MediaFile@height` in pixels.
+   */
+  max_height?: number;
+  /**
+   * Minimum accepted MediaFile bitrate in kilobits per second. A fixed `MediaFile@bitrate` must be at least this value. For adaptive/streaming media, the declared `MediaFile@minBitrate` must be at least this value. Safe byte inspection may establish the value when metadata is absent.
+   */
+  min_bitrate_kbps?: number;
+  /**
+   * Maximum accepted MediaFile bitrate in kilobits per second. A fixed `MediaFile@bitrate` must not exceed this value. For adaptive/streaming media, the declared `MediaFile@maxBitrate` must not exceed this value. Safe byte inspection may establish the value when metadata is absent.
+   */
+  max_bitrate_kbps?: number;
+  /**
+   * Maximum accepted MediaFile size in exact bytes. `MediaFile@fileSize`, when present, is expressed in bytes; a receiver MAY verify it against safely fetched media bytes and MUST use the verified byte count if the values disagree.
+   */
+  max_file_size_bytes?: number;
 }
 export interface HostedAudioFormatDeclaration {
   format_kind: 'audio_hosted';
@@ -7594,18 +8091,32 @@ export interface MarkdownAsset {
   allow_raw_html?: boolean;
 }
 /**
- * URL reference asset. `url_type` declares the mechanism a receiver uses to invoke the URL (clickthrough vs. tracker_pixel vs. tracker_script) and is distinct from the URL's purpose, which the format declares in `url-asset-requirements.role` (clickthrough, landing_page, impression_tracker, click_tracker, viewability_tracker, third_party_tracker). Senders SHOULD include `url_type` on every URL asset. When `url_type` is absent, receivers SHOULD fall back to the format's `url-asset-requirements.role` per this mapping: clickthrough/landing_page → `clickthrough`; impression_tracker/click_tracker → `tracker_pixel`; viewability_tracker → `tracker_script` (OMID and equivalent verification SDKs require a <script> tag — firing them as a pixel produces no measurement); third_party_tracker → no safe fallback (mechanism is integration-specific — DV/IAS ship both pixel and script forms — receivers MAY reject or warn). When neither `url_type` nor a format-side `role` is available, receivers MUST NOT silently pick a mechanism; they SHOULD reject the manifest. Note: VAST/DAAST tag URLs are not URL assets — use `asset_type: "vast"` (or the dedicated tracker types pending RFC #2915), not `asset_type: "url"` with a tracker_pixel mechanism.
+ * URL reference asset. `url_type` declares the mechanism a receiver uses to invoke the URL (`clickthrough`, display `ad_request`, `tracker_pixel`, or `tracker_script`) and is distinct from the URL's purpose, which the format declares in `url-asset-requirements.role`. Senders SHOULD include `url_type` on every URL asset. When `url_type` is absent, receivers SHOULD fall back to the format's role: clickthrough/landing_page → `clickthrough`; impression_tracker/click_tracker → `tracker_pixel`; viewability_tracker → `tracker_script`; third_party_tracker and display ad requests have no safe fallback. When neither `url_type` nor a format-side role is available, receivers MUST NOT silently pick a mechanism. VAST/DAAST tag URLs are not URL assets — use `asset_type: "vast"` or `asset_type: "daast"`.
  */
 export interface URLAsset {
   /**
    * Discriminator identifying this as a URL asset. See /schemas/creative/asset-types for the registry.
    */
   asset_type: 'url';
-  /**
-   * URL reference. May be a plain URI or an RFC 6570 URI template carrying AdCP universal macros (e.g., `{SKU}`, `{MEDIA_BUY_ID}`). Buyers MUST NOT pre-encode macro braces at sync time; the ad server URL-encodes substituted values at impression time. See docs/creative/universal-macros.mdx.
-   */
-  url: string;
+  url: MacroBearingURL;
   url_type?: URLAssetType;
+  /**
+   * One declaration per token occurrence in `url`; declaration_id values MUST be unique and every location MUST identify an existing occurrence. Absence retains legacy opaque transport behavior.
+   *
+   * @minItems 1
+   */
+  macro_declarations?: [
+    MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    },
+    ...(MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    })[]
+  ];
   /**
    * Description of what this URL points to
    */
@@ -7798,6 +8309,102 @@ export interface MaterialDeadline {
    * What the seller needs at this stage (e.g., 'Talking points and brand guidelines', 'Press-ready PDF with bleed')
    */
   label?: string;
+}
+/**
+ * The seller accepts inline audience member pushes via the AdCP sync_audiences task. Any AdCP-speaking buyer can use this path with no additional integration. This pattern declares inline push only; grant- and distribution-based paths carry their own declarations.
+ */
+export interface AdCPAudienceSync {
+  pattern: 'sync_audiences';
+}
+/**
+ * The seller has configured Trusted Match Protocol identity-match calls to a specific buyer agent. Declarations are per buyer agent because the integration is not generic. Entries MUST be consistent with trusted_match.providers[] where both are present on the product.
+ */
+export interface TMPIdentityMatch {
+  pattern: 'tmp_identity_match';
+  buyer_agent: {
+    /**
+     * Buyer agent's registered agent URL. Canonical identifier, mirroring trusted_match.providers[].agent_url.
+     */
+    agent_url: string;
+  };
+}
+/**
+ * Bucket-addressed file exchange over a cloud storage protocol. The buyer moves the bytes; direction declares who hosts the bucket.
+ */
+export interface FileTransfer {
+  pattern: 'file_transfer';
+  transport: CloudStorageProtocol;
+  /**
+   * Supported transfer directions. buyer_to_seller: buyer writes to a seller-hosted bucket. seller_to_buyer: seller reads from a buyer-hosted bucket. Absent means unspecified (resolve during account setup), not neither.
+   *
+   * @minItems 1
+   */
+  directions?: ['buyer_to_seller' | 'seller_to_buyer', ...('buyer_to_seller' | 'seller_to_buyer')[]];
+  vendor: BrandReference;
+}
+/**
+ * Vendor-mediated query access: the seller reads a dataset the buyer shares through the vendor's grantee-identified sharing mechanism (e.g., Snowflake Secure Data Sharing, Databricks Delta Sharing, BigQuery authorized views). Admissible only when the grant names a principal and no secret is conveyed; token-bearer flows remain out-of-band.
+ */
+export interface DatasetQuery {
+  pattern: 'dataset_query';
+  vendor: BrandReference;
+  /**
+   * Principals the buyer grants access to in the vendor's system. identity is always required. cloud and region are optional, paired deployment metadata: omit both for global principals (for example, an IAM principal or federated identity). Their operational meaning is vendor-specific — they may constrain direct-share reachability or select a fulfillment route, or may be routing and cost hints only. They are not compliance boundaries; data-transfer assessments key on the recipient entity's jurisdiction, not the grantee account's region. Optional: sellers MAY instead communicate identities during account setup.
+   *
+   * @minItems 1
+   */
+  consumer_identities?: [
+    {
+      /**
+       * Cloud family hosting this identity's account.
+       */
+      cloud?: 'aws' | 'azure' | 'gcp';
+      /**
+       * Vendor/cloud region identifier. Format follows the cloud family's region naming; not constrained by this schema.
+       */
+      region?: string;
+      /**
+       * Principal to grant, interpreted relative to the enclosing entry's vendor.domain. Format is vendor-specific and opaque — Snowflake: orgname.accountname; Databricks: sharing recipient identifier; BigQuery: IAM principal.
+       */
+      identity: string;
+    },
+    ...{
+      /**
+       * Cloud family hosting this identity's account.
+       */
+      cloud?: 'aws' | 'azure' | 'gcp';
+      /**
+       * Vendor/cloud region identifier. Format follows the cloud family's region naming; not constrained by this schema.
+       */
+      region?: string;
+      /**
+       * Principal to grant, interpreted relative to the enclosing entry's vendor.domain. Format is vendor-specific and opaque — Snowflake: orgname.accountname; Databricks: sharing recipient identifier; BigQuery: IAM principal.
+       */
+      identity: string;
+    }[]
+  ];
+}
+/**
+ * Privacy-preserving match in the named vendor's clean room; neither party sees the other's raw rows. A seller MUST declare this audience-activation pattern only when the collaboration can produce an audience targetable on this product; analytics-only or measurement-only room access does not qualify. The declaration does not imply that output is portable. Room setup is bilateral onboarding. Platform-native or partner-distributed output pairs with platform_distribution; queryable output pairs with dataset_query. The resulting audience binds through a dataset or platform_segment source reference on sync_audiences (core/audience-source.json).
+ */
+export interface CleanRoom {
+  pattern: 'clean_room';
+  vendor: BrandReference;
+}
+/**
+ * The vendor's rails deliver segments to the seller's destination; the buyer initiates distribution in the vendor's system and binds the arriving segment with a platform_segment source reference on sync_audiences (core/audience-source.json). destination_ref is optional because many vendors create or reveal the account-scoped destination only during bilateral account setup.
+ */
+export interface PlatformDistribution {
+  pattern: 'platform_distribution';
+  vendor: BrandReference;
+  /**
+   * Opaque, account-scoped destination or seat reference in the vendor's system, as the buyer needs it to initiate distribution. A seller-declared configuration reference, not a buyer-invoked key or secret. Sellers MUST NOT publish one global reference when the vendor configuration is buyer- or account-specific. Omit until account setup has established the destination.
+   */
+  destination_ref?: string;
+  /**
+   * Window after which the seller MAY expire an unfulfilled platform_segment bind (per-audience action: failed on sync_audiences). Initial vendor distribution is days-scale; windows shorter than the vendor's documented distribution latency are non-conformant.
+   */
+  bind_expiry_days?: number;
 }
 /**
  * Request-level confirmation of structured hard targeting inferred from the brief. Sellers MUST include this when their structured interpretation of hard prose materially affects product eligibility, pricing, or forecasting; otherwise inclusion is a best practice. Omitted when no hard targeting was inferred from the brief.
@@ -9939,7 +10546,7 @@ export interface ReportingWebhook {
    */
   reporting_frequency: 'hourly' | 'daily' | 'monthly';
   /**
-   * Optional list of metrics to include in webhook notifications. If omitted, all available metrics are included; an empty array has the same meaning as omission (it does not narrow to impressions and spend only). impressions and spend are always included regardless of this list. Must be subset of product's available_metrics. Subset evaluation and leaf resolution follow the container-subsumption rule in `enums/available-metric.json`: requesting a leaf identity selects its canonical carrier object in the payload. Same narrowing semantics as get_media_buy_delivery's requested_metrics (which additionally requires at least one entry when present).
+   * Optional list of metrics to include in webhook notifications. If omitted, all available metrics are included; an empty array has the same meaning as omission (it does not narrow to impressions and spend only). impressions and spend are always included regardless of this list. Must be a subset of the product's available_metrics. Subset evaluation and leaf resolution follow `enums/available-metric.json`: a numeric leaf may be covered by its container, while each structured distribution must be explicitly available. Requesting any nested identity selects its canonical carrier inside the payload's nested object. Same narrowing semantics as get_media_buy_delivery's requested_metrics (which additionally requires at least one entry when present).
    */
   requested_metrics?: AvailableMetric[];
 }
@@ -11413,6 +12020,10 @@ export type CreativeAssignment = {
   placement_ids?: [string, ...string[]];
 };
 /**
+ * Buyer-assigned identity for one immutable input-content state of a durable creative. Scoped to the parent creative_id. Seller transcoding, normalization, and delivery representations do not change this identity.
+ */
+export type CreativeRevisionID = string;
+/**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving. Unlike the hosted `video` asset, a VAST tag carries no `width`/`height`: a VAST response can return multiple renditions of differing dimensions, and the player selects one per device at serve time, so there is no single width/height for the ad. Dimensional, duration, and codec *constraints* for a placement live on the format/requirements layer, not on this asset.
  */
 export type VASTAsset = {
@@ -11421,6 +12032,12 @@ export type VASTAsset = {
    */
   asset_type: 'vast';
   vast_version?: VASTVersion;
+  /**
+   * One declaration per exact occurrence in a field carried by this asset. A URL-delivered asset can declare only occurrences in its locator `url`; tokens discovered later in a fetched VAST response require document validation evidence or an inline/snapshotted asset and MUST NOT be guessed from the locator. IAB tokens cite a registry namespace and revision rather than copying the live registry into AdCP.
+   *
+   * @minItems 1
+   */
+  macro_declarations?: [MacroDeclaration, ...MacroDeclaration[]];
   /**
    * Whether VPAID (Video Player-Ad Interface Definition) is supported
    */
@@ -11448,10 +12065,12 @@ export type VASTAsset = {
        * Discriminator indicating VAST is delivered via URL endpoint
        */
       delivery_type: 'url';
-      /**
-       * URL endpoint that returns VAST XML. May carry unsubstituted ad-server macros — VAST-style `[MACRO]` and `${MACRO}` placeholders are accepted as-is (RFC 6570 syntax); buyers MUST NOT pre-encode macro delimiters, since players match the literal token at substitution time.
-       */
-      url: string;
+      url: MacroBearingURL;
+      macro_declarations?: {
+        location?: {
+          field?: 'url';
+        };
+      }[];
     }
   | {
       /**
@@ -11462,8 +12081,86 @@ export type VASTAsset = {
        * Inline VAST XML content
        */
       content: string;
+      macro_declarations?: {
+        location?: {
+          field?: 'content';
+        };
+      }[];
     }
 );
+/**
+ * One atomic third-party display delivery representation. `delivery_type` distinguishes a single ad-request URL, byte-preserved inline markup, and a paired redirect whose ad-request and click-through URLs MUST travel together. This is not an HTML5 bundle: seller-hosted HTML5 zip files use `asset_type: "zip"` under `format_kind: "html5"`.
+ */
+export type DisplayTagAsset = {
+  /**
+   * Discriminator identifying an atomic third-party display-tag representation.
+   */
+  asset_type: 'display_tag';
+  /**
+   * Exact macro tokens present anywhere in this representation. Tokens remain byte-preserved until the resolver named by each declaration substitutes them.
+   *
+   * @minItems 1
+   */
+  macro_declarations?: [MacroDeclaration, ...MacroDeclaration[]];
+  provenance?: Provenance;
+} & (TagURL | InlineMarkup | PairedRedirect);
+/**
+ * Ad-request URL invoked at impression time. It is equivalent to the backward-compatible `url` asset with `url_type: "ad_request"`.
+ */
+export type MacroBearingURL1 = (
+  | {
+    }
+  | {
+    }
+  | {
+    }
+) &
+  string;
+/**
+ * Image or ad-request URL entered into the destination ad server. This field deliberately accepts byte-preserved vendor tokens that are not RFC 6570 URI templates.
+ */
+export type MacroBearingURL2 = (
+  | {
+    }
+  | {
+    }
+  | {
+    }
+) &
+  string;
+/**
+ * Click-through URL paired with `ad_request_url`. This field deliberately accepts byte-preserved vendor tokens that are not RFC 6570 URI templates. The pair MUST NOT be split, mixed, or revised independently.
+ */
+export type MacroBearingURL3 = (
+  | {
+    }
+  | {
+    }
+  | {
+    }
+) &
+  string;
+/**
+ * URL reference carrying plain, AdCP, IAB, or declared vendor macro syntax. Buyers preserve token delimiters; the authoritative declaration determines the processing operation and encoding.
+ */
+export type MacroBearingURL4 = (
+  | {
+    }
+  | {
+    }
+  | {
+    }
+) &
+  string &
+  (
+    | {
+      }
+    | {
+      }
+    | {
+      }
+  ) &
+  string;
 /**
  * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
  */
@@ -11490,16 +12187,24 @@ export type DAASTAsset = {
    */
   transcript_url?: string;
   provenance?: Provenance;
+  /**
+   * One declaration per occurrence in a field carried by this asset. URL-delivered assets declare only locator-URL occurrences; receivers do not infer declarations for tokens discovered later in a fetched document.
+   *
+   * @minItems 1
+   */
+  macro_declarations?: [MacroDeclaration, ...MacroDeclaration[]];
 } & (
   | {
       /**
        * Discriminator indicating DAAST is delivered via URL endpoint
        */
       delivery_type: 'url';
-      /**
-       * URL endpoint that returns DAAST XML. May carry unsubstituted ad-server macros — DAAST/VAST-style `[MACRO]` and `${MACRO}` placeholders are accepted as-is (RFC 6570 syntax); buyers MUST NOT pre-encode macro delimiters, since players match the literal token at substitution time.
-       */
-      url: string;
+      url: MacroBearingURL5;
+      macro_declarations?: {
+        location?: {
+          field?: 'url';
+        };
+      }[];
     }
   | {
       /**
@@ -11510,8 +12215,25 @@ export type DAASTAsset = {
        * Inline DAAST XML content
        */
       content: string;
+      macro_declarations?: {
+        location?: {
+          field?: 'content';
+        };
+      }[];
     }
 );
+/**
+ * URL endpoint returning DAAST XML. Macro delimiters remain byte-preserved and are processed only under attached occurrence declarations.
+ */
+export type MacroBearingURL5 = (
+  | {
+    }
+  | {
+    }
+  | {
+    }
+) &
+  string;
 /**
  * Campaign-level creative context as an asset. Carries the creative brief through the manifest so it travels with the creative through regeneration, resizing, and auditing.
  */
@@ -11653,24 +12375,7 @@ export type PixelTrackerAsset = {
    * Discriminator identifying this as a renderer-fired pixel tracker asset. See /schemas/creative/asset-types for the registry.
    */
   asset_type: 'pixel_tracker';
-  /**
-   * Which event this tracker fires on. Event enum mirrors IAB OpenRTB Native 1.2 event-tracker registry (event types 1, 2, 3, 4, 500); the events themselves are generic web-pixel measurement events that apply to any renderer:
-   * - `impression` (IAB type 1) — fires when the ad is served. Covers both `imptrackers[]` and `jstracker` from the IAB shape, distinguished by `method`.
-   * - `viewable_mrc_50` (IAB type 2) — IAB MRC viewable, 50% pixels for ≥1 second.
-   * - `viewable_mrc_100` (IAB type 3) — IAB MRC viewable, 100% pixels for ≥1 second.
-   * - `viewable_video_50` (IAB type 4) — video-specific viewable, 50% pixels for ≥2 seconds with audio on. On video_hosted; ignored on image/html5.
-   * - `audible_video_complete` (IAB type 500) — video reached 100% completion with audio on. Distinct from `viewable_video_50` (50% pixels + 2s threshold) — this is the full-completion audible-view event. Meaningful on non-VAST video formats (Meta Reels, YouTube Shorts, TikTok Spark) where audible-complete is a measured event but VAST `<TrackingEvents>` isn't the wire format; VAST formats use `vast_tracker` with `vast_event: complete` plus a separate audible tracker instead.
-   * - `click` — fires when the user clicks the creative (`link.clicktrackers[]`).
-   * - `custom` — adopter-defined event for anything not in the standardized enum. MUST also set `custom_event_name`. Reserved for IAB Native event types 555+ (exchange-specific) and any vendor-defined event not yet promoted to a first-class enum value.
-   */
-  event:
-    | 'impression'
-    | 'viewable_mrc_50'
-    | 'viewable_mrc_100'
-    | 'viewable_video_50'
-    | 'audible_video_complete'
-    | 'click'
-    | 'custom';
+  event: PixelTrackingEvent;
   /**
    * How the tracker URL is invoked at serve time:
    * - `img` — fired as an image pixel (HTTP GET with `<img>`-like semantics; no JS execution)
@@ -11679,16 +12384,42 @@ export type PixelTrackerAsset = {
    * Matches IAB OpenRTB Native 1.2 method enum (1=img, 2=js). `js` MUST only be used by sellers whose renderer supports JavaScript trackers; sellers without JS-tracker support MUST reject `method: js` declarations at sync_creatives time with `CREATIVE_REJECTED` carrying the reason.
    */
   method?: 'img' | 'js';
+  url: MacroBearingURL6;
   /**
-   * Tracker URL fired when `event` occurs. May carry AdCP universal macros (e.g., `{MEDIA_BUY_ID}`, `{CREATIVE_ID}`, `{CACHEBUSTER}`); the seller's renderer URL-encodes substituted values at serve time. See docs/creative/universal-macros.mdx.
+   * One declaration per token occurrence in `url`; declaration_id values MUST be unique and locations MUST resolve. When omitted, legacy behavior applies.
+   *
+   * @minItems 1
    */
-  url: string;
+  macro_declarations?: [
+    MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    },
+    ...(MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    })[]
+  ];
   /**
-   * REQUIRED when `event` is `custom`; otherwise MUST be absent. Adopter-defined event name. Sellers without registered handling for a given custom_event_name MUST silently no-op (do not fire) rather than reject — custom events are forward-compatible probes.
+   * REQUIRED when `event` is `custom`; otherwise MUST be absent. Adopter-defined event name. When tracker execution is undeclared, an unknown custom event is a forward-compatible probe and the seller silently no-ops instead of rejecting the creative. An effective tracker_execution_contract overrides that legacy fallback: with complete:true an unlisted custom selector is unsupported and rejects compatibility with tracker_contract_mismatch; a listed custom selector is an affirmative accept-and-initiate commitment.
    */
   custom_event_name?: string;
   provenance?: Provenance;
 };
+/**
+ * Tracker URL fired when `event` occurs. Macro processing and encoding follow an attached occurrence declaration; absent declarations retain the legacy universal-macro path.
+ */
+export type MacroBearingURL6 = (
+  | {
+    }
+  | {
+    }
+  | {
+    }
+) &
+  string;
 /**
  * A single tracker URL bound to a VAST `TrackingEvents` event. Emitted by the creative agent as a decomposed VAST-event URL; the sales agent assembles these into the VAST `TrackingEvents` block at serve time. IMPORTANT: this asset type is for `TrackingEvents` URLs only (start, quartiles, complete, pause, mute, etc.). The `Impression` URL MUST be modeled as a `url` asset with `url_type: "tracker_pixel"`, not as a vast_tracker with `vast_event: "impression"`. Decomposed trackers let format requirements bind specific measurement events (e.g., MRC viewable) without forcing the buyer to construct a full VAST tag.
  */
@@ -11703,20 +12434,46 @@ export type VASTTrackerAsset = {
    */
   vast_event: VASTTrackingEvent & {
   };
+  url: MacroBearingURL7;
   /**
-   * Tracker URL that fires when `vast_event` occurs. May carry AdCP universal macros (e.g., `{SKU}`, `{MEDIA_BUY_ID}`); the sales agent or ad server URL-encodes substituted values at serve time. See docs/creative/universal-macros.mdx.
+   * Exact tokens in `url` and their resolver/encoding contracts.
+   *
+   * @minItems 1
    */
-  url: string;
+  macro_declarations?: [
+    MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    },
+    ...(MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    })[]
+  ];
   /**
-   * VAST `offset` attribute. Required when `vast_event` is `progress`; ignored otherwise. Format matches the VAST 4.2 XSD `Tracking@offset` pattern: `HH:MM:SS` or `HH:MM:SS.mmm` for absolute time (two-digit hours, minutes 00–59, seconds 00–59), or an integer percentage 0–100 suffixed with `%`. Negative offsets are NOT permitted — the VAST 4.2 XSD pattern does not allow a leading minus.
+   * VAST `offset` attribute. Required when `vast_event` is `progress`; ignored otherwise for compatibility with existing 3.x manifests. Format matches the VAST 4.2 XSD `Tracking@offset` pattern: `HH:MM:SS` or `HH:MM:SS.mmm` for absolute time (two-digit hours, minutes 00–59, seconds 00–59), or an integer percentage 0–100 suffixed with `%`. Negative offsets are NOT permitted — the VAST 4.2 XSD pattern does not allow a leading minus.
    */
   offset?: string;
   /**
-   * Which VAST creative element this tracker scopes to — `linear` for `<Linear>/<TrackingEvents>`, `non_linear` for `<NonLinearAds>/<TrackingEvents>`, `companion` for `<CompanionAds>/<Companion>/<TrackingEvents>`. VAST 4.2 places these under separate XML elements with separate event semantics (e.g., `acceptInvitation` is meaningful on non-linear / companion; `closeLinear` only on linear). Defaults to `linear`. Sales agents use this to place the tracker in the correct location during VAST assembly.
+   * Which VAST creative element this tracker scopes to — `linear` for `<Linear>/<TrackingEvents>`, `non_linear` for `<NonLinearAds>/<TrackingEvents>`, `companion` for `<CompanionAds>/<Companion>/<TrackingEvents>`. Defaults to `linear`. Existing 3.x assets remain structurally permissive; a tracker execution contract applies the standards-valid event/target matrix when matching a creative to a product.
    */
   target?: 'linear' | 'non_linear' | 'companion';
   provenance?: Provenance;
 };
+/**
+ * Tracker URL fired for the VAST event. Attached declarations identify each macro occurrence, registry revision, processing actor, and exact encoding profile.
+ */
+export type MacroBearingURL7 = (
+  | {
+    }
+  | {
+    }
+  | {
+    }
+) &
+  string;
 /**
  * A single tracker URL bound to a DAAST `TrackingEvents` event. Audio-side analogue of vast-tracker-asset. The `Impression` URL MUST be modeled as a `url` asset with `url_type: "tracker_pixel"`, not as a daast_tracker with `daast_event: "impression"`.
  */
@@ -11731,26 +12488,75 @@ export type DAASTTrackerAsset = {
    */
   daast_event: DAASTTrackingEvent & {
   };
+  url: MacroBearingURL8;
   /**
-   * Tracker URL that fires when `daast_event` occurs. May carry AdCP universal macros; the sales agent or ad server URL-encodes substituted values at serve time. See docs/creative/universal-macros.mdx.
+   * Exact tokens in `url` and their resolver/encoding contracts.
+   *
+   * @minItems 1
    */
-  url: string;
+  macro_declarations?: [
+    MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    },
+    ...(MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    })[]
+  ];
   /**
-   * DAAST `offset` attribute. Required when `daast_event` is `progress` (DAAST 1.1 §3.2.4.3); ignored otherwise. Same format as VAST 4.2 `Tracking@offset`: `HH:MM:SS` or `HH:MM:SS.mmm` for absolute time (two-digit hours, minutes 00–59, seconds 00–59), or an integer percentage 0–100 suffixed with `%`. Negative offsets are NOT permitted.
+   * DAAST `offset` attribute. Required when `daast_event` is `progress` (DAAST 1.1 §3.2.4.3); ignored otherwise for compatibility with existing 3.x manifests. Same format as VAST 4.2 `Tracking@offset`: `HH:MM:SS` or `HH:MM:SS.mmm` for absolute time (two-digit hours, minutes 00–59, seconds 00–59), or an integer percentage 0–100 suffixed with `%`. Negative offsets are NOT permitted.
    */
   offset?: string;
   /**
-   * Which DAAST creative element this tracker scopes to — `linear` for `<Linear>/<TrackingEvents>` (DAAST 1.1 §3.2.1.7), `companion` for `<CompanionAds>/<Companion>/<TrackingEvents>` (DAAST 1.1 §3.2.2.7, where the only valid event is `creativeView`). DAAST has no `<NonLinearAds>` element. Defaults to `linear`. Sales agents use this to place the tracker in the correct location during DAAST assembly.
+   * Which DAAST creative element this tracker scopes to — `linear` for `<Linear>/<TrackingEvents>` (DAAST 1.1 §3.2.1.7), `companion` for `<CompanionAds>/<Companion>/<TrackingEvents>` (DAAST 1.1 §3.2.2.7). DAAST has no `<NonLinearAds>` element. Defaults to `linear`. Existing 3.x assets remain structurally permissive; a tracker execution contract applies the standards-valid event/target matrix when matching a creative to a product.
    */
   target?: 'linear' | 'companion';
   provenance?: Provenance;
 };
+/**
+ * Tracker URL fired for the DAAST event. Attached declarations identify each macro occurrence, processing actor, and exact encoding profile.
+ */
+export type MacroBearingURL8 = (
+  | {
+    }
+  | {
+    }
+  | {
+    }
+) &
+  string;
 export interface ExplicitPackagesWithFixedAllocation {
   budget_allocation?: {
     mode: 'fixed';
   };
   packages: (PackageRequest & {
   })[];
+}
+/**
+ * Readback lineage to the complete CreativeRepresentationSet revision and representation selected before this seller-bound creative was synced.
+ */
+export interface RepresentationSelection {
+  creative_id: string;
+  revision_id: CreativeRevisionID;
+  /**
+   * Verified digest from the complete source representation set. A downstream seller uses this value, not the selected manifest bytes alone, to enforce immutable revision reuse.
+   */
+  revision_content_digest: string;
+  selected_representation_id: string;
+  strategy: RepresentationSelectionStrategy;
+  /**
+   * Digest of the derived seller-bound manifest projection, computed with RFC 8785 JCS after removing exactly top-level `$schema`, `representation_selection`, `creative_id`, `revision_id`, `name`, `tags`, `status`, `weight`, `placement_refs`, `placement_ids`, and `inputs`. Every other field, including unknown delivery fields, is included. The identical exclusion list applies to the returned CreativeManifest and its later CreativeAsset sync wrapper. A selected sync item cannot carry localization in this version. This is the review/execution fingerprint for the projection, distinct from revision_content_digest, which binds the complete source set.
+   */
+  selected_output_digest: string;
+  execution_vast_version?: VASTVersion;
+  execution_daast_version?: DAASTVersion;
+  /**
+   * Who performed deterministic compatibility resolution. A buyer may resolve locally from seller discovery. Seller resolution is valid only on the destination sales agent when it advertised representation_resolution; an independent creative agent cannot claim seller-bound compatibility.
+   */
+  resolved_by: 'buyer' | 'seller';
 }
 /**
  * Audio asset with URL and technical specifications
@@ -11807,6 +12613,77 @@ export interface AudioAsset {
   transcript_url?: string;
   provenance?: Provenance;
 }
+export interface TagURL {
+  asset_type: 'display_tag';
+  /**
+   * @minItems 1
+   */
+  macro_declarations?: [
+    MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    },
+    ...(MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    })[]
+  ];
+  provenance?: Provenance;
+  delivery_type: 'tag_url';
+  url: MacroBearingURL1;
+}
+export interface InlineMarkup {
+  asset_type: 'display_tag';
+  /**
+   * @minItems 1
+   */
+  macro_declarations?: [
+    MacroDeclaration & {
+      location?: {
+        field?: 'markup';
+      };
+    },
+    ...(MacroDeclaration & {
+      location?: {
+        field?: 'markup';
+      };
+    })[]
+  ];
+  provenance?: Provenance;
+  delivery_type: 'inline_markup';
+  /**
+   * How the destination traffics the byte-preserved markup.
+   */
+  markup_type: 'iframe_javascript' | 'javascript' | 'standard';
+  /**
+   * Exact third-party tag markup. Receivers MUST preserve its bytes and MUST NOT reinterpret it as a seller-hosted HTML5 bundle.
+   */
+  markup: string;
+}
+export interface PairedRedirect {
+  asset_type: 'display_tag';
+  /**
+   * @minItems 1
+   */
+  macro_declarations?: [
+    MacroDeclaration & {
+      location?: {
+        field?: 'ad_request_url' | 'clickthrough_url';
+      };
+    },
+    ...(MacroDeclaration & {
+      location?: {
+        field?: 'ad_request_url' | 'clickthrough_url';
+      };
+    })[]
+  ];
+  provenance?: Provenance;
+  delivery_type: 'paired_redirect';
+  ad_request_url: MacroBearingURL2;
+  clickthrough_url: MacroBearingURL3;
+}
 /**
  * Text content asset
  */
@@ -11826,7 +12703,7 @@ export interface TextAsset {
   provenance?: Provenance;
 }
 /**
- * Inline HTML content asset. For URL-delivered HTML5 banner bundles, use the zip asset type instead. For single-URL iframe-rendered tag references, use the url asset type with an appropriate url_type.
+ * Inline HTML content asset. For seller-hosted HTML5 banner bundles, use the zip asset type. For third-party display markup or paired redirects, use the display_tag asset so the trafficking representation remains explicit.
  */
 export interface HTMLAsset {
   /**
@@ -11865,7 +12742,7 @@ export interface HTMLAsset {
   provenance?: Provenance;
 }
 /**
- * Inline JavaScript content asset. For URL-delivered third-party tag scripts, use the url asset type with url_type 'tracker_script'. For HTML5 banner bundles that include JavaScript, use the zip asset type.
+ * Inline JavaScript content asset. For third-party display ad markup, use the display_tag asset with delivery_type `inline_markup`; for measurement scripts use a typed tracker; for seller-hosted HTML5 bundles use zip.
  */
 export interface JavaScriptAsset {
   /**
@@ -12060,11 +12937,48 @@ export interface CardAsset {
    * Optional per-card call-to-action label (e.g., 'SHOP_NOW', 'LEARN_MORE'). When the parent format declares `cta_values` (allowed CTA labels), the per-card `cta` MUST be one of those values. Lets a Meta or TikTok carousel show different CTAs per card.
    */
   cta?: string;
-  landing_page_url?: URLAsset;
+  landing_page_url?: URLAsset1;
   /**
    * Per-card platform-specific extensions (URI+digest references). Same hosting model as format-level platform_extensions. Use this for Meta carousel-card attributes, Pinterest pin overrides, etc. — NEVER inline non-canonical keys on the card object directly.
    */
   platform_extensions?: PlatformExtensionReference[];
+  provenance?: Provenance;
+}
+/**
+ * URL reference asset. `url_type` declares the mechanism a receiver uses to invoke the URL (`clickthrough`, display `ad_request`, `tracker_pixel`, or `tracker_script`) and is distinct from the URL's purpose, which the format declares in `url-asset-requirements.role`. Senders SHOULD include `url_type` on every URL asset. When `url_type` is absent, receivers SHOULD fall back to the format's role: clickthrough/landing_page → `clickthrough`; impression_tracker/click_tracker → `tracker_pixel`; viewability_tracker → `tracker_script`; third_party_tracker and display ad requests have no safe fallback. When neither `url_type` nor a format-side role is available, receivers MUST NOT silently pick a mechanism. VAST/DAAST tag URLs are not URL assets — use `asset_type: "vast"` or `asset_type: "daast"`.
+ */
+export interface URLAsset1 {
+  /**
+   * Discriminator identifying this as a URL asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'url';
+  url: MacroBearingURL4;
+  url_type?: URLAssetType;
+  /**
+   * One declaration per token occurrence in `url`; declaration_id values MUST be unique and every location MUST identify an existing occurrence. Absence retains legacy opaque transport behavior.
+   *
+   * @minItems 1
+   */
+  macro_declarations?: [
+    MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    },
+    ...(MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    })[]
+  ];
+  /**
+   * Description of what this URL points to
+   */
+  description?: string;
+  /**
+   * Binding used only when this URL populates a `seller_rendered_stateful_display` `state_click_urls` slot. It MUST match one declared `states[].state_id` (semantic validators resolve it); at most one entry per state. Omit for ordinary URL slots.
+   */
+  state_id?: string;
   provenance?: Provenance;
 }
 /**
@@ -13407,15 +14321,15 @@ export type Package = {
    */
   creative_assignments?: CreativeAssignment[];
   /**
-   * Canonical creative contracts that the buyer must satisfy for this package. Each entry is a package-time snapshot of a selected Product.format_options declaration (or the equivalent declaration normalized from a direct format_kind + params selector) and MUST equal or narrow that product contract. Full declarations keep the requirement stable if the live product or publisher catalog later changes and remain usable when format_option_id is absent. Sellers SHOULD emit this field whenever additional creative coverage is required.
+   * Immutable canonical creative contracts established for this package. Each entry is a PackageFormatSnapshot of the selected effective Product format declaration. A package whose selected format carries tracker_execution_contract MUST retain and return this checklist even after creative coverage is complete; the live Product is never substituted for the package snapshot.
    *
    * @minItems 1
    */
-  formats_to_provide?: [ProductFormatDeclaration, ...ProductFormatDeclaration[]];
+  formats_to_provide?: [PackageFormatSnapshot, ...PackageFormatSnapshot[]];
   /**
-   * The declarations from formats_to_provide that do not yet have creative coverage through sync_creatives or inline creative assignment. An empty emitted array means every required format is covered. Absence means readiness was not reported, so buyers MUST NOT infer full coverage from omission. Sellers SHOULD emit this field with formats_to_provide when returning current package readiness.
+   * PackageFormatSnapshot entries from formats_to_provide that do not yet have creative coverage through sync_creatives or inline assignment. Every entry MUST equal its formats_to_provide snapshot after RFC 8785 canonicalization and, when product_snapshot_digest is present, carry the identical digest. An empty emitted array means every required format is covered. Absence means readiness was not reported.
    */
-  formats_pending?: ProductFormatDeclaration[];
+  formats_pending?: PackageFormatSnapshot[];
   /**
    * @deprecated
    * **DEPRECATED in 3.2.** Legacy named-format projection of formats_to_provide retained for older 3.x peers. New sellers emit canonical formats_to_provide declarations.
@@ -13574,6 +14488,37 @@ export type CommittedMetric =
        */
       committed_at: string;
     };
+/**
+ * Immutable package-time snapshot of one selected Product format declaration. Product-format fields remain flattened at the root for 3.x compatibility; product, placement, exact execution-version, and digest fields bind the seller's package-time decision. A contract-bearing snapshot is durably identified even when no preview or observation feature is offered.
+ */
+export type PackageFormatSnapshot = ProductFormatDeclaration & {
+} & {
+  /**
+   * Product whose effective selected format was snapshotted. Required whenever tracker_execution_contract is present.
+   */
+  product_id?: string;
+  /**
+   * Nonempty, duplicate-free effective placement set, sorted by publisher_domain then placement_id using ascending UTF-8 bytes without Unicode normalization. Omission binds the product-wide common effective contract; it never means an inferred list of all current placements.
+   *
+   * @minItems 1
+   */
+  placement_refs?: [
+    PlacementReference & {
+    },
+    ...(PlacementReference & {
+    })[]
+  ];
+  execution_vast_version?: VASTVersion;
+  execution_daast_version?: DAASTVersion;
+  /**
+   * SHA-256 of RFC 8785 canonical JSON for tracker_execution_contract alone. Required if and only if the snapshot contains that contract.
+   */
+  tracker_execution_contract_digest?: string;
+  /**
+   * Immutable SHA-256 digest of the package format snapshot's closed product-binding preimage. Required for every contract-bearing snapshot and paired with product_id whenever present.
+   */
+  product_snapshot_digest?: string;
+};
 /**
  * The seller's interpreted delivery parameters. Describes what the seller will actually run -- geo, channels, flight dates, frequency caps, and budget. Present when the account has governance_agents or when the seller chooses to provide delivery transparency.
  */
@@ -15007,13 +15952,13 @@ export interface PackageStatus {
     indicators_evaluated_scope?: IndicatorScope[];
   }[];
   /**
-   * The immutable canonical creative contracts established for this package at booking time. Each entry is the selected Product.format_options declaration, or the equivalent declaration normalized from a direct format_kind + params selector. Compare this full checklist with formats_pending to determine current creative readiness.
+   * The immutable PackageFormatSnapshot checklist established for this package at booking time. Contract-bearing snapshots remain present after creative coverage is complete so readback, assignment, and serving never fall back to a mutable live Product declaration.
    */
-  formats_to_provide?: ProductFormatDeclaration[];
+  formats_to_provide?: PackageFormatSnapshot[];
   /**
-   * Canonical package-time format declarations from formats_to_provide that do not yet have creative coverage through sync_creatives or inline creative assignment. Each entry preserves the full contract needed to select a compatible creative agent, including ID-less unique-kind and direct canonical selections. An empty emitted array means every formats_to_provide requirement is covered. Absence means readiness was not reported, so buyers MUST NOT infer full coverage from omission.
+   * PackageFormatSnapshot entries from formats_to_provide that do not yet have creative coverage. Each entry MUST be canonically equal to the corresponding checklist snapshot and, when product_snapshot_digest is present, carry the identical digest. An empty emitted array means all requirements are covered; absence means readiness was not reported.
    */
-  formats_pending?: ProductFormatDeclaration[];
+  formats_pending?: PackageFormatSnapshot[];
   /**
    * @deprecated
    * **DEPRECATED in 3.2.** Legacy named-format projection of formats_to_provide retained for older 3.x peers. New sellers emit canonical formats_to_provide declarations.
@@ -16027,6 +16972,31 @@ export interface GetMediaBuyDeliveryResponse {
   ext?: ExtensionObject;
 }
 /**
+ * Evidence artifact for this event (completion photograph); capture time and location ride the artifact
+ */
+export interface PlacementEvidence {
+  /**
+   * The evidence artifact — photograph, scanned tearsheet, or evidence package
+   */
+  url: string;
+  /**
+   * When the artifact was captured
+   */
+  captured_at?: string;
+  /**
+   * Capture location latitude
+   */
+  latitude?: number;
+  /**
+   * Capture location longitude
+   */
+  longitude?: number;
+  /**
+   * Context that doesn't fit the structured fields (e.g., 'shot from the eastbound approach at 40mph equivalent')
+   */
+  notes?: string;
+}
+/**
  * A reported value for a vendor-defined metric, emitted in `delivery-metrics.json` `vendor_metric_values` parallel to standard scalars. Identifies the vendor (BrandRef), the metric name within that vendor's vocabulary, the value, and the coverage denominator (`measurable_impressions`) — vendor measurement is rarely 100% coverage. The `breakdown` slot accommodates vendors that emit structured payloads beyond a single scalar (panel demographic breakouts, co-view ratios, incremental decompositions). To add fields beyond what this schema defines, vendors place them inside `breakdown` rather than alongside the standard envelope.
  */
 export interface VendorMetricValue {
@@ -16957,6 +17927,7 @@ export interface SyncAudiencesRequest {
      * Members to remove from this audience. If the same identifier appears in both add and remove in a single request, remove takes precedence.
      */
     remove?: AudienceMember[];
+    source?: AudienceSource;
     /**
      * When true, delete this audience from the account entirely. All other fields on this audience object are ignored. Use this to delete a specific audience without affecting others.
      */
@@ -16969,6 +17940,32 @@ export interface SyncAudiencesRequest {
   delete_missing?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
+}
+/**
+ * The seller reads a table or share the buyer has granted access to through the vendor's grantee-identified sharing mechanism (Snowflake Secure Data Sharing, Databricks Delta Sharing using D2D or OIDC token federation, BigQuery authorized views). The grant MUST name a principal without conveying a secret through AdCP; classic bearer-token recipient profiles are excluded. The buyer grants the seller's declared consumer identity in the vendor's system before calling; a missing or revoked grant at read time is a retryable per-audience failure (SOURCE_ACCESS_FAILED), not a lifecycle state. The shared object MUST expose the canonical AdCP identifier columns mirroring core/audience-member.json.
+ */
+export interface Dataset {
+  kind: 'dataset';
+  vendor: BrandReference;
+  /**
+   * Vendor-native reference to the shared object (share/database/table path). Opaque to AdCP; meaningful to the vendor. Never a credential. For the Databricks path, the locator convention is share://<provider-sharing-identifier>/<share-name>/<schema>.<object>; this identifies what to read and is distinct from the seller's recipient identity in consumer_identities[].
+   */
+  locator: string;
+  /**
+   * ISO 8601 time after which the buyer will revoke the grant. Declarative — tells the seller when the pipe closes so re-read behavior is predictable. Expiry bounds the access window, not retention: revocation does not claw back matched membership, and retention remains governed by the buyer-seller data processing agreement.
+   */
+  access_expires_at?: string;
+}
+/**
+ * The vendor's rails deliver the segment to the seller's declared platform_distribution destination; the buyer initiates distribution in the vendor's system and this reference binds the arriving segment to an audience_id. Order-independent: if the bind arrives before the segment, the audience sits in processing. Sellers MAY expire an unfulfilled bind after their declared bind_expiry_days (per-audience action: failed).
+ */
+export interface PlatformSegment {
+  kind: 'platform_segment';
+  vendor: BrandReference;
+  /**
+   * The vendor's segment identifier as issued to the buyer (the ID observable in the vendor's console/API). The seller owns the mapping to whatever identifier its ingest minted — it configured the destination and is the only party that can see both sides.
+   */
+  segment_ref: string;
 }
 
 // sync_audiences response
@@ -17091,10 +18088,36 @@ export interface SyncAudiencesSuccess {
       match_rate: number;
     }[];
     /**
-     * ISO 8601 timestamp of when the most recent sync operation was accepted by the platform. Useful for agents reasoning about audience freshness. Omitted if the seller does not track this.
+     * ISO 8601 timestamp of when the most recent sync operation was accepted by the platform. Useful for agents reasoning about audience freshness. Omitted if the seller does not track this. For externally sourced audiences, REQUIRED once counts populate (status ready or too_small): every count field is as-of this timestamp — it is the buyer's only anchor for what a count means, since two reads can differ because membership changed, match rate changed, or the seller re-read the source.
      * @format date-time
      */
     last_synced_at?: string;
+    /**
+     * Echo of the external source feeding this audience (never credentials), present on externally sourced audiences in every response including discovery-only calls — the single pane invariant: externally sourced audiences appear in discovery identically to pushed ones, with the same status enum, match reporting, and targetability. Loss of source access (revocation, access_expires_at passing, or read failure of any cause) MUST NOT change the audience status: last matched state persists and remains targetable, last_synced_at freezes, and failed re-reads MUST NOT emit suspended — that value stays reserved for consent/policy causes, which remain orthogonal. Source health is reported here via access_status instead.
+     */
+    source?: {
+      /**
+       * Source kind, echoed from the request.
+       */
+      kind: 'dataset' | 'platform_segment';
+      vendor: BrandReference;
+      /**
+       * Dataset locator, echoed from the request (kind: dataset).
+       */
+      locator?: string;
+      /**
+       * Segment reference, echoed from the request (kind: platform_segment).
+       */
+      segment_ref?: string;
+      /**
+       * Canonical identifier columns the seller actually read from the shared object on the most recent ingest (kind: dataset). Lets a buyer distinguish bad identifier data from a column the seller never read — match_breakdown reveals what resolved, not what was offered.
+       */
+      columns_read?: string[];
+      /**
+       * Source pipe health. Set to unavailable after a failed read (the seller cannot reliably distinguish revocation from expiry from a transient vendor outage — all three observables are a failed read); cleared to active on the next successful one. With last_synced_at this tells the buyer both that the pipe is down and how stale the membership is. Never a status input: membership stays frozen at the last successful read and remains targetable.
+       */
+      access_status?: 'active' | 'unavailable';
+    };
     /**
      * Minimum matched audience size required for targeting on this platform. Populated when status is 'too_small'. Helps agents know how many more members are needed.
      * @minimum 1
@@ -17558,7 +18581,7 @@ export interface SyncCatalogsSubmitted {
 
 // build_creative parameters
 /**
- * Request to transform, generate, refine, or retrieve a creative manifest. Supports four modes: (1) generation from a brief or seed assets, (2) transformation of an existing manifest, (3) refinement of a prior produced variant via refine_from_build_variant_id (re-build with a natural-language message + config delta), (4) retrieval from a creative library by creative_id. Produces target manifest(s) through canonical capabilities advertised in `get_adcp_capabilities.creative.supported_formats[]`. In 3.2, provide `target_capability_id` for one output or `target_capability_ids` for multiple outputs. Legacy `target_format_id` / `target_format_ids` remain accepted during the 3.x compatibility window but are deprecated.
+ * Request to transform, generate, resolve, refine, or retrieve a creative manifest. Supports five modes: (1) generation from a brief or seed assets, (2) transformation of an existing manifest, (3) deterministic seller-bound selection from a pre-binding CreativeRepresentationSet, (4) refinement of a prior produced variant via refine_from_build_variant_id, and (5) retrieval from a creative library by creative_id. Produces target manifest(s) through canonical capabilities advertised in `get_adcp_capabilities.creative.supported_formats[]`. CreativeRepresentationSet input is a non-generative, single-output mode available only on the destination sales agent and additionally requires `creative.representation_resolution.supported: true`. In 3.2, provide `target_capability_id` for one output or `target_capability_ids` for multiple outputs. Legacy named-format selectors remain accepted during the 3.x compatibility window but are deprecated.
  */
 export type BuildCreativeRequest = {
 } & (
@@ -17589,6 +18612,9 @@ export type BuildCreativeRequest = {
      */
     message?: string;
     creative_manifest?: CreativeManifest;
+    creative_representation_set?: CreativeRepresentationSet;
+    representation_destination?: RepresentationDestination;
+    representation_selection_strategy?: RepresentationSelectionStrategy;
     /**
      * Reference to a creative in the agent's library. The creative agent resolves this to a manifest from its library. Use this instead of creative_manifest when retrieving an existing creative for tag generation or format adaptation.
      */
@@ -17731,7 +18757,7 @@ export type BuildCreativeRequest = {
     preview_quality?: CreativeQuality;
     preview_output_format?: PreviewOutputFormat;
     /**
-     * Macro values to pre-substitute into the output manifest's assets. Keys are universal macro names (e.g., CLICK_URL, CACHEBUSTER); values are the substitution strings. The creative agent translates universal macros to its platform's native syntax. Substitution is literal — all occurrences of each macro in output assets are replaced with the provided value. The caller is responsible for URL-encoding values if the output context requires it. Macros not provided here remain as {MACRO} placeholders for the sales agent to resolve at serve time. Creative agents MUST ignore keys they do not recognize — unknown macro names are not an error.
+     * Raw concrete values offered for build-time binding, keyed by AdCP universal semantic (for example CLICK_URL or CACHEBUSTER). With declarations, a value binds only a verified-universal `resolve_value` occurrence performed_by `creative_agent`, using that declaration's exact context and encoding; callers MUST NOT pre-encode it. The selected `creative.supported_formats[]` route's macro_resolution_capabilities is the binding build/preview capability set; seller-wide and product sets apply only on the sales execution path. Values never short-circuit `translate_to_native`: translation emits its target declaration and the complete target capability chain remains required. For creative_representation_set, selection happens before binding and the complete representation set remains byte-identical. Without declarations, the 3.x legacy path remains: creative agents may translate recognized AdCP tokens using the existing `translateUniversalMacros` contract, preserve omitted placeholders for the sales agent, and ignore unknown keys. Existing unmapped/frozen-consent diagnostics remain required.
      */
     macro_values?: {
       [k: string]: string | undefined;
@@ -17755,6 +18781,7 @@ export type CreativeManifest = {
   format_id?: FormatReferenceStructuredObject;
   format_kind?: CanonicalFormatKind;
   format_option_ref?: FormatOptionReference;
+  representation_selection?: RepresentationSelection;
   /**
    * Map of slot keys to actual asset content. Legacy named-format path: each key matches an `asset_id` from the format's `assets` array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). 3.1+ canonical-format path: each key matches an `asset_group_id` from the format's `slots` declaration drawn from the canonical vocabulary registry (e.g., 'images_landscape', 'video', 'published_post', 'landing_page_url', 'vast_tag', 'script', 'creative_brief'). Either path produces the same envelope shape; only the slot-key vocabulary differs.
    *
@@ -17781,6 +18808,50 @@ export type CreativeManifest = {
   provenance?: Provenance;
   ext?: ExtensionObject;
 } & (NamedFormatManifest | CanonicalFormatManifest);
+/**
+ * One equivalent trafficking representation retained within a CreativeRepresentationSet before seller binding. `representation_id` is stable within its parent revision and identifies a representation, not rotation, A/B content, build output, locale, or a seller's served execution variant.
+ */
+export type CreativeRepresentation = CreativeManifest & {
+} & {
+} & {
+  /**
+   * Stable representation identifier, unique within the enclosing CreativeRepresentationSet revision.
+   */
+  representation_id: string;
+  source: {
+    /**
+     * Source system namespace.
+     */
+    system: string;
+    /**
+     * Source system's human-readable name for this representation.
+     */
+    source_representation: string;
+    /**
+     * Optional immutable source-system identifier for this representation.
+     */
+    source_id?: string;
+  };
+} & {
+  /**
+   * Stable representation identifier, unique within the enclosing CreativeRepresentationSet revision.
+   */
+  representation_id: string;
+  source: {
+    /**
+     * Source system namespace.
+     */
+    system: string;
+    /**
+     * Source system's human-readable name for this representation.
+     */
+    source_representation: string;
+    /**
+     * Optional immutable source-system identifier for this representation.
+     */
+    source_id?: string;
+  };
+};
 /**
  * Optional advisory evaluator (buyer-attached pointer, #5280) declaring how produced variants should be evaluated and ranked — the rank-side of the get_creative_features feature oracle. Experimental (x-status: experimental): the whole evaluator surface is new and unfrozen, and requires creative.supports_evaluator, which sellers MUST pair with `creative.evaluator` in experimental_features. Drives the producing agent's gate-then-rank pipeline over its best_of_n exploration: per leaf, evaluate (the chosen form) → optionally GATE (`evaluator.feature_requirement[]`, drop fails — internal pruning of which leaves the agent recommends, never an AdCP-layer block of an already-produced billable leaf) → RANK survivors (`evaluator.rank_by`, an explicit {feature_id, direction} ordering). Feature discovery uses get_adcp_capabilities governance.creative_features for rank_by, feature_requirement, and eval.features[]; evaluator_id is a pre-provisioned/account-arranged preset, not an ID discovered from that catalog. Populates a per-leaf `eval` block of creative-feature values (creative-feature-result[]) when supports_evaluator. When the evaluator names an external agent (`evaluator.feature_agent.agent_url` or the agent-form `agent_url`), that agent MUST appear in the seller's `creative_policy.accepted_verifiers[]` (the same allowlist #5280 established for provenance verify_agent); an off-list agent is rejected with `EVALUATOR_AGENT_NOT_ACCEPTED`. The outbound evaluator call authenticates on the transport (request signing/JWKS, mTLS, or a pre-provisioned static credential); credentials and caller-supplied trust material MUST NOT appear in evaluator, context, ext, or creative payload fields, and credential- or trust-material keys should be rejected with `CREDENTIAL_IN_ARGS`. With no `feature_requirement`, evaluation is advisory only and does not change what is produced or billed; an unreachable/unknown on-list agent degrades to seller-default ranking (advisory errors[] note), not a failure. Requires creative.supports_evaluator; otherwise ignored.
  */
@@ -17927,6 +18998,46 @@ export interface NamedFormatManifest {
  * Manifest declares which canonical format it targets via `format_kind` (e.g., `image`). This 3.1+ canonical-format path was introduced by RFC #3305.
  */
 export interface CanonicalFormatManifest {
+}
+/**
+ * Complete creative revision containing equivalent trafficking representations, of which exactly one is selected for this seller-bound output. This mode is accepted only by the destination sales agent and requires representation_destination plus representation_selection_strategy. The target capability selects the seller's build route; representation_destination supplies the binding inventory contract. The resolver verifies revision_content_digest against the complete set, retains every representation unchanged, selects exactly one compatible representation, and returns a manifest carrying representation_selection. If macro_values is present, selection happens first and binding affects only the derived output; the retained representation set and its revision binding never change. When none is compatible, the request fails with CREATIVE_REPRESENTATION_UNRESOLVED and one representation_rejections entry per candidate.
+ */
+export interface CreativeRepresentationSet {
+  /**
+   * Stable logical creative identifier across all representations and later seller-bound manifests.
+   */
+  creative_id: string;
+  revision_id: CreativeRevisionID;
+  /**
+   * SHA-256 of the RFC 8785 JCS canonical revision content defined by this schema. The producer computes it over the complete representation set after removing exactly the top-level $schema, creative_id, revision_id, revision_content_digest, and name properties. `$schema` is transport/schema-location metadata and never mints creative content identity. Resolvers MUST recompute and reject a mismatch; selection readback carries the verified digest so downstream sellers bind the revision to the complete source set rather than only the selected manifest.
+   */
+  revision_content_digest: string;
+  name: string;
+  /**
+   * Complete ordered set of equivalent representations. `representation_id` values MUST be unique within this array. Unsupported entries remain byte-for-byte unchanged; neither filtering nor selection changes this revision's canonical content.
+   *
+   * @minItems 1
+   */
+  representations: [CreativeRepresentation, ...CreativeRepresentation[]];
+  provenance?: Provenance;
+}
+/**
+ * Seller-owned product and effective format context for representation resolution. Required only with creative_representation_set and meaningful only when this endpoint is the destination sales agent.
+ */
+export interface RepresentationDestination {
+  /**
+   * Product owned by the destination seller.
+   */
+  product_id: string;
+  format_option: ProductFormatDeclaration;
+  /**
+   * Optional placements the derived manifest must satisfy. Omission means every placement in the intended product route, not an unconstrained destination.
+   *
+   * @minItems 1
+   */
+  placement_refs?: [PlacementReference, ...PlacementReference[]];
+  execution_vast_version?: VASTVersion;
+  execution_daast_version?: DAASTVersion;
 }
 /**
  * A feature-based requirement — a reusable predicate over a feature value. Used by property list filters today; designed for reuse in other surfaces (audience filters, creative gates) in future versions. Use min_value/max_value for quantitative features, allowed_values for binary/categorical features.
@@ -19011,7 +20122,7 @@ export type PreviewCreativeRequest = {
     item_limit?: number;
   }[];
   /**
-   * Platform-assigned variant identifier from get_creative_delivery response. Required when request_type is 'variant'.
+   * Agent-assigned AdCP served-execution identifier from get_creative_delivery. Required when request_type is 'variant'. It is agent-unique when the source agent advertises creative.supports_revisions; for legacy agents the published scope remains agent plus creative, and callers SHOULD also send creative_id to disambiguate reused values.
    */
   variant_id?: string;
   /**
@@ -19170,7 +20281,7 @@ export interface PreviewCreativeVariantResponse {
    */
   response_type: 'variant';
   /**
-   * Platform-assigned variant identifier
+   * Agent-assigned AdCP served-execution identifier. Agent-unique for an agent advertising creative.supports_revisions; otherwise scoped by this response's creative_id.
    */
   variant_id: string;
   /**
@@ -19388,11 +20499,16 @@ export type Transformer = (CanonicalTransformerOutputs | NamedFormatTransformerO
    */
   output_format_ids?: [FormatReferenceStructuredObject, ...FormatReferenceStructuredObject[]];
   /**
-   * Canonical format declarations this transformer accepts as input. Omitted means it builds from a brief or raw assets rather than transforming an existing creative. Compatibility uses canonical constraint satisfaction, not identifier equality.
+   * Canonical format declarations this transformer accepts as input. Omitted means it builds from a brief or raw assets rather than transforming an existing creative. Compatibility uses canonical constraint satisfaction, not identifier equality. Transformer self-description has no seller production authority, so tracker_execution_contract and tracker_execution_contract_digest are forbidden.
    *
    * @minItems 1
    */
-  input_formats?: [ProductFormatDeclaration, ...ProductFormatDeclaration[]];
+  input_formats?: [
+    ProductFormatDeclaration & {
+    },
+    ...(ProductFormatDeclaration & {
+    })[]
+  ];
   /**
    * Canonical output capabilities this transformer can produce. Every value MUST match this agent's get_adcp_capabilities `creative.supported_formats[].capability_id`. A build_creative request's target_capability_id(s) MUST be a subset of this array.
    *
@@ -19620,13 +20736,14 @@ export interface GetCreativeDeliveryRequest {
 
 // get_creative_delivery response
 /**
- * A specific execution variant of a creative with delivery metrics. For catalog-driven packages, each catalog item rendered as a distinct ad execution is a variant — the variant's manifest includes the catalog reference with the specific item rendered. For asset group optimization, represents one combination of assets the platform selected. For generative creative, represents a platform-generated variant. For standard creatives, maps 1:1 with the creative itself.
+ * A revision- and locale-homogeneous execution-variant breakdown row with delivery metrics. For catalog-driven packages, each catalog item rendered as a distinct ad execution is a variant — the variant's manifest includes the catalog reference with the specific item rendered. For asset group optimization, represents one combination of assets the platform selected. For generative creative, represents a platform-generated variant. For standard creatives, maps 1:1 with the creative within one source revision and locale. Existing agents retain the published scope in which variant_id is unique within the agent and creative. An agent advertising creative.supports_revisions additionally mints a distinct agent-unique AdCP variant_id for every source revision, locale, or rendered execution so historical attribution and variant preview remain unambiguous.
  */
 export type CreativeVariant = DeliveryMetrics & {
   /**
-   * Platform-assigned identifier for this variant
+   * Agent-assigned served-execution identifier. The legacy contract scopes uniqueness to the agent and creative. When the agent advertises creative.supports_revisions, the identifier is agent-unique and MUST NOT be reused for another creative, source revision, locale, or rendered manifest. A revision-capable adapter whose native platform reuses an identifier maps each distinct execution to a distinct AdCP variant_id and may retain the native identifier in ext. When that agent supports variant preview, this ID is its unambiguous lookup key.
    */
   variant_id: string;
+  revision_id?: CreativeRevisionID;
   /**
    * Buyer-assigned locale variant that supplied the served assets. Required for every delivered variant of a localized creative, including default fallback delivery. Omitted for unlocalized creatives.
    */
@@ -19751,12 +20868,12 @@ export interface GetCreativeDeliveryResponse {
     format_option_ref?: FormatOptionReference;
     totals?: DeliveryMetrics;
     /**
-     * Total number of variants for this creative. When max_variants was specified in the request, this may exceed the number of items in the variants array.
+     * Total number of agent-unique variant_id rows for this creative. When max_variants was specified in the request, this may exceed the number of items in the variants array.
      * @minimum 0
      */
     variant_count?: number;
     /**
-     * Variant-level delivery breakdown. Each variant includes the rendered manifest and delivery metrics. For standard creatives, contains a single variant. For asset group optimization, one per combination. For generative creative, one per generated execution. Empty when a creative has no variants yet.
+     * Variant-level delivery breakdown. Each agent-unique variant_id identifies one immutable served execution and each row includes metrics from exactly one source revision and, for localized delivery, exactly one locale variant. A distinct revision, locale, or rendered manifest receives a distinct variant_id; metrics MUST NOT cross those boundaries. For standard creatives, contains one row per source revision and locale represented in the reporting period. For asset group optimization, one per combination, source revision, and locale. For generative creative, one per generated execution, source revision, and locale. Empty when a creative has no variants yet.
      */
     variants: CreativeVariant[];
   }[];
@@ -20200,6 +21317,8 @@ export interface ListedCreativeNamedFormatReference {
    * Unique identifier for the creative
    */
   creative_id: string;
+  revision_id?: CreativeRevisionID;
+  representation_selection?: RepresentationSelection;
   account?: Account;
   /**
    * Human-readable creative name
@@ -20526,6 +21645,8 @@ export interface ListedCreativeCanonicalFormatKind {
    * Unique identifier for the creative
    */
   creative_id: string;
+  revision_id?: CreativeRevisionID;
+  representation_selection?: RepresentationSelection;
   account?: Account;
   /**
    * Human-readable creative name
@@ -20740,6 +21861,7 @@ export interface SyncCreativesRequest {
    * Array of creative assets to sync (create or update)
    */
   creatives?: (CreativeAsset & {
+    revision_id?: CreativeRevisionID;
     /**
      * Sync-only materialized-localization mutation. The top-level assets are the source variant; optional locale_fallbacks declare buyer-approved language-family substitutions, and default_locale_variant_id selects the final serving fallback. An object transactionally replaces the source assets and complete locale set, omission preserves existing localization only when the top-level source assets are unchanged, and null removes localization. This field never requests translation or generation. Receivers MUST advertise get_adcp_capabilities creative.localization before accepting it.
      */
@@ -20806,7 +21928,7 @@ export interface CreativeLocalization {
    */
   source: {
     /**
-     * Buyer-assigned stable identity for the source locale variant. This is a separate namespace from build_variant_id and served delivery variant_id.
+     * Buyer-assigned stable identity for the source locale variant. This is a separate namespace from build_variant_id and the served execution variant_id.
      */
     locale_variant_id: string;
     locale: LanguageTag;
@@ -20969,6 +22091,36 @@ export type SyncCreativesResponse = {
   adcp_major_version?: number;
 } & (SyncCreativesSuccess | SyncCreativesError | SyncCreativesSubmitted);
 /**
+ * Path-addressable preflight result for one declaration. `resolvable` means the selected execution path advertises the exact operation; it does not claim that serve-time substitution has already occurred.
+ */
+export type MacroResolutionResult = {
+} & {
+  declaration_id: string;
+  /**
+   * JSON Pointer to the asset carrying the declaration.
+   */
+  asset_path: string;
+  token: string;
+  dialect: MacroDialectFamily;
+  dialect_namespace?: string;
+  dialect_revision?: string;
+  dialect_semantic: string;
+  mapping_status: MacroMappingStatus;
+  universal_semantic?: UniversalMacro;
+  operation: MacroProcessingOperation;
+  performed_by?: MacroProcessingActor;
+  requested_encoding: MacroEncoding;
+  required: boolean;
+  unavailable_behavior: 'preserve' | 'omit_parameter' | 'dialect_sentinel' | 'reject';
+  status: 'resolvable' | 'preserved_for_downstream' | 'unsupported' | 'ambiguous';
+  reason: MacroResolutionReason;
+  /**
+   * Exact advertised profiles considered for this match, when relevant.
+   */
+  matched_encodings?: MacroEncoding[];
+  message?: string;
+};
+/**
  * Success response - sync operation processed creatives (may include per-item failures)
  */
 export interface SyncCreativesSuccess {
@@ -20984,6 +22136,7 @@ export interface SyncCreativesSuccess {
      * Creative ID from the request
      */
     creative_id: string;
+    revision_id?: CreativeRevisionID;
     account?: Account;
     action: CreativeAction;
     status?: CreativeStatus;
@@ -21004,6 +22157,10 @@ export interface SyncCreativesSuccess {
      * Non-fatal warnings about this creative
      */
     warnings?: string[];
+    /**
+     * Per-token result for declared macros. Sellers include this on accepted items when macro declarations were evaluated, and may include it alongside a failed item's structured errors.
+     */
+    macro_resolution_results?: MacroResolutionResult[];
     /**
      * Preview URL for generative creatives (only present for generative formats)
      */
@@ -21176,8 +22333,11 @@ export type ValidateInputResult = {
     expected?: unknown;
     predicted?: unknown;
   }[];
+  /**
+   * Per-token compatibility against the selected target. Required or unsafe `unsupported`/`ambiguous` results make the target `validated_fail`; deliberate preservation for the declared downstream resolver may still pass.
+   */
+  macro_resolution_results?: MacroResolutionResult[];
 };
-
 /**
  * Response payload for the validate_input task. Returns per-target manifest validation results — one entry per canonical, product, third-party, or agent-local capability target requested. A capability target selects an advertised creative.supported_formats entry whose operations contains validate; the response echoes kind capability and the same capability_id. Each result carries a `result_kind` discriminator (`validated_pass` / `validated_fail` / `unvalidatable_nondeterministic`) so callers can branch on three meaningfully different outcomes. A pass means the manifest is structurally valid against that target; it does not mean a later sync_creatives call will be accepted, because trafficking-time gates such as account authorization, creative_id upsert state, package assignments, active-delivery protections, and seller review policy are outside validate_input's scope. The `predicted` field on violations carries the platform's pre-flight estimate (e.g., predicted audio duration from text-length analysis), NOT the actual output — there is no protocol state for orphaned out-of-spec artifacts. For nondeterministic generative systems with `synthesis_nondeterministic: true`, the result_kind is `unvalidatable_nondeterministic` — predictive validation is impossible, the platform's post-synthesis QA loop applies on `build_creative`, and out-of-spec output never reaches this surface (instead `build_creative` returns task_failed with synthesis_failed reason).
  *
@@ -28066,6 +29226,46 @@ export type AccountTimezoneCapability = {
   supported_timezones?: [string, ...string[]];
 };
 /**
+ * Format declaration on which this agent can perform the listed operations. Creative-agent capability self-description has no seller production authority, so tracker_execution_contract and tracker_execution_contract_digest are forbidden.
+ */
+export type CreativeOperationFormatDeclaration = {
+} & {
+  /**
+   * Stable publisher- or product-declaration identity that this creative operation can satisfy. When publisher_domain is present, this field is required.
+   */
+  format_option_id?: string;
+  /**
+   * Publisher namespace for format_option_id when this operation claims compatibility with a publisher declaration.
+   */
+  publisher_domain?: string;
+  /**
+   * Creative-route processing capabilities for exact macro dialect identities, semantics, operations, actors, contexts, and encodings. These capabilities describe build, validation, or preview processing and do not grant seller production authority.
+   *
+   * @minItems 1
+   */
+  macro_resolution_capabilities?: [MacroProcessingCapability, ...MacroProcessingCapability[]];
+  technical_requirements_complete?: boolean;
+  display_name?: string;
+  sample_render_url?: string;
+  applies_to_channels?: MediaChannel[];
+  seller_preference?: 'preferred' | 'accepted' | 'discouraged';
+  locale_policy?: CreativeLocalePolicy;
+  canonical_formats_only?: boolean;
+  experimental?: boolean;
+  format_shape?: string;
+  /**
+   * @minItems 1
+   */
+  v1_format_ref?: [FormatReferenceStructuredObject, ...FormatReferenceStructuredObject[]];
+  format_schema?: PlatformExtensionReference;
+  format_kind: CanonicalFormatKind;
+  /**
+   * Canonical creative-shape parameters. Validate against the schema selected by format_kind; custom params validate against the fetched format_schema.
+   */
+  params: {
+  };
+};
+/**
  * Response payload for get_adcp_capabilities task. Protocol-level capability discovery across all AdCP protocols. Each protocol has its own capability section.
  */
 export interface GetAdCPCapabilitiesResponse {
@@ -28419,9 +29619,13 @@ export interface GetAdCPCapabilitiesResponse {
        */
       creative_specs?: {
         /**
-         * VAST versions supported for video creatives
+         * Seller-wide VAST execution ceiling. Each product format option declares its binding accepted subset in `params.vast_versions`.
          */
-        vast_versions?: string[];
+        vast_versions?: VASTVersion[];
+        /**
+         * Seller-wide ceiling for exact macro processing tuples (dialect identity/revision, semantic mapping, operation, actor, context, and encoding). It never proves a product execution path supports the same tuple and does not claim tracker firing; inspect the selected format option and, when standardized, product tracker capabilities.
+         */
+        macro_resolution_capabilities?: MacroProcessingCapability[];
         /**
          * MRAID versions supported for rich media mobile creatives
          */
@@ -28616,6 +29820,10 @@ export interface GetAdCPCapabilitiesResponse {
        * @minimum 1
        */
       minimum_audience_size: number;
+      /**
+       * Union of audience_activation.methods across the seller's products. Fast-fail discovery: a buyer reads this once and skips the catalog walk when nothing overlaps its pipeline. Per-product declarations are the source of truth; sellers MUST keep this consistent with the catalog. Operational coordinates are account-scoped: the union MAY omit consumer_identities and destination_ref until bilateral account setup establishes them, and MUST NOT expose another account's coordinates. Absence of this field with media_buy.audience_activation listed in experimental_features means walk the catalog; only a present, non-overlapping union is a fast-fail signal. Experimental (x-status: experimental): sellers implementing audience activation declarations MUST list media_buy.audience_activation in experimental_features. Per docs/reference/experimental-status, this surface MAY change between 3.x releases with notice.
+       */
+      supported_activation_methods?: AudienceActivationMethod[];
       /**
        * Expected matching latency range in hours after upload. Use to calibrate polling cadence and set appropriate expectations before configuring push_notification_config.
        */
@@ -28983,6 +30191,10 @@ export interface GetAdCPCapabilitiesResponse {
      */
     has_creative_library?: boolean;
     /**
+     * When true, this agent accepts buyer-assigned revision_id on sync_creatives, enforces immutable revision content, echoes accepted revision identity, returns it from list_creatives, and attributes delivered executions to it. Revision support does not imply revision history, rollback, or staged activation.
+     */
+    supports_revisions?: boolean;
+    /**
      * When true, this agent can generate creatives from natural language briefs via build_creative. The buyer provides a message with creative direction, and the agent produces a manifest with generated assets. When false, build_creative only supports transformation or library retrieval.
      */
     supports_generation?: boolean;
@@ -28990,6 +30202,19 @@ export interface GetAdCPCapabilitiesResponse {
      * When true, this agent can transform or resize existing canonical manifests via build_creative. The buyer supplies a creative_manifest and an advertised target_capability_id.
      */
     supports_transformation?: boolean;
+    /**
+     * Explicit opt-in for deterministic seller-bound selection from `build_creative.creative_representation_set`. Only the destination sales agent may advertise and exercise this capability because resolution requires its current product, placement/publisher narrowings, and seller-wide execution ceilings. A standalone creative agent may help a buyer select locally but MUST NOT advertise this capability or claim seller deliverability. Absence means the caller selects a representation before sending a seller-bound manifest; the agent MUST NOT guess silently.
+     */
+    representation_resolution?: {
+      /**
+       * True means the agent accepts CreativeRepresentationSet input and returns `representation_selection` or per-candidate structured rejections.
+       */
+      supported: true;
+      /**
+       * Deterministic selection strategies the seller implements after compatibility filtering. `representation_order` selects the first compatible source entry. `highest_compatible_vast` selects the highest exact VAST version from the already-intersected candidate set, with equal-version ties resolved by source array order.
+       */
+      strategies: RepresentationSelectionStrategy[];
+    };
     /**
      * When true, this agent exposes account-scoped creative transformers via list_transformers (the creative analog of media-buy products) and accepts transformer_id + config on build_creative. Buyers SHOULD call list_transformers to discover available transformers, their typed config params (and account-scoped enumerable option values via expand_params), and pricing. When false or absent, the agent does not offer the transformer surface.
      */
@@ -29052,7 +30277,7 @@ export interface GetAdCPCapabilitiesResponse {
       selection_strategies?: CreativeSelectionStrategy[];
     };
     /**
-     * Canonical-format capability catalog for this creative agent. This is the 3.2 source of truth for discovering which format contracts the agent can build, validate, or preview; it replaces the deprecated `list_creative_formats` task. Each entry uses the same `ProductFormatDeclaration` shape as a product's inline `format_options[i]`. New 3.2 producers MUST publish a stable agent-local `capability_id` and explicit `operations` for task routing. Every emitted `capability_id` MUST be unique within this catalog so a route selects exactly one entry. During the 3.x compatibility window, consumers MUST also accept legacy entries that omit either field; absent `operations` means `["build"]`, while an absent `capability_id` means the entry is discoverable by canonical contract but cannot be selected through a capability-ID route.
+     * Canonical-format capability catalog for this creative agent. This is the 3.2 source of truth for discovering which format contracts the agent can build, validate, or preview; it replaces the deprecated `list_creative_formats` task. Each entry uses the authority-free `CreativeOperationFormatDeclaration` projection of a product format declaration: canonical shape and creative-route macro processing are preserved, while seller production commitments are excluded. New 3.2 producers MUST publish a stable agent-local `capability_id` and explicit `operations` for task routing. Every emitted `capability_id` MUST be unique within this catalog so a route selects exactly one entry. During the 3.x compatibility window, consumers MUST also accept legacy entries that omit either field; absent `operations` means `["build"]`, while an absent `capability_id` means the entry is discoverable by canonical contract but cannot be selected through a capability-ID route.
      *
      * **Publisher-specific support.** To claim exact support for a publisher declaration, `format` carries the declaration's `{publisher_domain, format_option_id}` pair plus its canonical `format_kind` and narrowed `params`. Generic creative agents MAY instead advertise a canonical parameter envelope without publisher identity. A generic capability matches a target declaration only when the capability can satisfy every target constraint; matching canonical names alone is insufficient. Registries MAY reverse-index these entries by `format.format_kind`, `format.publisher_domain`, and `format.format_option_id`.
      *
@@ -29064,7 +30289,7 @@ export interface GetAdCPCapabilitiesResponse {
        * @pattern ^[a-zA-Z0-9_-]+$
        */
       capability_id?: string;
-      format: ProductFormatDeclaration;
+      format: CreativeOperationFormatDeclaration;
       /**
        * Creative operations this capability supports. `build` means the agent can produce a conforming manifest via build_creative; `validate` means it can evaluate inputs against the declaration; `preview` means it can render a preview. New 3.2 producers MUST emit this field so buyers and registries can distinguish producers, validators, and renderers without probing tasks. Consumers interpret omission from a legacy 3.x entry as `["build"]`.
        */
@@ -31566,6 +32791,90 @@ export interface GetAccountFinancialsError {
 
 // comply_test_controller parameters
 /**
+ * Viewability metrics. Viewable rate should be calculated as viewable_impressions / measurable_impressions (not total impressions), since some environments cannot measure viewability. Includes `viewed_seconds` — average in-view duration — plus optional percentile and histogram distributions over that duration; all three use the same `measurable_impressions` population and are governed by the same viewability threshold (`standard`). Sellers SHOULD include `standard` whenever measured viewability values are reported because MRC and GroupM rows are not interchangeable. The numeric leaves are addressable via the leaf metric identities `viewable_rate`, `viewable_impressions`, `measurable_impressions`, and `viewed_seconds` for declaration, commitments, aggregates, and breakdown sorting. The structured distribution carriers require explicit `viewed_seconds_percentiles` and `viewed_seconds_histogram` identities for declaration, commitment, and selection; they are not numeric aggregate rows or sort keys. This object remains the canonical carrier of every value. When a buy reports under more than one standard, contract a specific standard via the `viewability_standard` qualifier on `committed_metrics`; when the package's `committed_metrics` carry a `viewability_standard` qualifier, sellers MUST populate `standard` on reported viewability objects so reconciliation can match the qualifier.
+ */
+export type Viewability = {
+} & {
+  vendor?: BrandReference;
+  /**
+   * Impressions where viewability could be measured. Excludes environments without measurement capability (e.g., non-Intersection Observer browsers, certain app environments). Coverage denominator for `viewable_rate`, `viewed_seconds`, and both viewed-seconds distributions — every duration statistic is computed over this same measurable population.
+   */
+  measurable_impressions?: number;
+  /**
+   * Impressions that met the viewability threshold defined by the measurement standard.
+   */
+  viewable_impressions?: number;
+  /**
+   * Viewable impression rate (viewable_impressions / measurable_impressions). Range 0.0 to 1.0.
+   */
+  viewable_rate?: number;
+  /**
+   * Average in-view duration per measurable impression, in seconds. Reporting-side counterpart to the `viewed_seconds` optimization metric in `optimization-goal.json`. Computed over `measurable_impressions`, not total impressions — the same denominator as `viewable_rate`. The viewability `standard` governs the threshold (e.g., MRC's 50% pixels for 1s display / 2s video) that defines when an impression is in view and therefore when the clock is running. Sellers reporting against a `viewed_seconds` optimization goal MUST populate this field.
+   */
+  viewed_seconds?: number;
+  /**
+   * Percentile summary of the per-impression in-view durations whose arithmetic mean is reported in `viewed_seconds`. This object MUST use the same reporting row, measurement vendor, viewability `standard`, and `measurable_impressions` population as `viewed_seconds`; sellers MUST omit it when `measurable_impressions` is zero. Percentiles use the nearest-rank definition: sort the N observed durations in ascending order and select rank `ceil(p × N)` (one-based) for percentile p. Values MUST be non-decreasing from p25 through p95. The structured metric identity `viewed_seconds_percentiles` makes this optional surface discoverable and requestable; it is not sortable and the nested object remains the canonical carrier.
+   */
+  viewed_seconds_percentiles?: {
+    /**
+     * 25th-percentile in-view duration in seconds.
+     */
+    p25: number;
+    /**
+     * Median (50th-percentile) in-view duration in seconds.
+     */
+    p50: number;
+    /**
+     * 75th-percentile in-view duration in seconds.
+     */
+    p75: number;
+    /**
+     * 90th-percentile in-view duration in seconds.
+     */
+    p90: number;
+    /**
+     * 95th-percentile in-view duration in seconds.
+     */
+    p95: number;
+  };
+  /**
+   * Bucketed counts of the per-impression in-view durations whose arithmetic mean is reported in `viewed_seconds`. Buckets MUST be ordered by ascending lower bound, MUST NOT overlap, and MUST partition every impression in the same `measurable_impressions` population exactly once; therefore the sum of `impressions` MUST equal `measurable_impressions`. Buckets need not be contiguous: a gap between consecutive bucket boundaries is permitted when no impressions fall within that range — the sum constraint enforces this implicitly, and validators MUST NOT independently require contiguity. Each bucket is half-open `[lower_bound_seconds, upper_bound_seconds)`; only the final bucket MAY omit `upper_bound_seconds`, representing an unbounded upper range. Sellers choose boundaries, but buyers MUST combine histograms only when the complete boundary sequence, measurement vendor, and viewability `standard` match. The structured metric identity `viewed_seconds_histogram` makes this optional surface discoverable and requestable; it is not sortable and this nested array remains the canonical carrier.
+   *
+   * @minItems 1
+   */
+  viewed_seconds_histogram?: [
+    {
+      /**
+       * Inclusive lower bound of this duration bucket, in seconds.
+       */
+      lower_bound_seconds: number;
+      /**
+       * Exclusive upper bound of this duration bucket, in seconds. MUST be greater than `lower_bound_seconds`. Omit only on the final bucket to represent an unbounded upper range.
+       */
+      upper_bound_seconds?: number;
+      /**
+       * Number of measurable impressions whose in-view duration falls in this bucket.
+       */
+      impressions: number;
+    },
+    ...{
+      /**
+       * Inclusive lower bound of this duration bucket, in seconds.
+       */
+      lower_bound_seconds: number;
+      /**
+       * Exclusive upper bound of this duration bucket, in seconds. MUST be greater than `lower_bound_seconds`. Omit only on the final bucket to represent an unbounded upper range.
+       */
+      upper_bound_seconds?: number;
+      /**
+       * Number of measurable impressions whose in-view duration falls in this bucket.
+       */
+      impressions: number;
+    }[]
+  ];
+  standard?: ViewabilityStandard;
+};
+/**
  * Completion payload to record against the task. force_task_completion supports the bounded get_products, get_signals, and create_media_buy completion union; polling and production SDKs resolve all task results through the originating task's manifest response mapping instead of embedding a global result union. The seller MUST deliver this verbatim to the buyer's push_notification_config.url, preserving caller-supplied fields. Sellers MUST emit INVALID_PARAMS when the payload does not match the original task response branch and MAY reject payloads exceeding 256 KB.
  */
 export type ComplianceTaskCompletionData = GetProductsCompletion | GetSignalsCompletion | CreateMediaBuyCompletion;
@@ -32154,32 +33463,9 @@ export interface ComplyTestControllerRequest {
       period?: Duration;
     };
     /**
-     * Viewability metrics to inject into the simulated delivery row. Used by simulate_delivery. When present, sellers MUST surface these values inside `viewability` on the next get_media_buy_delivery response. Mirrors the `viewability` block in delivery-metrics.json: measurable_impressions is the shared denominator for viewable_rate and viewed_seconds. Sellers SHOULD include standard whenever measured values are present.
+     * Viewability metrics to inject into simulated delivery. Uses the canonical delivery viewability shape, including viewed-seconds distributions. This media-buy-scoped form is valid only for a single-package buy, where the reference seller surfaces the same values at package and media-buy totals grain.
      */
-    viewability?: {
-      /**
-       * Impressions where viewability could be measured. Coverage denominator for viewable_rate and viewed_seconds.
-       * @minimum 0
-       */
-      measurable_impressions?: number;
-      /**
-       * Impressions that met the viewability threshold.
-       * @minimum 0
-       */
-      viewable_impressions?: number;
-      /**
-       * Viewable impression rate (viewable_impressions / measurable_impressions).
-       * @minimum 0
-       * @maximum 1
-       */
-      viewable_rate?: number;
-      /**
-       * Average in-view duration per measurable impression in seconds. Reporting counterpart to the viewed_seconds optimization metric.
-       * @minimum 0
-       */
-      viewed_seconds?: number;
-      standard?: ViewabilityStandard;
-    };
+    viewability?: Viewability;
     /**
      * Vendor-defined metric values to inject into the next delivery report. Used by simulate_delivery. The reference seller reconciles these rows against each package's seller-stamped committed_metrics contract.
      */
@@ -32196,6 +33482,7 @@ export interface ComplyTestControllerRequest {
     not_yet_measurable_vendor_metrics?: {
       vendor: BrandReference;
       metric_id: VendorMetricID;
+      qualifier?: Qualifier;
     }[];
     /**
      * Package-scoped committed vendor metrics that are not yet measurable for the simulated window, keyed by package_id. Used by simulate_delivery for multi-package buys so a deferral on one package never suppresses another package's overdue gap.
@@ -32205,6 +33492,7 @@ export interface ComplyTestControllerRequest {
         | {
             vendor: BrandReference;
             metric_id: VendorMetricID;
+            qualifier?: Qualifier;
           }[]
         | undefined;
     };
@@ -32258,6 +33546,11 @@ export interface ComplyTestControllerRequest {
      * Human-readable identifier for the upstream dependency to force unavailable (e.g., 'inventory-service', 'creative-agent'). Used by force_upstream_unavailable. When omitted, the seller marks its default upstream for the specified tool as unavailable. Sellers MUST include the same name in STALE_RESPONSE error.details.upstream.name on the affected response.
      */
     upstream_name?: string;
+    /**
+     * Deterministic age of the stale cache entry used by force_upstream_unavailable. When supplied, the seller MUST emit this exact value in the matching STALE_RESPONSE error.details.cache_age_seconds on the next affected response. This lets the conformance runner bind the advisory code and its required detail fields to the same errors[] entry without assuming array order.
+     * @minimum 0
+     */
+    cache_age_seconds?: number;
     result?: ComplianceTaskCompletionData;
     /**
      * ISO 8601 timestamp; only return calls recorded at or after this time. Default: session start. Used by storyboard runners to scope upstream_traffic assertions to a specific step's window.
@@ -32294,6 +33587,16 @@ export interface ComplyTestControllerRequest {
      */
     sandbox: true;
   };
+}
+/**
+ * Qualifier for the exact committed vendor-metric row whose measurement is deferred.
+ */
+export interface Qualifier {
+  viewability_standard?: ViewabilityStandard;
+  completion_source?: CompletionSource;
+  attribution_methodology?: AttributionMethodology;
+  attribution_window?: Duration;
+  lift_dimension?: LiftDimension;
 }
 /**
  * Response from the comply_test_controller tool. Shape varies by scenario type: list_scenarios returns available scenarios, force_* returns state transition results, simulate_* returns simulation results.

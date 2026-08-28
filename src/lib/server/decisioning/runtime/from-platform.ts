@@ -5369,6 +5369,7 @@ export const INTENTIONALLY_UNHYDRATED_ENTITIES: ReadonlySet<string> = new Set([
   'advertiser_brand', // Same as above.
   'transformer', // Creative build capability catalog entry; no ctx-metadata ResourceKind yet.
   'build_variant', // Build lineage/refinement handle; no ctx-metadata ResourceKind yet.
+  'served_variant', // Agent-scoped delivery execution; creative delivery/preview owns its lookup semantics.
   'task', // Protocol task reconciliation id; task registry handles lookup, not ctx_metadata hydration.
   'proposal', // ProposalStore owns proposal lifecycle/CAS; ctx-metadata hydration would bypass those controls.
   'governance_adjustment', // Durable governance receipt identifier; no SDK ResourceKind/store yet.

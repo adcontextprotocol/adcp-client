@@ -113,6 +113,7 @@ const TS7056_SCHEMAS: Array<{
   { name: 'PackageUpdateSchema', tsType: 'PackageUpdate', objectShape: true, typeSource: 'core' },
   { name: 'UpdateMediaBuySuccessSchema' },
   { name: 'CreativeLocalizationReadbackSchema' },
+  { name: 'SyncCreativesRequestSchema', tsType: 'SyncCreativesRequest', objectShape: true },
   { name: 'SyncCreativesSuccessSchema' },
   { name: 'GetProductsCompletionSchema' },
   { name: 'ComplianceTaskCompletionDataSchema' },
@@ -631,8 +632,9 @@ function postProcessBeta4OfferAndOutcomeConstraints(content: string): string {
 /** Restore preview mode and batch routing constraints that TypeScript cannot encode. */
 function postProcessPreviewCreativeRequestConstraints(content: string): string {
   const schemaStart = content.indexOf('export const PreviewCreativeRequestSchema');
-  const schemaEnd = content.indexOf('\n\nexport const PreviewCreativeBatchResponseSchema = ', schemaStart);
-  if (schemaStart < 0 || schemaEnd < 0) throw new Error('Could not locate PreviewCreativeRequestSchema.');
+  if (schemaStart < 0) throw new Error('Could not locate PreviewCreativeRequestSchema.');
+  const nextSchema = content.indexOf('\n\nexport const ', schemaStart + 1);
+  const schemaEnd = nextSchema < 0 ? content.length : nextSchema;
   const block = content.slice(schemaStart, schemaEnd);
   const suffix = '}).passthrough());';
   if (!block.endsWith(suffix)) throw new Error('PreviewCreativeRequestSchema has an unexpected generated suffix.');
@@ -713,6 +715,16 @@ function postProcessRecordIntersections(content: string): string {
   result = stripNeverUnionIntersections(result);
 
   return result;
+}
+
+/**
+ * Collapse impossible empty-object/primitive intersections emitted for
+ * string schemas whose JSON Schema `anyOf` branches contain only lexical
+ * validators. Ajv retains the original format/pattern validation; the Zod
+ * projection must preserve the primitive runtime shape.
+ */
+function postProcessPrimitiveIntersections(content: string): string {
+  return content.replace(/z\.object\(\{\}\)(?:\.passthrough\(\))?\.and\(z\.(string|number|boolean)\(\)\)/g, 'z.$1()');
 }
 
 /**
@@ -3173,6 +3185,7 @@ async function generateZodSchemas() {
     // .passthrough(). They also create ZodIntersection types that lose .shape access.
     // Must run after postProcessUndefinedUnions (which normalizes the record value type).
     zodSchemas = postProcessRecordIntersections(zodSchemas);
+    zodSchemas = postProcessPrimitiveIntersections(zodSchemas);
 
     // Post-process: Add .passthrough() to all z.object() schemas so unknown keys are preserved.
     // Agents may return extra/platform-specific fields not in the schema. Without passthrough,

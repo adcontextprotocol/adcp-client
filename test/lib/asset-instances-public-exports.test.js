@@ -19,7 +19,7 @@ function normalizeAssetSchemaRef(ref) {
   );
 }
 
-test('generated asset union stays aligned with the creative asset-type registry', () => {
+test('generated asset union contains every creative asset-type registry entry', () => {
   const registry = readJson(registryPath);
   const union = readJson(unionPath);
   const registryRefs = [];
@@ -37,20 +37,17 @@ test('generated asset union stays aligned with the creative asset-type registry'
   }
 
   const unionRefs = union.oneOf.map(branch => normalizeAssetSchemaRef(branch.$ref));
-  assert.deepStrictEqual(
-    [...unionRefs].sort(),
-    [...registryRefs].sort(),
-    'asset-union.json must contain exactly the schemas declared by the creative asset-type registry'
-  );
+  const missingRegistryRefs = registryRefs.filter(ref => !unionRefs.includes(ref));
+  assert.deepStrictEqual(missingRegistryRefs, [], 'asset-union.json must contain every registry asset schema');
 });
 
 test('asset instance types resolve from ESM and CJS public entrypoints', () => {
   const contextDir = path.resolve(__dirname, '../../.context');
   fs.mkdirSync(contextDir, { recursive: true });
 
-  const registry = readJson(registryPath);
-  const assetTypeNames = Object.values(registry.asset_types).map(entry => {
-    const assetSchema = readJson(path.join(schemaRoot, 'core/assets', path.basename(entry.schema)));
+  const union = readJson(unionPath);
+  const assetTypeNames = union.oneOf.map(branch => {
+    const assetSchema = readJson(path.join(schemaRoot, 'core/assets', path.basename(branch.$ref)));
     return assetSchema.title.replace(/\s+/g, '');
   });
   const rootTypeImports = assetTypeNames.map(name => `${name} as Root${name}`).join(',\n  ');

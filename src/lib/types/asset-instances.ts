@@ -42,6 +42,7 @@ import type {
   PixelTrackerAsset,
   VASTTrackerAsset,
   DAASTTrackerAsset,
+  DisplayTagAsset,
 } from './tools.generated';
 
 /**
@@ -103,4 +104,5 @@ export type {
   PixelTrackerAsset,
   VASTTrackerAsset,
   DAASTTrackerAsset,
+  DisplayTagAsset,
 };

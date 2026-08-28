@@ -41,6 +41,38 @@ describe('SyncCreativesItemSchema', () => {
     assert.equal(r.success, true);
   });
 
+  test('accepts beta.8 revision IDs on accepted creatives', () => {
+    const r = SyncCreativesItemSchema.safeParse({ ...base, revision_id: 'rev_1' });
+    assert.equal(r.success, true, r.success ? '' : JSON.stringify(r.error.issues));
+  });
+
+  test('forbids beta.8 revision IDs on failed creatives', () => {
+    const r = SyncCreativesItemSchema.safeParse({ ...base, action: 'failed', revision_id: 'rev_1' });
+    assert.equal(r.success, false);
+    assert.ok(r.error.issues.some(i => i.path.includes('revision_id')));
+  });
+
+  test('requires status with beta.8 localization readback', () => {
+    const r = SyncCreativesItemSchema.safeParse({
+      ...base,
+      localization: {
+        default_locale_variant_id: 'source',
+        unmatched_locale_action: 'serve_default',
+        locale_matching: 'rfc4647_lookup',
+        variants: [
+          {
+            locale_variant_id: 'source',
+            locale: 'en-US',
+            role: 'source',
+            assets: { headline: { asset_type: 'text', content: 'Hello', language: 'en-US' } },
+          },
+        ],
+      },
+    });
+    assert.equal(r.success, false);
+    assert.ok(r.error.issues.some(i => i.path.includes('status')));
+  });
+
   test('rejects javascript: preview_url', () => {
     const r = SyncCreativesItemSchema.safeParse({
       ...base,

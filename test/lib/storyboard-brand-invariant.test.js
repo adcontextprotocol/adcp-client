@@ -366,7 +366,6 @@ describe('runStoryboard: brand invariant on the wire', () => {
 
     await runStoryboard('https://stub.example/mcp', storyboard, {
       brand: BRAND,
-      sandbox: true,
       agentTools: ['list_accounts'],
       _profile: { name: 'stub', tools: ['list_accounts'] },
       _client: {

@@ -677,7 +677,7 @@
     },
     "minimatch": "^10.2.1"
   },
-  "adcp_version": "3.2.0-beta.6",
+  "adcp_version": "3.2.0-beta.8",
   "sideEffects": [
     "**/default-invariants.*"
   ]
