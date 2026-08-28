@@ -12,13 +12,28 @@ const { TOOL_INPUT_SHAPE, toMcpResponse } = require('../../dist/lib/server/test-
 const { getComplianceStoryboardById } = require('../../dist/lib/testing/storyboard/index.js');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
 
-const ADCP_VERSION = '3.2.0-beta.8';
+const ADCP_VERSION = '3.2.0-beta.9';
 const ACCOUNT = {
   brand: { domain: 'acmeoutdoor.example' },
   operator: 'pinnacle-agency.example',
   sandbox: true,
 };
-const AVAILABLE_ACTIONS = [{ task: 'control_media_buy', action: 'decrease_budget', mode: 'self_serve' }];
+const AVAILABLE_ACTIONS = [
+  {
+    task: 'control_media_buy',
+    action: 'decrease_budget',
+    mode: 'self_serve',
+    change_term_id: 'change_decrease_budget',
+  },
+];
+const PROPOSAL_ALLOWED_ACTIONS = [
+  {
+    action: 'increase_budget',
+    modes: ['seller_managed'],
+    allowed_statuses: ['active'],
+    constraints: { kind: 'budget', max_delta_percent: 20 },
+  },
+];
 const PRICING = {
   pricing_option_id: 'compact_video_cpm',
   pricing_model: 'cpm',
@@ -41,7 +56,7 @@ function closeServer(server) {
 }
 
 function assertBeta3Envelope(request) {
-  assert.equal(request.adcp_version, '3.2-beta.8');
+  assert.equal(request.adcp_version, '3.2-beta.9');
   assert.equal(request.adcp_major_version, 3);
 }
 
@@ -63,6 +78,35 @@ function commercialTerms(productId, pricingOptionId, sourceFeedVersion, sourcePr
     start_time: '2099-09-01T00:00:00Z',
     end_time: '2099-09-30T23:59:59Z',
     total_budget: { amount: 1000, currency: 'USD' },
+    change_terms: [
+      {
+        term_id: 'change_decrease_budget',
+        action: 'decrease_budget',
+        service_mode: 'self_serve',
+        constraints: { kind: 'budget', max_delta_percent: 50 },
+      },
+      {
+        term_id: 'change_increase_budget',
+        action: 'increase_budget',
+        service_mode: 'seller_managed',
+        allowed_statuses: ['active'],
+        processing_sla: { response_max: 'PT30M', completion_max: 'PT24H' },
+        constraints: { kind: 'budget', max_delta_percent: 20 },
+        terms_ref: 'https://seller.example/terms/budget-increase',
+      },
+      {
+        term_id: 'change_extend_flight',
+        action: 'extend_flight',
+        service_mode: 'seller_managed',
+        constraints: { kind: 'flight', max_change: { interval: 7, unit: 'days' } },
+      },
+      {
+        term_id: 'change_resume',
+        action: 'resume',
+        service_mode: 'self_serve',
+        allowed_statuses: ['paused'],
+      },
+    ],
   };
 }
 
@@ -91,6 +135,7 @@ async function createLifecycleServer() {
     packageId: undefined,
     acceptedProposal: undefined,
     dailyBudgetCap: undefined,
+    totalBudget: 1000,
     mediaBuyStatus: 'pending_creatives',
     proposalSequence: 0,
   };
@@ -136,7 +181,7 @@ async function createLifecycleServer() {
             product_id: productId,
             name: direct ? 'Compact direct-buy video' : 'Compact proposal video',
             pricing_options: [{ ...PRICING, pricing_option_id: pricingOptionId }],
-            ...(direct && { allowed_actions: [{ action: 'decrease_budget', modes: ['self_serve'] }] }),
+            allowed_actions: direct ? [{ action: 'decrease_budget', modes: ['self_serve'] }] : PROPOSAL_ALLOWED_ACTIONS,
           },
         ],
         feed_version: direct ? 'direct-feed-v1' : 'proposal-feed-v1',
@@ -244,6 +289,7 @@ async function createLifecycleServer() {
       assert.equal(request.revision, state.revision);
       state.revision += 1;
       if (request.daily_budget_cap !== undefined) state.dailyBudgetCap = request.daily_budget_cap;
+      if (request.total_budget !== undefined) state.totalBudget = request.total_budget.amount;
       state.mediaBuyStatus =
         request.canceled === true
           ? 'canceled'
@@ -275,7 +321,7 @@ async function createLifecycleServer() {
             status: state.mediaBuyStatus,
             available_actions: AVAILABLE_ACTIONS,
             currency: 'USD',
-            total_budget: 1000,
+            total_budget: state.totalBudget,
             daily_budget_cap: state.dailyBudgetCap,
             confirmed_at: '2026-08-19T05:00:00Z',
             revision: state.revision,

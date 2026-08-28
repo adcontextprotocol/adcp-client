@@ -50,6 +50,8 @@ import type {
   Format,
   GetAdCPCapabilitiesRequest,
   GetAdCPCapabilitiesResponse,
+  ListAccountChangesRequest,
+  ListAccountChangesResponse,
   ListAccountsRequest,
   ListAccountsResponse,
   SyncAccountsRequest,
@@ -446,6 +448,7 @@ const RECORDLESS_HMAC_READ_ONLY_TASKS = new Set([
   'media_buy_delivery',
   'get_creative_delivery',
   'get_signals',
+  'list_account_changes',
   'list_accounts',
   'get_property_list',
   'list_property_lists',
@@ -965,6 +968,7 @@ const PRIMARY_ADCP_TASK_NAMES = {
   get_signals: true,
   activate_signal: true,
   get_adcp_capabilities: true,
+  list_account_changes: true,
   list_accounts: true,
   sync_accounts: true,
   sync_audiences: true,
@@ -6875,6 +6879,21 @@ export class SingleAgentClient {
   }
 
   // ====== ACCOUNT & AUDIENCE TASKS ======
+
+  /** Read the durable change feed for one account. */
+  async listAccountChanges(
+    params: ListAccountChangesRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ListAccountChangesResponse>> {
+    return this.executeAndHandle<ListAccountChangesResponse>(
+      'list_account_changes',
+      'onListAccountChangesStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
 
   /**
    * List accounts

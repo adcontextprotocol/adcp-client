@@ -123,6 +123,8 @@ import type {
   ListTasksResponse,
   SyncAgentNotificationConfigsRequest,
   SyncAgentNotificationConfigsResponse,
+  ListAccountChangesRequest,
+  ListAccountChangesResponse,
   ListAccountsRequest,
   ListAccountsResponse,
   SyncAccountsRequest,
@@ -608,6 +610,13 @@ export class Agent {
   }
 
   /**
+   * Official AdCP list_account_changes tool schema
+   */
+  async listAccountChanges(params: ListAccountChangesRequest): Promise<ListAccountChangesResponse> {
+    return this.callTool<ListAccountChangesResponse>('list_account_changes', params);
+  }
+
+  /**
    * Official AdCP list_accounts tool schema
    */
   async listAccounts(params: ListAccountsRequest): Promise<ListAccountsResponse> {
@@ -1007,6 +1016,13 @@ export class AgentCollection {
    */
   async syncAgentNotificationConfigs(params: MutatingRequestInput<SyncAgentNotificationConfigsRequest>): Promise<SyncAgentNotificationConfigsResponse[]> {
     return this.callToolOnAll<SyncAgentNotificationConfigsResponse>('sync_agent_notification_configs', params);
+  }
+
+  /**
+   * Official AdCP list_account_changes tool schema (across multiple agents)
+   */
+  async listAccountChanges(params: ListAccountChangesRequest): Promise<ListAccountChangesResponse[]> {
+    return this.callToolOnAll<ListAccountChangesResponse>('list_account_changes', params);
   }
 
   /**

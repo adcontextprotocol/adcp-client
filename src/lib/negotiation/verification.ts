@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { canonicalize } from '../utils/jcs';
+import { getSchemaValidatorByRef } from '../validation/schema-loader';
 import type {
   CanonicalProposal,
   ProposalConstraints,
@@ -315,61 +316,75 @@ function validateCanonicalProposalShape(
   path: string,
   issues: ProposalVerificationIssue[]
 ): value is CanonicalProposal {
-  if (!isRecord(value)) return shape(issues, path, 'proposal must be an object');
-  let valid = allowedKeys(value, PROPOSAL_KEYS, path, issues);
-  if (!boundedString(value.proposal_id, 1, 255))
+  const validateCanonicalProposal = getSchemaValidatorByRef('core/canonical-proposal.json');
+  if (!validateCanonicalProposal) return shape(issues, path, 'canonical-proposal schema is unavailable');
+  if (!validateCanonicalProposal(value)) {
+    const error = validateCanonicalProposal.errors?.[0];
+    const errorPath = error?.instancePath ? `${path}${error.instancePath.replaceAll('/', '.')}` : path;
+    return shape(
+      issues,
+      errorPath,
+      `proposal must satisfy the AdCP 3.2 schema${error?.message ? `: ${error.message}` : ''}`
+    );
+  }
+  const proposal = value as Record<string, any>;
+  let valid = true;
+  if (!boundedString(proposal.proposal_id, 1, 255))
     valid = shape(issues, `${path}.proposal_id`, 'proposal_id must be non-empty');
-  if (!PROPOSAL_KINDS.has(value.proposal_kind as string))
+  if (!PROPOSAL_KINDS.has(proposal.proposal_kind as string))
     valid = shape(issues, `${path}.proposal_kind`, 'proposal_kind is not recognized');
-  if (!nonempty(value.parent_proposal_id))
+  if (!nonempty(proposal.parent_proposal_id))
     valid = shape(issues, `${path}.parent_proposal_id`, 'parent_proposal_id is required');
-  if (!PROPOSAL_STATUSES.has(value.proposal_status as string))
+  if (!PROPOSAL_STATUSES.has(proposal.proposal_status as string))
     valid = shape(issues, `${path}.proposal_status`, 'proposal_status is not recognized');
-  if (!boundedString(value.name, 1, 500)) valid = shape(issues, `${path}.name`, 'name must be non-empty');
-  if (!/^sha256:[A-Za-z0-9_-]{43}$/.test(typeof value.terms_digest === 'string' ? value.terms_digest : '')) {
+  if (!boundedString(proposal.name, 1, 500)) valid = shape(issues, `${path}.name`, 'name must be non-empty');
+  if (!/^sha256:[A-Za-z0-9_-]{43}$/.test(typeof proposal.terms_digest === 'string' ? proposal.terms_digest : '')) {
     valid = shape(issues, `${path}.terms_digest`, 'terms_digest must be a sha256 base64url digest');
   }
   for (const key of ['description', 'brief_alignment'] as const) {
-    if (value[key] !== undefined && (typeof value[key] !== 'string' || value[key].length > 2000)) {
+    if (proposal[key] !== undefined && (typeof proposal[key] !== 'string' || proposal[key].length > 2000)) {
       valid = shape(issues, `${path}.${key}`, `${key} must be a string of at most 2000 characters`);
     }
   }
   for (const key of ['media_buy_id', 'opportunity_id'] as const) {
-    if (value[key] !== undefined && !nonempty(value[key]))
+    if (proposal[key] !== undefined && !nonempty(proposal[key]))
       valid = shape(issues, `${path}.${key}`, `${key} must be non-empty`);
   }
   if (
-    value.base_media_buy_revision !== undefined &&
-    (!Number.isInteger(value.base_media_buy_revision) || value.base_media_buy_revision < 1)
+    proposal.base_media_buy_revision !== undefined &&
+    (!Number.isInteger(proposal.base_media_buy_revision) || proposal.base_media_buy_revision < 1)
   ) {
     valid = shape(issues, `${path}.base_media_buy_revision`, 'base_media_buy_revision must be a positive integer');
   }
   for (const key of ['accepted_at', 'expires_at'] as const) {
-    if (value[key] !== undefined && !isStrictDateTime(value[key]))
+    if (proposal[key] !== undefined && !isStrictDateTime(proposal[key]))
       valid = shape(issues, `${path}.${key}`, `${key} must be an RFC 3339 date-time`);
   }
-  if (value.insertion_order !== undefined && !isRecord(value.insertion_order))
+  if (proposal.insertion_order !== undefined && !isRecord(proposal.insertion_order))
     valid = shape(issues, `${path}.insertion_order`, 'insertion_order must be an object');
 
   if (
-    (value.proposal_kind === 'media_buy_update' || value.proposal_kind === 'media_buy_cancellation') &&
-    (!nonempty(value.media_buy_id) || !Number.isInteger(value.base_media_buy_revision))
+    (proposal.proposal_kind === 'media_buy_update' || proposal.proposal_kind === 'media_buy_cancellation') &&
+    (!nonempty(proposal.media_buy_id) || !Number.isInteger(proposal.base_media_buy_revision))
   ) {
     valid = shape(issues, path, 'media-buy successor proposals require media_buy_id and base_media_buy_revision');
   }
-  if (value.proposal_status === 'accepted' && (!nonempty(value.media_buy_id) || !isStrictDateTime(value.accepted_at))) {
+  if (
+    proposal.proposal_status === 'accepted' &&
+    (!nonempty(proposal.media_buy_id) || !isStrictDateTime(proposal.accepted_at))
+  ) {
     valid = shape(issues, path, 'accepted proposals require media_buy_id and accepted_at');
   }
-  if (value.proposal_status === 'committed' && !isStrictDateTime(value.expires_at)) {
+  if (proposal.proposal_status === 'committed' && !isStrictDateTime(proposal.expires_at)) {
     valid = shape(issues, `${path}.expires_at`, 'committed proposals require expires_at');
   }
-  if (!validateCommercialTerms(value.commercial_terms, `${path}.commercial_terms`, issues)) valid = false;
+  if (!validateCommercialTerms(proposal.commercial_terms, `${path}.commercial_terms`, issues)) valid = false;
   return valid;
 }
 
 function validateCommercialTerms(value: unknown, path: string, issues: ProposalVerificationIssue[]): boolean {
   if (!isRecord(value)) return shape(issues, path, 'commercial_terms must be an object');
-  let valid = allowedKeys(value, COMMERCIAL_KEYS, path, issues);
+  let valid = true;
   if (!isRecord(value.brand)) valid = shape(issues, `${path}.brand`, 'brand must be an object');
   if (!Array.isArray(value.purchases) || value.purchases.length === 0) {
     valid = shape(issues, `${path}.purchases`, 'purchases must be a non-empty array');
@@ -378,6 +393,18 @@ function validateCommercialTerms(value: unknown, path: string, issues: ProposalV
       if (!validatePurchase(purchase, `${path}.purchases[${index}]`, issues)) valid = false;
     });
   }
+  const purchaseCurrencies = new Set<string>();
+  if (Array.isArray(value.purchases)) {
+    for (const purchase of value.purchases) {
+      if (isRecord(purchase) && isRecord(purchase.pricing) && typeof purchase.pricing.currency === 'string') {
+        purchaseCurrencies.add(purchase.pricing.currency);
+      }
+    }
+  }
+  if (purchaseCurrencies.size > 1) {
+    valid = shape(issues, `${path}.purchases`, 'every purchase pricing currency must be identical');
+  }
+  const purchaseCurrency = purchaseCurrencies.size === 1 ? [...purchaseCurrencies][0] : undefined;
   if (value.start_time !== 'asap' && !isStrictDateTime(value.start_time))
     valid = shape(issues, `${path}.start_time`, 'start_time must be asap or an RFC 3339 date-time');
   if (!isStrictDateTime(value.end_time))
@@ -399,6 +426,13 @@ function validateCommercialTerms(value: unknown, path: string, issues: ProposalV
     );
   if (value.total_budget !== undefined && !validateMoney(value.total_budget, `${path}.total_budget`, issues, true))
     valid = false;
+  if (
+    purchaseCurrency !== undefined &&
+    isRecord(value.total_budget) &&
+    value.total_budget.currency !== purchaseCurrency
+  ) {
+    valid = shape(issues, `${path}.total_budget.currency`, 'total budget currency must equal purchase currency');
+  }
   for (const key of ['budget_allocation', 'bidding', 'invoice_recipient'] as const) {
     if (value[key] !== undefined && !isRecord(value[key]))
       valid = shape(issues, `${path}.${key}`, `${key} must be an object`);
@@ -415,12 +449,107 @@ function validateCommercialTerms(value: unknown, path: string, issues: ProposalV
     !validateCancellationTerms(value.cancellation_terms, `${path}.cancellation_terms`, issues)
   )
     valid = false;
+  if (
+    value.change_terms !== undefined &&
+    !validateChangeTerms(value.change_terms, `${path}.change_terms`, issues, purchaseCurrency)
+  )
+    valid = false;
+  return valid;
+}
+
+const CHANGE_TERM_ACTIONS_BY_CONSTRAINT = {
+  budget: new Set([
+    'increase_budget',
+    'decrease_budget',
+    'reallocate_budget',
+    'update_budget_allocation',
+    'update_spend_target',
+  ]),
+  flight: new Set(['extend_flight', 'shorten_flight', 'update_flight_dates']),
+  package_count: new Set(['add_packages', 'remove_packages']),
+  effective_timing: new Set(['pause', 'resume', 'cancel']),
+} as const;
+
+function validateChangeTerms(
+  value: unknown,
+  path: string,
+  issues: ProposalVerificationIssue[],
+  purchaseCurrency?: string
+): boolean {
+  if (!Array.isArray(value) || value.length === 0) return shape(issues, path, 'change_terms must be a non-empty array');
+  const validateChangeTerm = getSchemaValidatorByRef('media-buy/change-term.json');
+  if (!validateChangeTerm) return shape(issues, path, 'change-term schema is unavailable');
+  let valid = true;
+  const actions = new Set<string>();
+  value.forEach((term, index) => {
+    const termPath = `${path}[${index}]`;
+    if (!validateChangeTerm(term)) {
+      const error = validateChangeTerm.errors?.[0];
+      const errorPath = error?.instancePath ? `${termPath}${error.instancePath.replaceAll('/', '.')}` : termPath;
+      valid = shape(
+        issues,
+        errorPath,
+        `change term must satisfy the AdCP 3.2 schema${error?.message ? `: ${error.message}` : ''}`
+      );
+      return;
+    }
+    const typedTerm = term as Record<string, any>;
+    if (actions.has(typedTerm.action)) {
+      valid = shape(issues, `${termPath}.action`, 'change term actions must be unique');
+    }
+    actions.add(typedTerm.action);
+    if (isRecord(typedTerm.constraints)) {
+      const kind = typedTerm.constraints.kind as keyof typeof CHANGE_TERM_ACTIONS_BY_CONSTRAINT;
+      if (!CHANGE_TERM_ACTIONS_BY_CONSTRAINT[kind]?.has(typedTerm.action)) {
+        valid = shape(
+          issues,
+          `${termPath}.constraints.kind`,
+          `${kind} constraints are not compatible with action ${typedTerm.action}`
+        );
+      }
+      if (!validateConstraintConsistency(typedTerm.constraints, termPath, issues, purchaseCurrency)) valid = false;
+    }
+  });
+  return valid;
+}
+
+function validateConstraintConsistency(
+  constraints: Record<string, any>,
+  termPath: string,
+  issues: ProposalVerificationIssue[],
+  purchaseCurrency?: string
+): boolean {
+  const path = `${termPath}.constraints`;
+  let valid = true;
+  for (const key of ['max_delta_amount', 'min_result_amount', 'max_result_amount'] as const) {
+    const money = constraints[key];
+    if (isRecord(money) && purchaseCurrency !== undefined && money.currency !== purchaseCurrency) {
+      valid = shape(issues, `${path}.${key}.currency`, `constraint currency must equal ${purchaseCurrency}`);
+    }
+  }
+  const minimum = constraints.min_result_amount;
+  const maximum = constraints.max_result_amount;
+  if (isRecord(minimum) && isRecord(maximum) && minimum.amount > maximum.amount) {
+    valid = shape(issues, path, 'minimum result amount must not exceed maximum result amount');
+  }
+  for (const [earliestKey, latestKey] of [
+    ['earliest_result', 'latest_result'],
+    ['earliest_effective_at', 'latest_effective_at'],
+  ] as const) {
+    if (
+      typeof constraints[earliestKey] === 'string' &&
+      typeof constraints[latestKey] === 'string' &&
+      Date.parse(constraints[earliestKey]) > Date.parse(constraints[latestKey])
+    ) {
+      valid = shape(issues, path, `${earliestKey} must not be later than ${latestKey}`);
+    }
+  }
   return valid;
 }
 
 function validatePurchase(value: unknown, path: string, issues: ProposalVerificationIssue[]): boolean {
   if (!isRecord(value)) return shape(issues, path, 'purchase must be an object');
-  let valid = allowedKeys(value, PURCHASE_KEYS, path, issues);
+  let valid = true;
   if (!nonempty(value.product_id)) valid = shape(issues, `${path}.product_id`, 'product_id is required');
   if (!nonempty(value.pricing_option_id))
     valid = shape(issues, `${path}.pricing_option_id`, 'pricing_option_id is required');
@@ -789,64 +918,6 @@ const RESULT_KEYS = new Set([
   'unsatisfied_product_changes',
   'suggestions',
   'targeting_resolution',
-]);
-const PROPOSAL_KEYS = new Set([
-  'proposal_id',
-  'proposal_kind',
-  'parent_proposal_id',
-  'media_buy_id',
-  'base_media_buy_revision',
-  'opportunity_id',
-  'proposal_status',
-  'accepted_at',
-  'expires_at',
-  'name',
-  'description',
-  'brief_alignment',
-  'commercial_terms',
-  'terms_digest',
-  'insertion_order',
-]);
-const COMMERCIAL_KEYS = new Set([
-  'source_feed_version',
-  'source_pricing_version',
-  'brand',
-  'advertiser_industry',
-  'purchases',
-  'start_time',
-  'end_time',
-  'total_budget',
-  'budget_allocation',
-  'pacing',
-  'bidding',
-  'invoice_recipient',
-  'purchase_order_ref',
-  'agency_estimate_number',
-  'reporting_commitments',
-  'cancellation_terms',
-]);
-const PURCHASE_KEYS = new Set([
-  'product_id',
-  'pricing_option_id',
-  'pricing',
-  'format_option_refs',
-  'catalog_ids',
-  'budget',
-  'min_spend_target',
-  'impressions',
-  'start_time',
-  'end_time',
-  'pacing',
-  'bidding',
-  'targeting_overlay',
-  'optimization_goals',
-  'audience_evidence_requirements',
-  'audience_evidence_pins',
-  'agency_estimate_number',
-  'context',
-  'ext',
-  'measurement_terms',
-  'performance_standards',
 ]);
 const PRICING_KEYS = new Set([
   'pricing_option_id',

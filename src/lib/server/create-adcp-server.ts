@@ -261,6 +261,7 @@ import type {
   SyncCreativesRequestSchema,
   GetSignalsRequestSchema,
   ActivateSignalRequestSchema,
+  ListAccountChangesRequestSchema,
   ListAccountsRequestSchema,
   SyncAccountsRequestSchema,
   SyncGovernanceRequestSchema,
@@ -347,6 +348,7 @@ import type {
   GetSignalsResponse,
   ActivateSignalSuccess,
   ActivateSignalResponse,
+  ListAccountChangesResponse,
   GetAdCPCapabilitiesResponse,
   CreatePropertyListResponse,
   UpdatePropertyListResponse,
@@ -750,6 +752,11 @@ export interface AdcpToolMap {
     result: ServerPayload<ActivateSignalSuccess>;
     response: ActivateSignalResponse;
   };
+  list_account_changes: {
+    params: z.input<typeof ListAccountChangesRequestSchema>;
+    result: ServerPayload<ListAccountChangesResponse>;
+    response: ListAccountChangesResponse;
+  };
   list_accounts: {
     params: z.input<typeof ListAccountsRequestSchema>;
     result: ServerPayload<ListAccountsResponse>;
@@ -1102,6 +1109,7 @@ export interface ProtocolHandlers<TAccount = unknown> {
 }
 
 export interface AccountHandlers<TAccount = unknown> {
+  listAccountChanges?: DomainHandler<'list_account_changes', TAccount>;
   listAccounts?: DomainHandler<'list_accounts', TAccount>;
   syncAccounts?: DomainHandler<'sync_accounts', TAccount>;
   syncGovernance?: DomainHandler<'sync_governance', TAccount>;
@@ -2970,6 +2978,7 @@ const TOOL_META: Record<string, ToolMeta> = {
   activate_signal: { wrap: activateSignalResponse, annotations: MUT },
 
   // Accounts
+  list_account_changes: { wrap: null, annotations: RO },
   list_accounts: { wrap: listAccountsResponse, annotations: RO },
   sync_accounts: { wrap: syncAccountsResponse, annotations: IDEMP },
   sync_governance: { wrap: syncGovernanceResponse, annotations: IDEMP },
@@ -3294,6 +3303,7 @@ const PROTOCOL_ENTRIES: HandlerEntry[] = [
 ];
 
 const ACCOUNT_ENTRIES: HandlerEntry[] = [
+  { handlerKey: 'listAccountChanges', toolName: 'list_account_changes' },
   { handlerKey: 'listAccounts', toolName: 'list_accounts' },
   { handlerKey: 'syncAccounts', toolName: 'sync_accounts' },
   { handlerKey: 'syncGovernance', toolName: 'sync_governance' },
@@ -5545,6 +5555,19 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         }
         const operationIdError = pushOperationIdError(params, requestRelease);
         if (operationIdError) return finalize(operationIdError);
+        if (
+          toolName === 'list_account_changes' &&
+          Object.hasOwn(params, 'cursor') &&
+          Object.hasOwn(params, 'starting_position')
+        ) {
+          return finalize(
+            adcpError('INVALID_REQUEST', {
+              message: 'list_account_changes cursor and starting_position are mutually exclusive',
+              field: 'starting_position',
+              recovery: 'correctable',
+            })
+          );
+        }
 
         // --- Buyer-agent registry resolution (#1269 / #1292) ---
         // Runs after `authInfo` is populated and before account resolution

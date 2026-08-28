@@ -79,6 +79,8 @@ import type {
   PreviewCreativeResponse,
   BuildCreativeRequest,
   BuildCreativeResponse,
+  ListAccountChangesRequest,
+  ListAccountChangesResponse,
   ListAccountsRequest,
   ListAccountsResponse,
   SyncAccountsRequest,
@@ -214,6 +216,7 @@ export type TaskResponseTypeMap = {
   get_signals: GetSignalsResponse;
   activate_signal: ActivateSignalResponse;
   get_adcp_capabilities: GetAdCPCapabilitiesResponse;
+  list_account_changes: ListAccountChangesResponse;
   list_accounts: ListAccountsResponse;
   sync_accounts: SyncAccountsResponse;
   sync_audiences: SyncAudiencesResponse;
@@ -263,6 +266,7 @@ export type TaskRequestTypeMap = {
   get_signals: GetSignalsRequest;
   activate_signal: MutatingRequestInput<ActivateSignalRequest>;
   get_adcp_capabilities: GetAdCPCapabilitiesRequest;
+  list_account_changes: ListAccountChangesRequest;
   list_accounts: ListAccountsRequest;
   sync_accounts: MutatingRequestInput<SyncAccountsRequest>;
   sync_audiences: MutatingRequestInput<SyncAudiencesRequest>;
@@ -1404,6 +1408,19 @@ export class AgentClient {
   }
 
   // ====== ACCOUNT & AUDIENCE TASKS ======
+
+  /** Read the durable change feed for one account. */
+  async listAccountChanges(
+    params: ListAccountChangesRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ListAccountChangesResponse>> {
+    const result = await this.client.listAccountChanges(params, inputHandler, {
+      ...this.withSession('list_account_changes', options),
+    });
+    this.retainSession(result);
+    return result;
+  }
 
   /**
    * List accounts

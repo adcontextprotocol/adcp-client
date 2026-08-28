@@ -82,6 +82,9 @@ export type FormatID = FormatReferenceStructuredObject;
 // Account model + account operations
 export type {
   AccountReference,
+  AccountChange,
+  ListAccountChangesRequest,
+  ListAccountChangesResponse,
   ListAccountsRequest,
   ListAccountsResponse,
   SyncAccountsRequest,

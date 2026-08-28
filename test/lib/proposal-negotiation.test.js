@@ -56,7 +56,7 @@ function revise(overrides = {}) {
 }
 
 function request(refinements = [revise()]) {
-  return { adcp_version: '3.2-beta.8', adcp_major_version: 3, idempotency_key: KEY, refinements };
+  return { adcp_version: '3.2-beta.9', adcp_major_version: 3, idempotency_key: KEY, refinements };
 }
 
 function completed(data) {
@@ -339,7 +339,7 @@ test('AgentClient.refineProposals dispatches through the official MCP client wit
   const mcpClient = new Client({ name: 'Buyer', version: '1.0.0' });
   await mcpClient.connect(clientTransport);
   const agent = AgentClient.fromMCPClient(mcpClient, {
-    adcpVersion: '3.2.0-beta.8',
+    adcpVersion: '3.2.0-beta.9',
     wireAdcpVersion: '3.2.0-beta.1',
   });
 
@@ -357,7 +357,7 @@ test('AgentClient.refineProposals dispatches through the official MCP client wit
 test('ADCPMultiAgentClient.simple forwards an exact prerelease wire pin to proposal requests', async () => {
   const { ADCPMultiAgentClient } = require('../../dist/lib/index.js');
   const client = ADCPMultiAgentClient.simple('https://seller.example.com/mcp', {
-    adcpVersion: '3.2.0-beta.8',
+    adcpVersion: '3.2.0-beta.9',
     wireAdcpVersion: '3.2.0-beta.1',
   });
   const agent = client.agent('default-agent');
@@ -381,7 +381,7 @@ test('ADCPMultiAgentClient.simple forwards an exact prerelease wire pin to propo
   };
 
   await agent.refineProposals({ refinements: [revise()] });
-  assert.equal(client.getAdcpVersion(), '3.2.0-beta.8');
+  assert.equal(client.getAdcpVersion(), '3.2.0-beta.9');
   assert.equal(captured.adcp_version, '3.2-beta.1');
   assert.equal(captured.adcp_major_version, 3);
 });

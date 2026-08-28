@@ -107,6 +107,7 @@ import type {
   BuildCreativeVariantSuccess,
   CreativeManifest,
   GetAdCPCapabilitiesResponse,
+  ListAccountChangesRequest,
   PaymentTerms,
   SyncGovernanceRequest,
 } from '../../../types/tools.generated';
@@ -7765,6 +7766,29 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
             ...(page.totalCount !== undefined && { total_count: page.totalCount }),
           },
         })
+      );
+    };
+  }
+
+  if (accounts.listChanges) {
+    handlers.listAccountChanges = async (params, ctx) => {
+      const request = params as ListAccountChangesRequest;
+      const resolveCtx = toResolveCtx(ctx, 'list_account_changes', params);
+      const accountRef = asValidatedDomainRequest<AccountReference>(params.account);
+      refuseInlineAccountIdWhenForbidden(accounts.resolution, accountRef);
+      const resolved = await accounts.resolve(accountRef, resolveCtx);
+      if (!resolved) {
+        throw new AdcpError('ACCOUNT_NOT_FOUND', {
+          message: 'Account not found',
+          recovery: 'terminal',
+        });
+      }
+      const account = cloneAccountForRequest(resolved);
+      const toolCtx = { ...resolveCtx, account };
+      return projectSync(
+        () => accounts.listChanges!(request, toolCtx),
+        page => page,
+        accounts.refreshToken ? { account, fn: accounts.refreshToken.bind(accounts) } : undefined
       );
     };
   }

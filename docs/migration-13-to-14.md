@@ -1,6 +1,6 @@
 # Migrating from 13.x to 14 beta
 
-SDK 14 adopts AdCP `3.2.0-beta.8` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the beta and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
+SDK 14 adopts AdCP `3.2.0-beta.9` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the beta and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
 
 Legacy signal-discovery adapters may keep supplying `opts.signals.getSignals`
 (or `legacyHandlers.signals.getSignals`) while declaring the truthful
@@ -807,7 +807,7 @@ import { getToolInputSchema, getToolResponseSchema } from '@adcp/sdk/schemas';
 
 const request = getToolInputSchema('create_media_buy', { adcpVersion: '3.0' });
 const response = getToolResponseSchema('create_media_buy', {
-  adcpVersion: '3.2.0-beta.8',
+  adcpVersion: '3.2.0-beta.9',
   variant: 'sync',
 });
 

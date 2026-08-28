@@ -93,6 +93,7 @@ export const TOOL_PROTOCOL_MAP: Readonly<Record<string, AdcpProtocol>> = {
   sync_catalogs: 'media-buy',
   log_event: 'media-buy',
   sync_accounts: 'media-buy',
+  list_account_changes: 'media-buy',
   list_accounts: 'media-buy',
   get_account_financials: 'media-buy',
   report_usage: 'media-buy',

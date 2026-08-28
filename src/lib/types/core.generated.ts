@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.2.0-beta.8
-// Generated at: 2026-08-28T10:14:52.513Z
+// Generated AdCP core types from official schemas v3.2.0-beta.9
+// Generated at: 2026-08-28T19:19:28.685Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -27,7 +27,8 @@ export type ActionNotAllowedReason =
   | 'wrong_status'
   | 'not_supported_on_product'
   | 'not_supported_on_buy'
-  | 'mode_mismatch';
+  | 'mode_mismatch'
+  | 'condition_unresolved';
 
 // ACTIONSOURCE CANONICAL ENUM
 /**
@@ -399,7 +400,11 @@ export type CanceledBy = 'buyer' | 'seller';
 /**
  * How a seller honors a routed compact-lifecycle action.
  */
-export type CanonicalMediaBuyActionMode = 'self_serve' | 'conditional_self_serve' | 'requires_approval';
+export type CanonicalMediaBuyActionMode =
+  | 'self_serve'
+  | 'conditional_self_serve'
+  | 'seller_managed'
+  | 'requires_approval';
 
 // CANONICALMEDIABUYACTIONNAME CANONICAL ENUM
 /**
@@ -882,6 +887,7 @@ export type ErrorCode =
   | 'IDEMPOTENCY_CONFLICT'
   | 'IDEMPOTENCY_EXPIRED'
   | 'IDEMPOTENCY_IN_FLIGHT'
+  | 'CURSOR_EXPIRED'
   | 'CREATIVE_DEADLINE_EXCEEDED'
   | 'CREATIVE_INACCESSIBLE'
   | 'INVALID_STATE'
@@ -910,6 +916,7 @@ export type ErrorCode =
   | 'VERSION_UNSUPPORTED'
   | 'CAMPAIGN_SUSPENDED'
   | 'GOVERNANCE_UNAVAILABLE'
+  | 'GOVERNANCE_AGENT_NOT_ACCEPTED'
   | 'PERMISSION_DENIED'
   | 'SCOPE_INSUFFICIENT'
   | 'READ_ONLY_SCOPE'
@@ -1373,9 +1380,9 @@ export type MatchType = 'broad' | 'phrase' | 'exact';
 
 // MEDIABUYACTIONMODE CANONICAL ENUM
 /**
- * How a seller honors a given action on a media buy. Buyers branch on this to decide whether to expect a synchronous response, an automatic-with-fallback flow, or an asynchronous human approval. The mode is declared on each entry of `allowed_actions[]` (product, as `modes[]` array) or `available_actions[]` (buy, as singular `mode`). Requotes that fall outside the current buy envelope are not an action mode in 3.1; sellers return REQUOTE_REQUIRED from update_media_buy instead. Buyer SDKs MUST tolerate unknown future values by treating the affected action as unavailable until they re-fetch the product or buy and inspect the current `available_actions[]` / `allowed_actions[]` metadata.
+ * How a seller honors a given action on a media buy. Buyers branch on this to decide whether to expect a synchronous response, an automatic-with-fallback flow, or seller-managed asynchronous processing. The mode is declared on each entry of `allowed_actions[]` (product, as `modes[]` array) or `available_actions[]` (buy, as singular `mode`). Requotes that fall outside the current buy envelope are not an action mode in 3.1; sellers return REQUOTE_REQUIRED from update_media_buy instead. Buyer SDKs MUST tolerate unknown future values by treating the affected action as unavailable until they re-fetch the product or buy and inspect the current `available_actions[]` / `allowed_actions[]` metadata.
  */
-export type MediaBuyActionMode = 'self_serve' | 'conditional_self_serve' | 'requires_approval';
+export type MediaBuyActionMode = 'self_serve' | 'conditional_self_serve' | 'seller_managed' | 'requires_approval';
 
 // MEDIABUYHEALTH CANONICAL ENUM
 /**
@@ -1475,7 +1482,7 @@ export type CreativeMotionLevel = 'static' | 'limited_motion' | 'full_motion';
 
 // NOTIFICATIONTYPE CANONICAL ENUM
 /**
- * Type of push notification fired by a seller agent. Media-buy-anchored notifications (`scheduled`, `final`, `delayed`, `adjusted`, `window_update`, `impairment`) fire against a media buy's `push_notification_config`. Account-anchored notifications (`creative.status_changed`, `creative.assignment_changed`, `indicators.changed`, `creative.purged`, `account.status_changed`, `product.*`, `signal.*`, `wholesale_feed.bulk_change`) fire against an account's `notification_configs[]` entries whose `event_types` include the value — these outlive any single media buy and anchor at the account. `indicators.changed` and `creative.assignment_changed` are invalidations repaired completely through `get_media_buys`; `list_creatives` may provide a bounded reverse projection. Agent-anchored notifications (`capabilities.changed`) fire against the agent-level subscriber set managed by `sync_agent_notification_configs`; they are valid before a buyer has any account. Account status changes use `account.status_changed` as an invalidation signal; receivers repair by re-reading `list_accounts`. Wholesale feed notifications carry the actual change payload in `/schemas/core/wholesale-feed-webhook.json`; product mirrors repair through `list_products` using `if_feed_version` and signal mirrors through `get_signals` using `if_wholesale_feed_version` (`get_products` remains the deprecated 3.x product fallback). Capability-change notifications carry only an invalidation payload in `/schemas/core/capabilities-changed-webhook.json`; receivers repair by re-reading `get_adcp_capabilities`. New notification types added to this enum MUST declare their anchor (media-buy, account, or agent), logical `notification_id` semantics, and repair key in the enumDescription. Sellers MUST reject `notification_configs[]` entries whose `event_types` include any media-buy-anchored or agent-anchored type, MUST reject `sync_agent_notification_configs` entries whose `event_types` include any media-buy-anchored or account-anchored type, and MUST reject `push_notification_config` registrations for persistent account-anchored or agent-anchored types.
+ * Type of push notification fired by a seller agent. Media-buy-anchored notifications (`scheduled`, `final`, `delayed`, `adjusted`, `window_update`, `impairment`) fire against a media buy's `push_notification_config`. Account-anchored notifications (`creative.status_changed`, `creative.assignment_changed`, `indicators.changed`, `creative.purged`, `account.status_changed`, `account.change_recorded`, `product.*`, `signal.*`, `wholesale_feed.bulk_change`) fire against an account's `notification_configs[]` entries whose `event_types` include the value — these outlive any single media buy and anchor at the account. `account.change_recorded` is the generic wake-up for the durable `list_account_changes` feed; specialized account notifications remain valid and may overlap it. `indicators.changed` and `creative.assignment_changed` are invalidations repaired completely through `get_media_buys`; `list_creatives` may provide a bounded reverse projection. Agent-anchored notifications (`capabilities.changed`) fire against the agent-level subscriber set managed by `sync_agent_notification_configs`; they are valid before a buyer has any account. Account status changes use `account.status_changed` as an invalidation signal; receivers repair by re-reading `list_accounts`. Wholesale feed notifications carry the actual change payload in `/schemas/core/wholesale-feed-webhook.json`; product mirrors repair through `list_products` using `if_feed_version` and signal mirrors through `get_signals` using `if_wholesale_feed_version` (`get_products` remains the deprecated 3.x product fallback). Capability-change notifications carry only an invalidation payload in `/schemas/core/capabilities-changed-webhook.json`; receivers repair by re-reading `get_adcp_capabilities`. New notification types added to this enum MUST declare their anchor (media-buy, account, or agent), logical `notification_id` semantics, and repair key in the enumDescription. Sellers MUST reject `notification_configs[]` entries whose `event_types` include any media-buy-anchored or agent-anchored type, MUST reject `sync_agent_notification_configs` entries whose `event_types` include any media-buy-anchored or account-anchored type, and MUST reject `push_notification_config` registrations for persistent account-anchored or agent-anchored types.
  */
 export type NotificationType =
   | 'scheduled'
@@ -1489,6 +1496,7 @@ export type NotificationType =
   | 'indicators.changed'
   | 'creative.purged'
   | 'account.status_changed'
+  | 'account.change_recorded'
   | 'product.created'
   | 'product.updated'
   | 'product.priced'
@@ -3872,11 +3880,11 @@ export interface PlacementForecastDimension {
  */
 export interface PlacementReference {
   /**
-   * Domain where the adagents.json declaring this placement is hosted. Omitted only for legacy single-publisher seller contexts where the seller agent's own publisher domain is the namespace.
+   * Domain where the adagents.json declaring a publisher-catalog placement is hosted, or the inventory publisher associated with an inline placement. Omitted only for legacy single-publisher product-context references.
    */
   publisher_domain?: string;
   /**
-   * Placement ID from the publisher's adagents.json placement catalog, or an inline seller-defined placement ID interpreted within the same publisher namespace.
+   * Placement ID from the publisher's adagents.json placement catalog, or an inline seller-defined placement ID interpreted within the enclosing seller and product context.
    */
   placement_id: string;
 }
@@ -5695,6 +5703,10 @@ export type FrequencyCap = {
  */
 export type PlacementSelection = SelectedPlacements | ProductDefaultPlacements;
 /**
+ * Self-contained identity for either a publisher-catalog placement or a sales-agent-defined inline placement. The discriminator names which authority owns placement_id.
+ */
+export type PlacementIdentity = PublisherCatalogPlacementIdentity | SellerInlinePlacementIdentity;
+/**
  * Assignment of a creative asset to a package with optional rotation and placement routing. Used in create_media_buy and update_media_buy requests. Buyers identify the stored creative with `creative_id` only. A generic `id` alias, if present due to adapter-internal payload reuse, is not an AdCP identifier and sellers MUST ignore it on input. Note: sync_creatives does not support package rotation, placement_refs, or placement_ids - use create/update_media_buy for package-level trafficking controls.
  */
 export type CreativeAssignment = {
@@ -5720,7 +5732,7 @@ export type CreativeAssignment = {
    */
   sequence_position?: number;
   /**
-   * Optional structured refs routing this creative within already-purchased package inventory. This field never narrows purchased inventory; use targeting_overlay.placement_selection for that. Every ref MUST fall within the package's committed placement selection. When omitted, the creative runs across the purchased placements compatible with its format. New senders SHOULD include publisher_domain because placement IDs are publisher-scoped. If both placement_refs and legacy placement_ids are present, placement_refs wins.
+   * Optional structured product-context refs routing this creative within already-purchased package inventory. These items always use placement-ref product-context semantics, even when tolerated additional members make an item resemble placement-identity. Receivers match only against the package's committed placement set; kind and seller_agent are non-authoritative for routing and MUST NOT expand or reinterpret that set. A receiver MUST reject a ref when the enclosing product and committed set do not yield one unambiguous match. This field never narrows purchased inventory; use targeting_overlay.placement_selection for that. Every ref MUST fall within the package's committed placement selection. New senders SHOULD include publisher_domain for publisher-catalog placements. When omitted, the creative runs across the purchased placements compatible with its format. If both placement_refs and legacy placement_ids are present, placement_refs wins.
    *
    * @minItems 1
    */
@@ -5791,7 +5803,7 @@ export type CreativeAsset = {
    */
   weight?: number;
   /**
-   * Optional structured placement references where this uploaded creative should run when uploading via create_media_buy or update_media_buy. New senders SHOULD use this field for placement-level targeting because placement IDs are publisher-scoped. References product placements by `{ publisher_domain, placement_id }`. If omitted, creative runs on all buyer-targetable placements. If both `placement_refs` and legacy `placement_ids` are present, `placement_refs` wins and receivers MUST ignore `placement_ids`. Only used during upload to media buy - not stored in creative library.
+   * Optional structured product-context placement references where this uploaded creative should run when uploading via create_media_buy or update_media_buy. These items always use placement-ref product-context semantics, even when tolerated additional members make an item resemble placement-identity. Receivers match only against the target package's committed placement set; kind and seller_agent are non-authoritative for routing and MUST NOT expand or reinterpret that set. A receiver MUST reject a ref when the enclosing product and committed set do not yield one unambiguous match. New senders SHOULD include publisher_domain for publisher-catalog placements. If omitted, creative runs on all buyer-targetable placements. If both `placement_refs` and legacy `placement_ids` are present, `placement_refs` wins and receivers MUST ignore `placement_ids`. Only used during upload to media buy - not stored in creative library.
    *
    * @minItems 1
    */
@@ -7696,17 +7708,52 @@ export interface CollectionListReference {
 export interface SelectedPlacements {
   mode: 'selected';
   /**
-   * Complete required placement set. A reference normally identifies a mode targetable placement. It MAY identify a mode included placement only when the set exactly equals the product's complete fixed included set, which is an inherent match rather than independent selection. publisher_domain is required in this targeting context even though legacy creative-routing refs may omit it.
+   * Complete required placement set. A reference normally identifies a mode targetable placement. It MAY identify a mode included placement only when the set exactly equals the product's complete fixed included set, which is an inherent match rather than independent selection. Legacy publisher refs use {publisher_domain, placement_id}; authority-discriminated 3.2 identities use placement-identity.json so seller-inline inventory is selected by {seller_agent, placement_id}. An item that exactly matches placement-identity uses that canonical identity; otherwise a released-compatible item with publisher_domain and placement_id uses legacy product-context matching, and tolerated product metadata such as kind, name, or mode has no selection effect.
    *
    * @minItems 1
    */
   placement_refs: [
-    PlacementReference & {
-    },
-    ...(PlacementReference & {
-    })[]
+    (
+      | (PlacementReference & {
+        })
+      | PlacementIdentity
+    ),
+    ...(
+      | (PlacementReference & {
+        })
+      | PlacementIdentity
+    )[]
   ];
   ext?: ExtensionObject;
+}
+export interface PublisherCatalogPlacementIdentity {
+  kind: 'publisher_ref';
+  /**
+   * Domain whose adagents.json declares placement_id.
+   */
+  publisher_domain: string;
+  placement_id: string;
+}
+export interface SellerInlinePlacementIdentity {
+  kind: 'seller_inline';
+  seller_agent: SellerAgentReference;
+  /**
+   * Stable placement ID within the defining sales agent's namespace. The agent MUST NOT reuse it for a different semantic placement.
+   */
+  placement_id: string;
+}
+/**
+ * Sales agent that defines and maintains the inline placement namespace.
+ */
+export interface SellerAgentReference {
+  /**
+   * The seller agent's API endpoint URL as declared in the property publisher's adagents.json `authorized_agents[].url`. MUST use the `https://` scheme. Receivers compare this URL against the `authorized_agents` list using the AdCP URL canonicalization rules — not byte-equality — and reject mismatches with `seller_not_authorized`. See docs/reference/url-canonicalization.
+   */
+  agent_url: string;
+  /**
+   * Reserved for a future registry-assigned stable seller identifier. Not used today — senders MUST NOT populate this field until a registry is defined. When a future release populates both `agent_url` and `id`, `agent_url` remains authoritative and `id` is advisory.
+   */
+  id?: string;
 }
 export interface ProductDefaultPlacements {
   mode: 'default';
@@ -13316,6 +13363,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -13332,6 +13380,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -13388,6 +13437,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -13404,6 +13454,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -13460,6 +13511,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -13476,6 +13528,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -13532,6 +13585,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -13548,6 +13602,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -13604,6 +13659,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -13620,6 +13676,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -13676,6 +13733,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -13692,6 +13750,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -13748,6 +13807,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -13764,6 +13824,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -13820,6 +13881,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -13836,6 +13898,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -13892,6 +13955,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -13908,6 +13972,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -13964,6 +14029,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -13980,6 +14046,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -14036,6 +14103,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -14052,6 +14120,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -14108,6 +14177,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -14124,6 +14194,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -14180,6 +14251,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -14196,6 +14268,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -14252,6 +14325,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -14268,6 +14342,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -14324,6 +14399,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -14340,6 +14416,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -14396,6 +14473,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -14412,6 +14490,7 @@ export type NotificationConfig = {
       | 'indicators.changed'
       | 'creative.purged'
       | 'account.status_changed'
+      | 'account.change_recorded'
       | 'product.created'
       | 'product.updated'
       | 'product.priced'
@@ -15712,7 +15791,7 @@ export interface Account {
    */
   sandbox?: boolean;
   /**
-   * Account-level webhook subscriptions for creative lifecycle/assignment changes, indicators.changed, account status, and wholesale feed changes. Buyers manage entries via sync_accounts and verify persisted state on list_accounts. Indicator and assignment payloads are invalidations repaired completely through get_media_buys; list_creatives may provide a bounded reverse projection. Distinct from per-resource push_notification_config. Entries are keyed by account-scoped subscriber_id; credentials are write-only.
+   * Account-level webhook subscriptions for creative lifecycle/assignment changes, indicators.changed, account status, durable account-change wake-ups, and wholesale feed changes. Buyers manage entries via sync_accounts and verify persisted state on list_accounts. account.change_recorded wakes receivers to drain list_account_changes; indicator and assignment payloads are invalidations repaired completely through get_media_buys; list_creatives may provide a bounded reverse projection. Distinct from per-resource push_notification_config. Entries are keyed by account-scoped subscriber_id; credentials are write-only.
    *
    * @maxItems 16
    */
@@ -16840,7 +16919,7 @@ export type Product = {
    */
   format_options?: ProductFormatDeclaration[];
   /**
-   * Optional array of specific public placements within this product. Placement IDs are scoped by publisher domain. Product placements declare `kind` to distinguish publisher-referenced placements (`publisher_ref`) from seller-defined inline placements (`seller_inline`). Publisher-referenced placements carry `publisher_domain` plus `placement_id` and may omit `name` because buyers resolve the name from the publisher's adagents.json placement declarations. Seller-inline placements carry buyer-facing `name` directly; when `publisher_domain` is omitted, buyers MAY interpret the placement ID relative to the seller agent's own publisher domain only during the legacy single-publisher transition. Community-maintained fallback files are resolver/source metadata, not a distinct placement kind. Each placement MUST declare `mode: 'targetable'` (buyer may purchase it through targeting_overlay.placement_selection) or `mode: 'included'` (part of fixed/default product composition and not independently selectable). Creative assignments route creatives only after placement inventory is purchased. Placement-level format declarations narrow the product-level creative contract and MUST NOT broaden it. Seller-private delivery objects, source/origin details, and ad-server mappings MUST NOT be exposed here.
+   * Optional array of specific public placements within this product. Product placements declare `kind` to distinguish publisher-catalog placements (`publisher_ref`) from sales-agent-defined placements (`seller_inline`). Publisher references use canonical `{publisher_domain, placement_id}` identity and may omit name because adagents.json resolves it. New seller-inline placements SHOULD carry `seller_agent`; legacy rows without it remain scoped to the enclosing seller and product. A seller-inline publisher_domain is inventory attribution, not authority to mint an ID in that publisher's catalog namespace. Each placement MUST declare mode: targetable or included. Creative assignments route creatives only after placement inventory is purchased.
    */
   placements?: Placement[];
   /**
@@ -17105,13 +17184,18 @@ export type Product = {
    */
   collection_targeting_allowed?: boolean;
   /**
-   * Specific installments included in this product. Each installment references its parent collection via collection_id when the product spans multiple collections. When absent with collections present, the product covers the collections broadly (run-of-collection).
+   * Product-scoped receipts for every effective property- or collection-list targeting reference. Sellers MUST return one receipt per application regardless of response field projection; exclusion applications receive a receipt even when summary.matched is zero, while zero matches for any inclusion application make the product ineligible and it is not returned. Each receipt uses the same pre-list product inventory baseline; pricing and forecast reflect inventory remaining after all effective lists are composed.
+   */
+  list_applications?: InventoryListApplication[];
+  /**
+   * Specific installments included in this product. Each installment references its parent through canonical collection_ref when the product spans multiple collections or publisher namespaces; collection_id remains a deprecated single-namespace shorthand. When absent with collections present, the product covers the collections broadly (run-of-collection).
    */
   installments?: Installment[];
   /**
    * Registry policy IDs the seller enforces for this product. Enforcement level comes from the policy registry. Buyers can filter products by required policies.
    */
   enforced_policies?: string[];
+  acceptance_policy_profile_ids?: AcceptancePolicyProfileIDs;
   /**
    * Trusted Match Protocol capabilities for this product. When present, the product supports real-time contextual and/or identity matching via TMP. Buyers use this to determine what response types the publisher can accept and whether brands can be selected dynamically at match time.
    */
@@ -17196,22 +17280,23 @@ export type Product = {
   ext?: ExtensionObject;
 };
 /**
- * Represents a specific public ad placement within a product's inventory. Placement IDs are scoped by publisher domain, matching placement definitions in that publisher's adagents.json. `kind` is the structural discriminator: `publisher_ref` means this product placement is a reference to `{publisher_domain, placement_id}`; `seller_inline` means the seller is defining public buyer-facing placement metadata inline. The schema accepts either `name` or `publisher_domain` because publisher-referenced placements can omit `name` only when the publisher declaration supplies it; seller-inline placements carry `name` directly. Whether a reference was resolved from publisher-hosted adagents.json or a community-maintained fallback is resolver metadata, not placement structure. Placement selection purchases inventory; creative assignments may then route creatives only within the purchased set. Reusing a registered placement preserves the registry's semantic identity; product-level placement objects may narrow format_ids/format_options or add operational detail, but SHOULD NOT redefine the placement's meaning incompatibly.
+ * Represents a specific public ad placement within a product's inventory. `kind` identifies the authority: `publisher_ref` resolves the canonical `{publisher_domain, placement_id}` in the publisher's adagents.json; `seller_inline` is defined by the sales agent and is self-contained only when paired with `seller_agent`. Legacy inline placements without seller_agent remain valid but are scoped to the enclosing seller and product. Whether a publisher reference resolved from publisher-hosted adagents.json or a community-maintained fallback is resolver metadata, not placement structure. Placement selection purchases inventory; creative assignments may then route creatives only within the purchased set.
  */
 export type Placement = {
 } & {
   /**
-   * Placement structure discriminator. `publisher_ref` identifies a placement by `{publisher_domain, placement_id}` and resolves public metadata from the named publisher's adagents.json placement declarations; `seller_inline` identifies buyer-facing placement metadata defined inline by the sales agent (still in the named publisher namespace when `publisher_domain` is present, or the seller's own namespace in legacy single-publisher contexts).
+   * Placement authority discriminator. `publisher_ref` is publisher-catalog identity; `seller_inline` is sales-agent-authored identity.
    */
   kind: 'publisher_ref' | 'seller_inline';
   /**
-   * Placement identifier in the publisher namespace. When `publisher_domain` is present, this matches a placement ID in that publisher's adagents.json catalog or a seller-defined inline placement in that publisher namespace. Buyers use this with `publisher_domain` in `creative_assignments[].placement_refs`; legacy `creative_assignments[].placement_ids` strings are only unambiguous in single-publisher contexts.
+   * Placement identifier. For publisher_ref it is scoped by publisher_domain and resolves in adagents.json. For seller_inline it is scoped by seller_agent, or by the enclosing seller and product for legacy rows.
    */
   placement_id: string;
   /**
-   * Publisher domain whose adagents.json placement declarations define this placement. Required for `kind: "publisher_ref"`. Omitted only for `kind: "seller_inline"` in legacy single-publisher seller contexts where the seller agent's own publisher domain is the namespace.
+   * For publisher_ref, the domain whose adagents.json declares the placement and part of canonical identity. For seller_inline, optional inventory-publisher attribution only; it does not grant the seller authority to mint IDs in that publisher's catalog namespace.
    */
   publisher_domain?: string;
+  seller_agent?: SellerAgentReference;
   /**
    * Human-readable name for the placement (e.g., 'Homepage Banner', 'Article Sidebar'). Required for `kind: "seller_inline"`. May be omitted for publisher-referenced placements because buyers resolve the name from the publisher declaration identified by `{publisher_domain, placement_id}`.
    */
@@ -17317,6 +17402,22 @@ export type RevenueSharePricingOption = {
    * Human-readable definition of inclusions, exclusions, and return or cancellation treatment used by the billing authority to calculate commissionable_value.
    */
   commission_basis_description: string;
+};
+/**
+ * Optional advisory machine-readable bounds buyers can use during product selection. The proposal must restate any binding bounds in commercial_terms.change_terms[].constraints.
+ */
+export type MediaBuyChangeTermConstraints =
+  | BudgetChangeConstraints
+  | FlightChangeConstraints
+  | PackageCountConstraints
+  | EffectiveTimingConstraints;
+export type BudgetChangeConstraints = {
+};
+export type FlightChangeConstraints = {
+};
+export type PackageCountConstraints = {
+};
+export type EffectiveTimingConstraints = {
 };
 /**
  * Product-scoped demographic breakdown support for by_demographic reporting. Declares reportable age ranges and measurement systems independently from demographic targeting execution.
@@ -17556,6 +17657,16 @@ export type ProductCardReferenceAsset = {
    */
   description?: string;
 };
+/**
+ * Seller-issued, product-scoped receipt showing how one effective property- or collection-list targeting reference intersected the inventory represented by a returned product. Each receipt compares its resolved entries independently against the same product inventory before any effective list is applied; product pricing and forecasts reflect the eligible inventory after all effective lists are composed. Sellers MUST NOT echo auth_token or other separately supplied fetch credentials; the closed receipt shape defines no credential field.
+ */
+export type InventoryListApplication = PropertyListApplication | CollectionListApplication;
+/**
+ * Acceptance-policy profiles from the seller catalog that apply to this product in addition to seller defaults. Profiles compose restrictively; the most restrictive matching disposition wins.
+ *
+ * @minItems 1
+ */
+export type AcceptancePolicyProfileIDs = [string, ...string[]];
 /**
  * One way buyer audience data can reach a seller for targeting. The pattern field discriminates the entry; each pattern carries only its own fields. Two patterns are AdCP-canonical (sync_audiences, tmp_identity_match); the rest describe integration paths that move data outside the protocol while remaining discoverable through it. Vendor identity is a BrandRef domain so new platforms declare a domain rather than waiting on an enum change. Experimental (x-status: experimental): the audience-activation surface — this schema, product.audience_activation, audience_targeting.supported_activation_methods, and the audience_activation_methods product filter — is new and not yet field-tested across parties. Sellers that implement it MUST list media_buy.audience_activation in experimental_features. Per docs/reference/experimental-status, it MAY change between 3.x releases with notice.
  */
@@ -18103,8 +18214,9 @@ export interface ProductAllowedAction {
    */
   allowed_statuses?: [MediaBuyStatus, ...MediaBuyStatus[]];
   sla?: SLAWindow;
+  constraints?: MediaBuyChangeTermConstraints;
   /**
-   * Optional pointer into buy-terms negotiation (forward-references the buy-terms namespace landing via separate RFC). When present, the named term governs cancellation policy, makegoods, or other commercial remedies tied to this action. Schema accepts any string for now and will tighten to a structured reference when the buy-terms RFC ships.
+   * Optional advisory pointer to published commercial terms governing this product action. It is not a proposal change-term identity and never grants a binding change right; a proposal materializes binding rights under commercial_terms.change_terms[].term_id.
    */
   terms_ref?: string;
 }
@@ -18113,11 +18225,11 @@ export interface ProductAllowedAction {
  */
 export interface SLAWindow {
   /**
-   * Maximum time from when the buyer issues the action to when the seller acknowledges receipt (mode-appropriate: synchronous response for self_serve, tolerance decision for conditional_self_serve, or queue ack for requires_approval). ISO 8601 duration.
+   * Maximum elapsed time from when the buyer issues the action to when the seller acknowledges receipt (mode-appropriate: synchronous response for self_serve, tolerance decision for conditional_self_serve, or queue acknowledgement for seller_managed and legacy requires_approval). Sellers include weekends and non-working periods in the maximum. ISO 8601 duration.
    */
   response_max?: string;
   /**
-   * Maximum time from buyer issuing the action to the seller completing it (mutation applied, proposal finalized, approval resolved). ISO 8601 duration.
+   * Maximum elapsed time from buyer issuing the action to the seller completing it (mutation applied, proposal finalized, or seller-managed decision resolved). Sellers include weekends and non-working periods in the maximum. ISO 8601 duration.
    */
   completion_max?: string;
 }
@@ -18184,6 +18296,30 @@ export interface ReportingCapabilities {
    * Whether this product supports placement breakdowns in delivery reporting (by_placement within by_package)
    */
   supports_placement_breakdown?: boolean;
+  /**
+   * Whether this product supports property breakdowns in delivery reporting (by_property within by_package).
+   */
+  supports_property_breakdown?: boolean;
+  /**
+   * Whether this product supports collection breakdowns in delivery reporting (by_collection within by_package).
+   */
+  supports_collection_breakdown?: boolean;
+  /**
+   * Whether this product supports installment breakdowns in delivery reporting (by_installment within by_package).
+   */
+  supports_installment_breakdown?: boolean;
+  /**
+   * Whether this product supports collection × property intersection reporting (by_collection_property within by_package).
+   */
+  supports_collection_property_breakdown?: boolean;
+  /**
+   * Whether this product supports installment × property intersection reporting (by_installment_property within by_package).
+   */
+  supports_installment_property_breakdown?: boolean;
+  /**
+   * Whether this product supports placement × property intersection reporting (by_placement_property within by_package).
+   */
+  supports_placement_property_breakdown?: boolean;
   supports_spot_breakdown?: SpotReportingCapability;
   /**
    * Whether delivery data can be filtered to arbitrary date ranges. 'date_range' means the platform supports start_date/end_date parameters. 'lifetime_only' means the platform returns campaign lifetime totals and date range parameters are not accepted.
@@ -18601,6 +18737,84 @@ export interface CollectionSelector {
    */
   collection_ids: [string, ...string[]];
 }
+export interface PropertyListApplication {
+  /**
+   * The receipt describes a property list.
+   */
+  list_type: 'property';
+  /**
+   * Whether matching properties were retained as an allowlist or removed as a blocklist.
+   */
+  effect: 'include' | 'exclude';
+  /**
+   * Agent URL from the effective property-list targeting reference.
+   */
+  agent_url: string;
+  /**
+   * Identifier from the effective property-list targeting reference.
+   */
+  list_id: string;
+  /**
+   * Timestamp identifying the complete resolved-list snapshot the seller evaluated. If the list response supplied resolved_at, the seller MUST copy it; otherwise the seller records when it completed assembling the snapshot, including all fetched pages.
+   */
+  resolved_at: string;
+  /**
+   * When the seller intersected that snapshot with this product's then-current inventory.
+   */
+  evaluated_at: string;
+  /**
+   * Partition of every entry in the resolved list snapshot against this product's common pre-list inventory baseline.
+   */
+  summary: {
+    /**
+     * Resolved entries that matched at least one property in this product.
+     */
+    matched: number;
+    /**
+     * Resolved entries that did not match a property in this product.
+     */
+    unmatched: number;
+  };
+}
+export interface CollectionListApplication {
+  /**
+   * The receipt describes a collection list.
+   */
+  list_type: 'collection';
+  /**
+   * Whether matching collections were retained as an allowlist or removed as a blocklist.
+   */
+  effect: 'include' | 'exclude';
+  /**
+   * Agent URL from the effective collection-list targeting reference.
+   */
+  agent_url: string;
+  /**
+   * Identifier from the effective collection-list targeting reference.
+   */
+  list_id: string;
+  /**
+   * Timestamp identifying the complete resolved-list snapshot the seller evaluated. If the list response supplied resolved_at, the seller MUST copy it; otherwise the seller records when it completed assembling the snapshot, including all fetched pages.
+   */
+  resolved_at: string;
+  /**
+   * When the seller intersected that snapshot with this product's then-current inventory.
+   */
+  evaluated_at: string;
+  /**
+   * Partition of every entry in the resolved list snapshot against this product's common pre-list inventory baseline.
+   */
+  summary: {
+    /**
+     * Resolved entries that matched at least one collection in this product.
+     */
+    matched: number;
+    /**
+     * Resolved entries that did not match a collection in this product.
+     */
+    unmatched: number;
+  };
+}
 /**
  * A single bookable unit within a collection — one episode, issue, event, or rotation period. The parent collection's kind indicates how to interpret each installment: TV/podcast episodes, print issues, live event airings, newsletter editions, or DOOH rotation periods. Installments inherit collection-level fields they don't override: content_rating defaults to the collection's baseline, guest_talent is additive to the collection's recurring talent, and topics add context beyond the collection's genre.
  */
@@ -18609,8 +18823,10 @@ export interface Installment {
    * Unique identifier for this installment within the collection
    */
   installment_id: string;
+  collection_ref?: CollectionReference;
   /**
-   * Parent collection reference. Required when the product spans multiple collections. Maps to a collection_id declared in one of the publishers' adagents.json files referenced by the product's collection selectors.
+   * @deprecated
+   * Deprecated publisher-domain-free parent collection shorthand. Use collection_ref. It is unambiguous only when the enclosing product addresses one publisher namespace.
    */
   collection_id?: string;
   /**
@@ -18665,6 +18881,19 @@ export interface Installment {
     type: DerivativeType;
   };
   ext?: ExtensionObject;
+}
+/**
+ * Canonical parent collection identity. Products spanning multiple collections or publisher namespaces MUST use this field.
+ */
+export interface CollectionReference {
+  /**
+   * Domain where the adagents.json declaring this collection is hosted.
+   */
+  publisher_domain: string;
+  /**
+   * Collection ID from the publisher's adagents.json collection catalog.
+   */
+  collection_id: string;
 }
 /**
  * Installment-specific content rating. Overrides the collection's baseline content_rating when present.
@@ -19161,7 +19390,7 @@ export type GetProductsResponse = AdCPVersionEnvelope &
           string
         ];
     /**
-     * [AdCP 3.0] Indicates whether property_list filtering was applied. True if the agent filtered products based on the provided property_list. Absent or false if property_list was not provided or not supported by this agent.
+     * [AdCP 3.0] Indicates whether deprecated top-level property_list filtering was applied. True if the agent filtered products based on the provided property_list; every returned product also carries the corresponding property/include list_applications receipt. Absent or false if property_list was not provided or not supported by this agent.
      */
     property_list_applied?: boolean;
     /**
@@ -19749,13 +19978,16 @@ export type CanonicalReportingCommitment =
       effective_at?: string;
     };
 /**
- * Compact product placement with canonical format narrowing only.
+ * Compact product placement with canonical format narrowing. Publisher references carry their publisher authority. New seller-inline placements SHOULD carry seller_agent as their defining authority; legacy seller-inline placements without it remain valid in product context.
  */
 export type CanonicalProductPlacement = {
-} & {
   kind: 'publisher_ref' | 'seller_inline';
   placement_id: string;
+  /**
+   * For publisher_ref, the adagents.json publisher namespace. For seller_inline, optional inventory-publisher attribution only.
+   */
   publisher_domain?: string;
+  seller_agent?: SellerAgentReference;
   name?: string;
   description?: string;
   mode: 'targetable' | 'included';
@@ -19780,7 +20012,14 @@ export type CanonicalProductPlacement = {
    * @minItems 1
    */
   social_placement_surfaces?: [SocialPlacementSurface, ...SocialPlacementSurface[]];
-};
+} & (
+  | {
+      kind: 'publisher_ref';
+    }
+  | {
+      kind: 'seller_inline';
+    }
+);
 /**
  * Compact immutable audience-evidence snapshot for product discovery. Provider identity is a BrandKey; credential and brand-asset graphs are resolved separately.
  */
@@ -20007,6 +20246,9 @@ export type RefineProposalsResponse = (
           }
       ))[]
   ];
+  /**
+   * Canonical products needed to evaluate the resulting terms. For revised or partial results whose effective criteria contain property or collection lists, each affected product MUST carry fresh list_applications receipts from the revision's product reevaluation. Finalization changes no terms and MAY repeat the receipts already bound to the source proposal rather than reevaluating them.
+   */
   products?: CanonicalProduct[];
   status?: 'completed' | 'submitted';
   task_id?: string;
@@ -20027,61 +20269,15 @@ export type MediaBuyCommitmentResponse = CommittedMediaBuy | CommitmentError | C
 /**
  * A currently available MediaBuy action with the compact-lifecycle task an SDK calls to exercise it. Deprecated coarse action values are absent.
  */
-export type CanonicalMediaBuyAction =
-  | {
-      task: 'control_media_buy';
-      action:
-        | 'pause'
-        | 'resume'
-        | 'cancel'
-        | 'update_name'
-        | 'increase_budget'
-        | 'decrease_budget'
-        | 'reallocate_budget'
-        | 'update_budget_allocation'
-        | 'update_targeting'
-        | 'update_pacing'
-        | 'update_bidding'
-        | 'update_frequency_caps'
-        | 'update_catalog_assignments'
-        | 'update_keywords'
-        | 'update_optimization_goals'
-        | 'update_impression_goal'
-        | 'update_spend_target'
-        | 'update_reporting_webhook'
-        | 'remove_packages';
-      mode: CanonicalMediaBuyActionMode;
-      sla?: SLAWindow;
-      terms_ref?: string;
-    }
-  | {
-      task: 'refine_proposals';
-      action:
-        | 'cancel'
-        | 'extend_flight'
-        | 'shorten_flight'
-        | 'update_flight_dates'
-        | 'increase_budget'
-        | 'decrease_budget'
-        | 'reallocate_budget'
-        | 'update_budget_allocation'
-        | 'update_targeting'
-        | 'update_pacing'
-        | 'update_bidding'
-        | 'update_frequency_caps'
-        | 'add_packages'
-        | 'remove_packages';
-      mode: CanonicalMediaBuyActionMode;
-      sla?: SLAWindow;
-      terms_ref?: string;
-    }
-  | {
-      task: 'sync_creatives';
-      action: 'replace_creative' | 'update_creative_assignments' | 'remove_creative';
-      mode: CanonicalMediaBuyActionMode;
-      sla?: SLAWindow;
-      terms_ref?: string;
-    };
+export type CanonicalMediaBuyAction = CanonicalMediaBuyActionFields;
+/**
+ * The accepted proposal change_terms[].term_id from which this current-state action projection was derived.
+ */
+export type MediaBuyChangeTermID = string;
+/**
+ * Deprecated 3.1 opaque commercial-terms pointer. A 3.2 compatibility projection MAY echo change_term_id here for older buyers, but new buyers MUST prefer change_term_id and MUST NOT assume an arbitrary 3.1 value identifies an accepted change term.
+ */
+export type MediaBuyTermsReference = string;
 /**
  * A non-blocking observation returned with a successful operation. The operation succeeded exactly as its success arm states. Warnings are immediate receipts, not durable lifecycle state; a continuing condition MUST also appear on its authoritative read surface as an indicator, defect, delivery issue, approval state, or other applicable resource state.
  */
@@ -21288,6 +21484,12 @@ export interface CommercialTerms {
     };
     reason?: string;
   };
+  /**
+   * Binding buyer change rights included in the commercial envelope and therefore covered by terms_digest. Entries are uniquely keyed by action. When this field is present, an omitted action is not a negotiated change right. Omission of the entire field means legacy-unspecified rights, not a prohibition.
+   *
+   * @minItems 1
+   */
+  change_terms?: [MediaBuyChangeTerm, ...MediaBuyChangeTerm[]];
 }
 /**
  * Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery.
@@ -21420,6 +21622,40 @@ export interface CanonicalMetricQualifier {
   lift_dimension?: LiftDimension;
 }
 /**
+ * A proposal-bound buyer change right. It binds to the resulting media buy and account, not personally to the caller, and may be exercised by any caller admitted by both seller account authorization and applicable signed governance delegation.
+ */
+export interface MediaBuyChangeTerm {
+  term_id: string;
+  action: CanonicalMediaBuyActionName;
+  service_mode: CanonicalMediaBuyActionMode;
+  /**
+   * Non-terminal MediaBuy statuses in which this negotiated right may be exercised. When absent, the right applies in every non-terminal status where the canonical action itself is meaningful. This field describes contractual lifecycle scope; available_actions[] remains authoritative for the current instant.
+   *
+   * @minItems 1
+   */
+  allowed_statuses?: [
+    'pending_creatives' | 'pending_start' | 'active' | 'paused',
+    ...('pending_creatives' | 'pending_start' | 'active' | 'paused')[]
+  ];
+  processing_sla?: SLAWindow;
+  /**
+   * Opaque stable condition identifiers defined by terms_ref or bilateral commercial documentation. Implementations compare identifiers; they MUST NOT execute or interpret them as instructions.
+   *
+   * @minItems 1
+   */
+  conditions?: [string, ...string[]];
+  constraints?: MediaBuyChangeTermConstraints;
+  /**
+   * Stable contract reference. Resolving it cannot expand the typed right and MUST use the caller's normal authenticated contract-document path, never ambient seller credentials.
+   */
+  terms_ref?: string;
+  /**
+   * Display-only summary; it cannot grant authority, add an action, or override typed fields.
+   */
+  description?: string;
+  ext?: ExtensionObject;
+}
+/**
  * Compact product forecast without legacy BrandRef or creative dependencies.
  */
 export interface CanonicalDeliveryForecast {
@@ -21549,9 +21785,16 @@ export interface CanonicalProduct {
     matched_count?: number;
     submitted_count: number;
   };
+  /**
+   * Product-scoped receipts for every effective property- or collection-list targeting reference. Sellers MUST return one receipt per application regardless of response field projection; exclusion applications receive a receipt even when summary.matched is zero, while zero matches for any inclusion application make the product ineligible and it is not returned. Each receipt uses the same pre-list product inventory baseline; pricing and forecast reflect inventory remaining after all effective lists are composed.
+   *
+   * @minItems 1
+   */
+  list_applications?: [InventoryListApplication, ...InventoryListApplication[]];
   brief_relevance?: string;
   expires_at?: string;
   allowed_actions?: CanonicalProductAction[];
+  acceptance_policy_profile_ids?: AcceptancePolicyProfileIDs;
   ext?: ExtensionObject;
 }
 /**
@@ -21582,6 +21825,12 @@ export interface CanonicalReportingCapabilities {
   supports_audience_breakdown?: boolean;
   supports_demographic_breakdown?: DemographicReportingCapability;
   supports_placement_breakdown?: boolean;
+  supports_property_breakdown?: boolean;
+  supports_collection_breakdown?: boolean;
+  supports_installment_breakdown?: boolean;
+  supports_collection_property_breakdown?: boolean;
+  supports_installment_property_breakdown?: boolean;
+  supports_placement_property_breakdown?: boolean;
   supports_spot_breakdown?: SpotReportingCapability;
   date_range_support: 'date_range' | 'lifetime_only';
   windowed_pull_granularities?: ReportingFrequency[];
@@ -21620,6 +21869,10 @@ export interface CanonicalProductAction {
    */
   allowed_statuses?: [MediaBuyStatus, ...MediaBuyStatus[]];
   sla?: SLAWindow;
+  constraints?: MediaBuyChangeTermConstraints;
+  /**
+   * Optional advisory pointer to published commercial terms. It is not a proposal change-term identity.
+   */
   terms_ref?: string;
 }
 export interface CommittedMediaBuy {
@@ -21666,6 +21919,17 @@ export interface CommittedMediaBuy {
   context?: ContextObject;
   ext?: ExtensionObject;
   replayed?: true;
+}
+/**
+ * Shared closed field set for task-discriminated canonical MediaBuy actions.
+ */
+export interface CanonicalMediaBuyActionFields {
+  task: 'control_media_buy' | 'refine_proposals' | 'sync_creatives';
+  action: string;
+  mode: CanonicalMediaBuyActionMode;
+  sla?: SLAWindow;
+  change_term_id?: MediaBuyChangeTermID;
+  terms_ref?: MediaBuyTermsReference;
 }
 export interface CommitmentError {
   status: 'failed';
@@ -21951,7 +22215,7 @@ export interface UpdateMediaBuySuccess {
   affected_packages?: Package[];
   /**
    * @deprecated
-   * Flat-vocabulary actions the buyer can perform after this update. Saves a round-trip to get_media_buys. Deprecated in favor of `available_actions[]`, which carries `mode`, optional SLA, and optional `terms_ref`. Sellers SHOULD populate both during the 3.x deprecation window; consumers MUST prefer `available_actions[]` when both are present. Removed in 4.0.
+   * Flat-vocabulary actions the buyer can perform after this update. Saves a round-trip to get_media_buys. Deprecated in favor of `available_actions[]`, which carries mode, optional SLA, and in 3.2 an optional change_term_id. Sellers SHOULD populate both during the 3.x deprecation window; consumers MUST prefer `available_actions[]` when both are present. Removed in 4.0.
    */
   valid_actions?: MediaBuyValidAction[];
   /**
@@ -21994,7 +22258,7 @@ export type MeasurementTerms1 = MeasurementTerms;
  */
 export type BrandReference12 = BrandReference;
 /**
- * An action currently available on a media buy, resolved against the buy's current status, negotiated terms, account tier, and any buy-level overrides. Authoritative per-buy capability — buyer SDKs MUST read this rather than re-deriving from the product's `allowed_actions[]`, because divergence from the product template is expected (negotiated terms and IO addenda live on the deal, not the product SKU). The containing `available_actions[]` array is uniquely keyed by `action`; sellers MUST NOT emit two entries with the same `action` value (this is a contract-level invariant — JSON Schema `uniqueItems` only catches structurally identical objects, so validators MUST enforce action-uniqueness separately). Predicate evaluators consuming dotted paths like `available_actions.extend_flight.sla.response_max` MUST index by `action` rather than by array position. The `mode` and `sla` values are advisory at the moment of emission; sellers MAY resolve to a different mode by the time the mutation arrives (state can change), in which case the request is rejected with `ACTION_NOT_ALLOWED` (`reason: mode_mismatch`).
+ * An action currently available on a media buy, resolved against the buy's current status, accepted commercial_terms.change_terms, account authorization, and applicable governance delegation. Authoritative for current availability, but not a replacement for negotiated rights: when explicit change_terms exist, this projection may temporarily omit an action because state changed, but MUST NOT silently replace its negotiated service mode, SLA, constraints, conditions, or contract reference. The containing array is uniquely keyed by action.
  */
 export interface MediaBuyAvailableAction {
   action: MediaBuyValidAction;
@@ -22004,10 +22268,8 @@ export interface MediaBuyAvailableAction {
    */
   task?: 'control_media_buy' | 'refine_proposals' | 'sync_creatives';
   sla?: SLAWindow;
-  /**
-   * Optional pointer into buy-terms negotiation (forward-references the buy-terms namespace landing via separate RFC). Schema accepts any string for now and will tighten to a structured reference when the buy-terms RFC ships.
-   */
-  terms_ref?: string;
+  change_term_id?: MediaBuyChangeTermID;
+  terms_ref?: MediaBuyTermsReference;
 }
 /**
  * Error response - operation failed, no changes applied
@@ -25602,7 +25864,7 @@ export type GetProductsCompletion = AdCPVersionEnvelope &
           string
         ];
     /**
-     * [AdCP 3.0] Indicates whether property_list filtering was applied. True if the agent filtered products based on the provided property_list. Absent or false if property_list was not provided or not supported by this agent.
+     * [AdCP 3.0] Indicates whether deprecated top-level property_list filtering was applied. True if the agent filtered products based on the provided property_list; every returned product also carries the corresponding property/include list_applications receipt. Absent or false if property_list was not provided or not supported by this agent.
      */
     property_list_applied?: boolean;
     /**
@@ -26129,6 +26391,285 @@ export interface Artifact {
 
 // content-standards/content-standards.json
 /**
+ * Optional reusable, machine-readable acceptance profile derived from this registry policy. Registry publishers MUST bind policy_refs to exact versions. Sellers adopt a profile explicitly; registry publication alone does not make it authoritative for a seller.
+ */
+export type AcceptancePolicyProfile = {
+} & {
+  profile_id: string;
+  version: string;
+  /**
+   * SHA-256 digest of the RFC 8785 JCS serialization of this profile with content_digest omitted. A profile_id/version pair is immutable; consumers reject a resolved profile whose digest differs.
+   */
+  content_digest: string;
+  /**
+   * Exact registry policy versions from which this profile was derived. Consumers MUST NOT silently substitute a different version.
+   *
+   * @minItems 1
+   */
+  policy_refs: [
+    {
+      policy_id: string;
+      version: string;
+      /**
+       * SHA-256 digest of the referenced policy entry's RFC 8785 JCS serialization with acceptance_profile omitted.
+       */
+      content_digest: string;
+    },
+    ...{
+      policy_id: string;
+      version: string;
+      /**
+       * SHA-256 digest of the referenced policy entry's RFC 8785 JCS serialization with acceptance_profile omitted.
+       */
+      content_digest: string;
+    }[]
+  ];
+  /**
+   * partial means additional unpublished rules may apply and omission is unknown. complete means this profile is exhaustive only for its declared scope and version.
+   */
+  coverage: 'partial' | 'complete';
+  /**
+   * The boundary within which a complete profile claims exhaustiveness. It is informative for partial profiles and mandatory for complete profiles.
+   */
+  scope?: {
+  };
+  /**
+   * Profile-local named country groups. Rules may reference only keys declared here; consumers expand them before matching.
+   */
+  region_aliases?: {
+    /**
+     * @minItems 1
+     */
+    [k: string]: [string, ...string[]] | undefined;
+  };
+  description?: string;
+  /**
+   * @minItems 1
+   */
+  rules: [AcceptancePolicyRule, ...AcceptancePolicyRule[]];
+  ext?: ExtensionObject;
+};
+/**
+ * A coarse, discoverable seller rule for one policy subject. Discovery is advisory; the seller response to an exact request remains authoritative.
+ */
+export type AcceptancePolicyRule = {
+} & {
+  rule_id: string;
+  /**
+   * Registry policy-category-definition category_id. Named subject_category to avoid collision with PolicyEntry.category, whose values are regulation and standard.
+   */
+  subject_category: string;
+  /**
+   * Facet IDs defined by the selected policy category. Omission means the rule applies to every facet in the category.
+   *
+   * @minItems 1
+   */
+  subject_facets?: [string, ...string[]];
+  /**
+   * Registry-extensible roles such as political_actor, election_authority, government_entity, news_publisher, or commercial_advertiser.
+   *
+   * @minItems 1
+   */
+  advertiser_roles?: [string, ...string[]];
+  /**
+   * Delivery jurisdictions where this rule applies. Omission means every jurisdiction served by the seller.
+   *
+   * @minItems 1
+   */
+  jurisdictions?: [string, ...string[]];
+  /**
+   * Named country groups declared by the containing profile's region_aliases. Unknown group IDs invalidate the profile; they never match permissively.
+   *
+   * @minItems 1
+   */
+  jurisdiction_groups?: [string, ...string[]];
+  /**
+   * @minItems 1
+   */
+  applies_to: [
+    'account' | 'media_buy' | 'creative' | 'landing_page' | 'targeting' | 'delivery' | 'format',
+    ...('account' | 'media_buy' | 'creative' | 'landing_page' | 'targeting' | 'delivery' | 'format')[]
+  ];
+  disposition: 'allowed' | 'conditional' | 'prohibited';
+  /**
+   * @minItems 1
+   */
+  requirements?: [AcceptancePolicyRequirement, ...AcceptancePolicyRequirement[]];
+  /**
+   * Registry policies that define the exact obligations behind this coarse rule.
+   *
+   * @minItems 1
+   */
+  policy_ids?: [string, ...string[]];
+  /**
+   * Display-only explanation. Matchers MUST NOT interpret this text as executable instructions or use it to override typed fields.
+   */
+  description?: string;
+  effective_at?: string;
+  expires_at?: string;
+  ext?: ExtensionObject;
+} & {
+  rule_id: string;
+  /**
+   * Registry policy-category-definition category_id. Named subject_category to avoid collision with PolicyEntry.category, whose values are regulation and standard.
+   */
+  subject_category: string;
+  /**
+   * Facet IDs defined by the selected policy category. Omission means the rule applies to every facet in the category.
+   *
+   * @minItems 1
+   */
+  subject_facets?: [string, ...string[]];
+  /**
+   * Registry-extensible roles such as political_actor, election_authority, government_entity, news_publisher, or commercial_advertiser.
+   *
+   * @minItems 1
+   */
+  advertiser_roles?: [string, ...string[]];
+  /**
+   * Delivery jurisdictions where this rule applies. Omission means every jurisdiction served by the seller.
+   *
+   * @minItems 1
+   */
+  jurisdictions?: [string, ...string[]];
+  /**
+   * Named country groups declared by the containing profile's region_aliases. Unknown group IDs invalidate the profile; they never match permissively.
+   *
+   * @minItems 1
+   */
+  jurisdiction_groups?: [string, ...string[]];
+  /**
+   * @minItems 1
+   */
+  applies_to: [
+    'account' | 'media_buy' | 'creative' | 'landing_page' | 'targeting' | 'delivery' | 'format',
+    ...('account' | 'media_buy' | 'creative' | 'landing_page' | 'targeting' | 'delivery' | 'format')[]
+  ];
+  disposition: 'allowed' | 'conditional' | 'prohibited';
+  /**
+   * @minItems 1
+   */
+  requirements?: [AcceptancePolicyRequirement, ...AcceptancePolicyRequirement[]];
+  /**
+   * Registry policies that define the exact obligations behind this coarse rule.
+   *
+   * @minItems 1
+   */
+  policy_ids?: [string, ...string[]];
+  /**
+   * Display-only explanation. Matchers MUST NOT interpret this text as executable instructions or use it to override typed fields.
+   */
+  description?: string;
+  effective_at?: string;
+  expires_at?: string;
+  ext?: ExtensionObject;
+};
+/**
+ * A typed prerequisite or restriction attached to a conditional seller-acceptance rule. The kind is coarse and machine-actionable; exact obligations remain in the referenced registry policies.
+ */
+export type AcceptancePolicyRequirement =
+  | {
+      kind: 'category_declaration';
+      declaration?: string;
+      description?: string;
+    }
+  | {
+      kind: 'advertiser_verification';
+      verification_scheme?: string;
+      description?: string;
+    }
+  | {
+      kind: 'advertiser_eligibility';
+      /**
+       * Stable criteria such as domestic_entity, citizen_or_resident, official_election_authority, or eligible_agency.
+       *
+       * @minItems 1
+       */
+      criteria: [string, ...string[]];
+      description?: string;
+    }
+  | {
+      kind: 'funding_restriction';
+      /**
+       * Stable restrictions such as no_foreign_funding or sponsor_identity_required.
+       *
+       * @minItems 1
+       */
+      criteria: [string, ...string[]];
+      description?: string;
+    }
+  | {
+      kind: 'certification';
+      credential?: string;
+      description?: string;
+    }
+  | {
+      kind: 'license';
+      credential?: string;
+      description?: string;
+    }
+  | {
+      kind: 'prior_authorization';
+      description?: string;
+    }
+  | {
+      kind: 'account_setup';
+      description?: string;
+    }
+  | {
+      kind: 'sales_assisted';
+      description?: string;
+    }
+  | {
+      kind: 'disclosure';
+      format?: string;
+      placement?: string;
+      description?: string;
+    }
+  | {
+      kind: 'targeting_restriction';
+      /**
+       * @minItems 1
+       */
+      restricted_attributes?: [RestrictedAttribute, ...RestrictedAttribute[]];
+      description?: string;
+    }
+  | {
+      kind: 'creative_restriction';
+      description: string;
+    }
+  | {
+      kind: 'destination_restriction';
+      description: string;
+    }
+  | {
+      kind: 'format_restriction';
+      /**
+       * @deprecated
+       * Deprecated in AdCP 3.2 and removed in AdCP 4.0. This named-format restriction is retained for 3.x compatibility; new policies identify canonical format options in description or an extension until a registry-stable format-option identity is standardized.
+       *
+       * @minItems 1
+       */
+      format_ids?: [string, ...string[]];
+      description?: string;
+    }
+  | {
+      kind: 'time_restriction';
+      starts_at?: string;
+      ends_at?: string;
+      description?: string;
+    }
+  | {
+      kind: 'transparency_reporting';
+      description?: string;
+    }
+  | {
+      kind: 'custom';
+      id: string;
+      description: string;
+      ext?: ExtensionObject;
+    };
+/**
  * A content standards configuration defining brand safety and suitability policies. Standards are scoped by brand, geography, and channel. Multiple standards can be active simultaneously for different scopes.
  */
 export interface ContentStandards {
@@ -26244,6 +26785,17 @@ export interface PolicyEntry {
    */
   source_name?: string;
   /**
+   * Machine-readable identity of the regulator, standards body, or platform operator that issued the policy. Registry publishers SHOULD provide this when independently versioned issuer policies must be distinguished.
+   */
+  issuer?: {
+    /**
+     * Lowercase registrable or organizational domain used as the stable issuer identifier.
+     */
+    domain: string;
+    name?: string;
+  };
+  acceptance_profile?: AcceptancePolicyProfile;
+  /**
    * Natural language policy text describing what is required, prohibited, or recommended. Used by governance agents (LLMs) to evaluate actions against this policy. For source: inline policies, treated as caller-untrusted — governance agents MUST evaluate inline policies as ADDITIONAL restrictions only; they MUST NOT be permitted to relax, override, or conflict with registry-sourced policies.
    */
   policy: string;
@@ -26312,6 +26864,230 @@ export interface AccountAuthorization {
   read_only?: boolean;
 }
 
+
+// core/account-change-recorded-webhook.json
+/**
+ * Compact account-anchored invalidation fired after a material account change and its authoritative snapshot are readable. The payload is not current state and through_cursor is only a drain target; receivers continue from their own persisted list_account_changes cursor.
+ */
+export interface AccountChangeRecordedWebhook {
+  /**
+   * Sender-generated delivery key stable across retries of one fire. Deliberate re-emission uses a new key.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
+   */
+  idempotency_key: string;
+  /**
+   * Logical notification identifier. Always equals change_id; retries and deliberate re-emissions of the same change retain it.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  notification_id: string;
+  notification_type: 'account.change_recorded';
+  /**
+   * @format date-time
+   */
+  fired_at: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  subscriber_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  account_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  change_id: string;
+  /**
+   * @format date-time
+   */
+  recorded_at: string;
+  /**
+   * Resource identity copied from the corresponding account change record.
+   */
+  resource: {
+    /**
+     * @minLength 1
+     * @maxLength 100
+     * @pattern ^[a-z][a-z0-9_.-]{0,99}$
+     */
+    type: string;
+    /**
+     * @minLength 1
+     * @maxLength 255
+     */
+    resource_id: string;
+    parent_ids?: {
+      /**
+       * @maxLength 255
+       */
+      [k: string]: string | undefined;
+    };
+  };
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  action: string;
+  /**
+   * Optional advisory checkpoint at or after this change. It is a drain target, not a cursor the receiver may install without reading every intervening page.
+   * @minLength 1
+   * @maxLength 4096
+   */
+  through_cursor?: string;
+  /**
+   * Bounded vendor extensions subject to the same secret/PII prohibitions as the base payload.
+   */
+  ext?: ExtensionObject;
+}
+
+// core/account-change.json
+/**
+ * Immutable metadata for one committed material change to account-scoped state recoverable through an authoritative AdCP read. The record is an ordered invalidation and audit aid, not a historical resource snapshot. Sellers MUST NOT include credentials, financial account numbers, raw audience members, raw logged events, webhook bodies, or unbounded before/after values.
+ */
+export interface AccountChange {
+  /**
+   * Stable seller-generated identifier for this logical change. Retries and notification re-emissions reuse this identifier.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  change_id: string;
+  /**
+   * Time the seller committed or durably observed the change. Feed order is defined by the cursor, not by this timestamp.
+   * @format date-time
+   */
+  recorded_at: string;
+  /**
+   * Upstream business time when the change occurred, only when the seller can establish it reliably.
+   * @format date-time
+   */
+  occurred_at?: string;
+  /**
+   * Optional stable identifier grouping records produced by one committed operation or one external-source ingestion batch. Each independently repairable authoritative identity still receives its own record; batch_id does not change cursor ordering or notification identity.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  batch_id?: string;
+  /**
+   * Stable identity of the changed resource. Resource types are open for forward compatibility. account_id is always present; resource_id identifies the changed entity and parent_ids supplies any IDs needed to disambiguate nested resources.
+   */
+  resource: {
+    /**
+     * Open resource-type name such as account, media_buy, package, creative, creative_assignment, delivery_report, audience, event_source, catalog, or account_financials.
+     * @minLength 1
+     * @maxLength 100
+     * @pattern ^[a-z][a-z0-9_.-]{0,99}$
+     */
+    type: string;
+    /**
+     * Seller-assigned account containing the resource.
+     * @minLength 1
+     * @maxLength 255
+     */
+    account_id: string;
+    /**
+     * Canonical identifier for the resource within its type. For an account change this equals account_id.
+     * @minLength 1
+     * @maxLength 255
+     */
+    resource_id: string;
+    /**
+     * Additional canonical parent identifiers needed to repair a nested resource, for example media_buy_id and package_id for a creative assignment. Keys and values MUST NOT contain sensitive payload data.
+     */
+    parent_ids?: {
+      /**
+       * @maxLength 255
+       */
+      [k: string]: string | undefined;
+    };
+  };
+  /**
+   * Material change action. Standard values are created, discovered, updated, status_changed, linked, unlinked, deleted, and purged. Future standard or vendor-namespaced values are allowed; receivers MUST treat unknown values as generic invalidations.
+   * @minLength 1
+   * @maxLength 100
+   * @pattern ^[a-z][a-z0-9_.-]{0,99}$
+   */
+  action: string;
+  /**
+   * Server-derived origin classification. The seller MUST NOT trust caller-supplied origin or actor claims.
+   */
+  origin: {
+    kind: 'adcp' | 'seller_operator' | 'seller_system' | 'connected_platform' | 'unknown';
+    /**
+     * Opaque, non-secret reference to the connected source when safe for this caller.
+     * @maxLength 255
+     */
+    connection_id?: string;
+  };
+  /**
+   * Post-change revision exposed by the repair read, when that resource family defines one.
+   */
+  resource_revision?: number | string;
+  /**
+   * Bounded set of RFC 6901 JSON Pointers naming material fields that changed. Values are intentionally omitted.
+   */
+  changed_paths?: string[];
+  /**
+   * Authoritative AdCP read the receiver uses to reconcile current state. The buyer constructs safe request arguments from the structured resource identity. A deleted or legally purged resource may instead declare unavailable with a categorical reason.
+   */
+  repair: {
+    /**
+     * Allowlisted authoritative read task. This is a repair hint, never an instruction to dispatch dynamically. The buyer constructs and validates the request locally from the authenticated feed account and resource identity.
+     */
+    task:
+      | 'list_accounts'
+      | 'get_media_buys'
+      | 'get_media_buy_delivery'
+      | 'list_creatives'
+      | 'sync_audiences'
+      | 'sync_event_sources'
+      | 'sync_catalogs'
+      | 'get_account_financials'
+      | 'list_products'
+      | 'get_signals';
+    /**
+     * False when deletion or compelled erasure makes the resource unavailable on the repair read.
+     */
+    available?: boolean;
+    unavailable_reason?: 'deleted' | 'purged' | 'legal_erasure' | 'access_revoked' | 'other';
+  };
+  /**
+   * Optional privacy-safe actor classification. Sellers MUST omit direct personal identifiers unless the authenticated caller is authorized for them.
+   */
+  actor?: {
+    type: 'principal' | 'operator' | 'system' | 'platform' | 'unknown';
+    /**
+     * Opaque, redaction-safe actor reference.
+     * @maxLength 255
+     */
+    id?: string;
+  };
+  /**
+   * Short machine-readable reason code, when available.
+   * @maxLength 100
+   * @pattern ^[a-z][a-z0-9_.-]{0,99}$
+   */
+  reason?: string;
+  /**
+   * Optional brief, untrusted human-readable summary. MUST NOT contain secrets or sensitive payload data.
+   * @maxLength 500
+   */
+  summary?: string;
+  /**
+   * Bounded vendor extensions. The entire encoded change record, including extensions, MUST NOT exceed 64 KiB and remains subject to the same secret/PII prohibitions.
+   */
+  ext?: ExtensionObject;
+}
 
 // core/account-identity-change-preview.json
 /**
@@ -27695,6 +28471,18 @@ export type Catchment = {
     }
 );
 
+// core/collection-delivery-metrics.json
+/**
+ * Delivery metrics for one canonically identified collection.
+ */
+export type CollectionDeliveryMetrics = DeliveryMetrics & {
+  collection_ref: CollectionReference;
+  /**
+   * Current human-readable collection name. Convenience metadata only; collection_ref is stable identity.
+   */
+  collection_name?: string;
+};
+
 // core/collection-distribution.json
 /**
  * A collection's presence on a specific publisher platform, identified by platform-specific identifiers. Enables cross-seller matching when the same collection is sold by different agents.
@@ -27714,6 +28502,40 @@ export interface CollectionDistribution {
      */
     value: string;
   }[];
+}
+
+
+// core/collection-property-delivery-metrics.json
+/**
+ * Delivery metrics at the intersection of one collection and one publisher property. The property operational key is (publisher_domain, identifier.type, identifier.value). This row grain proves where a collection delivered; independent by_collection and by_property marginals do not.
+ */
+export type CollectionPropertyDeliveryMetrics = DeliveryMetrics & {
+  collection_ref: CollectionReference;
+  /**
+   * Current human-readable collection name. Convenience metadata only.
+   */
+  collection_name?: string;
+  /**
+   * Publisher or platform authority that namespaces the property identifier, including for an unregistered surface.
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+   */
+  publisher_domain: string;
+  identifier: Identifier;
+  property_ref?: PropertyReference;
+  /**
+   * Current human-readable property name. Convenience metadata only.
+   */
+  property_name?: string;
+};
+/**
+ * Canonical publisher-scoped catalog identity when available. Its publisher_domain MUST equal the row's publisher_domain.
+ */
+export interface PropertyReference {
+  /**
+   * Domain where the adagents.json declaring this property is hosted.
+   */
+  publisher_domain: string;
+  property_id: PropertyID;
 }
 
 
@@ -27857,6 +28679,10 @@ export type CreativeDeliveryMetrics = DeliveryMetrics & {
    * Creative identifier matching the creative assignment
    */
   creative_id: string;
+  /**
+   * Optional human-readable creative name current when the report is generated. Convenience metadata only: names may change and buyers MUST use creative_id as the stable identity.
+   */
+  creative_name?: string;
   /**
    * Observed delivery share for this creative within the package during the reporting period, expressed as a percentage (0-100). Reflects actual delivery distribution, not a configured setting.
    * @minimum 0
@@ -28311,6 +29137,21 @@ export interface DatetimeRange {
    * @format date-time
    */
   end: string;
+}
+
+
+// core/delivery-breakdown-controls.json
+/**
+ * Common limit and ordering controls for an opt-in delivery-reporting dimension.
+ */
+export interface DeliveryBreakdownControls {
+  /**
+   * Maximum number of rows to return. Defaults to 25.
+   * @minimum 1
+   */
+  limit?: number;
+  sort_by?: SortMetric;
+  sort_direction?: SortDirection;
 }
 
 
@@ -30069,6 +30910,61 @@ export type IndicatorsChangedWebhook =
       ext?: ExtensionObject;
     };
 
+// core/installment-delivery-metrics.json
+/**
+ * Delivery metrics for one canonically identified installment.
+ */
+export type InstallmentDeliveryMetrics = DeliveryMetrics & {
+  installment_ref: InstallmentReference;
+  /**
+   * Current human-readable installment name. Convenience metadata only; installment_ref is stable identity.
+   */
+  installment_name?: string;
+  /**
+   * Convenience echo of the installment's scheduled publication or air time.
+   * @format date-time
+   */
+  scheduled_at?: string;
+};
+/**
+ * Canonical reference to one installment within a publisher-scoped collection. Installment IDs are collection-scoped, so identity is the tuple (collection_ref, installment_id).
+ */
+export interface InstallmentReference {
+  collection_ref: CollectionReference;
+  /**
+   * Installment ID within the referenced collection.
+   */
+  installment_id: string;
+}
+
+// core/installment-property-delivery-metrics.json
+/**
+ * Delivery metrics at the intersection of one installment and one publisher property. The property operational key is (publisher_domain, identifier.type, identifier.value). This row proves where a specific airing, episode, issue, or programming block delivered; independent by_installment and by_property marginals do not.
+ */
+export type InstallmentPropertyDeliveryMetrics = DeliveryMetrics & {
+  installment_ref: InstallmentReference;
+  /**
+   * Current human-readable installment name. Convenience metadata only.
+   */
+  installment_name?: string;
+  /**
+   * Convenience echo of the installment's scheduled publication or air time.
+   * @format date-time
+   */
+  scheduled_at?: string;
+  /**
+   * Publisher or platform authority that namespaces the property identifier, including for an unregistered surface.
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+   */
+  publisher_domain: string;
+  identifier: Identifier;
+  property_ref?: PropertyReference;
+  /**
+   * Current human-readable property name. Convenience metadata only.
+   */
+  property_name?: string;
+};
+
 // core/job-item.json
 /**
  * A job posting within a job-type catalog. Carries the position details that platforms use for job ads and recruitment campaigns. Maps to LinkedIn Jobs XML, Google DynamicJobsAsset, schema.org JobPosting, and similar formats.
@@ -30890,6 +31786,27 @@ export interface PublisherDesignatedPreviewProvider {
   ];
 }
 
+// core/placement-delivery-metrics.json
+/**
+ * Delivery metrics for one placement. The flat placement_id remains required for 3.1 consumer compatibility. New 3.2 sellers MUST also emit placement_identity so the authority is self-contained; legacy rows without it remain scoped to the enclosing package.
+ */
+export type PlacementDeliveryMetrics = DeliveryMetrics & {
+  placement_identity?: PlacementIdentity;
+  /**
+   * Current human-readable placement name. Convenience metadata only; placement_identity is stable identity.
+   */
+  placement_name?: string;
+  /**
+   * Required flat compatibility identity. It MUST equal placement_identity.placement_id when placement_identity is present.
+   */
+  placement_id: string;
+  /**
+   * Legacy publisher attribution. For publisher_ref identity it MUST equal placement_identity.publisher_domain. For seller_inline it identifies inventory context only and is not identity authority.
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+   */
+  publisher_domain?: string;
+};
+
 // core/placement-presentation.json
 export type Layer = 'behind_creative' | 'in_front_of_creative';
 /**
@@ -31015,6 +31932,33 @@ export interface ImageDecoration {
   fit: 'contain' | 'cover' | 'stretch';
 }
 
+
+// core/placement-property-delivery-metrics.json
+/**
+ * Delivery metrics at the intersection of one placement and one publisher property. This distinguishes the actual serving property when a placement declaration spans multiple properties.
+ */
+export type PlacementPropertyDeliveryMetrics = DeliveryMetrics & {
+  /**
+   * Required flat compatibility ID. It MUST equal placement_identity.placement_id when placement_identity is present.
+   */
+  placement_id: string;
+  placement_identity: PlacementIdentity;
+  /**
+   * Current convenience name for the placement.
+   */
+  placement_name?: string;
+  /**
+   * Publisher or platform authority that namespaces the property identifier. This may differ from a publisher-catalog placement's publisher_domain.
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+   */
+  publisher_domain: string;
+  identifier: Identifier;
+  property_ref?: PropertyReference;
+  /**
+   * Current convenience name for the property.
+   */
+  property_name?: string;
+};
 
 // core/planned-delivery.json
 /**
@@ -31544,6 +32488,24 @@ export interface ProductOfferFilters {
   audience_evidence_requirements?: ProductAudienceEvidenceRequirements;
   ext?: ExtensionObject;
 }
+
+// core/property-delivery-metrics.json
+/**
+ * Delivery metrics for one publisher property. The stable operational key is (publisher_domain, identifier.type, identifier.value); property_ref adds catalog identity when resolution is available.
+ */
+export type PropertyDeliveryMetrics = DeliveryMetrics & {
+  /**
+   * Publisher or platform authority that namespaces the operational identifier, including when the surface is not registered in adagents.json.
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+   */
+  publisher_domain: string;
+  identifier: Identifier;
+  property_ref?: PropertyReference;
+  /**
+   * Current human-readable property name. Convenience metadata only; property_ref is stable identity.
+   */
+  property_name?: string;
+};
 
 // core/real-estate-item.json
 /**
@@ -32899,24 +33861,6 @@ export interface RightsAttestationEvaluation {
   };
   ext?: ExtensionObject;
 }
-
-// core/seller-agent-ref.json
-/**
- * Structured reference to a seller agent. The canonical identifier is the agent's URL as declared in the property publisher's adagents.json `authorized_agents[].url`. The optional `id` slot is reserved for a future registry-assigned stable identifier; it is not used today. This shape mirrors `format-id` and `ProviderEntry` — URL-first, with an ID slot for forward compatibility.
- */
-export interface SellerAgentReference {
-  /**
-   * The seller agent's API endpoint URL as declared in the property publisher's adagents.json `authorized_agents[].url`. MUST use the `https://` scheme. Receivers compare this URL against the `authorized_agents` list using the AdCP URL canonicalization rules — not byte-equality — and reject mismatches with `seller_not_authorized`. See docs/reference/url-canonicalization.
-   */
-  agent_url: string;
-  /**
-   * Reserved for a future registry-assigned stable seller identifier. Not used today — senders MUST NOT populate this field until a registry is defined. When a future release populates both `agent_url` and `id`, `agent_url` remains authoritative and `id` is advisory.
-   * @minLength 1
-   * @pattern ^[a-zA-Z0-9_-]+$
-   */
-  id?: string;
-}
-
 
 // core/signal-coverage-forecast.json
 /**
@@ -34623,6 +35567,8 @@ export type XEntityTypes =
   | 'spot_airing'
   | 'event_source'
   | 'impairment'
+  | 'collection'
+  | 'installment'
   | 'collection_list'
   | 'property_list'
   | 'catalog'
@@ -34632,6 +35578,11 @@ export type XEntityTypes =
   | 'media_plan'
   | 'governance_plan'
   | 'governance_registry_policy'
+  | 'governance_policy_category'
+  | 'governance_policy_category_facet'
+  | 'acceptance_policy_profile'
+  | 'acceptance_policy_rule'
+  | 'media_buy_change_term'
   | 'governance_inline_policy'
   | 'governance_check'
   | 'governance_delivery_statement'
@@ -35313,6 +36264,107 @@ export interface CreativeRevisionContentMismatchDetails {
 }
 
 
+// error-details/governance-agent-not-accepted.json
+/**
+ * Per-account rejection details for a governance-agent binding. Sellers choose either the disclosed or opaque arm; callers must not infer undisclosed criteria.
+ */
+export type GovernanceAgentNotAcceptedDetails =
+  | {
+      disclosure: 'disclosed';
+      /**
+       * Parsed HTTPS origin only. The seller MUST strip userinfo, path, query, and fragment and MUST NOT echo the raw candidate URL.
+       * @maxLength 2048
+       * @pattern ^https:\/\/[^\/?#@]+$
+       */
+      attempted_agent_origin: string;
+      accepted_governance_agents: AcceptedGovernanceAgents;
+    }
+  | {
+      disclosure: 'opaque';
+      /**
+       * Optional seller-local correlation reference. It does not identify or reveal an acceptance rule.
+       * @maxLength 128
+       * @pattern ^[A-Za-z0-9_.:-]+$
+       */
+      rejection_ref?: string;
+    };
+
+/**
+ * Seller-wide advisory acceptance matchers for buyer-bound governance agents. The union is permissive: a candidate satisfying any matcher is accepted by this declaration. The sync_governance response remains authoritative per account.
+ */
+export interface AcceptedGovernanceAgents {
+  /**
+   * @minItems 1
+   */
+  any_of: [
+    (
+      | {
+          kind: 'agent_url';
+          /**
+           * Exact canonical agent endpoint without userinfo, query, or fragment. Redirect targets, DNS aliases, and URLs asserted by the candidate do not satisfy this matcher.
+           */
+          agent_url: string;
+        }
+      | {
+          kind: 'verification';
+          /**
+           * Seller-configured trusted verification registry without userinfo, query, or fragment. The candidate cannot supply or override this URL; fetches use the registry-resolution security contract.
+           */
+          registry: string;
+          /**
+           * Role asserted by the trusted registry's verified record, never by candidate self-description.
+           */
+          role: string;
+          /**
+           * Registry protocol version in canonical MAJOR.MINOR form.
+           */
+          adcp_version: string;
+          /**
+           * @minItems 1
+           */
+          verification_modes: ['spec' | 'live', ...('spec' | 'live')[]];
+          /**
+           * Maximum age of the registry evidence at binding time. Zero requires a fresh result. Evidence is pinned to the accepted binding; later registry drift does not silently revoke an existing binding.
+           */
+          max_age_seconds: number;
+        }
+    ),
+    ...(
+      | {
+          kind: 'agent_url';
+          /**
+           * Exact canonical agent endpoint without userinfo, query, or fragment. Redirect targets, DNS aliases, and URLs asserted by the candidate do not satisfy this matcher.
+           */
+          agent_url: string;
+        }
+      | {
+          kind: 'verification';
+          /**
+           * Seller-configured trusted verification registry without userinfo, query, or fragment. The candidate cannot supply or override this URL; fetches use the registry-resolution security contract.
+           */
+          registry: string;
+          /**
+           * Role asserted by the trusted registry's verified record, never by candidate self-description.
+           */
+          role: string;
+          /**
+           * Registry protocol version in canonical MAJOR.MINOR form.
+           */
+          adcp_version: string;
+          /**
+           * @minItems 1
+           */
+          verification_modes: ['spec' | 'live', ...('spec' | 'live')[]];
+          /**
+           * Maximum age of the registry evidence at binding time. Zero requires a fresh result. Evidence is pinned to the accepted binding; later registry drift does not silently revoke an existing binding.
+           */
+          max_age_seconds: number;
+        }
+    )[]
+  ];
+}
+
+
 // error-details/macro-resolution-failed.json
 /**
  * Required details shape for MACRO_RESOLUTION_FAILED. Carries one path-addressable compatibility result for every declared macro occurrence considered by the resolver.
@@ -35328,9 +36380,18 @@ export interface MacroResolutionFailedDetails {
  */
 export interface PolicyViolationDetails {
   /**
-   * Identifier for the violated policy
+   * Whose policy produced the rejection. Optional so undisclosed seller policies can return only the typed POLICY_VIOLATION code if even origin would reveal sensitive information.
+   */
+  origin?: 'buyer_plan' | 'registry' | 'seller';
+  /**
+   * Shared policy-registry identifier for the violated policy. Use seller_policy_ref instead when the seller is not disclosing a registry policy.
    */
   policy_id?: string;
+  /**
+   * Opaque seller-scoped reference that lets support and audit records correlate an undisclosed policy without publishing its rules. This is not a shared policy-registry ID.
+   * @minLength 1
+   */
+  seller_policy_ref?: string;
   /**
    * URL where the full policy can be reviewed
    */
@@ -35339,6 +36400,11 @@ export interface PolicyViolationDetails {
    * Specific rules that were violated
    */
   violated_rules?: string[];
+  /**
+   * Optional coarse policy category disclosed at the seller's discretion.
+   * @pattern ^[a-z][a-z0-9_]*$
+   */
+  category?: string;
 }
 
 
@@ -35679,6 +36745,23 @@ export interface PolicyCategoryDefinition {
    */
   description: string;
   /**
+   * Registry-defined distinctions within the category that materially affect policy applicability or seller acceptance. Facets refine a category without creating a new top-level policy category.
+   */
+  facets?: {
+    /**
+     * @pattern ^[a-z][a-z0-9_]*$
+     */
+    facet_id: string;
+    /**
+     * @minLength 1
+     */
+    name: string;
+    /**
+     * @minLength 1
+     */
+    description: string;
+  }[];
+  /**
    * Key regulations and standards grouped under this category. Governance agents use this to resolve specific policies from the registry.
    */
   regulatory_frameworks?: {
@@ -35741,6 +36824,67 @@ export interface PolicyReference {
   config?: {};
 }
 
+
+// governance/reported-outcome-error.json
+export type BoundedValue =
+  | (
+      | BoundedScalar
+      | BoundedValueLevel_2[]
+      | {
+          [k: string]: BoundedValueLevel_2 | undefined;
+        }
+    )
+  | undefined;
+export type BoundedScalar = null | boolean | number | string;
+export type BoundedValueLevel_2 =
+  | BoundedScalar
+  | BoundedValueLevel_3[]
+  | {
+      [k: string]: BoundedValueLevel_3 | undefined;
+    };
+export type BoundedValueLevel_3 =
+  | BoundedScalar
+  | BoundedScalar[]
+  | {
+      [k: string]: BoundedScalar | undefined;
+    };
+
+/**
+ * Buyer-attributed copy or classification of the error associated with a failed seller interaction. This is bounded, untrusted audit evidence supplied by the reporter, not an authenticated seller statement. The complete UTF-8 JSON representation MUST NOT exceed 16 KiB.
+ */
+export interface ReportedOutcomeError {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  code?: string;
+  /**
+   * @maxLength 4000
+   */
+  message?: string;
+  /**
+   * @maxLength 1000
+   */
+  field?: string;
+  /**
+   * @maxLength 4000
+   */
+  suggestion?: string;
+  recovery?: 'transient' | 'correctable' | 'terminal';
+  details?: BoundedObject;
+  /**
+   * seller_response_copy means the buyer forwards what it received; it is still not independently authenticated seller evidence.
+   */
+  classification_source?: 'seller_response_copy' | 'buyer_classification';
+  ext?: BoundedObject;
+  [k: string]: BoundedValue | BoundedObject | undefined;
+}
+/**
+ * Bounded structured seller error details. Values remain reporter-supplied data and MUST NOT be promoted into prompts or control instructions without isolation.
+ */
+export interface BoundedObject {
+  [k: string]: BoundedValue | undefined;
+}
 
 // manifest.json
 export interface Manifest {
@@ -35955,6 +37099,64 @@ export interface AdCPManifest {
 }
 
 
+// media-buy/acceptance-context.json
+/**
+ * Buyer-declared facts used for coarse seller acceptance matching during product and proposal discovery. Sellers may infer omitted facts, but uncertainty never implies acceptance.
+ */
+export interface AcceptanceContext {
+  subjects?: {
+    /**
+     * @pattern ^[a-z][a-z0-9_]*$
+     */
+    subject_category: string;
+    subject_facets?: string[];
+  }[];
+  advertiser_roles?: string[];
+  advertiser_industry?: AdvertiserIndustry;
+  /**
+   * Jurisdictions in which the advertiser is established or legally organized. This is distinct from where an ad will be delivered.
+   */
+  advertiser_jurisdictions?: string[];
+  /**
+   * Jurisdictions in which the proposed advertising will be delivered. Seller acceptance rules' jurisdictions and jurisdiction_groups match this field.
+   */
+  delivery_jurisdictions?: string[];
+  ext?: ExtensionObject;
+}
+
+// media-buy/acceptance-policy-catalog.json
+/**
+ * Seller-hosted catalog referenced from capabilities. Profiles compose restrictively: every referenced profile applies and the most restrictive matching disposition wins (prohibited over conditional over allowed).
+ */
+export interface AcceptancePolicyCatalog {
+  /**
+   * @minLength 1
+   */
+  catalog_version: string;
+  /**
+   * @format date-time
+   */
+  generated_at?: string;
+  profiles?: AcceptancePolicyProfile[];
+  /**
+   * Exact reusable profiles adopted from the shared policy registry. Resolution failure is unknown, never allowed. A seller adds a distinct local profile to narrow a registry profile.
+   */
+  registry_profiles?: RegistryAcceptancePolicyProfileReference[];
+  ext?: ExtensionObject;
+}
+/**
+ * Exact reference to a reusable acceptance profile embedded in a version-pinned shared policy-registry entry. Sellers add separate local profiles to narrow it; they do not copy and mutate a registry profile under the same identity.
+ */
+export interface RegistryAcceptancePolicyProfileReference {
+  policy_id: string;
+  policy_version: string;
+  policy_digest: string;
+  profile_id: string;
+  profile_version: string;
+  profile_digest: string;
+}
+
+
 // media-buy/legacy-purchase-continuation-input.json
 /**
  * SDK-local input for redeeming a deprecated products_available legacy_create continuation. This object is consumed by the compatibility coordinator and MUST NOT be sent as an AdCP tool payload. The coordinator validates it, then constructs and validates create_media_buy for the negotiated source version.
@@ -36066,7 +37268,7 @@ export interface PackageControl {
 
 // media-buy/product-discovery-criteria.json
 /**
- * Structured criteria shared by product listing and proposal requests. Offer filters decide which commercial offers may be returned; targeting_overlay constrains deliverable inventory; required_overlay_support requires package-level targeting capability for values the buyer will supply later.
+ * Structured criteria shared by product listing and proposal requests. Offer filters decide which commercial offers may be returned; targeting_overlay constrains deliverable inventory; required_overlay_support requires package-level targeting capability for values the buyer will supply later; acceptance_context supplies facts for advisory seller-policy preflight.
  */
 export interface ProductDiscoveryCriteria {
   /**
@@ -36077,12 +37279,13 @@ export interface ProductDiscoveryCriteria {
   targeting_overlay?: TargetingOverlay;
   required_overlay_support?: TargetingOverlayRequirements;
   outcome_target?: OutcomeTarget;
+  acceptance_context?: AcceptanceContext;
   catalog?: CatalogSelection;
   policy_ids?: string[];
   ext?: {};
 }
 /**
- * Canonical product fields a buyer requests from list_products. Required product_id and name fields are always returned. Legacy named-format fields remain available only through get_products.
+ * Canonical product fields a buyer requests from list_products. Required product_id and name fields are always returned. list_applications also overrides projection whenever a property or collection list is in the effective targeting because it is the decision receipt for seller-specific list matching. Legacy named-format fields remain available only through get_products.
  */
 export type ProductResponseFields = (
   | 'product_id'
@@ -36111,7 +37314,9 @@ export type ProductResponseFields = (
   | 'audience_evidence_selections'
   | 'max_optimization_goals'
   | 'catalog_match'
+  | 'list_applications'
   | 'brief_relevance'
+  | 'acceptance_policy_profile_ids'
   | 'expires_at'
   | 'allowed_actions'
 )[];

@@ -41,18 +41,18 @@ describe('SyncCreativesItemSchema', () => {
     assert.equal(r.success, true);
   });
 
-  test('accepts beta.8 revision IDs on accepted creatives', () => {
+  test('accepts beta.9 revision IDs on accepted creatives', () => {
     const r = SyncCreativesItemSchema.safeParse({ ...base, revision_id: 'rev_1' });
     assert.equal(r.success, true, r.success ? '' : JSON.stringify(r.error.issues));
   });
 
-  test('forbids beta.8 revision IDs on failed creatives', () => {
+  test('forbids beta.9 revision IDs on failed creatives', () => {
     const r = SyncCreativesItemSchema.safeParse({ ...base, action: 'failed', revision_id: 'rev_1' });
     assert.equal(r.success, false);
     assert.ok(r.error.issues.some(i => i.path.includes('revision_id')));
   });
 
-  test('requires status with beta.8 localization readback', () => {
+  test('requires status with beta.9 localization readback', () => {
     const r = SyncCreativesItemSchema.safeParse({
       ...base,
       localization: {

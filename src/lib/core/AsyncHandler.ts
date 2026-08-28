@@ -18,6 +18,7 @@ import type {
   ProvidePerformanceFeedbackResponse,
   GetSignalsResponse,
   ActivateSignalResponse,
+  ListAccountChangesResponse,
   ListAccountsResponse,
   SyncAccountsResponse,
   SyncAudiencesResponse,
@@ -305,6 +306,10 @@ export interface AsyncHandlerConfig {
     metadata: WebhookMetadata
   ) => void | Promise<void>;
   onListAccountsStatusChange?: (response: ListAccountsResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onListAccountChangesStatusChange?: (
+    response: ListAccountChangesResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
   onSyncAccountsStatusChange?: (response: SyncAccountsResponse, metadata: WebhookMetadata) => void | Promise<void>;
   onSyncAudiencesStatusChange?: (response: SyncAudiencesResponse, metadata: WebhookMetadata) => void | Promise<void>;
   onCreatePropertyListStatusChange?: (

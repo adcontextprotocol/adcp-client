@@ -361,6 +361,36 @@ _Response (success branch):_
 
 ### Account Management
 
+**`list_account_changes`** — Request parameters for reading the durable account change feed.
+
+_Request:_
+```
+{
+  account: Account Ref  // required
+  adcp_version: string
+  cursor: string
+  starting_position: 'earliest' | 'latest'
+  resource_types: string[]
+  max_results: integer
+  context: Context
+}
+```
+
+_Response (success branch):_
+```
+{
+  changes: Account Change[]  // required
+  cursor: string  // required
+  has_more: boolean  // required
+  available_since: string  // required
+  generated_at: string  // required
+  status: 'completed'  // required
+  source_coverage: object[]
+  errors: Error[]
+  context: Context
+}
+```
+
 **`list_accounts`** — Request parameters for listing accounts accessible to the authenticated agent.
 
 _Request:_
@@ -490,6 +520,7 @@ _Request:_
   brief: string
   refine: object[]
   brand: Brand Ref
+  acceptance_context: Acceptance Context
   catalog: Catalog
   account: Account Ref
   preferred_delivery_types: Delivery Type[]
@@ -497,7 +528,7 @@ _Request:_
   targeting_overlay: Targeting
   required_overlay_support: Targeting Overlay Requirements
   property_list: Property List Ref
-  fields: ('product_id' | 'name' | 'description' | 'publisher_properties' | 'channels' | 'video_placement_types' | 'audio_distribution_types' | 'sponsored_placement_types' | 'social_placement_surfaces' | 'format_ids' | 'format_options' | 'placements' | 'delivery_type' | 'exclusivity' | 'pricing_options' | 'forecast' | 'outcome_measurement' | 'delivery_measurement' | 'reporting_capabilities' | 'creative_policy' | 'catalog_types' | 'metric_optimization' | 'conversion_tracking' | 'data_provider_signals' | 'included_signals' | 'signal_targeting_allowed' | 'signal_targeting_options' | 'signal_targeting_rules' | 'demographic_targeting' | 'overlay_support' | 'targeting_resolution' | 'audience_evidence' | 'audience_evidence_selections' | 'max_optimization_goals' | 'catalog_match' | 'collections' | 'collection_targeting_allowed' | 'installments' | 'brief_relevance' | 'is_custom' | 'expires_at' | 'product_card' | 'product_card_detailed' | 'enforced_policies' | 'trusted_match')[]
+  fields: ('product_id' | 'name' | 'description' | 'publisher_properties' | 'channels' | 'video_placement_types' | 'audio_distribution_types' | 'sponsored_placement_types' | 'social_placement_surfaces' | 'format_options' | 'placements' | 'delivery_type' | 'exclusivity' | 'pricing_options' | 'forecast' | 'reporting_capabilities' | 'measurement_terms' | 'performance_standards' | 'catalog_types' | 'signal_targeting_allowed' | 'signal_targeting_rules' | 'demographic_targeting' | 'audience_evidence' | 'audience_evidence_selections' | 'max_optimization_goals' | 'catalog_match' | 'list_applications' | 'brief_relevance' | 'acceptance_policy_profile_ids' | 'expires_at' | 'allowed_actions' | 'format_ids' | 'outcome_measurement' | 'delivery_measurement' | 'creative_policy' | 'metric_optimization' | 'conversion_tracking' | 'data_provider_signals' | 'included_signals' | 'signal_targeting_options' | 'overlay_support' | 'targeting_resolution' | 'collections' | 'collection_targeting_allowed' | 'installments' | 'is_custom' | 'product_card' | 'product_card_detailed' | 'enforced_policies' | 'trusted_match')[]
   time_budget
   push_notification_config: Push Notification Config
   pagination: Pagination Request
@@ -542,7 +573,7 @@ _Watch out:_
 _Request:_
 ```
 {
-  adcp_version: Adcp_version
+  adcp_version: string
   idempotency_key: string
   context_id: string
   context
@@ -563,6 +594,14 @@ _Response (success branch):_
 ```
 {
   outcome: 'listed'  // required
+  products: Canonical Product[]  // required
+  feed_version: string  // required
+  cache_scope: 'public' | 'account'  // required
+  next_cursor: string
+  pricing_version: string
+  incomplete: object[]
+  replayed: 'true'
+  context: Context
 }
 ```
 
@@ -573,7 +612,7 @@ _Request:_
 {
   idempotency_key: string  // required
   brief: string  // required
-  adcp_version: Adcp_version
+  adcp_version: string
   context_id: string
   context
   governance_context: string
@@ -589,7 +628,16 @@ _Response (success branch):_
 ```
 {
   outcome: 'proposed'  // required
+  proposals: object[]  // required
+  products: Canonical Product[]  // required
+  adcp_version: string
+  incomplete: object[]
+  targeting_resolution: Get Products Targeting Resolution
   status: 'completed'
+  message: string
+  errors: Error[]
+  context: Context
+  replayed: 'true'
 }
 ```
 
@@ -600,7 +648,7 @@ _Request:_
 {
   idempotency_key: string  // required
   refinements: Proposal Refinement[]  // required
-  adcp_version: Adcp_version
+  adcp_version: string
   context_id: string
   context
   governance_context: string
@@ -611,7 +659,14 @@ _Request:_
 _Response (success branch):_
 ```
 {
+  results: union[]  // required
+  products: Canonical Product[]  // required
+  adcp_version: string
   status: 'completed'
+  message: string
+  errors: Error[]
+  context: Context
+  replayed: 'true'
 }
 ```
 
@@ -622,7 +677,7 @@ _Request:_
 {
   idempotency_key: string  // required
   declines: Proposal Decline[]  // required
-  adcp_version: Adcp_version
+  adcp_version: string
   context_id: string
   context
   governance_context: string
@@ -631,6 +686,16 @@ _Request:_
 }
 ```
 
+_Response (success branch):_
+```
+{
+  results: object[]  // required
+  message: string
+  errors: Error[]
+  context: Context
+  replayed: 'true'
+}
+```
 
 **`buy_products`** — Create a MediaBuy directly from canonical published product offers.
 
@@ -643,7 +708,7 @@ _Request:_
   purchases: Product Purchase[]  // required
   start_time: Start Timing  // required
   end_time: string  // required
-  adcp_version: Adcp_version
+  adcp_version: string
   brand: Brand Key
   advertiser_industry: Advertiser Industry
   pricing_version: string
@@ -675,7 +740,7 @@ _Request:_
   account: Canonical Account Ref  // required
   proposal_id: string  // required
   proposal_terms_digest: string  // required
-  adcp_version: Adcp_version
+  adcp_version: string
   total_budget: object
   daily_budget_cap: number
   budget_cap_timezone: string
@@ -699,7 +764,7 @@ _Request:_
   account: Canonical Account Ref  // required
   media_buy_id: string  // required
   revision: integer  // required
-  adcp_version: Adcp_version
+  adcp_version: string
   name: string
   paused: boolean
   canceled: 'true'
@@ -1921,7 +1986,7 @@ _Request:_
   purchase_type: Purchase Type
   seller_response: object
   delivery: object
-  error: object
+  error: Reported Outcome Error
   governance_context: string
   context: Context
 }

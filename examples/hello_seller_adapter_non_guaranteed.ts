@@ -38,6 +38,8 @@
  *        synthetic `{brand, sandbox: true}` refs to a known network and
  *        stamps `mode: 'sandbox'` on the returned Account so the framework
  *        gate admits the comply controller)
+ *      - `ADCP_LIVE_MODE_AUTH_TOKEN`, its auth-derived account fallback, and
+ *        its `verifyApiKey` registration (public conformance-test credential)
  *      - `complyTest:` config block on `createAdcpServerFromPlatform`
  *      - in-memory `seededMediaBuys` / `simulatedDelivery` / `adapterStatusOverrides`
  *      These exist so the conformance harness can drive cascade scenarios
@@ -102,6 +104,11 @@ const UPSTREAM_URL = process.env['UPSTREAM_URL'] ?? 'http://127.0.0.1:4451';
 const UPSTREAM_API_KEY = process.env['UPSTREAM_API_KEY'] ?? 'mock_sales_non_guaranteed_key_do_not_use_in_prod';
 const PORT = Number(process.env['PORT'] ?? 3007);
 const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use_in_prod';
+// TEST-ONLY: public compliance-kit bearer used to prove the controller is
+// denied in live mode. Anyone can read this value. Never copy it into a
+// production seller's key map; delete the constant, auth-derived fallback,
+// and verifyApiKey registration when forking this example.
+const ADCP_LIVE_MODE_AUTH_TOKEN = process.env['ADCP_LIVE_MODE_AUTH_TOKEN'];
 const PUBLIC_AGENT_URL = process.env['PUBLIC_AGENT_URL'] ?? `http://127.0.0.1:${PORT}`;
 const DEFAULT_PRICING_OPTION_ID = 'cpm_standard';
 
@@ -313,6 +320,18 @@ const upstream = {
       networkHeader(networkCode)
     );
     return body;
+  },
+
+  async updateOrder(networkCode: string, orderId: string, body: { budget: number }): Promise<UpstreamOrder> {
+    const response = await http.patch<UpstreamOrder>(
+      `/v1/orders/${encodeURIComponent(orderId)}`,
+      body,
+      networkHeader(networkCode)
+    );
+    if (response.body === null) {
+      throw new AdcpError('INVALID_REQUEST', { message: 'order update rejected by upstream' });
+    }
+    return response.body;
   },
 
   async listLineItems(networkCode: string, orderId: string): Promise<UpstreamLineItem[]> {
@@ -540,6 +559,7 @@ function projectLineItemPackage(
   overrides: Partial<AdcpPackage> = {}
 ): AdcpPackage {
   const storedContext = localPackageContexts.get(packageContextKey(account, mediaBuyId, li.line_item_id));
+  const commercial = localPackageCommercialState.get(packageContextKey(account, mediaBuyId, li.line_item_id));
   const packageContext =
     storedContext !== undefined ? (structuredClone(storedContext) as Record<string, unknown>) : undefined;
   const creativeAssignments =
@@ -547,8 +567,9 @@ function projectLineItemPackage(
   return {
     package_id: li.line_item_id,
     product_id: li.product_id,
-    budget: li.budget,
-    pricing_option_id: DEFAULT_PRICING_OPTION_ID,
+    budget: commercial?.budget ?? li.budget,
+    pricing_option_id: commercial?.pricing_option_id ?? DEFAULT_PRICING_OPTION_ID,
+    ...(commercial?.bid_price !== undefined && { bid_price: commercial.bid_price }),
     ...(creativeAssignments !== undefined && { creative_assignments: creativeAssignments }),
     ...(packageContext !== undefined && { context: packageContext }),
     ...overrides,
@@ -560,6 +581,7 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
     specialisms: ['sales-non-guaranteed'] as const,
     channels: ['olv', 'ctv', 'display', 'streaming_audio'] as const,
     pricingModels: ['cpm'] as const,
+    supportedBillings: ['operator', 'agent'] as const,
     config: {},
     compliance_testing: {
       scenarios: ['force_media_buy_status', 'simulate_delivery'] as const,
@@ -567,8 +589,27 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
   };
 
   accounts: AccountStore<NetworkMeta> = {
-    resolve: async ref => {
-      if (!ref) return null;
+    resolve: async (ref, ctx) => {
+      // TEST-ONLY: capability discovery and tasks/get carry no account ref.
+      // Resolve the authenticated conformance principal to the same seeded
+      // tenant used by the storyboard so the framework can expose and scope
+      // comply_test_controller. Production sellers use their tenant store.
+      if (!ref) {
+        if (!ctx?.authInfo) return null;
+        const network = await upstream.lookupNetwork('acmeoutdoor.example');
+        if (!network) return null;
+        return {
+          id: network.network_code,
+          name: network.display_name,
+          status: 'active',
+          brand: { domain: network.adcp_publisher },
+          mode:
+            ADCP_LIVE_MODE_AUTH_TOKEN !== undefined && ctx.authInfo.token === ADCP_LIVE_MODE_AUTH_TOKEN
+              ? 'live'
+              : 'sandbox',
+          ctx_metadata: { network_code: network.network_code, publisher_domain: network.adcp_publisher },
+        };
+      }
       // SWAP: persist `account_id → network_code` during sync_accounts and
       // serve account_id lookups from there.
       if ('account_id' in ref) return null;
@@ -732,6 +773,10 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       const packagesRequest = (req.packages ?? []) as Array<{
         product_id?: string;
         budget?: number;
+        bid_price?: number;
+        pricing_option_id?: string;
+        buyer_ref?: string;
+        context?: unknown;
       }>;
 
       // Build the line_items array up front so the upstream POST is one
@@ -799,10 +844,15 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       // already (since we created them inline); each maps to a wire
       // `package`.
       const packagesOut: CreateMediaBuySuccess['packages'] = (order.line_items ?? []).map((li, i) => {
-        const requestedPackage = packagesRequest[i] as
-          | { buyer_ref?: string; context?: unknown; pricing_option_id?: string }
-          | undefined;
+        const requestedPackage = packagesRequest[i];
         const packageContext = asPackageContext(requestedPackage?.context);
+        if (requestedPackage) {
+          localPackageCommercialState.set(packageContextKey(ctx.account, order.order_id, li.line_item_id), {
+            budget: requestedPackage.budget ?? li.budget,
+            pricing_option_id: requestedPackage.pricing_option_id ?? DEFAULT_PRICING_OPTION_ID,
+            ...(requestedPackage.bid_price !== undefined && { bid_price: requestedPackage.bid_price }),
+          });
+        }
         if (packageContext) {
           localPackageContexts.set(
             packageContextKey(ctx.account, order.order_id, li.line_item_id),
@@ -855,6 +905,8 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
               package_id?: string;
               creative_assignments?: Array<{ creative_id?: string }>;
               pricing_option_id?: string;
+              budget?: number;
+              bid_price?: number;
               targeting_overlay?: unknown;
             }>;
           }
@@ -895,17 +947,43 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       const currentStatus: AdcpMediaBuyStatus =
         local ?? adapterStatusOverrides.get(overrideKey(networkCode, id)) ?? baseStatus;
       let nextStatus: AdcpMediaBuyStatus = currentStatus;
-      if ((patch as { canceled?: boolean }).canceled === true) {
+      const cancelRequested = (patch as { canceled?: boolean }).canceled === true;
+      const pauseRequested = (patch as { paused?: boolean }).paused === true;
+      if (currentStatus === 'completed' || currentStatus === 'canceled') {
+        if (cancelRequested) assertMediaBuyTransition(currentStatus, 'canceled');
+        throw new AdcpError('INVALID_STATE', {
+          message: `Media buy in terminal ${currentStatus} state cannot be modified.`,
+          field: 'status',
+          recovery: 'correctable',
+        });
+      }
+      if (cancelRequested) {
         assertMediaBuyTransition(currentStatus, 'canceled');
         nextStatus = 'canceled';
-        localBuyStatus.set(overrideKey(networkCode, id), nextStatus);
-      } else if ((patch as { paused?: boolean }).paused === true && currentStatus === 'active') {
+      } else if (pauseRequested) {
         assertMediaBuyTransition(currentStatus, 'paused');
         nextStatus = 'paused';
-        localBuyStatus.set(overrideKey(networkCode, id), nextStatus);
       } else if (hasCreativeAssignment && nextStatus === 'pending_creatives') {
         const flightStarted = existing.flight_start !== undefined && Date.parse(existing.flight_start) <= Date.now();
         nextStatus = flightStarted ? 'active' : 'pending_start';
+      }
+
+      // All package and lifecycle validation is complete before the first
+      // upstream mutation. A rejected pause/cancel must never partially
+      // change the financial commitment.
+      if (patchPackages.length > 0) {
+        const patchedBudget = lineItems.reduce((sum, lineItem) => {
+          const update = patchPackages.find(candidate => candidate.package_id === lineItem.line_item_id);
+          const stored = localPackageCommercialState.get(packageContextKey(ctx.account, id, lineItem.line_item_id));
+          return sum + (update?.budget ?? stored?.budget ?? lineItem.budget);
+        }, 0);
+        await upstream.updateOrder(networkCode, id, { budget: patchedBudget });
+      }
+      if (cancelRequested) {
+        localBuyStatus.set(overrideKey(networkCode, id), 'canceled');
+      } else if (pauseRequested) {
+        localBuyStatus.set(overrideKey(networkCode, id), 'paused');
+      } else if (hasCreativeAssignment && (nextStatus === 'active' || nextStatus === 'pending_start')) {
         adapterStatusOverrides.set(overrideKey(networkCode, id), nextStatus);
       }
       const revisionKey = overrideKey(networkCode, id);
@@ -931,11 +1009,24 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
           if (typeof p.pricing_option_id === 'string' && p.pricing_option_id.length > 0) {
             overrides.pricing_option_id = p.pricing_option_id;
           }
+          if (typeof p.budget === 'number') overrides.budget = p.budget;
+          if (typeof p.bid_price === 'number') overrides.bid_price = p.bid_price;
           if (p.targeting_overlay !== null && p.targeting_overlay !== undefined) {
             overrides.targeting_overlay = structuredClone(p.targeting_overlay) as NonNullable<
               AdcpPackage['targeting_overlay']
             >;
           }
+          const stateKey = packageContextKey(ctx.account, id, lineItem.line_item_id);
+          const currentCommercial = localPackageCommercialState.get(stateKey);
+          localPackageCommercialState.set(stateKey, {
+            budget: p.budget ?? currentCommercial?.budget ?? lineItem.budget,
+            pricing_option_id: p.pricing_option_id ?? currentCommercial?.pricing_option_id ?? DEFAULT_PRICING_OPTION_ID,
+            ...(p.bid_price !== undefined
+              ? { bid_price: p.bid_price }
+              : currentCommercial?.bid_price !== undefined
+                ? { bid_price: currentCommercial.bid_price }
+                : {}),
+          });
           affectedPackages.push(projectLineItemPackage(ctx.account, id, lineItem, overrides));
         }
       }
@@ -996,8 +1087,8 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       const response: GetMediaBuyDeliveryPayload = {
         currency: filtered[0]?.currency ?? 'USD',
         reporting_period: {
-          start: filtered[0]?.reporting_period.start ?? new Date().toISOString(),
-          end: filtered[0]?.reporting_period.end ?? new Date().toISOString(),
+          start: toAdcpDateTime(filtered[0]?.reporting_period.start ?? 'asap', new Date().toISOString()),
+          end: toAdcpDateTime(filtered[0]?.reporting_period.end ?? 'asap', new Date().toISOString()),
         },
         aggregated_totals: {
           impressions: filtered.reduce((s, d) => s + d.totals.impressions, 0),
@@ -1181,6 +1272,10 @@ const simulatedDelivery = new Map<
 
 const localBuyRevisions = new Map<string, number>();
 const localPackageContexts = new Map<string, Record<string, unknown>>();
+const localPackageCommercialState = new Map<
+  string,
+  { budget: number; pricing_option_id: string; bid_price?: number }
+>();
 
 serve(
   ({ taskStore }) =>
@@ -1258,7 +1353,12 @@ serve(
   {
     port: PORT,
     authenticate: verifyApiKey({
-      keys: { [ADCP_AUTH_TOKEN]: { principal: 'compliance-runner' } },
+      keys: {
+        [ADCP_AUTH_TOKEN]: { principal: 'compliance-runner' },
+        ...(ADCP_LIVE_MODE_AUTH_TOKEN !== undefined && {
+          [ADCP_LIVE_MODE_AUTH_TOKEN]: { principal: 'compliance-live-mode-probe' },
+        }),
+      },
     }),
   }
 );
