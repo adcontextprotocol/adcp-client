@@ -315,6 +315,7 @@ function selectCurrent(
     revision.account_id !== obligation.account_id ||
     revision.report_definition_id !== obligation.report_definition_id ||
     revision.reporting_profile !== obligation.reporting_profile ||
+    !same([...(revision.media_buy_ids ?? [])].sort(), [...(obligation.media_buy_ids ?? [])].sort()) ||
     !same(revision.period, obligation.period)
   ) {
     reasons.push('REVISION_SCOPE_MISMATCH');
