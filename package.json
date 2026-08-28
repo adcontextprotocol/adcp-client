@@ -463,6 +463,7 @@
     "!compliance/cache/*.previous/**/*",
     "!compliance/cache/3.2.0-beta.0/**/*",
     "!compliance/cache/3.2.0-beta.1/**/*",
+    "!compliance/cache/3.2.0-beta.8/**/*",
     "ADCP_VERSION",
     "docs/llms.txt",
     "docs/releases/**/*.md",
@@ -516,7 +517,7 @@
     "sync-registry-schemas": "tsx scripts/generate-registry-types.ts --sync",
     "schemas:ensure": "tsx scripts/schemas-ensure.ts",
     "schema-diff": "tsx scripts/schema-diff.ts",
-    "generate-types": "tsx scripts/generate-types.ts && tsx scripts/generate-enum-arrays.ts && tsx scripts/generate-manifest-derived.ts && tsx scripts/generate-entity-hydration.ts && tsx scripts/generate-media-buy-update-fields.ts",
+    "generate-types": "tsx scripts/generate-types.ts && tsx scripts/generate-enum-arrays.ts && tsx scripts/generate-inline-enum-arrays.ts && tsx scripts/generate-manifest-derived.ts && tsx scripts/generate-entity-hydration.ts && tsx scripts/generate-media-buy-update-fields.ts",
     "generate-manifest-derived": "tsx scripts/generate-manifest-derived.ts",
     "generate-entity-hydration": "tsx scripts/generate-entity-hydration.ts",
     "generate-types:v2.5": "tsx scripts/generate-v2-5-types.ts",
@@ -679,7 +680,7 @@
     },
     "minimatch": "^10.2.1"
   },
-  "adcp_version": "3.2.0-beta.8",
+  "adcp_version": "3.2.0-beta.9",
   "sideEffects": [
     "**/default-invariants.*"
   ]

@@ -5,7 +5,7 @@ routes it can still **call**. A 3.2 seller should make the compact lifecycle the
 obvious path for new buyers without breaking a 3.0 or 3.1 buyer that already
 calls the established names.
 
-The SDK is pinned to the signed `3.2.0-beta.8` bundle. That exact prerelease
+The SDK is pinned to the signed `3.2.0-beta.9` bundle. That exact prerelease
 supersedes beta.5 and adds delivery metric identities, requested-metric
 narrowing, sortable breakdowns, completeness echoes, coordinated placements,
 seller-rendered stateful display, creative component assets, and A2A 1.0
@@ -77,7 +77,7 @@ const platform = {
 createAdcpServerFromPlatform(platform, {
   name: 'seller',
   version: '1.0.0',
-  adcpVersion: '3.2.0-beta.8',
+  adcpVersion: '3.2.0-beta.9',
 });
 ```
 

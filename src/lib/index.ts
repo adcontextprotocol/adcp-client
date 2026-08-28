@@ -1008,6 +1008,9 @@ export type {
   GetCreativeDeliveryResponse as LegacyGetCreativeDeliveryResponse,
   // Account Domain
   Account,
+  AccountChange,
+  ListAccountChangesRequest,
+  ListAccountChangesResponse,
   ListAccountsRequest,
   ListAccountsResponse,
   SyncAccountsRequest,

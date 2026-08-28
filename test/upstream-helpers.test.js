@@ -211,6 +211,19 @@ describe('createUpstreamHttpClient', () => {
     assert.equal(capturedRequests[0].init.body, JSON.stringify({ name: 'updated' }));
   });
 
+  it('PATCH sends JSON body and correct method', async () => {
+    mockResponses.push({ status: 200, body: JSON.stringify({ id: 'x', budget: 25000 }) });
+    const client = createUpstreamHttpClient({
+      baseUrl: 'https://api.example.com',
+      auth: { kind: 'none' },
+    });
+    const result = await client.patch('/items/x', { budget: 25000 });
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, { id: 'x', budget: 25000 });
+    assert.equal(capturedRequests[0].init.method, 'PATCH');
+    assert.equal(capturedRequests[0].init.body, JSON.stringify({ budget: 25000 }));
+  });
+
   it('GET non-2xx empty body throws', async () => {
     mockResponses.push({ status: 500, body: '' });
     const client = createUpstreamHttpClient({

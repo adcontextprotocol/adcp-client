@@ -25,7 +25,7 @@ export function applyFunctionalRequestSigning<T extends TestOptions>(
 
   const contract = loadSignedRequestsRunnerContract(loadOptions);
   const dispatch = contract?.functional_dispatch;
-  // Older compliance bundles predate functional signing. Keep beta.8's
+  // Older compliance bundles predate functional signing. Keep beta.9's
   // post-dispatch not_applicable compatibility behavior for those bundles.
   if (!dispatch) return options;
   if (contract.endpoint_scope !== 'sandbox') {

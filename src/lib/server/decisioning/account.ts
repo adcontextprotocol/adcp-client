@@ -26,6 +26,8 @@ import type {
   AccountReference,
   BusinessEntity,
   ExtensionObject,
+  ListAccountChangesRequest,
+  ListAccountChangesResponse,
   ListAccountsRequest,
   PaymentTerms,
   ListAccountsResponse,
@@ -69,6 +71,7 @@ type SyncAccountError = Pick<AdcpStructuredError, 'code' | 'message'> &
   Partial<Omit<AdcpStructuredError, 'code' | 'message'>>;
 
 export type ListAccountsPayload = ServerPayload<ListAccountsResponse>;
+export type ListAccountChangesPayload = ServerPayload<ListAccountChangesResponse>;
 export type SyncAccountsPayload = ServerPayload<SyncAccountsResponse>;
 export type SyncAccountsSuccessPayload = ServerPayload<SyncAccountsSuccess>;
 export type SyncAccountsRow = SyncAccountsSuccess['accounts'][number];
@@ -79,6 +82,7 @@ export type ReportUsagePayload = ServerPayload<ReportUsageResponse>;
 export type GetAccountFinancialsPayload = ServerPayload<GetAccountFinancialsResponse>;
 export type GetAccountFinancialsSuccessPayload = ServerPayload<GetAccountFinancialsSuccess>;
 export type ListAccountsHandlerResult<TCtxMeta = Record<string, unknown>> = CursorPage<Account<TCtxMeta>>;
+export type ListAccountChangesHandlerResult = ListAccountChangesPayload;
 export type SyncAccountsHandlerResult = SyncAccountsResultRow[];
 export type SyncGovernanceHandlerResult = SyncGovernanceRow[];
 export type ReportUsageHandlerResult = ReportUsagePayload;
@@ -645,6 +649,21 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * the calling buyer agent) without re-deriving identity from the request.
    */
   list?(request: ListAccountsRequest, ctx?: ResolveContext): Promise<ListAccountsHandlerResult<TCtxMeta>>;
+
+  /**
+   * list_account_changes API surface. Returns a durable feed page whose
+   * cursor remains bound to the authenticated principal, account, and
+   * normalized filters. The framework resolves the request account before
+   * calling this method; adopters must additionally bind and validate opaque
+   * cursors against the caller identity carried by `ctx`.
+   *
+   * **Optional.** Platforms without a durable change feed leave this
+   * unimplemented and do not advertise `list_account_changes`.
+   */
+  listChanges?(
+    request: ListAccountChangesRequest,
+    ctx: AccountToolContext<TCtxMeta>
+  ): Promise<ListAccountChangesHandlerResult>;
 
   /**
    * report_usage API surface. Operator-billed platforms accept usage rows

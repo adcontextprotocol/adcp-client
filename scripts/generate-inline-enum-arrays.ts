@@ -114,26 +114,38 @@ function extractStringLiteralUnion(schema: unknown): { values: string[]; isArray
     isArray = true;
   }
 
-  const unionDef = getDef(unionCandidate);
-  if (!unionDef || unionDef.type !== 'union') return null;
-  const options = unionDef.options;
-  if (!Array.isArray(options) || options.length === 0) return null;
+  function collectLiterals(candidate: unknown): string[] | null {
+    const candidateCore = unwrap(candidate);
+    const candidateDef = getDef(candidateCore);
+    if (!candidateDef) return null;
 
-  const literals: string[] = [];
-  for (const opt of options) {
-    const optCore = unwrap(opt);
-    const optDef = getDef(optCore);
-    if (!optDef || optDef.type !== 'literal') return null;
-    // Zod 4 `z.literal('x')` stores values as an array (multi-literal
-    // support); we accept any number of string members per option.
-    const values = optDef.values;
-    if (!Array.isArray(values)) return null;
-    for (const v of values) {
-      if (typeof v !== 'string') return null;
-      literals.push(v);
+    if (candidateDef.type === 'literal') {
+      // Zod 4 `z.literal('x')` stores values as an array (multi-literal
+      // support); we accept any number of string members per option.
+      const values = candidateDef.values;
+      if (!Array.isArray(values) || values.some(value => typeof value !== 'string')) return null;
+      return values as string[];
     }
+
+    // json-schema-to-typescript can preserve an authored anyOf grouping as
+    // nested Zod unions. Flatten only all-string union members; a mixed type
+    // still fails closed rather than being silently coerced or omitted.
+    if (candidateDef.type === 'union' && Array.isArray(candidateDef.options)) {
+      const literals: string[] = [];
+      for (const option of candidateDef.options) {
+        const optionLiterals = collectLiterals(option);
+        if (!optionLiterals) return null;
+        literals.push(...optionLiterals);
+      }
+      return literals;
+    }
+
+    return null;
   }
-  return literals.length > 0 ? { values: literals, isArray } : null;
+
+  const literals = collectLiterals(unionCandidate);
+  if (!literals?.length) return null;
+  return { values: [...new Set(literals)], isArray };
 }
 
 interface NamedEnumGate {

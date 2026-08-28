@@ -2824,6 +2824,36 @@ function fixTypedIndexSignatures(typeDefinitions: string): string {
   );
 }
 
+/**
+ * JSON Schema applies `additionalProperties` only to properties that were not
+ * matched by `properties`. TypeScript index signatures also constrain named
+ * properties, so ReportedOutcomeError.details/ext must be added to the index
+ * value union even though the protocol's generic bounded value is one nesting
+ * level shallower than the dedicated BoundedObject schema.
+ */
+function widenReportedOutcomeErrorIndexSignature(typeDefinitions: string): string {
+  const start = typeDefinitions.indexOf('export interface ReportedOutcomeError {');
+  if (start === -1) return typeDefinitions;
+  const end = typeDefinitions.indexOf('\nexport ', start + 'export interface ReportedOutcomeError {'.length);
+  const blockEnd = end === -1 ? typeDefinitions.length : end;
+  let block = typeDefinitions.slice(start, blockEnd);
+
+  if (block.includes('[k: string]: BoundedValue | undefined;')) {
+    block = block.replace(
+      '[k: string]: BoundedValue | undefined;',
+      '[k: string]: BoundedValue | BoundedObject | undefined;'
+    );
+  } else {
+    const signatureStart = block.indexOf('\n  [k: string]:');
+    const signatureEnd = signatureStart === -1 ? -1 : block.indexOf('\n    | undefined;\n}', signatureStart);
+    if (signatureEnd !== -1) {
+      block = block.slice(0, signatureEnd) + '\n    | BoundedObject' + block.slice(signatureEnd);
+    }
+  }
+
+  return typeDefinitions.slice(0, start) + block + typeDefinitions.slice(blockEnd);
+}
+
 const POSTAL_AREA_SUPPORT_INDEX_TYPE =
   "('zip' | 'zip_plus_four' | 'outward' | 'full' | 'fsa' | 'plz' | 'code_postal' | 'postcode' | 'cep' | 'pin' | 'postal_code' | 'custom')[]";
 
@@ -4188,6 +4218,7 @@ async function generateTypes() {
   toolTypes = namePostalAreaCountryBranch(toolTypes);
   toolTypes = applyKnownJstsAliases(toolTypes);
   toolTypes = fixTypedIndexSignatures(toolTypes);
+  toolTypes = widenReportedOutcomeErrorIndexSignature(toolTypes);
   toolTypes = widenPostalAreaSupportIndexSignature(toolTypes);
   toolTypes = widenMediaBuyFeaturesIndexSignature(toolTypes);
   toolTypes = simplifyForecastRange(toolTypes);
@@ -4203,7 +4234,14 @@ async function generateTypes() {
   // Only dedup against core types (not tool types) because gap schemas go into
   // core.generated.ts which is a separate file from tools.generated.ts.
   console.log('\n🔍 Scanning for gap schemas...');
-  const gapTypes = await compileGapSchemas(new Set(generatedCoreTypes), refResolver);
+  const gapGeneratedCoreTypes = new Set(generatedCoreTypes);
+  // PostalArea1 is stabilized as PostalCountryArea later in the output
+  // post-processing pipeline. Reserve that final public name now so a gap
+  // schema cannot emit a second declaration before the rename occurs.
+  if (/export (?:interface|type) PostalArea1\b/.test(coreTypes)) {
+    gapGeneratedCoreTypes.add('PostalCountryArea');
+  }
+  const gapTypes = await compileGapSchemas(gapGeneratedCoreTypes, refResolver);
   if (gapTypes.trim()) {
     coreTypes += `\n// GAP SCHEMAS — types not reachable from root schemas or tool definitions\n${gapTypes}\n`;
   }
@@ -4228,12 +4266,14 @@ async function generateTypes() {
               simplifyPriceBreakdown(
                 widenMediaBuyFeaturesIndexSignature(
                   widenPostalAreaSupportIndexSignature(
-                    fixTypedIndexSignatures(
-                      removeResidualInlineIndexSignatureArms(
-                        applyKnownJstsAliases(
-                          namePostalAreaCountryBranch(
-                            renameKnownNumberedSemanticTypes(
-                              removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))
+                    widenReportedOutcomeErrorIndexSignature(
+                      fixTypedIndexSignatures(
+                        removeResidualInlineIndexSignatureArms(
+                          applyKnownJstsAliases(
+                            namePostalAreaCountryBranch(
+                              renameKnownNumberedSemanticTypes(
+                                removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))
+                              )
                             )
                           )
                         )

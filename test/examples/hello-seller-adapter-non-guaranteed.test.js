@@ -29,8 +29,107 @@ runHelloAdapterGates({
   mockOptions: { apiKey: 'mock_sales_non_guaranteed_key_do_not_use_in_prod' },
   extraEnv: {
     UPSTREAM_API_KEY: 'mock_sales_non_guaranteed_key_do_not_use_in_prod',
+    ADCP_LIVE_MODE_AUTH_TOKEN: 'demo-acme-outdoor-live-v1',
   },
   expectedRoutes: ['GET /_lookup/network', 'GET /v1/products', 'POST /v1/orders', 'GET /v1/orders/{id}'],
+  extraMcpAssertions: [
+    {
+      label: 'preserves prior package budgets across sequential partial updates',
+      run: async ({ callTool }) => {
+        const account = {
+          brand: { domain: 'acmeoutdoor.example' },
+          operator: 'pinnacle-agency.example',
+          sandbox: true,
+        };
+        const created = await callTool('create_media_buy', {
+          adcp_version: '3.2-beta.9',
+          idempotency_key: 'sequential-budget-create-0001',
+          account,
+          brand: { domain: 'buyer.example' },
+          start_time: '2027-01-01T00:00:00Z',
+          end_time: '2027-02-01T00:00:00Z',
+          total_budget: { amount: 1300, currency: 'USD' },
+          packages: [
+            { product_id: 'acme_dooh_remnant_q2', budget: 600, pricing_option_id: 'cpm_standard' },
+            { product_id: 'acme_display_remnant_q2', budget: 700, pricing_option_id: 'cpm_standard' },
+          ],
+        });
+        const buy = created.structuredContent;
+        assert.ok(buy?.media_buy_id, JSON.stringify(created));
+        assert.equal(buy.packages.length, 2);
+
+        await callTool('update_media_buy', {
+          adcp_version: '3.2-beta.9',
+          idempotency_key: 'sequential-budget-update-0001',
+          account,
+          media_buy_id: buy.media_buy_id,
+          packages: [{ package_id: buy.packages[0].package_id, budget: 800 }],
+        });
+        await callTool('update_media_buy', {
+          adcp_version: '3.2-beta.9',
+          idempotency_key: 'sequential-budget-update-0002',
+          account,
+          media_buy_id: buy.media_buy_id,
+          packages: [{ package_id: buy.packages[1].package_id, budget: 900 }],
+        });
+
+        const read = await callTool('get_media_buys', {
+          adcp_version: '3.2-beta.9',
+          account,
+          media_buy_ids: [buy.media_buy_id],
+        });
+        const projected = read.structuredContent?.media_buys?.[0];
+        assert.equal(projected?.total_budget, 1700, JSON.stringify(read));
+        assert.deepEqual(
+          projected.packages.map(pkg => pkg.budget),
+          [800, 900]
+        );
+      },
+    },
+    {
+      label: 'rejects terminal-state budget updates before upstream PATCH',
+      run: async ({ callTool, mockUrl }) => {
+        const account = {
+          brand: { domain: 'acmeoutdoor.example' },
+          operator: 'pinnacle-agency.example',
+          sandbox: true,
+        };
+        const created = await callTool('create_media_buy', {
+          adcp_version: '3.2-beta.9',
+          idempotency_key: 'terminal-budget-create-0001',
+          account,
+          brand: { domain: 'buyer.example' },
+          start_time: '2027-01-01T00:00:00Z',
+          end_time: '2027-02-01T00:00:00Z',
+          packages: [{ product_id: 'acme_dooh_remnant_q2', budget: 600, pricing_option_id: 'cpm_standard' }],
+        });
+        const buy = created.structuredContent;
+        assert.ok(buy?.media_buy_id, JSON.stringify(created));
+        await callTool('update_media_buy', {
+          adcp_version: '3.2-beta.9',
+          idempotency_key: 'terminal-budget-cancel-0001',
+          account,
+          media_buy_id: buy.media_buy_id,
+          canceled: true,
+        });
+        const before = await fetch(`${mockUrl}/_debug/traffic`).then(response => response.json());
+        const rejected = await callTool('update_media_buy', {
+          adcp_version: '3.2-beta.9',
+          idempotency_key: 'terminal-budget-update-0001',
+          account,
+          media_buy_id: buy.media_buy_id,
+          packages: [{ package_id: buy.packages[0].package_id, budget: 900 }],
+        });
+        assert.equal(rejected.structuredContent?.adcp_error?.code, 'INVALID_STATE', JSON.stringify(rejected));
+        const after = await fetch(`${mockUrl}/_debug/traffic`).then(response => response.json());
+        assert.equal(
+          after.traffic?.['PATCH /v1/orders/{id}'] ?? 0,
+          before.traffic?.['PATCH /v1/orders/{id}'] ?? 0,
+          'terminal-state rejection must happen before the upstream financial mutation'
+        );
+      },
+    },
+  ],
   filterFailures:
     EXPECTED_FAILURES.length === 0
       ? undefined

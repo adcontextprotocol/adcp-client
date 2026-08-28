@@ -90,7 +90,7 @@ export type SyncCreativesSuccessStrict = z.infer<typeof SyncCreativesSuccessStri
 /**
  * Strict response schema for sync_creatives.
  *
- * This hand-authored strict projection preserves the beta.8 per-item fields
+ * This hand-authored strict projection preserves the beta.9 per-item fields
  * and the cross-field conditions that TypeScript-to-Zod generation cannot
  * express: failed/deleted rows omit lifecycle state, and localization
  * readback requires an enclosing creative status.

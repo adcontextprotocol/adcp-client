@@ -114,10 +114,18 @@ function loadSchema(ref: string): any {
   // Indexes may use either root-relative or absolute canonical schema URLs.
   // Resolve both to a cache-relative path before stripping the version.
   let rel = ref;
+  let fragment = '';
   try {
-    rel = new URL(ref).pathname;
+    const url = new URL(ref);
+    rel = url.pathname;
+    fragment = url.hash;
   } catch {
     // A relative reference is already suitable for the handling below.
+    const hashIndex = rel.indexOf('#');
+    if (hashIndex >= 0) {
+      fragment = rel.slice(hashIndex);
+      rel = rel.slice(0, hashIndex);
+    }
   }
   if (rel.startsWith('/schemas/')) {
     rel = rel.substring('/schemas/'.length);
@@ -128,7 +136,15 @@ function loadSchema(ref: string): any {
   }
   const filePath = path.join(SCHEMA_CACHE_DIR, rel);
   if (!existsSync(filePath)) return null;
-  return JSON.parse(readFileSync(filePath, 'utf8'));
+  let schema = JSON.parse(readFileSync(filePath, 'utf8'));
+  if (fragment.startsWith('#/')) {
+    for (const rawSegment of fragment.slice(2).split('/')) {
+      const segment = decodeURIComponent(rawSegment).replaceAll('~1', '/').replaceAll('~0', '~');
+      schema = schema?.[segment];
+      if (schema === undefined) return null;
+    }
+  }
+  return schema;
 }
 
 function kebabToSnake(s: string): string {
@@ -173,14 +189,42 @@ function summarizeFields(schema: any): { required: string[]; optional: string[] 
 function summarizeResponseFields(schema: any): { required: string[]; optional: string[] } {
   if (!schema) return { required: [], optional: [] };
 
+  const prohibitedFields = (notSchema: any): Set<string> => {
+    const prohibited = new Set<string>();
+    if (Array.isArray(notSchema?.required) && notSchema.required.length === 1) {
+      prohibited.add(notSchema.required[0]);
+    }
+    for (const member of notSchema?.anyOf || []) {
+      if (Array.isArray(member?.required) && member.required.length === 1) prohibited.add(member.required[0]);
+    }
+    return prohibited;
+  };
+
+  const summarizeBranch = (branch: any) => {
+    const prohibited = new Set([...prohibitedFields(schema.not), ...prohibitedFields(branch.not)]);
+    const properties = Object.fromEntries(
+      Object.entries({ ...(schema.properties || {}), ...(branch.properties || {}) }).filter(
+        ([name]) => !prohibited.has(name)
+      )
+    );
+    return summarizeFields({
+      ...schema,
+      ...branch,
+      properties,
+      required: [...new Set([...(schema.required || []), ...(branch.required || [])])].filter(
+        name => !prohibited.has(name)
+      ),
+    });
+  };
+
   // oneOf / anyOf — pick the success branch (doesn't require `errors`)
   if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) {
     const successBranch = schema.oneOf.find((b: any) => !(b.required || []).includes('errors')) ?? schema.oneOf[0];
-    return summarizeFields(successBranch);
+    return summarizeBranch(successBranch);
   }
   if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
     const successBranch = schema.anyOf.find((b: any) => !(b.required || []).includes('errors')) ?? schema.anyOf[0];
-    return summarizeFields(successBranch);
+    return summarizeBranch(successBranch);
   }
   return summarizeFields(schema);
 }
@@ -195,8 +239,12 @@ function fieldType(prop: any): string {
   }
   if (prop.type === 'object' && prop.title) return prop.title;
   if (prop.$ref) {
+    if (prop.$ref.includes('#')) {
+      const resolved = loadSchema(prop.$ref);
+      if (resolved) return fieldType(resolved);
+    }
     // Extract type name from $ref path
-    const parts = prop.$ref.split('/');
+    const parts = prop.$ref.split('#')[0].split('/');
     const filename = parts[parts.length - 1].replace('.json', '');
     return kebabToTitle(filename);
   }

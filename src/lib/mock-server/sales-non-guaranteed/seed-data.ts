@@ -233,6 +233,16 @@ export const PRODUCTS: MockProduct[] = [
     pricing: { min_cpm: 1.25, target_cpm: 1.9, currency: 'USD', min_spend: 500 },
   },
   {
+    product_id: 'acme_video_viewability_q2',
+    name: 'Acme Outdoor — Viewability Video Q2',
+    network_code: 'net_acmeoutdoor',
+    delivery_type: 'non_guaranteed',
+    channel: 'video',
+    format_ids: ['video_15s'],
+    ad_unit_ids: ['au_acmeoutdoor_dooh'],
+    pricing: { min_cpm: 7.0, target_cpm: 10.5, currency: 'USD', min_spend: 500 },
+  },
+  {
     product_id: 'pinnacle_display_remnant_q2',
     name: 'Pinnacle Display Remnant Q2',
     network_code: 'net_pinnacle',

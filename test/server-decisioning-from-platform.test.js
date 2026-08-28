@@ -21,6 +21,7 @@ const { getSchemaValidatorByRef } = require('../dist/lib/validation/schema-loade
 const { toCanonicalOnlyResponse } = require('../dist/lib/v2/projection');
 const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/idempotency');
 const { createInMemoryTaskRegistry } = require('../dist/lib/server/decisioning/runtime/task-registry');
+const { ADCP_VERSION } = require('../dist/lib/version');
 
 const PRODUCTS_ONLY_BRIEF_VECTORS = JSON.parse(
   readFileSync(
@@ -182,8 +183,8 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'compact-and-legacy',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.8',
-      capabilities: { supported_versions: ['3.0.25', '3.1.18', '3.2.0-beta.8'] },
+      adcpVersion: '3.2.0-beta.9',
+      capabilities: { supported_versions: ['3.0.25', '3.1.18', '3.2.0-beta.9'] },
       validation: { requests: 'off', responses: 'off' },
     });
 
@@ -209,7 +210,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       method: 'tools/call',
       params: {
         name: 'list_products',
-        arguments: { adcp_version: '3.2.0-beta.8', account: { account_id: 'acc-modern' } },
+        arguments: { adcp_version: '3.2.0-beta.9', account: { account_id: 'acc-modern' } },
       },
     });
     assert.notStrictEqual(compact.isError, true, JSON.stringify(compact.structuredContent));
@@ -226,7 +227,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       assert.notStrictEqual(legacy.isError, true, JSON.stringify(legacy.structuredContent));
     }
     assert.deepStrictEqual(calls, [
-      ['list_products', '3.2.0-beta.8', 'acc-modern'],
+      ['list_products', '3.2.0-beta.9', 'acc-modern'],
       ['get_products', '3.1.18', 'acc-3.1.18'],
       ['get_products', '3.0.25', 'acc-3.0.25'],
     ]);
@@ -273,8 +274,8 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'signed-reverse-compatibility',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.8',
-      capabilities: { supported_versions: ['3.1.18', '3.2.0-beta.8'] },
+      adcpVersion: '3.2.0-beta.9',
+      capabilities: { supported_versions: ['3.1.18', '3.2.0-beta.9'] },
       validation: { requests: 'off', responses: 'off' },
       legacyCreativeFormatConverter: ({ formatId }) =>
         formatId.id === 'display-300x250'
@@ -328,7 +329,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'compact-only',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.8',
+      adcpVersion: '3.2.0-beta.9',
       validation: { requests: 'off', responses: 'off' },
     });
 
@@ -361,7 +362,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'scoped-compact',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.8',
+      adcpVersion: '3.2.0-beta.9',
       validation: { requests: 'off', responses: 'off' },
     });
     const response = await server.dispatchTestRequest(
@@ -398,7 +399,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'anonymous-session',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.8',
+      adcpVersion: '3.2.0-beta.9',
       resolveSessionKey: () => 'anonymous-session',
       validation: { requests: 'off', responses: 'off' },
     });
@@ -426,7 +427,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'compact-replay-auth',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.8',
+      adcpVersion: '3.2.0-beta.9',
       idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
       resolveIdempotencyPrincipal: () => 'deliberately-shared-principal',
       resolveSessionKey: () => 'deliberately-shared-session',
@@ -475,7 +476,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'refinement-scope',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.8',
+      adcpVersion: '3.2.0-beta.9',
       validation: { requests: 'off', responses: 'off' },
     });
     const response = await server.dispatchTestRequest(
@@ -5679,7 +5680,7 @@ describe('Custom-handler merge seam (incremental migration)', () => {
       signals: undefined,
       capabilities: {
         specialisms: ['signal-marketplace'],
-        supported_versions: ['3.1.18', '3.2.0-beta.8'],
+        supported_versions: ['3.1.18', ADCP_VERSION],
         config: {},
       },
     };
@@ -5698,8 +5699,8 @@ describe('Custom-handler merge seam (incremental migration)', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'legacy-signals',
       version: '0.0.1',
-      adcpVersion: '3.2.0-beta.8',
-      capabilities: { supported_versions: ['3.1.18', '3.2.0-beta.8'] },
+      adcpVersion: ADCP_VERSION,
+      capabilities: { supported_versions: ['3.1.18', ADCP_VERSION] },
       strictSpecialismValidation: true,
       validation: { requests: 'off', responses: 'off' },
       signals: {
@@ -6048,6 +6049,46 @@ describe('Custom-handler merge seam (incremental migration)', () => {
     });
     assert.notStrictEqual(result.isError, true);
     assert.ok(sawCall, 'opts.accounts.listAccounts MUST run when platform.accounts.list is undefined');
+  });
+
+  it('list_account_changes delegates to the account store with caller context', async () => {
+    let captured;
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async ref => ({
+          id: ref?.account_id ?? 'acc_1',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
+        }),
+        listChanges: async (request, ctx) => {
+          captured = { request, ctx };
+          return {
+            changes: [],
+            cursor: 'checkpoint-2',
+            has_more: false,
+            available_since: '2026-01-01T00:00:00Z',
+            generated_at: '2026-08-28T00:00:00Z',
+          };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'account-change-feed',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'list_account_changes',
+        arguments: { account: { account_id: 'acc_1' }, cursor: 'checkpoint-1' },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent.cursor, 'checkpoint-2');
+    assert.strictEqual(captured.request.cursor, 'checkpoint-1');
+    assert.strictEqual(captured.ctx.toolName, 'list_account_changes');
+    assert.strictEqual(captured.ctx.account.id, 'acc_1');
   });
 
   it('platform-derived handler wins when both define the same key', async () => {
@@ -6976,11 +7017,11 @@ describe('HITL push notification webhook on terminal state', () => {
     };
 
     const platform = buildHitlPlatform(async () => ({ media_buy_id: 'mb_42', status: 'active' }));
-    for (const adcpVersion of ['3.2-beta.8']) {
+    for (const adcpVersion of ['3.2-beta.9']) {
       const server = createAdcpServerFromPlatform(platform, {
         name: 'webhook',
         version: '0.0.1',
-        adcpVersion: '3.2.0-beta.8',
+        adcpVersion: '3.2.0-beta.9',
         validation: { requests: 'off', responses: 'off' },
         taskWebhookEmitter: fakeEmitter,
       });
@@ -7461,7 +7502,7 @@ describe('tasks_get wire tool (B9)', () => {
         creatives_processed: 2,
       });
       assert.deepStrictEqual(legacy.structuredContent.progress, canonical.structuredContent.progress);
-      assert.strictEqual(legacy.structuredContent.adcp_version, '3.2-beta.8');
+      assert.strictEqual(legacy.structuredContent.adcp_version, '3.2-beta.9');
       assert.strictEqual(legacy.structuredContent.adcp_version, canonical.structuredContent.adcp_version);
 
       const legacyPinned = await server.dispatchTestRequest({
@@ -7554,7 +7595,7 @@ describe('tasks_get wire tool (B9)', () => {
       assert.strictEqual(status.structuredContent.status, 'submitted');
       assert.strictEqual(status.structuredContent.has_webhook, true);
       assert.strictEqual(status.structuredContent.result, undefined);
-      assert.strictEqual(status.structuredContent.adcp_version, '3.2-beta.8');
+      assert.strictEqual(status.structuredContent.adcp_version, '3.2-beta.9');
 
       const listed = await server.dispatchTestRequest({
         method: 'tools/call',
@@ -8485,7 +8526,7 @@ describe('createAdcpServerFromPlatform — default resolveIdempotencyPrincipal',
       {
         name: 'principal-compat',
         version: '0.0.1',
-        adcpVersion: '3.2.0-beta.8',
+        adcpVersion: '3.2.0-beta.9',
         idempotency,
         validation: { requests: 'off', responses: 'off' },
       }

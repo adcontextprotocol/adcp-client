@@ -310,6 +310,18 @@ Register, replace, pause, or clear agent-level webhook subscribers such as capab
 
 ### Account Management
 
+#### `list_account_changes`
+
+Request parameters for reading the durable account change feed.
+
+**Request:**
+- Required: `account: Account Ref`
+- Optional: `adcp_version: string`, `cursor: string`, `starting_position: 'earliest' | 'latest'`, `resource_types: string[]`, `max_results: integer`, `context: Context`
+
+**Response (success branch):**
+- Required: `changes: Account Change[]`, `cursor: string`, `has_more: boolean`, `available_since: string`, `generated_at: string`, `status: 'completed'`
+- Optional: `source_coverage: object[]`, `errors: Error[]`, `context: Context`
+
 #### `list_accounts`
 
 Request parameters for listing accounts accessible to the authenticated agent.
@@ -380,7 +392,7 @@ AdCP 3.
 
 **Request:**
 - Required: `buying_mode: 'brief' | 'wholesale' | 'refine'`
-- Optional: `idempotency_key: string`, `brief: string`, `refine: object[]`, `brand: Brand Ref`, `catalog: Catalog`, `account: Account Ref`, `preferred_delivery_types: Delivery Type[]`, `filters: Product Filters`, +11 more
+- Optional: `idempotency_key: string`, `brief: string`, `refine: object[]`, `brand: Brand Ref`, `acceptance_context: Acceptance Context`, `catalog: Catalog`, `account: Account Ref`, `preferred_delivery_types: Delivery Type[]`, +12 more
 
 **Response (success branch):**
 - Optional: `products: Product[]`, `targeting_resolution: Get Products Targeting Resolution`, `extensions: object`, `proposals: Proposal[]`, `errors: Error[]`, `reason: string`, `suggestions: string[]`, `property_list_applied: boolean`, +11 more
@@ -394,10 +406,11 @@ AdCP 3.
 Request parameters for synchronous product-offer reads.
 
 **Request:**
-- Optional: `adcp_version: Adcp_version`, `idempotency_key: string`, `context_id: string`, `context`, `governance_context: string`, `push_notification_config`, `account`, `brand: Brand Key`, +6 more
+- Optional: `adcp_version: string`, `idempotency_key: string`, `context_id: string`, `context`, `governance_context: string`, `push_notification_config`, `account`, `brand: Brand Key`, +6 more
 
 **Response (success branch):**
-- Required: `outcome: 'listed'`
+- Required: `outcome: 'listed'`, `products: Canonical Product[]`, `feed_version: string`, `cache_scope: 'public' | 'account'`
+- Optional: `next_cursor: string`, `pricing_version: string`, `incomplete: object[]`, `replayed: 'true'`, `context: Context`
 
 #### `request_proposals`
 
@@ -405,11 +418,11 @@ Request parameters for creating actionable seller proposals.
 
 **Request:**
 - Required: `idempotency_key: string`, `brief: string`
-- Optional: `adcp_version: Adcp_version`, `context_id: string`, `context`, `governance_context: string`, `push_notification_config`, `account`, `brand: Brand Key`, `criteria: Product Discovery Criteria`, +1 more
+- Optional: `adcp_version: string`, `context_id: string`, `context`, `governance_context: string`, `push_notification_config`, `account`, `brand: Brand Key`, `criteria: Product Discovery Criteria`, +1 more
 
 **Response (success branch):**
-- Required: `outcome: 'proposed'`
-- Optional: `status: 'completed'`
+- Required: `outcome: 'proposed'`, `proposals: object[]`, `products: Canonical Product[]`
+- Optional: `adcp_version: string`, `incomplete: object[]`, `targeting_resolution: Get Products Targeting Resolution`, `status: 'completed'`, `message: string`, `errors: Error[]`, `context: Context`, `replayed: 'true'`
 
 #### `refine_proposals`
 
@@ -417,10 +430,11 @@ Request parameters for creating one or more proposal revisions.
 
 **Request:**
 - Required: `idempotency_key: string`, `refinements: Proposal Refinement[]`
-- Optional: `adcp_version: Adcp_version`, `context_id: string`, `context`, `governance_context: string`, `push_notification_config`
+- Optional: `adcp_version: string`, `context_id: string`, `context`, `governance_context: string`, `push_notification_config`
 
 **Response (success branch):**
-- Optional: `status: 'completed'`
+- Required: `results: union[]`, `products: Canonical Product[]`
+- Optional: `adcp_version: string`, `status: 'completed'`, `message: string`, `errors: Error[]`, `context: Context`, `replayed: 'true'`
 
 #### `decline_proposals`
 
@@ -428,7 +442,11 @@ Request parameters for terminally declining one or more proposals.
 
 **Request:**
 - Required: `idempotency_key: string`, `declines: Proposal Decline[]`
-- Optional: `adcp_version: Adcp_version`, `context_id: string`, `context`, `governance_context: string`, `push_notification_config`, `opportunity: Opportunity Context`
+- Optional: `adcp_version: string`, `context_id: string`, `context`, `governance_context: string`, `push_notification_config`, `opportunity: Opportunity Context`
+
+**Response (success branch):**
+- Required: `results: object[]`
+- Optional: `message: string`, `errors: Error[]`, `context: Context`, `replayed: 'true'`
 
 #### `buy_products`
 
@@ -436,7 +454,7 @@ Create a MediaBuy directly from canonical published product offers.
 
 **Request:**
 - Required: `idempotency_key: string`, `account`, `feed_version: string`, `purchases: Product Purchase[]`, `start_time: Start Timing`, `end_time: string`
-- Optional: `adcp_version: Adcp_version`, `brand: Brand Key`, `advertiser_industry: Advertiser Industry`, `pricing_version: string`, `total_budget: object`, `daily_budget_cap: number`, `budget_cap_timezone: string`, `budget_allocation: Canonical Budget Allocation`, +11 more
+- Optional: `adcp_version: string`, `brand: Brand Key`, `advertiser_industry: Advertiser Industry`, `pricing_version: string`, `total_budget: object`, `daily_budget_cap: number`, `budget_cap_timezone: string`, `budget_allocation: Canonical Budget Allocation`, +11 more
 
 #### `accept_proposal`
 
@@ -444,7 +462,7 @@ Accept a committed new-buy, amendment, or cancellation proposal.
 
 **Request:**
 - Required: `idempotency_key: string`, `account: Canonical Account Ref`, `proposal_id: string`, `proposal_terms_digest: string`
-- Optional: `adcp_version: Adcp_version`, `total_budget: object`, `daily_budget_cap: number`, `budget_cap_timezone: string`, `io_acceptance: object`, `purchase_order_ref: string`, `governance_context: string`, `push_notification_config: Push Notification Config`, +3 more
+- Optional: `adcp_version: string`, `total_budget: object`, `daily_budget_cap: number`, `budget_cap_timezone: string`, `io_acceptance: object`, `purchase_order_ref: string`, `governance_context: string`, `push_notification_config: Push Notification Config`, +3 more
 
 #### `control_media_buy`
 
@@ -452,7 +470,7 @@ Apply operational controls inside accepted commercial terms.
 
 **Request:**
 - Required: `idempotency_key: string`, `account: Canonical Account Ref`, `media_buy_id: string`, `revision: integer`
-- Optional: `adcp_version: Adcp_version`, `name: string`, `paused: boolean`, `canceled: 'true'`, `cancellation_reason: string`, `total_budget: object`, `daily_budget_cap: number,null`, `budget_cap_timezone: string,null`, +8 more
+- Optional: `adcp_version: string`, `name: string`, `paused: boolean`, `canceled: 'true'`, `cancellation_reason: string`, `total_budget: object`, `daily_budget_cap: number,null`, `budget_cap_timezone: string,null`, +8 more
 
 **Response (success branch):**
 - Required: `status: 'completed'`, `media_buy_id: string`, `revision: integer`
@@ -961,7 +979,7 @@ Report the outcome of an action to the governance agent.
 
 **Request:**
 - Required: `plan_id: string`, `idempotency_key: string`, `outcome: Outcome Type`
-- Optional: `check_id: string`, `purchase_type: Purchase Type`, `seller_response: object`, `delivery: object`, `error: object`, `governance_context: string`, `context: Context`
+- Optional: `check_id: string`, `purchase_type: Purchase Type`, `seller_response: object`, `delivery: object`, `error: Reported Outcome Error`, `governance_context: string`, `context: Context`
 
 **Response (success branch):**
 - Required: `outcome_id: string`, `outcome_state: 'accepted' | 'findings'`
@@ -1176,6 +1194,9 @@ Flow: `validate_input`
 **Governance denial and human escalation** — Buyer's governance agent denies a media buy that exceeds spending authority, escalates to a human who approves with conditions.
 Flow: `get_adcp_capabilities → sync_accounts → sync_governance → sync_plans → get_products → check_governance → create_media_buy → report_plan_outcome → get_plan_audit_logs`
 
+**Governance preserves bounded failed-outcome audit evidence** — Verifies that a buyer-reported failed seller interaction is accepted without spend mutation and is emitted verbatim as untrusted audit evidence.
+Flow: `sync_plans → check_governance → report_plan_outcome → get_plan_audit_logs`
+
 **Campaign governance — delivery monitoring with drift detection** — Governance agent monitors delivery, detects budget drift past thresholds, and triggers re-evaluation.
 Flow: `get_adcp_capabilities → sync_plans → check_governance → create_media_buy → report_plan_outcome → get_media_buy_delivery → check_governance → report_plan_adjustment → report_plan_outcome → report_plan_adjustment → report_plan_outcome → report_plan_adjustment → check_governance → report_plan_outcome → report_plan_adjustment`
 
@@ -1206,6 +1227,12 @@ Flow: `get_adcp_capabilities → create_property_list → list_property_lists �
 **Media buy seller agent** — Seller agent that receives briefs, returns products, accepts media buys, and reports delivery.
 Flow: `get_adcp_capabilities → sync_accounts → get_adcp_capabilities → sync_accounts → sync_governance → get_products → create_media_buy → get_media_buys → get_media_buy_delivery → sync_governance → get_products → create_media_buy → get_media_buys → get_media_buy_delivery`
 
+**Seller exposes structured acceptance-policy discovery** — Verifies that an advertised acceptance-policy catalog is digest-pinned and that product-specific profiles are discoverable.
+Flow: `get_adcp_capabilities → get_products`
+
+**Shared-account change feed convergence** — Bootstraps a shared account, forces a connected-platform creative change, observes account.change_recorded, drains list_account_changes, and repairs through list_creatives.
+Flow: `sync_accounts → list_account_changes → comply_test_controller → expect_webhook → list_account_changes → list_creatives → comply_test_controller → expect_webhook → list_account_changes → list_creatives → list_account_changes → comply_test_controller → list_account_changes → list_creatives → list_account_changes`
+
 **Buyer-selected account timezone resolution** — Verifies advertised timezone reconciliation, cold-start reconnect, and separate account identities when a buyer selects another timezone.
 Flow: `get_adcp_capabilities → sync_accounts → list_accounts → sync_accounts → list_accounts → get_adcp_capabilities → sync_accounts → list_accounts`
 
@@ -1214,6 +1241,9 @@ Flow: `get_adcp_capabilities → sync_accounts → list_accounts`
 
 **Seller-fixed account timezone resolution** — Verifies that seller-fixed account capabilities declare one timezone and every account write and read echoes it.
 Flow: `get_adcp_capabilities → sync_accounts → list_accounts`
+
+**Seller discovers audience activation paths honestly** — Verifies capability and product declarations, vendor-constrained matching, OR semantics, omitted-field wildcards, and exclusion of undeclared products.
+Flow: `get_adcp_capabilities → get_products`
 
 **Seller fulfills a media buy with audience targeting from a synced CRM audience** — Verifies that a seller advertising audience_targeting can ingest a CRM audience via sync_audiences, accept a media buy whose targeting_overlay references the bound audience_id, reject malformed audience references, and report delivery for the audience-targeted buy. Sibling to media_buy_seller/performance_buy_flow on the audience side: the unbound-id rejection is the discriminating assertion.
 Flow: `sync_accounts → get_products → sync_audiences → create_media_buy → comply_test_controller → get_media_buy_delivery`
@@ -1244,6 +1274,9 @@ Flow: `create_media_buy`
 
 **Buyer-managed catalog items support immediate availability updates** — Verifies capability-gated, atomic, synchronous suppression and restoration of buyer-managed catalog items.
 Flow: `sync_catalogs → comply_test_controller → sync_catalogs → comply_test_controller → sync_catalogs → comply_test_controller → sync_catalogs → comply_test_controller → sync_catalogs`
+
+**Seller projects proposal change rights through MediaBuy state** — Verifies that accepted change terms remain binding while available_actions narrows by status, routes seller-managed work, and links with change_term_id.
+Flow: `get_media_buys → control_media_buy → get_media_buys → control_media_buy`
 
 **Seller fulfills a media buy with a clicks optimization goal (target CPC)** — Verifies that a seller advertising clicks in supported_optimization_metrics can accept a media buy whose metric-kind optimization_goal targets cost-per-click and reports clicks + cost_per_click on delivery. Lightweight sibling to the performance scenarios on the click-optimization side: sellers that don't advertise clicks as an optimization metric (rare — most do; pure brand sellers like broadcast TV upper-funnel video are the not_applicable population) grade not_applicable.
 Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery`
@@ -1313,6 +1346,9 @@ Flow: `comply_test_controller → get_products → list_tasks → comply_test_co
 
 **Seller returns a structured business rejection for a declined brief** — Forces get_products into the rejected arm and verifies its required fields, transport-success semantics, and mutual exclusion from success, partial-result, and error fields.
 Flow: `comply_test_controller → get_products`
+
+**Seller rejects an unacceptable governance-agent binding** — Verifies capability-gated governance-agent allowlisting, typed rejection, and successful recovery without persisting the rejected binding.
+Flow: `sync_accounts → sync_governance → comply_test_controller → sync_governance`
 
 **Seller commits a buy only after governance approval** — Verifies signed intent authorization, durable media-buy commit, and auditable governance outcome.
 Flow: `create_media_buy → sync_plans → sync_accounts → sync_governance → get_products → check_governance → create_media_buy → get_media_buys → report_plan_outcome`
@@ -1425,7 +1461,7 @@ Flow: `get_adcp_capabilities → sync_accounts → sync_governance → get_produ
 **Governance-aware seller** — Seller agent that composes with a campaign-governance agent after baseline sync_governance registration — verifies approved intent at execution and blocks denied or invalid execution verdicts. Optional claim for the full governance-check loop.
 Flow: `get_adcp_capabilities`
 
-**Seller rejects sync_governance with more than one governance agent** — Verifies that any seller required to implement sync_governance rejects a request carrying more than one governance_agents entry, enforcing the maxItems: 1 constraint.
+**Seller registers one governance agent and rejects multiple agents** — Verifies valid single-agent registration and rejection of a governance_agents payload that violates the maxItems: 1 constraint.
 Flow: `sync_accounts → sync_governance`
 
 **Broadcast linear TV seller agent** — Seller agent for broadcast linear TV inventory — primetime and fringe spots with measurement windows, agency estimate numbers, Ad-ID-based creative sync, and delayed delivery reporting.
@@ -1435,10 +1471,10 @@ Flow: `get_adcp_capabilities → get_products → sync_governance → create_med
 Flow: `get_adcp_capabilities → sync_accounts → sync_governance → sync_catalogs → build_creative → expect_substitution_safe → get_products → create_media_buy → sync_event_sources → log_event → provide_performance_feedback → get_media_buy_delivery`
 
 **Guaranteed media buy with human IO approval** — Seller agent that requires human-in-the-loop IO signing before guaranteed media buys go live.
-Flow: `get_adcp_capabilities → sync_accounts → sync_governance → get_products → create_media_buy → get_media_buys → sync_creatives → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → sync_accounts → get_products → create_media_buy → get_media_buys → sync_creatives → get_media_buy_delivery`
 
 **Non-guaranteed auction-based media buy** — Seller agent for auction-based, non-guaranteed buying where the buyer sets bid prices and budgets.
-Flow: `get_adcp_capabilities → get_products → sync_governance → create_media_buy → get_media_buys → update_media_buy → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → get_products → create_media_buy → get_media_buys → update_media_buy → get_media_buy_delivery`
 
 **Media buy via proposal acceptance** — Seller agent that generates curated media plan proposals the buyer can review, refine, and accept.
 Flow: `get_adcp_capabilities → sync_accounts → get_products → create_media_buy → sync_creatives → get_media_buy_delivery`
@@ -1456,6 +1492,9 @@ Flow: `get_products`
 Flow: `get_products`
 
 ### Reporting
+
+**Seller narrows metrics and reports delivery by canonical format** — Verifies requested-metric narrowing, time-threshold video views, negotiated format breakdowns, truncation disclosure, and applied-sort echoes.
+Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery`
 
 **Billing finality delivery and usage reporting** — Verifies that 3.1 billing-grade delivery rows distinguish provisional from final numbers and that report_usage accepts final usage records with finality metadata.
 Flow: `sync_accounts → create_media_buy → comply_test_controller → get_media_buy_delivery → comply_test_controller → get_media_buy_delivery → report_usage`
@@ -1660,7 +1699,7 @@ Agents use the `recovery` classification to decide what to do: `transient` → r
 | `ACCOUNT_REQUIRED` | correctable | The service must resolve the commercial account before it can determine governance applicability, but the request and referenced resource do not identify one. |
 | `ACCOUNT_SETUP_REQUIRED` | correctable | Natural key resolved but the account needs setup before use. |
 | `ACCOUNT_SUSPENDED` | terminal | Account has been suspended. |
-| `ACTION_NOT_ALLOWED` | correctable | The requested mutation maps to an action that is not currently available on this media buy. Sellers MUST populate `error.details` with `attempted_action` (the `media_buy_valid_action` value the request maps to), `reason` (an `action-not-allowed-reason` value: `wrong_status`, `not_supported_on_product`, `not_supported_on_buy`, or `mode_mismatch`), and `currently_available_actions` (echo of the buy's resolved `available_actions[]` so the buyer SDK can offer recovery without a separate get_media_buys round-trip). |
+| `ACTION_NOT_ALLOWED` | correctable | The requested mutation maps to an action that is not currently available on this media buy. Sellers MUST populate `error.details` with `attempted_action` (the `media_buy_valid_action` value the request maps to), `reason` (an `action-not-allowed-reason` value: `wrong_status`, `not_supported_on_product`, `not_supported_on_buy`, `mode_mismatch`, or `condition_unresolved`), and `currently_available_actions` (echo of the buy's resolved `available_actions[]` so the buyer SDK can offer recovery without a separate get_media_buys round-trip). |
 | `AGENT_BLOCKED` | terminal | The calling buyer agent's commercial relationship with the seller is permanently denied — the agent is blocked. Sibling to `AGENT_SUSPENDED` on the agent-relationship axis but with no recovery path (a suspension may lift via re-onboarding; a block does not). The code itself is the discriminator — same posture as `AGENT_SUSPENDED`: no `error.details` payload, no per-agent commercial state, cross-tenant onboarding oracle clamp + channel-coverage requirements normative in error-handling.mdx Per-Agent Authorization Gate. |
 | `AGENT_SUSPENDED` | terminal | The calling buyer agent's commercial relationship with the seller is temporarily paused — the agent is onboarded but currently suspended. Sibling to `ACCOUNT_SUSPENDED` (account-wide) and `CAMPAIGN_SUSPENDED` (per-plan) but scoped to the agent-relationship axis (orthogonal to any specific account on that agent). The code itself is the discriminator — it does NOT carry an `error.details` payload (mirroring `BILLING_NOT_PERMITTED_FOR_AGENT`'s discriminator-by-code pattern), and MUST NOT carry per-agent commercial state (rate cards, payment terms, credit limit, billing entity, contact channels) since full disclosure of per-agent state in a single probe is a per-agent oracle. Cross-tenant onboarding oracle clamp + channel-coverage requirements (response shape, HTTP/A2A/MCP status, headers, side effects, observability, latency parity, retry-counter side channel) are normative in error-handling.mdx Per-Agent Authorization Gate; this description does not restate them to avoid drift. |
 | `AMBIGUOUS_BIDDING_POLICY` | correctable | The same effective package combines the canonical bidding block with legacy bid_price or monetary optimization-goal target fields, so two bidding interpretations are present. Sellers MUST reject rather than choosing a winner. |
@@ -1693,6 +1732,7 @@ Agents use the `recovery` classification to decide what to do: `transient` → r
 | `CREATIVE_REVISION_CONTENT_MISMATCH` | correctable | A sync_creatives item reused a revision_id for different canonical revision content under the same creative_id. Revision identity is scoped to the parent creative and immutable after first acceptance. Sellers MUST evaluate the buyer input before transcoding or normalization, MUST leave the prior creative state unchanged, and SHOULD return details conforming to error-details/creative-revision-content-mismatch.json. Distinct from IDEMPOTENCY_CONFLICT: idempotency_key protects one request replay window, while revision identity protects creative content across requests and retention. |
 | `CREATIVE_VALUE_NOT_ALLOWED` | correctable | A submitted text-asset value is not in the format's declared `allowed_values` list. Distinct from `CREATIVE_REJECTED` (generic creative-review failure) by being a closed-set constraint violation that the buyer can resolve mechanically without policy interpretation — the seller has published the complete list of acceptable values on the format, and any value outside that list is rejected by definition. The seller MUST set `error.field` to the offending asset's path within the manifest (e.g., `creatives[0].creative_manifest.assets[0].value` or the field name declared by the format) and SHOULD include the format's `allowed_values` array in `error.details.allowed_values` so the buyer agent can re-prompt its LLM with constrained sampling. |
 | `CREDENTIAL_IN_ARGS` | terminal | The seller detected authentication material or caller-supplied trust material placed in request args (top-level, in `context`, in `ext`, or any other nested location in the task payload) instead of arriving on the relevant transport authentication or trust channel. This includes buyer-principal credentials that should arrive on the inbound transport (`Authorization: Bearer` per RFC 6750 §2 for HTTP, RFC 9421 signature headers for signed requests, MCP/A2A authentication framing per RFC 9728 §3), and evaluator-call credentials or JWK/JWKS/JWKS-URI trust material smuggled into evaluator-related payload fields instead of being established through the creative agent's outbound transport authentication to the evaluator. Distinct from `AUTH_MISSING` (no credentials presented on the transport channel) and `AUTH_INVALID` (credentials presented but rejected on the transport channel) and `PERMISSION_DENIED` (authenticated caller not authorized for the action). Distinct from the receiver-side credentials carried in `push_notification_config.authentication.credentials`, which configure the seller's webhook callback authentication and are not buyer-principal or evaluator-call credentials — those are an explicit carve-out and MUST NOT trigger this code. Sellers SHOULD reject credential-in-args under AdCP 3.1; the requirement upgrades to MUST 90 days after the 3.1 publication date. |
+| `CURSOR_EXPIRED` | correctable | The list_account_changes cursor is no longer within the seller's retained account change window. The seller MUST NOT silently restart from the retention boundary. error.details SHOULD include available_since and MAY include a replacement starting-position hint, without disclosing inaccessible history. |
 | `EVALUATOR_AGENT_NOT_ACCEPTED` | correctable | Buyer attached an evaluator agent pointer on `build_creative` — `evaluator.feature_agent.agent_url` or the `evaluator` agent-form `agent_url` — that does not match (canonicalized per /docs/reference/url-canonicalization: lowercase scheme and host, strip default port, normalize path dot-segments) any entry in the seller's `creative_policy.accepted_verifiers[].agent_url`. The producing agent does not call buyer-asserted endpoints outside its allowlist; this mirrors `PROVENANCE_VERIFIER_NOT_ACCEPTED` for the gate/rank evaluator path — the buyer represents which on-list agent it used, the seller is the agent-of-record and calls only allowlisted agents. `error.field` MUST point at the offending `agent_url` path; `error.details` SHOULD include a reference to the product whose `creative_policy.accepted_verifiers` the buyer should consult. |
 | `FEED_FETCH_FAILED` | correctable | Platform could not fetch the catalog feed URL during sync_catalogs. |
 | `FIELD_NOT_PERMITTED` | correctable | A request field is not in the caller's `field_scopes` allowlist for this task. Sellers declaring `field_scopes` on the account's `authorization` object MUST reject any request that sets a non-allowlisted field with this code. Distinct from `VALIDATION_ERROR` (schema/business-rule violation) - the field is valid, just not writable by this caller. `error.field` MUST identify the exact offending field path (e.g., `packages[0].budget`); when multiple fields are disallowed, sellers SHOULD return one error per field, or MAY enumerate them in `error.details.fields`. |
@@ -1703,6 +1743,7 @@ Agents use the `recovery` classification to decide what to do: `transient` → r
 | `FORMAT_OPTION_UNRESOLVED` | correctable | Non-fatal advisory raised when a placement in `adagents.json` (or any consumer of `placement-definition.json`) carries `format_options[].format_option_id` referencing a `format_option_id` that does NOT exist in the file's top-level `formats[]`. The reference is broken — the publisher's catalog claims the placement accepts a format option that isn't declared. **Resolution scope is same-file only.** Cross-file `format_option_id` lookup is not supported by design (closes off format_option_id squatting across publisher boundaries — a malicious file cannot reference another publisher's format_option_id and claim its narrowing). Buyer SDKs MUST fail closed for the placement (drop the format from the placement's accepted format set) and MUST surface this code rather than silently dropping or guessing what the publisher meant. Surface placement: same single-mandate as the other FORMAT_* codes — SDKs that detect on consumption MUST augment the response's `errors[]` with `source: "sdk"`, `sdk_id`, `code: "FORMAT_OPTION_UNRESOLVED"`, `field` pointing at the offending placement (e.g., `placements[2].format_options[1].format_option_id`), and `error.details` SHOULD carry `{ placement_id, format_option_id, declared_format_options: [<list of format_option_ids actually in formats[]>] }` so the publisher can fix. |
 | `FORMAT_PROJECTION_FAILED` | correctable | Non-fatal advisory raised when a legacy named format on a product cannot be projected to a canonical-formats `ProductFormatDeclaration` via the resolution order in `v1-canonical-mapping.json` (explicit `canonical` field → format_id_glob → structural match → fail-closed). The product is still valid on the legacy named-format path; only the 3.1+ `format_options` projection failed. Primarily a **consumer-SDK concern** — the seller didn't fail; the consumer-side SDK couldn't project on their behalf. `error.field` MUST point at the offending product (e.g., `products[3].format_ids[0]`); `error.details` SHOULD carry `{ format_id, product_id, resolution_failure: "no_explicit_canonical" | "no_registry_match" | "no_structural_match" }` so buyer SDKs can route remediation (suggest the seller add an explicit `canonical` field, or file a registry PR). **Surface placement (normative).** SDKs that detect this on consumption MUST augment the response's `errors[]` array with an entry carrying `source: "sdk"`, `sdk_id: "<package>@<version>"`, `code: "FORMAT_PROJECTION_FAILED"`, and the field+details described above. This is the single mandated surface — logger-only is insufficient and a separate lint-output channel is NOT acceptable (AdCP is a multi-hop agent network; warnings need to propagate across hops or each hop has to re-detect locally). Sellers MAY emit this code on their own response when they self-detect a non-projectable format on emit; producer-emitted entries omit `source` (or set `source: "producer"`). The response stays 200/success regardless of who emits; this is non-fatal. **Multi-hop deduplication.** Each hop that detects the same condition SHOULD deduplicate by `(code, field)` rather than re-emit. The existing entry's `sdk_id` identifies which earlier processor saw it first; downstream SDKs SHOULD NOT add a second entry for the same `(code, field)` pair unless they have materially different `error.details` (e.g., a different `resolution_failure` reason from a different registry version). See canonical-formats.mdx 'Dual emission and v2↔v1 projection' for the full rules. |
 | `FORMAT_SHAPE_PROMOTED` | correctable | Non-fatal deprecation advisory raised when a 3.2-aware SDK encounters `format_kind: custom` with a `format_shape` that has been promoted to a first-class canonical. SDKs MUST preserve the declaration during its transition window and SHOULD augment the containing response's `errors[]` with `source: sdk`, `sdk_id`, this code, and `details: { format_shape, promoted_to, promotion_release, transition_end }`. Producers that self-detect their own legacy declaration MAY emit the same advisory with `source: producer`. Recovery is seller-side: dual-emit during the published transition window, migrate consumers, then replace the custom declaration with the promoted canonical. |
+| `GOVERNANCE_AGENT_NOT_ACCEPTED` | correctable | The governance agent proposed in `sync_governance` does not satisfy the seller's authoritative per-account acceptance criteria. The failed binding MUST NOT be persisted or contacted, and credentials supplied for it MUST NOT be echoed in responses or logs. `error.details` SHOULD conform to `error-details/governance-agent-not-accepted.json`. Distinct from `GOVERNANCE_UNAVAILABLE`, which means a verification criterion or registry could not be resolved and is retryable. |
 | `GOVERNANCE_DENIED` | correctable | A registered governance agent denied the transaction. Sellers MUST place the denial in the operation's structured rejection arm when one exists (e.g., `acquire_rights` → `AcquireRightsRejected`, or an `approval_webhook` delivery → `CreativeRejected`); otherwise in `errors[]` + `adcp_error`. Buyers MUST dispatch on the response's discriminated `status` first and fall back to `errors[].code` / `adcp_error.code` only when no rejection arm exists for that operation. The buyer may restructure the buy (e.g., reduce budget, split into smaller transactions), escalate to human spending authority, or contact the governance agent for details. Wire placement (full guidance). Governance denial is a structured business outcome, not a system error — the governance call SUCCEEDED and the agent returned a denial verdict. Two cases: 1. Operation or webhook payload defines a structured rejection arm. The arm IS the canonical denial shape. The seller populates `reason` (human-readable, propagating governance findings) and `suggestions` (optional) and does NOT additionally emit `GOVERNANCE_DENIED` in `errors[]` or `adcp_error`. The rejection arms enforce this at the schema layer: e.g., `AcquireRightsRejected` and `CreativeRejected` both declare `not: { required: [errors] }`, so dual-emission is already a schema violation. The code does not appear on the wire when the rejection arm is used. Transport-level success markers MUST NOT be flipped (HTTP 200, MCP `isError: false`, A2A `succeeded`) — the operation completed successfully and produced a structured response. 2. Operation response has no rejection arm (e.g., `create_media_buy` returns Success / Error / Submitted arms only). The seller populates `errors[].code: GOVERNANCE_DENIED` in the payload AND `adcp_error.code: GOVERNANCE_DENIED` on the envelope per the two-layer model in `error-handling.mdx#envelope-vs-payload-errors-the-two-layer-model`. Transport-level failure markers DO flip in this case (HTTP 4xx, MCP `isError: true`, A2A `failed`) — the task could not produce a success artifact. The rule generalizes to any current or future operation or webhook payload whose response defines a discriminated rejection arm. In either placement, sellers SHOULD propagate governance findings verbatim — buyers' recovery decisions depend on what specifically was rejected. `GOVERNANCE_DENIED` is reserved for verdicts received from a reachable governance agent; if the governance call itself failed (timeout, network, config error), use `GOVERNANCE_UNAVAILABLE` instead. |
 | `GOVERNANCE_UNAVAILABLE` | transient | A registered governance agent is unreachable. Sellers MUST place this code in `errors[]` + `adcp_error` (never a structured rejection arm) and flip transport-level failure markers (HTTP 5xx, MCP `isError: true`, A2A `failed`). Distinct from `GOVERNANCE_DENIED` (agent reachable and explicitly denied — see that code's wire-placement guidance). Wire placement (full guidance). Governance unavailability is a system error — the governance call FAILED (timeout, network, config error) and the seller could not get a verdict at all. Always populate both layers per the two-layer model in `error-handling.mdx#envelope-vs-payload-errors-the-two-layer-model`. Do NOT use a structured rejection arm for unavailability even when the task offers one — the buyer's recovery semantics differ (retry-with-backoff for unavailability vs. restructure-or-escalate for denial), and conflating them masks the system-error signal. |
 | `IDEMPOTENCY_CONFLICT` | correctable | An earlier request with the same idempotency_key was processed with a different canonical payload within the seller's replay window. Distinct from CONFLICT (concurrent write) — this indicates the client reused a key across semantically different requests. |
@@ -1721,7 +1762,7 @@ Agents use the `recovery` classification to decide what to do: `transient` → r
 | `NOT_CANCELLABLE` | correctable | The media buy or package cannot be canceled in its current state. The seller may have contractual or operational constraints that prevent cancellation. |
 | `PACKAGE_NOT_FOUND` | correctable | Referenced package does not exist within the specified media buy. |
 | `PAYMENT_TERMS_NOT_SUPPORTED` | correctable | The seller does not accept the requested `payment_terms` value for this account. Payment terms are never silently remapped — sellers either accept or reject. Distinct from `BILLING_NOT_SUPPORTED` (the `billing` enum) by being narrowly about the `payment_terms` enum on the same account. |
-| `PERMISSION_DENIED` | correctable | The authenticated caller is not authorized for the requested action under the seller's own policies, or a required signed credential (e.g., a `governance_context` token on a spend-commit) is missing, fails verification, or was issued for a different plan, seller, or phase. Distinct from `AUTH_MISSING` (no credentials presented), `AUTH_INVALID` (credentials presented but rejected), `GOVERNANCE_DENIED` (governance agent denied), `AGENT_SUSPENDED` (agent's relationship temporarily paused), and `AGENT_BLOCKED` (agent's relationship permanently denied). When the gate that fired is specifically a non-status per-agent provisioning constraint — e.g., the agent is provisioned for sandbox traffic only and the request was against a non-sandbox account — `error.details` SHOULD conform to `error-details/agent-permission-denied.json` (`scope: "agent"` plus `reason: "sandbox_only"`) so callers can dispatch without parsing prose. Sellers MUST emit `scope: "agent"` only when buyer-agent identity has been established via signed-request derivation or a credential-to-agent mapping in the seller's onboarding record; in all other cases (including bearer credentials not mapped to a specific agent record) sellers MUST return `PERMISSION_DENIED` and MUST omit `error.details.scope` — emitting the per-agent scope without established identity is a cross-tenant onboarding oracle, and the omit MUST be enforced across every observable channel (response shape, HTTP/A2A/MCP status, headers, side effects, observability, latency parity) per the channel-coverage rules in error-handling.mdx Per-Agent Authorization Gate, mirroring the `*_NOT_FOUND` uniform-response rule and `BILLING_NOT_PERMITTED_FOR_AGENT`. The `suspended` and `blocked` per-agent states are NOT carried on this code — sellers MUST emit `AGENT_SUSPENDED` / `AGENT_BLOCKED` instead, each of which is its own discriminator. |
+| `PERMISSION_DENIED` | correctable | The authenticated caller is not authorized for the requested action, or a required signed credential (e.g., a `governance_context` token on a spend-commit) is missing, fails verification, or was issued for a different plan, seller, or phase. Seller content or advertising policy denials use `POLICY_VIOLATION`; media-buy change-right and current-availability denials use `ACTION_NOT_ALLOWED`. Distinct from `AUTH_MISSING` (no credentials presented), `AUTH_INVALID` (credentials presented but rejected), `GOVERNANCE_DENIED` (governance agent denied), `AGENT_SUSPENDED` (agent's relationship temporarily paused), and `AGENT_BLOCKED` (agent's relationship permanently denied). When the gate that fired is specifically a non-status per-agent provisioning constraint — e.g., the agent is provisioned for sandbox traffic only and the request was against a non-sandbox account — `error.details` SHOULD conform to `error-details/agent-permission-denied.json` (`scope: "agent"` plus `reason: "sandbox_only"`) so callers can dispatch without parsing prose. Sellers MUST emit `scope: "agent"` only when buyer-agent identity has been established via signed-request derivation or a credential-to-agent mapping in the seller's onboarding record; in all other cases (including bearer credentials not mapped to a specific agent record) sellers MUST return `PERMISSION_DENIED` and MUST omit `error.details.scope` — emitting the per-agent scope without established identity is a cross-tenant onboarding oracle, and the omit MUST be enforced across every observable channel (response shape, HTTP/A2A/MCP status, headers, side effects, observability, latency parity) per the channel-coverage rules in error-handling.mdx Per-Agent Authorization Gate, mirroring the `*_NOT_FOUND` uniform-response rule and `BILLING_NOT_PERMITTED_FOR_AGENT`. The `suspended` and `blocked` per-agent states are NOT carried on this code — sellers MUST emit `AGENT_SUSPENDED` / `AGENT_BLOCKED` instead, each of which is its own discriminator. |
 | `PIXEL_TRACKER_LOSSY_DOWNGRADE` | correctable | Non-fatal advisory raised when a 3.1 buyer SDK downgrades a `pixel_tracker` asset to the v1 `{asset_type: url, url_type: tracker_pixel}` shape for a 3.0.x seller that doesn't recognize the new asset type. The URL is still emitted on the wire and the seller will fire it as a tracker pixel; what's lost is the event/method discrimination. Downgrade rules (normative):
 - `event: impression` + `method: img` → no loss; emit as `{asset_type: url, url_type: tracker_pixel, url, asset_id: impression_tracker}`
 - `event: viewable_mrc_50` / `viewable_mrc_100` / `viewable_video_50` / `audible_video_complete` → emit with `asset_id: viewability_tracker`; advisory `lost_event: <variant>` (specific viewability variant collapses to a single v1 slot)

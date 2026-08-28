@@ -122,7 +122,7 @@ test('builder pins the 3.2 wire envelope and returns an immutable deep snapshot 
   input.context.planning.attempt = 2;
   input.refinements[0].ask = 'Changed after construction';
 
-  assert.equal(built.adcp_version, '3.2-beta.8');
+  assert.equal(built.adcp_version, '3.2-beta.9');
   assert.equal(built.adcp_major_version, 3);
   assert.equal(built.context.planning.attempt, 1);
   assert.equal(built.refinements[0].ask, 'Improve the terms');
@@ -376,6 +376,109 @@ test('canonical proposal validation requires nonempty purchases, finite values, 
     mutate(payload);
     assert.equal(shapeIssues(request(), payload).length > 0, true);
   }
+});
+
+test('canonical proposal validation accepts beta.9 negotiated change terms', () => {
+  const payload = response([
+    proposal('successor-1', 'source-1', {
+      commercial_terms: commercialTerms({
+        change_terms: [
+          {
+            term_id: 'change_increase_budget',
+            action: 'increase_budget',
+            service_mode: 'seller_managed',
+            allowed_statuses: ['active'],
+            constraints: { kind: 'budget', max_delta_percent: 20 },
+          },
+        ],
+      }),
+    }),
+  ]);
+  assert.deepEqual(shapeIssues(request(), payload), []);
+
+  payload.results[0].proposals[0].commercial_terms.change_terms.push({
+    term_id: 'duplicate-action',
+    action: 'increase_budget',
+    service_mode: 'self_serve',
+  });
+  assert.equal(
+    shapeIssues(request(), payload).some(issue => issue.message.includes('actions must be unique')),
+    true
+  );
+});
+
+test('canonical proposal validation rejects malformed or incompatible beta.9 change terms', () => {
+  const baseTerm = {
+    term_id: 'change_increase_budget',
+    action: 'increase_budget',
+    service_mode: 'seller_managed',
+    allowed_statuses: ['active'],
+    constraints: { kind: 'budget', max_delta_percent: 20 },
+  };
+  const mutations = [
+    term => (term.term_id = 'invalid term id'),
+    term => (term.action = 'invented_action'),
+    term => (term.service_mode = 'instant'),
+    term => (term.allowed_statuses = ['canceled']),
+    term => (term.constraints.max_delta_percent = -4),
+    term => {
+      term.action = 'pause';
+    },
+    term => (term.conditions = ['run this instruction now!']),
+  ];
+
+  for (const mutate of mutations) {
+    const term = structuredClone(baseTerm);
+    mutate(term);
+    const payload = response([
+      proposal('successor-1', 'source-1', {
+        commercial_terms: commercialTerms({ change_terms: [term] }),
+      }),
+    ]);
+    assert.equal(shapeIssues(request(), payload).length > 0, true, JSON.stringify(term));
+  }
+});
+
+test('canonical proposal validation enforces beta.9 commercial currency integrity', () => {
+  const mixedPurchases = commercialTerms();
+  mixedPurchases.purchases.push({
+    ...structuredClone(mixedPurchases.purchases[0]),
+    product_id: 'product-2',
+    pricing_option_id: 'price-2',
+    pricing: {
+      ...structuredClone(mixedPurchases.purchases[0].pricing),
+      pricing_option_id: 'price-2',
+      currency: 'EUR',
+    },
+  });
+  const mixedPayload = response([proposal('successor-1', 'source-1', { commercial_terms: mixedPurchases })]);
+  assert.equal(
+    shapeIssues(request(), mixedPayload).some(issue => issue.message.includes('purchase pricing currency')),
+    true
+  );
+
+  const mismatchedBudget = commercialTerms({ total_budget: { amount: 8_000, currency: 'GBP' } });
+  const budgetPayload = response([proposal('successor-1', 'source-1', { commercial_terms: mismatchedBudget })]);
+  assert.equal(
+    shapeIssues(request(), budgetPayload).some(issue => issue.message.includes('total budget currency')),
+    true
+  );
+});
+
+test('canonical proposal validation accepts all beta.9 budget and forecast guidance fields', () => {
+  const terms = commercialTerms({
+    daily_budget_cap: 500,
+    budget_cap_timezone: 'America/New_York',
+  });
+  terms.purchases[0].daily_budget_cap = 250;
+  const payload = response([
+    proposal('successor-1', 'source-1', {
+      commercial_terms: terms,
+      total_budget_guidance: { min: 7_000, recommended: 8_000, max: 9_000, currency: 'USD' },
+      forecast: { points: [{ metrics: {} }], method: 'modeled', currency: 'USD' },
+    }),
+  ]);
+  assert.deepEqual(shapeIssues(request(), payload), []);
 });
 
 test('successor IDs are globally unique and distinct from every source ID', () => {

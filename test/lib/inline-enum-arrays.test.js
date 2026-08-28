@@ -38,6 +38,16 @@ describe('Inline-union value arrays (inline-enums.generated)', () => {
     assert.deepEqual([...inlineEnums.VideoAssetRequirements_ContainersValues], ['mp4', 'webm', 'mov', 'avi', 'mkv']);
   });
 
+  it('flattens nested string unions without dropping canonical get_products fields', async () => {
+    if (!inlineEnums) inlineEnums = await import('../../dist/lib/types/inline-enums.generated.js');
+    const fields = inlineEnums.GetProductsRequest_FieldsValues;
+
+    assert.ok(fields.includes('measurement_terms'));
+    assert.ok(fields.includes('list_applications'));
+    assert.ok(fields.includes('format_ids'));
+    assert.equal(new Set(fields).size, fields.length);
+  });
+
   it('values are non-empty const arrays of strings (every export)', async () => {
     if (!inlineEnums) inlineEnums = await import('../../dist/lib/types/inline-enums.generated.js');
     let count = 0;

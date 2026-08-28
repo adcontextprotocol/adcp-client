@@ -201,10 +201,10 @@ describe('AdCP 3.2 strict compact request envelopes', () => {
     const agent = { id: 'beta1-a2a', name: 'beta1-a2a', agent_uri: 'https://seller.example/a2a', protocol: 'a2a' };
 
     for (const [toolName, request] of Object.entries(compactRequests)) {
-      const prepared = prepareProtocolToolCall(agent, request, { toolName, adcpVersion: '3.2.0-beta.8' }).args;
-      assert.strictEqual(prepared.adcp_version, '3.2-beta.8', `${toolName} keeps the release pin`);
+      const prepared = prepareProtocolToolCall(agent, request, { toolName, adcpVersion: '3.2.0-beta.9' }).args;
+      assert.strictEqual(prepared.adcp_version, '3.2-beta.9', `${toolName} keeps the release pin`);
       assert.strictEqual(prepared.adcp_major_version, 3, `${toolName} keeps the SDK-injected major`);
-      const validation = validateRequest(toolName, prepared, '3.2.0-beta.8');
+      const validation = validateRequest(toolName, prepared, '3.2.0-beta.9');
       assert.strictEqual(validation.valid, true, `${toolName}: ${JSON.stringify(validation.issues)}`);
     }
   });

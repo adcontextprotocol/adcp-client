@@ -96,7 +96,7 @@ test('both positive lifecycles chain seller-issued revisions into control and re
     { key: 'accepted_media_buy_status', name: 'accepted_media_buy_status', path: 'media_buy_status' },
   ]);
   assert.equal(
-    proposalSteps.get('cap_accepted_proposal_daily_budget').sample_request.revision,
+    proposalSteps.get('decrease_accepted_proposal_total_budget').sample_request.revision,
     '$context.accepted_media_buy_revision'
   );
   assert.deepEqual(proposalSteps.get('read_controlled_proposal_buy').sample_request.media_buy_ids, [

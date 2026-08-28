@@ -49,6 +49,7 @@ const ADOPTER_SOURCE = `
 // payload typing surface that adopters consume from a packed SDK tarball.
 import type {
   AdcpServer,
+  AccountStore,
   ActivateSignalPayload,
   LegacyBuildCreativePayload,
   LegacyBuildCreativeMultiPayload,
@@ -67,6 +68,7 @@ import type {
   GetProductsPayload,
   LegacyGetRightsPayload,
   ListAccountsHandlerResult,
+  ListAccountChangesHandlerResult,
   ListAccountsPayload,
   LegacyListCreativeFormatsPayload,
   LegacyListContentStandardsPayload,
@@ -209,6 +211,22 @@ const _tupleAwareWebhookRegistration: WebhookRegistration = {
 };
 void _delegatedTaskOptions;
 void _tupleAwareWebhookRegistration;
+
+const _accountChangeStore: AccountStore = {
+  async resolve() {
+    return null;
+  },
+  async listChanges(): Promise<ListAccountChangesHandlerResult> {
+    return {
+      changes: [],
+      cursor: 'checkpoint',
+      has_more: false,
+      available_since: '2026-01-01T00:00:00Z',
+      generated_at: '2026-08-28T00:00:00Z',
+    };
+  },
+};
+void _accountChangeStore;
 
 // Public schema declarations must retain their object helpers and complete
 // parse outputs after packing, not just while compiling inside the repository.

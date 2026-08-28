@@ -136,6 +136,7 @@ export type KnownToolRequestSchemas = {
   get_creative_delivery: typeof schemas.GetCreativeDeliveryRequestSchema;
   get_signals: typeof schemas.GetSignalsRequestSchema;
   activate_signal: typeof schemas.ActivateSignalRequestSchema;
+  list_account_changes: typeof schemas.ListAccountChangesRequestSchema;
   sync_accounts: typeof schemas.SyncAccountsRequestSchema;
   list_accounts: typeof schemas.ListAccountsRequestSchema;
   sync_governance: typeof schemas.SyncGovernanceRequestSchema;
@@ -222,6 +223,7 @@ export const TOOL_REQUEST_SCHEMAS: ToolRequestSchemas = {
   activate_signal: schemas.ActivateSignalRequestSchema,
 
   // Account & audience
+  list_account_changes: schemas.ListAccountChangesRequestSchema,
   sync_accounts: schemas.SyncAccountsRequestSchema,
   list_accounts: schemas.ListAccountsRequestSchema,
   sync_governance: schemas.SyncGovernanceRequestSchema,

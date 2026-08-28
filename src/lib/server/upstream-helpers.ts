@@ -217,6 +217,12 @@ export interface UpstreamHttpClient {
     headers?: Record<string, string>,
     options?: UpstreamCallOptions
   ): Promise<UpstreamHttpResult<T>>;
+  patch<T>(
+    path: string,
+    body: unknown,
+    headers?: Record<string, string>,
+    options?: UpstreamCallOptions
+  ): Promise<UpstreamHttpResult<T>>;
   delete<T>(
     path: string,
     headers?: Record<string, string>,
@@ -413,6 +419,15 @@ export function createUpstreamHttpClient(options: UpstreamHttpClientOptions): Up
       }),
     put: (path, body, headers, opts) =>
       doRequest(baseUrl, auth, defaultHeaders, fetchImpl, 'PUT', path, {
+        body,
+        headers,
+        authContext: opts?.authContext,
+        signal: opts?.signal,
+        requestTimeoutMs: resolveRequestTimeoutMs(opts?.requestTimeoutMs, defaultRequestTimeoutMs),
+        maxResponseBytes: resolveMaxResponseBytes(opts?.maxResponseBytes, defaultMaxResponseBytes),
+      }),
+    patch: (path, body, headers, opts) =>
+      doRequest(baseUrl, auth, defaultHeaders, fetchImpl, 'PATCH', path, {
         body,
         headers,
         authContext: opts?.authContext,
