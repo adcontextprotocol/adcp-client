@@ -12,6 +12,21 @@ import type {
 } from '../types/tools.generated';
 import { generateIdempotencyKey } from '../utils/idempotency';
 
+// Kept local until the experimental reporting schemas ship in the next protocol
+// bundle consumed by this SDK. Optionality preserves compatibility with the prior
+// generated types while reconciliation fails closed when the evidence is absent.
+type ManagedReportingObligation = ReportingObligation & {
+  scope_resolved_at?: string;
+};
+
+type ManagedReportingRevision = ReportingRevision & {
+  report_definition_uri?: string;
+  report_definition_sha256?: string;
+  finality_basis?: 'source_final' | 'contractual_cutoff' | 'stabilized';
+  finality_policy_id?: string;
+  finalized_at?: string;
+};
+
 export interface ReportingReconciliationClient {
   getReportingStatus(params: GetReportingStatusRequest): Promise<GetReportingStatusResponse>;
   syncReportingReceipts(params: SyncReportingReceiptsRequest): Promise<SyncReportingReceiptsResponse>;
@@ -22,8 +37,8 @@ export interface ReportingLedger {
   ledgerAsOf: string;
   accountId: string;
   scope: NonNullable<GetReportingStatusResponse['scope']>;
-  obligations: ReportingObligation[];
-  revisions: ReportingRevision[];
+  obligations: ManagedReportingObligation[];
+  revisions: ManagedReportingRevision[];
   materializations: ReportingMaterialization[];
   receipts: ReportingReceipt[];
 }
@@ -54,8 +69,8 @@ export interface ReportingCheckpointStore {
 }
 
 export interface ReportingInspectionContext {
-  obligation: ReportingObligation;
-  revision: ReportingRevision;
+  obligation: ManagedReportingObligation;
+  revision: ManagedReportingRevision;
   materialization: ReportingMaterialization;
 }
 
@@ -120,7 +135,7 @@ function normalizedTotals(totals: ReportingControlTotal[]): ReportingControlTota
 
 function receiptMatches(
   receipt: ReportingReceipt,
-  revision: ReportingRevision,
+  revision: ManagedReportingRevision,
   materialization: ReportingMaterialization
 ): boolean {
   if (receipt.status !== 'accepted' || !materialization.verification) return false;
@@ -168,8 +183,8 @@ export async function loadReportingLedger(
 ): Promise<ReportingLedger> {
   for (let restart = 0; restart <= maxSnapshotRestarts; restart += 1) {
     try {
-      const obligations = new Map<string, ReportingObligation>();
-      const revisions = new Map<string, ReportingRevision>();
+      const obligations = new Map<string, ManagedReportingObligation>();
+      const revisions = new Map<string, ManagedReportingRevision>();
       const materializations = new Map<string, ReportingMaterialization>();
       const receipts = new Map<string, ReportingReceipt>();
       const seenCursors = new Set<string>();
@@ -281,9 +296,9 @@ export async function loadReportingLedger(
 }
 
 function selectCurrent(
-  obligation: ReportingObligation,
+  obligation: ManagedReportingObligation,
   ledger: ReportingLedger
-): { revision?: ReportingRevision; materialization?: ReportingMaterialization; reasons: string[] } {
+): { revision?: ManagedReportingRevision; materialization?: ReportingMaterialization; reasons: string[] } {
   const reasons: string[] = [];
   const attempts = ledger.materializations.filter(
     item => item.reporting_obligation_id === obligation.reporting_obligation_id
@@ -320,7 +335,25 @@ function selectCurrent(
   ) {
     reasons.push('REVISION_SCOPE_MISMATCH');
   }
-  if (obligation.required_finality === 'official' && revision.finality !== 'official') reasons.push('FINALITY_NOT_MET');
+  if (obligation.scope_resolved_at !== obligation.period.end) reasons.push('SCOPE_CUTOFF_MISMATCH');
+  if (!revision.report_definition_uri || !revision.report_definition_sha256) {
+    reasons.push('REPORT_DEFINITION_NOT_PINNED');
+  }
+  const finalizedAt = revision.finalized_at ? Date.parse(revision.finalized_at) : Number.NaN;
+  const periodEnd = Date.parse(revision.period.end);
+  const createdAt = Date.parse(revision.created_at);
+  if (
+    obligation.required_finality === 'official' &&
+    (revision.finality !== 'official' ||
+      !revision.finality_basis ||
+      !revision.finality_policy_id ||
+      !revision.finalized_at ||
+      !Number.isFinite(finalizedAt) ||
+      finalizedAt < periodEnd ||
+      finalizedAt > createdAt)
+  ) {
+    reasons.push('FINALITY_NOT_MET');
+  }
 
   const successful = successfulAttempts
     .filter(
@@ -385,7 +418,7 @@ export function evaluateReportingLedger(
   now = new Date()
 ): Omit<ReportingReconciliationResult, 'submittedReceipts'> {
   const obligationResults: ObligationReconciliation[] = [];
-  const uniqueRevisions = new Map<string, ReportingRevision>();
+  const uniqueRevisions = new Map<string, ManagedReportingRevision>();
 
   for (const obligation of ledger.obligations) {
     const selected = selectCurrent(obligation, ledger);
