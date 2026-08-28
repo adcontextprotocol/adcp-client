@@ -253,6 +253,27 @@ test('does not let one campaign satisfy another campaign in the same feed period
   assert.equal(result.missingExpectedPeriods.length, 1);
 });
 
+test('rejects a revision whose campaign scope differs from its obligation', async () => {
+  const raw = response([]);
+  raw.revisions[0] = { ...raw.revisions[0], media_buy_ids: ['buy-1'] };
+  raw.periods[0].reconciliation_mode = 'delivery_only';
+  raw.periods[0].reconciliation_status = 'not_required';
+  const ledger = await loadReportingLedger(
+    {
+      async getReportingStatus() {
+        return raw;
+      },
+      async syncReportingReceipts() {
+        throw new Error('not called');
+      },
+    },
+    { account: { account_id: 'account-1' } }
+  );
+  const result = evaluateReportingLedger(ledger, []);
+  assert.equal(result.definitive, false);
+  assert.ok(result.obligations[0].reasons.includes('REVISION_SCOPE_MISMATCH'));
+});
+
 test('does not claim completeness without an independent expected-period denominator', async () => {
   const ledger = await loadReportingLedger(
     {
