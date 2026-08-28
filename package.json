@@ -454,6 +454,8 @@
   },
   "files": [
     "dist/lib/**/*",
+    "!dist/**/*.map",
+    "!dist/lib/schemas-data/*/bundled/**/*",
     "bin/**/*.js",
     "skills/**/*",
     ".claude-plugin/**/*",

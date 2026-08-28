@@ -20,6 +20,7 @@ import { readdirSync, readFileSync, existsSync } from 'fs';
 import path from 'path';
 import { ADCP_VERSION } from '../version';
 import { ConfigurationError } from '../errors';
+import { hasBundledSchemaStore, listBundledSchemaFiles, loadBundledSchemaFile } from './bundled-schema-store';
 
 export type ResponseVariant = 'sync' | 'submitted' | 'working' | 'input-required';
 export type Direction = 'request' | ResponseVariant;
@@ -372,7 +373,7 @@ function clearStatesForBundle(bundleKey: string): void {
 function hasSchemaRootShape(root: string): boolean {
   if (!existsSync(root)) return false;
   const bundledRoot = path.join(root, 'bundled');
-  const files = existsSync(bundledRoot) ? walkJsonFiles(bundledRoot) : walkJsonFiles(root);
+  const files = hasBundledSchemaStore(bundledRoot) ? walkJsonFiles(bundledRoot) : walkJsonFiles(root);
   return files.some(file => {
     try {
       const schema = loadJson(file);
@@ -575,6 +576,7 @@ export function isExternalSchemaRootActive(version: string): boolean {
 }
 
 function walkJsonFiles(dir: string): string[] {
+  if (path.basename(dir) === 'bundled') return listBundledSchemaFiles(dir);
   if (!existsSync(dir)) return [];
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -586,6 +588,10 @@ function walkJsonFiles(dir: string): string[] {
 }
 
 function loadJson(file: string): LoadedSchema {
+  if (file.includes(`${path.sep}bundled${path.sep}`)) {
+    const bundled = loadBundledSchemaFile(file);
+    if (bundled) return bundled;
+  }
   return JSON.parse(readFileSync(file, 'utf-8')) as LoadedSchema;
 }
 

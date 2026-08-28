@@ -44,11 +44,31 @@ Requires a prior `npm run build:lib` (it inspects `dist/`).
 
 `scripts/check-package-size.mjs` asks npm for the exact dry-run pack manifest
 and fails closed if its size metadata is missing. It enforces budgets for
-compressed bytes, installed bytes, and entry count, plus separate limits for
-the canonical generated schema declaration and its ESM façade. Because it runs
+compressed bytes, installed bytes, file count, total compact bundled-schema
+bytes, and the canonical generated schema declaration plus its ESM façade. It
+also rejects source maps in the publish artifact. Because it runs
 unconditionally after `build:lib`, growth from any packaged source, generated
 schema, or copied cache is covered even when the live package smoke is skipped.
 The full `verify:package` smoke imports and runs the same checker.
+
+### Compact offline schema bundles
+
+The protocol cache contains both canonical schemas with `$ref` links and a
+mostly dereferenced `bundled/` copy of every tool schema. Publishing those
+upstream bundles verbatim duplicates shared definitions hundreds of times.
+`scripts/copy-schemas-to-dist.ts` instead compacts each protocol-authored
+bundled document, storing repeated schema fragments once under private local
+`$defs`. Local builds retain those compact JSON files for direct inspection.
+The published package stores them together in one Brotli archive per wire
+version; the schema loader expands the private refs before returning a schema,
+so IDs, retained refs, AJV diagnostics, and logical
+`bundled/<domain>/<tool>.json` paths remain unchanged for runtime validation
+and conformance consumers. There is no network fetch and no supported-version
+reduction.
+
+Runtime JavaScript and declaration source maps are intentionally not shipped.
+The public repository and declarations remain the debugging source, while the
+maps added thousands of files and several compressed MiB to every install.
 
 ### Why the build emits `.d.mts`
 
@@ -99,10 +119,11 @@ the tarball plus its **required** peers pinned to their **range floors** and
 (outside the workspace, so npm resolution is honest and not monorepo-deduped),
 then loads the main, enums, server, testing, and schemas entry points through
 both a real ESM `import` and a real CJS `require`, asserting each loads and
-exposes a known runtime symbol. It also type-checks the exact generated schema
-surface from `.mts` and `.cts` consumers. `server` is included so the
-`@a2a-js/sdk` peer gets real ESM/CJS load coverage through a dedicated
-entrypoint. Optional peers
+exposes a known runtime symbol. It also exercises runtime validation,
+conformance loading, and server error-arm discovery from the installed Brotli
+archives, then type-checks the exact generated schema surface from `.mts` and
+`.cts` consumers. `server` is included so the `@a2a-js/sdk` peer gets real
+ESM/CJS load coverage through a dedicated entrypoint. Optional peers
 (`peerDependenciesMeta`) are **not** installed — no tested subpath loads them,
 so pinning them would add only install weight and registry-flake surface. The
 floor/load smoke uses `npm install` (never workspace pnpm/catalog), and both

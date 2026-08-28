@@ -11,14 +11,15 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// The signed 3.2.0-beta.6 bundle adds two substantial canonical format
-// schemas and expands the reporting/tool projections. Keep the budgets tight
-// to the resulting artifact (about 48 MiB packed, 337 MiB unpacked, 7,811
-// files) while allowing normal compressor variance across supported Node/npm
-// versions.
-const MAX_PACKED_TARBALL_BYTES = 50 * 1024 * 1024;
-const MAX_UNPACKED_PACKAGE_BYTES = 340 * 1024 * 1024;
-const MAX_PACKED_FILE_COUNT = 7_900;
+// Compact local-ref schema bundles and omission of source maps bring the
+// package below pnpm's default fetch-timeout boundary on moderate links. Keep
+// enough compressor variance for supported Node/npm versions without allowing
+// the old 48 MB artifact shape to return. The packed limit is decimal because
+// npm reports published package size in MB and issue #2579 set a 20 MB target.
+const MAX_PACKED_TARBALL_BYTES = 20_000_000;
+const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
+const MAX_PACKED_FILE_COUNT = 5_800;
+const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
 const EXPECTED_ESM_SCHEMA_FACADE = "export * from './schemas.generated.js';\n";
@@ -81,6 +82,33 @@ export function checkPackageSize(repoRoot) {
   }
   assertAtMost('packed file count', packageInfo.entryCount, MAX_PACKED_FILE_COUNT, 'files');
 
+  const sourceMaps = packageInfo.files.filter(file => file.path.endsWith('.map'));
+  if (sourceMaps.length > 0) {
+    throw new Error(`packed package contains ${sourceMaps.length} source map files`);
+  }
+  const rawBundledSchemas = packageInfo.files.filter(
+    file => file.path.includes('/schemas-data/') && file.path.includes('/bundled/') && file.path.endsWith('.json')
+  );
+  if (rawBundledSchemas.length > 0) {
+    throw new Error(`packed package contains ${rawBundledSchemas.length} expanded bundled schema files`);
+  }
+  const bundledSchemaBytes = packageInfo.files
+    .filter(file => file.path.endsWith('/bundled.schemas.br'))
+    .reduce((sum, file) => sum + file.size, 0);
+  assertAtMost('bundled schema data', bundledSchemaBytes, MAX_BUNDLED_SCHEMA_BYTES);
+  const currentProtocolVersion = readFileSync(path.join(repoRoot, 'ADCP_VERSION'), 'utf8').trim();
+  const currentBundleKey = currentProtocolVersion.includes('-')
+    ? currentProtocolVersion
+    : currentProtocolVersion.split('.').slice(0, 2).join('.');
+  const expectedBundleKeys = new Set(['3.0', '3.1', currentBundleKey]);
+  const packedPaths = new Set(packageInfo.files.map(file => file.path));
+  for (const bundleKey of expectedBundleKeys) {
+    const expectedArchivePath = `dist/lib/schemas-data/${bundleKey}/bundled.schemas.br`;
+    if (!packedPaths.has(expectedArchivePath)) {
+      throw new Error(`packed package is missing a required bundled schema archive: ${expectedArchivePath}`);
+    }
+  }
+
   const cjsSchema = packageInfo.files.find(file => file.path === 'dist/lib/types/schemas.generated.d.ts');
   const esmSchema = packageInfo.files.find(file => file.path === 'dist/lib/types/schemas.generated.d.mts');
   if (!cjsSchema) throw new Error('packed package is missing schemas.generated.d.ts');
@@ -103,7 +131,8 @@ export function checkPackageSize(repoRoot) {
 
   console.log(
     `✅ Package size: ${mib(packageInfo.size)} MiB packed, ${mib(packageInfo.unpackedSize)} MiB unpacked, ` +
-      `${packageInfo.entryCount} files; schema declarations ${mib(cjsSchema.size)} MiB CJS + ${esmSchema.size} B ESM`
+      `${packageInfo.entryCount} files; bundled schemas ${mib(bundledSchemaBytes)} MiB; ` +
+      `schema declarations ${mib(cjsSchema.size)} MiB CJS + ${esmSchema.size} B ESM`
   );
   return packageInfo;
 }

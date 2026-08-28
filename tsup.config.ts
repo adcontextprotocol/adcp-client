@@ -110,7 +110,10 @@ export default defineConfig({
   bundle: false,
   // A paths-free tsconfig so the import-fixer's alias resolution is a no-op.
   tsconfig: 'tsconfig.build.json',
-  sourcemap: true,
+  // Published source maps account for thousands of files and several MiB of
+  // the compressed artifact. The source is public and declaration files remain
+  // the debugging contract, so the install-DX cost is not justified.
+  sourcemap: false,
   clean: true,
   dts: false,
   // Not tsup's `shims: true`: with many entries it emits `__dirname` once in a

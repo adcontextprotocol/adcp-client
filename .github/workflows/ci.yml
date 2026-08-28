@@ -225,7 +225,7 @@ jobs:
           if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
             # No usable base (first push, force-push, scheduled run) — run to be safe.
             echo "changed=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "$base" HEAD | grep -qE '^(package\.json|package-lock\.json|tsup\.config\.ts|tsconfig\.json|tsconfig\.lib\.json|tsconfig\.build\.json|scripts/(generate-dmts-declarations|generate-per-tool-types|copy-schemas-to-dist|copy-v2-projection-catalog|generate-wire-spec-fields)\.ts|scripts/(verify-package|check-package-size)\.mjs|\.github/workflows/ci\.yml)$'; then
+          elif git diff --name-only "$base" HEAD | grep -qE '^(ADCP_VERSION|package\.json|package-lock\.json|tsup\.config\.ts|tsconfig\.json|tsconfig\.lib\.json|tsconfig\.build\.json|scripts/(generate-dmts-declarations|generate-per-tool-types|copy-schemas-to-dist|copy-v2-projection-catalog|generate-wire-spec-fields|compact-schema-bundle)\.ts|scripts/(verify-package|check-package-size)\.mjs|src/lib/(validation/(bundled-schema-store|schema-loader)|conformance/schemaLoader|server/error-arm-tools)\.ts|\.github/workflows/ci\.yml)$'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
