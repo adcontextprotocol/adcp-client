@@ -23,7 +23,14 @@ import { resolveAgent, type AgentResolution, type ResolveAgentOptions } from './
 
 export type GetAgentJwksOptions = Pick<
   ResolveAgentOptions,
-  'protocol' | 'fetchCapabilities' | 'allowPrivateIp' | 'timeoutMs' | 'now'
+  | 'protocol'
+  | 'fetchCapabilities'
+  | 'allowPrivateIp'
+  | 'timeoutMs'
+  | 'now'
+  | 'requiredOperatorBrand'
+  | 'requiredOperatorScope'
+  | 'requiredOperatorCountry'
 >;
 
 export interface AgentJwksResult {
@@ -32,6 +39,8 @@ export interface AgentJwksResult {
   jwksUri: string;
   jwks: { keys: ReadonlyArray<Record<string, unknown>> };
   cacheControl?: string;
+  /** Cross-origin operator delegation expiry, in epoch seconds. Never cache these keys at or beyond this instant. */
+  operatorAuthorizationValidUntil?: number;
   fetchedAt: number;
 }
 
@@ -49,13 +58,23 @@ export async function getAgentJwks(agentUrl: string, options: GetAgentJwksOption
     jwksUri: resolution.jwksUri,
     jwks: resolution.jwks,
     ...(resolution.jwksCacheControl !== undefined && { cacheControl: resolution.jwksCacheControl }),
+    ...(resolution.operatorAuthorizationValidUntil !== undefined && {
+      operatorAuthorizationValidUntil: resolution.operatorAuthorizationValidUntil,
+    }),
     fetchedAt: resolution.freshness.jwksFetchedAt,
   };
 }
 
 export interface CreateAgentJwksSetOptions extends Pick<
   ResolveAgentOptions,
-  'protocol' | 'fetchCapabilities' | 'allowPrivateIp' | 'timeoutMs' | 'now'
+  | 'protocol'
+  | 'fetchCapabilities'
+  | 'allowPrivateIp'
+  | 'timeoutMs'
+  | 'now'
+  | 'requiredOperatorBrand'
+  | 'requiredOperatorScope'
+  | 'requiredOperatorCountry'
 > {
   /**
    * Algorithm allowlist enforced at JWKS-import time AND surfaced to
@@ -113,7 +132,13 @@ export function createAgentJwksSet(agentUrl: string, options: CreateAgentJwksSet
   const allowedAlgs = new Set(options.allowedAlgs);
   const cacheMaxAge = options.cacheMaxAgeSeconds ?? DEFAULT_CACHE_MAX_AGE_SECONDS;
   const kidCooldown = options.kidMissCooldownSeconds ?? DEFAULT_KID_MISS_COOLDOWN_SECONDS;
-  const now = options.now ?? (() => Math.floor(Date.now() / 1000));
+  if (!Number.isFinite(cacheMaxAge) || cacheMaxAge <= 0) {
+    throw new TypeError('cacheMaxAgeSeconds must be a finite positive number.');
+  }
+  if (!Number.isFinite(kidCooldown) || kidCooldown < 0) {
+    throw new TypeError('kidMissCooldownSeconds must be a finite non-negative number.');
+  }
+  const now = options.now ?? (() => Date.now() / 1000);
 
   let cache: CachedJwks | undefined;
   let lastRefetchAt = 0;
@@ -123,10 +148,22 @@ export function createAgentJwksSet(agentUrl: string, options: CreateAgentJwksSet
     if (inFlight) return inFlight;
     inFlight = (async () => {
       const resolution = await resolveAgent(agentUrl, options);
+      const refreshedAt = now();
+      if (
+        resolution.operatorAuthorizationValidUntil !== undefined &&
+        refreshedAt >= resolution.operatorAuthorizationValidUntil
+      ) {
+        throw new AgentResolverError(
+          'request_signature_brand_origin_mismatch',
+          'The cross-origin operator delegation expired during key discovery.',
+          { agent_url: agentUrl },
+          ['agent_url']
+        );
+      }
       assertAllJwksAllowed(resolution.jwks, allowedAlgs, agentUrl);
       const filtered = filterJwksToAllowedAlgs(resolution.jwks, allowedAlgs);
       const getKey = createLocalJWKSet({ keys: filtered as unknown as JWK[] });
-      cache = { resolution, fetchedAt: now(), getKey };
+      cache = { resolution, fetchedAt: refreshedAt, getKey };
       lastRefetchAt = cache.fetchedAt;
       return cache;
     })().finally(() => {
@@ -136,7 +173,12 @@ export function createAgentJwksSet(agentUrl: string, options: CreateAgentJwksSet
   };
 
   const ensureFresh = async (): Promise<CachedJwks> => {
-    if (!cache || now() - cache.fetchedAt >= cacheMaxAge) {
+    if (
+      !cache ||
+      now() - cache.fetchedAt >= cacheMaxAge ||
+      (cache.resolution.operatorAuthorizationValidUntil !== undefined &&
+        now() >= cache.resolution.operatorAuthorizationValidUntil)
+    ) {
       return refresh();
     }
     return cache;

@@ -4637,6 +4637,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   const isProduction = process.env.NODE_ENV === 'production';
   const requestValidationMode = validationConfig?.requests ?? (isProduction ? 'off' : 'strict');
   const responseValidationMode = validationConfig?.responses ?? (isProduction ? 'off' : 'strict');
+  const effectiveRequestValidationMode = (extra: unknown): 'off' | 'warn' | 'strict' =>
+    (extra as { enforceRequestSchema?: unknown } | undefined)?.enforceRequestSchema === true
+      ? 'strict'
+      : requestValidationMode;
 
   // Split the `idempotency` config field into "the active store" and
   // "explicitly opted out" so existing call sites keep working with a
@@ -5106,16 +5110,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
   const protocolTaskRequestValidationError = (
     toolName: 'get_task_status' | 'list_tasks',
-    params: Record<string, unknown>
+    params: Record<string, unknown>,
+    extra?: unknown
   ): McpToolResponse | undefined => {
+    const validationMode = effectiveRequestValidationMode(extra);
     const accountIssues = protocolTaskAccountExtensionIssues(params);
     const outcome =
-      requestValidationMode === 'off'
+      validationMode === 'off'
         ? ({ valid: true, issues: [], schemaId: undefined } as const)
         : validateRequest(toolName, params, requestServedRelease(params)?.validationVersion ?? adcpVersion);
     const issues = [...(outcome.valid ? [] : outcome.issues), ...accountIssues];
     if (issues.length === 0) return undefined;
-    if (requestValidationMode === 'strict' || accountIssues.length > 0) {
+    if (validationMode === 'strict' || accountIssues.length > 0) {
       return adcpError(
         'VALIDATION_ERROR',
         buildAdcpValidationErrorPayload(toolName, 'request', issues, {
@@ -5458,6 +5464,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
       const wrap = meta?.wrap ?? ((data: any, summary?: string) => genericResponse(toolName, data, summary));
       const toolHandler = async (params: any, extra: any) => {
+        const callRequestValidationMode = effectiveRequestValidationMode(extra);
         const releaseSelection = selectServedAdcpRelease(params, capConfig, adcpVersion);
         let releaseError: McpToolResponse | undefined;
         let requestRelease: ServedAdcpRelease;
@@ -5913,7 +5920,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             }
           }
         }
-        if (requestValidationMode !== 'off') {
+        if (callRequestValidationMode !== 'off') {
           const outcome = validateFrameworkPayload(
             toolName,
             'request',
@@ -5955,7 +5962,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 ? outcome.issues.filter(i => !(i.keyword === 'required' && i.pointer === '/idempotency_key'))
                 : outcome.issues;
             if (issues.length > 0) {
-              if (requestValidationMode === 'strict') {
+              if (callRequestValidationMode === 'strict') {
                 // Thread `exposeSchemaPath` the same way response-side does
                 // so request-side schemaPath also ships in dev and stays
                 // gated in production. Prior to this, request-side silently
@@ -7436,7 +7443,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             echoContext: false,
           });
         }
-        const validationError = protocolTaskRequestValidationError('get_task_status', params ?? {});
+        const validationError = protocolTaskRequestValidationError('get_task_status', params ?? {}, extra);
         if (validationError) return finalizeProtocolTaskToolResponse('get_task_status', params ?? {}, validationError);
         const boundsError = protocolTaskBoundsError('get_task_status', params ?? {});
         if (boundsError) return finalizeProtocolTaskToolResponse('get_task_status', params ?? {}, boundsError);
@@ -7532,7 +7539,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         if (credentialError) {
           return finalizeProtocolTaskToolResponse('list_tasks', params ?? {}, credentialError, { echoContext: false });
         }
-        const validationError = protocolTaskRequestValidationError('list_tasks', params ?? {});
+        const validationError = protocolTaskRequestValidationError('list_tasks', params ?? {}, extra);
         if (validationError) return finalizeProtocolTaskToolResponse('list_tasks', params ?? {}, validationError);
         const boundsError = protocolTaskBoundsError('list_tasks', params ?? {});
         if (boundsError) return finalizeProtocolTaskToolResponse('list_tasks', params ?? {}, boundsError);
@@ -7922,6 +7929,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       _meta: frameworkToolMeta,
     },
     (async (params: any, extra: { authInfo?: ResolvedAuthInfo } = {}) => {
+      const callRequestValidationMode = effectiveRequestValidationMode(extra);
       const requestParams = isPlainObject(params) ? params : {};
       const releaseSelection = selectServedAdcpRelease(requestParams, capConfig, adcpVersion);
       const release = isMcpToolResponse(releaseSelection)
@@ -7949,7 +7957,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         );
       }
 
-      if (requestValidationMode !== 'off') {
+      if (callRequestValidationMode !== 'off') {
         const requestOutcome = validateRequest('get_adcp_capabilities', requestParams, release.validationVersion);
         if (!requestOutcome.valid) {
           logger.warn(
@@ -7959,7 +7967,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               issues: requestOutcome.issues,
             }
           );
-          if (requestValidationMode === 'strict') {
+          if (callRequestValidationMode === 'strict') {
             return finalizeCapabilityResponse(
               adcpError(
                 'VALIDATION_ERROR',

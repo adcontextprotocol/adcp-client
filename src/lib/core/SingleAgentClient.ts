@@ -1654,7 +1654,20 @@ export class SingleAgentClient {
     // historically returns the input object unchanged for the preferred
     // `trustedFetchFn` spelling, so clone first while retaining function identity.
     const configuredTransport = config.transport === undefined ? undefined : { ...config.transport };
-    this.config = { ...config, transport: normalizeTransportOptions(configuredTransport) };
+    const configuredWebhookVerification =
+      config.webhookVerification === undefined
+        ? undefined
+        : {
+            ...config.webhookVerification,
+            ...(config.webhookVerification.resolverOptions !== undefined && {
+              resolverOptions: { ...config.webhookVerification.resolverOptions },
+            }),
+          };
+    this.config = {
+      ...config,
+      transport: normalizeTransportOptions(configuredTransport),
+      ...(configuredWebhookVerification !== undefined && { webhookVerification: configuredWebhookVerification }),
+    };
     config = this.config;
     // Validate the configured adcpVersion at construction time. Throws
     // ConfigurationError if the pin's major differs from ADCP_MAJOR_VERSION

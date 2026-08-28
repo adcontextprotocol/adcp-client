@@ -137,6 +137,13 @@ export interface AdcpInvokeOptions {
   authInfo?: AdcpAuthInfo;
   /** Abort signal for cancellation; defaults to a fresh controller. */
   signal?: AbortSignal;
+  /**
+   * Require the framework to enforce the bundled request schema even when the
+   * server's general validation mode is `warn` or `off`. Transport adapters
+   * that advertise the exact official schema use this strengthening-only flag
+   * so failures retain the structured AdCP error envelope.
+   */
+  enforceRequestSchema?: true;
 }
 
 /**
@@ -695,10 +702,11 @@ export function wrapMcpServer(
     if (!tool) {
       throw new Error(`AdcpServer.invoke: tool "${options.toolName}" is not registered`);
     }
-    const extra: { signal: AbortSignal; authInfo?: AdcpAuthInfo } = {
+    const extra: { signal: AbortSignal; authInfo?: AdcpAuthInfo; enforceRequestSchema?: true } = {
       signal: options.signal ?? new AbortController().signal,
     };
     if (options.authInfo) extra.authInfo = options.authInfo;
+    if (options.enforceRequestSchema === true) extra.enforceRequestSchema = true;
     return (await tool.handler(options.args, extra)) as McpToolResponse;
   };
   const wrapper: AdcpServerInternal = {

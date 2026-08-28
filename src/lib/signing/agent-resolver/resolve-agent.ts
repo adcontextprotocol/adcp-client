@@ -47,6 +47,14 @@ import { type AgentEntry, selectAgentByUrl, AgentSelectorError } from './select-
 
 export type AgentProtocol = 'mcp' | 'a2a';
 
+export type AuthorizedOperatorScope =
+  | 'media_buying'
+  | 'creative_generation'
+  | 'rights_clearance'
+  | 'governance'
+  | 'measurement'
+  | 'agent_operations';
+
 export interface FetchCapabilitiesFn {
   (agentUrl: string): Promise<unknown>;
 }
@@ -96,6 +104,24 @@ export interface ResolveAgentOptions {
   publisherPinned?: { webhook_signing?: boolean };
   /** Override the current time (epoch seconds) — for deterministic tests. */
   now?: () => number;
+  /**
+   * Brand authorization required from a cross-origin `authorized_operators[]`
+   * entry. Constrained brand lists fail closed when this context is omitted;
+   * `brands: ['*']` remains a context-free broad grant.
+   */
+  requiredOperatorBrand?: string;
+  /**
+   * Activity authorization required from a cross-origin operator entry.
+   * Omitted `scopes` and `scopes: ['all']` are broad grants. A narrower list
+   * fails closed when this context is omitted.
+   */
+  requiredOperatorScope?: AuthorizedOperatorScope;
+  /**
+   * ISO 3166-1 alpha-2 country authorization required from a cross-origin
+   * operator entry. Omitted `countries` is global; a present list fails closed
+   * when this context is omitted.
+   */
+  requiredOperatorCountry?: string;
 }
 
 export interface TraceStep {
@@ -128,6 +154,11 @@ export interface AgentResolution {
   };
   /** `Cache-Control` header from the JWKS fetch, when the response carried one. */
   jwksCacheControl?: string;
+  /**
+   * Epoch seconds when the cross-origin operator delegation stops authorizing
+   * this resolution. Built-in JWKS caches cap their lifetime at this boundary.
+   */
+  operatorAuthorizationValidUntil?: number;
   trace: ReadonlyArray<TraceStep>;
 }
 
@@ -135,7 +166,7 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 
 export async function resolveAgent(agentUrl: string, options: ResolveAgentOptions = {}): Promise<AgentResolution> {
   const trace: TraceStep[] = [];
-  const now = options.now ?? (() => Math.floor(Date.now() / 1000));
+  const now = options.now ?? (() => Date.now() / 1000);
   const allowPrivateIp = checkAllowPrivateIp(options.allowPrivateIp === true);
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const caps = options.bodyCaps ?? {};
@@ -276,9 +307,10 @@ export async function resolveAgent(agentUrl: string, options: ResolveAgentOption
   }
 
   // Now run step 3's authorized_operators delegation check against the body.
+  let operatorAuthorizationValidUntil: number | undefined;
   if (!sameOrigin) {
-    const delegated = isAuthorizedOperator(brandJson, agentEtld1);
-    if (!delegated) {
+    const delegation = findAuthorizedOperator(brandJson, agentEtld1, now(), options);
+    if (!delegation) {
       const detail: AgentResolverErrorDetail = {
         agent_url: agentUrl,
         agent_etld1: agentEtld1,
@@ -292,6 +324,7 @@ export async function resolveAgent(agentUrl: string, options: ResolveAgentOption
         ['agent_url']
       );
     }
+    operatorAuthorizationValidUntil = delegation.validUntil;
     pushTrace(trace, {
       step: 3,
       name: 'etld1_binding',
@@ -417,6 +450,23 @@ export async function resolveAgent(agentUrl: string, options: ResolveAgentOption
     throw new AgentResolverError('request_signature_jwks_unreachable', `JWKS fetch failed`, detail, ['jwks_uri']);
   }
 
+  // A delegation can expire while brand.json/JWKS discovery is in flight.
+  // Re-check at the trust-chain boundary so the first cache use cannot extend
+  // authorization past the normative `valid_until` instant.
+  if (operatorAuthorizationValidUntil !== undefined && now() >= operatorAuthorizationValidUntil) {
+    const detail: AgentResolverErrorDetail = {
+      agent_url: agentUrl,
+      agent_etld1: agentEtld1,
+      brand_json_url_etld1: brandEtld1,
+    };
+    throw new AgentResolverError(
+      'request_signature_brand_origin_mismatch',
+      `Agent delegation expired while resolving signing keys`,
+      detail,
+      ['agent_url']
+    );
+  }
+
   return {
     agentUrl,
     brandJsonUrl,
@@ -427,6 +477,7 @@ export async function resolveAgent(agentUrl: string, options: ResolveAgentOption
     consistency: { ok: true },
     freshness: { capabilitiesFetchedAt, brandJsonFetchedAt, jwksFetchedAt },
     ...(jwksCacheControl !== undefined && { jwksCacheControl }),
+    ...(operatorAuthorizationValidUntil !== undefined && { operatorAuthorizationValidUntil }),
     trace: trace.map(annotateAge(now())),
   };
 }
@@ -457,31 +508,136 @@ function defaultFetchCapabilities(agentUrl: string, protocol: AgentProtocol): Fe
   };
 }
 
-function isAuthorizedOperator(brandJson: unknown, agentEtld1: string): boolean {
-  if (!brandJson || typeof brandJson !== 'object') return false;
+interface ActiveOperatorDelegation {
+  validUntil?: number;
+}
+
+const AUTHORIZED_OPERATOR_SCOPES = new Set<string>([
+  'all',
+  'media_buying',
+  'creative_generation',
+  'rights_clearance',
+  'governance',
+  'measurement',
+  'agent_operations',
+]);
+const AUTHORIZED_OPERATOR_DOMAIN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
+
+/**
+ * Evaluate the complete cross-origin delegation tuple. Domain matching is
+ * deliberately at eTLD+1 (including the private PSL) to match step 3 of the
+ * discovery algorithm; brand, activity, country, and time remain independent
+ * authorization dimensions and must all match the same entry.
+ */
+function findAuthorizedOperator(
+  brandJson: unknown,
+  agentEtld1: string,
+  now: number,
+  options: Pick<ResolveAgentOptions, 'requiredOperatorBrand' | 'requiredOperatorScope' | 'requiredOperatorCountry'>
+): ActiveOperatorDelegation | undefined {
+  if (!brandJson || typeof brandJson !== 'object') return undefined;
   const operators = (brandJson as { authorized_operators?: unknown }).authorized_operators;
-  if (!Array.isArray(operators)) return false;
+  if (!Array.isArray(operators)) return undefined;
+  let latestValidUntil: number | undefined;
+  let matched = false;
   for (const op of operators) {
-    if (op && typeof op === 'object') {
-      const domain = (op as { domain?: unknown }).domain;
-      if (typeof domain === 'string') {
-        try {
-          if (eTldPlusOne(domain) === agentEtld1) return true;
-        } catch {
-          continue;
-        }
-      }
+    if (!op || typeof op !== 'object' || Array.isArray(op)) continue;
+    const candidate = op as Record<string, unknown>;
+    const domain = candidate.domain;
+    const brands = candidate.brands;
+    if (typeof domain !== 'string' || !AUTHORIZED_OPERATOR_DOMAIN.test(domain) || !isValidBrandGrant(brands)) {
+      continue;
     }
-    // Some brand.json shapes carry a bare-string entry rather than `{ domain }`.
-    if (typeof op === 'string') {
-      try {
-        if (eTldPlusOne(op) === agentEtld1) return true;
-      } catch {
-        continue;
-      }
+    try {
+      if (eTldPlusOne(domain) !== agentEtld1) continue;
+    } catch {
+      continue;
     }
+
+    const scopes = candidate.scopes;
+    if (scopes !== undefined && !isValidScopeGrant(scopes)) continue;
+    const countries = candidate.countries;
+    if (countries !== undefined && !isValidCountryGrant(countries)) continue;
+
+    const validFrom = parseOptionalRfc3339(candidate.valid_from);
+    const validUntil = parseOptionalRfc3339(candidate.valid_until);
+    if (validFrom === null || validUntil === null) continue;
+    if (validFrom !== undefined && validUntil !== undefined && validFrom >= validUntil) continue;
+    if (validFrom !== undefined && now < validFrom) continue;
+    if (validUntil !== undefined && now >= validUntil) continue;
+
+    if (!matchesGrant(brands, options.requiredOperatorBrand, '*')) continue;
+    if (scopes !== undefined && !matchesGrant(scopes, options.requiredOperatorScope, 'all')) continue;
+    if (countries !== undefined && !matchesGrant(countries, options.requiredOperatorCountry)) continue;
+
+    matched = true;
+    // Any unbounded active sibling keeps the same authorization tuple active.
+    if (validUntil === undefined) return {};
+    latestValidUntil = Math.max(latestValidUntil ?? Number.NEGATIVE_INFINITY, validUntil);
   }
-  return false;
+  return matched ? { validUntil: latestValidUntil } : undefined;
+}
+
+function isValidBrandGrant(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every(item => typeof item === 'string' && (item === '*' || /^[a-z0-9_]+$/.test(item)))
+  );
+}
+
+function isValidScopeGrant(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    new Set(value).size === value.length &&
+    value.every(item => typeof item === 'string' && AUTHORIZED_OPERATOR_SCOPES.has(item))
+  );
+}
+
+function isValidCountryGrant(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string' && /^[A-Z]{2}$/.test(item));
+}
+
+function matchesGrant(grants: readonly string[], required: string | undefined, wildcard?: string): boolean {
+  if (wildcard !== undefined && grants.includes(wildcard)) return true;
+  return required !== undefined && grants.includes(required);
+}
+
+function parseOptionalRfc3339(value: unknown): number | undefined | null {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?([Zz]|([+-])(\d{2}):(\d{2}))$/.exec(
+    value
+  );
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const offsetHour = match[10] === undefined ? 0 : Number(match[10]);
+  const offsetMinute = match[11] === undefined ? 0 : Number(match[11]);
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > daysInMonth(year, month) ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59 ||
+    offsetHour > 23 ||
+    offsetMinute > 59
+  ) {
+    return null;
+  }
+  const parsed = Date.parse(value) / 1000;
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 
 function originOf(url: string): string {

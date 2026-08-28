@@ -10,10 +10,8 @@
 import {
   McpServer as ModernMcpServer,
   createMcpHandler,
-  fromJsonSchema,
   isLegacyRequest,
   type AuthInfo as ModernAuthInfo,
-  type JsonSchemaType,
   type ResourceMetadata,
   type RegisteredTool as ModernRegisteredTool,
   type StandardSchemaWithJSON,
@@ -115,20 +113,8 @@ function officialAdcpToolSummary(
   );
 }
 
-function schemaForModernMcp(
-  toolName: string,
-  schema: unknown,
-  adcpVersion: string,
-  profile: 'media-buy' | 'all'
-): StandardSchemaWithJSON {
-  const officialSchema = officialAdcpInputSchema(toolName, adcpVersion, profile);
-  if (officialSchema) {
-    // This official MCP bridge supplies both validation and the JSON
-    // conversion hook that Zod versions before 4.2 do not implement.
-    return fromJsonSchema(officialSchema as JsonSchemaType);
-  }
-
-  if (!hasJsonConversionForSchemaOrRawShape(schema) && !warnedAboutCustomSchemaJsonConversion) {
+function schemaForModernMcp(schema: unknown, hasOfficialSchema: boolean): StandardSchemaWithJSON {
+  if (!hasOfficialSchema && !hasJsonConversionForSchemaOrRawShape(schema) && !warnedAboutCustomSchemaJsonConversion) {
     warnedAboutCustomSchemaJsonConversion = true;
     console.warn(
       '[adcp/serve] A custom MCP tool schema does not expose ~standard.jsonSchema. ' +
@@ -156,17 +142,31 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
   const modernToolDefinitions: Array<
     Omit<RegisteredToolDefinition, 'inputSchema' | 'outputSchema'> & {
       inputSchema?: StandardSchemaWithJSON;
+      advertisedInputSchema?: Readonly<Record<string, unknown>>;
       outputSchema?: StandardSchemaWithJSON;
     }
   > = toolDefinitions.map(tool => {
     const { inputSchema, outputSchema, ...definition } = tool;
     const description = tool.description ?? officialAdcpToolSummary(tool.name, adcpVersion, activeMcpToolProfile);
+    // Framework-registered AdCP tools carry the version marker below. A
+    // hand-wrapped adopter tool may reuse an official name while intentionally
+    // defining a different contract; advertising the official schema for that
+    // tool would lie about the schema enforced at call time.
+    const frameworkAdcpTool = tool._meta?.adcp_version === adcpVersion;
+    const advertisedInputSchema = frameworkAdcpTool
+      ? officialAdcpInputSchema(tool.name, adcpVersion, activeMcpToolProfile)
+      : undefined;
     return {
       ...definition,
       ...(description !== undefined && { description }),
       ...(inputSchema !== undefined && {
-        inputSchema: schemaForModernMcp(tool.name, inputSchema, adcpVersion, activeMcpToolProfile),
+        // Keep call-time validation on the adopter/framework schema. The
+        // framework's AdCP validator must see domain-invalid objects so it can
+        // return a structured `adcp_error` + context echo; the official strict
+        // projection remains discovery-only below.
+        inputSchema: schemaForModernMcp(inputSchema, advertisedInputSchema !== undefined),
       }),
+      ...(advertisedInputSchema !== undefined && { advertisedInputSchema }),
       // Output schemas can dwarf the input discovery surface and are not
       // required for clients to form tool calls. Preserve an adopter's
       // explicitly registered schema, but do not replace it with a bundled
@@ -209,6 +209,10 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
             args,
             authInfo: toAdcpAuthInfo(ctx.http?.authInfo),
             signal: ctx.mcpReq.signal,
+            // Only strengthen calls for tools whose exact official schema we
+            // advertise. Hidden compatibility tools remain directly callable
+            // and retain the adopter's configured validation mode.
+            ...(tool.advertisedInputSchema !== undefined && { enforceRequestSchema: true }),
           });
 
         if (tool.inputSchema !== undefined) {
@@ -241,10 +245,11 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
                 name: tool.name,
                 ...(tool.title !== undefined && { title: tool.title }),
                 ...(tool.description !== undefined && { description: tool.description }),
-                inputSchema: (modern.toolInputSchemaJson(tool.name) ?? {
-                  type: 'object',
-                  properties: {},
-                }) as unknown as ModernTool['inputSchema'],
+                inputSchema: (tool.advertisedInputSchema ??
+                  modern.toolInputSchemaJson(tool.name) ?? {
+                    type: 'object',
+                    properties: {},
+                  }) as unknown as ModernTool['inputSchema'],
                 ...(registered.outputSchemaJson !== undefined && { outputSchema: registered.outputSchemaJson }),
                 ...(tool.annotations !== undefined && { annotations: tool.annotations as ToolAnnotations }),
                 ...(tool._meta !== undefined && { _meta: tool._meta }),
