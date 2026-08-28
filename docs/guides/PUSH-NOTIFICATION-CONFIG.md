@@ -149,6 +149,17 @@ Custom registration stores used by durability-protected mutation flows must also
 
 For deterministic tests or infrastructure-managed keys, set `webhookVerification.jwks`. Otherwise seller key discovery is automatic and uses an unauthenticated official protocol client for the capabilities step, so credentials configured for one endpoint are never transplanted to the registered callback origin. Sellers whose capability discovery requires authentication should provide an origin-bound `webhookVerification.fetchCapabilities(agentUrl, protocol)` callback or inject `webhookVerification.jwks` directly.
 
+When a cross-origin seller is authorized through a constrained
+`brand.json.authorized_operators[]` entry, also configure the trusted
+`webhookVerification.resolverOptions.requiredOperatorBrand`,
+`requiredOperatorScope`, and/or `requiredOperatorCountry` values that select the
+intended grant. Narrow brand, scope, or country lists fail closed without this
+context. Broad grants use `brands: ['*']`, omitted scopes (or `['all']`), and
+omitted countries. Delegated JWKS caches never outlive `valid_until`.
+Resolver options are trusted client-wide policy; they are not inferred from
+individual tool arguments. Use separate clients/resolvers for operations with
+different constrained brand, scope, or country tuples.
+
 ### Legacy HMAC-SHA256
 
 When `webhookSecret` is configured, the legacy webhook authentication path uses `HMAC-SHA256`. The agent signs `${timestamp}.${raw_body_bytes}` with the shared secret and sends:

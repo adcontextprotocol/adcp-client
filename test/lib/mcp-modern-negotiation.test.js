@@ -574,6 +574,90 @@ test('serve exposes AdCP tools to a client pinned to MCP 2026-07-28', async t =>
   await hostileClient.close().catch(() => {});
 });
 
+test('modern serving returns structured AdCP validation errors while advertising the strict official schema', async t => {
+  const { serve, InMemoryStateStore } = require('../../dist/lib/index.js');
+  const { createAdcpServer } = require('../../dist/lib/server/legacy/v5/index.js');
+  const { Client, StreamableHTTPClientTransport } = require('@modelcontextprotocol/client');
+
+  let handlerCalls = 0;
+  const httpServer = serve(
+    () =>
+      createAdcpServer({
+        name: 'modern-validation-test',
+        version: '1.0.0',
+        adcpVersion: '3.2.0-beta.8',
+        mcpToolProfile: 'all',
+        stateStore: new InMemoryStateStore(),
+        validation: { requests: 'off', responses: 'off' },
+        mediaBuy: {
+          createMediaBuy: async () => {
+            handlerCalls += 1;
+            return { media_buy_id: 'mb-modern-validation', packages: [], status: 'pending_creative' };
+          },
+        },
+      }),
+    { port: 0, onListening: () => {} }
+  );
+  await new Promise((resolve, reject) => {
+    httpServer.once('error', reject);
+    if (httpServer.listening) resolve();
+    else httpServer.once('listening', resolve);
+  });
+  const address = httpServer.address();
+  assert.ok(address && typeof address === 'object');
+  const client = new Client(
+    { name: 'modern-validation-client', version: '1.0.0' },
+    { versionNegotiation: { mode: { pin: '2026-07-28' } } }
+  );
+
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await closeServer(httpServer);
+  });
+
+  await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`)));
+  const listed = await client.listTools();
+  const createMediaBuy = listed.tools.find(tool => tool.name === 'create_media_buy');
+  assert.ok(createMediaBuy);
+  assert.match(createMediaBuy.inputSchema.$id, /\/mcp\/2026-07-28\/media-buy\/create-media-buy-request\.json$/);
+  assert.equal(
+    createMediaBuy.inputSchema.$defs['external:media-buy/package-request.json'].properties.budget.minimum,
+    0
+  );
+
+  const context = { correlation_id: 'negative-budget-probe' };
+  const baseArguments = {
+    account: { account_id: 'acct-modern-validation' },
+    brand: { domain: 'example.com' },
+    start_time: '2026-09-01T00:00:00Z',
+    end_time: '2026-09-02T00:00:00Z',
+    packages: [{ product_id: 'product-1', pricing_option_id: 'pricing-1', budget: -1 }],
+    idempotency_key: 'modern-validation-negative',
+    context,
+  };
+  const rejected = await client.callTool({ name: 'create_media_buy', arguments: baseArguments });
+  assert.equal(rejected.isError, true);
+  assert.equal(rejected.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+  assert.equal(rejected.structuredContent.adcp_error.recovery, 'correctable');
+  assert.deepEqual(rejected.structuredContent.context, context);
+  assert.match(JSON.stringify(rejected.structuredContent.adcp_error), /packages\/0\/budget/);
+  assert.match(JSON.stringify(rejected.structuredContent.adcp_error), /minimum/);
+  assert.doesNotMatch(rejected.content.map(part => part.text ?? '').join('\n'), /Input validation error/);
+  assert.equal(handlerCalls, 0);
+
+  const accepted = await client.callTool({
+    name: 'create_media_buy',
+    arguments: {
+      ...baseArguments,
+      idempotency_key: 'modern-validation-positive',
+      packages: [{ product_id: 'product-1', pricing_option_id: 'pricing-1', budget: 1 }],
+    },
+  });
+  assert.notEqual(accepted.isError, true);
+  assert.deepEqual(accepted.structuredContent.context, context);
+  assert.equal(handlerCalls, 1);
+});
+
 test('modern serving honors the resolved AdCP MCP tool profile', async () => {
   const { serve, InMemoryStateStore } = require('../../dist/lib/index.js');
   const { createAdcpServer, MEDIA_BUY_MCP_TOOL_PROFILE } = require('../../dist/lib/server/create-adcp-server.js');
@@ -589,6 +673,7 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
           adcpVersion: '3.2.0-beta.8',
           ...(mcpToolProfile !== undefined && { mcpToolProfile }),
           stateStore: new InMemoryStateStore(),
+          validation: { requests: 'off', responses: 'off' },
           mediaBuy: {
             listProducts: async () => ({ outcome: 'listed', products: [], feed_version: 'feed-1' }),
             requestProposals: async () => ({ outcome: 'rejected', reason: 'fixture' }),
@@ -621,13 +706,17 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
     try {
       await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`)));
       const listed = await client.listTools();
+      let hiddenCompatibilityResult;
       if (mcpToolProfile === undefined) {
-        await client.callTool({
+        hiddenCompatibilityResult = await client.callTool({
           name: 'get_products',
-          arguments: { buying_mode: 'brief', brief: 'legacy compatibility probe' },
+          // Deliberately violates the hidden tool's official schema. Hidden
+          // compatibility tools retain the adopter's explicit validation-off
+          // policy even though advertised framework tools are strengthened.
+          arguments: { buying_mode: 'not-a-mode', brief: 'legacy compatibility probe' },
         });
       }
-      return { listed, legacyCalls };
+      return { listed, legacyCalls, hiddenCompatibilityResult };
     } finally {
       await client.close().catch(() => {});
       await closeServer(httpServer);
@@ -642,6 +731,11 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
   assert.ok(!compactNames.includes('get_products'));
   assert.ok(!compactNames.includes('build_creative'));
   assert.equal(compactResult.legacyCalls, 1, 'a legacy tool hidden from discovery must remain directly callable');
+  assert.notEqual(
+    compactResult.hiddenCompatibilityResult?.isError,
+    true,
+    'hidden compatibility calls must retain an explicit validation-off policy'
+  );
   assert.ok(
     compactNames.every(name => MEDIA_BUY_MCP_TOOL_PROFILE.includes(name)),
     compactNames.join(', ')
@@ -702,14 +796,18 @@ test('modern serving preserves explicitly registered custom schemas and descript
   const { createModernMcpServerAdapter } = require('../../dist/lib/server/mcp-modern-server.js');
 
   const legacy = new McpServer({ name: 'modern-output-schema-test', version: '1.0.0' });
+  let handlerCalls = 0;
   legacy.registerTool(
     'request_proposals',
     {
       description: 'Adopter-specific proposal bridge.',
-      inputSchema: {},
+      inputSchema: { required_value: z.string() },
       outputSchema: z.object({ placeholder: z.string() }),
     },
-    async () => ({ content: [{ type: 'text', text: 'unused' }] })
+    async () => {
+      handlerCalls += 1;
+      return { content: [{ type: 'text', text: 'unused' }] };
+    }
   );
   const adapter = createModernMcpServerAdapter(wrapMcpServer(legacy, undefined, '3.2.0-beta.8'));
   const httpServer = createServer((req, res) => void adapter.handle(req, res));
@@ -729,8 +827,13 @@ test('modern serving preserves explicitly registered custom schemas and descript
   const listed = await client.listTools();
   const proposals = listed.tools.find(tool => tool.name === 'request_proposals');
   assert.equal(proposals.description, 'Adopter-specific proposal bridge.');
+  assert.ok(proposals.inputSchema.properties?.required_value);
+  assert.equal(proposals.inputSchema.properties?.account, undefined);
   assert.ok(proposals.outputSchema.properties?.placeholder);
   assert.equal(proposals.outputSchema.properties?.outcome, undefined);
+  const rejected = await client.callTool({ name: 'request_proposals', arguments: {} });
+  assert.equal(rejected.isError, true, 'the adopter-provided call-time schema must remain enforced');
+  assert.equal(handlerCalls, 0);
 });
 
 test('modern serving forwards portable MCP App metadata for custom tools', async t => {

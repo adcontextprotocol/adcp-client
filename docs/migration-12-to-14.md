@@ -88,6 +88,15 @@ Body-bearing requests fail closed without `rawBody`. HMAC webhook registrations 
 
 OAuth flow handlers must preserve `state`, verify callback binding, and pass an HTTP(S) URL to `redirectToAuthorization()`. Literal-host SSRF validation now applies in every `NODE_ENV`; private/internal targets require the documented explicit opt-in and metadata addresses remain blocked.
 
+Cross-origin signing-key discovery now requires a schema-shaped, active
+`authorized_operators[]` grant. Broad grants use `brands: ['*']`, omitted
+scopes (or `['all']`), and omitted countries. For narrower grants, configure
+the matching trusted `requiredOperatorBrand`, `requiredOperatorScope`, and/or
+`requiredOperatorCountry` under `webhookVerification.resolverOptions` (or the
+corresponding low-level resolver options); constrained dimensions fail closed
+without context. Cached delegated keys expire no later than `valid_until`. See
+[the 13→14 migration detail](migration-13-to-14.md#cross-origin-signing-key-delegation).
+
 ## SDK 13 payload and API changes included in 14
 
 - Narrow `CreateMediaBuyPayload` with `'errors' in payload` before reading success fields.

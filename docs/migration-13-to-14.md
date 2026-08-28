@@ -32,6 +32,55 @@ installed. Existing `createA2AAdapter()` card options remain accepted, but
 `preferredTransport` and `protocolVersion` are deprecated because the adapter
 now advertises JSON-RPC 1.0 plus its 0.3 compatibility interface.
 
+### Cross-origin signing-key delegation
+
+Signing-key discovery now evaluates the complete matching
+`authorized_operators[]` entry. Bare strings, missing/empty `brands`, malformed
+validity timestamps, future grants, and grants at or after `valid_until` no
+longer authorize an operator. Domain comparison remains eTLD+1-based (including
+private suffixes), while brand, activity scope, country, and time must all match
+the same entry.
+
+Broad grants remain configuration-free: use `brands: ['*']`, omit `scopes` for
+all activities (or use `['all']`), and omit `countries` for global scope. If a
+house publishes a constrained grant, bind the trusted verification context:
+
+```ts
+const client = new SingleAgentClient(agent, {
+  webhookVerification: {
+    resolverOptions: {
+      requiredOperatorBrand: 'brand_a',
+      requiredOperatorScope: 'media_buying',
+      requiredOperatorCountry: 'GB',
+    },
+  },
+});
+```
+
+These resolver options are trusted client-wide key-discovery policy, not
+per-operation authorization inferred from tool arguments. Use a separate
+client/resolver for each constrained brand, scope, and country tuple; do not
+reuse the example client for operations outside `brand_a` / `media_buying` /
+`GB`.
+
+The same options are accepted by `resolveAgent()`, `getAgentJwks()`,
+`createAgentJwksSet()`, and `ResolvedAgentJwksResolver`. A constrained list with
+no corresponding trusted option fails closed. Built-in JWKS caches now expire
+at the earlier of their configured TTL and the accepted delegation's
+`valid_until` boundary. Low-level `getAgentJwks()` callers receive that boundary
+as `operatorAuthorizationValidUntil` and must apply it to any custom cache.
+
+### Modern MCP validation errors
+
+Modern MCP `tools/list` continues to advertise the exact official AdCP input
+schema. Call-time domain validation now remains in the AdCP framework pipeline,
+so schema-invalid AdCP objects return the framework's structured `adcp_error`
+and `context` echo instead of a generic MCP input-validation string. Because
+the modern transport advertises that strict schema, it requests strict
+framework request validation even when the server-wide validation mode is
+`warn` or `off`; explicit custom tool schemas remain enforced by the MCP server
+layer.
+
 ### Beta.5 task webhook registration and polling
 
 `push_notification_config` is now an AdCP application-layer field across MCP,

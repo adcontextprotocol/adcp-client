@@ -122,6 +122,7 @@ export {
   readIdentityPosture,
   type AgentResolution,
   type AgentProtocol,
+  type AuthorizedOperatorScope,
   type AgentResolverErrorCode,
   type AgentResolverErrorDetail,
   type AgentEntry,
