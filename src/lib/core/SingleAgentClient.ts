@@ -158,9 +158,11 @@ import {
 } from './AsyncHandler';
 import { verifyWebhookRequest, type WebhookHeaderValue, type WebhookHeadersLike } from '../webhooks';
 import {
+  canonicalDelegatedOperatorAuthorization,
   InMemoryWebhookRegistrationStore,
   type WebhookRegistration,
   type WebhookRegistrationStore,
+  validateWebhookRegistrationAuthorization,
 } from './webhook-registration';
 import {
   InMemoryReplayStore,
@@ -168,6 +170,7 @@ import {
   InMemoryRevocationStore,
   type RevocationStore,
   type JwksResolver,
+  type DelegatedOperatorAuthorizationContext,
   WebhookSignatureError,
   type WebhookSignatureErrorCode,
   verifyWebhookSignature as verifyRfc9421WebhookSignature,
@@ -175,6 +178,7 @@ import {
   type ResolvedAgentJwksResolverOptions,
   canonicalTargetUri,
 } from '../signing/server';
+import { AgentResolverError } from '../signing/agent-resolver/errors';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
 import { getLatestA2ADataPartFromTask } from '../utils/a2a-artifacts';
 import { extractAdcpTaskStatusFromPayload, isAdcpStatus } from './task-status';
@@ -462,6 +466,13 @@ const RECORDLESS_HMAC_READ_ONLY_TASKS = new Set([
  * credentials. Map insertion order provides LRU eviction.
  */
 const TASK_SCOPED_STATE_LIMIT = 10_000;
+
+/**
+ * Automatic seller-key resolvers are cheap to recreate, so bound tuple-aware
+ * cache cardinality for long-lived shared clients. Map insertion order is the
+ * LRU order; successful lookups move their entry to the newest position.
+ */
+const WEBHOOK_JWKS_RESOLVER_LIMIT = 1_024;
 
 interface CanonicalCreativeTaskAssociation {
   taskType: string;
@@ -928,6 +939,9 @@ function snapshotTaskOptions<T extends TaskOptions | undefined>(options: T): T {
     ...options,
     ...(options.transport !== undefined && { transport: { ...options.transport } }),
     ...(options.metadata !== undefined && { metadata: structuredClone(options.metadata) }),
+    ...(options.delegatedOperatorAuthorization !== undefined && {
+      delegatedOperatorAuthorization: { ...options.delegatedOperatorAuthorization },
+    }),
   } as T;
 }
 
@@ -1784,6 +1798,7 @@ export class SingleAgentClient {
     operationId: string;
     callbackUrl: string;
     mode: WebhookRegistration['mode'];
+    delegatedOperatorAuthorization?: DelegatedOperatorAuthorizationContext;
   }): Promise<void> {
     const nowMs = this.config.webhookVerification?.now
       ? Math.floor(this.config.webhookVerification.now() * 1000)
@@ -1812,20 +1827,38 @@ export class SingleAgentClient {
     persistedAgentUrl.username = '';
     persistedAgentUrl.password = '';
     persistedAgentUrl.hash = '';
+    const delegatedOperatorAuthorization = this.effectiveDelegatedOperatorAuthorization(
+      args.delegatedOperatorAuthorization
+    );
+    const registration: WebhookRegistration = {
+      agentId: args.agent.id,
+      agentUrl: persistedAgentUrl.toString(),
+      protocol: args.agent.protocol,
+      operationId: args.operationId,
+      taskType: args.taskType,
+      callbackUrl: args.callbackUrl,
+      method: 'POST',
+      mode: args.mode,
+      authorizationContextVersion: 1,
+      ...(delegatedOperatorAuthorization !== undefined && { delegatedOperatorAuthorization }),
+      ...(previewMode && { previewMode }),
+      createdAt: nowMs,
+      expiresAt: nowMs + ttlSeconds * 1000,
+    };
+    validateWebhookRegistrationAuthorization(registration);
     try {
-      await this.webhookRegistrationStore.putIfAbsent({
-        agentId: args.agent.id,
-        agentUrl: persistedAgentUrl.toString(),
-        protocol: args.agent.protocol,
-        operationId: args.operationId,
-        taskType: args.taskType,
-        callbackUrl: args.callbackUrl,
-        method: 'POST',
-        mode: args.mode,
-        ...(previewMode && { previewMode }),
-        createdAt: nowMs,
-        expiresAt: nowMs + ttlSeconds * 1000,
-      });
+      await this.webhookRegistrationStore.putIfAbsent(registration);
+      const persisted = await this.webhookRegistrationStore.get(args.agent.id, args.operationId);
+      if (
+        !persisted ||
+        persisted.authorizationContextVersion !== 1 ||
+        canonicalDelegatedOperatorAuthorization(persisted.delegatedOperatorAuthorization) !==
+          canonicalDelegatedOperatorAuthorization(delegatedOperatorAuthorization)
+      ) {
+        throw new Error(
+          'Webhook registration store did not preserve the versioned delegated-operator authorization context.'
+        );
+      }
     } catch (cause) {
       // RFC 9421 has no safe fallback without seller-pinned provenance. Legacy
       // HMAC remains verifiable from the configured global secret only for the
@@ -1837,6 +1870,40 @@ export class SingleAgentClient {
         throw error;
       }
     }
+  }
+
+  private configuredDelegatedOperatorAuthorization(): DelegatedOperatorAuthorizationContext | undefined {
+    const options = this.config.webhookVerification?.resolverOptions;
+    if (!options) return undefined;
+    const context: DelegatedOperatorAuthorizationContext = {
+      ...(options.requiredOperatorBrand !== undefined && { brand: options.requiredOperatorBrand }),
+      ...(options.requiredOperatorScope !== undefined && { scope: options.requiredOperatorScope }),
+      ...(options.requiredOperatorCountry !== undefined && { country: options.requiredOperatorCountry }),
+    };
+    return Object.keys(context).length > 0 ? context : undefined;
+  }
+
+  private effectiveDelegatedOperatorAuthorization(
+    perCall: DelegatedOperatorAuthorizationContext | undefined
+  ): DelegatedOperatorAuthorizationContext | undefined {
+    // A per-call tuple is deliberately whole-object precedence. Mixing its
+    // fields with client defaults can silently create an authorization tuple
+    // the caller never selected.
+    const selected = perCall ?? this.configuredDelegatedOperatorAuthorization();
+    if (selected === undefined) return undefined;
+    return { ...selected };
+  }
+
+  private delegatedOperatorAuthorizationForRegistration(
+    registration: Readonly<WebhookRegistration>
+  ): DelegatedOperatorAuthorizationContext | undefined {
+    validateWebhookRegistrationAuthorization(registration);
+    if (registration.authorizationContextVersion === 1) {
+      return registration.delegatedOperatorAuthorization === undefined
+        ? undefined
+        : { ...registration.delegatedOperatorAuthorization };
+    }
+    return undefined;
   }
 
   private async markWebhookDurableSettlementRequired(operationId: string): Promise<void> {
@@ -1852,12 +1919,43 @@ export class SingleAgentClient {
   private webhookJwksFor(registration: Readonly<WebhookRegistration>): JwksResolver {
     const configured = this.config.webhookVerification?.jwks;
     if (configured) return configured;
-    const key = `${registration.protocol}\x00${registration.agentUrl}`;
+    if (registration.authorizationContextVersion !== 1) {
+      throw new ConfigurationError(
+        'Automatic seller-key discovery cannot verify a legacy webhook registration without a persisted authorization context.'
+      );
+    }
+    const delegatedOperatorAuthorization = this.delegatedOperatorAuthorizationForRegistration(registration);
+    const key = JSON.stringify([
+      registration.protocol,
+      registration.agentUrl,
+      registration.authorizationContextVersion ?? 0,
+      canonicalDelegatedOperatorAuthorization(delegatedOperatorAuthorization),
+    ]);
     const existing = this.webhookJwksResolvers.get(key);
-    if (existing) return existing;
+    if (existing) {
+      this.webhookJwksResolvers.delete(key);
+      this.webhookJwksResolvers.set(key, existing);
+      return existing;
+    }
 
+    const configuredResolverOptions = this.config.webhookVerification?.resolverOptions;
+    const {
+      requiredOperatorBrand: _configuredBrand,
+      requiredOperatorScope: _configuredScope,
+      requiredOperatorCountry: _configuredCountry,
+      ...resolverOptionsWithoutOperatorContext
+    } = configuredResolverOptions ?? {};
     const resolver = new ResolvedAgentJwksResolver(registration.agentUrl, registration.protocol, {
-      ...this.config.webhookVerification?.resolverOptions,
+      ...resolverOptionsWithoutOperatorContext,
+      ...(delegatedOperatorAuthorization?.brand !== undefined && {
+        requiredOperatorBrand: delegatedOperatorAuthorization.brand,
+      }),
+      ...(delegatedOperatorAuthorization?.scope !== undefined && {
+        requiredOperatorScope: delegatedOperatorAuthorization.scope,
+      }),
+      ...(delegatedOperatorAuthorization?.country !== undefined && {
+        requiredOperatorCountry: delegatedOperatorAuthorization.country,
+      }),
       fetchCapabilities: agentUrl => {
         const configuredFetch = this.config.webhookVerification?.fetchCapabilities;
         if (configuredFetch) return configuredFetch(agentUrl, registration.protocol);
@@ -1885,6 +1983,10 @@ export class SingleAgentClient {
         );
       },
     });
+    if (this.webhookJwksResolvers.size >= WEBHOOK_JWKS_RESOLVER_LIMIT) {
+      const oldest = this.webhookJwksResolvers.keys().next().value;
+      if (oldest !== undefined) this.webhookJwksResolvers.delete(oldest);
+    }
     this.webhookJwksResolvers.set(key, resolver);
     return resolver;
   }
@@ -3140,6 +3242,16 @@ export class SingleAgentClient {
         };
       }
       try {
+        validateWebhookRegistrationAuthorization(registration);
+      } catch (cause) {
+        return {
+          ok: false,
+          code: 'webhook_registration_store_unavailable',
+          message: 'Webhook registration state contains invalid authorization context.',
+          cause,
+        };
+      }
+      try {
         const registeredAgentUrl = new URL(registration.agentUrl);
         if (registeredAgentUrl.username || registeredAgentUrl.password) {
           throw new TypeError('Webhook registration seller URL contains userinfo.');
@@ -3246,6 +3358,7 @@ export class SingleAgentClient {
       const normalizedHeaders = normalizeRfc9421WebhookHeaders(options.headers);
       if (!normalizedHeaders.ok) return normalizedHeaders.failure;
       try {
+        const delegatedOperatorAuthorization = this.delegatedOperatorAuthorizationForRegistration(registration);
         await verifyRfc9421WebhookSignature(
           {
             method: options.requestMethod,
@@ -3259,11 +3372,25 @@ export class SingleAgentClient {
             revocationStore: this.webhookRevocationStore,
             ...(this.config.webhookVerification?.now && { now: this.config.webhookVerification.now }),
             agentUrlForKeyid: () => registration.agentUrl,
+            ...(registration.authorizationContextVersion === 1 && {
+              replayScopeBinding: `delegated-operator:v1:${crypto
+                .createHash('sha256')
+                .update(canonicalDelegatedOperatorAuthorization(delegatedOperatorAuthorization))
+                .digest('base64url')}`,
+            }),
           }
         );
       } catch (cause) {
         if (cause instanceof WebhookSignatureError) {
           return { ok: false, code: cause.code, message: cause.message, cause };
+        }
+        if (cause instanceof AgentResolverError && !cause.code.endsWith('_unreachable')) {
+          return {
+            ok: false,
+            code: 'webhook_signature_key_unknown',
+            message: 'The registered seller is not authorized to supply this webhook signing key.',
+            cause,
+          };
         }
         return {
           ok: false,
@@ -6706,7 +6833,7 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetAdCPCapabilitiesResponse>> {
-    return withTaskDeadline(options, effectiveOptions =>
+    return withTaskDeadline(snapshotTaskOptions(options), effectiveOptions =>
       this.getAdcpCapabilitiesWithinDeadline(params, inputHandler, effectiveOptions)
     );
   }

@@ -57,11 +57,35 @@ const client = new SingleAgentClient(agent, {
 });
 ```
 
-These resolver options are trusted client-wide key-discovery policy, not
-per-operation authorization inferred from tool arguments. Use a separate
-client/resolver for each constrained brand, scope, and country tuple; do not
-reuse the example client for operations outside `brand_a` / `media_buying` /
-`GB`.
+These resolver options remain a trusted client-wide fallback for a client that
+uses one tuple. Shared clients can now select and durably persist the trusted
+tuple per dispatch:
+
+```ts
+await client.createMediaBuy(request, undefined, {
+  delegatedOperatorAuthorization: {
+    brand: 'brand_b',
+    scope: 'media_buying',
+    country: 'US',
+  },
+});
+```
+
+The per-call object takes whole-object precedence and is local receiver policy;
+the SDK neither infers it from request fields nor sends it on the wire. Custom
+`WebhookRegistrationStore` implementations must round-trip the versioned
+authorization fields so restart-time verification can revalidate the tuple
+against live `brand.json`, with immediate read-your-writes consistency after
+`putIfAbsent()`. The SDK reads the row back before seller dispatch and fails
+closed if a legacy projection drops either field. Do not persist a prior allow
+decision as authority.
+
+Pre-upgrade RFC 9421 rows without `authorizationContextVersion` cannot be
+safely backfilled from the receiver's current configuration. Automatic key
+discovery rejects them after upgrade; drain them first or re-dispatch the
+operation to create a versioned registration. A caller-supplied
+`webhookVerification.jwks` may support legacy rows only when it independently
+preserves their original trust boundary.
 
 The same options are accepted by `resolveAgent()`, `getAgentJwks()`,
 `createAgentJwksSet()`, and `ResolvedAgentJwksResolver`. A constrained list with
@@ -69,6 +93,8 @@ no corresponding trusted option fails closed. Built-in JWKS caches now expire
 at the earlier of their configured TTL and the accepted delegation's
 `valid_until` boundary. Low-level `getAgentJwks()` callers receive that boundary
 as `operatorAuthorizationValidUntil` and must apply it to any custom cache.
+Webhook verification also rechecks that boundary immediately before accepting a
+delivery and committing its replay nonce.
 
 ### Modern MCP validation errors
 

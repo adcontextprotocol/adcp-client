@@ -19,6 +19,20 @@ interface AgentConfig {
   headers?: Record<string, string>;
 }
 
+interface DelegatedOperatorAuthorizationContext {
+  brand?: string;
+  scope?: 'media_buying' | 'creative_generation' | 'rights_clearance'
+        | 'governance' | 'measurement' | 'agent_operations';
+  country?: string;
+}
+
+interface TaskOptions {
+  // Trusted local receiver policy; snapshotted and persisted with generated
+  // webhook registrations, never inferred from or sent in task arguments.
+  delegatedOperatorAuthorization?: DelegatedOperatorAuthorizationContext;
+  // ...deadline, cancellation, transport, and conversation options...
+}
+
 interface TaskResult<T = any> {
   success: boolean;
   status: 'completed' | 'deferred' | 'submitted' | 'input-required'

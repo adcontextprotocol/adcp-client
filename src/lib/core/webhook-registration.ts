@@ -1,4 +1,8 @@
 import { ConfigurationError } from '../errors';
+import type {
+  AuthorizedOperatorScope,
+  DelegatedOperatorAuthorizationContext,
+} from '../signing/agent-resolver/resolve-agent';
 import { isWebhookLoopbackHost } from '../signing/webhook-verifier';
 
 export type WebhookAuthenticationMode = 'hmac-sha256' | 'rfc9421';
@@ -19,6 +23,10 @@ export interface WebhookRegistration {
   callbackUrl: string;
   method: 'POST';
   mode: WebhookAuthenticationMode;
+  /** Versioned marker distinguishing tuple-aware registrations from legacy rows. */
+  authorizationContextVersion?: 1;
+  /** Trusted local tuple used to re-authorize delegated seller keys after restart. */
+  delegatedOperatorAuthorization?: Readonly<DelegatedOperatorAuthorizationContext>;
   /** Originating preview API, persisted so async routing survives races and restarts. */
   previewMode?: 'canonical' | 'legacy';
   /** Callback must fail closed unless a durable mutation-settlement route is recoverable. */
@@ -34,7 +42,9 @@ export interface WebhookRegistrationStore {
   get(agentId: string, operationId: string): Promise<Readonly<WebhookRegistration> | undefined>;
   /**
    * Atomically create a registration. An identical retry is idempotent; a
-   * conflicting live registration for the same key MUST reject.
+   * conflicting live registration for the same key MUST reject. A successful
+   * return MUST provide immediate read-your-writes consistency through `get()`
+   * so the SDK can verify trusted authorization provenance before dispatch.
    */
   putIfAbsent(registration: WebhookRegistration): Promise<void>;
   /** Atomically mark a live registration as requiring durable mutation settlement. */
@@ -93,7 +103,7 @@ export class InMemoryWebhookRegistrationStore implements WebhookRegistrationStor
     if (this.entries.size >= this.maxEntries) {
       throw new Error('Webhook registration store capacity reached; refusing to dispatch an untracked callback.');
     }
-    this.entries.set(key, Object.freeze({ ...registration }));
+    this.entries.set(key, freezeRegistration(registration));
   }
 
   async delete(agentId: string, operationId: string): Promise<void> {
@@ -107,7 +117,7 @@ export class InMemoryWebhookRegistrationStore implements WebhookRegistrationStor
       this.entries.delete(key);
       throw new Error('Cannot mark a missing or expired webhook registration for durable settlement.');
     }
-    this.entries.set(key, Object.freeze({ ...registration, requiresDurableSettlement: true }));
+    this.entries.set(key, freezeRegistration({ ...registration, requiresDurableSettlement: true }));
   }
 
   private pruneExpired(): void {
@@ -136,6 +146,7 @@ function validateRegistration(registration: WebhookRegistration): void {
   if (registration.previewMode !== undefined && !['canonical', 'legacy'].includes(registration.previewMode)) {
     throw new TypeError('Webhook registration previewMode must be canonical or legacy.');
   }
+  validateWebhookRegistrationAuthorization(registration);
   const callback = new URL(registration.callbackUrl);
   if (callback.username || callback.password || callback.hash) {
     throw new TypeError('Webhook callbackUrl cannot contain userinfo or a fragment.');
@@ -152,6 +163,73 @@ function validateRegistration(registration: WebhookRegistration): void {
   }
 }
 
+const AUTHORIZED_OPERATOR_SCOPES = new Set<AuthorizedOperatorScope>([
+  'media_buying',
+  'creative_generation',
+  'rights_clearance',
+  'governance',
+  'measurement',
+  'agent_operations',
+]);
+
+/** @internal Validate trusted registration state before using it as authorization policy. */
+export function validateDelegatedOperatorAuthorizationContext(
+  value: Readonly<DelegatedOperatorAuthorizationContext> | undefined
+): void {
+  if (value === undefined) return;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('delegatedOperatorAuthorization must be an object.');
+  }
+  const unknown = Object.keys(value).filter(key => !['brand', 'scope', 'country'].includes(key));
+  if (unknown.length > 0) {
+    throw new TypeError('delegatedOperatorAuthorization contains unsupported fields.');
+  }
+  if (value.brand !== undefined && (typeof value.brand !== 'string' || !/^[a-z0-9_]+$/.test(value.brand))) {
+    throw new TypeError('delegatedOperatorAuthorization.brand must be a protocol brand id.');
+  }
+  if (value.scope !== undefined && (typeof value.scope !== 'string' || !AUTHORIZED_OPERATOR_SCOPES.has(value.scope))) {
+    throw new TypeError('delegatedOperatorAuthorization.scope is not an authorized-operator scope.');
+  }
+  if (value.country !== undefined && (typeof value.country !== 'string' || !/^[A-Z]{2}$/.test(value.country))) {
+    throw new TypeError('delegatedOperatorAuthorization.country must be an uppercase ISO alpha-2 code.');
+  }
+  if (value.brand === undefined && value.scope === undefined && value.country === undefined) {
+    throw new TypeError('delegatedOperatorAuthorization must select at least one authorization dimension.');
+  }
+}
+
+/** @internal Validate the versioned authorization fields returned by a custom durable store. */
+export function validateWebhookRegistrationAuthorization(
+  registration: Pick<WebhookRegistration, 'authorizationContextVersion' | 'delegatedOperatorAuthorization'>
+): void {
+  if (registration.authorizationContextVersion !== undefined && registration.authorizationContextVersion !== 1) {
+    throw new TypeError('Webhook registration authorizationContextVersion must be 1 when present.');
+  }
+  if (registration.delegatedOperatorAuthorization !== undefined && registration.authorizationContextVersion !== 1) {
+    throw new TypeError('Webhook registration delegatedOperatorAuthorization requires authorizationContextVersion 1.');
+  }
+  validateDelegatedOperatorAuthorizationContext(registration.delegatedOperatorAuthorization);
+}
+
+/** @internal Canonical collision-safe serialization for resolver and replay partitions. */
+export function canonicalDelegatedOperatorAuthorization(
+  value: Readonly<DelegatedOperatorAuthorizationContext> | undefined
+): string {
+  if (value === undefined) return '';
+  validateDelegatedOperatorAuthorizationContext(value);
+  return JSON.stringify([value.brand ?? null, value.scope ?? null, value.country ?? null]);
+}
+
+function freezeRegistration(registration: WebhookRegistration): Readonly<WebhookRegistration> {
+  const delegatedOperatorAuthorization = registration.delegatedOperatorAuthorization;
+  return Object.freeze({
+    ...registration,
+    ...(delegatedOperatorAuthorization !== undefined && {
+      delegatedOperatorAuthorization: Object.freeze({ ...delegatedOperatorAuthorization }),
+    }),
+  });
+}
+
 function sameRegistration(a: Readonly<WebhookRegistration>, b: WebhookRegistration): boolean {
   return (
     a.agentId === b.agentId &&
@@ -162,6 +240,9 @@ function sameRegistration(a: Readonly<WebhookRegistration>, b: WebhookRegistrati
     a.callbackUrl === b.callbackUrl &&
     a.method === b.method &&
     a.mode === b.mode &&
-    a.previewMode === b.previewMode
+    a.previewMode === b.previewMode &&
+    a.authorizationContextVersion === b.authorizationContextVersion &&
+    canonicalDelegatedOperatorAuthorization(a.delegatedOperatorAuthorization) ===
+      canonicalDelegatedOperatorAuthorization(b.delegatedOperatorAuthorization)
   );
 }
