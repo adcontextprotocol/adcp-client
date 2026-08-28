@@ -267,16 +267,22 @@ In-memory task registry refuses to construct outside `NODE_ENV=test/development`
 (production safety). For HITL-eligible production deployments:
 
 ```ts
-import { createPostgresTaskRegistry, getDecisioningTaskRegistryMigration } from '@adcp/sdk/server';
+import { createPostgresTaskRegistry, getDecisioningTaskRegistryBootstrap } from '@adcp/sdk/server';
 
 const taskRegistryNamespace = 'tenant:my-agent';
-await pool.query(getDecisioningTaskRegistryMigration({ namespace: taskRegistryNamespace }));
+await pool.query(getDecisioningTaskRegistryBootstrap({ namespace: taskRegistryNamespace }));
 
 createAdcpServerFromPlatform(platform, {
   name: '...', version: '...',
   taskRegistry: createPostgresTaskRegistry({ pool, namespace: taskRegistryNamespace }),
 });
 ```
+
+`getDecisioningTaskRegistryBootstrap()` is DDL for a new/empty table,
+not an application-boot upgrade for a populated pre-scope registry. Existing
+installations must follow the phased
+[`getDecisioningTaskRegistryScopeV1Upgrade()` runbook](./migration-task-registry-scoping.md#populated-postgresql-upgrade)
+before starting scoped writers.
 
 ## Common gotchas
 
@@ -463,15 +469,14 @@ createAdcpServerFromPlatform(platform, {
   `req.target_format_ids` (multi) vs `req.target_format_id` (single)
   and return the matching arm. Returning the wrong arm fails wire
   schema validation.
-- **`npm link` and `undici` peer drift.** The SDK depends on
-  `undici@^6.25.0`. Adopters using `npm link` (or `pnpm link`) to point
-  at a locally checked-out SDK during migration may find Node walks up
-  from the resolved canonical SDK path and binds the host workspace's
-  `undici` (often 7.x) instead — the SDK rejects 7.x at startup.
-  Workaround: run with `NODE_OPTIONS=--preserve-symlinks` so resolution
-  stays inside the SDK's own `node_modules`. Once the SDK is consumed
-  via published tarball (`npm install @adcp/sdk@x.y.z`), this
-  disappears — link mode is the only setup that triggers it.
+- **Node and Undici compatibility.** The SDK intentionally depends on
+  `undici@^6.28.0` for its fully supported runtime. The SDK requires Node
+  `^20.19.0 || >=22.12.0` so CommonJS consumers can load its ESM dependency
+  graph; Node 21 and Node 22.0–22.11 are outside that range.
+  A consumer override to `undici@>=7.29.0 <8` is best-effort and tested only
+  on Node `>=20.19.0`; older Undici 7 releases are below the reviewed security
+  floor. See [Node and Undici compatibility](./guides/NODE-UNDICI-COMPATIBILITY.md)
+  for the executable override fixture and supported matrix.
 - **`zod` is now a required peer dependency** (`^4.1.5` in 6.0.1; was
   `^4.1.0` in 6.0.0 — bumped to match the codegen tools' floors). The
   SDK's `ZodSchema` types must resolve to the same `zod` instance the

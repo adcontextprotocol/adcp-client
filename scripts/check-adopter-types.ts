@@ -84,6 +84,7 @@ import type {
   SyncCreativesHandlerResult,
   SyncEventSourcesPayload,
   SyncGovernanceHandlerResult,
+  TaskHandoffProgress,
   TaskRegistry,
   LegacyUpdateRightsPayload,
   UpdateMediaBuyPayload,
@@ -394,20 +395,19 @@ void extractAdcpErrorFromMcp;
 void extractAdcpErrorFromTransport;
 void createAdcpServerFromPlatform;
 
-// Scoped task-registry migration: the explicitly unsafe admin/test escape
-// hatches must survive stripInternal in the declarations that adopters pack.
+// Scoped task-registry migration: production reads require explicit authority;
+// the old unscoped lookup is intentionally absent from packed declarations.
 declare const _decisioningServer: DecisioningAdcpServer;
+void _decisioningServer.getTaskState('task_1', { accountId: 'acct_1', ownerScope: 'account:acct_1' });
+// @ts-expect-error unsafe task lookup is not a public production API
 void _decisioningServer.getTaskStateUnsafe('task_1');
 void _decisioningServer.awaitTaskUnsafe('task_1');
 const _taskRegistry: TaskRegistry = {
   scopeVersion: 1,
   async create() {
-    return { taskId: 'task_1' };
+    return { taskId: 'task_1', accountId: 'acct_1', ownerScope: 'account:acct_1' };
   },
   async getTask() {
-    return null;
-  },
-  async _getTaskUnsafe() {
     return null;
   },
   async complete() {},
@@ -417,8 +417,11 @@ const _taskRegistry: TaskRegistry = {
   async awaitTask() {},
   async _awaitTaskUnsafe() {},
 };
+// @ts-expect-error unsafe task lookup is not part of the public registry contract
 void _taskRegistry._getTaskUnsafe('task_1');
 void _taskRegistry._awaitTaskUnsafe('task_1');
+const _extendedProgress: TaskHandoffProgress = { message: 'working', creatives_processed: 3 };
+void _extendedProgress;
 
 const _createMediaBuyPayload: CreateMediaBuyPayload = {
   media_buy_id: 'mb_1',

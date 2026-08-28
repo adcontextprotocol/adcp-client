@@ -30,7 +30,7 @@
 import type { HandlerContext } from '../../create-adcp-server';
 import type { Account } from '../account';
 import type { RequestContext, CtxMetadataAccessor } from '../context';
-import type { TaskRegistry, TaskRegistryScope } from './task-registry';
+import { sanitizeTaskProgressForStorage, type ScopedTaskRef, type TaskRegistry } from './task-registry';
 import {
   _createTaskHandoff,
   type TaskHandoffContext,
@@ -184,16 +184,18 @@ export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
  * `heartbeat()` remains a no-op stub (v6.1); it is a liveness / TTL-reset
  * signal for operator infrastructure, not buyer-facing.
  */
-export function buildHandoffContext(
-  taskRegistry: TaskRegistry,
-  taskId: string,
-  scope: TaskRegistryScope
-): TaskHandoffContext {
+export function buildHandoffContext(taskRegistry: TaskRegistry, taskRef: ScopedTaskRef): TaskHandoffContext {
+  const { taskId } = taskRef;
   return {
     id: taskId,
+    taskRef,
     update: async progress => {
+      const sanitized = sanitizeTaskProgressForStorage(progress);
       try {
-        await taskRegistry.updateProgress(taskId, scope, progress);
+        const outcome = await taskRegistry.updateProgress(taskId, taskRef, sanitized);
+        if (outcome?.outcome === 'not_found_in_scope') {
+          throw new Error(`Task registry progress write matched no task in the supplied scope: ${taskId}`);
+        }
       } catch {
         // Swallow — a transient registry write failure must not abort the
         // adopter's background handoff function. The buyer-facing impact is

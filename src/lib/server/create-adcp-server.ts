@@ -90,7 +90,12 @@ import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError, applyAdcpErrorAllowlist, sanitizeStructuredAdcpError } from './errors';
 import type { BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
 import type { ResolvedAuthInfo } from './decisioning/account';
-import type { TaskRecord, TaskRegistry } from './decisioning/runtime/task-registry';
+import {
+  _sanitizeStoredTaskResultForWire,
+  sanitizeTaskProgressForStorage,
+  type TaskRecord,
+  type TaskRegistry,
+} from './decisioning/runtime/task-registry';
 import { protocolForTool } from './decisioning/runtime/protocol-for-tool';
 import { AdcpError } from './decisioning/async-outcome';
 import { redactCredentialPatterns } from './redact';
@@ -2569,6 +2574,15 @@ function toProtocolTaskStatus(task: TaskRecord): GetTaskStatusResponse | undefin
   const taskType = readRegistryTaskType(task);
   if (taskType === undefined) return undefined;
   const protocol = protocolForTool(taskType) as WireAdcpProtocol;
+  let progress: GetTaskStatusResponse['progress'];
+  if (task.progress !== undefined) {
+    try {
+      progress = sanitizeTaskProgressForStorage(task.progress);
+    } catch {
+      // Custom and legacy registries may return records written before
+      // progress validation existed. Omit unsafe data at the wire boundary.
+    }
+  }
   return {
     task_id: task.taskId,
     task_type: taskType,
@@ -2580,7 +2594,7 @@ function toProtocolTaskStatus(task: TaskRecord): GetTaskStatusResponse | undefin
       ? { completed_at: task.updatedAt }
       : {}),
     ...(task.hasWebhook !== undefined ? { has_webhook: task.hasWebhook === true } : {}),
-    ...(task.progress !== undefined ? { progress: task.progress } : {}),
+    ...(progress !== undefined ? { progress } : {}),
     ...(task.error !== undefined
       ? { error: sanitizeStructuredAdcpError(task.error) as GetTaskStatusResponse['error'] }
       : task.statusMessage !== undefined
@@ -7453,7 +7467,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             })
           );
         }
-        if (task == null || accountId === undefined || !taskBelongsToCaller(task, accountId, ownerScope)) {
+        if (
+          task == null ||
+          accountId === undefined ||
+          ownerScope === undefined ||
+          !taskBelongsToCaller(task, accountId, ownerScope)
+        ) {
           return finalizeProtocolTaskToolResponse(
             'get_task_status',
             params ?? {},
@@ -7480,7 +7499,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           (response.status === 'completed' || response.status === 'failed' || response.status === 'rejected') &&
           task.result !== undefined
         ) {
-          response.result = task.result as GetTaskStatusResponse['result'];
+          const result = _sanitizeStoredTaskResultForWire(task.result, {
+            taskId: task.taskId,
+            accountId,
+            ownerScope,
+            ...(taskRegistry.registryId !== undefined && { registryId: taskRegistry.registryId }),
+          });
+          if (result !== undefined) response.result = result as GetTaskStatusResponse['result'];
+          else logger.warn('Omitting unsafe stored task result during get_task_status poll');
         }
         if (isPlainObject(params?.context)) response.context = params.context;
         return finalizeProtocolTaskToolResponse(
@@ -7630,12 +7656,25 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       // SDK as generic JSON-RPC errors and the buyer loses the typed code.
       // The framework's own `tasks_get` is registered through this path.
       const rawHandler = handler as (...args: unknown[]) => Promise<McpToolResponse> | McpToolResponse;
+      const finalizeCustomResponse = (response: McpToolResponse, taskRelease?: ServedAdcpRelease): McpToolResponse => {
+        if (customName === 'tasks_get') {
+          injectVersionIntoResponse(response, taskRelease?.wireVersion ?? servedAdcpVersion);
+        }
+        return applyResponseEnhancer(response);
+      };
       const wrappedHandler = (async (...args: unknown[]) => {
+        const params = isPlainObject(args[0]) ? args[0] : {};
+        let taskRelease: ServedAdcpRelease | undefined;
+        if (customName === 'tasks_get') {
+          const selected = selectServedAdcpRelease(params, capConfig, adcpVersion);
+          if (isMcpToolResponse(selected)) return finalizeCustomResponse(selected);
+          taskRelease = selected;
+        }
         try {
-          return applyResponseEnhancer(await rawHandler(...args));
+          return finalizeCustomResponse(await rawHandler(...args), taskRelease);
         } catch (err) {
-          if (isThrownAdcpError(err)) return applyResponseEnhancer(err);
-          if (err instanceof AdcpError) return applyResponseEnhancer(projectThrownAdcpError(err));
+          if (isThrownAdcpError(err)) return finalizeCustomResponse(err, taskRelease);
+          if (err instanceof AdcpError) return finalizeCustomResponse(projectThrownAdcpError(err), taskRelease);
           throw err;
         }
       }) as Parameters<typeof server.registerTool>[2];

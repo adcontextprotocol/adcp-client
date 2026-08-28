@@ -16,6 +16,7 @@
  */
 
 import { getErrorRecovery, STANDARD_ERROR_CODES, type StandardErrorCode } from '../../types/error-codes';
+import type { ScopedTaskRef } from './runtime/task-registry';
 
 /**
  * Error code vocabulary the SDK recognizes. Uses the same runtime table as
@@ -257,6 +258,11 @@ export interface TaskHandoff<TResult> {
  */
 export interface TaskHandoffContext {
   readonly id: string;
+  /**
+   * Trusted serializable handle for durable out-of-process settlement.
+   * Persist the complete value; never project it onto the buyer wire.
+   */
+  readonly taskRef: ScopedTaskRef;
   update(progress: TaskHandoffProgress): Promise<void>;
   heartbeat(): Promise<void>;
 }
@@ -267,6 +273,8 @@ export interface TaskHandoffProgress {
   step_number?: number;
   total_steps?: number;
   current_step?: string;
+  /** Tool/vendor-specific progress fields permitted by the wire schema. */
+  [key: string]: unknown;
 }
 
 /**

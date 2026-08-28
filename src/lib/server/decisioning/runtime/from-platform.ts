@@ -42,9 +42,8 @@
  * via `NoAccountCtx<TCtxMeta>` — handlers receive `ctx.account: Account |
  * undefined` and must narrow before reading `ctx_metadata`.
  *
- * Status: Preview / 6.0. Not yet exported from the public `./server`
- * subpath; reach in via `@adcp/sdk/server/decisioning/runtime` for
- * spike experimentation only.
+ * Status: Preview / 6.0. Exported from the canonical `@adcp/sdk/server`
+ * entry point; the decisioning implementation remains preview until GA.
  *
  * @public
  */
@@ -137,7 +136,7 @@ import type {
   UpdateMediaBuyInputForStore,
   GetMediaBuysResultForStore,
 } from '../../media-buy-store';
-import { createPostgresTaskRegistry, getDecisioningTaskRegistryMigration } from './postgres-task-registry';
+import { createPostgresTaskRegistry, getDecisioningTaskRegistryBootstrap } from './postgres-task-registry';
 import type { PgQueryable } from '../../postgres-task-store';
 import { isTaskHandoff, _extractHandoffEntry, type TaskHandoff } from '../async-outcome';
 import { _extractResponseSummaryEntry } from '../response-summary';
@@ -145,8 +144,12 @@ import { productsResponse } from '../../responses';
 import { TOOL_ENTITY_FIELDS } from './entity-hydration.generated';
 import { z } from 'zod';
 import {
+  _sanitizeStoredTaskResultForWire,
   createInMemoryTaskRegistry,
+  sanitizeTaskProgressForStorage,
+  sanitizeTaskResultForWire,
   taskRecordMatchesScope,
+  type ScopedTaskRef,
   type TaskRegistry,
   type TaskRecord,
   type TaskRegistryScope,
@@ -1981,6 +1984,12 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    */
   taskRegistryNamespace?: string;
   /**
+   * Stable, non-secret identity for the physical database/schema used by the
+   * pooled task registry. Required only when its scoped refs will be settled
+   * by an out-of-process worker after restart.
+   */
+  taskRegistryStorageId?: string;
+  /**
    * Override the framework's status-change event bus for this server.
    * Defaults to a fresh per-server `createInMemoryStatusChangeBus()` so
    * tests get isolation without touching the module-level singleton from
@@ -2104,8 +2113,10 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * explicitly keep override priority — the explicit values win, and the
    * pool fills only the unset ones.
    *
-   * Run `getAllAdcpMigrations({ taskRegistryNamespace })` once per database to create the three
-   * required tables (idempotency cache, ctx-metadata cache, task registry).
+   * Use `getAllAdcpMigrations({ taskRegistryNamespace })` while provisioning a
+   * new database to create the three required tables (idempotency cache,
+   * ctx-metadata cache, task registry). Populated legacy task tables require
+   * the explicit scope-v1 operator upgrade.
    *
    * @example
    * ```ts
@@ -2124,6 +2135,7 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    *   version: '1.0.0',
    *   pool,                                // wires all three persistence stores
    *   taskRegistryNamespace,
+   *   taskRegistryStorageId: 'prod-eu1:primary-db',
    * });
    * ```
    *
@@ -2351,8 +2363,6 @@ export interface DecisioningAdcpServer extends AdcpServer {
    * (`createPostgresTaskRegistry`); the in-memory impl resolves synchronously.
    */
   getTaskState<TResult = unknown>(taskId: string, scope: TaskRegistryScope): Promise<TaskRecord<TResult> | null>;
-  /** Administrative/test access; null when task_id is ambiguous across scopes. Never expose to buyer traffic. */
-  getTaskStateUnsafe<TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null>;
   /**
    * Await any in-flight background completion for `taskId` (HITL handoff
    * function still running). Resolves immediately if the task is terminal
@@ -2531,12 +2541,16 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     throw new PlatformConfigError(
       'taskRegistryNamespace is required when opts.pool supplies the task registry. ' +
         'Use the same trusted namespace with getAllAdcpMigrations({ taskRegistryNamespace }) or ' +
-        'getDecisioningTaskRegistryMigration({ namespace }).'
+        'getDecisioningTaskRegistryBootstrap({ namespace }).'
     );
   }
   const pooledTaskRegistry: TaskRegistry | undefined =
     opts.pool && opts.taskRegistry === undefined
-      ? createPostgresTaskRegistry({ pool: opts.pool, namespace: opts.taskRegistryNamespace! })
+      ? createPostgresTaskRegistry({
+          pool: opts.pool,
+          namespace: opts.taskRegistryNamespace!,
+          ...(opts.taskRegistryStorageId !== undefined && { storageId: opts.taskRegistryStorageId }),
+        })
       : undefined;
 
   // Effective resolved values. Explicit > pooled > default.
@@ -3314,7 +3328,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       // security issue: silent test loss, not cross-tenant pollution. The
       // architectural fix (widen `ComplyControllerContext` to expose the
       // framework-resolved account so writes match reads even under mapping
-      // resolvers) is tracked at #1216. Mapping-resolver adopters wire
+      // resolvers) is tracked at #2723. Mapping-resolver adopters wire
       // explicit seed adapters today.
       const explicitSeed = opts.complyTest.seed ?? {};
       const autoSeed = { ...explicitSeed };
@@ -3610,8 +3624,6 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       const record = await taskRegistry.getTask<TResult>(taskId, scope);
       return record && taskRecordMatchesScope(record, scope) ? record : null;
     },
-    getTaskStateUnsafe: <TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null> =>
-      taskRegistry._getTaskUnsafe<TResult>(taskId),
     awaitTask: (taskId: string, scope: TaskRegistryScope): Promise<void> => taskRegistry.awaitTask(taskId, scope),
     awaitTaskUnsafe: (taskId: string): Promise<void> => taskRegistry._awaitTaskUnsafe(taskId),
     statusChange: statusChangeBus,
@@ -3728,6 +3740,8 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
       .boolean()
       .optional()
       .describe('Include a canonical terminal artifact for completed, failed, or rejected tasks.'),
+    adcp_version: z.string().optional().describe('Requested AdCP release for response negotiation.'),
+    adcp_major_version: z.number().int().optional().describe('Requested AdCP major version.'),
   };
   return {
     description:
@@ -3750,7 +3764,13 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
     // resolver and reads tenant B's task. Same threading as the regular
     // `resolveAccount` dispatch flow in `create-adcp-server.ts:2380-2398`.
     handler: async (
-      args: { task_id: string; account?: { account_id?: string }; include_result?: boolean },
+      args: {
+        task_id: string;
+        account?: { account_id?: string };
+        include_result?: boolean;
+        adcp_version?: string;
+        adcp_major_version?: number;
+      },
       extra: { authInfo?: ResolvedAuthInfo }
     ) => {
       const policyError = credentialPolicyError(args as Record<string, unknown>, extra);
@@ -3917,10 +3937,10 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
         });
       }
       // Spec shape: `tasks-get-response.json` requires task_id, task_type,
-      // status, created_at, updated_at, protocol. Optional: completed_at
-      // (terminal states), error (failed tasks — top-level, NOT inside
-      // result), result (success-arm body for completed tasks),
-      // has_webhook (whether buyer wired push_notification_config).
+      // status, created_at, updated_at, protocol. Optional: progress/message
+      // (live work), completed_at (terminal states), error (failed tasks —
+      // top-level, NOT inside result), result (success-arm body for completed
+      // tasks), has_webhook (whether buyer wired push_notification_config).
       const payload: Record<string, unknown> = {
         task_id: record.taskId,
         task_type: record.tool,
@@ -3937,12 +3957,30 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
         payload.completed_at = record.updatedAt;
       }
       if (record.statusMessage) payload.message = record.statusMessage;
+      if (record.progress !== undefined) {
+        try {
+          payload.progress = sanitizeTaskProgressForStorage(record.progress);
+        } catch {
+          // Legacy/custom registries may contain progress written before the
+          // current validation and secret-stripping boundary existed. Omit
+          // malformed or oversized data rather than exposing it or failing
+          // an otherwise valid scoped lifecycle poll.
+          logger.warn?.('Omitting unsafe stored task progress during tasks_get poll');
+        }
+      }
       if (
         args.include_result === true &&
         (record.status === 'completed' || record.status === 'failed' || record.status === 'rejected') &&
         record.result !== undefined
       ) {
-        payload.result = record.result;
+        const result = _sanitizeStoredTaskResultForWire(record.result, {
+          taskId: record.taskId,
+          accountId: resolvedAccountId,
+          ownerScope: expectedOwnerScope,
+          ...(taskRegistry.registryId !== undefined && { registryId: taskRegistry.registryId }),
+        });
+        if (result !== undefined) payload.result = result;
+        else logger.warn?.('Omitting unsafe stored task result during tasks_get poll');
       }
       if (record.status === 'failed' && record.error) {
         // Spec shape: top-level `error: { code, message, details? }` —
@@ -4216,7 +4254,8 @@ function wrapBusWithObservability(bus: StatusChangeBus, observability: Decisioni
 /**
  * Combined DDL for all framework persistence tables: idempotency cache,
  * ctx-metadata cache, and decisioning task registry. Run once per database
- * during deployment / boot. Idempotent — safe to re-run.
+ * while provisioning a new database. It is bootstrap DDL, not an in-place
+ * upgrade path for a populated legacy task registry.
  *
  * Use with the `pool` shortcut on `createAdcpServerFromPlatform`:
  *
@@ -4234,7 +4273,7 @@ function wrapBusWithObservability(bus: StatusChangeBus, observability: Decisioni
  *
  * Adopters who don't use the `pool` shortcut should call the per-store
  * migration helpers (`getIdempotencyMigration`, `getCtxMetadataMigration`,
- * `getDecisioningTaskRegistryMigration`) only for the stores they wire.
+ * `getDecisioningTaskRegistryBootstrap`) only for the stores they wire.
  *
  * @public
  */
@@ -4247,7 +4286,7 @@ export function getAllAdcpMigrations(options: { taskRegistryNamespace: string })
   return [
     getIdempotencyMigration(),
     getCtxMetadataMigration(),
-    getDecisioningTaskRegistryMigration({ namespace: options.taskRegistryNamespace }),
+    getDecisioningTaskRegistryBootstrap({ namespace: options.taskRegistryNamespace }),
   ].join('\n\n');
 }
 
@@ -4261,8 +4300,8 @@ function buildDefaultTaskRegistry(): TaskRegistry {
         '{NODE_ENV=test, NODE_ENV=development}. Production deployments need a ' +
         'durable task registry — pick one of:\n' +
         '  1. (Recommended) Pass `taskRegistry: createPostgresTaskRegistry({ pool, namespace: tenantId })` ' +
-        'to keep HITL tasks across restarts. See `@adcp/sdk/server/decisioning` ' +
-        'for `getDecisioningTaskRegistryMigration({ namespace })` — run it once against your DB.\n' +
+        'to keep HITL tasks across restarts. See `@adcp/sdk/server` ' +
+        'for `getDecisioningTaskRegistryBootstrap({ namespace })` on a new DB (use the scope-v1 operator upgrade for populated legacy tables).\n' +
         '  2. Pass `taskRegistry: createInMemoryTaskRegistry()` explicitly if you ' +
         'accept that in-flight tasks are lost on process restart. The explicit ' +
         'pass-in is the contract — saying "yes I want in-memory in production" ' +
@@ -4586,13 +4625,8 @@ async function routeIfHandoff<TInner, TWire>(
     return dispatchHitl(
       taskRegistry,
       opts,
-      async taskId => {
-        const inner = await taskFn(
-          buildHandoffContext(taskRegistry, taskId, {
-            accountId: opts.accountId,
-            ownerScope: opts.ownerScope ?? `account:${opts.accountId}`,
-          })
-        );
+      async taskRef => {
+        const inner = await taskFn(buildHandoffContext(taskRegistry, taskRef));
         rejectResponseSummary(inner);
         return await project(inner);
       },
@@ -4607,17 +4641,41 @@ async function routeIfHandoff<TInner, TWire>(
 async function dispatchHitl<TResult>(
   taskRegistry: TaskRegistry,
   opts: DispatchHitlOpts,
-  taskFn: (taskId: string) => Promise<TResult>,
+  taskFn: (taskRef: ScopedTaskRef) => Promise<TResult>,
   overrideTaskId?: string
 ): Promise<SubmittedEnvelope> {
   const createStart = Date.now();
-  const { taskId } = await taskRegistry.create({
+  const createdRef = await taskRegistry.create({
     tool: opts.tool,
     accountId: opts.accountId,
     ownerScope: opts.ownerScope ?? `account:${opts.accountId}`,
     hasWebhook: opts.pushNotificationUrl !== undefined,
     ...(overrideTaskId !== undefined && { overrideTaskId }),
   });
+  if (
+    createdRef == null ||
+    typeof createdRef !== 'object' ||
+    typeof createdRef.taskId !== 'string' ||
+    createdRef.taskId.length === 0 ||
+    typeof createdRef.accountId !== 'string' ||
+    createdRef.accountId.length === 0 ||
+    typeof createdRef.ownerScope !== 'string' ||
+    createdRef.ownerScope.length === 0 ||
+    (createdRef.registryId !== undefined &&
+      (typeof createdRef.registryId !== 'string' || createdRef.registryId.length === 0))
+  ) {
+    throw new Error(
+      'TaskRegistry.create() must return a complete ScopedTaskRef with non-empty taskId, accountId, and ownerScope'
+    );
+  }
+  const expectedOwnerScope = opts.ownerScope ?? `account:${opts.accountId}`;
+  if (createdRef.accountId !== opts.accountId || createdRef.ownerScope !== expectedOwnerScope) {
+    throw new Error(
+      'TaskRegistry.create() must return accountId and ownerScope exactly matching the trusted request scope'
+    );
+  }
+  const taskRef: ScopedTaskRef = createdRef;
+  const { taskId } = taskRef;
   safeFire(
     opts.observability?.onTaskCreate,
     {
@@ -4660,14 +4718,11 @@ async function dispatchHitl<TResult>(
   // Webhook delivery is gated on the registry write succeeding so the
   // buyer's view (via webhook OR getTaskState) is always consistent.
   const completion: Promise<void> = (async () => {
-    const registryScope = {
-      accountId: opts.accountId,
-      ownerScope: opts.ownerScope ?? `account:${opts.accountId}`,
-    };
+    const registryScope = taskRef;
     let result: TResult | undefined;
     let taskFnError: unknown;
     try {
-      result = await taskFn(taskId);
+      result = await taskFn(taskRef);
     } catch (err) {
       taskFnError = err;
     }
@@ -4681,12 +4736,13 @@ async function dispatchHitl<TResult>(
       // sync arm. Without this strip, ctx_metadata + implementation_config
       // ride to the buyer via the HITL completion path even though the
       // sync path is clean — surfaced by security review on PR #1562.
-      if (result != null && typeof result === 'object') {
-        stripCtxMetadata(result as Record<string, unknown>);
-        stripImplementationConfig(result as Record<string, unknown>);
-      }
+      sanitizeTaskResultForWire(result, taskRef);
       try {
-        await taskRegistry.complete(taskId, registryScope, result as TResult);
+        const outcome = await taskRegistry.complete(taskId, registryScope, result as TResult);
+        if (outcome?.outcome === 'not_found_in_scope') {
+          throw new Error('Scoped task registry completion matched no task');
+        }
+        if (outcome?.outcome === 'already_terminal') return;
       } catch (registryErr) {
         opts.logger.error(
           `[adcp/decisioning] task ${taskId} (${opts.tool}) completed but registry write failed — ` +
@@ -4715,7 +4771,11 @@ async function dispatchHitl<TResult>(
     );
     const failureArtifact = { errors: [structured] };
     try {
-      await taskRegistry.fail(taskId, registryScope, structured, failureArtifact);
+      const outcome = await taskRegistry.fail(taskId, registryScope, structured, failureArtifact);
+      if (outcome?.outcome === 'not_found_in_scope') {
+        throw new Error('Scoped task registry failure write matched no task');
+      }
+      if (outcome?.outcome === 'already_terminal') return;
     } catch (registryErr) {
       opts.logger.error(
         `[adcp/decisioning] task ${taskId} (${opts.tool}) failed AND registry fail-write also failed — ` +
@@ -4730,11 +4790,7 @@ async function dispatchHitl<TResult>(
       task: { task_id: taskId, status: 'failed', result: failureArtifact, error: structured },
     });
   })();
-  taskRegistry._registerBackground(
-    taskId,
-    { accountId: opts.accountId, ownerScope: opts.ownerScope ?? `account:${opts.accountId}` },
-    completion
-  );
+  taskRegistry._registerBackground(taskId, taskRef, completion);
 
   return { status: 'submitted', task_id: taskId };
 }
@@ -7727,8 +7783,8 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
 // only exposes `{ input }`), and calling `platform.accounts.resolve`
 // here without `authInfo` would let a caller spoof `account.account_id`
 // and write into another tenant's resolved namespace. The architectural
-// fix (widen `ComplyControllerContext` to surface the resolved account)
-// is tracked at #1216 — until then, raw id is the secure choice.
+// fix (widen `ComplyControllerContext` to surface the resolved authority)
+// is tracked at #2723 — until then, raw id is the secure choice.
 function readAutoSeedAccountId(input: Record<string, unknown>): string | undefined {
   const account = input.account;
   if (account == null || typeof account !== 'object') return undefined;

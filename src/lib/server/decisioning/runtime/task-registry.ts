@@ -9,10 +9,11 @@
  *   4. Updates the record on progress (`updateProgress`) and terminal
  *      state (`complete` / `fail`) from the method's return/throw.
  *
- * Adopters never call into the registry directly. Wire-level `tasks/get`
- * integration (so buyers can poll the lifecycle) reads via scoped `getTask`;
- * test harnesses use `awaitTask` to flush the background promise
- * deterministically.
+ * The framework owns request-time task lifecycle. Out-of-process approval
+ * workers may use the exported scoped-ref helpers to settle a durably queued
+ * task without reconstructing its trusted account/principal scope. Wire-level
+ * `tasks/get` integration reads via scoped `getTask`; test harnesses use
+ * `awaitTask` to flush the background promise deterministically.
  *
  * Status: Preview / 6.0.
  *
@@ -21,6 +22,8 @@
 
 import { randomUUID } from 'node:crypto';
 import type { AdcpStructuredError, TaskHandoffProgress } from '../async-outcome';
+import { stripCtxMetadata, stripImplementationConfig } from '../../ctx-metadata';
+import { sanitizeStructuredAdcpError } from '../../errors';
 
 /**
  * AdCP-spec task lifecycle states. Mirrors `enums/task-status.json` —
@@ -46,6 +49,78 @@ const TERMINAL_TASK_STATUSES: ReadonlySet<TaskStatus> = new Set(['completed', 'f
 
 function isTerminalTaskStatus(status: TaskStatus): boolean {
   return TERMINAL_TASK_STATUSES.has(status);
+}
+
+const MAX_PROGRESS_BYTES = 64 * 1024;
+const PRIVATE_PROGRESS_KEYS: ReadonlySet<string> = new Set([
+  'authorization',
+  'bearer',
+  'token',
+  'accesstoken',
+  'refreshtoken',
+  'apikey',
+  'clientsecret',
+  'password',
+  'secret',
+  'credential',
+  'credentials',
+  'privatekey',
+  'ctxmetadata',
+  'implementationconfig',
+  'taskref',
+  'taskid',
+  'accountid',
+  'ownerscope',
+  'registryid',
+]);
+
+function isPrivateProgressKey(key: string): boolean {
+  const normalized = key.replace(/[_-]/g, '').toLowerCase();
+  return (
+    PRIVATE_PROGRESS_KEYS.has(normalized) ||
+    normalized.endsWith('token') ||
+    normalized.endsWith('secret') ||
+    normalized.endsWith('password') ||
+    normalized.endsWith('credential') ||
+    normalized.endsWith('credentials') ||
+    normalized.endsWith('privatekey') ||
+    normalized.endsWith('apikey')
+  );
+}
+
+/** Normalize and bound buyer-readable progress before any registry persists it. */
+export function sanitizeTaskProgressForStorage(progress: TaskHandoffProgress): TaskHandoffProgress {
+  if (progress == null || typeof progress !== 'object' || Array.isArray(progress)) {
+    throw new TypeError('Task progress must be an object');
+  }
+  const copyString = (key: 'message' | 'current_step'): void => {
+    const value = progress[key];
+    if (value === undefined) return;
+    if (typeof value !== 'string') throw new TypeError(`Task progress ${key} must be a string`);
+  };
+  copyString('message');
+  copyString('current_step');
+  if (progress.percentage !== undefined) {
+    if (typeof progress.percentage !== 'number' || !Number.isFinite(progress.percentage)) {
+      throw new TypeError('Task progress percentage must be a finite number');
+    }
+    if (progress.percentage < 0 || progress.percentage > 100) {
+      throw new RangeError('Task progress percentage must be between 0 and 100');
+    }
+  }
+  for (const key of ['step_number', 'total_steps'] as const) {
+    const value = progress[key];
+    if (value === undefined) continue;
+    if (!Number.isInteger(value) || value < 1) {
+      throw new RangeError(`Task progress ${key} must be an integer of at least 1`);
+    }
+  }
+  const json = JSON.stringify(progress, (key, value) => (isPrivateProgressKey(key) ? undefined : value));
+  if (json === undefined) throw new TypeError('Task progress must be JSON-serializable');
+  if (Buffer.byteLength(json, 'utf8') > MAX_PROGRESS_BYTES) {
+    throw new Error(`Task progress JSON exceeds ${MAX_PROGRESS_BYTES} bytes`);
+  }
+  return JSON.parse(json) as TaskHandoffProgress;
 }
 
 export interface TaskRecord<TResult = unknown, TError extends AdcpStructuredError = AdcpStructuredError> {
@@ -92,7 +167,37 @@ export interface TaskRegistryListOptions {
 export interface TaskRegistryScope {
   accountId: string;
   ownerScope: string;
+  /**
+   * Opaque identity of the issuing registry partition. Built-ins set it on
+   * durable handles and reject it when it names another registry. Optional
+   * only for source compatibility with beta.13 custom registries.
+   */
+  registryId?: string;
 }
+
+/**
+ * Serializable trusted-internal handle for a task registry row.
+ *
+ * Persist this complete value before acknowledging an approval-queue write.
+ * It deliberately never appears on the AdCP buyer wire: `accountId` and
+ * `ownerScope` are server-side authorization boundaries, not buyer data.
+ */
+export interface ScopedTaskRef extends TaskRegistryScope {
+  taskId: string;
+}
+
+/** Non-enumerating result of a scoped lifecycle mutation. */
+export type TaskMutationOutcome =
+  | { outcome: 'applied' }
+  | { outcome: 'already_terminal'; status: TaskStatus }
+  | { outcome: 'not_found_in_scope' };
+
+/**
+ * Lifecycle result accepted from custom beta.13 registries. Built-in
+ * registries always return `TaskMutationOutcome`; `void` preserves source
+ * compatibility while existing custom implementations adopt strict outcomes.
+ */
+export type TaskRegistryMutationResult = TaskMutationOutcome | void;
 
 /** Defense-in-depth boundary check for custom registry results. */
 export function taskRecordMatchesScope(record: TaskRecord, scope: TaskRegistryScope): boolean {
@@ -120,8 +225,16 @@ export interface TaskRegistry {
   readonly scopeVersion: 1;
 
   /**
-   * Allocate a new task record. Returns the `taskId` the framework hands
-   * to `platform.xxxTask(taskId, ...)`. Initial status is `submitted`.
+   * Identity bound into every durable task reference issued by this registry.
+   * It is stable for the lifetime of stored records and rotates when a
+   * test-only `clear()` invalidates them. Custom registries must provide it
+   * before using worker-settlement helpers. It is never buyer-visible.
+   */
+  readonly registryId?: string;
+
+  /**
+   * Allocate a new task record. Returns the complete scoped reference the
+   * framework passes to the handoff context. Initial status is `submitted`.
    *
    * `hasWebhook: true` when the buyer wired `push_notification_config.url`
    * — surfaced via `tasks_get`'s `has_webhook` field. Defaults to `false`.
@@ -137,13 +250,10 @@ export interface TaskRegistry {
     ownerScope?: string;
     hasWebhook?: boolean;
     overrideTaskId?: string;
-  }): Promise<{ taskId: string }>;
+  }): Promise<ScopedTaskRef>;
 
   /** Read a task within its account/principal boundary. */
   getTask<TResult = unknown>(taskId: string, scope: TaskRegistryScope): Promise<TaskRecord<TResult> | null>;
-
-  /** Administrative/test access; returns null when an id is ambiguous across scopes. Never expose to buyer traffic. */
-  _getTaskUnsafe<TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null>;
 
   /**
    * List tasks owned by a resolved account. Buyer-facing AdCP task
@@ -160,24 +270,34 @@ export interface TaskRegistry {
   list?(opts: TaskRegistryListOptions): Promise<TaskRegistryListResult>;
 
   /**
-   * Mark a task `completed` with the method's return value. No-op if the
-   * task is already terminal (idempotent).
+   * Mark a task `completed` with the method's return value. Returns an
+   * idempotent terminal outcome or a non-enumerating scoped miss.
    */
-  complete<TResult>(taskId: string, scope: TaskRegistryScope, result: TResult): Promise<void>;
+  complete<TResult>(taskId: string, scope: TaskRegistryScope, result: TResult): Promise<TaskRegistryMutationResult>;
 
   /**
    * Mark a task `failed` with the structured error and, when available, the
-   * canonical terminal artifact. No-op if the task is already terminal.
+   * canonical terminal artifact. Returns an idempotent terminal outcome or a
+   * non-enumerating scoped miss.
    */
-  fail(taskId: string, scope: TaskRegistryScope, error: AdcpStructuredError, result?: unknown): Promise<void>;
+  fail(
+    taskId: string,
+    scope: TaskRegistryScope,
+    error: AdcpStructuredError,
+    result?: unknown
+  ): Promise<TaskRegistryMutationResult>;
 
   /**
    * Record intermediate progress from `TaskHandoffContext.update(...)`.
    * Transitions the task from `'submitted'` → `'working'` on the first
-   * call. No-op on already-terminal tasks. The `progress` payload is
+   * call. Reports already-terminal and scoped-miss outcomes. The `progress` payload is
    * written to the record and surfaced to buyers polling `tasks_get`.
    */
-  updateProgress(taskId: string, scope: TaskRegistryScope, progress: TaskHandoffProgress): Promise<void>;
+  updateProgress(
+    taskId: string,
+    scope: TaskRegistryScope,
+    progress: TaskHandoffProgress
+  ): Promise<TaskRegistryMutationResult>;
 
   /**
    * Register the background completion promise the framework spawned for
@@ -199,8 +319,10 @@ export interface TaskRegistry {
   /**
    * Optional test-harness flush. In-memory registries expose this so
    * `AdcpServer.compliance.reset()` can clear hardcoded overrideTaskId
-   * records between repeated storyboard runs. Persistent registries should
-   * omit it unless they can safely flush their configured backend.
+   * records between repeated storyboard runs. Implementations must invalidate
+   * every previously issued handle (for example by rotating `registryId`)
+   * before allowing a scoped task id to be reused. Persistent registries
+   * should omit it unless they can safely flush their configured backend.
    */
   clear?(): void | Promise<void>;
 }
@@ -208,16 +330,20 @@ export interface TaskRegistry {
 export function createInMemoryTaskRegistry(): TaskRegistry {
   const tasks = new Map<string, TaskRecord<unknown>>();
   const backgrounds = new Map<string, Promise<void>>();
+  let registryId = `memory:${randomUUID()}`;
 
   return {
     scopeVersion: 1,
+    get registryId(): string {
+      return registryId;
+    },
     async create(opts: {
       tool: string;
       accountId: string;
       ownerScope?: string;
       hasWebhook?: boolean;
       overrideTaskId?: string;
-    }): Promise<{ taskId: string }> {
+    }): Promise<ScopedTaskRef> {
       const taskId = opts.overrideTaskId ?? `task_${randomUUID()}`;
       const scope = { accountId: opts.accountId, ownerScope: opts.ownerScope ?? `account:${opts.accountId}` };
       const storageKey = taskStorageKey(taskId, scope);
@@ -235,17 +361,13 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
         createdAt: now,
         updatedAt: now,
       });
-      return { taskId };
+      return { taskId, ...scope, registryId };
     },
 
     async getTask<TResult = unknown>(taskId: string, scope: TaskRegistryScope): Promise<TaskRecord<TResult> | null> {
+      if (scope.registryId !== undefined && scope.registryId !== registryId) return null;
       const record = tasks.get(taskStorageKey(taskId, scope));
       return (record as TaskRecord<TResult> | undefined) ?? null;
-    },
-
-    async _getTaskUnsafe<TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null> {
-      const matches = Array.from(tasks.values()).filter(record => record.taskId === taskId);
-      return matches.length === 1 ? (matches[0] as TaskRecord<TResult>) : null;
     },
 
     async list(opts: TaskRegistryListOptions): Promise<TaskRegistryListResult> {
@@ -256,33 +378,49 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
       };
     },
 
-    async complete<TResult>(taskId: string, scope: TaskRegistryScope, result: TResult): Promise<void> {
+    async complete<TResult>(taskId: string, scope: TaskRegistryScope, result: TResult): Promise<TaskMutationOutcome> {
+      if (scope.registryId !== undefined && scope.registryId !== registryId) return { outcome: 'not_found_in_scope' };
       const existing = tasks.get(taskStorageKey(taskId, scope));
-      if (!existing) return;
-      if (isTerminalTaskStatus(existing.status)) return;
+      if (!existing) return { outcome: 'not_found_in_scope' };
+      if (isTerminalTaskStatus(existing.status)) return { outcome: 'already_terminal', status: existing.status };
       existing.status = 'completed';
       existing.result = result;
       existing.updatedAt = new Date().toISOString();
+      return { outcome: 'applied' };
     },
 
-    async fail(taskId: string, scope: TaskRegistryScope, error: AdcpStructuredError, result?: unknown): Promise<void> {
+    async fail(
+      taskId: string,
+      scope: TaskRegistryScope,
+      error: AdcpStructuredError,
+      result?: unknown
+    ): Promise<TaskMutationOutcome> {
+      if (scope.registryId !== undefined && scope.registryId !== registryId) return { outcome: 'not_found_in_scope' };
       const existing = tasks.get(taskStorageKey(taskId, scope));
-      if (!existing) return;
-      if (isTerminalTaskStatus(existing.status)) return;
+      if (!existing) return { outcome: 'not_found_in_scope' };
+      if (isTerminalTaskStatus(existing.status)) return { outcome: 'already_terminal', status: existing.status };
       existing.status = 'failed';
       existing.error = error;
       if (result !== undefined) existing.result = result;
       existing.statusMessage = error.message;
       existing.updatedAt = new Date().toISOString();
+      return { outcome: 'applied' };
     },
 
-    async updateProgress(taskId: string, scope: TaskRegistryScope, progress: TaskHandoffProgress): Promise<void> {
+    async updateProgress(
+      taskId: string,
+      scope: TaskRegistryScope,
+      progress: TaskHandoffProgress
+    ): Promise<TaskMutationOutcome> {
+      if (scope.registryId !== undefined && scope.registryId !== registryId) return { outcome: 'not_found_in_scope' };
       const existing = tasks.get(taskStorageKey(taskId, scope));
-      if (!existing) return;
-      if (isTerminalTaskStatus(existing.status)) return;
+      if (!existing) return { outcome: 'not_found_in_scope' };
+      if (isTerminalTaskStatus(existing.status)) return { outcome: 'already_terminal', status: existing.status };
+      const sanitized = sanitizeTaskProgressForStorage(progress);
       if (existing.status === 'submitted') existing.status = 'working';
-      existing.progress = progress;
+      existing.progress = sanitized;
       existing.updatedAt = new Date().toISOString();
+      return { outcome: 'applied' };
     },
 
     _registerBackground(taskId: string, scope: TaskRegistryScope, completion: Promise<void>): void {
@@ -299,6 +437,7 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
     },
 
     async awaitTask(taskId: string, scope: TaskRegistryScope): Promise<void> {
+      if (scope.registryId !== undefined && scope.registryId !== registryId) return;
       const pending = backgrounds.get(taskStorageKey(taskId, scope));
       if (pending) await pending;
     },
@@ -313,6 +452,170 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
     clear(): void {
       tasks.clear();
       backgrounds.clear();
+      // Invalidate every pre-reset handle before a caller can reuse a forced
+      // task id. Otherwise an old in-flight completion could settle a new
+      // task with the same account/owner/id tuple after compliance.reset().
+      registryId = `memory:${randomUUID()}`;
     },
   };
+}
+
+function requireMutationOutcome(outcome: TaskRegistryMutationResult): TaskMutationOutcome {
+  if (outcome === undefined) {
+    throw new Error(
+      'Custom TaskRegistry returned no lifecycle mutation outcome. Implement applied/already_terminal/not_found_in_scope before using scoped worker settlement.'
+    );
+  }
+  return outcome;
+}
+
+function verifyWorkerRefBinding(registry: TaskRegistry, ref: ScopedTaskRef): TaskMutationOutcome | undefined {
+  if (typeof registry.registryId !== 'string' || registry.registryId.length === 0) {
+    throw new Error(
+      'TaskRegistry has no registryId. Configure a stable registry/storage identity before using scoped worker settlement.'
+    );
+  }
+  if (typeof ref.registryId !== 'string' || ref.registryId.length === 0) {
+    throw new Error(
+      'ScopedTaskRef has no registryId. Persist a newly issued complete handle before using scoped worker settlement.'
+    );
+  }
+  if (registry.registryId !== ref.registryId) return { outcome: 'not_found_in_scope' };
+  return undefined;
+}
+
+async function ensureWorkerSettlementIsSafe(
+  registry: TaskRegistry,
+  ref: ScopedTaskRef
+): Promise<TaskMutationOutcome | undefined> {
+  const mismatch = verifyWorkerRefBinding(registry, ref);
+  if (mismatch) return mismatch;
+  const record = await registry.getTask(ref.taskId, ref);
+  if (record == null) return { outcome: 'not_found_in_scope' };
+  if (record.hasWebhook) {
+    throw new Error(
+      'Direct scoped worker settlement is unavailable for tasks with push notifications because registry-only writes cannot durably deliver the terminal webhook. Return the result through the live handoff instead.'
+    );
+  }
+  return undefined;
+}
+
+function stripIssuedTaskRef(value: unknown, ref: ScopedTaskRef): void {
+  const visited = new WeakSet<object>();
+
+  const matches = (candidate: unknown): candidate is Record<string, unknown> => {
+    if (candidate == null || typeof candidate !== 'object') return false;
+    const record = candidate as Record<string, unknown>;
+    return record.taskId === ref.taskId && record.accountId === ref.accountId && record.ownerScope === ref.ownerScope;
+  };
+
+  const visit = (current: unknown): void => {
+    if (current == null || typeof current !== 'object' || visited.has(current)) return;
+    visited.add(current);
+    const record = current as Record<string, unknown>;
+    if (matches(record)) {
+      delete record.taskId;
+      delete record.accountId;
+      delete record.ownerScope;
+      delete record.registryId;
+      return;
+    }
+    for (const [key, nested] of Object.entries(record)) {
+      if (matches(nested)) delete record[key];
+      else visit(nested);
+    }
+  };
+
+  visit(value);
+}
+
+function sanitizeEmbeddedStructuredErrors(value: unknown): void {
+  const visited = new WeakSet<object>();
+  const visit = (current: unknown): void => {
+    if (current == null || typeof current !== 'object' || visited.has(current)) return;
+    visited.add(current);
+    if (Array.isArray(current)) {
+      for (const item of current) visit(item);
+      return;
+    }
+    const record = current as Record<string, unknown>;
+    if (Array.isArray(record.errors)) {
+      record.errors = record.errors.map(error =>
+        error != null &&
+        typeof error === 'object' &&
+        typeof (error as Record<string, unknown>).code === 'string' &&
+        typeof (error as Record<string, unknown>).message === 'string'
+          ? sanitizeStructuredAdcpError(error as { code: string; message: string })
+          : error
+      );
+    }
+    for (const nested of Object.values(record)) visit(nested);
+  };
+  visit(value);
+}
+
+/** Remove server-only fields before a task result becomes buyer-readable. */
+export function sanitizeTaskResultForWire<T>(result: T, taskRef?: ScopedTaskRef): T {
+  if (result != null && typeof result === 'object') {
+    stripCtxMetadata(result as Record<string, unknown>);
+    stripImplementationConfig(result as Record<string, unknown>);
+    sanitizeEmbeddedStructuredErrors(result);
+    if (taskRef) stripIssuedTaskRef(result, taskRef);
+  }
+  return result;
+}
+
+/** @internal Clone and sanitize a legacy/custom stored result before buyer egress. */
+export function _sanitizeStoredTaskResultForWire<T>(result: T, taskRef: ScopedTaskRef): T | undefined {
+  try {
+    const clone = structuredClone(result);
+    const sanitized = sanitizeTaskResultForWire(clone, taskRef);
+    const json = JSON.stringify(sanitized);
+    return json === undefined ? undefined : (JSON.parse(json) as T);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Complete a task using the exact trusted handle returned by `create()`. */
+export async function completeScopedTask<TResult>(
+  registry: TaskRegistry,
+  ref: ScopedTaskRef,
+  result: TResult
+): Promise<TaskMutationOutcome> {
+  const refused = await ensureWorkerSettlementIsSafe(registry, ref);
+  if (refused) return refused;
+  return requireMutationOutcome(await registry.complete(ref.taskId, ref, sanitizeTaskResultForWire(result, ref)));
+}
+
+/** Fail a task using the exact trusted handle returned by `create()`. */
+export async function failScopedTask(
+  registry: TaskRegistry,
+  ref: ScopedTaskRef,
+  error: AdcpStructuredError,
+  result?: unknown
+): Promise<TaskMutationOutcome> {
+  const refused = await ensureWorkerSettlementIsSafe(registry, ref);
+  if (refused) return refused;
+  return requireMutationOutcome(
+    await registry.fail(
+      ref.taskId,
+      ref,
+      sanitizeStructuredAdcpError(error),
+      result === undefined ? undefined : sanitizeTaskResultForWire(result, ref)
+    )
+  );
+}
+
+/** Record task progress using the exact trusted handle returned by `create()`. */
+export async function updateScopedTaskProgress(
+  registry: TaskRegistry,
+  ref: ScopedTaskRef,
+  progress: TaskHandoffProgress
+): Promise<TaskMutationOutcome> {
+  const refused = verifyWorkerRefBinding(registry, ref);
+  if (refused) return refused;
+  return requireMutationOutcome(
+    await registry.updateProgress(ref.taskId, ref, sanitizeTaskProgressForStorage(progress))
+  );
 }
