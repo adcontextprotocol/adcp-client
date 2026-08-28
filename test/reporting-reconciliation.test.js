@@ -21,11 +21,14 @@ const digest = {
   algorithm: 'sha256',
   value: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   canonicalization_id: 'rows-v1',
+  canonicalization_uri: 'https://schemas.example/canonicalization/rows-v1.json',
   canonicalization_sha256: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
 };
 const revision = {
   reporting_revision_id: 'revision-august-official',
   report_definition_id: 'billing-v1',
+  report_definition_uri: 'https://schemas.example/report-definitions/billing-v1.json',
+  report_definition_sha256: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
   reporting_profile: 'billing-v1',
   schema_version: '1',
   schema_uri: 'https://schemas.example/billing-v1.json',
@@ -36,6 +39,9 @@ const revision = {
   media_buy_ids: ['buy-1', 'buy-2'],
   period,
   finality: 'official',
+  finality_basis: 'contractual_cutoff',
+  finality_policy_id: 'billing-close-v1',
+  finalized_at: '2026-09-02T00:00:00Z',
   observed_at: '2026-09-02T00:00:00Z',
   data_through: '2026-09-01T00:00:00Z',
   data_through_precision: 'exact',
@@ -55,9 +61,16 @@ function obligation(id = 'obligation-billing') {
     reporting_profile: 'billing-v1',
     account_id: 'account-1',
     media_buy_ids: ['buy-1', 'buy-2'],
+    scope_resolved_at: period.end,
     period,
     expected_at: '2026-09-02T00:00:00Z',
-    schedule: { period_duration: 'P1M', alignment: 'billing_cycle', delivery_sla: 'P1D' },
+    schedule: {
+      period_duration: 'P1M',
+      alignment: 'billing_cycle',
+      period_anchor: '2026-01-01T00:00:00Z',
+      period_timezone: 'UTC',
+      delivery_sla: 'P1D',
+    },
     destination_ref: `destination-${id}`,
     required_finality: 'official',
     reconciliation_mode: 'consumer_receipt',
@@ -137,8 +150,8 @@ function response(receipts = []) {
       coverage_complete: true,
     },
     periods: [item],
-    revisions: [revision],
-    materializations: [materialization()],
+    revisions: [structuredClone(revision)],
+    materializations: [structuredClone(materialization())],
     receipts,
     pagination: { has_more: false, total_count: 3 + receipts.length },
   };
@@ -185,7 +198,7 @@ test('reconciles a closed billing period, retries inspection, and records a matc
     },
   });
 
-  assert.equal(result.definitive, true);
+  assert.equal(result.definitive, true, JSON.stringify(result.obligations));
   assert.equal(inspections, 2);
   assert.equal(result.submittedReceipts.length, 1);
   assert.equal(result.submittedReceipts[0].status, 'accepted');
@@ -308,6 +321,69 @@ test('rejects a revision whose campaign scope differs from its obligation', asyn
   assert.ok(result.obligations[0].reasons.includes('REVISION_SCOPE_MISMATCH'));
 });
 
+test('rejects a period whose campaign denominator was not frozen at period end', async () => {
+  const raw = response([]);
+  raw.periods[0].scope_resolved_at = '2026-08-31T23:59:59Z';
+  raw.periods[0].reconciliation_mode = 'delivery_only';
+  raw.periods[0].reconciliation_status = 'not_required';
+  const ledger = await loadReportingLedger(
+    {
+      async getReportingStatus() {
+        return raw;
+      },
+      async syncReportingReceipts() {
+        throw new Error('not called');
+      },
+    },
+    { account: { account_id: 'account-1' } }
+  );
+  const result = evaluateReportingLedger(ledger, []);
+  assert.equal(result.definitive, false);
+  assert.ok(result.obligations[0].reasons.includes('SCOPE_CUTOFF_MISMATCH'));
+});
+
+test('rejects official data without auditable finality evidence', async () => {
+  const raw = response([]);
+  delete raw.revisions[0].finality_policy_id;
+  raw.periods[0].reconciliation_mode = 'delivery_only';
+  raw.periods[0].reconciliation_status = 'not_required';
+  const ledger = await loadReportingLedger(
+    {
+      async getReportingStatus() {
+        return raw;
+      },
+      async syncReportingReceipts() {
+        throw new Error('not called');
+      },
+    },
+    { account: { account_id: 'account-1' } }
+  );
+  const result = evaluateReportingLedger(ledger, []);
+  assert.equal(result.definitive, false);
+  assert.ok(result.obligations[0].reasons.includes('FINALITY_NOT_MET'));
+});
+
+test('rejects a revision whose semantic report definition is not pinned', async () => {
+  const raw = response([]);
+  delete raw.revisions[0].report_definition_sha256;
+  raw.periods[0].reconciliation_mode = 'delivery_only';
+  raw.periods[0].reconciliation_status = 'not_required';
+  const ledger = await loadReportingLedger(
+    {
+      async getReportingStatus() {
+        return raw;
+      },
+      async syncReportingReceipts() {
+        throw new Error('not called');
+      },
+    },
+    { account: { account_id: 'account-1' } }
+  );
+  const result = evaluateReportingLedger(ledger, []);
+  assert.equal(result.definitive, false);
+  assert.ok(result.obligations[0].reasons.includes('REPORT_DEFINITION_NOT_PINNED'));
+});
+
 test('does not claim completeness without an independent expected-period denominator', async () => {
   const ledger = await loadReportingLedger(
     {
@@ -358,7 +434,7 @@ test('deduplicates one canonical revision fanned out to two destinations', () =>
     accountId: 'account-1',
     scope: response([]).scope,
     obligations: [first, second],
-    revisions: [revision],
+    revisions: [structuredClone(revision)],
     materializations: [
       materialization('materialization-a', 'obligation-a'),
       materialization('materialization-b', 'obligation-b'),
@@ -366,7 +442,7 @@ test('deduplicates one canonical revision fanned out to two destinations', () =>
     receipts: [],
   };
   const result = evaluateReportingLedger(ledger, [], new Date('2026-09-03T00:00:00Z'));
-  assert.equal(result.definitive, true);
+  assert.equal(result.definitive, true, JSON.stringify(result.obligations));
   assert.equal(result.totalsByRevision.length, 1);
 });
 
