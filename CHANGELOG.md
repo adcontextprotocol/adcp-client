@@ -1,5 +1,21 @@
 # Changelog
 
+## 14.0.0-beta.15
+
+### Minor Changes
+
+- e3e8c6d: Bind delegated-operator brand, scope, and country policy to each durable webhook registration, including bounded resolver caches, replay-budget, restart, and expiry enforcement. Custom registration stores must preserve the versioned context with immediate read-your-writes consistency; automatic discovery rejects legacy unbound RFC 9421 rows.
+- a4052ce: Preserve static bearer and header credential rejections instead of misclassifying them as interactive OAuth, and require validated MCP protected-resource metadata before raising `NeedsAuthorizationError`.
+- 6e7ad48: Add crash-safe PostgreSQL settlement for push-enabled decisioning tasks. The
+  new coordinator commits terminal task state and the durable webhook outbox in
+  one transaction, reports task compatibility separately from delivery state,
+  protects task-webhook validation tokens at rest, and withholds the submitted
+  response until the external producer's durable queue write succeeds.
+
+### Patch Changes
+
+- 6512011: Allow legacy `get_signals` handlers to satisfy signal-specialism platform validation during incremental SDK 14 migrations.
+
 ## 14.0.0-beta.14
 
 ### Major Changes
