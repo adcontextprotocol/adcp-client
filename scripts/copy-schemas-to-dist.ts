@@ -31,6 +31,8 @@
 
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import path from 'path';
+import { brotliCompressSync, constants as zlibConstants } from 'node:zlib';
+import { compactBundledSchema } from './compact-schema-bundle';
 
 interface ParsedVersion {
   version: string;
@@ -167,7 +169,7 @@ function patchPrereleaseGetProductsTaskType(schemaRoot: string): void {
 }
 
 function patchInlineTaskTypeEnums(root: string): void {
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
+  for (const entry of readdirSync(root, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     const abs = path.join(root, entry.name);
     if (entry.isDirectory()) {
       patchInlineTaskTypeEnums(abs);
@@ -262,6 +264,59 @@ function stripMcpOutputSchemaReferences(schemaRoot: string): void {
   visit(mcpRoot);
 }
 
+function walkJsonFiles(root: string): string[] {
+  if (!existsSync(root)) return [];
+  const files: string[] = [];
+  for (const entry of readdirSync(root, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    const full = path.join(root, entry.name);
+    if (entry.isDirectory()) files.push(...walkJsonFiles(full));
+    else if (entry.isFile() && entry.name.endsWith('.json')) files.push(full);
+  }
+  return files;
+}
+
+/**
+ * Rebuild the upstream `bundled/` tree as compact local-ref documents. The
+ * protocol-authored bundled file itself is the input so expanding the private
+ * refs at runtime restores its exact IDs, retained refs, and diagnostic paths.
+ */
+function writeCompactBundles(sourceRoot: string, destRoot: string): void {
+  const sourceBundledRoot = path.join(sourceRoot, 'bundled');
+  if (!existsSync(sourceBundledRoot)) return;
+
+  const destBundledRoot = path.join(destRoot, 'bundled');
+  mkdirSync(destBundledRoot, { recursive: true });
+
+  let count = 0;
+  let totalBytes = 0;
+  const archive: Record<string, Record<string, unknown>> = {};
+  for (const sourceBundledFile of walkJsonFiles(sourceBundledRoot)) {
+    const relativePath = path.relative(sourceBundledRoot, sourceBundledFile);
+    const canonicalFile = path.join(destRoot, relativePath);
+    if (!existsSync(canonicalFile)) {
+      throw new Error(`Bundled schema has no canonical counterpart: ${relativePath}`);
+    }
+
+    const bundledSchema = JSON.parse(readFileSync(sourceBundledFile, 'utf8')) as Record<string, unknown>;
+    const compacted = compactBundledSchema(bundledSchema);
+    const serialized = `${JSON.stringify(compacted)}\n`;
+    const destination = path.join(destBundledRoot, relativePath);
+    mkdirSync(path.dirname(destination), { recursive: true });
+    writeFileSync(destination, serialized);
+    totalBytes += Buffer.byteLength(serialized);
+    archive[relativePath.split(path.sep).join('/')] = compacted;
+    count++;
+  }
+  const archiveContents = brotliCompressSync(Buffer.from(JSON.stringify(archive)), {
+    params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 9 },
+  });
+  writeFileSync(path.join(destRoot, 'bundled.schemas.br'), archiveContents);
+  console.log(
+    `[copy-schemas-to-dist] compacted ${count} bundled schemas (${(totalBytes / 1024 / 1024).toFixed(1)} MiB raw, ` +
+      `${(archiveContents.length / 1024 / 1024).toFixed(1)} MiB archive)`
+  );
+}
+
 function main(): void {
   const repoRoot = path.resolve(__dirname, '..');
   const cacheRoot = path.join(repoRoot, 'schemas', 'cache');
@@ -338,7 +393,7 @@ function main(): void {
         if (!rel) return true;
         const parts = rel.split(path.sep);
         const top = parts[0];
-        if (top === 'tmp' || top === 'compliance') return false;
+        if (top === 'tmp' || top === 'compliance' || top === 'bundled') return false;
         if (top === 'mcp') {
           return [...allowedMcpFiles].some(allowed => allowed === rel || allowed.startsWith(`${rel}${path.sep}`));
         }
@@ -348,6 +403,7 @@ function main(): void {
     stripMcpOutputSchemaReferences(destRoot);
     relaxAdagentsAuthorizedAgentsMinItems(destRoot);
     patchPrereleaseGetProductsTaskType(destRoot);
+    writeCompactBundles(srcRoot, destRoot);
     const note = key === source.version ? '' : ` (key collapsed from ${source.version})`;
     console.log(`[copy-schemas-to-dist] copied ${srcRoot} → ${destRoot}${note}`);
   }
@@ -368,4 +424,9 @@ function main(): void {
   }
 }
 
-main();
+try {
+  main();
+} catch (error) {
+  console.error(`[copy-schemas-to-dist] failed: ${error instanceof Error ? error.message : String(error)}`);
+  process.exitCode = 1;
+}

@@ -203,6 +203,34 @@ try {
   console.log('🔍 CJS require:');
   run('node', ['smoke.cjs'], { cwd: tmpDir, stdio: 'inherit' });
 
+  // The publish artifact omits expanded bundled JSON files and restores them
+  // from one Brotli archive per wire version. Exercise all archive-backed
+  // consumers from the installed tarball, where source-tree fallback is
+  // impossible, and assert the protocol-authored bundled ID survives.
+  writeFileSync(
+    path.join(tmpDir, 'smoke-schema-archive.cjs'),
+    [
+      "const { validateRequest } = require('./node_modules/@adcp/sdk/dist/lib/validation/index.js');",
+      "const { loadRequestSchema } = require('./node_modules/@adcp/sdk/dist/lib/conformance/schemaLoader.js');",
+      "const { getToolsWithErrorArm } = require('./node_modules/@adcp/sdk/dist/lib/server/error-arm-tools.js');",
+      "const invalid = validateRequest('get_products', {}, '3.2.0-beta.6');",
+      "if (invalid.valid || !invalid.issues.some(issue => issue.pointer === '/buying_mode')) {",
+      "  throw new Error('runtime validator did not load the archived get_products schema');",
+      '}',
+      "const schema = loadRequestSchema('get_products', { version: '3.2.0-beta.6' });",
+      "if (!schema.$id?.includes('/bundled/media-buy/get-products-request.json')) {",
+      '  throw new Error(`conformance loader returned the wrong archived schema ID: ${schema.$id}`);',
+      '}',
+      "const errorArmTools = getToolsWithErrorArm('3.2.0-beta.6');",
+      "if (!errorArmTools.has('create_media_buy')) {",
+      "  throw new Error('server error-arm discovery did not load the archived response schemas');",
+      '}',
+    ].join('\n')
+  );
+  console.log('🗜️  Archived offline schemas:');
+  run('node', ['smoke-schema-archive.cjs'], { cwd: tmpDir, stdio: 'inherit' });
+  console.log('  validation, conformance, and server discovery load schemas from the packed archives');
+
   const schemaTypeSmoke = [
     "import { CreativeAssetSchema } from '@adcp/sdk/schemas';",
     "import type { z } from 'zod';",

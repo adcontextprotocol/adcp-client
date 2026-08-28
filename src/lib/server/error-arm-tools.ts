@@ -26,6 +26,11 @@ import { readdirSync, readFileSync, existsSync } from 'fs';
 import path from 'path';
 import { ADCP_VERSION } from '../version';
 import { resolveBundleKey, toReleasePrecisionWire } from '../validation/schema-loader';
+import {
+  hasBundledSchemaStore,
+  listBundledSchemaFiles,
+  loadBundledSchemaFile,
+} from '../validation/bundled-schema-store';
 
 function findPrereleaseBundle(root: string, key: string): string | undefined {
   if (!existsSync(root)) return undefined;
@@ -65,7 +70,7 @@ function resolveBundledRoot(version: string): string | undefined {
   const distRoot = path.join(__dirname, '..', 'schemas-data');
   // Built layout (dist): dist/lib/schemas-data/<bundle-key>/bundled
   const distCandidate = path.join(distRoot, key, 'bundled');
-  if (existsSync(distCandidate)) return distCandidate;
+  if (hasBundledSchemaStore(distCandidate)) return distCandidate;
 
   // Wire envelopes carry release-precision prerelease values such as
   // `3.2-beta.0`, while published bundles retain the exact full-semver
@@ -80,7 +85,7 @@ function resolveBundledRoot(version: string): string | undefined {
   // Source-tree layout (dev): schemas/cache/<exact-version>/bundled
   const cacheRoot = path.join(__dirname, '..', '..', '..', 'schemas', 'cache');
   const exactCandidate = path.join(cacheRoot, version, 'bundled');
-  if (existsSync(exactCandidate)) return exactCandidate;
+  if (hasBundledSchemaStore(exactCandidate)) return exactCandidate;
 
   // Latest-patch fallback for stable minor pins (matches schema-loader).
   const minorMatch = key.match(/^(\d+)\.(\d+)$/);
@@ -202,24 +207,14 @@ function scanForErrorArmTools(bundledRoot: string): Map<string, ErrorArmDescript
     // fallback for those versions; current bundles always take the stricter
     // manifest path below.
   }
-  const files: string[] = [];
-  function walk(dir: string): void {
-    if (!existsSync(dir)) return;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(full);
-      } else if (entry.isFile() && entry.name.endsWith('-response.json')) {
-        files.push(full);
-      }
-    }
-  }
-  walk(bundledRoot);
+  const files = listBundledSchemaFiles(bundledRoot).filter(file => file.endsWith('-response.json'));
 
   for (const file of files) {
     let schema: Record<string, unknown>;
     try {
-      schema = JSON.parse(readFileSync(file, 'utf-8')) as Record<string, unknown>;
+      const loaded = loadBundledSchemaFile(file);
+      if (!loaded) continue;
+      schema = loaded;
     } catch {
       continue;
     }

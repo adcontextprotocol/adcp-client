@@ -4,8 +4,8 @@
     "outDir": "./dist/lib",
     "rootDir": "./src/lib",
     "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
+    "declarationMap": false,
+    "sourceMap": false,
     "stripInternal": true
   },
   "include": ["src/lib/**/*"],

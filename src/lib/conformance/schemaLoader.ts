@@ -1,8 +1,8 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import type { ConformanceToolName } from './types';
 import { ADCP_VERSION } from '../version';
 import { resolveBundleKey } from '../validation/schema-loader';
+import { hasBundledSchemaStore, loadBundledSchemaFile } from '../validation/bundled-schema-store';
 
 type JsonSchema = Record<string, unknown>;
 
@@ -70,18 +70,20 @@ const TOOL_SCHEMA_LOCATIONS: Record<ConformanceToolName, ToolSchemaLocation> = {
 function findBundledDir(options: ConformanceSchemaOptions = {}): string {
   if (options.schemaRoot) {
     const bundled = path.join(options.schemaRoot, 'bundled');
-    if (fs.existsSync(bundled)) return bundled;
-    if (path.basename(options.schemaRoot) === 'bundled' && fs.existsSync(options.schemaRoot)) return options.schemaRoot;
+    if (hasBundledSchemaStore(bundled)) return bundled;
+    if (path.basename(options.schemaRoot) === 'bundled' && hasBundledSchemaStore(options.schemaRoot)) {
+      return options.schemaRoot;
+    }
     throw new Error(`Conformance schema bundle not found at ${options.schemaRoot}. Expected a root with bundled/.`);
   }
 
   const version = options.version ?? ADCP_VERSION;
   const bundleKey = resolveBundleKey(version);
   const distCandidate = path.resolve(__dirname, '..', 'schemas-data', bundleKey, 'bundled');
-  if (fs.existsSync(distCandidate)) return distCandidate;
+  if (hasBundledSchemaStore(distCandidate)) return distCandidate;
 
   const srcCandidate = path.resolve(__dirname, '..', '..', '..', 'schemas', 'cache', version, 'bundled');
-  if (fs.existsSync(srcCandidate)) return srcCandidate;
+  if (hasBundledSchemaStore(srcCandidate)) return srcCandidate;
 
   throw new Error(
     `Conformance schema bundle not found. Looked in ${distCandidate} and ${srcCandidate}. ` +
@@ -97,7 +99,8 @@ function loadSchema(relativePath: string, options: ConformanceSchemaOptions = {}
   const cached = schemaCache.get(cacheKey);
   if (cached) return cached;
   const full = path.join(bundledDir, relativePath);
-  const parsed = JSON.parse(fs.readFileSync(full, 'utf8')) as JsonSchema;
+  const parsed = loadBundledSchemaFile(full);
+  if (!parsed) throw new Error(`Conformance schema not found: ${full}`);
   schemaCache.set(cacheKey, parsed);
   return parsed;
 }
