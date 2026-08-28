@@ -844,13 +844,16 @@ function requestFingerprint(value: unknown): string {
   return createHash('sha256').update(canonicalize(value)).digest('base64url');
 }
 
-function snapshotCompatibilityTaskOptions(options: TaskOptions | undefined): TaskOptions | undefined {
-  if (!options) return undefined;
+function snapshotCompatibilityTaskOptions<T extends TaskOptions | undefined>(options: T): T {
+  if (!options) return options;
   return {
     ...options,
     ...(options.transport !== undefined && { transport: { ...options.transport } }),
     ...(options.metadata !== undefined && { metadata: structuredClone(options.metadata) }),
-  };
+    ...(options.delegatedOperatorAuthorization !== undefined && {
+      delegatedOperatorAuthorization: { ...options.delegatedOperatorAuthorization },
+    }),
+  } as T;
 }
 
 function stripWebhookAuthenticationCredential(value: unknown): unknown {
@@ -5141,6 +5144,7 @@ export class MediaBuyLifecycleCoordinator {
     inputHandler?: InputHandler,
     options?: CanonicalProjectionTaskOptions
   ): Promise<CompatibilityTaskResult<CompatibleProductsResponse, CompatibleProductsWireResponse>> {
+    options = snapshotCompatibilityTaskOptions(options);
     this.assertActive('listProducts');
     const input = record(params);
     const lifecycle = this.selectLifecycle('list_products');
@@ -5223,6 +5227,7 @@ export class MediaBuyLifecycleCoordinator {
     inputHandler?: InputHandler,
     options?: CanonicalProjectionTaskOptions
   ): Promise<CompatibilityTaskResult<CompatibleRequestProposalsResponse, CompatibleRequestProposalsWireResponse>> {
+    options = snapshotCompatibilityTaskOptions(options);
     this.assertActive('requestProposals');
     const input = record(params);
     const lifecycle = this.selectLifecycle('request_proposals');
@@ -8239,6 +8244,7 @@ export class MediaBuyLifecycleCoordinator {
     inputHandler?: InputHandler,
     options?: ProposalRefinementTaskOptions
   ): Promise<CompatibilityTaskResult<CompatibleRefineProposalsResponse, CompatibleRefineProposalsWireResponse>> {
+    options = snapshotCompatibilityTaskOptions(options);
     this.assertActive('refineProposals');
     const lifecycle = this.selectLifecycle('refine_proposals');
     this.assertBeta6ReportingRequest('refineProposals', 'refine_proposals', params);
@@ -8556,6 +8562,7 @@ export class MediaBuyLifecycleCoordinator {
     inputHandler?: InputHandler,
     options?: CanonicalProjectionTaskOptions
   ): Promise<CompatibilityTaskResult<CompatibleDeclineProposalsResponse, CompatibleDeclineProposalsWireResponse>> {
+    options = snapshotCompatibilityTaskOptions(options);
     this.assertActive('declineProposals');
     const input = record(params);
     const lifecycle = this.selectLifecycle('decline_proposals');
@@ -8801,6 +8808,7 @@ export class MediaBuyLifecycleCoordinator {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<CompatibilityTaskResult<BuyProductsResponse | CreateMediaBuyResponse>> {
+    options = snapshotCompatibilityTaskOptions(options);
     this.assertActive('buyProducts');
     const input = record(params);
     const lifecycle = this.selectLifecycle('buy_products');
@@ -8953,6 +8961,7 @@ export class MediaBuyLifecycleCoordinator {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<CompatibilityTaskResult<AcceptProposalResponse | CreateMediaBuyResponse>> {
+    options = snapshotCompatibilityTaskOptions(options);
     this.assertActive('acceptProposal');
     const input = record(params);
     const lifecycle = this.selectLifecycle('accept_proposal');
@@ -9482,6 +9491,7 @@ export class MediaBuyLifecycleCoordinator {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<CompatibilityTaskResult<ControlMediaBuyResponse | UpdateMediaBuyResponse>> {
+    options = snapshotCompatibilityTaskOptions(options);
     this.assertActive('controlMediaBuy');
     const input = record(params);
     const lifecycle = this.selectLifecycle('control_media_buy');
@@ -9786,6 +9796,7 @@ export class MediaBuyLifecycleCoordinator {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<CompatibilityTaskResult<GetMediaBuysResponse>> {
+    options = snapshotCompatibilityTaskOptions(options);
     this.assertActive('getMediaBuys');
     if (compareRelease(this.negotiated_version, '3.0') < 0) {
       throw this.unsupported(
@@ -9812,6 +9823,7 @@ export class MediaBuyLifecycleCoordinator {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<CompatibilityTaskResult<GetMediaBuyDeliveryResponse>> {
+    options = snapshotCompatibilityTaskOptions(options);
     this.assertActive('getMediaBuyDelivery');
     if (compareRelease(this.negotiated_version, '3.0') < 0) {
       throw this.unsupported(

@@ -5185,6 +5185,7 @@ describe('legacy products-only purchase continuations', () => {
     const taskOptions = {
       transport: { trustedFetchFn: trustedFetch, allowPrivateIp: false, requestTimeoutMs: 1_000 },
       metadata: { tenant: { id: 'tenant-snapshot' } },
+      delegatedOperatorAuthorization: { brand: 'brand_a', scope: 'media_buying', country: 'GB' },
     };
     const purchase = coordinator.continueLegacyPurchase(input, undefined, taskOptions);
     await getStarted;
@@ -5195,6 +5196,7 @@ describe('legacy products-only purchase continuations', () => {
     taskOptions.transport.trustedFetchFn = substitutedFetch;
     taskOptions.transport.allowPrivateIp = true;
     taskOptions.metadata.tenant.id = 'attacker-tenant';
+    taskOptions.delegatedOperatorAuthorization.brand = 'mutated_after_store_read';
     releaseGet();
 
     assert.equal((await purchase).status, 'completed');
@@ -5205,6 +5207,11 @@ describe('legacy products-only purchase continuations', () => {
     assert.strictEqual(dispatchOptions.transport.trustedFetchFn, trustedFetch);
     assert.equal(dispatchOptions.transport.allowPrivateIp, false);
     assert.equal(dispatchOptions.metadata.tenant.id, 'tenant-snapshot');
+    assert.deepStrictEqual(dispatchOptions.delegatedOperatorAuthorization, {
+      brand: 'brand_a',
+      scope: 'media_buying',
+      country: 'GB',
+    });
   });
 
   test('continuation replay fingerprints exclude only write-only webhook credentials', async () => {

@@ -16,7 +16,8 @@ const {
 } = require('../dist/lib/protocols/prepared-call-context.js');
 const { signWebhook } = require('../dist/lib/signing/signer.js');
 const { StaticJwksResolver } = require('../dist/lib/signing/jwks.js');
-const { ResolvedAgentJwksResolver } = require('../dist/lib/signing/agent-resolver/index.js');
+const { InMemoryReplayStore } = require('../dist/lib/signing/replay.js');
+const { AgentResolverError, ResolvedAgentJwksResolver } = require('../dist/lib/signing/agent-resolver/index.js');
 
 const agent = {
   id: 'seller-1',
@@ -180,6 +181,42 @@ test('webhook registrations persist durable-settlement routing provenance', asyn
 
   await store.markRequiresDurableSettlement(agent.id, 'op-durable-settlement-marker');
   assert.equal((await store.get(agent.id, 'op-durable-settlement-marker')).requiresDurableSettlement, true);
+});
+
+test('webhook registrations own and fence delegated-operator authorization context', async () => {
+  const store = new InMemoryWebhookRegistrationStore();
+  const authorization = { brand: 'brand_a', scope: 'media_buying', country: 'GB' };
+  const registration = {
+    agentId: agent.id,
+    agentUrl: agent.agent_uri,
+    protocol: agent.protocol,
+    operationId: 'op-authorization-context',
+    taskType: 'create_media_buy',
+    callbackUrl: 'https://buyer.example/webhooks/create_media_buy/op-authorization-context',
+    method: 'POST',
+    mode: 'rfc9421',
+    authorizationContextVersion: 1,
+    delegatedOperatorAuthorization: authorization,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 60_000,
+  };
+  await store.putIfAbsent(registration);
+  authorization.brand = 'brand_b';
+
+  const stored = await store.get(agent.id, registration.operationId);
+  assert.deepStrictEqual(stored.delegatedOperatorAuthorization, {
+    brand: 'brand_a',
+    scope: 'media_buying',
+    country: 'GB',
+  });
+  assert.strictEqual(Object.isFrozen(stored.delegatedOperatorAuthorization), true);
+  await assert.rejects(
+    store.putIfAbsent({
+      ...registration,
+      delegatedOperatorAuthorization: { brand: 'brand_b', scope: 'media_buying', country: 'GB' },
+    }),
+    /different trusted provenance/
+  );
 });
 
 describe('SingleAgentClient RFC 9421 webhook receiver', () => {
@@ -931,9 +968,16 @@ describe('webhook registration provenance', () => {
       { ...agent, agent_uri: 'https://seller-user:secret@seller.example/mcp#fragment' },
       {
         webhookSecret: 'legacy-secret',
+        webhookVerification: {
+          resolverOptions: {
+            requiredOperatorBrand: 'client_default',
+            requiredOperatorScope: 'governance',
+            requiredOperatorCountry: 'CA',
+          },
+        },
         webhookRegistrationStore: {
           async get() {
-            return undefined;
+            return persisted;
           },
           async putIfAbsent(registration) {
             persisted = registration;
@@ -947,17 +991,109 @@ describe('webhook registration provenance', () => {
       operationId: 'op-sanitized-agent-url',
       callbackUrl: 'https://buyer.example/webhook/op-sanitized-agent-url',
       mode: 'hmac-sha256',
+      delegatedOperatorAuthorization: { brand: 'brand_a' },
     });
     assert.strictEqual(persisted.agentUrl, 'https://seller.example/mcp');
+    assert.strictEqual(persisted.authorizationContextVersion, 1);
+    assert.deepStrictEqual(persisted.delegatedOperatorAuthorization, { brand: 'brand_a' });
     assert.strictEqual(JSON.stringify(persisted).includes('secret'), false);
+  });
+
+  test('persists the client-wide delegated policy when a dispatch omits a per-call tuple', async () => {
+    const store = new InMemoryWebhookRegistrationStore();
+    const client = new SingleAgentClient(agent, {
+      webhookVerification: {
+        resolverOptions: {
+          requiredOperatorBrand: 'client_default',
+          requiredOperatorScope: 'governance',
+          requiredOperatorCountry: 'CA',
+        },
+      },
+      webhookRegistrationStore: store,
+    });
+
+    await client.persistWebhookRegistration({
+      agent,
+      taskType: 'get_products',
+      operationId: 'op-client-default-registration',
+      callbackUrl: 'https://buyer.example/webhook/op-client-default-registration',
+      mode: 'rfc9421',
+    });
+
+    const persisted = await store.get(agent.id, 'op-client-default-registration');
+    assert.strictEqual(persisted.authorizationContextVersion, 1);
+    assert.deepStrictEqual(persisted.delegatedOperatorAuthorization, {
+      brand: 'client_default',
+      scope: 'governance',
+      country: 'CA',
+    });
+  });
+
+  test('fails before seller dispatch when a durable store drops versioned authorization fields', async () => {
+    const original = ProtocolClient.callTool;
+    let dispatches = 0;
+    ProtocolClient.callTool = async () => {
+      dispatches += 1;
+      return { status: 'submitted' };
+    };
+    try {
+      const projections = [
+        registration => {
+          const { authorizationContextVersion: _authorizationContextVersion, ...withoutVersion } = registration;
+          return withoutVersion;
+        },
+        registration => {
+          const { delegatedOperatorAuthorization: _delegatedOperatorAuthorization, ...withoutTuple } = registration;
+          return withoutTuple;
+        },
+        registration => {
+          const {
+            authorizationContextVersion: _authorizationContextVersion,
+            delegatedOperatorAuthorization: _delegatedOperatorAuthorization,
+            ...legacyProjection
+          } = registration;
+          return legacyProjection;
+        },
+      ];
+
+      for (const project of projections) {
+        let stored;
+        const client = new SingleAgentClient(agent, {
+          webhookUrlTemplate: 'https://buyer.example/webhook/{operation_id}',
+          webhookRegistrationStore: {
+            async get() {
+              return stored;
+            },
+            async putIfAbsent(registration) {
+              stored = project(registration);
+            },
+          },
+          validation: { requests: 'off', responses: 'off' },
+        });
+
+        const result = await client.executor.executeTask(agent, 'extension_task', {}, undefined, {
+          delegatedOperatorAuthorization: { brand: 'brand_a', scope: 'media_buying', country: 'GB' },
+        });
+        assert.strictEqual(result.success, false);
+        assert.strictEqual(dispatches, 0);
+        assert.match(result.error, /webhook registration/i);
+      }
+    } finally {
+      ProtocolClient.callTool = original;
+    }
   });
 
   test('TaskExecutor persists the single prepared call before dispatch', async () => {
     const original = ProtocolClient.callTool;
     let registration;
     const store = new InMemoryWebhookRegistrationStore();
-    ProtocolClient.callTool = async () => {
+    ProtocolClient.callTool = async (_agent, _taskName, args) => {
       assert.ok(registration, 'registration must be durable before dispatch begins');
+      assert.strictEqual(
+        Object.prototype.hasOwnProperty.call(args, 'delegatedOperatorAuthorization'),
+        false,
+        'trusted receiver policy must never enter protocol arguments'
+      );
       return { status: 'completed', result: { products: [] } };
     };
     try {
@@ -976,14 +1112,30 @@ describe('webhook registration provenance', () => {
             callbackUrl: value.callbackUrl,
             method: 'POST',
             mode: value.mode,
+            authorizationContextVersion: 1,
+            delegatedOperatorAuthorization: value.delegatedOperatorAuthorization,
             createdAt: now,
             expiresAt: now + 60_000,
           });
         },
         validation: { requests: 'off', responses: 'off' },
       });
-      await executor.executeTask(agent, 'extension_task', {});
+      const delegatedOperatorAuthorization = {
+        brand: 'brand_a',
+        scope: 'media_buying',
+        country: 'GB',
+      };
+      const pending = executor.executeTask(agent, 'extension_task', {}, undefined, {
+        delegatedOperatorAuthorization,
+      });
+      delegatedOperatorAuthorization.brand = 'mutated_after_dispatch';
+      await pending;
       assert.strictEqual(registration.callbackUrl, `https://buyer.example/webhook/${registration.operationId}`);
+      assert.deepStrictEqual(registration.delegatedOperatorAuthorization, {
+        brand: 'brand_a',
+        scope: 'media_buying',
+        country: 'GB',
+      });
       assert.ok(!JSON.stringify(registration).includes('credentials'));
       assert.ok(
         await store.get(agent.id, registration.operationId),
@@ -1047,6 +1199,7 @@ describe('webhook registration provenance', () => {
 
   test('custom durable stores must implement the pre-claim settlement marker', async () => {
     const original = ProtocolClient.callTool;
+    let stored;
     let claims = 0;
     let dispatches = 0;
     ProtocolClient.callTool = async () => {
@@ -1059,9 +1212,11 @@ describe('webhook registration provenance', () => {
         webhookSecret: 'legacy-secret',
         webhookRegistrationStore: {
           async get() {
-            return undefined;
+            return stored;
           },
-          async putIfAbsent() {},
+          async putIfAbsent(registration) {
+            stored = registration;
+          },
         },
         validation: { requests: 'off', responses: 'off' },
       });
@@ -1219,6 +1374,39 @@ describe('webhook registration provenance', () => {
     releaseDiscovery();
 
     assert.strictEqual((await status).taskId, 'seller-task-snapshot');
+  });
+
+  test('getAdcpCapabilities owns delegated authorization before endpoint discovery yields', async () => {
+    const client = new SingleAgentClient(agent);
+    const delegatedOperatorAuthorization = { brand: 'brand_a', scope: 'media_buying', country: 'GB' };
+    let releaseDiscovery;
+    let markDiscoveryEntered;
+    const discoveryEntered = new Promise(resolve => {
+      markDiscoveryEntered = resolve;
+    });
+    const discoveryRelease = new Promise(resolve => {
+      releaseDiscovery = resolve;
+    });
+    client.ensureEndpointDiscovered = async () => {
+      markDiscoveryEntered();
+      await discoveryRelease;
+      return agent;
+    };
+    client.executor.validateRequest = () => {};
+    client.executor.executeTask = async (_agent, _taskName, _params, _handler, options) => {
+      assert.deepStrictEqual(options.delegatedOperatorAuthorization, {
+        brand: 'brand_a',
+        scope: 'media_buying',
+        country: 'GB',
+      });
+      return { success: true, status: 'completed', data: {}, metadata: {} };
+    };
+
+    const result = client.getAdcpCapabilities({}, undefined, { delegatedOperatorAuthorization });
+    await discoveryEntered;
+    delegatedOperatorAuthorization.brand = 'mutated_after_preflight';
+    releaseDiscovery();
+    assert.strictEqual((await result).success, true);
   });
 
   test('webhook HTTP helper maps malformed dedup keys to 400 before handler dispatch', async () => {
@@ -1398,6 +1586,114 @@ describe('webhook registration provenance', () => {
 });
 
 describe('seller-pinned webhook JWK discovery cache', () => {
+  test('partitions resolver caches by the persisted delegated-operator tuple', async () => {
+    const seen = [];
+    const client = new SingleAgentClient(agent, {
+      webhookVerification: {
+        resolverOptions: {
+          requiredOperatorBrand: 'client_default',
+          requiredOperatorScope: 'governance',
+          requiredOperatorCountry: 'CA',
+          resolve: async (_agentUrl, options) => {
+            seen.push([options.requiredOperatorBrand, options.requiredOperatorScope, options.requiredOperatorCountry]);
+            return { jwks: { keys: [{ kid: 'known-key', kty: 'OKP' }] } };
+          },
+        },
+      },
+    });
+    const base = {
+      agentId: agent.id,
+      agentUrl: agent.agent_uri,
+      protocol: agent.protocol,
+      taskType: 'get_products',
+      callbackUrl: 'https://buyer.example/shared-webhook',
+      method: 'POST',
+      mode: 'rfc9421',
+      authorizationContextVersion: 1,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+    };
+    const brandA = client.webhookJwksFor({
+      ...base,
+      operationId: 'op-brand-a',
+      delegatedOperatorAuthorization: { brand: 'brand_a', scope: 'media_buying', country: 'GB' },
+    });
+    const brandASecond = client.webhookJwksFor({
+      ...base,
+      operationId: 'op-brand-a-2',
+      delegatedOperatorAuthorization: { brand: 'brand_a', scope: 'media_buying', country: 'GB' },
+    });
+    const brandB = client.webhookJwksFor({
+      ...base,
+      operationId: 'op-brand-b',
+      delegatedOperatorAuthorization: { brand: 'brand_b', scope: 'creative_generation', country: 'US' },
+    });
+    const explicitBrandOnly = client.webhookJwksFor({
+      ...base,
+      operationId: 'op-brand-only',
+      delegatedOperatorAuthorization: { brand: 'brand_only' },
+    });
+    const clientDefault = client.webhookJwksFor({
+      ...base,
+      operationId: 'op-client-default',
+      delegatedOperatorAuthorization: {
+        brand: 'client_default',
+        scope: 'governance',
+        country: 'CA',
+      },
+    });
+    const { authorizationContextVersion: _version, ...legacyBase } = base;
+
+    assert.strictEqual(brandA, brandASecond, 'identical trusted tuples may coalesce');
+    assert.notStrictEqual(brandA, brandB, 'different trusted tuples must not share a key cache');
+    assert.throws(
+      () => client.webhookJwksFor({ ...legacyBase, operationId: 'op-legacy-default' }),
+      /legacy webhook registration/
+    );
+    await brandA.resolve('known-key');
+    await brandB.resolve('known-key');
+    await explicitBrandOnly.resolve('known-key');
+    await clientDefault.resolve('known-key');
+    assert.deepStrictEqual(seen, [
+      ['brand_a', 'media_buying', 'GB'],
+      ['brand_b', 'creative_generation', 'US'],
+      ['brand_only', undefined, undefined],
+      ['client_default', 'governance', 'CA'],
+    ]);
+  });
+
+  test('bounds tuple-partitioned resolver cache cardinality with LRU eviction', () => {
+    const client = new SingleAgentClient(agent);
+    const base = {
+      agentId: agent.id,
+      agentUrl: agent.agent_uri,
+      protocol: agent.protocol,
+      taskType: 'get_products',
+      callbackUrl: 'https://buyer.example/shared-webhook',
+      method: 'POST',
+      mode: 'rfc9421',
+      authorizationContextVersion: 1,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+    };
+    const firstRegistration = {
+      ...base,
+      operationId: 'op-brand-0',
+      delegatedOperatorAuthorization: { brand: 'brand_0' },
+    };
+    const first = client.webhookJwksFor(firstRegistration);
+    for (let index = 1; index <= 1_024; index += 1) {
+      client.webhookJwksFor({
+        ...base,
+        operationId: `op-brand-${index}`,
+        delegatedOperatorAuthorization: { brand: `brand_${index}` },
+      });
+    }
+    assert.strictEqual(client.webhookJwksResolvers.size, 1_024);
+    assert.notStrictEqual(client.webhookJwksFor(firstRegistration), first, 'the oldest tuple must be evicted');
+    assert.strictEqual(client.webhookJwksResolvers.size, 1_024);
+  });
+
   test('coalesces positive lookups and rate-limits unknown-kid refreshes', async () => {
     let now = 1_700_000_000;
     let resolutions = 0;
@@ -1448,6 +1744,291 @@ describe('seller-pinned webhook JWK discovery cache', () => {
       () => new ResolvedAgentJwksResolver(agent.agent_uri, 'mcp', { unknownKidCooldownSeconds: -1 }),
       /finite non-negative/
     );
+  });
+
+  test('does not accept a delegation that expires during webhook verification', async () => {
+    const initialNow = 1_700_000_000;
+    const validUntil = initialNow + 0.5;
+    let now = initialNow;
+    const store = new InMemoryWebhookRegistrationStore({ now: () => now * 1000 });
+    const callbackUrl = 'https://buyer.example/webhooks/get_products/op-expiring-authorization';
+    await store.putIfAbsent({
+      agentId: agent.id,
+      agentUrl: agent.agent_uri,
+      protocol: agent.protocol,
+      operationId: 'op-expiring-authorization',
+      taskType: 'get_products',
+      callbackUrl,
+      method: 'POST',
+      mode: 'rfc9421',
+      authorizationContextVersion: 1,
+      delegatedOperatorAuthorization: { brand: 'brand_a' },
+      createdAt: initialNow * 1000,
+      expiresAt: (initialNow + 60) * 1000,
+    });
+    const { signer, publicJwk } = keypair('expiring-authorization-key');
+    const client = new SingleAgentClient(agent, {
+      webhookRegistrationStore: store,
+      webhookVerification: {
+        now: () => now,
+        jwks: {
+          async resolve() {
+            throw new Error('metadata-aware lookup expected');
+          },
+          async resolveWithMetadata() {
+            now = validUntil;
+            return { jwk: publicJwk, operatorAuthorizationValidUntil: validUntil };
+          },
+        },
+      },
+    });
+    const rawBody = JSON.stringify(
+      envelope({ operation_id: 'op-expiring-authorization', idempotency_key: 'expiring-auth-delivery' })
+    );
+    const signed = signWebhook(
+      { method: 'POST', url: callbackUrl, headers: { 'content-type': 'application/json' }, body: rawBody },
+      signer,
+      { now: () => initialNow, nonce: 'expiring-auth-nonce' }
+    );
+
+    const result = await client.verifyAndParseWebhook({
+      rawBody,
+      headers: signed.headers,
+      taskType: 'get_products',
+      operationId: 'op-expiring-authorization',
+      requestMethod: 'POST',
+      requestUrl: callbackUrl,
+    });
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.code, 'webhook_signature_key_unknown');
+  });
+
+  test('does not accept a delegation that expires during durable replay insertion', async () => {
+    const initialNow = 1_700_000_000;
+    const validUntil = initialNow + 0.5;
+    let now = initialNow;
+    const store = new InMemoryWebhookRegistrationStore({ now: () => now * 1000 });
+    const callbackUrl = 'https://buyer.example/webhooks/get_products/op-expiring-replay-insert';
+    await store.putIfAbsent({
+      agentId: agent.id,
+      agentUrl: agent.agent_uri,
+      protocol: agent.protocol,
+      operationId: 'op-expiring-replay-insert',
+      taskType: 'get_products',
+      callbackUrl,
+      method: 'POST',
+      mode: 'rfc9421',
+      authorizationContextVersion: 1,
+      delegatedOperatorAuthorization: { brand: 'brand_a' },
+      createdAt: initialNow * 1000,
+      expiresAt: (initialNow + 60) * 1000,
+    });
+    const { signer, publicJwk } = keypair('expiring-replay-insert-key');
+    const client = new SingleAgentClient(agent, {
+      webhookRegistrationStore: store,
+      webhookVerification: {
+        now: () => now,
+        jwks: {
+          async resolve() {
+            throw new Error('metadata-aware lookup expected');
+          },
+          async resolveWithMetadata() {
+            return { jwk: publicJwk, operatorAuthorizationValidUntil: validUntil };
+          },
+        },
+        replayStore: {
+          async has() {
+            return false;
+          },
+          async isCapHit() {
+            return false;
+          },
+          async insert() {
+            now = validUntil;
+            return 'ok';
+          },
+        },
+      },
+    });
+    const rawBody = JSON.stringify(
+      envelope({ operation_id: 'op-expiring-replay-insert', idempotency_key: 'expiring-replay-delivery' })
+    );
+    const signed = signWebhook(
+      { method: 'POST', url: callbackUrl, headers: { 'content-type': 'application/json' }, body: rawBody },
+      signer,
+      { now: () => initialNow, nonce: 'expiring-replay-nonce' }
+    );
+
+    const result = await client.verifyAndParseWebhook({
+      rawBody,
+      headers: signed.headers,
+      taskType: 'get_products',
+      operationId: 'op-expiring-replay-insert',
+      requestMethod: 'POST',
+      requestUrl: callbackUrl,
+    });
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.code, 'webhook_signature_key_unknown');
+  });
+});
+
+describe('delegated-operator webhook authorization context', () => {
+  function registration(operationId, delegatedOperatorAuthorization, callbackUrl) {
+    return {
+      agentId: agent.id,
+      agentUrl: agent.agent_uri,
+      protocol: agent.protocol,
+      operationId,
+      taskType: 'get_products',
+      callbackUrl,
+      method: 'POST',
+      mode: 'rfc9421',
+      authorizationContextVersion: 1,
+      delegatedOperatorAuthorization,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+    };
+  }
+
+  async function verifyFor(client, callbackUrl, operationId, signer, nonce) {
+    const rawBody = JSON.stringify(
+      envelope({
+        operation_id: operationId,
+        task_id: `task-${operationId}`,
+        idempotency_key: `delivery-${operationId}-${nonce}`,
+      })
+    );
+    const signed = signWebhook(
+      { method: 'POST', url: callbackUrl, headers: { 'content-type': 'application/json' }, body: rawBody },
+      signer,
+      { nonce }
+    );
+    return client.verifyAndParseWebhook({
+      rawBody,
+      headers: signed.headers,
+      taskType: 'get_products',
+      operationId,
+      requestMethod: 'POST',
+      requestUrl: callbackUrl,
+    });
+  }
+
+  test('prevents a key authorized for one registration tuple from authenticating another', async () => {
+    const callbackUrl = 'https://buyer.example/shared-delegated-webhook';
+    const store = new InMemoryWebhookRegistrationStore();
+    const brandAContext = { brand: 'brand_a', scope: 'media_buying', country: 'GB' };
+    const brandBContext = { brand: 'brand_b', scope: 'creative_generation', country: 'US' };
+    await store.putIfAbsent(registration('op-brand-a', brandAContext, callbackUrl));
+    await store.putIfAbsent(registration('op-brand-b', brandBContext, callbackUrl));
+    const brandA = keypair('brand-a-key');
+    const brandB = keypair('brand-b-key');
+    const resolved = [];
+    const client = new SingleAgentClient(agent, {
+      webhookRegistrationStore: store,
+      webhookVerification: {
+        resolverOptions: {
+          resolve: async (_agentUrl, options) => {
+            const tuple = [
+              options.requiredOperatorBrand,
+              options.requiredOperatorScope,
+              options.requiredOperatorCountry,
+            ];
+            resolved.push(tuple);
+            const key = options.requiredOperatorBrand === 'brand_a' ? brandA.publicJwk : brandB.publicJwk;
+            return { jwks: { keys: [key] } };
+          },
+        },
+      },
+    });
+
+    assert.strictEqual((await verifyFor(client, callbackUrl, 'op-brand-a', brandA.signer, 'brand-a-1')).ok, true);
+    const crossTuple = await verifyFor(client, callbackUrl, 'op-brand-b', brandA.signer, 'brand-a-on-b');
+    assert.strictEqual(crossTuple.ok, false);
+    assert.strictEqual(crossTuple.code, 'webhook_signature_key_unknown');
+    assert.strictEqual((await verifyFor(client, callbackUrl, 'op-brand-b', brandB.signer, 'brand-b-1')).ok, true);
+    assert.deepStrictEqual(resolved, [
+      ['brand_a', 'media_buying', 'GB'],
+      ['brand_b', 'creative_generation', 'US'],
+    ]);
+  });
+
+  test('revalidates a persisted tuple against live authority after restart', async () => {
+    const callbackUrl = 'https://buyer.example/restart-delegated-webhook';
+    const store = new InMemoryWebhookRegistrationStore();
+    await store.putIfAbsent(
+      registration('op-restart', { brand: 'brand_a', scope: 'media_buying', country: 'GB' }, callbackUrl)
+    );
+    const signing = keypair('restart-key');
+    let authorized = true;
+    let resolutions = 0;
+    const makeClient = () =>
+      new SingleAgentClient(agent, {
+        webhookRegistrationStore: store,
+        webhookVerification: {
+          resolverOptions: {
+            resolve: async (_agentUrl, options) => {
+              resolutions += 1;
+              assert.deepStrictEqual(
+                [options.requiredOperatorBrand, options.requiredOperatorScope, options.requiredOperatorCountry],
+                ['brand_a', 'media_buying', 'GB']
+              );
+              if (!authorized) {
+                throw new AgentResolverError('request_signature_brand_origin_mismatch', 'delegation no longer active');
+              }
+              return { jwks: { keys: [signing.publicJwk] } };
+            },
+          },
+        },
+      });
+
+    assert.strictEqual(
+      (await verifyFor(makeClient(), callbackUrl, 'op-restart', signing.signer, 'before-restart')).ok,
+      true
+    );
+    authorized = false;
+    const afterRestart = await verifyFor(makeClient(), callbackUrl, 'op-restart', signing.signer, 'after-restart');
+    assert.strictEqual(afterRestart.ok, false);
+    assert.strictEqual(afterRestart.code, 'webhook_signature_key_unknown');
+    assert.strictEqual(resolutions, 2, 'a fresh client must perform live discovery for the persisted tuple');
+  });
+
+  test('isolates replay capacity by authorization tuple on a shared callback URL', async () => {
+    const callbackUrl = 'https://buyer.example/shared-replay-webhook';
+    const store = new InMemoryWebhookRegistrationStore();
+    await store.putIfAbsent(registration('op-replay-a', { brand: 'brand_a' }, callbackUrl));
+    await store.putIfAbsent(registration('op-replay-b', { brand: 'brand_b' }, callbackUrl));
+    const signing = keypair('shared-replay-key');
+    const client = new SingleAgentClient(agent, {
+      webhookRegistrationStore: store,
+      webhookVerification: {
+        jwks: new StaticJwksResolver([signing.publicJwk]),
+        replayStore: new InMemoryReplayStore({ maxEntriesPerKeyid: 1 }),
+      },
+    });
+
+    assert.strictEqual((await verifyFor(client, callbackUrl, 'op-replay-a', signing.signer, 'tuple-a-first')).ok, true);
+    assert.strictEqual(
+      (await verifyFor(client, callbackUrl, 'op-replay-b', signing.signer, 'tuple-b-first')).ok,
+      true,
+      'tuple A must not consume tuple B replay capacity'
+    );
+    const cappedA = await verifyFor(client, callbackUrl, 'op-replay-a', signing.signer, 'tuple-a-second');
+    assert.strictEqual(cappedA.ok, false);
+    assert.strictEqual(cappedA.code, 'webhook_signature_rate_abuse');
+  });
+
+  test('uses a fixed-length replay binding for a valid long brand id', async () => {
+    const callbackUrl = 'https://buyer.example/long-brand-replay-webhook';
+    const store = new InMemoryWebhookRegistrationStore();
+    await store.putIfAbsent(registration('op-long-brand', { brand: 'b'.repeat(2_048) }, callbackUrl));
+    const signing = keypair('long-brand-replay-key');
+    const client = new SingleAgentClient(agent, {
+      webhookRegistrationStore: store,
+      webhookVerification: { jwks: new StaticJwksResolver([signing.publicJwk]) },
+    });
+
+    const result = await verifyFor(client, callbackUrl, 'op-long-brand', signing.signer, 'long-brand-nonce');
+    assert.strictEqual(result.ok, true);
   });
 });
 

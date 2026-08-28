@@ -70,6 +70,12 @@ export interface VerifyWebhookOptions {
   requiredTag?: string;
   /** Optional reverse-lookup (kid → publisher URL) for result attribution. */
   agentUrlForKeyid?: (keyid: string) => string | undefined;
+  /**
+   * Trusted local discriminator appended to replay accounting. Receivers use
+   * this to isolate registrations authorized under different delegated-
+   * operator tuples even when they share a callback URL and signing key.
+   */
+  replayScopeBinding?: string;
 }
 
 export interface VerifyWebhookResult {
@@ -99,7 +105,8 @@ export async function verifyWebhookSignature(
   request: WebhookRequestLike,
   options: VerifyWebhookOptions
 ): Promise<VerifyWebhookResult> {
-  const now = options.now ? options.now() : Math.floor(Date.now() / 1000);
+  const currentTime = options.now ?? (() => Date.now() / 1000);
+  const now = currentTime();
   const requiredTag = options.requiredTag ?? WEBHOOK_SIGNING_TAG;
 
   // Step 1: both signature headers present AND parseable. The bound-pair
@@ -162,7 +169,10 @@ export async function verifyWebhookSignature(
   const canonicalWebhookTarget = validateTargetUri(request.url);
 
   // Step 7: resolve keyid.
-  const jwk = await options.jwks.resolve(parsedInput.params.keyid);
+  const keyResolution = options.jwks.resolveWithMetadata
+    ? await options.jwks.resolveWithMetadata(parsedInput.params.keyid)
+    : { jwk: await options.jwks.resolve(parsedInput.params.keyid) };
+  const jwk = keyResolution.jwk;
   if (!jwk) {
     throw new WebhookSignatureError(
       'webhook_signature_key_unknown',
@@ -176,6 +186,9 @@ export async function verifyWebhookSignature(
       7,
       `JWKS resolver returned a JWK whose kid "${jwk.kid}" does not match requested keyid "${parsedInput.params.keyid}".`
     );
+  }
+  if (keyResolution.operatorAuthorizationValidUntil !== undefined) {
+    assertDelegatedOperatorAuthorizationActive(keyResolution.operatorAuthorizationValidUntil, currentTime());
   }
 
   // Step 8: key purpose — webhooks are signed with a `request-signing` key.
@@ -224,11 +237,11 @@ export async function verifyWebhookSignature(
     throw err;
   }
 
-  // Replay cache is scoped by `(keyid, @target-uri)` per adcp#2460 — a
-  // webhook captured on one receiver path MUST NOT count against the replay
-  // budget for a different path under the same keyid. Canonicalize once and
-  // reuse for both pre-check and commit.
-  const replayScope = canonicalWebhookTarget;
+  // Replay cache is scoped by `(keyid, @target-uri, trusted binding)` — a
+  // webhook captured on one receiver path or authorized tuple MUST NOT count
+  // against another budget under the same keyid. The binding is absent on the
+  // generic low-level path, preserving adcp#2460 URL-only behavior there.
+  const replayScope = replayScopeForWebhook(canonicalWebhookTarget, options.replayScopeBinding);
 
   // Pre-check step 12's replay before crypto so a replayed nonce short-
   // circuits an expensive Ed25519/ECDSA verify. Replay precedes the cap
@@ -289,6 +302,13 @@ export async function verifyWebhookSignature(
     );
   }
 
+  // Resolution can be valid at step 7 and expire while cryptographic and
+  // digest verification are in flight. Recheck immediately before accepting
+  // the delivery or consuming replay capacity.
+  if (keyResolution.operatorAuthorizationValidUntil !== undefined) {
+    assertDelegatedOperatorAuthorizationActive(keyResolution.operatorAuthorizationValidUntil, currentTime());
+  }
+
   // Step 13: commit nonce. Insert AFTER every prior check passes — this is
   // the load-bearing invariant that keeps external traffic from growing the
   // cap (any signature failing at step 10 never consumes an entry).
@@ -310,8 +330,40 @@ export async function verifyWebhookSignature(
     );
   }
 
+  // A durable replay backend can block across the delegation boundary. The
+  // delivery is not accepted until that atomic insert has completed, so check
+  // the authorization one final time at the actual acceptance boundary.
+  if (keyResolution.operatorAuthorizationValidUntil !== undefined) {
+    assertDelegatedOperatorAuthorizationActive(keyResolution.operatorAuthorizationValidUntil, currentTime());
+  }
+
   const agent_url = options.agentUrlForKeyid?.(jwk.kid);
-  return { status: 'verified', keyid: jwk.kid, ...(agent_url !== undefined && { agent_url }), verified_at: now };
+  return {
+    status: 'verified',
+    keyid: jwk.kid,
+    ...(agent_url !== undefined && { agent_url }),
+    // Keep the established whole-second credential timestamp while using the
+    // fractional clock above for exact authorization-expiry enforcement.
+    verified_at: Math.floor(now),
+  };
+}
+
+function assertDelegatedOperatorAuthorizationActive(validUntil: number | undefined, now: number): void {
+  if (validUntil !== undefined && (!Number.isFinite(validUntil) || now >= validUntil)) {
+    throw new WebhookSignatureError(
+      'webhook_signature_key_unknown',
+      7,
+      'The signing key is no longer authorized for this webhook registration.'
+    );
+  }
+}
+
+function replayScopeForWebhook(canonicalTarget: string, binding: string | undefined): string {
+  if (binding === undefined) return canonicalTarget;
+  if (binding.length === 0 || binding.length > 1_024 || binding.includes('\0')) {
+    throw new TypeError('replayScopeBinding must be a non-empty string of at most 1024 characters without NUL.');
+  }
+  return JSON.stringify([canonicalTarget, binding]);
 }
 
 function requireParams(parsed: ParsedSignatureInput): void {

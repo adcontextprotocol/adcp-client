@@ -55,6 +55,16 @@ export type AuthorizedOperatorScope =
   | 'measurement'
   | 'agent_operations';
 
+/**
+ * Trusted local context selecting one delegated-operator authorization tuple.
+ * This is receiver policy, never counterparty-supplied wire data.
+ */
+export interface DelegatedOperatorAuthorizationContext {
+  brand?: string;
+  scope?: AuthorizedOperatorScope;
+  country?: string;
+}
+
 export interface FetchCapabilitiesFn {
   (agentUrl: string): Promise<unknown>;
 }
