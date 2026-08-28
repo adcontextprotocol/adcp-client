@@ -594,8 +594,12 @@ export async function discoverAgentProfile(
   signal?: AbortSignal,
   /** Compliance/schema line selected by the caller. Defaults to the client pin. */
   schemaAdcpVersion?: string
-): Promise<{ profile: AgentProfile; step: TestStepResult }> {
-  const { result: agentInfo, step } = await runStep('Discover agent capabilities', 'getAgentInfo', () =>
+): Promise<{ profile: AgentProfile; step: TestStepResult; caughtError?: unknown }> {
+  const {
+    result: agentInfo,
+    step,
+    caughtError,
+  } = await runStep('Discover agent capabilities', 'getAgentInfo', () =>
     raceWithSignal(client.getAgentInfo({ signal }), signal)
   );
 
@@ -674,7 +678,7 @@ export async function discoverAgentProfile(
   }
 
   seedTestClientSigningCapability(client, profile, schemaAdcpVersion);
-  return { profile, step };
+  return { profile, step, ...(caughtError !== undefined && { caughtError }) };
 }
 
 /**

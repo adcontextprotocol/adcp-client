@@ -26,6 +26,7 @@ const {
   CapabilityResolutionError,
 } = require('../../dist/lib/testing/storyboard/compliance');
 const { ADCPError, isADCPError } = require('../../dist/lib/errors');
+const { NeedsAuthorizationError } = require('../../dist/lib/auth/oauth');
 const { BrandJsonSchema } = require('../../dist/lib/types/wellknown-schemas.generated');
 const fs = require('fs');
 const path = require('path');
@@ -2084,7 +2085,7 @@ describe('comply() degraded-profile path (security_baseline against 401-on-disco
     }
   });
 
-  it('detectAuthRejection classifies NeedsAuthorizationError-style messages as auth', async () => {
+  it('detectAuthRejection classifies validated NeedsAuthorizationError instances as OAuth', async () => {
     // Regression: `NeedsAuthorizationError.defaultMessage()` phrases the
     // error as "Agent <url> requires OAuth authorization. ... Provide an
     // OAuthFlowHandler or run an interactive flow to complete authorization."
@@ -2100,24 +2101,45 @@ describe('comply() degraded-profile path (security_baseline against 401-on-disco
       'Agent https://example.test/mcp requires OAuth authorization. ' +
       'Authorization server: https://example.test/mcp. ' +
       'Provide an OAuthFlowHandler or run an interactive flow to complete authorization.';
-    const result = await detectAuthRejection('https://127.0.0.1:1/mcp', errMsg);
-    assert.strictEqual(result.isAuth, true, 'keyword match on "authorization"/"oauth" should classify as auth');
+    const caughtError = new NeedsAuthorizationError({
+      agentUrl: 'https://example.test/mcp',
+      resource: 'https://example.test/mcp',
+      authorizationServers: ['https://auth.example.test'],
+      authorizationServer: 'https://auth.example.test',
+      challenge: { scheme: 'bearer', params: {} },
+    });
+    const result = await detectAuthRejection('https://example.test/mcp', errMsg, undefined, undefined, caughtError);
+    assert.strictEqual(result.isAuth, true, 'typed, validated requirements should classify as auth');
     const hint = result.observations.find(o => o.category === 'auth' && /--save-auth/.test(o.message));
     assert.ok(hint, `expected a --save-auth remediation hint, got ${JSON.stringify(result.observations)}`);
     assert.match(hint.message, /--oauth/);
   });
 
-  it('detectAuthRejection emits the OAuth hint even when OAuth metadata is not discoverable', async () => {
-    // Regression for the "hint only fires when discoverOAuthMetadata returns
-    // non-null" branch. An agent that 401s before its /.well-known/* chain
-    // resolves should still get an actionable hint — the wording in the
-    // error is sufficient signal that it's an OAuth agent.
+  it('detectAuthRejection does not promote a typed but partial requirements record to OAuth', async () => {
+    const caughtError = new NeedsAuthorizationError({
+      agentUrl: 'https://example.test/mcp',
+      challenge: { scheme: 'bearer', params: {} },
+    });
+    const result = await detectAuthRejection(
+      'https://example.test/mcp',
+      caughtError.message,
+      undefined,
+      undefined,
+      caughtError
+    );
+    assert.strictEqual(result.isAuth, true);
+    assert.strictEqual(result.observations[0].source.code, 'auth-401');
+    assert.doesNotMatch(result.observations[0].message, /--oauth/);
+  });
+
+  it('detectAuthRejection does not trust OAuth wording without validated metadata', async () => {
     const errMsg = 'Unauthorized — MCP server requires OAuth2 authorization';
     const result = await detectAuthRejection('https://127.0.0.1:1/mcp', errMsg);
     assert.strictEqual(result.isAuth, true);
-    const hint = result.observations.find(o => o.category === 'auth' && /--save-auth/.test(o.message));
-    assert.ok(hint, 'hint must fire on OAuth wording even without discovery');
-    assert.match(hint.message, /issuer: \(unknown\)/i);
+    const observation = result.observations.find(o => o.category === 'auth');
+    assert.ok(observation);
+    assert.strictEqual(observation.source.code, 'auth-401');
+    assert.doesNotMatch(observation.message, /--oauth/);
   });
 
   it('detectAuthRejection does not mis-classify benign "authorization header" upstream errors as OAuth', async () => {

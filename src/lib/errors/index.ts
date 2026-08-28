@@ -308,6 +308,45 @@ export class AuthenticationRequiredError extends ADCPError {
 }
 
 /**
+ * A configured non-interactive credential reached the agent and was rejected.
+ * The transport error is retained as a non-enumerable cause so reflected
+ * credential material from an untrusted 401 body cannot enter JSON reports.
+ */
+export class AuthenticationCredentialsRejectedError extends AuthenticationRequiredError {
+  readonly subCode = 'credentials_rejected' as const;
+
+  constructor(agentUrl: string, cause?: unknown) {
+    const safeAgentUrl = sanitizeAgentUrlForError(agentUrl);
+    super(
+      safeAgentUrl,
+      undefined,
+      'The agent rejected the configured credential with HTTP 401. Verify or replace the saved credential and retry.'
+    );
+    this.name = 'AuthenticationCredentialsRejectedError';
+    if (cause !== undefined) {
+      Object.defineProperty(this, 'cause', {
+        value: cause,
+        enumerable: false,
+        configurable: true,
+      });
+    }
+  }
+}
+
+function sanitizeAgentUrlForError(value: string): string {
+  try {
+    const url = new URL(value);
+    url.username = '';
+    url.password = '';
+    url.search = '';
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return 'invalid_url';
+  }
+}
+
+/**
  * Build the default error message. Branches on what the 401 disclosed:
  * - non-Bearer challenge (Basic, Digest, …) → scheme-specific remediation
  * - OAuth metadata → point at the authorization endpoint

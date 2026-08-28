@@ -114,7 +114,25 @@ describe('connectMCP — 401 errors carry auth-scheme context', () => {
     await assert.rejects(
       () => connectMCP({ agentUrl: baseUrl, authToken: 'wrong' }),
       err => {
-        assert.strictEqual(err.agentUrl, baseUrl);
+        assert.strictEqual(err.agentUrl, new URL(baseUrl).toString());
+        return true;
+      }
+    );
+  });
+
+  it('keeps raw transport details out of serialized errors', async () => {
+    const sensitiveQuery = 'query-secret-do-not-leak';
+    await assert.rejects(
+      () => connectMCP({ agentUrl: `${baseUrl}/mcp?access_token=${sensitiveQuery}`, authToken: 'wrong' }),
+      err => {
+        const serialized = JSON.stringify(err);
+        assert.ok(!serialized.includes(sensitiveQuery), `URL credential leaked into serialized error: ${serialized}`);
+        assert.ok(!serialized.includes('unauthorized'), `raw 401 body leaked into serialized error: ${serialized}`);
+        assert.strictEqual(err.agentUrl, `${baseUrl}/mcp`);
+        assert.ok(err.cause, 'the original transport error remains available for in-process diagnostics');
+        assert.ok(!Object.keys(err).includes('cause'));
+        assert.ok(!Object.keys(err).includes('agentUrl'));
+        assert.ok(!Object.keys(err).includes('originalError'));
         return true;
       }
     );

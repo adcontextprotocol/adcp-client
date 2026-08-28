@@ -138,4 +138,64 @@ describe('SingleAgentClient pre-flight discovery: 401 → NeedsAuthorizationErro
       }
     );
   });
+
+  test('does not upgrade a rejected saved bearer token to OAuth', async () => {
+    state.handlers = {
+      '/mcp': (req, res) => {
+        res.statusCode = 401;
+        res.setHeader(
+          'www-authenticate',
+          `Bearer error="invalid_token", resource_metadata="${issuer()}/.well-known/oauth-protected-resource/mcp"`
+        );
+        res.end();
+      },
+      '/.well-known/oauth-protected-resource/mcp': (req, res) =>
+        jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [issuer()] }),
+    };
+    const client = new AdCPClient([
+      {
+        id: 'test-agent',
+        name: 'test',
+        agent_uri: agentUrl(),
+        protocol: 'mcp',
+        auth_token: 'saved-static-token',
+      },
+    ]);
+
+    await assert.rejects(
+      () => client.agent('test-agent').executeTask('get_products', { brief: 'test' }),
+      err => {
+        assert.ok(!(err instanceof NeedsAuthorizationError));
+        assert.doesNotMatch(err.message, /requires OAuth authorization/i);
+        assert.doesNotMatch(err.message, /saved-static-token/);
+        return true;
+      }
+    );
+  });
+
+  test('does not upgrade mismatched protected-resource metadata to OAuth', async () => {
+    state.handlers = {
+      '/mcp': (req, res) => {
+        res.statusCode = 401;
+        res.setHeader(
+          'www-authenticate',
+          `Bearer resource_metadata="${issuer()}/.well-known/oauth-protected-resource/mcp"`
+        );
+        res.end();
+      },
+      '/.well-known/oauth-protected-resource/mcp': (req, res) =>
+        jsonRes(res, 200, { resource: `${issuer()}/different`, authorization_servers: [issuer()] }),
+    };
+    const client = new AdCPClient([{ id: 'test-agent', name: 'test', agent_uri: agentUrl(), protocol: 'mcp' }]);
+
+    await assert.rejects(
+      () => client.agent('test-agent').executeTask('get_products', { brief: 'test' }),
+      err => {
+        assert.ok(err instanceof AuthenticationRequiredError);
+        assert.ok(!(err instanceof NeedsAuthorizationError));
+        assert.doesNotMatch(err.message, /requires OAuth authorization/i);
+        return true;
+      }
+    );
+  });
 });

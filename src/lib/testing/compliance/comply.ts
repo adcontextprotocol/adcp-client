@@ -63,7 +63,11 @@ import { withExternalSchemaRoot } from '../../validation/schema-loader';
 import { redactOAuthUrlForOutput, redactOAuthUrlsInText } from '../storyboard/oauth-metadata-graph';
 import { LIBRARY_VERSION } from '../../version';
 import { validationFailsStep } from '../storyboard/validations';
-import { isLikelyPrivateUrl } from '../../net/address-guards';
+import { createAgentTransportFetch } from '../../net/agent-transport-fetch';
+import {
+  hasValidatedMcpAuthorizationRequirements,
+  NeedsAuthorizationError,
+} from '../../auth/oauth/authorization-required';
 import { applyFunctionalRequestSigning } from '../storyboard/request-signing/functional-dispatch';
 
 /**
@@ -1239,11 +1243,11 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     // legacy sellers still get a compatibility retry below.
     let discoveryOptions = effectiveOptions;
     let discoveryClient = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', discoveryOptions);
-    let { profile, step: profileStep } = await discoverAgentProfile(
-      discoveryClient,
-      signal,
-      complianceIndex.adcp_version
-    );
+    let {
+      profile,
+      step: profileStep,
+      caughtError: profileCaughtError,
+    } = await discoverAgentProfile(discoveryClient, signal, complianceIndex.adcp_version);
     if (
       testOptions.versionEnvelope === undefined &&
       profile.tools.includes('get_adcp_capabilities') &&
@@ -1262,6 +1266,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
         discoveryClient = legacyDiscoveryClient;
         profile = legacyDiscovery.profile;
         profileStep = legacyDiscovery.step;
+        profileCaughtError = legacyDiscovery.caughtError;
       }
     }
     effectiveOptions = applyNegotiatedComplianceVersionOptions(profile, effectiveOptions, {
@@ -1353,7 +1358,14 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       const isVersionUnsupported = profileStep.error?.startsWith('VERSION_UNSUPPORTED:') === true;
       const authCheck = isVersionUnsupported
         ? { isAuth: false, observations: [] }
-        : await detectAuthRejection(agentUrl, profileStep.error, signal, effectiveOptions.transport?.trustedFetchFn);
+        : await detectAuthRejection(
+            agentUrl,
+            profileStep.error,
+            signal,
+            effectiveOptions.transport?.trustedFetchFn,
+            profileCaughtError,
+            effectiveOptions.transport?.allowPrivateIp
+          );
       if (authCheck.isAuth) {
         const degraded: AgentProfile = { name: profile.name || 'Unknown (auth required)', tools: [] };
         const candidate = explicitStoryboards?.length
@@ -1386,6 +1398,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
         start,
         effectiveOptions,
         complianceIndex.adcp_version,
+        profileCaughtError,
         signal
       );
     }
@@ -1664,14 +1677,16 @@ function buildComplyTimeoutBudgetObservation(
  * Centralized so the "run security.yaml against 401-happy agents" path and
  * the fallback "unreachable result" path share the same truth.
  *
- * Exported for direct unit tests of the keyword classifier — callers inside
+ * Exported for direct unit tests of the auth classifier — callers inside
  * the library should go through `comply()`, not this helper.
  */
 export async function detectAuthRejection(
   agentUrl: string,
   errorMsg: string | undefined,
   signal?: AbortSignal,
-  fetchFn?: typeof fetch
+  fetchFn?: typeof fetch,
+  caughtError?: unknown,
+  allowPrivateIp?: boolean
 ): Promise<{ isAuth: boolean; observations: AdvisoryObservation[] }> {
   const err = errorMsg || 'Unknown error';
   const observations: AdvisoryObservation[] = [];
@@ -1687,7 +1702,7 @@ export async function detectAuthRejection(
   // then suppress the real "Agent unreachable" classification and tell the
   // operator to re-authenticate a healthy-but-offline agent.
   const lower = err.toLowerCase();
-  const hasOAuthSignal =
+  const hasLegacyAuthSignal =
     lower.includes('oauth authorization') ||
     lower.includes('requires oauth') ||
     lower.includes('requires authorization') ||
@@ -1696,11 +1711,15 @@ export async function detectAuthRejection(
     lower.includes('needsauthorizationerror') ||
     lower.includes('www-authenticate') ||
     lower.includes('bearer realm');
+  const hasValidatedOAuthSignal =
+    caughtError instanceof NeedsAuthorizationError &&
+    hasValidatedMcpAuthorizationRequirements(caughtError.requirements, agentUrl);
   const isExplicitAuthError =
     lower.includes('401') ||
     lower.includes('unauthorized') ||
     lower.includes('authentication') ||
-    hasOAuthSignal ||
+    hasLegacyAuthSignal ||
+    hasValidatedOAuthSignal ||
     lower.includes('jws') ||
     lower.includes('jwt') ||
     lower.includes('signature verification');
@@ -1713,7 +1732,11 @@ export async function detectAuthRejection(
   if (!isAuth) {
     try {
       const probeSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000);
-      const probe = await (fetchFn ?? fetch)(agentUrl, {
+      const transportFetch = createAgentTransportFetch(agentUrl, {
+        trustedFetchFn: fetchFn,
+        allowPrivateIp: allowPrivateIp ?? false,
+      });
+      const probe = await transportFetch(agentUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         redirect: 'manual',
@@ -1726,19 +1749,17 @@ export async function detectAuthRejection(
   }
 
   if (isAuth) {
-    const { discoverOAuthMetadata } = await import('../../auth/oauth/discovery');
-    const oauthMeta = await discoverOAuthMetadata(agentUrl, {
-      trustedFetchFn: fetchFn,
-      allowPrivateIp: isLikelyPrivateUrl(agentUrl),
-    });
-    // Classify OAuth vs bearer based on (a) explicit OAuth phrasing in the
-    // error text, or (b) a resolvable OAuth metadata document. Either is
-    // enough; a plain 401 on a static-token endpoint matches neither.
-    const looksOAuth = oauthMeta !== null || hasOAuthSignal;
+    // Only a typed error produced from a validated MCP challenge → PRM chain
+    // is OAuth evidence. Human-readable error text and unbound authorization
+    // server metadata are agent-controlled and must not trigger an OAuth flow.
+    const oauthRequirements = hasValidatedOAuthSignal ? caughtError.requirements : undefined;
+    const looksOAuth = oauthRequirements !== undefined;
     if (looksOAuth) {
       // `oauthMeta.issuer` comes from the agent's well-known document — agent-
       // controlled, same fencing as capabilities_probe_error.
-      const issuer = oauthMeta?.issuer ? fenceAgentText(redactOAuthUrlForOutput(oauthMeta.issuer), 200) : '(unknown)';
+      const issuer = oauthRequirements?.authorizationServer
+        ? fenceAgentText(redactOAuthUrlForOutput(oauthRequirements.authorizationServer), 200)
+        : '(unknown)';
       const safeAgentUrl = redactOAuthUrlForOutput(agentUrl);
       observations.push({
         category: 'auth',
@@ -1747,7 +1768,9 @@ export async function detectAuthRejection(
           `Agent requires OAuth (issuer: ${issuer}). ` +
           `Inline: adcp storyboard run ${safeAgentUrl} --oauth (requires a saved alias). ` +
           `Save once: adcp --save-auth <alias> ${safeAgentUrl} --oauth.`,
-        ...(oauthMeta?.issuer && { evidence: { oauth_issuer: redactOAuthUrlForOutput(oauthMeta.issuer) } }),
+        ...(oauthRequirements?.authorizationServer && {
+          evidence: { oauth_issuer: redactOAuthUrlForOutput(oauthRequirements.authorizationServer) },
+        }),
         source: { kind: 'probe', code: 'auth-oauth-required' },
       });
     } else {
@@ -1919,12 +1942,20 @@ async function buildUnreachableResult(
   start: number,
   effectiveOptions: TestOptions,
   adcpVersion: string,
+  caughtError?: unknown,
   signal?: AbortSignal
 ): Promise<ComplianceResult> {
   const isVersionUnsupported = errorMsg?.startsWith('VERSION_UNSUPPORTED:') === true;
   const { isAuth, observations } = isVersionUnsupported
     ? { isAuth: false, observations: [] }
-    : await detectAuthRejection(agentUrl, errorMsg, signal, effectiveOptions.transport?.trustedFetchFn);
+    : await detectAuthRejection(
+        agentUrl,
+        errorMsg,
+        signal,
+        effectiveOptions.transport?.trustedFetchFn,
+        caughtError,
+        effectiveOptions.transport?.allowPrivateIp
+      );
   const err = redactOAuthUrlsInText(errorMsg || 'Unknown error');
   const headline = isAuth ? `Authentication required` : `Agent unreachable — ${err}`;
   return {

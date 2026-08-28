@@ -1,6 +1,14 @@
 import { isAlwaysBlocked, isPrivateIp } from '../../../net/address-guards';
 import { ssrfSafeFetch, SsrfRefusedError } from '../../../net/ssrf-fetch';
 import type { HttpProbeResult } from '../types';
+export {
+  buildProtectedResourceMetadataUrl,
+  normalizeOAuthResourceForComparison,
+} from '../../../auth/oauth/resource-url';
+import {
+  buildProtectedResourceMetadataUrl,
+  normalizeOAuthResourceForComparison,
+} from '../../../auth/oauth/resource-url';
 import type {
   OAuthMetadataFetchResponse,
   OAuthMetadataFetchTransport,
@@ -72,49 +80,6 @@ interface FetchDocumentOptions {
   authorizationServerIndex?: number;
 }
 
-/**
- * Shared RFC 9728 comparison semantics used by security.yaml and oauth_setup.
- * Only scheme and host are case-folded and default ports are elided. The
- * path, query, fragment, userinfo, and trailing slash remain significant.
- */
-export function normalizeOAuthResourceForComparison(value: string): string {
-  // Do not rebuild through URL: WHATWG parsing removes dot segments and turns
-  // an empty path into `/`, but the shared storyboard rule says the remainder
-  // of the URL is byte-for-byte significant after scheme/host/default-port.
-  const match = /^([A-Za-z][A-Za-z\d+.-]*):\/\/([^/?#]*)([\s\S]*)$/.exec(value);
-  if (!match) return value;
-  const scheme = match[1]!.toLowerCase();
-  const authority = match[2]!;
-  const remainder = match[3]!;
-  const at = authority.lastIndexOf('@');
-  const userinfo = at >= 0 ? authority.slice(0, at + 1) : '';
-  const hostAndPort = at >= 0 ? authority.slice(at + 1) : authority;
-  let host: string;
-  let port = '';
-  if (hostAndPort.startsWith('[')) {
-    const bracket = hostAndPort.indexOf(']');
-    if (bracket < 0) return value;
-    host = hostAndPort.slice(0, bracket + 1).toLowerCase();
-    const suffix = hostAndPort.slice(bracket + 1);
-    if (suffix && !/^:\d+$/.test(suffix)) return value;
-    port = suffix.slice(1);
-  } else {
-    const colon = hostAndPort.lastIndexOf(':');
-    if (colon >= 0) {
-      const suffix = hostAndPort.slice(colon + 1);
-      if (!/^\d+$/.test(suffix)) return value;
-      host = hostAndPort.slice(0, colon).toLowerCase();
-      port = suffix;
-    } else {
-      host = hostAndPort.toLowerCase();
-    }
-  }
-  if (!host) return value;
-  const defaultPort = scheme === 'https' ? '443' : scheme === 'http' ? '80' : undefined;
-  const renderedPort = port && port !== defaultPort ? `:${port}` : '';
-  return `${scheme}://${userinfo}${host}${renderedPort}${remainder}`;
-}
-
 /** Redact sensitive URL components before including a URL in a report. */
 export function redactOAuthUrlForOutput(value: string): string {
   try {
@@ -134,11 +99,6 @@ export function redactOAuthUrlForOutput(value: string): string {
 /** Redact absolute URLs embedded in diagnostic text before report serialization. */
 export function redactOAuthUrlsInText(value: string): string {
   return value.replace(/https?:\/\/[^\s"'<>]+/gi, url => redactOAuthUrlForOutput(url));
-}
-
-export function buildProtectedResourceMetadataUrl(agentUrl: string): string {
-  const u = new URL(agentUrl);
-  return `${u.origin}/.well-known/oauth-protected-resource${u.pathname}`;
 }
 
 export function buildAuthorizationServerMetadataUrl(issuer: string): string {
