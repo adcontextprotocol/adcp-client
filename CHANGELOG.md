@@ -1,5 +1,32 @@
 # Changelog
 
+## 14.0.0-beta.14
+
+### Major Changes
+
+- 445b675: Harden task-registry cutover and out-of-process settlement. Task creation now
+  returns a serializable scoped handle, lifecycle writes report applied,
+  already-terminal, or scoped-miss outcomes, and trusted workers can settle using
+  ref-based helpers. Split PostgreSQL bootstrap from a phased operator-run scope
+  upgrade with preflight, bounded locks, concurrent indexes, verification, and
+  rollback guidance. Require Node 20.19+ on the Node 20 line or Node 22.12+ so
+  CommonJS consumers can load the SDK's ESM dependency graph, and document and
+  continuously test both boundaries in the supported Node/Undici runtime matrix,
+  including the Undici 7 consumer-override fixture.
+
+### Minor Changes
+
+- 8a90149: Enforce active, scoped cross-origin operator delegations during signing-key discovery and cap JWKS caches at delegation expiry. Preserve strict official modern MCP discovery schemas while routing AdCP input failures through the structured framework error envelope.
+
+### Patch Changes
+
+- 5d51dab: Adopt the signed AdCP 3.2.0-beta.8 protocol bundle, regenerate the public types and runtime schemas, and keep annotation-only protocol metadata from collapsing generated response types.
+- bfe15cc: Reduce install size by publishing compact offline schema bundles and omitting source maps.
+- b43d3b6: Preserve branch-specific required fields in generated union types and export
+  the compact media-buy lifecycle request and response types from
+  `@adcp/sdk/types`. Sync the registry policy-publication fields from the
+  authoritative OpenAPI snapshot.
+
 ## 14.0.0-beta.13
 
 ### Major Changes
