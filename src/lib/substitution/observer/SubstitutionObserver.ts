@@ -183,13 +183,18 @@ export class SubstitutionObserver {
     timerHandle.unref?.();
 
     try {
-      const res = await request(url.href, {
+      // Undici 7 removed maxRedirections from RequestOptions in favor of its
+      // redirect interceptor, but still accepts zero at runtime and the
+      // interceptor honors it. Keep the explicit zero so an injected
+      // redirect-capable dispatcher cannot follow an unvalidated location.
+      const requestOptions: Parameters<typeof request>[1] & { maxRedirections: 0 } = {
         method: 'GET',
         dispatcher: dispatcher as import('undici').Dispatcher,
         maxRedirections: 0,
         signal: abortCtrl.signal,
         headers: { accept: allowedContentTypes.join(', ') },
-      });
+      };
+      const res = await request(url.href, requestOptions);
 
       if (res.statusCode >= 300 && res.statusCode < 400) {
         throw new PreviewFetchError('redirect_returned', `status=${res.statusCode}`);
