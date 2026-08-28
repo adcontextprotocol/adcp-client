@@ -1935,7 +1935,7 @@ export interface DecisioningObservabilityHooks {
 
 export type LegacyDecisioningHandlerGroups = Pick<
   AdcpServerConfig,
-  'mediaBuy' | 'creative' | 'governance' | 'brandRights'
+  'mediaBuy' | 'creative' | 'governance' | 'brandRights' | 'signals'
 >;
 
 export interface CreateAdcpServerFromPlatformOptions extends Omit<
@@ -1947,7 +1947,10 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
   /**
    * Explicit compatibility seam for raw protocol handlers that have not yet
    * migrated to canonical DecisioningPlatform methods. Wire support remains
-   * available through AdCP 3.x, but raw creative identity must never look like
+   * available through AdCP 3.x. A legacy `signals.getSignals` handler supplied
+   * here (or through the inherited `opts.signals` compatibility field) satisfies
+   * signal-specialism platform validation without requiring an invented
+   * `activateSignal` implementation. Raw creative identity must never look like
    * a primary platform hook.
    */
   legacyHandlers?: LegacyDecisioningHandlerGroups;
@@ -2414,11 +2417,13 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     creative: opts.legacyHandlers?.creative ?? runtimeLegacyOptions.creative,
     governance: opts.legacyHandlers?.governance ?? runtimeLegacyOptions.governance,
     brandRights: opts.legacyHandlers?.brandRights ?? runtimeLegacyOptions.brandRights,
+    signals: opts.legacyHandlers?.signals ?? runtimeLegacyOptions.signals,
   };
   validatePlatform(platform, {
     creative: legacyHandlers.creative,
     campaignGovernance: legacyHandlers.governance,
     brandRights: legacyHandlers.brandRights,
+    signals: legacyHandlers.signals,
   });
 
   // Specialism→required-tools coverage check (adcp-client#1299).
@@ -2445,6 +2450,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       creative: platform.creative ?? legacyHandlers.creative,
       governance: legacyHandlers.governance,
       brandRights: platform.brandRights ?? legacyHandlers.brandRights,
+      signals: platform.signals ?? legacyHandlers.signals,
     };
     const issues = validateSpecialismRequiredTools(effectiveSpecialismSurface, specialisms);
     if (issues.length > 0) {
@@ -3127,7 +3133,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       mergeOpts
     ),
     signals: mergeHandlers(
-      opts.signals,
+      legacyHandlers.signals,
       buildSignalsHandlers(
         platform,
         taskRegistry,

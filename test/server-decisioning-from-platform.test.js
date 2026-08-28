@@ -5543,6 +5543,69 @@ describe('Custom-handler merge seam (incremental migration)', () => {
   // handlers WIN per-key; adopter handlers fill the rest. The explicit raw
   // media-buy lifecycle handlers win only for a negotiated legacy wire.
 
+  it('accepts a legacy get_signals-only handler as a truthful signal-specialism surface (#2732)', async () => {
+    const base = buildPlatform();
+    const platform = {
+      ...base,
+      sales: undefined,
+      signals: undefined,
+      capabilities: {
+        specialisms: ['signal-marketplace'],
+        supported_versions: ['3.1.18', '3.2.0-beta.8'],
+        config: {},
+      },
+    };
+
+    assert.throws(
+      () =>
+        createAdcpServerFromPlatform(platform, {
+          name: 'missing-signals',
+          version: '0.0.1',
+          strictSpecialismValidation: true,
+        }),
+      err => err instanceof PlatformConfigError && /signal-marketplace.*signals/.test(err.message)
+    );
+
+    let receivedRequest;
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'legacy-signals',
+      version: '0.0.1',
+      adcpVersion: '3.2.0-beta.8',
+      capabilities: { supported_versions: ['3.1.18', '3.2.0-beta.8'] },
+      strictSpecialismValidation: true,
+      validation: { requests: 'off', responses: 'off' },
+      signals: {
+        getSignals: async request => {
+          receivedRequest = request;
+          return { signals: [] };
+        },
+      },
+    });
+
+    const capabilities = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_adcp_capabilities', arguments: {} },
+    });
+    assert.notStrictEqual(capabilities.isError, true, JSON.stringify(capabilities.structuredContent));
+    assert.deepStrictEqual(capabilities.structuredContent.specialisms, ['signal-marketplace']);
+    assert.ok(capabilities.structuredContent.supported_protocols.includes('signals'));
+
+    const signals = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_signals',
+        arguments: {
+          adcp_version: '3.1.18',
+          brief: 'luxury auto intenders',
+          account: { account_id: 'acc_1' },
+        },
+      },
+    });
+    assert.notStrictEqual(signals.isError, true, JSON.stringify(signals.structuredContent));
+    assert.deepStrictEqual(signals.structuredContent.signals, []);
+    assert.strictEqual(receivedRequest.adcp_version, '3.1.18');
+  });
+
   it('dispatches getMediaBuys through opts.legacyHandlers.mediaBuy', async () => {
     const platform = buildPlatform();
     let sawArgs;

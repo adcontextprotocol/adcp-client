@@ -2,6 +2,12 @@
 
 SDK 14 adopts AdCP `3.2.0-beta.8` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the beta and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
 
+Legacy signal-discovery adapters may keep supplying `opts.signals.getSignals`
+(or `legacyHandlers.signals.getSignals`) while declaring the truthful
+`signal-marketplace` or `signal-owned` specialism. That compatibility handler
+now satisfies platform validation without requiring adopters to invent an
+`activate_signal` implementation during an incremental migration.
+
 AdCP 3.2 prereleases are exact protocol pins: beta.6 replaces beta.5 in the
 SDK's compatible-version list rather than extending a rolling 3.2-beta range.
 Beta.1 restored `adcp_major_version` on `buy_products`,
