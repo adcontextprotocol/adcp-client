@@ -3289,6 +3289,7 @@ const JSTS_UNDER_RESOLUTION_ALIASES: Array<{ numbered: string; base: string }> =
   { numbered: 'None2', base: 'None' },
   { numbered: 'DeliveryForecast1', base: 'DeliveryForecast' },
   { numbered: 'DeliveryForecast2', base: 'DeliveryForecast' },
+  { numbered: 'TaskType1', base: 'TaskType' },
 ];
 
 const JSTS_REPEATED_UNDER_RESOLUTION_BASES = [
