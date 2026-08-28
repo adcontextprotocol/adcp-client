@@ -133,10 +133,23 @@ export type {
   GetPlanAuditLogsResponse,
 } from './tools.generated';
 
-// Compact proposal authoring. The response is owned by core.generated so
-// every public surface retains its discriminated branches and non-empty
-// tuple guarantees instead of the weaker aggregate-tool projection.
-export type { RequestProposalsRequest } from './tools.generated';
+// AdCP 3.2 compact media-buy lifecycle. RequestProposalsResponse is owned by
+// core.generated; the other tool types use their schema-faithful projections.
+export type {
+  ListProductsRequest,
+  ListProductsResponse,
+  RequestProposalsRequest,
+  RefineProposalsRequest,
+  RefineProposalsResponse,
+  DeclineProposalsRequest,
+  DeclineProposalsResponse,
+  BuyProductsRequest,
+  BuyProductsResponse,
+  AcceptProposalRequest,
+  AcceptProposalResponse,
+  ControlMediaBuyRequest,
+  ControlMediaBuyResponse,
+} from './tools.generated';
 export type { RequestProposalsResponse } from './core.generated';
 
 // Pricing models (discriminated union across pricing types)

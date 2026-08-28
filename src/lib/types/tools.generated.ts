@@ -9104,10 +9104,73 @@ export type ListProductsResponse = {
   ext?: ExtensionObject;
 } & (
   | {
+      /**
+       * Whether this response carries a product page or confirms that the selected feed has not changed.
+       */
       outcome: 'listed';
+      products: CanonicalProduct[];
+      /**
+       * Cursor for the next page. Omitted when this is the last page.
+       * @minLength 1
+       */
+      next_cursor?: string;
+      /**
+       * Opaque version of the selected offer feed. For wholesale webhook consumers this is the same scope-keyed token carried as wholesale_feed_version on product.* and wholesale_feed.bulk_change notifications.
+       */
+      feed_version: string;
+      /**
+       * Opaque version of the selected pricing layer.
+       */
+      pricing_version?: string;
+      cache_scope: 'public' | 'account';
+      /**
+       * Usable partial response with explicitly missing product-list scopes.
+       */
+      incomplete?: {
+        scope: 'products' | 'pricing' | 'forecast' | 'wholesale_feed';
+        /**
+         * @minLength 1
+         */
+        description: string;
+        estimated_wait?: Duration;
+      }[];
+      replayed?: true;
+      context?: ContextObject;
+      ext?: ExtensionObject;
     }
   | {
+      /**
+       * Whether this response carries a product page or confirms that the selected feed has not changed.
+       */
       outcome: 'unchanged';
+      /**
+       * Cursor for the next page. Omitted when this is the last page.
+       * @minLength 1
+       */
+      next_cursor?: string;
+      /**
+       * Opaque version of the selected offer feed. For wholesale webhook consumers this is the same scope-keyed token carried as wholesale_feed_version on product.* and wholesale_feed.bulk_change notifications.
+       */
+      feed_version: string;
+      /**
+       * Opaque version of the selected pricing layer.
+       */
+      pricing_version?: string;
+      cache_scope: 'public' | 'account';
+      /**
+       * Usable partial response with explicitly missing product-list scopes.
+       */
+      incomplete?: {
+        scope: 'products' | 'pricing' | 'forecast' | 'wholesale_feed';
+        /**
+         * @minLength 1
+         */
+        description: string;
+        estimated_wait?: Duration;
+      }[];
+      replayed?: true;
+      context?: ContextObject;
+      ext?: ExtensionObject;
     }
 );
 /**
@@ -10380,10 +10443,23 @@ export type DeclineProposalsResponse =
   | {
       results: (
         | {
+            /**
+             * @minLength 1
+             */
+            proposal_id: string;
             outcome: 'declined';
           }
         | {
+            /**
+             * @minLength 1
+             */
+            proposal_id: string;
             outcome: 'unable';
+            /**
+             * Why the seller could not apply a decline. Present only for outcome unable.
+             * @minLength 1
+             */
+            reason: string;
           }
       )[];
       /**
@@ -10398,10 +10474,23 @@ export type DeclineProposalsResponse =
   | {
       results?: (
         | {
+            /**
+             * @minLength 1
+             */
+            proposal_id: string;
             outcome: 'declined';
           }
         | {
+            /**
+             * @minLength 1
+             */
+            proposal_id: string;
             outcome: 'unable';
+            /**
+             * Why the seller could not apply a decline. Present only for outcome unable.
+             * @minLength 1
+             */
+            reason: string;
           }
       )[];
       status: 'submitted';

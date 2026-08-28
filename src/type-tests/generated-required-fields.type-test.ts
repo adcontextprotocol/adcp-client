@@ -1,5 +1,6 @@
 import type {
   CatalogItemDeliveryMetrics,
+  DeclineProposalsResponse as CoreDeclineProposalsResponse,
   GeoDeliveryMetrics,
   KeywordDeliveryMetrics,
   PostalCountrySystem,
@@ -10,6 +11,7 @@ import type {
   AdCPVersionEnvelope as ToolAdCPVersionEnvelope,
   CatalogItemDeliveryMetrics as ToolCatalogItemDeliveryMetrics,
   CanonicalFormatBase as ToolCanonicalFormatBase,
+  DeclineProposalsResponse,
   GeoDeliveryMetrics as ToolGeoDeliveryMetrics,
   GetMediaBuyDeliveryCatalogItemMetrics,
   GetMediaBuyDeliveryGeoMetrics,
@@ -116,6 +118,41 @@ type _FinalizedCommercialTermsRequired = Assert<IsRequired<FinalizedProposal, 'c
 type _FinalizedTermsDigestRequired = Assert<IsRequired<FinalizedProposal, 'terms_digest'>>;
 type _FinalizedParentProposalIdRequired = Assert<IsRequired<FinalizedProposal, 'parent_proposal_id'>>;
 type _FinalizedExpiresAtRequired = Assert<IsRequired<FinalizedProposal, 'expires_at'>>;
+
+// decline_proposals result arms inherit the row's unconditional proposal_id,
+// while the unable arm additionally requires its reason. The generator must
+// merge those shared properties into both oneOf branches.
+type DeclineCompleted = Extract<DeclineProposalsResponse, { results: unknown }>;
+type DeclineResult = DeclineCompleted['results'][number];
+type DeclinedResult = Extract<DeclineResult, { outcome: 'declined' }>;
+type UnableDeclineResult = Extract<DeclineResult, { outcome: 'unable' }>;
+type _DeclinedProposalIdRequired = Assert<IsRequired<DeclinedResult, 'proposal_id'>>;
+type _DeclinedReasonAbsent = AssertFalse<HasKey<DeclinedResult, 'reason'>>;
+type _UnableProposalIdRequired = Assert<IsRequired<UnableDeclineResult, 'proposal_id'>>;
+type _UnableReasonRequired = Assert<IsRequired<UnableDeclineResult, 'reason'>>;
+
+// The independently generated core copy flows through AdCPAsyncResponseData
+// into MCPWebhookPayload.result, so it must retain the same row identity and
+// unable reason as the direct tool response.
+type CoreDeclineCompleted = Extract<CoreDeclineProposalsResponse, { results: unknown }>;
+type CoreDeclineResult = CoreDeclineCompleted['results'][number];
+type CoreDeclinedResult = Extract<CoreDeclineResult, { outcome: 'declined' }>;
+type CoreUnableDeclineResult = Extract<CoreDeclineResult, { outcome: 'unable' }>;
+type _CoreDeclinedProposalIdRequired = Assert<IsRequired<CoreDeclinedResult, 'proposal_id'>>;
+type _CoreUnableProposalIdRequired = Assert<IsRequired<CoreUnableDeclineResult, 'proposal_id'>>;
+type _CoreUnableReasonRequired = Assert<IsRequired<CoreUnableDeclineResult, 'reason'>>;
+
+const validDeclinedResult: DeclinedResult = { proposal_id: 'proposal-declined', outcome: 'declined' };
+const validUnableResult: UnableDeclineResult = {
+  proposal_id: 'proposal-unable',
+  outcome: 'unable',
+  reason: 'Proposal is no longer available.',
+};
+void validDeclinedResult;
+void validUnableResult;
+// @ts-expect-error unable results require a reason from the schema arm.
+const invalidUnableResult: UnableDeclineResult = { proposal_id: 'proposal-unable', outcome: 'unable' };
+void invalidUnableResult;
 
 // Buyer-side tool responses retain tolerance for legacy sellers that predate
 // the v3 breakdown identifiers. These aliases must stay distinct from the

@@ -79,13 +79,15 @@ describe('Response Unwrapper', () => {
       assert.strictEqual(result.status, undefined);
     });
 
-    test('accepts the generated ordered decline result form without an echoed proposal_id', () => {
+    test('rejects decline results without the required proposal_id', () => {
       const payload = {
         results: [{ outcome: 'declined' }],
       };
-      const result = unwrapProtocolResponse({ structuredContent: payload }, 'decline_proposals', 'mcp');
 
-      assert.deepStrictEqual(result, payload);
+      assert.throws(
+        () => unwrapProtocolResponse({ structuredContent: payload }, 'decline_proposals', 'mcp'),
+        /Response validation failed for decline_proposals/
+      );
     });
 
     test('should unwrap A2A result.artifacts response with validation', () => {
