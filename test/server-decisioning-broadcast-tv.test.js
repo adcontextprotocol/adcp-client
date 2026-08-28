@@ -179,7 +179,7 @@ describe('BroadcastTvSeller — HITL via *Task variants', () => {
     const taskId = result.structuredContent.task_id;
 
     await server.awaitTaskUnsafe(taskId);
-    const final = await server.getTaskStateUnsafe(taskId);
+    const final = await server.getTaskState(taskId, { accountId: 'acc_1', ownerScope: 'account:acc_1' });
     assert.strictEqual(final.status, 'completed');
     assert.strictEqual(final.result.status, 'pending_start');
     assert.ok(final.result.media_buy_id.startsWith('mb_WCBS_'));
@@ -268,7 +268,7 @@ describe('BroadcastTvSeller — HITL via *Task variants', () => {
     const taskId = result.structuredContent.task_id;
     await server.awaitTaskUnsafe(taskId);
 
-    const final = await server.getTaskStateUnsafe(taskId);
+    const final = await server.getTaskState(taskId, { accountId: 'acc_1', ownerScope: 'account:acc_1' });
     assert.strictEqual(final.status, 'completed');
     // Task result is the wire-shape `{ creatives: [...] }` envelope (framework
     // wraps the per-creative rows when the handoff resolves).

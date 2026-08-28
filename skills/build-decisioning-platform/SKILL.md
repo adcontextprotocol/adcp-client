@@ -290,7 +290,9 @@ import { createAdcpServerFromPlatform, getAllAdcpMigrations, serve } from '@adcp
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const taskRegistryNamespace = 'tenant:my-agent';
-await pool.query(getAllAdcpMigrations({ taskRegistryNamespace })); // one DDL call, all 3 tables
+// Bootstrap only for a new database. A populated legacy task table requires
+// the phased scope-v1 operator runbook before application startup.
+await pool.query(getAllAdcpMigrations({ taskRegistryNamespace }));
 
 const platform = new MyPlatform(myAdServer);
 const server = createAdcpServerFromPlatform(platform, {
@@ -298,12 +300,14 @@ const server = createAdcpServerFromPlatform(platform, {
   version: '1.0.0',
   pool, // wires idempotency + ctxMetadata + taskRegistry
   taskRegistryNamespace,
+  // Required when durable workers settle task refs after restart.
+  taskRegistryStorageId: 'prod-eu1:primary-db',
 });
 
 serve(() => server, { port: process.env.PORT });
 ```
 
-That's the whole bootstrap. **One pool, one migration, three persistence concerns wired by the framework.**
+That's the whole new-database bootstrap. **One pool, one bootstrap call, three persistence concerns wired by the framework.** For an existing task table, use `getDecisioningTaskRegistryScopeV1Upgrade()` and follow `docs/migration-task-registry-scoping.md`; never run bootstrap DDL as an application-boot upgrade.
 
 For dev / single-process: omit `pool` entirely. Framework defaults to in-memory backends. Don't ship that to production — silent state loss after rolling restart produces "package not found" errors that look like publisher bugs and run for weeks.
 
@@ -312,7 +316,8 @@ For dev / single-process: omit `pool` entirely. Framework defaults to in-memory 
 Things you set up once at deploy time:
 
 - [ ] `DATABASE_URL` env var pointing at your Postgres instance
-- [ ] Run `getAllAdcpMigrations({ taskRegistryNamespace })` once per database with a stable, trusted namespace (idempotent — safe to re-run)
+- [ ] New database: run `getAllAdcpMigrations({ taskRegistryNamespace })` with a stable, trusted namespace
+- [ ] Populated legacy task table: drain traffic and complete the phased `getDecisioningTaskRegistryScopeV1Upgrade()` operator runbook before starting scoped code
 - [ ] OAuth provider config — see `advanced/OAUTH.md` if buyers authenticate via OIDC
 - [ ] `ADCP_VERSION` env (default `3.0.0`) if pinning a specific spec version
 

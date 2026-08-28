@@ -21,7 +21,7 @@
 // task primitives — the framework owns task lifecycle and dispatches the
 // `*Task` method in the background.
 export { type AdcpStructuredError, type ErrorCode, AdcpError } from './async-outcome';
-export type { TaskHandoffOptions } from './async-outcome';
+export type { TaskHandoffOptions, TaskHandoffProgress } from './async-outcome';
 export { withResponseSummary } from './response-summary';
 export type { ResponseWithSummary } from './response-summary';
 export type { ServerPayload } from '../../types/server-payload';
@@ -356,16 +356,26 @@ export {
 } from './runtime/from-platform';
 export { PlatformConfigError, validatePlatform } from './runtime/validate-platform';
 export {
+  completeScopedTask,
   createInMemoryTaskRegistry,
+  failScopedTask,
+  updateScopedTaskProgress,
+  type ScopedTaskRef,
+  type TaskMutationOutcome,
   type TaskRegistry,
+  type TaskRegistryMutationResult,
   type TaskRegistryScope,
   type TaskRecord,
   type TaskStatus,
 } from './runtime/task-registry';
 export {
   createPostgresTaskRegistry,
+  getDecisioningTaskRegistryBootstrap,
   getDecisioningTaskRegistryMigration,
+  getDecisioningTaskRegistryScopeV1Upgrade,
   type CreatePostgresTaskRegistryOptions,
+  type DecisioningTaskRegistryScopeV1Upgrade,
+  type DecisioningTaskRegistryScopeV1UpgradeOptions,
   type PgQueryable,
 } from './runtime/postgres-task-registry';
 

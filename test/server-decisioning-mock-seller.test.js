@@ -221,7 +221,7 @@ describe('MockSeller worked example — unified hybrid shape', () => {
 
       await server.awaitTaskUnsafe(taskId);
 
-      const final = await server.getTaskStateUnsafe(taskId);
+      const final = await server.getTaskState(taskId, { accountId: 'acc_1', ownerScope: 'account:acc_1' });
       assert.strictEqual(final.status, 'completed');
       assert.strictEqual(final.result.status, 'active');
     });
@@ -240,7 +240,7 @@ describe('MockSeller worked example — unified hybrid shape', () => {
 
       await server.awaitTaskUnsafe(taskId);
 
-      const final = await server.getTaskStateUnsafe(taskId);
+      const final = await server.getTaskState(taskId, { accountId: 'acc_1', ownerScope: 'account:acc_1' });
       assert.strictEqual(final.status, 'failed');
       assert.strictEqual(final.error.code, 'INVALID_REQUEST');
       assert.strictEqual(final.error.recovery, 'correctable');

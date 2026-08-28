@@ -3870,7 +3870,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     const taskId = result.structuredContent.task_id;
     await server.awaitTaskUnsafe(taskId);
 
-    const finalRecord = await server.getTaskStateUnsafe(taskId);
+    const finalRecord = await server.getTaskState(taskId, { accountId: 'acc_1', ownerScope: 'account:acc_1' });
     assert.strictEqual(finalRecord.status, 'completed');
     assert.deepStrictEqual(finalRecord.result, {
       products: [
@@ -3920,7 +3920,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     const taskId = result.structuredContent.task_id;
     await server.awaitTaskUnsafe(taskId);
 
-    const finalRecord = await server.getTaskStateUnsafe(taskId);
+    const finalRecord = await server.getTaskState(taskId, { accountId: 'acc_1', ownerScope: 'account:acc_1' });
     assert.strictEqual(finalRecord.status, 'completed');
     assert.deepStrictEqual(finalRecord.result, {
       signals: [{ signal_agent_segment_id: 'sig_async', name: 'Async signal' }],
@@ -4321,7 +4321,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     const taskId = result.structuredContent.task_id;
     await server.awaitTaskUnsafe(taskId);
 
-    const finalRecord = await server.getTaskStateUnsafe(taskId);
+    const finalRecord = await server.getTaskState(taskId, { accountId: 'acc_1', ownerScope: 'account:acc_1' });
     assert.strictEqual(finalRecord.status, 'completed');
     assert.deepStrictEqual(finalRecord.result, { media_buy_id: 'mb_final', status: 'active' });
   });
@@ -4367,7 +4367,10 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     const submitted = await dispatchCreate(server);
     assert.strictEqual(submitted.structuredContent.status, 'submitted');
     await server.awaitTaskUnsafe(submitted.structuredContent.task_id);
-    const finalRecord = await server.getTaskStateUnsafe(submitted.structuredContent.task_id);
+    const finalRecord = await server.getTaskState(submitted.structuredContent.task_id, {
+      accountId: 'acc_1',
+      ownerScope: 'account:acc_1',
+    });
 
     assert.strictEqual(finalRecord.status, 'completed');
     const creative = finalRecord.result.packages[0].creatives[0];
@@ -4520,7 +4523,10 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(slowResult.structuredContent.status, 'submitted');
     assert.ok(slowResult.structuredContent.task_id);
     await server.awaitTaskUnsafe(slowResult.structuredContent.task_id);
-    const finalSlow = await server.getTaskStateUnsafe(slowResult.structuredContent.task_id);
+    const finalSlow = await server.getTaskState(slowResult.structuredContent.task_id, {
+      accountId: 'acc_1',
+      ownerScope: 'account:acc_1',
+    });
     assert.strictEqual(finalSlow.result.media_buy_id, 'mb_hitl_slow');
   });
 
@@ -4568,7 +4574,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
 
     await server.awaitTaskUnsafe(taskId);
 
-    const finalRecord = await server.getTaskStateUnsafe(taskId);
+    const finalRecord = await server.getTaskState(taskId, { accountId: 'acc_1', ownerScope: 'account:acc_1' });
     assert.strictEqual(finalRecord.status, 'failed');
     assert.strictEqual(finalRecord.error.code, 'GOVERNANCE_DENIED');
     assert.strictEqual(finalRecord.error.recovery, 'terminal');
@@ -4593,7 +4599,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
 
     await server.awaitTaskUnsafe(taskId);
 
-    const finalRecord = await server.getTaskStateUnsafe(taskId);
+    const finalRecord = await server.getTaskState(taskId, { accountId: 'acc_1', ownerScope: 'account:acc_1' });
     assert.strictEqual(finalRecord.status, 'failed');
     assert.strictEqual(finalRecord.error.code, 'SERVICE_UNAVAILABLE');
     assert.strictEqual(finalRecord.error.recovery, 'transient');
@@ -6483,6 +6489,43 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
     );
   });
 
+  it('treats a scoped completion with no matching task as REGISTRY_WRITE_FAILED', async () => {
+    const transitions = [];
+    const errors = [];
+    const platform = buildHitlPlatform(async () => ({ media_buy_id: 'mb_42' }));
+    const inner = require('../dist/lib/server/decisioning/runtime/task-registry').createInMemoryTaskRegistry();
+    const noMatchRegistry = {
+      ...inner,
+      complete: async () => ({ outcome: 'not_found_in_scope' }),
+    };
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'obs',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      taskRegistry: noMatchRegistry,
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: message => errors.push(message) },
+      observability: { onTaskTransition: info => transitions.push(info) },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1',
+          idempotency_key: '11111111-1111-1111-1111-111111111112',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+        },
+      },
+    });
+    await server.awaitTaskUnsafe(result.structuredContent.task_id);
+
+    assert.strictEqual(transitions[0].errorCode, 'REGISTRY_WRITE_FAILED');
+    assert.ok(errors.some(message => message.includes('registry write failed')));
+  });
+
   it('onTaskTransition status="failed" carries errorCode on AdcpError', async () => {
     const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
     const transitions = [];
@@ -7094,7 +7137,7 @@ describe('tasks_get wire tool (B9)', () => {
       },
       sales: {
         getProducts: async () => ({ products: [], cache_scope: 'account' }),
-        createMediaBuy: (_req, ctx) => ctx.handoffToTask(async () => taskFn()),
+        createMediaBuy: (_req, ctx) => ctx.handoffToTask(async taskCtx => taskFn(taskCtx)),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_42' }),
         syncCreatives: async () => [],
         getMediaBuyDelivery: async () => ({ media_buys: [] }),
@@ -7156,6 +7199,109 @@ describe('tasks_get wire tool (B9)', () => {
     assert.strictEqual(payload.status, 'completed');
     assert.strictEqual(payload.protocol, 'media-buy');
     assert.deepStrictEqual(payload.result, { media_buy_id: 'mb_42', status: 'active' });
+  });
+
+  it('keeps progress and version envelopes aligned across task polling surfaces', async () => {
+    let releaseTask;
+    let markProgressWritten;
+    const unblockTask = new Promise(resolve => {
+      releaseTask = resolve;
+    });
+    const progressWritten = new Promise(resolve => {
+      markProgressWritten = resolve;
+    });
+    const server = createAdcpServerFromPlatform(
+      buildHitlPlatform(async taskCtx => {
+        try {
+          await taskCtx.update({ message: 'processing', percentage: 50, creatives_processed: 2 });
+          markProgressWritten({ ok: true });
+        } catch (error) {
+          markProgressWritten({ error });
+          throw error;
+        }
+        await unblockTask;
+        return { media_buy_id: 'mb_42', status: 'active' };
+      }),
+      { name: 'p', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    let taskId;
+
+    try {
+      const submitted = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'create_media_buy',
+          arguments: {
+            buyer_ref: 'b1',
+            idempotency_key: '11111111-1111-1111-1111-111111111119',
+            packages: [],
+            start_time: '2026-05-01T00:00:00Z',
+            end_time: '2026-06-01T00:00:00Z',
+            account: { account_id: 'acc_owner' },
+          },
+        },
+      });
+      taskId = submitted.structuredContent.task_id;
+      const progressOutcome = await progressWritten;
+      assert.ifError(progressOutcome.error);
+
+      const args = { task_id: taskId, account: { account_id: 'acc_owner' } };
+      const legacy = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: { name: 'tasks_get', arguments: args },
+      });
+      const canonical = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: { name: 'get_task_status', arguments: args },
+      });
+
+      assert.deepStrictEqual(legacy.structuredContent.progress, {
+        message: 'processing',
+        percentage: 50,
+        creatives_processed: 2,
+      });
+      assert.deepStrictEqual(legacy.structuredContent.progress, canonical.structuredContent.progress);
+      assert.strictEqual(legacy.structuredContent.adcp_version, '3.2-beta.8');
+      assert.strictEqual(legacy.structuredContent.adcp_version, canonical.structuredContent.adcp_version);
+
+      const legacyPinned = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'tasks_get',
+          arguments: { ...args, adcp_version: '3.1.18', adcp_major_version: 3 },
+        },
+      });
+      const canonicalPinned = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'get_task_status',
+          arguments: { ...args, adcp_version: '3.1.18', adcp_major_version: 3 },
+        },
+      });
+      assert.strictEqual(legacyPinned.structuredContent.adcp_version, '3.1');
+      assert.strictEqual(legacyPinned.structuredContent.adcp_version, canonicalPinned.structuredContent.adcp_version);
+
+      const legacyUnsupported = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: { name: 'tasks_get', arguments: { ...args, adcp_version: '99.0' } },
+      });
+      const canonicalUnsupported = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: { name: 'get_task_status', arguments: { ...args, adcp_version: '99.0' } },
+      });
+      assert.strictEqual(legacyUnsupported.structuredContent.adcp_error.code, 'VERSION_UNSUPPORTED');
+      assert.strictEqual(
+        legacyUnsupported.structuredContent.adcp_error.code,
+        canonicalUnsupported.structuredContent.adcp_error.code
+      );
+      assert.strictEqual(
+        legacyUnsupported.structuredContent.adcp_version,
+        canonicalUnsupported.structuredContent.adcp_version
+      );
+    } finally {
+      releaseTask();
+      if (taskId) await server.awaitTaskUnsafe(taskId);
+    }
   });
 
   it('serves get_task_status/list_tasks from the platform task registry while a task is submitted', async () => {
@@ -7504,6 +7650,105 @@ describe('tasks_get wire tool (B9)', () => {
     assert.strictEqual(result.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');
   });
 
+  it('re-sanitizes legacy/custom progress and results before exposing them to buyers', async () => {
+    const inner = createInMemoryTaskRegistry();
+    const taskRegistry = {
+      ...inner,
+      getTask: async taskId => ({
+        taskId,
+        tool: 'create_media_buy',
+        accountId: 'acc_owner',
+        ownerScope: 'account:acc_owner',
+        status: taskId === 'task_legacy_result' ? 'completed' : 'working',
+        progress:
+          taskId === 'task_legacy_result'
+            ? undefined
+            : taskId === 'task_invalid_progress'
+              ? { message: 'unsafe', percentage: 101 }
+              : {
+                  message: 'processing',
+                  creatives_processed: 2,
+                  vendor: {
+                    safe: true,
+                    accessToken: 'secret-token',
+                    ctx_metadata: { private: true },
+                    task_ref: { registryId: 'private-registry', ownerScope: 'private-owner' },
+                  },
+                },
+        result:
+          taskId === 'task_legacy_result'
+            ? {
+                media_buy_id: 'mb_safe',
+                ctx_metadata: { tenant_secret: 'private' },
+                task_ref: {
+                  taskId,
+                  accountId: 'acc_owner',
+                  ownerScope: 'account:acc_owner',
+                  registryId: 'private-registry',
+                },
+                products: [
+                  {
+                    product_id: 'prod_safe',
+                    ctx_metadata: { upstream_secret: 'private' },
+                    implementation_config: { adapter_secret: 'private' },
+                  },
+                ],
+              }
+            : undefined,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:01:00.000Z',
+      }),
+    };
+    const server = createAdcpServerFromPlatform(
+      buildHitlPlatform(async () => ({ media_buy_id: 'unused' })),
+      {
+        name: 'p',
+        version: '0.0.1',
+        validation: { requests: 'off', responses: 'off' },
+        taskRegistry,
+        logger: { debug() {}, info() {}, warn() {}, error() {} },
+      }
+    );
+    const poll = (toolName, taskId, includeResult = false) =>
+      server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: toolName,
+          arguments: {
+            task_id: taskId,
+            account: { account_id: 'acc_owner' },
+            ...(includeResult && { include_result: true }),
+          },
+        },
+      });
+
+    const expected = {
+      message: 'processing',
+      creatives_processed: 2,
+      vendor: { safe: true },
+    };
+    const legacy = await poll('tasks_get', 'task_legacy_progress');
+    const canonical = await poll('get_task_status', 'task_legacy_progress');
+    assert.deepStrictEqual(legacy.structuredContent.progress, expected);
+    assert.deepStrictEqual(canonical.structuredContent.progress, expected);
+
+    const legacyInvalid = await poll('tasks_get', 'task_invalid_progress');
+    const canonicalInvalid = await poll('get_task_status', 'task_invalid_progress');
+    assert.strictEqual(legacyInvalid.structuredContent.status, 'working');
+    assert.strictEqual(legacyInvalid.structuredContent.progress, undefined);
+    assert.strictEqual(canonicalInvalid.structuredContent.status, 'working');
+    assert.strictEqual(canonicalInvalid.structuredContent.progress, undefined);
+
+    const expectedResult = {
+      media_buy_id: 'mb_safe',
+      products: [{ product_id: 'prod_safe' }],
+    };
+    const legacyResult = await poll('tasks_get', 'task_legacy_result', true);
+    const canonicalResult = await poll('get_task_status', 'task_legacy_result', true);
+    assert.deepStrictEqual(legacyResult.structuredContent.result, expectedResult);
+    assert.deepStrictEqual(canonicalResult.structuredContent.result, expectedResult);
+  });
+
   it('fails closed when a custom registry returns a record outside the requested scope', async () => {
     const inner = createInMemoryTaskRegistry();
     const taskRegistry = {
@@ -7652,14 +7897,17 @@ describe('getTaskState account/principal scoping (B7)', () => {
     assert.strictEqual(record, null);
   });
 
-  it('explicitly unsafe read remains available to ops/test contexts', async () => {
+  it('requires explicit account and owner scope for application reads', async () => {
     const server = createAdcpServerFromPlatform(buildHitlPlatform(), {
       name: 't',
       version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
     });
     const taskId = await createTaskFor(server, 'acc_owner');
-    const record = await server.getTaskStateUnsafe(taskId);
+    const record = await server.getTaskState(taskId, {
+      accountId: 'acc_owner',
+      ownerScope: 'account:acc_owner',
+    });
     assert.ok(record);
     assert.strictEqual(record.accountId, 'acc_owner');
   });

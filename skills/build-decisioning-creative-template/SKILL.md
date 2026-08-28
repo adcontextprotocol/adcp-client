@@ -405,7 +405,7 @@ serve(() => server, {
 
 - Calls `validatePlatform()` — throws if you advertise a specialism but don't implement it, or define both halves of a method-pair
 - Wraps each method with `AdcpError`-catch + `submitted`-envelope projection for HITL
-- Returns a `DecisioningAdcpServer` (extends `AdcpServer`) with scoped `getTaskState(taskId, scope)` + `awaitTask(taskId, scope)` for HITL inspection. Trusted admin/tests may use the explicitly unsafe `getTaskStateUnsafe(taskId)` + `awaitTaskUnsafe(taskId)` helpers.
+- Returns a `DecisioningAdcpServer` (extends `AdcpServer`) with scoped `getTaskState(taskId, scope)` + `awaitTask(taskId, scope)` for HITL inspection. Persist the issued `ScopedTaskRef` for cross-process work; unscoped task lookup is not exposed by the production API.
 
 `serve()` accepts the server and binds HTTP transport for both MCP and A2A.
 
@@ -483,7 +483,7 @@ console.log(result.structuredContent);
 
 `dispatchTestRequest` is the canonical loop for unit-testing platform behavior without HTTP. It's available on `DecisioningAdcpServer` (the type returned by `createAdcpServerFromPlatform`). Set `validation: { requests: 'off' }` while iterating; turn it back to `strict` for end-to-end tests.
 
-For HITL platforms, `server.awaitTask(taskId, scope)` settles the background promise; `server.getTaskState(taskId, scope)` reads terminal status. Use the `*Unsafe(taskId)` variants only in trusted admin or test code.
+For HITL platforms, `server.awaitTask(taskId, scope)` settles the background promise; `server.getTaskState(taskId, scope)` reads terminal status. Persist the framework-issued `ScopedTaskRef` when work crosses a process boundary so every read and settlement retains its original authority.
 
 ## What NOT to do
 

@@ -453,6 +453,12 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6379
         run: node --test test/lib/webhook-delivery-durability.test.js
 
+      - name: Run PostgreSQL decisioning task-registry contract
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
+        run: node --test --test-timeout=120000 test/server-decisioning-postgres-task-registry.test.js
+
   eslint-plugin-tests:
     name: ESLint Plugin Tests
     runs-on: ubuntu-latest
@@ -562,6 +568,70 @@ jobs:
             exit 1
           fi
 
+  node-undici-runtime-matrix:
+    name: Node ${{ matrix.node }} / Undici ${{ matrix.undici }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - node: 20.0.0
+            undici: 6.28.0
+            mode: package
+          - node: 20.18.1
+            undici: 7.29.0
+            mode: network
+          - node: 24.x
+            undici: 6.28.0
+            mode: network
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies with tested Undici
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false "undici@${{ matrix.undici }}"
+
+      - name: Check declared runtime policy
+        run: npm run check:runtime-compat
+
+      - name: Build library
+        run: npm run build:lib
+
+      - name: Published-package floor smoke
+        if: matrix.mode == 'package'
+        run: npm run verify:package
+
+      - name: Published-package Undici 7 consumer override
+        if: matrix.undici == '7.29.0'
+        env:
+          ADCP_UNDICI_OVERRIDE: 7.29.0
+        run: npm run verify:package
+
+      - name: Network-sensitive SDK suites
+        if: matrix.mode == 'network'
+        env:
+          NODE_ENV: test
+        run: >-
+          node --test --test-timeout=120000
+          test/lib/pin-and-bind-fetch.test.js
+          test/lib/protocol-detection.test.js
+          test/lib/protocol-detection-1612.test.js
+          test/lib/protocol-detection-toctou.test.js
+          test/lib/mcp-oauth-scoped-fetch.test.js
+          test/lib/webhook-emitter.test.js
+          test/unit/oauth-size-limit.test.js
+          test/unit/response-size-limit.test.js
+
   test:
     name: Test & Build
     runs-on: ubuntu-latest
@@ -573,6 +643,7 @@ jobs:
       - example-integration-tests
       - security-audit
       - package-smoke
+      - node-undici-runtime-matrix
     if: ${{ always() }}
     timeout-minutes: 2
 

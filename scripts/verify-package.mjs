@@ -48,6 +48,7 @@ function run(cmd, args, options = {}) {
 }
 
 const pkg = JSON.parse(readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
+const undiciOverride = process.env.ADCP_UNDICI_OVERRIDE;
 
 // Pin every REQUIRED peer to its floor, so the smoke test resolves the exact
 // minimums the export map promises — not whatever higher version npm would
@@ -68,7 +69,21 @@ try {
   // never walks up into the repo's workspace.
   writeFileSync(
     path.join(tmpDir, 'package.json'),
-    JSON.stringify({ name: 'adcp-verify-consumer', version: '1.0.0', private: true }, null, 2)
+    JSON.stringify(
+      {
+        name: 'adcp-verify-consumer',
+        version: '1.0.0',
+        private: true,
+        ...(undiciOverride
+          ? {
+              dependencies: { undici: undiciOverride },
+              overrides: { undici: '$undici' },
+            }
+          : {}),
+      },
+      null,
+      2
+    )
   );
 
   console.log('📏 Auditing publish size...');
@@ -140,12 +155,20 @@ try {
   }
   console.log('   migration guides referenced by README are present');
 
-  const runtimeFloors = ['tldts@7.0.0'];
+  const runtimeFloors = ['tldts@7.0.0', `undici@${undiciOverride ?? rangeFloor(pkg.dependencies.undici)}`];
   console.log(`📥 Installing tarball + runtime/peer floors:\n   ${[...runtimeFloors, ...peerFloors].join('\n   ')}`);
   run('npm', ['install', '--no-audit', '--no-fund', '--loglevel=error', tarballPath, ...runtimeFloors, ...peerFloors], {
     cwd: tmpDir,
     stdio: 'inherit',
   });
+  const installedUndiciVersion = JSON.parse(
+    readFileSync(path.join(tmpDir, 'node_modules', 'undici', 'package.json'), 'utf8')
+  ).version;
+  const expectedUndiciVersion = undiciOverride ?? rangeFloor(pkg.dependencies.undici);
+  if (installedUndiciVersion !== expectedUndiciVersion) {
+    throw new Error(`Expected consumer Undici ${expectedUndiciVersion}, installed ${installedUndiciVersion}`);
+  }
+  console.log(`   consumer resolved Undici ${installedUndiciVersion}${undiciOverride ? ' via override' : ''}`);
   const installedTldtsVersion = JSON.parse(
     readFileSync(path.join(tmpDir, 'node_modules', 'tldts', 'package.json'), 'utf8')
   ).version;

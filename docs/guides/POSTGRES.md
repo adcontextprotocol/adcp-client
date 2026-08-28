@@ -12,7 +12,14 @@ When you wire `pool` on `createAdcpServerFromPlatform`, the framework creates an
 | `adcp_ctx_metadata` | Adapter-internal state round-trip cache | Lifetime of referenced resource (often months) | Bounded by your active product / media-buy / creative count |
 | `adcp_decisioning_tasks` | HITL task lifecycle (submitted → working → completed/failed) | Until terminal + manual cleanup | Bounded by HITL request volume |
 
-**Run `getAllAdcpMigrations({ taskRegistryNamespace })` once per database at deploy time.** The namespace must be stable and unique per hosted tenant. The migration is idempotent and safe to re-run on every boot.
+**Use `getAllAdcpMigrations({ taskRegistryNamespace })` only to bootstrap new framework tables.** The namespace must be stable and unique per hosted tenant. Re-running the bootstrap against an already-current schema is harmless, but it does not upgrade a populated legacy task registry. Use the explicit operator runbook below for that cutover.
+
+If out-of-process workers will settle scoped task refs after restart, also set
+`taskRegistryStorageId` on the `pool` shortcut (or `storageId` on
+`createPostgresTaskRegistry`). It must be a stable, non-secret identifier that
+is unique to the physical database/schema and environment. The SDK combines it
+with table and namespace in the serialized handle; without it, strict worker
+settlement fails closed while ordinary registry access remains compatible.
 
 `getAllAdcpMigrations({ taskRegistryNamespace })` installs one default idempotency table. The official
 `serve()` path automatically includes its canonical, server-controlled host in
@@ -87,7 +94,7 @@ CREATE INDEX idx_adcp_ctx_metadata_expires_at
 
 ### `adcp_decisioning_tasks`
 
-This DDL is returned by `getDecisioningTaskRegistryMigration()` (exported from `@adcp/sdk/server/decisioning`). Call `await pool.query(getDecisioningTaskRegistryMigration({ namespace: taskRegistryNamespace }))` once at boot, using the same stable trusted namespace passed to the registry. Existing rows are backfilled into that namespace, and the migration is idempotent. Pass `{ tableName: 'your_tasks', namespace: taskRegistryNamespace }` to override the default table name. Use `getAllAdcpMigrations({ taskRegistryNamespace })` from `@adcp/sdk/server` when you want one call to install all three SDK tables at once.
+This bootstrap DDL is returned by `getDecisioningTaskRegistryBootstrap()` (exported from `@adcp/sdk/server`). Run it while provisioning a new/empty database, using the same stable trusted namespace passed to the registry. Pass `{ tableName: 'your_tasks', namespace: taskRegistryNamespace }` to override the default table name. Use `getAllAdcpMigrations({ taskRegistryNamespace })` from `@adcp/sdk/server` when provisioning all three SDK tables at once. The deprecated `getDecisioningTaskRegistryMigration()` now throws so a populated legacy table cannot appear successfully migrated; choose bootstrap or the phased upgrade explicitly.
 
 ```sql
 CREATE TABLE adcp_decisioning_tasks (
@@ -122,6 +129,15 @@ The four-value status constraint is intentionally narrow. The five additional sp
 
 **Sizing.** Bounded by HITL traffic. Tasks accumulate forever unless adopter prunes — the SDK doesn't auto-delete completed tasks. Run a periodic `DELETE FROM adcp_decisioning_tasks WHERE status IN ('completed', 'failed') AND updated_at < NOW() - INTERVAL '30 days'`.
 
+### Upgrading a populated pre-scope task table
+
+Do not run primary-key replacement in application startup. Generate the phased
+`getDecisioningTaskRegistryScopeV1Upgrade({ namespace })` plan and follow
+[`migration-task-registry-scoping.md`](../migration-task-registry-scoping.md#populated-postgresql-upgrade).
+The runbook covers preflight queries, old/new deployment order, bounded lock and
+statement timeouts, concurrent index construction, the brief locking cutover,
+interruption recovery, ambiguous tenant ownership, and rollback limits.
+
 ## Connection pool sizing
 
 The SDK shares one `pg.Pool` across all three tables. Pool size guidance:
@@ -141,11 +157,13 @@ Each request does at most 2 PG queries (idempotency check + write). HITL request
 pool.on('error', (err) => console.error('pg pool error', err));
 ```
 
-The framework's PG backends issue zero-row shape probes via `probe()` to
-surface bad credentials and stale migrations at boot rather than on the first
-mutating request. The idempotency probe names every runtime-required column,
-including `retain_until`; a reachable table with an older column shape therefore
-fails readiness instead of advertising idempotency that cannot be persisted.
+The idempotency and context-metadata PG backends expose zero-row shape probes via
+`probe()` to surface bad credentials and stale migrations at boot rather than on
+the first mutating request. The idempotency probe names every runtime-required
+column, including `retain_until`; a reachable table with an older column shape
+therefore fails readiness instead of advertising idempotency that cannot be
+persisted. Run the decisioning task-registry migration plan's `verifySql` during
+deployment; `TaskRegistry` does not expose a boot-time probe.
 
 ## Statement timeout
 

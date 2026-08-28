@@ -204,6 +204,8 @@ Your PR will be reviewed for:
 ✅ **Compatibility**
 
 - Works with Node.js >=20.0.0
+- The supported Node/Undici matrix is documented in
+  [`docs/guides/NODE-UNDICI-COMPATIBILITY.md`](./docs/guides/NODE-UNDICI-COMPATIBILITY.md).
 - Compatible with both CommonJS and ESM
 - No breaking changes without major version bump
 - Backward compatible when possible
@@ -240,6 +242,7 @@ When introducing support for a new AdCP specialism (`governance-spend-authority`
 ### 1. Mock-server with deterministic-seeded fixtures
 
 Add `src/lib/mock-server/<specialism>/`:
+
 - `server.ts` — boots an HTTP server that mirrors a real upstream's wire shape (GAM-shape for guaranteed, walled-garden CAPI-shape for social, etc.).
 - `seed-data.ts` — fixture state. Seeds must be **deterministic** so storyboard replay is stable. Brand names in seed data MUST be fictional (`acme-outdoor.example`, NOT `tiktok_test_*`).
 - Per-route traffic counters at `/_debug/traffic` for the façade gate.
@@ -251,6 +254,7 @@ Wire into `src/lib/mock-server/index.ts` `bootMockServer({specialism})`.
 `examples/hello_<role>_adapter_<specialism>.ts` — where `<role>` is the AdCP protocol layer (`seller` for `media-buy`, `creative` for `creative`, `signals` for `signals`, `governance` for `governance`, `brand` for `brand`) and `<specialism>` is the part of the specialism name AFTER the role-implied prefix (so `creative-template` → `_template`, `sales-guaranteed` → `_guaranteed`).
 
 The adapter:
+
 - Wraps the mock-server upstream via `createUpstreamHttpClient`.
 - Implements the typed platform interface(s) for the specialism (per `RequiredPlatformsFor<S>`).
 - Marks every upstream call with a `// SWAP:` comment — the seam adopters replace.
@@ -262,6 +266,7 @@ The adapter:
 `test/examples/hello-<role>-adapter-<specialism>.test.js` using the `runHelloAdapterGates()` helper from `test/examples/_helpers/`.
 
 Three gates per [`docs/guides/EXAMPLE-TEST-CONTRACT.md`](docs/guides/EXAMPLE-TEST-CONTRACT.md):
+
 1. **Strict tsc** — `--strict --noUncheckedIndexedAccess --exactOptionalPropertyTypes --noPropertyAccessFromIndexSignature` + 2 other hardening flags.
 2. **Storyboard runner** — zero failed steps against the published storyboard.
 3. **Façade gate** — every expected upstream route shows ≥1 hit at `/_debug/traffic` after the run.
@@ -271,6 +276,7 @@ Each gate fires for a distinct regression class. **Adversarially validate** by s
 ### 4. Skill update — fork-target pointer, NOT inline pattern
 
 Update the per-specialism skill file (`skills/build-<role>-agent/SKILL.md` or `skills/build-<role>-agent/specialisms/<specialism>.md`) to:
+
 - Open with a "**Fork target**: `examples/hello_<role>_adapter_<specialism>.ts`" pointer.
 - Cover only this-specialism deltas: what's different from the role's baseline, which `RequiredPlatformsFor<S>` slot it fills, this-specialism storyboard's specific assertions.
 - NOT teach the wire pattern inline. The example does that.

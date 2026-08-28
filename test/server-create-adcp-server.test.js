@@ -2137,13 +2137,14 @@ describe('createAdcpServer', () => {
         version: '1.0.0',
         taskRegistry: {
           scopeVersion: 1,
-          async create() {
-            return { taskId: 'task_1' };
+          async create(opts) {
+            return {
+              taskId: 'task_1',
+              accountId: opts.accountId,
+              ownerScope: opts.ownerScope ?? `account:${opts.accountId}`,
+            };
           },
           async getTask() {
-            return null;
-          },
-          async _getTaskUnsafe() {
             return null;
           },
           async complete() {},
@@ -2327,13 +2328,14 @@ describe('createAdcpServer', () => {
         validation: { responses: 'strict' },
         taskRegistry: {
           scopeVersion: 1,
-          async create() {
-            return { taskId: invalidTask.taskId };
+          async create(opts) {
+            return {
+              taskId: invalidTask.taskId,
+              accountId: opts.accountId,
+              ownerScope: opts.ownerScope ?? `account:${opts.accountId}`,
+            };
           },
           async getTask(taskId) {
-            return taskId === invalidTask.taskId ? invalidTask : null;
-          },
-          async _getTaskUnsafe(taskId) {
             return taskId === invalidTask.taskId ? invalidTask : null;
           },
           async list() {
@@ -2513,12 +2515,18 @@ describe('createAdcpServer', () => {
       };
       const taskRegistry = {
         scopeVersion: 1,
-        create: async () => ({ taskId: record.taskId }),
+        create: async opts => ({
+          taskId: record.taskId,
+          accountId: opts.accountId,
+          ownerScope: opts.ownerScope ?? `account:${opts.accountId}`,
+        }),
         getTask: async taskId => (taskId === record.taskId ? record : null),
         complete: async () => {},
         fail: async () => {},
         updateProgress: async () => {},
         _registerBackground: () => {},
+        awaitTask: async () => {},
+        _awaitTaskUnsafe: async () => {},
       };
       const server = createAdcpServer({
         name: 'Test',
@@ -2748,13 +2756,14 @@ describe('createAdcpServer', () => {
         version: '1.0.0',
         taskRegistry: {
           scopeVersion: 1,
-          async create() {
-            return { taskId: 'unused' };
+          async create(opts) {
+            return {
+              taskId: 'unused',
+              accountId: opts.accountId,
+              ownerScope: opts.ownerScope ?? `account:${opts.accountId}`,
+            };
           },
           async getTask(taskId) {
-            return tasks.find(task => task.taskId === taskId) ?? null;
-          },
-          async _getTaskUnsafe(taskId) {
             return tasks.find(task => task.taskId === taskId) ?? null;
           },
           async list() {
@@ -2799,13 +2808,14 @@ describe('createAdcpServer', () => {
         version: '1.0.0',
         taskRegistry: {
           scopeVersion: 1,
-          async create() {
-            return { taskId: task.taskId };
+          async create(opts) {
+            return {
+              taskId: task.taskId,
+              accountId: opts.accountId,
+              ownerScope: opts.ownerScope ?? `account:${opts.accountId}`,
+            };
           },
           async getTask(taskId) {
-            return taskId === task.taskId ? task : null;
-          },
-          async _getTaskUnsafe(taskId) {
             return taskId === task.taskId ? task : null;
           },
           async list() {
@@ -2882,13 +2892,14 @@ describe('createAdcpServer', () => {
         version: '1.0.0',
         taskRegistry: {
           scopeVersion: 1,
-          async create() {
-            return { taskId: task.taskId };
+          async create(opts) {
+            return {
+              taskId: task.taskId,
+              accountId: opts.accountId,
+              ownerScope: opts.ownerScope ?? `account:${opts.accountId}`,
+            };
           },
           async getTask(taskId) {
-            return taskId === task.taskId ? task : null;
-          },
-          async _getTaskUnsafe(taskId) {
             return taskId === task.taskId ? task : null;
           },
           async list() {
