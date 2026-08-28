@@ -771,6 +771,9 @@ export { rollupOptimizationMetricsFromProducts } from './utils/capability-rollup
 // ====== PROPOSAL NEGOTIATION (AdCP 3.2) ======
 export * from './negotiation';
 
+// ====== RELIABLE REPORTING RECONCILIATION (AdCP 3.2 experimental) ======
+export * from './reporting';
+
 // ====== CORE TYPES ======
 export * from './types';
 

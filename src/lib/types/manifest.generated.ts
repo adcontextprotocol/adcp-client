@@ -13,7 +13,7 @@
  * `src/lib/types/error-codes.ts`.
  *
  * Source: `schemas/cache/3.2.0-beta.8/manifest.json` (adcp_version: 3.2.0-beta.8, generated_at:
- * 2026-08-27T21:12:10.542Z). Re-run `npm run sync-schemas` then
+ * 2026-08-28T08:30:21.831Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -687,6 +687,7 @@ export const MEDIA_BUY_TOOLS_FROM_MANIFEST = [
   "get_media_buy_delivery",
   "get_media_buys",
   "get_products",
+  "get_reporting_status",
   "list_creative_formats",
   "list_products",
   "log_event",
@@ -696,6 +697,7 @@ export const MEDIA_BUY_TOOLS_FROM_MANIFEST = [
   "sync_audiences",
   "sync_catalogs",
   "sync_event_sources",
+  "sync_reporting_receipts",
   "update_media_buy",
 ] as const;
 
