@@ -33,6 +33,7 @@ import type { RequestContext, CtxMetadataAccessor } from '../context';
 import { sanitizeTaskProgressForStorage, type ScopedTaskRef, type TaskRegistry } from './task-registry';
 import {
   _createTaskHandoff,
+  type ExternalTaskHandoffOptions,
   type TaskHandoffContext,
   type TaskHandoff,
   type TaskHandoffOptions,
@@ -83,6 +84,32 @@ function buildCtxMetadataAccessor(store: CtxMetadataStore, accountId: string): C
       return store.get(accountId, 'signal', id);
     },
   };
+}
+
+function createContextTaskHandoff(
+  fn: (taskCtx: TaskHandoffContext) => Promise<void>,
+  options: ExternalTaskHandoffOptions
+): TaskHandoff<never>;
+function createContextTaskHandoff<TResult>(
+  fn: (taskCtx: TaskHandoffContext) => Promise<TResult>,
+  options?: TaskHandoffOptions
+): TaskHandoff<TResult>;
+function createContextTaskHandoff(
+  fn: (taskCtx: TaskHandoffContext) => Promise<unknown>,
+  options?: TaskHandoffOptions | ExternalTaskHandoffOptions
+): TaskHandoff<unknown> {
+  if (options?.task_id !== undefined) {
+    if (typeof options.task_id !== 'string' || options.task_id.length === 0) {
+      throw new Error('handoffToTask options.task_id must be a non-empty string');
+    }
+    if (options.task_id.length > 128) {
+      throw new Error('handoffToTask options.task_id must be ≤ 128 characters');
+    }
+  }
+  if (options != null && 'settlement' in options && options.settlement !== 'external') {
+    throw new Error("handoffToTask options.settlement must be 'external'");
+  }
+  return _createTaskHandoff(fn, options);
 }
 
 export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
@@ -149,20 +176,7 @@ export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
       creativeFormat: stubResolver('creativeFormat'),
     },
     ctxMetadata,
-    handoffToTask<TResult>(
-      fn: (taskCtx: TaskHandoffContext) => Promise<TResult>,
-      options?: TaskHandoffOptions
-    ): TaskHandoff<TResult> {
-      if (options?.task_id !== undefined) {
-        if (typeof options.task_id !== 'string' || options.task_id.length === 0) {
-          throw new Error('handoffToTask options.task_id must be a non-empty string');
-        }
-        if (options.task_id.length > 128) {
-          throw new Error('handoffToTask options.task_id must be ≤ 128 characters');
-        }
-      }
-      return _createTaskHandoff(fn, options);
-    },
+    handoffToTask: createContextTaskHandoff,
   };
 }
 

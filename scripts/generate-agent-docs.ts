@@ -1114,9 +1114,15 @@ function generateLlmsTxt(
   ln(
     `| \`WebhooksConfig.tenantScope\` | Explicit trusted webhook namespace for a genuinely single-tenant server; multi-tenant servers derive scope per request |`
   );
+  ln(
+    `| \`PostgresTaskSettlementCoordinator\` | Atomically commits a push task terminal state and PostgreSQL recovery-outbox checkpoint for different-process workers |`
+  );
   ln();
   ln(
     `Production webhook publishers may construct an unbound emitter and call \`forTenantScope(trustedTenant)\` before every delivery. Direct unbound \`emit()\` fails before checkpointing or network access. \`createAdcpServer\` derives scope from trusted request context; configure \`webhooks.tenantScope\` only for a genuinely single-tenant factory.`
+  );
+  ln(
+    `Push-enabled decisioning tasks settled by another process must return \`ctx.handoffToTask(producer, { settlement: 'external' })\`; the framework withholds \`submitted\` until the producer durably queues the complete scoped handle and encrypted route. Workers use \`createPostgresTaskSettlementCoordinator()\` with \`completeScopedPushTask()\` / \`failScopedPushTask()\`; the task mutation and encrypted recovery outbox checkpoint commit together. Acknowledge work only for \`applied\` or compatible \`already_terminal\`; retry or dead-letter scope misses and conflicts.`
   );
   ln();
 
@@ -1404,6 +1410,40 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln();
   ln(`// After restart: lifecycle.reconcileEstablishedProposalTask({ account, sellerTaskId })`);
   ln('```');
+  ln();
+
+  ln(`## Crash-Safe Push Task Settlement`);
+  ln();
+  ln('```typescript');
+  ln(`interface TaskPushSettlementConfig {`);
+  ln(`  url: string;`);
+  ln(`  operationId?: string; // required for AdCP 3.2.0-beta.5+`);
+  ln(`  servedAdcpVersion?: string; // required when operationId is absent; must prove a pre-3.2 route`);
+  ln(`  token?: string; // protected at rest by WebhookAuthenticationAdapter`);
+  ln(`  authentication?: WebhookAuthentication;`);
+  ln(`}`);
+  ln(`interface ExternalTaskHandoffOptions { settlement: 'external'; task_id?: string; }`);
+  ln(`type TaskPushSettlementOutcome =`);
+  ln(`  | { outcome: 'applied'; delivery: 'durably_bound' }`);
+  ln(
+    `  | { outcome: 'already_terminal'; status: TaskStatus; compatibility: 'compatible'; delivery: 'durably_bound' | 'recoverable' | 'delivered' | 'terminal' }`
+  );
+  ln(
+    `  | { outcome: 'already_terminal'; status: TaskStatus; compatibility: 'conflicting'; delivery: 'not_applicable' }`
+  );
+  ln(`  | { outcome: 'not_found_in_scope'; delivery: 'not_applicable' };`);
+  ln(`class TaskPushSettlementConfigurationError extends Error {}`);
+  ln();
+  ln(`const settlements = createPostgresTaskSettlementCoordinator({`);
+  ln(`  registry, publisherScope, outbox: { tableName }, authenticationAdapter,`);
+  ln(`});`);
+  ln(`await completeScopedPushTask(settlements, scopedTaskRef, push, result);`);
+  ln(`await failScopedPushTask(settlements, scopedTaskRef, push, structuredError);`);
+  ln('```');
+  ln();
+  ln(
+    `The registry and outbox must share one PostgreSQL pool. Run the task-registry and webhook-recovery migrations, return \`ctx.handoffToTask(producer, { settlement: 'external' })\`, and persist the complete \`ScopedTaskRef\` plus encrypted push route before the producer returns. The framework waits for that durable producer commit before returning \`submitted\`; rejection fails the initial invocation. Poll \`settlements.recovery\` from a worker. See \`docs/migration-task-registry-scoping.md\`.`
+  );
   ln();
 
   ln(`## Production Webhook Tenant Binding`);

@@ -21,7 +21,7 @@
 // task primitives — the framework owns task lifecycle and dispatches the
 // `*Task` method in the background.
 export { type AdcpStructuredError, type ErrorCode, AdcpError } from './async-outcome';
-export type { TaskHandoffOptions, TaskHandoffProgress } from './async-outcome';
+export type { ExternalTaskHandoffOptions, TaskHandoffOptions, TaskHandoffProgress } from './async-outcome';
 export { withResponseSummary } from './response-summary';
 export type { ResponseWithSummary } from './response-summary';
 export type { ServerPayload } from '../../types/server-payload';
@@ -377,7 +377,20 @@ export {
   type DecisioningTaskRegistryScopeV1Upgrade,
   type DecisioningTaskRegistryScopeV1UpgradeOptions,
   type PgQueryable,
+  type PgTransactionClient,
+  type PgTransactionalPool,
 } from './runtime/postgres-task-registry';
+export {
+  completeScopedPushTask,
+  createPostgresTaskSettlementCoordinator,
+  failScopedPushTask,
+  TaskPushSettlementConfigurationError,
+  type PostgresTaskSettlementCoordinator,
+  type PostgresTaskSettlementCoordinatorOptions,
+  type TaskPushDeliveryState,
+  type TaskPushSettlementConfig,
+  type TaskPushSettlementOutcome,
+} from './runtime/postgres-task-settlement';
 
 // Multi-tenant deployment helper — wraps createAdcpServerFromPlatform with
 // per-tenant config, health states (healthy/unverified/disabled), and JWKS

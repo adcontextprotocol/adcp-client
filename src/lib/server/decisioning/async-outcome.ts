@@ -200,9 +200,23 @@ export interface TaskHandoffOptions {
   task_id?: string;
 }
 
+/**
+ * Options for a handoff whose terminal result is owned by a durable worker.
+ * The callback must only persist the complete task handle and work item; the
+ * framework waits for that commit before acknowledging submitted, then leaves
+ * the task submitted for the worker to settle.
+ *
+ * @public
+ */
+export interface ExternalTaskHandoffOptions extends TaskHandoffOptions {
+  readonly settlement: 'external';
+}
+
+type AnyTaskHandoffOptions = TaskHandoffOptions | ExternalTaskHandoffOptions;
+
 type TaskHandoffEntry = {
   fn: (taskCtx: TaskHandoffContext) => Promise<unknown>;
-  options?: TaskHandoffOptions;
+  options?: AnyTaskHandoffOptions;
 };
 
 /**
@@ -290,7 +304,7 @@ export interface TaskHandoffProgress {
  */
 export function _createTaskHandoff<TResult>(
   fn: (taskCtx: TaskHandoffContext) => Promise<TResult>,
-  options?: TaskHandoffOptions
+  options?: AnyTaskHandoffOptions
 ): TaskHandoff<TResult> {
   // Frozen object so adopters can't mutate the brand field. Even if
   // they did, the dispatch seam keys on identity (WeakMap), not on
@@ -332,8 +346,8 @@ export function isTaskHandoff<TResult>(value: unknown): value is TaskHandoff<TRe
  */
 export function _extractHandoffEntry<TResult>(
   handoff: TaskHandoff<TResult>
-): { fn: (taskCtx: TaskHandoffContext) => Promise<TResult>; options?: TaskHandoffOptions } | undefined {
+): { fn: (taskCtx: TaskHandoffContext) => Promise<TResult>; options?: AnyTaskHandoffOptions } | undefined {
   const entry = taskHandoffEntries.get(handoff as unknown as object);
   if (!entry) return undefined;
-  return entry as { fn: (taskCtx: TaskHandoffContext) => Promise<TResult>; options?: TaskHandoffOptions };
+  return entry as { fn: (taskCtx: TaskHandoffContext) => Promise<TResult>; options?: AnyTaskHandoffOptions };
 }

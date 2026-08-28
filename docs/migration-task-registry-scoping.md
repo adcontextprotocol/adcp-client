@@ -48,10 +48,9 @@ import {
 
 return ctx.handoffToTask(async taskCtx => {
   // The queue transaction must durably store the complete taskRef before the
-  // producer acknowledges this write. Persisting only taskCtx.id is unsafe.
+  // submitted response is sent. Persisting only taskCtx.id is unsafe.
   await approvals.enqueue({ taskRef: taskCtx.taskRef, request: approvalInput });
-  return await approvals.waitForResult(taskCtx.taskRef.taskId);
-});
+}, { settlement: 'external' });
 
 // A different process after restart:
 const item = await approvals.claim();
@@ -78,14 +77,168 @@ if (outcome.outcome === 'not_found_in_scope') {
 }
 ```
 
-This direct helper path is polling-only. It rejects tasks created with buyer
-push notifications because a registry write alone cannot durably deliver the
-terminal webhook after the request process restarts. For a request carrying
-`push_notification_config`, keep the handoff live and return the eventual
-result through its function so the framework owns both settlement and webhook
-delivery. Do not race a terminal scoped worker helper against that live
-handoff. `updateScopedTaskProgress()` remains available for push-enabled tasks
-because progress does not create a terminal delivery obligation.
+The direct `completeScopedTask()` / `failScopedTask()` path is polling-only and
+continues to reject push-enabled tasks. A registry write by itself cannot
+durably promise the terminal webhook.
+
+For PostgreSQL deployments, use the transactional push coordinator. It writes
+the terminal task row and the webhook recovery outbox entry in one transaction,
+then lets the ordinary webhook recovery worker publish it. Both tables must use
+the same `pg.Pool` and database/schema:
+
+```ts
+import {
+  completeScopedPushTask,
+  createPostgresTaskRegistry,
+  createPostgresTaskSettlementCoordinator,
+  createWebhookEmitter,
+  getWebhookDeliveryMigration,
+  getWebhookDeliveryRecoveryMigration,
+  pgWebhookDeliveryStore,
+  pollWebhookDeliveryRecovery,
+  TaskPushSettlementConfigurationError,
+} from '@adcp/sdk/server';
+
+// Integration sketch: pool, approvals, taskCtx, request, approvalInput,
+// seal/openPushRoute, the KMS adapter, and signerKey are application-owned.
+// The queue must persist encrypted push state before the request process exits.
+
+await pool.query(getWebhookDeliveryRecoveryMigration({
+  tableName: 'my_agent_task_webhook_outbox',
+}));
+await pool.query(getWebhookDeliveryMigration({
+  tableName: 'my_agent_webhook_bindings',
+}));
+
+const registry = createPostgresTaskRegistry({
+  pool,
+  namespace: 'tenant:my-agent',
+  storageId: 'prod-eu1:primary-db',
+});
+const settlements = createPostgresTaskSettlementCoordinator({
+  registry,
+  publisherScope: 'my-agent',
+  outbox: { tableName: 'my_agent_task_webhook_outbox' },
+  authenticationAdapter: kmsWebhookAuthenticationAdapter,
+});
+
+// In the specialism handler, the submitted response waits until the queue
+// transaction durably stores the complete taskRef plus encrypted push route.
+// The callback's return leaves the task submitted; only the worker below may
+// make it terminal. A callback rejection fails the initial invocation.
+return ctx.handoffToTask(async taskCtx => {
+  await approvals.enqueue({
+    taskRef: taskCtx.taskRef,
+    push: await sealPushRoute({
+      url: request.push_notification_config.url,
+      operationId: request.push_notification_config.operation_id,
+      // Always persist the negotiated version. A valid pre-3.2 version is
+      // required when operationId is absent and the stable fallback is used.
+      servedAdcpVersion,
+      token: request.push_notification_config.token,
+      authentication: request.push_notification_config.authentication,
+    }),
+    request: approvalInput,
+  });
+}, { settlement: 'external' });
+
+// A different process, including after the request process restarted:
+const item = await approvals.claim();
+const openedPush = await openPushRoute(item.push);
+const legacyScheme = openedPush.authentication?.schemes[0];
+let outcome;
+try {
+  outcome = await completeScopedPushTask(
+    settlements,
+    item.taskRef,
+    {
+      url: openedPush.url,
+      operationId: openedPush.operationId,
+      servedAdcpVersion: openedPush.servedAdcpVersion,
+      token: openedPush.token,
+      authentication:
+        legacyScheme === 'Bearer'
+          ? { type: 'bearer', token: openedPush.authentication.credentials }
+          : legacyScheme === 'HMAC-SHA256'
+            ? { type: 'hmac_sha256', secret: openedPush.authentication.credentials }
+            : null,
+    },
+    item.result,
+  );
+} catch (error) {
+  if (error instanceof TaskPushSettlementConfigurationError || error instanceof TypeError) {
+    await approvals.deadLetterAndAlert(item, error); // immutable bad route/config
+  } else {
+    await approvals.retry(item, error); // transaction/infrastructure failure
+  }
+  return;
+}
+
+if (
+  outcome.outcome === 'applied' ||
+  (outcome.outcome === 'already_terminal' && outcome.compatibility === 'compatible')
+) {
+  await approvals.ack(item);
+} else {
+  // A scope miss or conflicting terminal result must not be acknowledged as
+  // success. Apply the queue's bounded retry/dead-letter policy and alert.
+  await approvals.retryOrDeadLetter(item, outcome);
+}
+
+// Publish/recover outside the database transaction. The outbox lease is
+// fenced; a crash before publish or before acknowledgement is retryable.
+await pollWebhookDeliveryRecovery({
+  recovery: settlements.recovery,
+  deliver: async lease => {
+    const emitter = createWebhookEmitter({
+      signerKey,
+      publisherScope: lease.key.publisherScope,
+      tenantScope: lease.key.tenantScope,
+      deliveryStore: pgWebhookDeliveryStore(pool, {
+        tableName: 'my_agent_webhook_bindings',
+      }),
+      deliveryRecovery: settlements.recovery,
+    });
+    const result = await emitter.emitRecovered(lease);
+    return result.delivered
+      ? { disposition: 'delivered' }
+      : result.terminal
+        ? { disposition: 'terminal' }
+        : { disposition: 'retry', retryAfterMs: 1_000 };
+  },
+});
+```
+
+`TaskPushSettlementOutcome` reports the two independent state machines. Task
+mutation is `applied`, compatible/conflicting `already_terminal`, or the
+non-enumerating `not_found_in_scope`. Delivery is `durably_bound`,
+`recoverable`, `delivered`, or `terminal`; scope misses and conflicting
+settlements report `not_applicable` and never create an outbox entry. Retries
+reuse one deterministic delivery identity and the first committed payload.
+
+The settlement coordinator explicitly removes the top-level task-webhook
+`token` from the JSON payload before persistence and protects it through
+`authenticationAdapter`; generic recovery snapshots do not reinterpret a
+field merely because it is named `token`. The adapter context has
+`purpose: 'payload_token'` for that validation token. The context for legacy
+transport authentication intentionally leaves `purpose` undefined so pending
+snapshots encrypted by older SDK versions keep the same KMS AAD.
+Include a key version in `protectedValue`; retain old decrypt-only key versions
+until every pending delivery using them has settled and the configured retry
+horizon has elapsed. Rotate by writing with the new version while continuing
+to resolve old versions. Never store cleartext push tokens in the approval
+queue, task result, logs, metrics, or dead-letter metadata.
+
+`updateScopedTaskProgress()` remains available for push-enabled tasks because
+progress does not create a terminal delivery obligation. Use
+`{ settlement: 'external' }` for every handoff owned by these helpers. Its
+registry must declare `durability: 'durable'` and issue a stable `registryId`;
+the built-in in-memory registry is process-local and is rejected before the
+producer runs or the buyer receives `submitted`. Its
+producer callback may enqueue work but cannot return a terminal artifact; even
+if that callback throws, the framework rejects the initial invocation, leaves
+the task internally submitted, and writes no webhook. The buyer never receives
+an acknowledgment before recoverable work exists.
 
 The framework owns normal in-process handoff settlement. The direct registry
 surface is specifically for trusted webhook/queue workers and explicit

@@ -138,6 +138,33 @@ interface EstablishedProposalStore {
 // After restart: lifecycle.reconcileEstablishedProposalTask({ account, sellerTaskId })
 ```
 
+## Crash-Safe Push Task Settlement
+
+```typescript
+interface TaskPushSettlementConfig {
+  url: string;
+  operationId?: string; // required for AdCP 3.2.0-beta.5+
+  servedAdcpVersion?: string; // required when operationId is absent; must prove a pre-3.2 route
+  token?: string; // protected at rest by WebhookAuthenticationAdapter
+  authentication?: WebhookAuthentication;
+}
+interface ExternalTaskHandoffOptions { settlement: 'external'; task_id?: string; }
+type TaskPushSettlementOutcome =
+  | { outcome: 'applied'; delivery: 'durably_bound' }
+  | { outcome: 'already_terminal'; status: TaskStatus; compatibility: 'compatible'; delivery: 'durably_bound' | 'recoverable' | 'delivered' | 'terminal' }
+  | { outcome: 'already_terminal'; status: TaskStatus; compatibility: 'conflicting'; delivery: 'not_applicable' }
+  | { outcome: 'not_found_in_scope'; delivery: 'not_applicable' };
+class TaskPushSettlementConfigurationError extends Error {}
+
+const settlements = createPostgresTaskSettlementCoordinator({
+  registry, publisherScope, outbox: { tableName }, authenticationAdapter,
+});
+await completeScopedPushTask(settlements, scopedTaskRef, push, result);
+await failScopedPushTask(settlements, scopedTaskRef, push, structuredError);
+```
+
+The registry and outbox must share one PostgreSQL pool. Run the task-registry and webhook-recovery migrations, return `ctx.handoffToTask(producer, { settlement: 'external' })`, and persist the complete `ScopedTaskRef` plus encrypted push route before the producer returns. The framework waits for that durable producer commit before returning `submitted`; rejection fails the initial invocation. Poll `settlements.recovery` from a worker. See `docs/migration-task-registry-scoping.md`.
+
 ## Production Webhook Tenant Binding
 
 An unbound production `WebhookEmitter` is safe to construct with a stable `publisherScope`, durable delivery store, and durable recovery outbox. It refuses direct emission until trusted tenant scope is bound:

@@ -224,6 +224,9 @@ export interface TaskRegistry {
   /** Confirms that lifecycle methods use the account/principal-scoped v1 signatures. */
   readonly scopeVersion: 1;
 
+  /** Whether stored rows can be reopened by a different process after restart. */
+  readonly durability?: 'durable' | 'process-local';
+
   /**
    * Identity bound into every durable task reference issued by this registry.
    * It is stable for the lifetime of stored records and rotates when a
@@ -334,6 +337,7 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
 
   return {
     scopeVersion: 1,
+    durability: 'process-local',
     get registryId(): string {
       return registryId;
     },
@@ -494,7 +498,7 @@ async function ensureWorkerSettlementIsSafe(
   if (record == null) return { outcome: 'not_found_in_scope' };
   if (record.hasWebhook) {
     throw new Error(
-      'Direct scoped worker settlement is unavailable for tasks with push notifications because registry-only writes cannot durably deliver the terminal webhook. Return the result through the live handoff instead.'
+      'Registry-only scoped settlement is unavailable for tasks with push notifications. Use createPostgresTaskSettlementCoordinator() with completeScopedPushTask()/failScopedPushTask() for crash-safe PostgreSQL settlement.'
     );
   }
   return undefined;
