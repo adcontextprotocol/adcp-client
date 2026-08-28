@@ -90,10 +90,11 @@ OAuth flow handlers must preserve `state`, verify callback binding, and pass an 
 
 Cross-origin signing-key discovery now requires a schema-shaped, active
 `authorized_operators[]` grant. Broad grants use `brands: ['*']`, omitted
-scopes (or `['all']`), and omitted countries. For narrower grants, configure
-the matching trusted `requiredOperatorBrand`, `requiredOperatorScope`, and/or
-`requiredOperatorCountry` under `webhookVerification.resolverOptions` (or the
-corresponding low-level resolver options); constrained dimensions fail closed
+scopes (or `['all']`), and omitted countries. For narrower grants, pass
+`TaskOptions.delegatedOperatorAuthorization` per dispatch, or configure the
+matching trusted client-wide `requiredOperatorBrand`, `requiredOperatorScope`,
+and/or `requiredOperatorCountry` fallback under
+`webhookVerification.resolverOptions`. Constrained dimensions fail closed
 without context. Cached delegated keys expire no later than `valid_until`. See
 [the 13→14 migration detail](migration-13-to-14.md#cross-origin-signing-key-delegation).
 
@@ -103,7 +104,7 @@ without context. Cached delegated keys expire no later than `valid_until`. See
 - Add `zip`, `published_post`, `card`, `pixel_tracker`, `vast_tracker`, and `daast_tracker` to exhaustive `AssetInstance` handling.
 - Read canonical compliance scenarios from `ComplianceResult.tracks`; `tested_tracks` contains compact reference entries.
 - `createAdcpServerFromPlatform()` never emits a task webhook for an inline terminal result. The deprecated `autoEmitCompletionWebhooks` option is ignored under AdCP 3.2.
-- Rename raw platform hooks to explicit forms such as `buildCreativeLegacy`, `previewCreativeLegacy`, `listCreativeFormatsLegacy`, and the corresponding content-standard and brand-rights names. Canonical AdCP 3.2 previews now use `previewCreative` with `target_capability_id`, `creative_id`, or `creative_manifest`; retain `previewCreativeLegacy` only for `format_id` callers. Custom `WebhookRegistrationStore` implementations must round-trip the optional `previewMode` field so callback routing survives restarts.
+- Rename raw platform hooks to explicit forms such as `buildCreativeLegacy`, `previewCreativeLegacy`, `listCreativeFormatsLegacy`, and the corresponding content-standard and brand-rights names. Canonical AdCP 3.2 previews now use `previewCreative` with `target_capability_id`, `creative_id`, or `creative_manifest`; retain `previewCreativeLegacy` only for `format_id` callers. Custom `WebhookRegistrationStore` implementations must round-trip `previewMode`, `authorizationContextVersion`, and `delegatedOperatorAuthorization` so callback routing and delegated authority survive restarts; dispatch now fails closed if an immediate read-back loses the versioned authorization fields, and automatic key discovery rejects pre-upgrade RFC 9421 rows that lack the version marker.
 - Put incrementally migrated raw handler groups under `legacyHandlers`.
 - Replace removed registry hierarchy calls with `lookupBrand()`/`lookupBrands()` and inspect relationship evidence; use `{ fresh: true }` when a live origin check is required.
 - Use `PayloadDigestOptions` for `computePayloadDigestSha256()` rather than the removed bare `RegExp` or `false` overloads.

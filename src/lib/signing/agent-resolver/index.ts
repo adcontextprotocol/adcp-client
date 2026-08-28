@@ -22,6 +22,7 @@ export type {
   AgentResolution,
   AgentProtocol,
   AuthorizedOperatorScope,
+  DelegatedOperatorAuthorizationContext,
   FetchCapabilitiesFn,
   ResolveAgentOptions,
   TraceStep,

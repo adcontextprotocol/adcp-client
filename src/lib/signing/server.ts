@@ -41,7 +41,7 @@ export {
   WebhookSignatureError,
   type WebhookSignatureErrorCode,
 } from './errors';
-export { StaticJwksResolver, type JwksResolver } from './jwks';
+export { StaticJwksResolver, type JwksResolution, type JwksResolver } from './jwks';
 export { HttpsJwksResolver, type HttpsJwksResolverOptions } from './jwks-https';
 export {
   BrandJsonJwksResolver,
@@ -123,6 +123,7 @@ export {
   type AgentResolution,
   type AgentProtocol,
   type AuthorizedOperatorScope,
+  type DelegatedOperatorAuthorizationContext,
   type AgentResolverErrorCode,
   type AgentResolverErrorDetail,
   type AgentEntry,

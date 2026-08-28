@@ -1,7 +1,15 @@
 import type { AdcpJsonWebKey } from './types';
 
+export interface JwksResolution {
+  jwk: AdcpJsonWebKey | null;
+  /** Epoch seconds for a delegated-operator authorization boundary, when applicable. */
+  operatorAuthorizationValidUntil?: number;
+}
+
 export interface JwksResolver {
   resolve(keyid: string): Promise<AdcpJsonWebKey | null>;
+  /** Optional metadata-aware lookup used by verifiers that must enforce delegation expiry at acceptance time. */
+  resolveWithMetadata?(keyid: string): Promise<JwksResolution>;
 }
 
 export class StaticJwksResolver implements JwksResolver {

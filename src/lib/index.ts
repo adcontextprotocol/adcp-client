@@ -297,6 +297,7 @@ export {
   type WebhookRegistration,
   type WebhookRegistrationStore,
 } from './core/webhook-registration';
+export type { DelegatedOperatorAuthorizationContext } from './signing/agent-resolver';
 export {
   AgentClient,
   type CanonicalGetProductsResponse,

@@ -125,6 +125,7 @@ import type {
   DisclosurePosition,
   FormatSchemaReferenceResult,
   CreateMediaBuyPayload as RootCreateMediaBuyPayload,
+  DelegatedOperatorAuthorizationContext,
   GetProductsPayload as RootGetProductsPayload,
   LegacyProduct,
   LegacyGetProductsResponse,
@@ -135,8 +136,10 @@ import type {
   GetProductsRequest,
   SLAWindow,
   SlaWindow,
+  TaskOptions,
   UpdateMediaBuyPayload as RootUpdateMediaBuyPayload,
   LegacyGetProductsRequest,
+  WebhookRegistration,
 } from '@adcp/sdk';
 import { z } from 'zod';
 import type {
@@ -181,6 +184,31 @@ import type {
 import { createCanonicalReferenceResolver as createSubpathCanonicalReferenceResolver } from '@adcp/sdk/canonical-references';
 import { customToolFor, customToolForSchema, TOOL_INPUT_SCHEMAS, TOOL_INPUT_SHAPES, TOOL_REQUEST_SCHEMAS } from '@adcp/sdk/schemas';
 import * as publicSchemas from '@adcp/sdk/schemas';
+
+const _delegatedOperatorAuthorization: DelegatedOperatorAuthorizationContext = {
+  brand: 'brand_a',
+  scope: 'media_buying',
+  country: 'GB',
+};
+const _delegatedTaskOptions: TaskOptions = {
+  delegatedOperatorAuthorization: _delegatedOperatorAuthorization,
+};
+const _tupleAwareWebhookRegistration: WebhookRegistration = {
+  agentId: 'seller',
+  agentUrl: 'https://seller.example/mcp',
+  protocol: 'mcp',
+  operationId: 'operation',
+  taskType: 'get_products',
+  callbackUrl: 'https://buyer.example/webhook',
+  method: 'POST',
+  mode: 'rfc9421',
+  authorizationContextVersion: 1,
+  delegatedOperatorAuthorization: _delegatedOperatorAuthorization,
+  createdAt: 1,
+  expiresAt: 2,
+};
+void _delegatedTaskOptions;
+void _tupleAwareWebhookRegistration;
 
 // Public schema declarations must retain their object helpers and complete
 // parse outputs after packing, not just while compiling inside the repository.

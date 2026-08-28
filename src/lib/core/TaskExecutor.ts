@@ -674,6 +674,9 @@ function snapshotTaskOptions(options: TaskOptions): TaskOptions {
     ...options,
     ...(options.transport !== undefined && { transport: snapshotTransportOptions(options.transport) }),
     ...(options.metadata !== undefined && { metadata: structuredClone(options.metadata) }),
+    ...(options.delegatedOperatorAuthorization !== undefined && {
+      delegatedOperatorAuthorization: { ...options.delegatedOperatorAuthorization },
+    }),
   };
 }
 
@@ -886,6 +889,7 @@ export class TaskExecutor {
         operationId: string;
         callbackUrl: string;
         mode: 'rfc9421' | 'hmac-sha256';
+        delegatedOperatorAuthorization?: TaskOptions['delegatedOperatorAuthorization'];
       }) => void | Promise<void>;
       /** Persist fail-closed routing provenance before a durable mutation claim can run. */
       onDurableSettlementRequired?: (operationId: string) => void | Promise<void>;
@@ -1442,6 +1446,9 @@ export class TaskExecutor {
             agent,
             taskType: taskName,
             operationId: taskId,
+            ...(options.delegatedOperatorAuthorization !== undefined && {
+              delegatedOperatorAuthorization: options.delegatedOperatorAuthorization,
+            }),
             ...registration,
           });
           webhookRegistrationPersisted = true;

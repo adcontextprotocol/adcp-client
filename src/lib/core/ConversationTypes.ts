@@ -2,6 +2,7 @@
 // These types support the conversation and clarification pattern
 
 import type { ProductPropertyPolicyDiagnostic, ProductPropertyPolicyMode } from '../media-buy/property-policy';
+import type { DelegatedOperatorAuthorizationContext } from '../signing/agent-resolver/resolve-agent';
 
 /**
  * Represents a single message in a conversation with an agent
@@ -184,6 +185,15 @@ export interface TaskOptions {
   debug?: boolean;
   /** Suppress automatic webhook URL generation for this call. */
   disableWebhook?: boolean;
+  /**
+   * Trusted local authorization tuple for a delegated, cross-origin seller.
+   * The SDK snapshots this before dispatch and persists it with any generated
+   * webhook registration. It is never inferred from or sent in task arguments.
+   *
+   * When present, this whole object takes precedence over the client-wide
+   * `webhookVerification.resolverOptions.requiredOperator*` fallback.
+   */
+  delegatedOperatorAuthorization?: DelegatedOperatorAuthorizationContext;
   /** Additional metadata to include */
   metadata?: Record<string, any>;
   /**

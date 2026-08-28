@@ -150,15 +150,51 @@ Custom registration stores used by durability-protected mutation flows must also
 For deterministic tests or infrastructure-managed keys, set `webhookVerification.jwks`. Otherwise seller key discovery is automatic and uses an unauthenticated official protocol client for the capabilities step, so credentials configured for one endpoint are never transplanted to the registered callback origin. Sellers whose capability discovery requires authentication should provide an origin-bound `webhookVerification.fetchCapabilities(agentUrl, protocol)` callback or inject `webhookVerification.jwks` directly.
 
 When a cross-origin seller is authorized through a constrained
-`brand.json.authorized_operators[]` entry, also configure the trusted
-`webhookVerification.resolverOptions.requiredOperatorBrand`,
-`requiredOperatorScope`, and/or `requiredOperatorCountry` values that select the
-intended grant. Narrow brand, scope, or country lists fail closed without this
+`brand.json.authorized_operators[]` entry, pass the trusted tuple on the task
+call. The SDK snapshots it before dispatch, persists it with the webhook
+registration, and uses it for live key discovery after restarts:
+
+```ts
+await client.createMediaBuy(request, undefined, {
+  delegatedOperatorAuthorization: {
+    brand: 'brand_a',
+    scope: 'media_buying',
+    country: 'GB',
+  },
+});
+```
+
+This local policy is never inferred from task arguments or sent to the seller.
+Narrow brand, scope, or country lists fail closed without matching trusted
 context. Broad grants use `brands: ['*']`, omitted scopes (or `['all']`), and
-omitted countries. Delegated JWKS caches never outlive `valid_until`.
-Resolver options are trusted client-wide policy; they are not inferred from
-individual tool arguments. Use separate clients/resolvers for operations with
-different constrained brand, scope, or country tuples.
+omitted countries. Delegated JWKS caches never outlive `valid_until`, and
+resolver/replay caches partition distinct registration tuples even when they
+share a seller key and callback URL.
+
+For a genuinely single-tuple client, the existing
+`webhookVerification.resolverOptions.requiredOperatorBrand`,
+`requiredOperatorScope`, and `requiredOperatorCountry` settings remain a
+client-wide fallback. An explicit per-call object takes whole-object precedence;
+its missing dimensions are not filled from the client fallback. Custom durable
+`WebhookRegistrationStore` implementations must round-trip
+`authorizationContextVersion` and `delegatedOperatorAuthorization`. Persist the
+requested tuple only—never persist a prior authorization decision or
+`valid_until` as proof. Stores must provide read-your-writes consistency: the
+SDK reads the row back immediately before seller dispatch and fails closed if
+either versioned field is not yet visible or was lost. A restarted receiver
+revalidates against live `brand.json`.
+
+Automatic seller-key discovery rejects pre-upgrade RFC 9421 registration rows
+that have no `authorizationContextVersion`; the SDK cannot safely reconstruct
+the dispatch-time tuple from a later client configuration. Let those rows
+drain before upgrading, or re-dispatch the operation so the SDK writes a
+versioned registration. An explicit `webhookVerification.jwks` remains a
+caller-owned trust source for deployments that can independently bind legacy
+rows to their original authority.
+
+`webhookVerification.jwks` is an explicit caller-owned trust source and bypasses
+automatic `brand.json` authorization. Use it only when that resolver already
+enforces the intended registration trust boundary.
 
 ### Legacy HMAC-SHA256
 
