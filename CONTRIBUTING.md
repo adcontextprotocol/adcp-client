@@ -203,7 +203,7 @@ Your PR will be reviewed for:
 
 ✅ **Compatibility**
 
-- Works with Node.js >=20.0.0
+- Works with Node.js ^20.19.0 or >=22.12.0
 - The supported Node/Undici matrix is documented in
   [`docs/guides/NODE-UNDICI-COMPATIBILITY.md`](./docs/guides/NODE-UNDICI-COMPATIBILITY.md).
 - Compatible with both CommonJS and ESM

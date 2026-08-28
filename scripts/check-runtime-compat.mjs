@@ -9,6 +9,7 @@ const policy = new Map([
   [6, { node: '18.17.0', secure: '6.28.0' }],
   [7, { node: '20.18.1', secure: '7.29.0' }],
 ]);
+const sdkNodeRange = '^20.19.0 || >=22.12.0';
 
 export function checkRuntimeCompatibility(nodeRange, undiciRange) {
   if (typeof nodeRange !== 'string' || typeof undiciRange !== 'string') {
@@ -18,6 +19,9 @@ export function checkRuntimeCompatibility(nodeRange, undiciRange) {
   const nodeFloor = semver.minVersion(nodeRange);
   const undiciFloor = semver.minVersion(undiciRange);
   if (!nodeFloor || !undiciFloor) throw new Error('Unable to determine Node/Undici version floors');
+  if (!semver.subset(nodeRange, sdkNodeRange)) {
+    throw new Error(`Node range ${nodeRange} is not contained by the SDK runtime policy ${sdkNodeRange}`);
+  }
 
   const selected = policy.get(undiciFloor.major);
   if (!selected) throw new Error(`Undici ${undiciFloor.major}.x has no reviewed runtime policy`);

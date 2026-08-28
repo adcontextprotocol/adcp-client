@@ -470,9 +470,11 @@ before starting scoped writers.
   and return the matching arm. Returning the wrong arm fails wire
   schema validation.
 - **Node and Undici compatibility.** The SDK intentionally depends on
-  `undici@^6.28.0` so its `node >=20.0.0` engine promise remains valid.
+  `undici@^6.28.0` for its fully supported runtime. The SDK requires Node
+  `^20.19.0 || >=22.12.0` so CommonJS consumers can load its ESM dependency
+  graph; Node 21 and Node 22.0–22.11 are outside that range.
   A consumer override to `undici@>=7.29.0 <8` is best-effort and tested only
-  on Node `>=20.18.1`; older Undici 7 releases are below the reviewed security
+  on Node `>=20.19.0`; older Undici 7 releases are below the reviewed security
   floor. See [Node and Undici compatibility](./guides/NODE-UNDICI-COMPATIBILITY.md)
   for the executable override fixture and supported matrix.
 - **`zod` is now a required peer dependency** (`^4.1.5` in 6.0.1; was

@@ -576,12 +576,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - node: 20.0.0
+          - node: 20.19.0
             undici: 6.28.0
             mode: package
-          - node: 20.18.1
+          - node: 20.19.0
             undici: 7.29.0
             mode: network
+          - node: 22.12.0
+            undici: 6.28.0
+            mode: package
           - node: 24.x
             undici: 6.28.0
             mode: network

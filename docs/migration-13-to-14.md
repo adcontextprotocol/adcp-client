@@ -104,7 +104,7 @@ loading; keep using `requires_capability` for a singular predicate.
 13. Ensure custom 3.2 buyers include `push_notification_config.operation_id`, and update A2A integrations to keep the AdCP registration in skill parameters even when native A2A push configuration is also present.
 14. Treat failed/rejected task results as canonical terminal artifacts when `include_result` is requested; do not discard them while preserving only the summary error.
 15. Persist the complete `ScopedTaskRef` for out-of-process task settlement and acknowledge durable queue items only after `applied` or `already_terminal`. Upgrade populated PostgreSQL task registries with the phased [`getDecisioningTaskRegistryScopeV1Upgrade()` runbook](./migration-task-registry-scoping.md#populated-postgresql-upgrade), not application-boot bootstrap DDL.
-16. Keep Undici 6 for the full Node `>=20.0.0` promise, or use the tested best-effort Undici 7 override only on Node 20.18.1+. See the [Node/Undici compatibility policy](./guides/NODE-UNDICI-COMPATIBILITY.md).
+16. Upgrade to Node `^20.19.0 || >=22.12.0`, whose two boundaries enable the `require(esm)` support needed by the SDK's CommonJS dependency graph. Node 21 and Node 22.0–22.11 are not supported. Keep Undici 6 for the fully supported configuration, or use the tested best-effort Undici 7 override on Node 20.19+. See the [Node/Undici compatibility policy](./guides/NODE-UNDICI-COMPATIBILITY.md).
 
 ### Webhook delivery identity and retry horizons
 

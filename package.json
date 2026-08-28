@@ -663,7 +663,7 @@
     "zod": "^4.4.3"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": "^20.19.0 || >=22.12.0"
   },
   "overrides": {
     "esbuild": "$esbuild",
