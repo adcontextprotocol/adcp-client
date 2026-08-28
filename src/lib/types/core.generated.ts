@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-08-28T08:31:34.009Z
+// Generated at: 2026-08-28T08:50:24.312Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -19100,7 +19100,7 @@ export type GetProductsResponse = AdCPVersionEnvelope &
           string
         ];
     /**
-     * [AdCP 3.0] Indicates whether property_list filtering was applied. True if the agent filtered products based on the provided property_list. Absent or false if property_list was not provided or not supported by this agent.
+     * [AdCP 3.0] Indicates whether deprecated top-level property_list filtering was applied. True if the agent filtered products based on the provided property_list; every returned product also carries the corresponding property/include list_applications receipt. Absent or false if property_list was not provided or not supported by this agent.
      */
     property_list_applied?: boolean;
     /**
@@ -19255,6 +19255,10 @@ export type GetProductsResponse = AdCPVersionEnvelope &
     context?: ContextObject;
     ext?: ExtensionObject;
   };
+/**
+ * Seller-issued, product-scoped receipt showing how one effective property- or collection-list targeting reference intersected the inventory represented by a returned product. Each receipt compares its resolved entries independently against the same product inventory before any effective list is applied; product pricing and forecasts reflect the eligible inventory after all effective lists are composed. Sellers MUST NOT echo auth_token or other separately supplied fetch credentials; the closed receipt shape defines no credential field.
+ */
+export type InventoryListApplication = PropertyListApplication | CollectionListApplication;
 /**
  * A proposed media plan with fixed or seller-optimized budget allocation across products. Represents the publisher's strategic recommendation for how to structure a campaign based on the brief. Proposals are actionable: committed proposals can be executed directly via create_media_buy by providing the proposal_id; draft proposals must first be finalized via get_products refine action 'finalize'.
  */
@@ -19946,6 +19950,9 @@ export type RefineProposalsResponse = (
           }
       ))[]
   ];
+  /**
+   * Canonical products needed to evaluate the resulting terms. For revised or partial results whose effective criteria contain property or collection lists, each affected product MUST carry fresh list_applications receipts from the revision's product reevaluation. Finalization changes no terms and MAY repeat the receipts already bound to the source proposal rather than reevaluating them.
+   */
   products?: CanonicalProduct[];
   status?: 'completed' | 'submitted';
   task_id?: string;
@@ -20964,6 +20971,84 @@ export interface ProtocolEnvelope {
   payload?: {
   };
 }
+export interface PropertyListApplication {
+  /**
+   * The receipt describes a property list.
+   */
+  list_type: 'property';
+  /**
+   * Whether matching properties were retained as an allowlist or removed as a blocklist.
+   */
+  effect: 'include' | 'exclude';
+  /**
+   * Agent URL from the effective property-list targeting reference.
+   */
+  agent_url: string;
+  /**
+   * Identifier from the effective property-list targeting reference.
+   */
+  list_id: string;
+  /**
+   * Timestamp identifying the complete resolved-list snapshot the seller evaluated. If the list response supplied resolved_at, the seller MUST copy it; otherwise the seller records when it completed assembling the snapshot, including all fetched pages.
+   */
+  resolved_at: string;
+  /**
+   * When the seller intersected that snapshot with this product's then-current inventory.
+   */
+  evaluated_at: string;
+  /**
+   * Partition of every entry in the resolved list snapshot against this product's common pre-list inventory baseline.
+   */
+  summary: {
+    /**
+     * Resolved entries that matched at least one property in this product.
+     */
+    matched: number;
+    /**
+     * Resolved entries that did not match a property in this product.
+     */
+    unmatched: number;
+  };
+}
+export interface CollectionListApplication {
+  /**
+   * The receipt describes a collection list.
+   */
+  list_type: 'collection';
+  /**
+   * Whether matching collections were retained as an allowlist or removed as a blocklist.
+   */
+  effect: 'include' | 'exclude';
+  /**
+   * Agent URL from the effective collection-list targeting reference.
+   */
+  agent_url: string;
+  /**
+   * Identifier from the effective collection-list targeting reference.
+   */
+  list_id: string;
+  /**
+   * Timestamp identifying the complete resolved-list snapshot the seller evaluated. If the list response supplied resolved_at, the seller MUST copy it; otherwise the seller records when it completed assembling the snapshot, including all fetched pages.
+   */
+  resolved_at: string;
+  /**
+   * When the seller intersected that snapshot with this product's then-current inventory.
+   */
+  evaluated_at: string;
+  /**
+   * Partition of every entry in the resolved list snapshot against this product's common pre-list inventory baseline.
+   */
+  summary: {
+    /**
+     * Resolved entries that matched at least one collection in this product.
+     */
+    matched: number;
+    /**
+     * Resolved entries that did not match a collection in this product.
+     */
+    unmatched: number;
+  };
+}
 /**
  * Request-level confirmation of structured hard targeting inferred from the brief. Sellers MUST include this when their structured interpretation of hard prose materially affects product eligibility, pricing, or forecasting; otherwise inclusion is a best practice. Omitted when no hard targeting was inferred from the brief.
  */
@@ -21525,6 +21610,12 @@ export interface CanonicalProduct {
     matched_count?: number;
     submitted_count: number;
   };
+  /**
+   * Product-scoped receipts for every effective property- or collection-list targeting reference. Sellers MUST return one receipt per application regardless of response field projection; exclusion applications receive a receipt even when summary.matched is zero, while zero matches for any inclusion application make the product ineligible and it is not returned. Each receipt uses the same pre-list product inventory baseline; pricing and forecast reflect inventory remaining after all effective lists are composed.
+   *
+   * @minItems 1
+   */
+  list_applications?: [InventoryListApplication, ...InventoryListApplication[]];
   brief_relevance?: string;
   expires_at?: string;
   allowed_actions?: CanonicalProductAction[];
@@ -25578,7 +25669,7 @@ export type GetProductsCompletion = AdCPVersionEnvelope &
           string
         ];
     /**
-     * [AdCP 3.0] Indicates whether property_list filtering was applied. True if the agent filtered products based on the provided property_list. Absent or false if property_list was not provided or not supported by this agent.
+     * [AdCP 3.0] Indicates whether deprecated top-level property_list filtering was applied. True if the agent filtered products based on the provided property_list; every returned product also carries the corresponding property/include list_applications receipt. Absent or false if property_list was not provided or not supported by this agent.
      */
     property_list_applied?: boolean;
     /**
@@ -34701,42 +34792,17 @@ export interface TasksGetResponse {
 
 // core/tasks-list-request.json
 /**
- * Valid AdCP task types across all domains. These represent the complete set of operations that can be tracked via the task management system.
+ * Re-export of `TaskType` under the legacy codegen artifact name.
+ *
+ * `TaskType1` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `TaskType` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `TaskType`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `TaskType` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type TaskType1 =
-  | 'create_media_buy'
-  | 'update_media_buy'
-  | 'buy_products'
-  | 'accept_proposal'
-  | 'control_media_buy'
-  | 'media_buy_delivery'
-  | 'sync_creatives'
-  | 'build_creative'
-  | 'preview_creative'
-  | 'activate_signal'
-  | 'get_products'
-  | 'request_proposals'
-  | 'refine_proposals'
-  | 'decline_proposals'
-  | 'get_signals'
-  | 'create_property_list'
-  | 'update_property_list'
-  | 'get_property_list'
-  | 'list_property_lists'
-  | 'delete_property_list'
-  | 'sync_accounts'
-  | 'get_account_financials'
-  | 'get_creative_delivery'
-  | 'sync_event_sources'
-  | 'sync_audiences'
-  | 'sync_catalogs'
-  | 'log_event'
-  | 'get_brand_identity'
-  | 'search_brands'
-  | 'get_rights'
-  | 'acquire_rights'
-  | 'update_rights'
-  | 'sync_agent_notification_configs';
+export type TaskType1 = TaskType;
 /**
  * Request parameters for listing and filtering async tasks across all AdCP protocols with state reconciliation capabilities
  */
@@ -35543,10 +35609,6 @@ export type WholesaleFeedEvent = {
     }
 );
 /**
- * Seller-issued, product-scoped receipt showing how one effective property- or collection-list targeting reference intersected the inventory represented by a returned product. Each receipt compares its resolved entries independently against the same product inventory before any effective list is applied; product pricing and forecasts reflect the eligible inventory after all effective lists are composed. Sellers MUST NOT echo auth_token or other separately supplied fetch credentials; the closed receipt shape defines no credential field.
- */
-export type InventoryListApplication = PropertyListApplication | CollectionListApplication;
-/**
  * REQUIRED. Sellers MUST declare the cache layer explicitly on every *.created event. When introducing an entity that exists only in an account overlay (e.g., a custom product for a single account), the seller MUST emit { scope: 'account', account_ids: [...] } to prevent the entity from leaking into every consumer's public-layer cache. For public-layer additions, declare { scope: 'public' } explicitly rather than relying on a default — schema-required declaration prevents the quiet-failure path where a forgotten applies_to leaks an account-only entity to all consumers.
  */
 export type CacheLayerScope =
@@ -35576,84 +35638,6 @@ export type Product1 = Product;
  * Why the entity was removed. 'withdrawn': seller-initiated, no resubmit path. 'cancellation': resource cancelled, may return. 'expired': time-bounded availability ended (flight ended, seasonal product retired). 'depublication': underlying property depublished (see publisher.adagents_changed in the registry feed). 'policy_takedown': governance-driven removal (AdCP governance agent OR external regulator/legal takedown). In-flight buys honor existing cancellation policy regardless of reason; storefront UX differs.
  */
 export type RemovalReason = 'withdrawn' | 'cancellation' | 'expired' | 'depublication' | 'policy_takedown';
-export interface PropertyListApplication {
-  /**
-   * The receipt describes a property list.
-   */
-  list_type: 'property';
-  /**
-   * Whether matching properties were retained as an allowlist or removed as a blocklist.
-   */
-  effect: 'include' | 'exclude';
-  /**
-   * Agent URL from the effective property-list targeting reference.
-   */
-  agent_url: string;
-  /**
-   * Identifier from the effective property-list targeting reference.
-   */
-  list_id: string;
-  /**
-   * Timestamp identifying the complete resolved-list snapshot the seller evaluated. If the list response supplied resolved_at, the seller MUST copy it; otherwise the seller records when it completed assembling the snapshot, including all fetched pages.
-   */
-  resolved_at: string;
-  /**
-   * When the seller intersected that snapshot with this product's then-current inventory.
-   */
-  evaluated_at: string;
-  /**
-   * Partition of every entry in the resolved list snapshot against this product's common pre-list inventory baseline.
-   */
-  summary: {
-    /**
-     * Resolved entries that matched at least one property in this product.
-     */
-    matched: number;
-    /**
-     * Resolved entries that did not match a property in this product.
-     */
-    unmatched: number;
-  };
-}
-export interface CollectionListApplication {
-  /**
-   * The receipt describes a collection list.
-   */
-  list_type: 'collection';
-  /**
-   * Whether matching collections were retained as an allowlist or removed as a blocklist.
-   */
-  effect: 'include' | 'exclude';
-  /**
-   * Agent URL from the effective collection-list targeting reference.
-   */
-  agent_url: string;
-  /**
-   * Identifier from the effective collection-list targeting reference.
-   */
-  list_id: string;
-  /**
-   * Timestamp identifying the complete resolved-list snapshot the seller evaluated. If the list response supplied resolved_at, the seller MUST copy it; otherwise the seller records when it completed assembling the snapshot, including all fetched pages.
-   */
-  resolved_at: string;
-  /**
-   * When the seller intersected that snapshot with this product's then-current inventory.
-   */
-  evaluated_at: string;
-  /**
-   * Partition of every entry in the resolved list snapshot against this product's common pre-list inventory baseline.
-   */
-  summary: {
-    /**
-     * Resolved entries that matched at least one collection in this product.
-     */
-    matched: number;
-    /**
-     * Resolved entries that did not match a collection in this product.
-     */
-    unmatched: number;
-  };
-}
 /**
  * Full post-change signal object.
  */

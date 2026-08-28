@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-28T08:35:10.736Z
+// Generated at: 2026-08-28T08:54:08.560Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -3562,6 +3562,32 @@ export const PaginationResponseSchema = z.object({
     total_count: z.number().optional()
 }).passthrough();
 
+export const PropertyListApplicationSchema = z.object({
+    list_type: z.literal("property"),
+    effect: z.union([z.literal("include"), z.literal("exclude")]),
+    agent_url: z.string(),
+    list_id: z.string(),
+    resolved_at: z.string(),
+    evaluated_at: z.string(),
+    summary: z.object({
+        matched: z.number(),
+        unmatched: z.number()
+    }).passthrough()
+}).passthrough();
+
+export const CollectionListApplicationSchema = z.object({
+    list_type: z.literal("collection"),
+    effect: z.union([z.literal("include"), z.literal("exclude")]),
+    agent_url: z.string(),
+    list_id: z.string(),
+    resolved_at: z.string(),
+    evaluated_at: z.string(),
+    summary: z.object({
+        matched: z.number(),
+        unmatched: z.number()
+    }).passthrough()
+}).passthrough();
+
 export const GetProductsRejectedSchema = AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).and(z.object({
     status: z.literal("rejected"),
     reason: z.string(),
@@ -4112,6 +4138,8 @@ export const CanonicalAudienceEvidenceSelectionSchema = z.object({
     verified_attestation_digests: z.array(z.string()).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
+
+export const InventoryListApplicationSchema = z.union([PropertyListApplicationSchema, CollectionListApplicationSchema]);
 
 export const CanonicalProductActionSchema = z.object({
     action: CanonicalMediaBuyActionNameSchema,
@@ -6837,7 +6865,7 @@ export const TasksGetResponseSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const TaskType1Schema = z.union([z.literal("create_media_buy"), z.literal("update_media_buy"), z.literal("buy_products"), z.literal("accept_proposal"), z.literal("control_media_buy"), z.literal("media_buy_delivery"), z.literal("sync_creatives"), z.literal("build_creative"), z.literal("preview_creative"), z.literal("activate_signal"), z.literal("get_products"), z.literal("request_proposals"), z.literal("refine_proposals"), z.literal("decline_proposals"), z.literal("get_signals"), z.literal("create_property_list"), z.literal("update_property_list"), z.literal("get_property_list"), z.literal("list_property_lists"), z.literal("delete_property_list"), z.literal("sync_accounts"), z.literal("get_account_financials"), z.literal("get_creative_delivery"), z.literal("sync_event_sources"), z.literal("sync_audiences"), z.literal("sync_catalogs"), z.literal("log_event"), z.literal("get_brand_identity"), z.literal("search_brands"), z.literal("get_rights"), z.literal("acquire_rights"), z.literal("update_rights"), z.literal("sync_agent_notification_configs")]);
+export const TaskType1Schema = TaskTypeSchema;
 
 export const TasksListRequestSchema = z.object({
     adcp_version: z.string().optional(),
@@ -6976,32 +7004,6 @@ export const CacheLayerScopeSchema = z.union([z.object({
     }).passthrough()]);
 
 export const RemovalReasonSchema = z.union([z.literal("withdrawn"), z.literal("cancellation"), z.literal("expired"), z.literal("depublication"), z.literal("policy_takedown")]);
-
-export const PropertyListApplicationSchema = z.object({
-    list_type: z.literal("property"),
-    effect: z.union([z.literal("include"), z.literal("exclude")]),
-    agent_url: z.string(),
-    list_id: z.string(),
-    resolved_at: z.string(),
-    evaluated_at: z.string(),
-    summary: z.object({
-        matched: z.number(),
-        unmatched: z.number()
-    }).passthrough()
-}).passthrough();
-
-export const CollectionListApplicationSchema = z.object({
-    list_type: z.literal("collection"),
-    effect: z.union([z.literal("include"), z.literal("exclude")]),
-    agent_url: z.string(),
-    list_id: z.string(),
-    resolved_at: z.string(),
-    evaluated_at: z.string(),
-    summary: z.object({
-        matched: z.number(),
-        unmatched: z.number()
-    }).passthrough()
-}).passthrough();
 
 export const XEntityTypesSchema = z.union([z.literal("advertiser_brand"), z.literal("rights_holder_brand"), z.literal("rights_grant"), z.literal("account"), z.literal("operator"), z.literal("operator_unit"), z.literal("media_buy"), z.literal("package"), z.literal("product"), z.literal("proposal"), z.literal("opportunity"), z.literal("placement"), z.literal("product_pricing_option"), z.literal("vendor_pricing_option"), z.literal("creative"), z.literal("creative_revision"), z.literal("creative_representation"), z.literal("macro_declaration"), z.literal("tracker_execution_selector"), z.literal("creative_locale_variant"), z.literal("creative_format"), z.literal("transformer"), z.literal("evaluator"), z.literal("build_variant"), z.literal("served_variant"), z.literal("audience"), z.literal("audience_evidence"), z.literal("audience_evidence_snapshot"), z.literal("signal"), z.literal("signal_activation_id"), z.literal("demographic_interval_id"), z.literal("spot_airing"), z.literal("event_source"), z.literal("impairment"), z.literal("collection_list"), z.literal("property_list"), z.literal("catalog"), z.literal("catalog_generation"), z.literal("catalog_item"), z.literal("property"), z.literal("media_plan"), z.literal("governance_plan"), z.literal("governance_registry_policy"), z.literal("governance_inline_policy"), z.literal("governance_check"), z.literal("governance_delivery_statement"), z.literal("governance_delivery_observation"), z.literal("governance_outcome"), z.literal("governance_adjustment"), z.literal("governance_adjustment_evidence"), z.literal("seller_adjustment"), z.literal("content_standards"), z.literal("task"), z.literal("attestation_credential"), z.literal("si_session"), z.literal("offering"), z.literal("vendor_metric"), z.literal("reporting_destination"), z.literal("reporting_offering"), z.literal("reporting_delivery_config"), z.literal("reporting_definition"), z.literal("reporting_obligation"), z.literal("reporting_revision"), z.literal("reporting_materialization"), z.literal("reporting_receipt"), z.literal("reporting_resource"), z.literal("identity_relying_party")]);
 
@@ -7407,7 +7409,7 @@ export const OutcomeTargetSchema = z.object({
     }
 });
 
-export const ProductResponseFieldsSchema = z.tuple([z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("audio_distribution_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("reporting_capabilities"), z.literal("measurement_terms"), z.literal("performance_standards"), z.literal("catalog_types"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_rules"), z.literal("demographic_targeting"), z.literal("audience_evidence"), z.literal("audience_evidence_selections"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("brief_relevance"), z.literal("expires_at"), z.literal("allowed_actions")])]).rest(z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("audio_distribution_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("reporting_capabilities"), z.literal("measurement_terms"), z.literal("performance_standards"), z.literal("catalog_types"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_rules"), z.literal("demographic_targeting"), z.literal("audience_evidence"), z.literal("audience_evidence_selections"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("brief_relevance"), z.literal("expires_at"), z.literal("allowed_actions")]));
+export const ProductResponseFieldsSchema = z.tuple([z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("audio_distribution_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("reporting_capabilities"), z.literal("measurement_terms"), z.literal("performance_standards"), z.literal("catalog_types"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_rules"), z.literal("demographic_targeting"), z.literal("audience_evidence"), z.literal("audience_evidence_selections"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("list_applications"), z.literal("brief_relevance"), z.literal("expires_at"), z.literal("allowed_actions")])]).rest(z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("audio_distribution_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("reporting_capabilities"), z.literal("measurement_terms"), z.literal("performance_standards"), z.literal("catalog_types"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_rules"), z.literal("demographic_targeting"), z.literal("audience_evidence"), z.literal("audience_evidence_selections"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("list_applications"), z.literal("brief_relevance"), z.literal("expires_at"), z.literal("allowed_actions")]));
 
 export const ProductRefinementRequestsSchema = z.array(z.union([z.object({
         scope: z.literal("request"),
@@ -13806,6 +13808,7 @@ export const ProductSchema: ProductSchemaObject<ProductSchemaShape> & z.ZodType<
     }).passthrough().optional(),
     collections: z.array(CollectionSelectorSchema).optional(),
     collection_targeting_allowed: z.boolean().optional(),
+    list_applications: z.array(InventoryListApplicationSchema).optional(),
     installments: z.array(InstallmentSchema).optional(),
     enforced_policies: z.array(z.string()).optional(),
     trusted_match: z.object({
@@ -15149,6 +15152,7 @@ export const CanonicalProductSchema = z.object({
         matched_count: z.number().optional(),
         submitted_count: z.number()
     }).passthrough().optional(),
+    list_applications: z.array(InventoryListApplicationSchema).optional(),
     brief_relevance: z.string().optional(),
     expires_at: z.string().optional(),
     allowed_actions: z.array(CanonicalProductActionSchema).optional(),
@@ -15180,8 +15184,6 @@ export const WholesaleSignalObjectSchema = z.object({
     deployments: z.array(DeploymentSchema),
     pricing_options: z.array(VendorPricingOptionSchema).optional()
 }).passthrough();
-
-export const InventoryListApplicationSchema = z.union([PropertyListApplicationSchema, CollectionListApplicationSchema]);
 
 export const WholesaleFeedEventSchema: z.ZodType = z.object({
     event_id: z.uuid(),

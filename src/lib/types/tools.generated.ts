@@ -2580,6 +2580,12 @@ export type Product = {
      */
     collection_targeting_allowed?: boolean;
     /**
+     * Product-scoped receipts for every effective property- or collection-list targeting reference. Sellers MUST return one receipt per application regardless of response field projection; exclusion applications receive a receipt even when summary.matched is zero, while zero matches for any inclusion application make the product ineligible and it is not returned. Each receipt uses the same pre-list product inventory baseline; pricing and forecast reflect inventory remaining after all effective lists are composed.
+     *
+     * @minItems 1
+     */
+    list_applications?: [InventoryListApplication, ...InventoryListApplication[]];
+    /**
      * Specific installments included in this product. Each installment references its parent collection via collection_id when the product spans multiple collections. When absent with collections present, the product covers the collections broadly (run-of-collection).
      */
     installments?: Installment[];
@@ -5335,6 +5341,10 @@ export type MacroDeclaration = {
    */
   unavailable_behavior: 'preserve' | 'omit_parameter' | 'dialect_sentinel' | 'reject';
 };
+/**
+ * Seller-issued, product-scoped receipt showing how one effective property- or collection-list targeting reference intersected the inventory represented by a returned product. Each receipt compares its resolved entries independently against the same product inventory before any effective list is applied; product pricing and forecasts reflect the eligible inventory after all effective lists are composed. Sellers MUST NOT echo auth_token or other separately supplied fetch credentials; the closed receipt shape defines no credential field.
+ */
+export type InventoryListApplication = PropertyListApplication | CollectionListApplication;
 /**
  * One way buyer audience data can reach a seller for targeting. The pattern field discriminates the entry; each pattern carries only its own fields. Two patterns are AdCP-canonical (sync_audiences, tmp_identity_match); the rest describe integration paths that move data outside the protocol while remaining discoverable through it. Vendor identity is a BrandRef domain so new platforms declare a domain rather than waiting on an enum change. Experimental (x-status: experimental): the audience-activation surface — this schema, product.audience_activation, audience_targeting.supported_activation_methods, and the audience_activation_methods product filter — is new and not yet field-tested across parties. Sellers that implement it MUST list media_buy.audience_activation in experimental_features. Per docs/reference/experimental-status, it MAY change between 3.x releases with notice.
  */
@@ -8144,6 +8154,84 @@ export interface CollectionSelector {
    */
   collection_ids: [string, ...string[]];
 }
+export interface PropertyListApplication {
+  /**
+   * The receipt describes a property list.
+   */
+  list_type: 'property';
+  /**
+   * Whether matching properties were retained as an allowlist or removed as a blocklist.
+   */
+  effect: 'include' | 'exclude';
+  /**
+   * Agent URL from the effective property-list targeting reference.
+   */
+  agent_url: string;
+  /**
+   * Identifier from the effective property-list targeting reference.
+   */
+  list_id: string;
+  /**
+   * Timestamp identifying the complete resolved-list snapshot the seller evaluated. If the list response supplied resolved_at, the seller MUST copy it; otherwise the seller records when it completed assembling the snapshot, including all fetched pages.
+   */
+  resolved_at: string;
+  /**
+   * When the seller intersected that snapshot with this product's then-current inventory.
+   */
+  evaluated_at: string;
+  /**
+   * Partition of every entry in the resolved list snapshot against this product's common pre-list inventory baseline.
+   */
+  summary: {
+    /**
+     * Resolved entries that matched at least one property in this product.
+     */
+    matched: number;
+    /**
+     * Resolved entries that did not match a property in this product.
+     */
+    unmatched: number;
+  };
+}
+export interface CollectionListApplication {
+  /**
+   * The receipt describes a collection list.
+   */
+  list_type: 'collection';
+  /**
+   * Whether matching collections were retained as an allowlist or removed as a blocklist.
+   */
+  effect: 'include' | 'exclude';
+  /**
+   * Agent URL from the effective collection-list targeting reference.
+   */
+  agent_url: string;
+  /**
+   * Identifier from the effective collection-list targeting reference.
+   */
+  list_id: string;
+  /**
+   * Timestamp identifying the complete resolved-list snapshot the seller evaluated. If the list response supplied resolved_at, the seller MUST copy it; otherwise the seller records when it completed assembling the snapshot, including all fetched pages.
+   */
+  resolved_at: string;
+  /**
+   * When the seller intersected that snapshot with this product's then-current inventory.
+   */
+  evaluated_at: string;
+  /**
+   * Partition of every entry in the resolved list snapshot against this product's common pre-list inventory baseline.
+   */
+  summary: {
+    /**
+     * Resolved entries that matched at least one collection in this product.
+     */
+    matched: number;
+    /**
+     * Resolved entries that did not match a collection in this product.
+     */
+    unmatched: number;
+  };
+}
 /**
  * A single bookable unit within a collection — one episode, issue, event, or rotation period. The parent collection's kind indicates how to interpret each installment: TV/podcast episodes, print issues, live event airings, newsletter editions, or DOOH rotation periods. Installments inherit collection-level fields they don't override: content_rating defaults to the collection's baseline, guest_talent is additive to the collection's recurring talent, and topics add context beyond the collection's genre.
  */
@@ -8841,7 +8929,7 @@ export type Gtins = [string, ...string[]];
  */
 export type Tags = [string, ...string[]];
 /**
- * Canonical product fields a buyer requests from list_products. Required product_id and name fields are always returned. Legacy named-format fields remain available only through get_products.
+ * Canonical product fields a buyer requests from list_products. Required product_id and name fields are always returned. list_applications also overrides projection whenever a property or collection list is in the effective targeting because it is the decision receipt for seller-specific list matching. Legacy named-format fields remain available only through get_products.
  *
  * @minItems 1
  */
@@ -8873,6 +8961,7 @@ export type ProductResponseFields = [
     | 'audience_evidence_selections'
     | 'max_optimization_goals'
     | 'catalog_match'
+    | 'list_applications'
     | 'brief_relevance'
     | 'expires_at'
     | 'allowed_actions'
@@ -8904,6 +8993,7 @@ export type ProductResponseFields = [
     | 'audience_evidence_selections'
     | 'max_optimization_goals'
     | 'catalog_match'
+    | 'list_applications'
     | 'brief_relevance'
     | 'expires_at'
     | 'allowed_actions'
@@ -9368,6 +9458,12 @@ export interface CanonicalProduct {
     matched_count?: number;
     submitted_count: number;
   };
+  /**
+   * Product-scoped receipts for every effective property- or collection-list targeting reference. Sellers MUST return one receipt per application regardless of response field projection; exclusion applications receive a receipt even when summary.matched is zero, while zero matches for any inclusion application make the product ineligible and it is not returned. Each receipt uses the same pre-list product inventory baseline; pricing and forecast reflect inventory remaining after all effective lists are composed.
+   *
+   * @minItems 1
+   */
+  list_applications?: [InventoryListApplication, ...InventoryListApplication[]];
   brief_relevance?: string;
   expires_at?: string;
   allowed_actions?: CanonicalProductAction[];
@@ -34396,7 +34492,7 @@ export type GetProductsCompletion = AdCPVersionEnvelope &
           string
         ];
     /**
-     * [AdCP 3.0] Indicates whether property_list filtering was applied. True if the agent filtered products based on the provided property_list. Absent or false if property_list was not provided or not supported by this agent.
+     * [AdCP 3.0] Indicates whether deprecated top-level property_list filtering was applied. True if the agent filtered products based on the provided property_list; every returned product also carries the corresponding property/include list_applications receipt. Absent or false if property_list was not provided or not supported by this agent.
      */
     property_list_applied?: boolean;
     /**
