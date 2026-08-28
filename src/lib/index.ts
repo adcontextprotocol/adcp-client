@@ -770,6 +770,9 @@ export { rollupOptimizationMetricsFromProducts } from './utils/capability-rollup
 
 // ====== PROPOSAL NEGOTIATION (AdCP 3.2) ======
 export * from './negotiation';
+// Resolve the intentional name overlap with the wire-level response exported
+// from `@adcp/sdk/types`; the root keeps its richer negotiation helper types.
+export type { RefineProposalsRequest, RefineProposalsResponse } from './negotiation';
 
 // ====== CORE TYPES ======
 export * from './types';

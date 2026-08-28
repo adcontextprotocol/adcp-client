@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-28T04:11:43.377Z
+// Generated at: 2026-08-28T10:16:46.158Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -2293,6 +2293,38 @@ export const InsertionOrderSchema = z.object({
     requires_signature: z.boolean()
 }).passthrough();
 
+export const DeclineProposalsResponseSchema = z.union([z.object({
+        results: z.array(z.union([z.object({
+                proposal_id: z.string().min(1),
+                outcome: z.literal("declined")
+            }).passthrough(), z.object({
+                proposal_id: z.string().min(1),
+                outcome: z.literal("unable"),
+                reason: z.string().min(1)
+            }).passthrough()])),
+        message: z.string().max(2000).optional(),
+        errors: z.array(ErrorSchema).optional(),
+        context: ContextObjectSchema.optional(),
+        ext: ExtensionObjectSchema.optional(),
+        replayed: z.literal(true).optional()
+    }).passthrough(), z.object({
+        results: z.array(z.union([z.object({
+                proposal_id: z.string().min(1),
+                outcome: z.literal("declined")
+            }).passthrough(), z.object({
+                proposal_id: z.string().min(1),
+                outcome: z.literal("unable"),
+                reason: z.string().min(1)
+            }).passthrough()])).optional(),
+        status: z.literal("submitted"),
+        task_id: z.string().min(1),
+        message: z.string().max(2000).optional(),
+        errors: z.array(ErrorSchema).optional(),
+        context: ContextObjectSchema.optional(),
+        ext: ExtensionObjectSchema.optional(),
+        replayed: z.literal(true).optional()
+    }).passthrough()]);
+
 export const MacroResolutionResultSchema = z.object({}).passthrough().merge(z.object({
     declaration_id: z.string(),
     asset_path: z.string(),
@@ -3378,32 +3410,6 @@ export const GetProductsAsyncSubmittedSchema = z.object({
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
-
-export const DeclineProposalsResponseSchema = z.union([z.object({
-        results: z.array(z.union([z.object({
-                outcome: z.literal("declined")
-            }).passthrough(), z.object({
-                outcome: z.literal("unable")
-            }).passthrough()])),
-        message: z.string().max(2000).optional(),
-        errors: z.array(ErrorSchema).optional(),
-        context: ContextObjectSchema.optional(),
-        ext: ExtensionObjectSchema.optional(),
-        replayed: z.literal(true).optional()
-    }).passthrough(), z.object({
-        results: z.array(z.union([z.object({
-                outcome: z.literal("declined")
-            }).passthrough(), z.object({
-                outcome: z.literal("unable")
-            }).passthrough()])).optional(),
-        status: z.literal("submitted"),
-        task_id: z.string().min(1),
-        message: z.string().max(2000).optional(),
-        errors: z.array(ErrorSchema).optional(),
-        context: ContextObjectSchema.optional(),
-        ext: ExtensionObjectSchema.optional(),
-        replayed: z.literal(true).optional()
-    }).passthrough()]);
 
 export const CompactTaskSubmittedSchema = z.object({
     status: z.literal("submitted"),
@@ -5439,9 +5445,14 @@ export const BrandResponseAuthorizationResultSchema = z.object({
     kid: z.string().min(1).optional(),
     jwks_uri: z.string().regex(/^https:\/\//).optional()
 }).passthrough().and(z.union([z.object({
-        trust: z.literal("trusted")
+        trust: z.literal("trusted"),
+        kid: z.string().min(1),
+        jwks_uri: z.string().regex(/^https:\/\//)
     }).passthrough(), z.object({
-        trust: z.literal("untrusted")
+        trust: z.literal("untrusted"),
+        reason: z.union([z.literal("brand_json_unavailable"), z.literal("agent_not_authorized"), z.literal("agent_authorization_ambiguous"), z.literal("jwks_unavailable"), z.literal("kid_not_authorized"), z.literal("kid_authorization_ambiguous"), z.literal("key_material_mismatch"), z.literal("key_purpose_invalid")]),
+        kid: z.string().min(1).optional(),
+        jwks_uri: z.string().regex(/^https:\/\//).optional()
     }).passthrough()]));
 
 export const BudgetRangeSchema = z.object({}).passthrough().merge(z.object({
@@ -7085,8 +7096,10 @@ export const AdCPManifestSchema = z.object({
             response_schema: SchemaPathSchema,
             async_response_schemas: z.array(SchemaPathSchema),
             legacy_fallback: z.union([z.object({
+                    tool: z.string().regex(/^[a-z][a-z0-9_]*$/),
                     mode: z.literal("direct")
                 }).passthrough(), z.object({
+                    tool: z.string().regex(/^[a-z][a-z0-9_]*$/),
                     mode: z.literal("orchestrated")
                 }).passthrough(), z.object({
                     mode: z.literal("none")
@@ -15117,9 +15130,34 @@ export const ListProductsResponseSchema = z.object({
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough().and(z.union([z.object({
-        outcome: z.literal("listed")
+        outcome: z.literal("listed"),
+        products: z.array(CanonicalProductSchema),
+        next_cursor: z.string().min(1).optional(),
+        feed_version: z.string(),
+        pricing_version: z.string().optional(),
+        cache_scope: z.union([z.literal("public"), z.literal("account")]),
+        incomplete: z.array(z.object({
+            scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("wholesale_feed")]),
+            description: z.string().min(1),
+            estimated_wait: DurationSchema.optional()
+        }).passthrough()).optional(),
+        replayed: z.literal(true).optional(),
+        context: ContextObjectSchema.optional(),
+        ext: ExtensionObjectSchema.optional()
     }).passthrough(), z.object({
-        outcome: z.literal("unchanged")
+        outcome: z.literal("unchanged"),
+        next_cursor: z.string().min(1).optional(),
+        feed_version: z.string(),
+        pricing_version: z.string().optional(),
+        cache_scope: z.union([z.literal("public"), z.literal("account")]),
+        incomplete: z.array(z.object({
+            scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("wholesale_feed")]),
+            description: z.string().min(1),
+            estimated_wait: DurationSchema.optional()
+        }).passthrough()).optional(),
+        replayed: z.literal(true).optional(),
+        context: ContextObjectSchema.optional(),
+        ext: ExtensionObjectSchema.optional()
     }).passthrough()]));
 
 export const RequestProposalsRequestSchema = z.object({

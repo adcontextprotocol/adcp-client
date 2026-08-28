@@ -481,6 +481,79 @@ writeFileSync(__OUTPUT__, JSON.stringify({
   assert.ok(result.continuationProperties.includes('product_ids'));
 });
 
+test('decline_proposals result branches retain shared fields beside an open unable arm', () => {
+  const result = runGeneratorHarness(`
+import { readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { applyCodegenSchemaWorkarounds, enforceStrictSchema } from __GENERATOR__;
+
+const source = JSON.parse(
+  readFileSync(path.join(__REPO_ROOT__, 'schemas/cache/latest/media-buy/decline-proposals-response.json'), 'utf8')
+);
+const transformed = enforceStrictSchema(applyCodegenSchemaWorkarounds(source, 'DeclineProposalsResponse'));
+const branches = transformed.oneOf.map((response: any) => response.properties.results.items.oneOf);
+writeFileSync(__OUTPUT__, JSON.stringify({
+  branches: branches.map((arms: any[]) => arms.map((arm: any) => ({
+    outcome: arm.properties.outcome.const,
+    required: arm.required,
+    properties: Object.keys(arm.properties),
+  }))),
+}));
+`);
+
+  assert.equal(result.branches.length, 2, 'completed and submitted envelopes should both retain result arms');
+  for (const arms of result.branches) {
+    const declined = arms.find(arm => arm.outcome === 'declined');
+    const unable = arms.find(arm => arm.outcome === 'unable');
+    assert.ok(declined.required.includes('proposal_id'));
+    assert.ok(declined.required.includes('outcome'));
+    assert.ok(declined.properties.includes('proposal_id'));
+    assert.ok(!declined.properties.includes('reason'));
+    assert.ok(unable.required.includes('proposal_id'));
+    assert.ok(unable.required.includes('outcome'));
+    assert.ok(unable.required.includes('reason'));
+    assert.ok(unable.properties.includes('proposal_id'));
+    assert.ok(unable.properties.includes('reason'));
+  }
+});
+
+test('mutual-exclusion rewrite leaves branches with unsupported validators intact', () => {
+  const result = runGeneratorHarness(`
+import { writeFileSync } from 'node:fs';
+import { enforceStrictSchema } from __GENERATOR__;
+
+const source = {
+  type: 'object',
+  properties: {
+    outcome: { type: 'string' },
+    proposal_id: { type: 'string' },
+    reason: { type: 'string' },
+  },
+  required: ['proposal_id', 'outcome'],
+  oneOf: [
+    {
+      properties: { outcome: { const: 'declined' } },
+      required: ['outcome'],
+      not: { required: ['reason'] },
+    },
+    {
+      properties: { outcome: { const: 'unable' } },
+      required: ['outcome', 'reason'],
+      dependentRequired: { reason: ['proposal_id'] },
+    },
+  ],
+};
+const transformed = enforceStrictSchema(source);
+writeFileSync(__OUTPUT__, JSON.stringify({
+  retainsDependentRequired: transformed.oneOf[1].dependentRequired,
+  openArmHasOwnType: Object.hasOwn(transformed.oneOf[1], 'type'),
+}));
+`);
+
+  assert.deepEqual(result.retainsDependentRequired, { reason: ['proposal_id'] });
+  assert.equal(result.openArmHasOwnType, false, 'unsupported branch validators must prevent the rewrite');
+});
+
 test('GetMediaBuyDeliveryResponse isolates optional breakdown identifiers under unique compat titles', () => {
   const result = runGeneratorHarness(`
 import { readFileSync, writeFileSync } from 'node:fs';

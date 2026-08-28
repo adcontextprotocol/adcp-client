@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.2.0-beta.8
-// Generated at: 2026-08-28T03:33:35.268Z
+// Generated at: 2026-08-28T10:14:52.513Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -13138,6 +13138,79 @@ export type RequestProposalsResponse =
       ext?: ExtensionObject;
       replayed?: true;
     };
+// DECLINEPROPOSALSRESPONSE PRIORITY EXTRACTED TYPE
+/**
+ * One ordered terminal result for each requested proposal decline.
+ */
+export type DeclineProposalsResponse =
+  | {
+      results: (
+        | {
+            /**
+             * @minLength 1
+             */
+            proposal_id: string;
+            outcome: 'declined';
+          }
+        | {
+            /**
+             * @minLength 1
+             */
+            proposal_id: string;
+            outcome: 'unable';
+            /**
+             * Why the seller could not apply a decline. Present only for outcome unable.
+             * @minLength 1
+             */
+            reason: string;
+          }
+      )[];
+      /**
+       * @maxLength 2000
+       */
+      message?: string;
+      errors?: Error[];
+      context?: ContextObject;
+      ext?: ExtensionObject;
+      replayed?: true;
+    }
+  | {
+      results?: (
+        | {
+            /**
+             * @minLength 1
+             */
+            proposal_id: string;
+            outcome: 'declined';
+          }
+        | {
+            /**
+             * @minLength 1
+             */
+            proposal_id: string;
+            outcome: 'unable';
+            /**
+             * Why the seller could not apply a decline. Present only for outcome unable.
+             * @minLength 1
+             */
+            reason: string;
+          }
+      )[];
+      status: 'submitted';
+      /**
+       * @minLength 1
+       */
+      task_id: string;
+      /**
+       * @maxLength 2000
+       */
+      message?: string;
+      errors?: Error[];
+      context?: ContextObject;
+      ext?: ExtensionObject;
+      replayed?: true;
+    };
+
 // SYNCCREATIVESSUCCESS PRIORITY EXTRACTED TYPE
 /**
  * Success response - sync operation processed creatives (may include per-item failures)
@@ -16725,6 +16798,8 @@ export interface CustomFormatDeclaration {
 export type BusinessEntity1 = BusinessEntity;
 
 // CREATIVE-ASSET SCHEMA
+
+// PRODUCT SCHEMA
 /**
  * Represents available advertising inventory
  */
@@ -19945,43 +20020,6 @@ export type RefineProposalsResponse = (
  * Acknowledgment for submitted refine_proposals (complex revision requiring re-underwriting or upstream pricing queries)
  */
 export type RefineProposalsAsyncSubmitted = CompactTaskSubmitted;
-/**
- * Terminal response for decline_proposals
- */
-export type DeclineProposalsResponse = (
-  | {
-    }
-  | CompactTaskSubmitted
-) & {
-  /**
-   * @minItems 1
-   */
-  results?: [
-    (
-      | {
-          outcome: 'declined';
-        }
-      | {
-          outcome: 'unable';
-        }
-    ),
-    ...(
-      | {
-          outcome: 'declined';
-        }
-      | {
-          outcome: 'unable';
-        }
-    )[]
-  ];
-  status?: 'submitted';
-  task_id?: string;
-  message?: string;
-  errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-  replayed?: true;
-};
 /**
  * Shared terminal response for buy_products and accept_proposal; originating task identity is carried by the task envelope and manifest resolver.
  */
@@ -27129,10 +27167,48 @@ export type BrandResponseAuthorizationResult = {
   jwks_uri?: string;
 } & (
   | {
+      /**
+       * Whether the signing key was bound to the asserted brand_domain through an authorized brand-agent entry. An untrusted result MUST NOT extend or revoke relationship trust on its own.
+       */
       trust: 'trusted';
+      /**
+       * JWS kid evaluated by the cross-check.
+       * @minLength 1
+       */
+      kid: string;
+      /**
+       * JWKS URI selected only from the matched brand.json agent entry, or its same-origin default.
+       * @pattern ^https:\/\/
+       */
+      jwks_uri: string;
     }
   | {
+      /**
+       * Whether the signing key was bound to the asserted brand_domain through an authorized brand-agent entry. An untrusted result MUST NOT extend or revoke relationship trust on its own.
+       */
       trust: 'untrusted';
+      /**
+       * Machine-readable reason for an untrusted result.
+       */
+      reason:
+        | 'brand_json_unavailable'
+        | 'agent_not_authorized'
+        | 'agent_authorization_ambiguous'
+        | 'jwks_unavailable'
+        | 'kid_not_authorized'
+        | 'kid_authorization_ambiguous'
+        | 'key_material_mismatch'
+        | 'key_purpose_invalid';
+      /**
+       * JWS kid evaluated by the cross-check.
+       * @minLength 1
+       */
+      kid?: string;
+      /**
+       * JWKS URI selected only from the matched brand.json agent entry, or its same-origin default.
+       * @pattern ^https:\/\/
+       */
+      jwks_uri?: string;
     }
 );
 
@@ -35754,12 +35830,31 @@ export interface AdCPManifest {
            */
           legacy_fallback?:
             | {
+                /**
+                 * Canonical snake_case tool name safe for use as a manifest JSON Pointer segment.
+                 * @pattern ^[a-z][a-z0-9_]*$
+                 */
+                tool: string;
+                /**
+                 * direct: one lossless translated call; orchestrated: the SDK must sequence legacy calls and preserve the current tool's semantics; none: no faithful legacy fallback exists.
+                 */
                 mode: 'direct';
               }
             | {
+                /**
+                 * Canonical snake_case tool name safe for use as a manifest JSON Pointer segment.
+                 * @pattern ^[a-z][a-z0-9_]*$
+                 */
+                tool: string;
+                /**
+                 * direct: one lossless translated call; orchestrated: the SDK must sequence legacy calls and preserve the current tool's semantics; none: no faithful legacy fallback exists.
+                 */
                 mode: 'orchestrated';
               }
             | {
+                /**
+                 * direct: one lossless translated call; orchestrated: the SDK must sequence legacy calls and preserve the current tool's semantics; none: no faithful legacy fallback exists.
+                 */
                 mode: 'none';
               };
           /**

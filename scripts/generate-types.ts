@@ -182,6 +182,13 @@ const PRIORITY_EXTRACTED_TYPES = [
     numberedReferenceAliases: ['ProductDiscoveryTargetingResolution'],
   },
   {
+    ref: 'media-buy/decline-proposals-response.json',
+    typeName: 'DeclineProposalsResponse',
+    reason:
+      'the async-response-data webhook union can collapse shared proposal_id and unable.reason fields from result branches',
+    numberedReferenceAliases: [],
+  },
+  {
     ref: 'creative/sync-creatives-response.json',
     typeName: 'SyncCreativesSuccess',
     reason: 'the async-response-data webhook union can collapse the conditional creatives[] item to an empty object',
@@ -513,9 +520,13 @@ function tightenMutualExclusionOneOf(schema: any): any {
 
   // Returns the union of forbidden field names a branch declares — collected
   // from either `not.required` (idiom 1) or every entry of an `allOf` of
-  // `{not:{required:[X]}}` clauses (idiom 2). Returns null when the branch
-  // carries any other not/allOf shape — preserving the existing strict-bail
-  // behavior so Ajv stays the source of truth at runtime.
+  // `{not:{required:[X]}}` clauses (idiom 2). A required branch without an
+  // exclusion clause is an open sibling arm and returns `[]`; this lets a
+  // discriminated union combine one exclusion arm with another arm that adds
+  // requirements (for example decline_proposals' unable + reason result).
+  // Returns null when the branch carries any other not/allOf shape — preserving
+  // the existing strict-bail behavior so Ajv stays the source of truth at
+  // runtime.
   const extractBranchForbidden = (branch: any): string[] | null => {
     const forbidden = new Set<string>();
     let sawForbid = false;
@@ -554,7 +565,8 @@ function tightenMutualExclusionOneOf(schema: any): any {
       sawForbid = true;
     }
 
-    return sawForbid && forbidden.size > 0 ? Array.from(forbidden) : null;
+    if (sawForbid) return forbidden.size > 0 ? Array.from(forbidden) : null;
+    return Array.isArray(branch.required) && branch.required.length > 0 ? [] : null;
   };
 
   const isMutualExclusionBranch = (branch: any): boolean => {
@@ -562,15 +574,23 @@ function tightenMutualExclusionOneOf(schema: any): any {
     // Branches that already declare their own type/ref/combinator have a
     // closed shape; nothing to tighten.
     if (branch.type || branch.$ref || branch.oneOf || branch.anyOf) return false;
+    const supportedKeys = new Set(['required', 'properties', 'not', 'allOf', 'title', 'description']);
+    if (Object.keys(branch).some(key => !supportedKeys.has(key))) return false;
     if (!Array.isArray(branch.required) || branch.required.length === 0) return false;
     return extractBranchForbidden(branch) !== null;
   };
 
   if (!schema.oneOf.every(isMutualExclusionBranch)) return schema;
 
-  const rewritten = schema.oneOf.map((branch: any) => {
+  const forbiddenByBranch = schema.oneOf.map((branch: any) => extractBranchForbidden(branch) as string[]);
+  // Do not rewrite ordinary discriminated unions whose branches merely add
+  // requirements. At least one sibling must carry the mutual-exclusion idiom
+  // this helper exists to materialize.
+  if (!forbiddenByBranch.some(forbidden => forbidden.length > 0)) return schema;
+
+  const rewritten = schema.oneOf.map((branch: any, branchIndex: number) => {
     const branchRequired: string[] = branch.required;
-    const forbidden = extractBranchForbidden(branch) as string[];
+    const forbidden = forbiddenByBranch[branchIndex]!;
     const branchOwnProps: Record<string, any> =
       branch.properties && typeof branch.properties === 'object' ? branch.properties : {};
     const newProperties: Record<string, any> = {};
