@@ -14,6 +14,7 @@ import { ssrfSafeFetch, decodeBodyAsJsonOrText } from '../../net';
 import { AuthenticationRequiredError, type OAuthMetadataInfo } from '../../errors';
 import { throwIfAborted } from '../../protocols/abort';
 import { parseWWWAuthenticate, type WWWAuthenticateChallenge } from './diagnostics';
+import { buildProtectedResourceMetadataUrl, normalizeOAuthResourceForComparison } from './resource-url';
 
 /**
  * Maximum length of an individual server-supplied string we copy into the
@@ -76,9 +77,10 @@ function sanitizeChallenge(c: WWWAuthenticateChallenge): WWWAuthenticateChalleng
 }
 
 /**
- * Structured description of what an agent's authorization server requires
- * before it will accept a `tools/call`. Produced by
- * {@link discoverAuthorizationRequirements}.
+ * Structured result from a Bearer challenge and its available discovery
+ * metadata. Records may be partial; use
+ * {@link hasValidatedMcpAuthorizationRequirements} before treating one as
+ * proof that an MCP endpoint requires OAuth.
  */
 export interface AuthorizationRequirements {
   /** The agent URL we probed. */
@@ -138,12 +140,12 @@ export interface AuthorizationRequirements {
  *   `instanceof NeedsAuthorizationError` for type-narrowing and use `subCode`
  *   only for structured-log keying.
  *
- * Note on `hasOAuth`:
+ * Note on validation and `hasOAuth`:
  *   The inherited getter returns `true` only when both `authorization_endpoint`
  *   and `token_endpoint` were walked successfully. A partially-walked
- *   requirements record (PRM reachable but AS metadata missing) still yields
- *   `hasOAuth === false` even though `requirements.authorizationServer` is set.
- *   Treat it as "we have enough to start a flow," not "server wants OAuth."
+ *   requirements record still yields `hasOAuth === false`. Callers should
+ *   construct this error only after
+ *   {@link hasValidatedMcpAuthorizationRequirements} succeeds.
  */
 export class NeedsAuthorizationError extends AuthenticationRequiredError {
   /** Narrow discriminator for consumers that already know about this class. */
@@ -211,14 +213,17 @@ export interface DiscoverAuthorizationOptions {
 }
 
 /**
- * Walk the OAuth discovery chain starting from an agent URL. Returns
- * `AuthorizationRequirements` when the agent demands OAuth, or `null` when a
- * `tools/list` call succeeds without credentials.
+ * Walk the OAuth discovery chain starting from an agent URL. Returns an
+ * `AuthorizationRequirements` diagnostic record for a Bearer challenge (even
+ * when later metadata is absent), or `null` when the probe is not a Bearer
+ * 401. Use {@link hasValidatedMcpAuthorizationRequirements} before promoting
+ * the record to an interactive OAuth requirement.
  *
  * Strategy:
  *   1. POST `tools/list` to the agent with no `Authorization` header.
  *   2. If 401 + `WWW-Authenticate: Bearer`: parse the challenge.
- *   3. If the challenge carries `resource_metadata=…`: GET it and read
+ *   3. Resolve `resource_metadata=…`, or the RFC 9728 well-known fallback,
+ *      then GET it and read
  *      `resource` + `authorization_servers`.
  *   4. For the first `authorization_servers[0]`: GET `/.well-known/oauth-authorization-server`
  *      and read `authorization_endpoint`, `token_endpoint`, `registration_endpoint`,
@@ -266,17 +271,26 @@ export async function discoverAuthorizationRequirements(
 
   const requirements: AuthorizationRequirements = {
     agentUrl,
-    resourceMetadataUrl: challenge.resource_metadata ? sanitizeDisplay(challenge.resource_metadata) : undefined,
     challengeScope: challenge.scope ? sanitizeDisplay(challenge.scope) : undefined,
     challenge: sanitizeChallenge(challenge),
   };
 
+  let resourceMetadataUrl = challenge.resource_metadata;
+  if (!resourceMetadataUrl) {
+    try {
+      resourceMetadataUrl = buildProtectedResourceMetadataUrl(agentUrl);
+    } catch {
+      resourceMetadataUrl = undefined;
+    }
+  }
+  if (resourceMetadataUrl) requirements.resourceMetadataUrl = sanitizeDisplay(resourceMetadataUrl);
+
   // Walk protected-resource metadata (RFC 9728 §3). Private-IP targets are
   // only allowed when the hop's origin matches the agent's.
-  if (challenge.resource_metadata && isSafeHttpUrl(challenge.resource_metadata)) {
+  if (resourceMetadataUrl && isSafeHttpUrl(resourceMetadataUrl)) {
     const prm = await fetchJson(
-      challenge.resource_metadata,
-      allowPrivateIpForHop(challenge.resource_metadata),
+      resourceMetadataUrl,
+      allowPrivateIpForHop(resourceMetadataUrl),
       options.timeoutMs,
       options.fetchFn,
       options.signal
@@ -363,6 +377,27 @@ export async function discoverAuthorizationRequirements(
   }
 
   return requirements;
+}
+
+/**
+ * Whether a discovery record proves the MCP endpoint is OAuth protected.
+ *
+ * `discoverAuthorizationRequirements` intentionally returns partial records
+ * for diagnostics. Those records are not sufficient evidence for an
+ * interactive OAuth prompt: the MCP authorization profile requires protected
+ * resource metadata whose `resource` exactly identifies the endpoint and
+ * which names at least one authorization server.
+ */
+export function hasValidatedMcpAuthorizationRequirements(
+  requirements: AuthorizationRequirements,
+  agentUrl: string
+): boolean {
+  return (
+    normalizeOAuthResourceForComparison(requirements.resource ?? '') ===
+      normalizeOAuthResourceForComparison(agentUrl) &&
+    Array.isArray(requirements.authorizationServers) &&
+    requirements.authorizationServers.length > 0
+  );
 }
 
 /**

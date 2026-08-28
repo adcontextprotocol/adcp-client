@@ -60,8 +60,9 @@ import {
   getAgentStorage,
   ensureClientCredentialsTokens,
 } from '../auth/oauth';
+import { hasValidatedMcpAuthorizationRequirements } from '../auth/oauth/authorization-required';
 import { getNonInteractiveOAuthProvider } from '../auth/oauth/provider-cache';
-import { is401Error } from '../errors';
+import { AuthenticationCredentialsRejectedError, is401Error } from '../errors';
 import { isLikelyPrivateUrl } from '../net';
 import { validateAgentUrl } from '../validation';
 import { withSpan } from '../observability/tracing';
@@ -86,6 +87,16 @@ export {
 export type { TransportActivity, TransportActivityContext, TransportActivityHandler } from './transportDiagnostics';
 
 export type VersionEnvelopeMode = 'auto' | 'none' | 'major-only';
+
+type AuthorizationRecoveryMode = 'discover' | 'oauth' | 'static' | 'legacy-a2a';
+
+function hasStaticAgentCredentials(agent: AgentConfig, authToken: string | undefined): boolean {
+  if (authToken) return true;
+  return Object.keys(agent.headers ?? {}).some(key => {
+    const normalized = key.toLowerCase();
+    return normalized === 'authorization' || normalized === 'x-adcp-auth';
+  });
+}
 
 /**
  * Derive the wire-level `adcp_major_version` integer from a caller-supplied
@@ -688,7 +699,8 @@ export class ProtocolClient {
                       agent.agent_uri,
                       transport?.trustedFetchFn,
                       signal,
-                      transport?.allowPrivateIp
+                      transport?.allowPrivateIp,
+                      'oauth'
                     );
                     throw err;
                   }
@@ -756,7 +768,8 @@ export class ProtocolClient {
                         agent.agent_uri,
                         transport?.trustedFetchFn,
                         signal,
-                        transport?.allowPrivateIp
+                        transport?.allowPrivateIp,
+                        'static'
                       );
                       throw retryErr;
                     }
@@ -766,7 +779,8 @@ export class ProtocolClient {
                     agent.agent_uri,
                     transport?.trustedFetchFn,
                     signal,
-                    transport?.allowPrivateIp
+                    transport?.allowPrivateIp,
+                    hasStaticAgentCredentials(agent, authToken) ? 'static' : 'discover'
                   );
                   throw err;
                 }
@@ -825,7 +839,8 @@ export class ProtocolClient {
                         agent.agent_uri,
                         transport?.trustedFetchFn,
                         signal,
-                        transport?.allowPrivateIp
+                        transport?.allowPrivateIp,
+                        'legacy-a2a'
                       );
                       throw retryErr;
                     }
@@ -835,7 +850,8 @@ export class ProtocolClient {
                     agent.agent_uri,
                     transport?.trustedFetchFn,
                     signal,
-                    transport?.allowPrivateIp
+                    transport?.allowPrivateIp,
+                    'legacy-a2a'
                   );
                   throw err;
                 }
@@ -863,10 +879,14 @@ async function rethrowAsNeedsAuthorization(
   agentUrl: string,
   fetchFn?: typeof fetch,
   signal?: AbortSignal,
-  configuredAllowPrivateIp?: boolean
+  configuredAllowPrivateIp?: boolean,
+  recoveryMode: AuthorizationRecoveryMode = 'discover'
 ): Promise<void> {
   if (err instanceof NeedsAuthorizationError) throw err;
   if (!is401Error(err)) return;
+  if (recoveryMode === 'static') {
+    throw new AuthenticationCredentialsRejectedError(agentUrl, err);
+  }
 
   // If the caller has already connected to the agent URL, they've implicitly
   // trusted it — inherit that trust for the discovery probe so loopback /
@@ -877,7 +897,10 @@ async function rethrowAsNeedsAuthorization(
   // returns null rather than throwing — anything that escapes is a genuine
   // bug we want to surface rather than mask the 401 with.
   const requirements = await discoverAuthorizationRequirements(agentUrl, { allowPrivateIp, fetchFn, signal });
-  if (requirements) {
+  if (
+    requirements &&
+    (recoveryMode === 'legacy-a2a' || hasValidatedMcpAuthorizationRequirements(requirements, agentUrl))
+  ) {
     throw new NeedsAuthorizationError(requirements);
   }
   // No requirements walked; let the caller re-throw the original error.

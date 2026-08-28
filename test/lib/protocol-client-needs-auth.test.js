@@ -12,9 +12,23 @@ const assert = require('node:assert');
 const http = require('node:http');
 
 const { ProtocolClient } = require('../../dist/lib/protocols');
+const { AuthenticationCredentialsRejectedError, hasValidatedMcpAuthorizationRequirements } = require('../../dist/lib');
 const { NeedsAuthorizationError, bindAgentStorage, getAgentStorage } = require('../../dist/lib/auth/oauth');
 
 const state = { handlers: {}, server: null, port: 0 };
+
+test('AuthenticationCredentialsRejectedError keeps URL credentials out of JSON', () => {
+  const sensitive = 'query-secret-do-not-leak';
+  const err = new AuthenticationCredentialsRejectedError(
+    `https://user:password@example.test/mcp?access_token=${sensitive}#fragment`,
+    new Error(`reflected ${sensitive}`)
+  );
+  const serialized = JSON.stringify(err);
+  assert.doesNotMatch(serialized, /user|password|query-secret-do-not-leak|access_token|fragment/);
+  assert.strictEqual(err.agentUrl, 'https://example.test/mcp');
+  assert.ok(err.cause);
+  assert.ok(!Object.keys(err).includes('cause'));
+});
 
 before(async () => {
   state.server = http.createServer((req, res) => {
@@ -95,6 +109,81 @@ describe('ProtocolClient.callTool: auto-auth discovery', () => {
         assert.strictEqual(err.requirements.authorizationServer, issuer());
         assert.strictEqual(err.requirements.registrationEndpoint, `${issuer()}/oauth/register`);
         assert.strictEqual(err.requirements.challenge.error, 'invalid_token');
+        assert.strictEqual(hasValidatedMcpAuthorizationRequirements(err.requirements, agentUrl()), true);
+        return true;
+      }
+    );
+
+    const basicAgent = {
+      ...agent,
+      id: 'basic-agent',
+      auth_token: undefined,
+      headers: { Authorization: `Basic ${Buffer.from('user:wrong').toString('base64')}` },
+    };
+    await assert.rejects(
+      () => ProtocolClient.callTool(basicAgent, 'get_products', { brief: 'test' }),
+      err => {
+        assert.ok(!(err instanceof NeedsAuthorizationError));
+        assert.ok(err instanceof AuthenticationCredentialsRejectedError);
+        assert.match(err.message, /rejected the configured credential/i);
+        assert.doesNotMatch(err.message, /requires OAuth authorization/i);
+        return true;
+      }
+    );
+  });
+
+  test('preserves a rejected static bearer credential instead of prompting for OAuth', async () => {
+    state.handlers = {
+      '/mcp': (req, res) => {
+        res.statusCode = 401;
+        res.setHeader(
+          'www-authenticate',
+          `Bearer error="invalid_token", resource_metadata="${issuer()}/.well-known/oauth-protected-resource/mcp"`
+        );
+        res.end('rejected credential: saved-static-token');
+      },
+      '/.well-known/oauth-protected-resource/mcp': (req, res) =>
+        jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [issuer()] }),
+      '/.well-known/oauth-authorization-server': (req, res) =>
+        jsonRes(res, 200, { authorization_endpoint: `${issuer()}/oauth/authorize` }),
+    };
+
+    const agent = {
+      id: 'test-agent',
+      name: 'test',
+      agent_uri: agentUrl(),
+      protocol: 'mcp',
+      auth_token: 'saved-static-token',
+    };
+
+    await assert.rejects(
+      () => ProtocolClient.callTool(agent, 'get_products', { brief: 'test' }),
+      err => {
+        assert.ok(!(err instanceof NeedsAuthorizationError));
+        assert.match(err.message, /401|authentication/i);
+        assert.doesNotMatch(err.message, /oauth/i);
+        assert.doesNotMatch(err.message, /saved-static-token/);
+        assert.doesNotMatch(JSON.stringify(err), /saved-static-token/);
+        return true;
+      }
+    );
+  });
+
+  test('does not infer OAuth from a bare Bearer challenge without valid PRM', async () => {
+    state.handlers = {
+      '/mcp': (req, res) => {
+        res.statusCode = 401;
+        res.setHeader('www-authenticate', 'Bearer error="invalid_token"');
+        res.end();
+      },
+    };
+
+    const agent = { id: 'test-agent', name: 'test', agent_uri: agentUrl(), protocol: 'mcp' };
+    await assert.rejects(
+      () => ProtocolClient.callTool(agent, 'get_products', {}),
+      err => {
+        assert.ok(!(err instanceof NeedsAuthorizationError));
+        assert.match(err.message, /401|authentication/i);
         return true;
       }
     );

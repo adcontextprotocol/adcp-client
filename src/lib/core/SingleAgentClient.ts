@@ -120,6 +120,7 @@ import { createMCPRequestHeaders } from '../auth';
 import { isAbortOrTimeoutError } from '../protocols/abort';
 import { ProtocolClient, normalizeTransportOptions } from '../protocols';
 import {
+  AuthenticationCredentialsRejectedError,
   AuthenticationRequiredError,
   ConfigurationError,
   FeatureUnsupportedError,
@@ -131,6 +132,7 @@ import {
 import { createAgentTransportFetch, isLikelyPrivateUrl } from '../net';
 import {
   discoverAuthorizationRequirements,
+  hasValidatedMcpAuthorizationRequirements,
   NeedsAuthorizationError,
   probeAuthChallenge,
 } from '../auth/oauth/authorization-required';
@@ -192,6 +194,19 @@ import {
   throwIfAborted,
   withAbortSignal,
 } from '../protocols/abort';
+
+function presentedStaticTransportCredential(
+  authToken: string | undefined,
+  headers: Record<string, string> | undefined,
+  authProvider?: object
+): boolean {
+  if (authProvider) return false;
+  if (authToken) return true;
+  return Object.keys(headers ?? {}).some(key => {
+    const normalized = key.toLowerCase();
+    return normalized === 'authorization' || normalized === 'x-adcp-auth';
+  });
+}
 
 // v3.0 compatibility utilities
 import type { AdcpCapabilities, AdcpMajorVersion, ToolInfo, FeatureName } from '../utils/capabilities';
@@ -2788,8 +2803,8 @@ export class SingleAgentClient {
    *
    * Special handling for authentication errors (401):
    * - If any endpoint returns 401, we know the server exists but requires auth
-   * - We fetch OAuth metadata and throw AuthenticationRequiredError
-   * - This gives consumers clear guidance on how to authenticate
+   * - A validated MCP protected-resource metadata chain yields NeedsAuthorizationError
+   * - Otherwise AuthenticationRequiredError carries the advertised challenge
    *
    * Note: This is async and called lazily on first agent interaction
    */
@@ -2900,6 +2915,7 @@ export class SingleAgentClient {
 
     // Track results and whether we got any 401s
     let got401 = false;
+    let first401Error: unknown;
     let firstWorkingUrl: string | undefined;
 
     // Test each URL
@@ -2913,6 +2929,7 @@ export class SingleAgentClient {
 
       if (result.status === 401) {
         got401 = true;
+        first401Error ??= result.error;
       }
     }
 
@@ -2923,15 +2940,18 @@ export class SingleAgentClient {
     // If we got 401 from any endpoint, throw an authentication-required error.
     // Prefer the richer NeedsAuthorizationError when we can walk the full
     // RFC 9728 chain (PRM → AS metadata → endpoints + scopes + DCR hint).
-    // Fall back to the simpler AuthenticationRequiredError with one-hop AS
-    // metadata when the walk doesn't yield enough.
+    // Fall back to AuthenticationRequiredError with the advertised challenge
+    // when the walk does not prove this MCP resource is OAuth protected.
     if (got401) {
+      if (presentedStaticTransportCredential(authToken, agentHeaders, authProvider)) {
+        throw new AuthenticationCredentialsRejectedError(providedUri, first401Error);
+      }
       const requirements = await discoverAuthorizationRequirements(providedUri, {
         allowPrivateIp: transport?.allowPrivateIp ?? isLikelyPrivateUrl(providedUri),
         fetchFn: transport?.trustedFetchFn,
         signal: options?.signal,
       });
-      if (requirements) {
+      if (requirements && hasValidatedMcpAuthorizationRequirements(requirements, providedUri)) {
         throw new NeedsAuthorizationError(requirements);
       }
       // Non-Bearer 401 (or Bearer-without-PRM). Re-probe to surface the
@@ -2943,12 +2963,7 @@ export class SingleAgentClient {
         fetchFn: transport?.trustedFetchFn,
         signal: options?.signal,
       });
-      const oauthMetadata = await discoverOAuthMetadata(providedUri, {
-        trustedFetchFn: transport?.trustedFetchFn,
-        allowPrivateIp: transport?.allowPrivateIp ?? isLikelyPrivateUrl(providedUri),
-        signal: options?.signal,
-      });
-      throw new AuthenticationRequiredError(providedUri, oauthMetadata || undefined, undefined, challenge ?? undefined);
+      throw new AuthenticationRequiredError(providedUri, undefined, undefined, challenge ?? undefined);
     }
 
     // None worked and no 401 - generic discovery failure.

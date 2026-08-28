@@ -650,6 +650,7 @@ export {
   MissingInputHandlerError,
   InvalidContextError,
   ConfigurationError,
+  AuthenticationCredentialsRejectedError,
   AuthenticationRequiredError,
   FeatureUnsupportedError,
   ProtocolFeatureUnsupportedError,
@@ -1497,6 +1498,7 @@ export {
 export {
   NeedsAuthorizationError,
   discoverAuthorizationRequirements,
+  hasValidatedMcpAuthorizationRequirements,
   createFileOAuthStorage,
   bindAgentStorage,
   getAgentStorage,

@@ -17,7 +17,7 @@ import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext
 import { redactArgsForLog } from '../utils/redact-args';
 import { wrapFetchWithCapture } from './rawResponseCapture';
 import { wrapFetchWithSizeLimit } from './responseSizeLimit';
-import { wrapFetchWithTransportDiagnostics } from './transportDiagnostics';
+import { sanitizeTransportUrl, wrapFetchWithTransportDiagnostics } from './transportDiagnostics';
 import {
   isAbortOrTimeoutError,
   resolveClientRequestTimeoutMs,
@@ -1255,9 +1255,11 @@ export async function connectMCP(options: {
     });
     return { client: mcpClient, transport };
   } catch (error) {
-    // If it's an UnauthorizedError, the OAuth flow has started
-    // Rethrow so the caller can handle the callback
-    if (error instanceof UnauthorizedError) {
+    // UnauthorizedError is also used by the MCP transport when no OAuth
+    // provider exists. Only interpret it as an initiated OAuth flow when this
+    // connection actually supplied a provider; static and unauthenticated
+    // 401s belong in the structured rejection path below.
+    if (authProvider && error instanceof UnauthorizedError) {
       debugLogs.push({
         type: 'info',
         message: 'MCP: OAuth authorization required, flow initiated',
@@ -1285,13 +1287,15 @@ export async function connectMCP(options: {
             : scheme === 'bearer'
               ? "Verify the bearer token matches the agent's expected credential."
               : 'OAuth provider returned tokens that the agent rejected — check the provider configuration and token scopes.';
-      const detail = `MCP connect rejected with HTTP 401 from ${agentUrl}. SDK sent auth scheme: ${scheme}. ${hint}`;
+      const safeAgentUrl = sanitizeTransportUrl(agentUrl);
+      const detail = `MCP connect rejected with HTTP 401 from ${safeAgentUrl}. SDK sent auth scheme: ${scheme}. ${hint}`;
       const wrapped = Object.assign(new Error(detail), {
-        cause: error,
         code: 'MCP_AUTH_REJECTED',
         scheme,
-        agentUrl,
-        originalError: error,
+      });
+      Object.defineProperties(wrapped, {
+        agentUrl: { value: safeAgentUrl, enumerable: false, configurable: true },
+        cause: { value: error, enumerable: false, configurable: true },
       });
       throw wrapped;
     }

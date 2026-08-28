@@ -11,6 +11,7 @@ const assert = require('node:assert');
 const http = require('node:http');
 
 const { NeedsAuthorizationError, discoverAuthorizationRequirements } = require('../../dist/lib/auth/oauth');
+const { hasValidatedMcpAuthorizationRequirements } = require('../../dist/lib/auth/oauth/authorization-required');
 
 const state = { handlers: {}, server: null, port: 0 };
 
@@ -147,6 +148,41 @@ describe('discoverAuthorizationRequirements', () => {
     assert.deepStrictEqual(result.scopesSupported, ['mcp.read', 'mcp.write']);
     assert.strictEqual(result.challengeScope, 'mcp.read mcp.write');
     assert.strictEqual(result.challenge.error, 'invalid_token');
+  });
+
+  test('uses the RFC 9728 well-known fallback when the challenge omits resource_metadata', async () => {
+    state.handlers = {
+      '/mcp': (req, res) => {
+        res.statusCode = 401;
+        res.setHeader('www-authenticate', 'Bearer realm="api"');
+        res.end();
+      },
+      '/.well-known/oauth-protected-resource/mcp': (req, res) =>
+        jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [issuer()] }),
+      '/.well-known/oauth-authorization-server': (req, res) =>
+        jsonRes(res, 200, { authorization_endpoint: `${issuer()}/authorize`, token_endpoint: `${issuer()}/token` }),
+    };
+    const result = await discoverAuthorizationRequirements(agentUrl(), { allowPrivateIp: true });
+    assert.ok(result);
+    assert.strictEqual(result.resourceMetadataUrl, `${issuer()}/.well-known/oauth-protected-resource/mcp`);
+    assert.strictEqual(hasValidatedMcpAuthorizationRequirements(result, agentUrl()), true);
+  });
+
+  test('validates resource identity with scheme/host case and default-port normalization', () => {
+    const requirements = {
+      agentUrl: 'https://example.test/mcp',
+      resource: 'HTTPS://EXAMPLE.TEST:443/mcp',
+      authorizationServers: ['https://auth.example.test'],
+      challenge: { scheme: 'bearer', params: {} },
+    };
+    assert.strictEqual(hasValidatedMcpAuthorizationRequirements(requirements, 'https://example.test/mcp'), true);
+    assert.strictEqual(
+      hasValidatedMcpAuthorizationRequirements(
+        { ...requirements, resource: 'https://example.test/mcp/' },
+        'https://example.test/mcp'
+      ),
+      false
+    );
   });
 
   test('returns partial record when PRM is 404 (still captures challenge)', async () => {

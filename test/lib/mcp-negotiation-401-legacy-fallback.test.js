@@ -54,6 +54,7 @@ const { ADCPMultiAgentClient } = require('../../dist/lib/core/ADCPMultiAgentClie
 const { closeMCPConnections } = require('../../dist/lib/protocols/mcp.js');
 const { defaultCapabilityCache } = require('../../dist/lib/signing/client.js');
 const { InMemorySigningProvider, mintEphemeralEd25519Key } = require('../../dist/lib/signing/testing.js');
+const { comply } = require('../../dist/lib/testing/compliance/comply.js');
 
 const API_KEY = 'plain-api-key-for-v3-seller-0123456789';
 const AGENT_ID = '15';
@@ -181,6 +182,15 @@ async function startV3Seller({
       source: req.headers[SOURCE_HEADER],
     };
     requests.push(entry);
+
+    // Reproduce adcp#6903: an unmatched RFC 9728 route is swallowed by an
+    // authenticated catch-all and returns a generic Bearer 401, not metadata.
+    if (req.url === '/.well-known/oauth-protected-resource/v3/mcp') {
+      res
+        .writeHead(401, { 'Content-Type': 'application/json', 'WWW-Authenticate': 'Bearer error="invalid_token"' })
+        .end(JSON.stringify({ error: 'invalid_token', error_description: 'Authentication required' }));
+      return;
+    }
 
     // The reported seller 401s this sibling path regardless of credential.
     // `discoverMCPEndpoint` needs a 401 from somewhere to raise
@@ -348,6 +358,35 @@ for (const era of ['modern', 'legacy']) {
     assert.equal(result.success, true, String(result.error ?? 'delivery read should succeed'));
   });
 }
+
+test('comply keeps a valid saved bearer when an unmatched PRM route returns a catch-all 401 (adcp#6903)', async t => {
+  withCleanup(t);
+  const seller = await startV3Seller();
+  t.after(() => seller.stop());
+
+  const result = await comply(seller.url, {
+    allow_http: true,
+    auth: { type: 'bearer', token: API_KEY },
+    storyboards: ['security_baseline'],
+    timeout_ms: 30_000,
+  });
+
+  assert.notEqual(result.overall_status, 'auth_required');
+  assert.equal(
+    result.observations.some(observation => observation.source?.code === 'auth-oauth-required'),
+    false,
+    JSON.stringify(result.observations)
+  );
+  assert.ok(
+    seller.requests.some(request => request.path === SELLER_PATH && request.authorization === `Bearer ${API_KEY}`),
+    'capability discovery should use the saved bearer'
+  );
+  assert.equal(
+    seller.requests.some(request => request.path === '/.well-known/oauth-protected-resource/v3/mcp'),
+    false,
+    'bearer-only capabilities should not trigger an unrelated OAuth metadata probe'
+  );
+});
 
 test('v3 MCP seller: per-request header churn does not drop the credential across calls', async t => {
   withCleanup(t);

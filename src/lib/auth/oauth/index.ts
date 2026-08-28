@@ -321,6 +321,7 @@ export {
 export {
   NeedsAuthorizationError,
   discoverAuthorizationRequirements,
+  hasValidatedMcpAuthorizationRequirements,
   probeAuthChallenge,
   type AuthorizationRequirements,
   type DiscoverAuthorizationOptions,
