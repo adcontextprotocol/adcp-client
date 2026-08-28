@@ -31,6 +31,10 @@ export interface ReportingLedger {
 export interface ExpectedReportingPeriod {
   deliveryConfigId: string;
   deliveryConfigVersion: number;
+  reportDefinitionId: string;
+  feedPurpose: ReportingObligation['feed_purpose'];
+  reportingProfile: string;
+  mediaBuyIds: string[];
   periodStart: string;
   periodEnd: string;
 }
@@ -409,12 +413,24 @@ export function evaluateReportingLedger(
       canonical({
         deliveryConfigId: obligation.delivery_config_id,
         deliveryConfigVersion: obligation.delivery_config_version,
+        reportDefinitionId: obligation.report_definition_id,
+        feedPurpose: obligation.feed_purpose,
+        reportingProfile: obligation.reporting_profile,
+        mediaBuyIds: [...(obligation.media_buy_ids ?? [])].sort(),
         periodStart: obligation.period.start,
         periodEnd: obligation.period.end,
       })
     )
   );
-  const missingExpectedPeriods = (expectedPeriods ?? []).filter(expected => !actualPeriods.has(canonical(expected)));
+  const missingExpectedPeriods = (expectedPeriods ?? []).filter(
+    expected =>
+      !actualPeriods.has(
+        canonical({
+          ...expected,
+          mediaBuyIds: [...expected.mediaBuyIds].sort(),
+        })
+      )
+  );
   const scopeDefinitive = ledger.scope.scope_closed && ledger.scope.coverage_complete;
   return {
     definitive:

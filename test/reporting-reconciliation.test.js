@@ -159,6 +159,10 @@ test('reconciles a closed billing period, retries inspection, and records a matc
       {
         deliveryConfigId: 'billing-feed',
         deliveryConfigVersion: 1,
+        reportDefinitionId: 'billing-v1',
+        feedPurpose: 'billing',
+        reportingProfile: 'billing-v1',
+        mediaBuyIds: ['buy-1', 'buy-2'],
         periodStart: period.start,
         periodEnd: period.end,
       },
@@ -207,12 +211,44 @@ test('does not claim completeness when an expected seller obligation is missing'
       {
         deliveryConfigId: 'billing-feed',
         deliveryConfigVersion: 1,
+        reportDefinitionId: 'billing-v1',
+        feedPurpose: 'billing',
+        reportingProfile: 'billing-v1',
+        mediaBuyIds: ['buy-1', 'buy-2'],
         periodStart: '2026-07-01T00:00:00Z',
         periodEnd: '2026-08-01T00:00:00Z',
       },
     ],
     new Date('2026-09-03T00:00:00Z')
   );
+  assert.equal(result.definitive, false);
+  assert.equal(result.missingExpectedPeriods.length, 1);
+});
+
+test('does not let one campaign satisfy another campaign in the same feed period', async () => {
+  const ledger = await loadReportingLedger(
+    {
+      async getReportingStatus() {
+        return response([]);
+      },
+      async syncReportingReceipts() {
+        throw new Error('not called');
+      },
+    },
+    { account: { account_id: 'account-1' } }
+  );
+  const result = evaluateReportingLedger(ledger, [
+    {
+      deliveryConfigId: 'billing-feed',
+      deliveryConfigVersion: 1,
+      reportDefinitionId: 'billing-v1',
+      feedPurpose: 'billing',
+      reportingProfile: 'billing-v1',
+      mediaBuyIds: ['buy-1', 'buy-3'],
+      periodStart: period.start,
+      periodEnd: period.end,
+    },
+  ]);
   assert.equal(result.definitive, false);
   assert.equal(result.missingExpectedPeriods.length, 1);
 });

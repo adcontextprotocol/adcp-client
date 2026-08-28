@@ -6,7 +6,7 @@ The helper only returns `definitive: true` when all of these conditions hold:
 
 - the buyer supplies its own complete `expectedPeriods` denominator;
 - the seller closes the requested scope and declares its coverage complete;
-- every expected period has an obligation;
+- every expected report definition, feed, reporting profile, campaign set, and period has an obligation;
 - every obligation's history counts match the returned immutable records;
 - the current revision has the required finality;
 - a verified, unexpired materialization matches the obligation;
@@ -29,6 +29,10 @@ const result = await reconcileReporting({
   expectedPeriods: [{
     deliveryConfigId: 'billing-feed',
     deliveryConfigVersion: 3,
+    reportDefinitionId: 'billing-v1',
+    feedPurpose: 'billing',
+    reportingProfile: 'billing-v1',
+    mediaBuyIds: ['buy-1', 'buy-2'],
     periodStart: '2026-08-01T00:00:00Z',
     periodEnd: '2026-09-01T00:00:00Z',
   }],
