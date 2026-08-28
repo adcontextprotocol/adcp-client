@@ -35,9 +35,25 @@ export interface WebhookAuthenticationAdapter {
   ): Promise<WebhookAuthentication> | WebhookAuthentication;
 }
 
+/** Retryable failure while calling an application's KMS/secret adapter. */
+export class WebhookAuthenticationProtectionError extends Error {
+  override readonly name = 'WebhookAuthenticationProtectionError';
+}
+
+/** Retryable failure while resolving protected authentication for delivery. */
+export class WebhookAuthenticationResolutionError extends Error {
+  override readonly name = 'WebhookAuthenticationResolutionError';
+}
+
 export interface WebhookAuthenticationContext {
   key: WebhookDeliveryKey;
   url: string;
+  /**
+   * Domain-separates task payload validation tokens. Undefined is the
+   * original transport-authentication context and is intentionally preserved
+   * so pending encrypted snapshots remain decryptable across SDK upgrades.
+   */
+  purpose?: 'payload_token';
   snapshotContextFingerprint: string;
 }
 
@@ -45,7 +61,29 @@ export interface StoredWebhookDeliverySnapshot {
   url: string;
   payload: Record<string, unknown>;
   authentication: { kind: 'none' } | { kind: 'protected'; protectedValue: unknown; fingerprint: string };
+  /**
+   * A top-level task-webhook `token`, protected independently from transport
+   * authentication. The cleartext is restored only after a recovery lease is
+   * claimed and is never written to the outbox JSON payload.
+   */
+  payloadToken?: { kind: 'protected'; protectedValue: unknown; fingerprint: string };
   retries: WebhookDeliverySnapshot['retries'];
+}
+
+/** Storage-ready snapshot used by transactional outbox coordinators. */
+export interface PreparedWebhookDeliverySnapshot {
+  snapshot: StoredWebhookDeliverySnapshot;
+  snapshotFingerprint: string;
+  storageFingerprint: string;
+}
+
+export interface PrepareWebhookDeliveryOptions {
+  /**
+   * Protect and remove the top-level `payload.token` before persistence.
+   * This is opt-in because generic webhook payloads may legitimately use a
+   * non-secret field with that name.
+   */
+  protectPayloadToken?: boolean;
 }
 
 export interface WebhookRecoveryRecord {
@@ -104,6 +142,16 @@ export interface WebhookDeliveryRecoveryBackend {
 
 export interface DurableWebhookDeliveryRecovery extends WebhookDeliveryRecovery {
   probe(): Promise<void>;
+  /**
+   * Protect and fingerprint a snapshot without writing it. This is reserved
+   * for coordinators that insert the returned value in the same database
+   * transaction as their domain mutation.
+   */
+  prepare(
+    key: Readonly<WebhookDeliveryKey>,
+    snapshot: Readonly<WebhookDeliverySnapshot>,
+    options?: Readonly<PrepareWebhookDeliveryOptions>
+  ): Promise<PreparedWebhookDeliverySnapshot>;
   claimPending(options: { ownerToken?: string; leaseMs?: number; limit?: number }): Promise<WebhookRecoveryLease[]>;
   renew(lease: WebhookRecoveryLease, leaseMs?: number): Promise<boolean>;
   release(lease: WebhookRecoveryLease, retryAfterMs?: number): Promise<boolean>;
@@ -245,13 +293,25 @@ export function createWebhookDeliveryRecovery(
   return {
     durability: 'durable',
     probe: () => options.backend.probe(),
+    async prepare(key, snapshot, prepareOptions): Promise<PreparedWebhookDeliverySnapshot> {
+      assertDeliveryKey(key);
+      const stored = await protectSnapshot(
+        snapshot,
+        key,
+        options.authenticationAdapter,
+        prepareOptions?.protectPayloadToken === true
+      );
+      assertStoredSnapshotSize(stored, maxSnapshotBytes);
+      return {
+        snapshot: stored,
+        snapshotFingerprint: snapshotFingerprint(stored),
+        storageFingerprint: canonicalJsonSha256(stored),
+      };
+    },
     async checkpoint(key, snapshot): Promise<void | WebhookDeliveryRecoveryClaim> {
       assertDeliveryKey(key);
-      const stored = await protectSnapshot(snapshot, key, options.authenticationAdapter);
-      const storedBytes = Buffer.byteLength(JSON.stringify(stored));
-      if (storedBytes > maxSnapshotBytes) {
-        throw new TypeError(`Webhook recovery snapshot exceeds maxSnapshotBytes (${maxSnapshotBytes})`);
-      }
+      const stored = await protectSnapshot(snapshot, key, options.authenticationAdapter, false);
+      assertStoredSnapshotSize(stored, maxSnapshotBytes);
       const fingerprint = snapshotFingerprint(stored);
       const storageFingerprint = canonicalJsonSha256(stored);
       const ownerToken = randomUUID();
@@ -460,37 +520,45 @@ function assertPollOutcome(
 async function protectSnapshot(
   snapshot: Readonly<WebhookDeliverySnapshot>,
   key: Readonly<WebhookDeliveryKey>,
-  adapter?: WebhookAuthenticationAdapter
+  adapter: WebhookAuthenticationAdapter | undefined,
+  protectPayloadToken: boolean
 ): Promise<StoredWebhookDeliverySnapshot> {
+  const payload = structuredClone(snapshot.payload);
+  const cleartextPayloadToken = protectPayloadToken && typeof payload.token === 'string' ? payload.token : undefined;
+  if (cleartextPayloadToken !== undefined) delete payload.token;
   const base = {
     url: snapshot.url,
-    payload: structuredClone(snapshot.payload),
+    payload,
     retries: { ...snapshot.retries },
   };
   // Canonicalization validates every stored field as plain JSON.
   canonicalJsonSha256(base);
-  if (snapshot.authentication === null) return { ...base, authentication: { kind: 'none' } };
-  if (!adapter) {
+  if ((snapshot.authentication !== null || cleartextPayloadToken !== undefined) && !adapter) {
     throw new TypeError(
-      'Durable webhook recovery requires authenticationAdapter when bearer or HMAC authentication is present'
+      'Durable webhook recovery requires authenticationAdapter when bearer/HMAC authentication or a payload token is present'
     );
   }
-  const context = authenticationContext(key, base);
-  const protectedAuth = await adapter.protect(structuredClone(snapshot.authentication), context);
-  if (!protectedAuth || typeof protectedAuth.fingerprint !== 'string' || protectedAuth.fingerprint.length < 16) {
-    throw new TypeError(
-      'WebhookAuthenticationAdapter.protect() must return a stable fingerprint of at least 16 characters'
-    );
-  }
-  canonicalJsonSha256(protectedAuth.protectedValue);
-  return {
+  const stored: StoredWebhookDeliverySnapshot = {
     ...base,
-    authentication: {
-      kind: 'protected',
-      protectedValue: structuredClone(protectedAuth.protectedValue),
-      fingerprint: protectedAuth.fingerprint,
-    },
+    authentication: { kind: 'none' },
   };
+  if (snapshot.authentication !== null) {
+    const protectedAuth = await protectAuthentication(
+      adapter!,
+      structuredClone(snapshot.authentication),
+      authenticationContext(key, base)
+    );
+    stored.authentication = { kind: 'protected', ...protectedAuth };
+  }
+  if (cleartextPayloadToken !== undefined) {
+    const protectedToken = await protectAuthentication(
+      adapter!,
+      { type: 'bearer', token: cleartextPayloadToken },
+      authenticationContext(key, base, 'payload_token')
+    );
+    stored.payloadToken = { kind: 'protected', ...protectedToken };
+  }
+  return stored;
 }
 
 async function resolveSnapshot(
@@ -498,32 +566,68 @@ async function resolveSnapshot(
   key: Readonly<WebhookDeliveryKey>,
   adapter?: WebhookAuthenticationAdapter
 ): Promise<WebhookDeliverySnapshot> {
-  let authentication: WebhookAuthentication = null;
-  if (snapshot.authentication.kind === 'protected') {
-    if (!adapter) throw new Error('Cannot recover protected webhook authentication without authenticationAdapter');
-    authentication = await adapter.resolve(
-      structuredClone(snapshot.authentication.protectedValue),
-      authenticationContext(key, snapshot)
-    );
-    if (authentication === null)
-      throw new Error('WebhookAuthenticationAdapter.resolve() returned null for protected state');
+  try {
+    let authentication: WebhookAuthentication = null;
+    if (snapshot.authentication.kind === 'protected') {
+      if (!adapter) throw new Error('Cannot recover protected webhook authentication without authenticationAdapter');
+      authentication = await adapter.resolve(
+        structuredClone(snapshot.authentication.protectedValue),
+        authenticationContext(key, snapshot)
+      );
+      if (authentication === null)
+        throw new Error('WebhookAuthenticationAdapter.resolve() returned null for protected state');
+    }
+    const payload = structuredClone(snapshot.payload);
+    if (snapshot.payloadToken) {
+      if (!adapter) throw new Error('Cannot recover protected webhook payload token without authenticationAdapter');
+      const resolved = await adapter.resolve(
+        structuredClone(snapshot.payloadToken.protectedValue),
+        authenticationContext(key, snapshot, 'payload_token')
+      );
+      if (resolved?.type !== 'bearer' || typeof resolved.token !== 'string') {
+        throw new Error('WebhookAuthenticationAdapter.resolve() returned an invalid protected payload token');
+      }
+      payload.token = resolved.token;
+    }
+    return {
+      url: snapshot.url,
+      payload,
+      authentication,
+      retries: { ...snapshot.retries },
+    };
+  } catch (cause) {
+    if (cause instanceof WebhookAuthenticationResolutionError) throw cause;
+    throw new WebhookAuthenticationResolutionError('Webhook authentication resolution failed', { cause });
   }
-  return {
-    url: snapshot.url,
-    payload: structuredClone(snapshot.payload),
-    authentication,
-    retries: { ...snapshot.retries },
-  };
 }
 
 function authenticationContext(
   key: Readonly<WebhookDeliveryKey>,
-  snapshot: Pick<StoredWebhookDeliverySnapshot, 'url' | 'payload' | 'retries'>
+  snapshot: Pick<StoredWebhookDeliverySnapshot, 'url' | 'payload' | 'retries'>,
+  purpose?: 'payload_token'
 ): WebhookAuthenticationContext {
-  return {
+  const base = {
     key: { ...key },
     url: snapshot.url,
+  };
+  if (purpose === undefined) {
+    return {
+      ...base,
+      // This is the exact pre-payload-token context hash. Do not change it:
+      // applications may bind KMS AAD to this value for pending snapshots.
+      snapshotContextFingerprint: canonicalJsonSha256({
+        key,
+        url: snapshot.url,
+        payload: snapshot.payload,
+        retries: snapshot.retries,
+      }),
+    };
+  }
+  return {
+    ...base,
+    purpose,
     snapshotContextFingerprint: canonicalJsonSha256({
+      purpose,
       key,
       url: snapshot.url,
       payload: snapshot.payload,
@@ -596,7 +700,59 @@ function snapshotFingerprint(snapshot: StoredWebhookDeliverySnapshot): string {
       snapshot.authentication.kind === 'none'
         ? { kind: 'none' }
         : { kind: 'protected', fingerprint: snapshot.authentication.fingerprint },
+    ...(snapshot.payloadToken && { payloadToken: { fingerprint: snapshot.payloadToken.fingerprint } }),
   });
+}
+
+async function protectAuthentication(
+  adapter: WebhookAuthenticationAdapter,
+  authentication: Exclude<WebhookAuthentication, null>,
+  context: WebhookAuthenticationContext
+): Promise<{ protectedValue: unknown; fingerprint: string }> {
+  let protectedAuth: ProtectedWebhookAuthentication;
+  try {
+    protectedAuth = await adapter.protect(authentication, context);
+  } catch (cause) {
+    throw new WebhookAuthenticationProtectionError('Webhook authentication protection failed', { cause });
+  }
+  if (!protectedAuth || typeof protectedAuth.fingerprint !== 'string' || protectedAuth.fingerprint.length < 16) {
+    throw new TypeError(
+      'WebhookAuthenticationAdapter.protect() must return a stable fingerprint of at least 16 characters'
+    );
+  }
+  canonicalJsonSha256(protectedAuth.protectedValue);
+  const cleartext = authentication.type === 'bearer' ? authentication.token : authentication.secret;
+  if (cleartext.length < 16) {
+    throw new TypeError('Durable webhook credentials must contain at least 16 characters');
+  }
+  if (
+    protectedValueContainsSecret(protectedAuth.protectedValue, cleartext) ||
+    protectedAuth.fingerprint.includes(cleartext)
+  ) {
+    throw new TypeError('WebhookAuthenticationAdapter.protect() returned durable state containing cleartext');
+  }
+  return {
+    protectedValue: structuredClone(protectedAuth.protectedValue),
+    fingerprint: protectedAuth.fingerprint,
+  };
+}
+
+function protectedValueContainsSecret(value: unknown, cleartext: string): boolean {
+  if (typeof value === 'string') return value.includes(cleartext);
+  if (Array.isArray(value)) return value.some(item => protectedValueContainsSecret(item, cleartext));
+  if (value && typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>).some(
+      ([key, item]) => key.includes(cleartext) || protectedValueContainsSecret(item, cleartext)
+    );
+  }
+  return false;
+}
+
+function assertStoredSnapshotSize(snapshot: StoredWebhookDeliverySnapshot, maxSnapshotBytes: number): void {
+  const storedBytes = Buffer.byteLength(JSON.stringify(snapshot));
+  if (storedBytes > maxSnapshotBytes) {
+    throw new TypeError(`Webhook recovery snapshot exceeds maxSnapshotBytes (${maxSnapshotBytes})`);
+  }
 }
 
 function assertLeaseMs(value: number): void {

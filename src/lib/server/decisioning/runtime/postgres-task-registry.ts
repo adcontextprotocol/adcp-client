@@ -44,7 +44,8 @@
  * process boundaries may use `completeScopedTask()` / `failScopedTask()` for
  * polling-only tasks after persisting the full issued reference. Registry-only
  * settlement rejects buyer push-notification tasks because it cannot durably
- * deliver their terminal webhook; those must finish through the live handoff.
+ * deliver their terminal webhook; settle those with
+ * `createPostgresTaskSettlementCoordinator()` in a trusted worker.
  * The MCP `tasks/get` wire path reads via `getTask` and is cross-instance.
  *
  * Status: Preview / 6.0.
@@ -71,6 +72,27 @@ import { sanitizeTaskProgressForStorage } from './task-registry';
  */
 export interface PgQueryable {
   query(text: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }>;
+}
+
+export interface PgTransactionClient extends PgQueryable {
+  release(): void;
+}
+
+export interface PgTransactionalPool extends PgQueryable {
+  connect(): Promise<PgTransactionClient>;
+}
+
+interface PostgresTaskRegistryBinding {
+  pool: PgQueryable;
+  namespace: string;
+  tableName: string;
+}
+
+const postgresTaskRegistryBindings = new WeakMap<TaskRegistry, PostgresTaskRegistryBinding>();
+
+/** @internal Used by the crash-safe task/webhook settlement coordinator. */
+export function _postgresTaskRegistryBinding(registry: TaskRegistry): PostgresTaskRegistryBinding | undefined {
+  return postgresTaskRegistryBindings.get(registry);
 }
 
 export interface CreatePostgresTaskRegistryOptions {
@@ -623,8 +645,9 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
   // scoped worker helpers, not awaitTask.
   const backgrounds = new Map<string, Promise<void>>();
 
-  return {
+  const registry = {
     scopeVersion: 1,
+    durability: 'durable' as const,
     registryId,
     async create(createOpts: {
       tool: string;
@@ -813,4 +836,6 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
       await Promise.all(pending);
     },
   } satisfies TaskRegistry;
+  postgresTaskRegistryBindings.set(registry, { pool, namespace, tableName: table });
+  return registry;
 }

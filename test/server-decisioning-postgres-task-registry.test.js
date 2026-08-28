@@ -9,9 +9,12 @@ process.env.NODE_ENV = 'test';
 
 const { test, describe, before, afterEach, after } = require('node:test');
 const assert = require('node:assert');
+const { spawnSync } = require('node:child_process');
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const TABLE = 'adcp_decisioning_tasks';
+const SETTLEMENT_OUTBOX = 'adcp_task_webhook_outbox_test';
+const SETTLEMENT_DELIVERIES = 'adcp_task_webhook_deliveries_test';
 const NAMESPACE = 'test';
 const ACC_1_SCOPE = { accountId: 'acc_1', ownerScope: 'account:acc_1' };
 const ACCT_1_SCOPE = { accountId: 'acct_1', ownerScope: 'account:acct_1' };
@@ -86,6 +89,43 @@ describe('decisioning task registry schema management', () => {
       registry.create({ tool: 'create_media_buy', accountId: 'acct-1' }),
       error =>
         error.message === 'PostgresTaskRegistry.create: database operation failed' && error.cause === databaseError
+    );
+  });
+
+  test('push settlement wraps pool acquisition errors without exposing infrastructure details', async () => {
+    const {
+      createPostgresTaskRegistry,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    const databaseError = new Error('private database host unavailable');
+    const pool = {
+      async query() {
+        return { rows: [], rowCount: 0 };
+      },
+      async connect() {
+        throw databaseError;
+      },
+    };
+    const registry = createPostgresTaskRegistry({ namespace: NAMESPACE, storageId: 'pool-error', pool });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+    });
+    await assert.rejects(
+      coordinator.settle(
+        {
+          taskId: 'task_pool_error',
+          accountId: 'acc_1',
+          ownerScope: 'account:acc_1',
+          registryId: registry.registryId,
+        },
+        { status: 'completed', result: { ok: true } },
+        { url: 'https://buyer.example/webhooks/task', operationId: 'pool-error-operation' }
+      ),
+      error =>
+        error.message === 'PostgresTaskSettlementCoordinator.settle: transaction failed' &&
+        error.cause === databaseError
     );
   });
 
@@ -277,13 +317,20 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
     createPostgresTaskRegistry = lib.createPostgresTaskRegistry;
     getDecisioningTaskRegistryBootstrap = lib.getDecisioningTaskRegistryBootstrap;
     getDecisioningTaskRegistryScopeV1Upgrade = lib.getDecisioningTaskRegistryScopeV1Upgrade;
+    const { getWebhookDeliveryMigration, getWebhookDeliveryRecoveryMigration } = require('../dist/lib/server');
 
     await pool.query(`DROP TABLE IF EXISTS ${TABLE} CASCADE`);
+    await pool.query(`DROP TABLE IF EXISTS ${SETTLEMENT_OUTBOX} CASCADE`);
+    await pool.query(`DROP TABLE IF EXISTS ${SETTLEMENT_DELIVERIES} CASCADE`);
     await pool.query(getDecisioningTaskRegistryBootstrap({ namespace: NAMESPACE }));
+    await pool.query(getWebhookDeliveryRecoveryMigration({ tableName: SETTLEMENT_OUTBOX }));
+    await pool.query(getWebhookDeliveryMigration({ tableName: SETTLEMENT_DELIVERIES }));
   });
 
   afterEach(async () => {
     await pool.query(`DELETE FROM ${TABLE}`);
+    await pool.query(`DELETE FROM ${SETTLEMENT_OUTBOX}`);
+    await pool.query(`DELETE FROM ${SETTLEMENT_DELIVERIES}`);
   });
 
   after(async () => {
@@ -318,6 +365,33 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
       () => createPostgresTaskRegistry({ pool, namespace: NAMESPACE, tableName: 'Robert; DROP TABLE--' }),
       /Invalid table name/
     );
+  });
+
+  test('push settlement coordinator rejects invalid retry policies instead of silently changing them', () => {
+    const { createPostgresTaskSettlementCoordinator } = require('../dist/lib/server/decisioning');
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:invalid-settlement-retries',
+    });
+    for (const retries of [
+      { maxAttempts: 0 },
+      { maxAttempts: 1.5 },
+      { initialDelayMs: -1 },
+      { maxDelayMs: Infinity },
+      { jitter: 1.1 },
+    ]) {
+      assert.throws(
+        () =>
+          createPostgresTaskSettlementCoordinator({
+            registry,
+            publisherScope: 'test-seller',
+            outbox: { tableName: SETTLEMENT_OUTBOX },
+            retries,
+          }),
+        TypeError
+      );
+    }
   });
 
   test('create + getTask roundtrips a submitted task', async () => {
@@ -469,6 +543,667 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
       /unavailable for tasks with push notifications/
     );
     assert.strictEqual((await registry.getTask(webhookRef.taskId, webhookRef)).status, 'submitted');
+  });
+
+  test('push worker settlement atomically binds recovery, protects tokens, and classifies retries', async () => {
+    const {
+      completeScopedPushTask,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:push-settlement',
+    });
+    const adapter = {
+      protect(authentication, context) {
+        const token = authentication.token ?? authentication.secret;
+        return {
+          protectedValue: {
+            ciphertext: Buffer.from(`${context.purpose}:${token}`, 'utf8').toString('base64'),
+          },
+          fingerprint: require('node:crypto').createHash('sha256').update(`${context.purpose}:${token}`).digest('hex'),
+        };
+      },
+      resolve(protectedValue, context) {
+        const cleartext = Buffer.from(protectedValue.ciphertext, 'base64').toString('utf8');
+        const prefix = `${context.purpose}:`;
+        assert.ok(cleartext.startsWith(prefix));
+        return { type: 'bearer', token: cleartext.slice(prefix.length) };
+      },
+    };
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+      authenticationAdapter: adapter,
+      recovery: { defaultLeaseMs: 1000 },
+    });
+    const ref = await registry.create({
+      tool: 'create_media_buy',
+      accountId: 'acc_1',
+      ownerScope: 'api_key:buyer-a',
+      hasWebhook: true,
+    });
+    const push = {
+      url: 'https://buyer.example/webhooks/task',
+      operationId: 'approval-op-1',
+      token: 'buyer-validation-secret',
+    };
+    const result = { media_buy_id: 'mb_crash_safe', ctx_metadata: { bearer: 'must-strip' } };
+
+    assert.deepStrictEqual(await completeScopedPushTask(coordinator, ref, push, result), {
+      outcome: 'applied',
+      delivery: 'durably_bound',
+    });
+    assert.deepStrictEqual((await registry.getTask(ref.taskId, ref)).result, {
+      media_buy_id: 'mb_crash_safe',
+    });
+
+    const raw = await pool.query(`SELECT snapshot::text AS snapshot FROM ${SETTLEMENT_OUTBOX}`);
+    assert.strictEqual(raw.rowCount, 1);
+    assert.doesNotMatch(raw.rows[0].snapshot, /buyer-validation-secret|must-strip/);
+
+    assert.deepStrictEqual(await completeScopedPushTask(coordinator, ref, push, result), {
+      outcome: 'already_terminal',
+      status: 'completed',
+      compatibility: 'compatible',
+      delivery: 'recoverable',
+    });
+    await assert.rejects(
+      completeScopedPushTask(coordinator, ref, { ...push, url: 'https://other.example/webhook' }, result),
+      /already bound to a conflicting route or payload/
+    );
+    assert.deepStrictEqual(await completeScopedPushTask(coordinator, ref, push, { media_buy_id: 'wrong' }), {
+      outcome: 'already_terminal',
+      status: 'completed',
+      compatibility: 'conflicting',
+      delivery: 'not_applicable',
+    });
+    assert.strictEqual((await pool.query(`SELECT count(*)::int AS count FROM ${SETTLEMENT_OUTBOX}`)).rows[0].count, 1);
+
+    const restartedRegistry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:push-settlement',
+    });
+    assert.notStrictEqual(restartedRegistry, registry, 'restart reconstructs the registry from stable configuration');
+    const restarted = createPostgresTaskSettlementCoordinator({
+      registry: restartedRegistry,
+      publisherScope: 'test-seller',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+      authenticationAdapter: adapter,
+      recovery: { defaultLeaseMs: 1000 },
+    });
+    const [beforePublish] = await restarted.recovery.claimPending({ ownerToken: 'recovery-worker-a', limit: 1 });
+    assert.ok(beforePublish);
+    assert.strictEqual(await restarted.recovery.release(beforePublish, 0), true, 'crash-before-publish is retryable');
+    const [publishedNotAcked] = await restarted.recovery.claimPending({ ownerToken: 'recovery-worker-b', limit: 1 });
+    assert.ok(publishedNotAcked);
+    assert.strictEqual(publishedNotAcked.snapshot.payload.token, 'buyer-validation-secret');
+    assert.deepStrictEqual(publishedNotAcked.snapshot.payload.result, { media_buy_id: 'mb_crash_safe' });
+    const { createWebhookEmitter, pgWebhookDeliveryStore } = require('../dist/lib/server');
+    const { privateKey } = require('node:crypto').generateKeyPairSync('ed25519');
+    const privateJwk = privateKey.export({ format: 'jwk' });
+    let publishes = 0;
+    const emitter = createWebhookEmitter({
+      signerKey: {
+        keyid: 'settlement-recovery-key',
+        alg: 'ed25519',
+        privateKey: {
+          ...privateJwk,
+          kid: 'settlement-recovery-key',
+          alg: 'EdDSA',
+          key_ops: ['sign'],
+          adcp_use: 'request-signing',
+        },
+      },
+      publisherScope: publishedNotAcked.key.publisherScope,
+      tenantScope: publishedNotAcked.key.tenantScope,
+      deliveryStore: pgWebhookDeliveryStore(pool, { tableName: SETTLEMENT_DELIVERIES }),
+      deliveryRecovery: restarted.recovery,
+      fetch: async () => {
+        publishes++;
+        return { status: 204, headers: { get: () => undefined } };
+      },
+    });
+    const publishResult = await emitter.emitRecovered(publishedNotAcked);
+    assert.strictEqual(publishResult.delivered, true);
+    assert.strictEqual(publishes, 1);
+    // Simulate process death after POST success but before lease settlement.
+    await new Promise(resolve => setTimeout(resolve, 1100));
+    const afterPublishCrash = createPostgresTaskSettlementCoordinator({
+      registry: restartedRegistry,
+      publisherScope: 'test-seller',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+      authenticationAdapter: adapter,
+      recovery: { defaultLeaseMs: 1000 },
+    });
+    const [reclaimed] = await afterPublishCrash.recovery.claimPending({ ownerToken: 'recovery-worker-c', limit: 1 });
+    assert.ok(reclaimed, 'an unacknowledged publish is recoverable after lease expiry');
+    assert.strictEqual(reclaimed.key.deliveryId, publishedNotAcked.key.deliveryId);
+    assert.deepStrictEqual(reclaimed.snapshot.payload, publishedNotAcked.snapshot.payload);
+    const replayResult = await emitter.emitRecovered(reclaimed);
+    assert.strictEqual(replayResult.delivered, true);
+    assert.strictEqual(replayResult.idempotency_key, publishResult.idempotency_key);
+    assert.strictEqual(publishes, 2, 'restart retries the same at-least-once delivery before acknowledging');
+    assert.strictEqual(await afterPublishCrash.recovery.settleLease(reclaimed, 'delivered'), true);
+    assert.deepStrictEqual(await completeScopedPushTask(coordinator, ref, push, result), {
+      outcome: 'already_terminal',
+      status: 'completed',
+      compatibility: 'compatible',
+      delivery: 'delivered',
+    });
+    await assert.rejects(
+      completeScopedPushTask(coordinator, ref, { ...push, operationId: 'changed-after-delivery' }, result),
+      /already bound to a conflicting route or payload/
+    );
+  });
+
+  test('push settlement preserves legacy operation identity and rejects deterministic poison results', async () => {
+    const {
+      completeScopedPushTask,
+      createPostgresTaskSettlementCoordinator,
+      TaskPushSettlementConfigurationError,
+    } = require('../dist/lib/server/decisioning');
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:legacy-operation',
+    });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller-legacy',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+    });
+
+    const legacyRef = await registry.create({
+      tool: 'create_media_buy',
+      accountId: 'acc_1',
+      hasWebhook: true,
+    });
+    assert.deepStrictEqual(
+      await completeScopedPushTask(
+        coordinator,
+        legacyRef,
+        { url: 'https://buyer.example/legacy', servedAdcpVersion: '3.0.1' },
+        { media_buy_id: 'mb_legacy' }
+      ),
+      { outcome: 'applied', delivery: 'durably_bound' }
+    );
+    const legacyOutbox = await pool.query(
+      `SELECT snapshot->'payload'->>'operation_id' AS operation_id FROM ${SETTLEMENT_OUTBOX}
+        WHERE publisher_scope = $1`,
+      ['test-seller-legacy']
+    );
+    assert.strictEqual(legacyOutbox.rows[0].operation_id, `create_media_buy.${legacyRef.taskId}`);
+
+    const currentRef = await registry.create({
+      tool: 'create_media_buy',
+      accountId: 'acc_1',
+      hasWebhook: true,
+    });
+    await assert.rejects(
+      completeScopedPushTask(
+        coordinator,
+        currentRef,
+        { url: 'https://buyer.example/current', servedAdcpVersion: '3.2.0-beta.5' },
+        { media_buy_id: 'mb_current' }
+      ),
+      error => error instanceof TaskPushSettlementConfigurationError && /operationId is required/.test(error.message)
+    );
+    for (const servedAdcpVersion of [undefined, 'not-a-version']) {
+      await assert.rejects(
+        completeScopedPushTask(
+          coordinator,
+          currentRef,
+          { url: 'https://buyer.example/current', servedAdcpVersion },
+          { media_buy_id: 'mb_current' }
+        ),
+        error => error instanceof TaskPushSettlementConfigurationError && /operationId is required/.test(error.message)
+      );
+    }
+    await assert.rejects(
+      completeScopedPushTask(
+        coordinator,
+        currentRef,
+        {
+          url: 'https://buyer.example/current',
+          operationId: 'current-operation',
+          servedAdcpVersion: '3.2.0-beta.5',
+        },
+        { media_buy_id: 1n }
+      ),
+      error => error instanceof TaskPushSettlementConfigurationError && /serializable JSON/.test(error.message)
+    );
+    for (const poison of [NaN, Infinity, new Map([['media_buy_id', 'mb_current']]), new Date()]) {
+      await assert.rejects(
+        completeScopedPushTask(
+          coordinator,
+          currentRef,
+          {
+            url: 'https://buyer.example/current',
+            operationId: 'current-operation',
+            servedAdcpVersion: '3.2.0-beta.5',
+          },
+          { value: poison }
+        ),
+        error => error instanceof TaskPushSettlementConfigurationError && /serializable JSON/.test(error.message)
+      );
+    }
+    await assert.rejects(
+      completeScopedPushTask(
+        coordinator,
+        currentRef,
+        {
+          url: 'https://',
+          operationId: 'current-operation',
+          servedAdcpVersion: '3.2.0-beta.5',
+        },
+        { media_buy_id: 'mb_current' }
+      ),
+      error => error instanceof TaskPushSettlementConfigurationError && /url must be/.test(error.message)
+    );
+    assert.strictEqual((await registry.getTask(currentRef.taskId, currentRef)).status, 'submitted');
+  });
+
+  test('push settlement refuses to create a delivery for a task terminalized outside its atomic transaction', async () => {
+    const {
+      completeScopedPushTask,
+      createPostgresTaskSettlementCoordinator,
+      TaskPushSettlementConfigurationError,
+    } = require('../dist/lib/server/decisioning');
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:preterminal-no-outbox',
+    });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller-preterminal',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+    });
+    const ref = await registry.create({ tool: 'create_media_buy', accountId: 'acc_1', hasWebhook: true });
+    const result = { media_buy_id: 'mb_preterminal' };
+    assert.deepStrictEqual(await registry.complete(ref.taskId, ref, result), { outcome: 'applied' });
+
+    await assert.rejects(
+      completeScopedPushTask(
+        coordinator,
+        ref,
+        { url: 'https://buyer.example/preterminal', operationId: 'preterminal-operation' },
+        result
+      ),
+      error =>
+        error instanceof TaskPushSettlementConfigurationError &&
+        /no atomic webhook delivery checkpoint/.test(error.message)
+    );
+    assert.strictEqual((await pool.query(`SELECT count(*)::int AS count FROM ${SETTLEMENT_OUTBOX}`)).rows[0].count, 0);
+  });
+
+  test('a separate Node process reconstructs the registry and atomically settles a push task', async () => {
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:child-process-settlement',
+    });
+    const ref = await registry.create({
+      tool: 'create_media_buy',
+      accountId: 'acc_1',
+      ownerScope: 'api_key:child-process',
+      hasWebhook: true,
+    });
+    const script = `
+      const { Pool } = require('pg');
+      const {
+        completeScopedPushTask,
+        createPostgresTaskRegistry,
+        createPostgresTaskSettlementCoordinator,
+      } = require('./dist/lib/server/decisioning');
+      (async () => {
+        const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+        const registry = createPostgresTaskRegistry({
+          pool,
+          namespace: process.env.TASK_NAMESPACE,
+          storageId: process.env.TASK_STORAGE_ID,
+        });
+        const coordinator = createPostgresTaskSettlementCoordinator({
+          registry,
+          publisherScope: process.env.TASK_PUBLISHER,
+          outbox: { tableName: process.env.TASK_OUTBOX },
+        });
+        const outcome = await completeScopedPushTask(
+          coordinator,
+          JSON.parse(process.env.TASK_REF),
+          {
+            url: 'https://buyer.example/child-process',
+            operationId: 'child-process-operation',
+            servedAdcpVersion: '3.2.0-beta.5',
+          },
+          { media_buy_id: 'mb_child_process' },
+        );
+        process.stdout.write(JSON.stringify(outcome));
+        await pool.end();
+      })().catch(error => {
+        process.stderr.write(error.stack || String(error));
+        process.exitCode = 1;
+      });
+    `;
+    const child = spawnSync(process.execPath, ['-e', script], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      timeout: 30_000,
+      env: {
+        ...process.env,
+        TASK_NAMESPACE: NAMESPACE,
+        TASK_STORAGE_ID: 'store:child-process-settlement',
+        TASK_PUBLISHER: 'test-seller-child-process',
+        TASK_OUTBOX: SETTLEMENT_OUTBOX,
+        TASK_REF: JSON.stringify(ref),
+      },
+    });
+    assert.strictEqual(child.status, 0, child.stderr);
+    assert.deepStrictEqual(JSON.parse(child.stdout), { outcome: 'applied', delivery: 'durably_bound' });
+    const state = await registry.getTask(ref.taskId, ref);
+    assert.strictEqual(state.status, 'completed');
+    assert.deepStrictEqual(state.result, { media_buy_id: 'mb_child_process' });
+    assert.strictEqual(
+      (
+        await pool.query(`SELECT count(*)::int AS count FROM ${SETTLEMENT_OUTBOX} WHERE publisher_scope = $1`, [
+          'test-seller-child-process',
+        ])
+      ).rows[0].count,
+      1
+    );
+  });
+
+  test('shared outbox recovery claims are isolated by publisher and registry scope', async () => {
+    const {
+      completeScopedPushTask,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    const firstRegistry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:isolated-first',
+    });
+    const secondRegistry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:isolated-second',
+    });
+    const first = createPostgresTaskSettlementCoordinator({
+      registry: firstRegistry,
+      publisherScope: 'shared-publisher',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+      recovery: { defaultLeaseMs: 1000 },
+    });
+    const second = createPostgresTaskSettlementCoordinator({
+      registry: secondRegistry,
+      publisherScope: 'shared-publisher',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+      recovery: { defaultLeaseMs: 1000 },
+    });
+    const firstRef = await firstRegistry.create({ tool: 'create_media_buy', accountId: 'acc_1', hasWebhook: true });
+    const secondRef = await secondRegistry.create({ tool: 'create_media_buy', accountId: 'acc_2', hasWebhook: true });
+    const push = { url: 'https://buyer.example/webhooks/task', operationId: 'shared-operation' };
+    await completeScopedPushTask(first, firstRef, push, { media_buy_id: 'first-buy' });
+    await completeScopedPushTask(second, secondRef, push, { media_buy_id: 'second-buy' });
+
+    const [firstLease] = await first.recovery.claimPending({ ownerToken: 'first-scope-worker', limit: 10 });
+    const [secondLease] = await second.recovery.claimPending({ ownerToken: 'second-scope-worker', limit: 10 });
+    assert.strictEqual(firstLease.snapshot.payload.task_id, firstRef.taskId);
+    assert.strictEqual(secondLease.snapshot.payload.task_id, secondRef.taskId);
+    assert.notStrictEqual(firstLease.key.tenantScope, secondLease.key.tenantScope);
+    assert.deepStrictEqual(await first.recovery.claimPending({ ownerToken: 'first-scope-worker-2', limit: 10 }), []);
+    assert.strictEqual(await first.recovery.settleLease(firstLease, 'delivered'), true);
+    assert.strictEqual(await second.recovery.settleLease(secondLease, 'delivered'), true);
+  });
+
+  test('concurrent conflicting settlements commit exactly one terminal result and webhook', async () => {
+    const {
+      completeScopedPushTask,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:concurrent-settlement',
+    });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+    });
+    const ref = await registry.create({ tool: 'create_media_buy', accountId: 'acc_1', hasWebhook: true });
+    const push = { url: 'https://buyer.example/webhooks/task', operationId: 'concurrent-operation' };
+    const outcomes = await Promise.all([
+      completeScopedPushTask(coordinator, ref, push, { media_buy_id: 'candidate-a' }),
+      completeScopedPushTask(coordinator, ref, push, { media_buy_id: 'candidate-b' }),
+    ]);
+    assert.strictEqual(outcomes.filter(outcome => outcome.outcome === 'applied').length, 1);
+    assert.strictEqual(
+      outcomes.filter(outcome => outcome.outcome === 'already_terminal' && outcome.compatibility === 'conflicting')
+        .length,
+      1
+    );
+    const task = await registry.getTask(ref.taskId, ref);
+    const outbox = await pool.query(`SELECT snapshot FROM ${SETTLEMENT_OUTBOX}`);
+    assert.strictEqual(outbox.rowCount, 1);
+    assert.deepStrictEqual(outbox.rows[0].snapshot.payload.result, task.result);
+  });
+
+  test('a transient authentication-protection outage leaves settlement retryable', async () => {
+    const {
+      completeScopedPushTask,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:transient-protection',
+    });
+    let protectionAttempts = 0;
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+      authenticationAdapter: {
+        protect(authentication) {
+          protectionAttempts++;
+          if (protectionAttempts === 1) throw new Error('temporary KMS outage');
+          return {
+            protectedValue: { ciphertext: 'opaque-ciphertext-reference' },
+            fingerprint: require('node:crypto').createHash('sha256').update(authentication.token).digest('hex'),
+          };
+        },
+        resolve() {
+          return { type: 'bearer', token: 'buyer-validation-secret' };
+        },
+      },
+    });
+    const ref = await registry.create({ tool: 'create_media_buy', accountId: 'acc_1', hasWebhook: true });
+    const push = {
+      url: 'https://buyer.example/webhooks/task',
+      operationId: 'approval-op-kms-retry',
+      token: 'buyer-validation-secret',
+    };
+    await assert.rejects(
+      completeScopedPushTask(coordinator, ref, push, { media_buy_id: 'kms-retry-buy' }),
+      error =>
+        error.message === 'PostgresTaskSettlementCoordinator.settle: transaction failed' &&
+        error.cause?.name === 'WebhookAuthenticationProtectionError'
+    );
+    assert.strictEqual((await registry.getTask(ref.taskId, ref)).status, 'submitted');
+    assert.strictEqual((await pool.query(`SELECT count(*)::int AS count FROM ${SETTLEMENT_OUTBOX}`)).rows[0].count, 0);
+    assert.deepStrictEqual(await completeScopedPushTask(coordinator, ref, push, { media_buy_id: 'kms-retry-buy' }), {
+      outcome: 'applied',
+      delivery: 'durably_bound',
+    });
+  });
+
+  test('a failure between outbox insert and task update rolls back both and retries cleanly', async () => {
+    const {
+      completeScopedPushTask,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:push-rollback',
+    });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+    });
+    const ref = await registry.create({
+      tool: 'create_media_buy',
+      accountId: 'acc_1',
+      hasWebhook: true,
+    });
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION fail_task_settlement_update() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.task_id = '${ref.taskId}' AND NEW.status = 'completed' THEN
+          RAISE EXCEPTION 'injected crash boundary';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER fail_task_settlement_update
+      BEFORE UPDATE ON ${TABLE}
+      FOR EACH ROW EXECUTE FUNCTION fail_task_settlement_update();
+    `);
+    const push = { url: 'https://buyer.example/webhooks/task', operationId: 'approval-op-rollback' };
+    try {
+      await assert.rejects(
+        completeScopedPushTask(coordinator, ref, push, { media_buy_id: 'mb_after_retry' }),
+        /transaction failed/
+      );
+    } finally {
+      await pool.query(`DROP TRIGGER IF EXISTS fail_task_settlement_update ON ${TABLE}`);
+      await pool.query(`DROP FUNCTION IF EXISTS fail_task_settlement_update()`);
+    }
+    assert.strictEqual((await registry.getTask(ref.taskId, ref)).status, 'submitted');
+    assert.strictEqual((await pool.query(`SELECT count(*)::int AS count FROM ${SETTLEMENT_OUTBOX}`)).rows[0].count, 0);
+    assert.deepStrictEqual(await completeScopedPushTask(coordinator, ref, push, { media_buy_id: 'mb_after_retry' }), {
+      outcome: 'applied',
+      delivery: 'durably_bound',
+    });
+  });
+
+  test('a deferred commit failure rolls back the updated task and its outbox checkpoint', async () => {
+    const {
+      completeScopedPushTask,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:push-commit-rollback',
+    });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+    });
+    const ref = await registry.create({ tool: 'create_media_buy', accountId: 'acc_1', hasWebhook: true });
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION fail_task_settlement_commit() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.task_id = '${ref.taskId}' AND NEW.status = 'completed' THEN
+          RAISE EXCEPTION 'injected deferred commit boundary';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      CREATE CONSTRAINT TRIGGER fail_task_settlement_commit
+      AFTER UPDATE ON ${TABLE}
+      DEFERRABLE INITIALLY DEFERRED
+      FOR EACH ROW EXECUTE FUNCTION fail_task_settlement_commit();
+    `);
+    const push = { url: 'https://buyer.example/webhooks/task', operationId: 'approval-op-deferred-rollback' };
+    try {
+      await assert.rejects(
+        completeScopedPushTask(coordinator, ref, push, { media_buy_id: 'mb_commit_retry' }),
+        /transaction failed/
+      );
+    } finally {
+      await pool.query(`DROP TRIGGER IF EXISTS fail_task_settlement_commit ON ${TABLE}`);
+      await pool.query(`DROP FUNCTION IF EXISTS fail_task_settlement_commit()`);
+    }
+    assert.strictEqual((await registry.getTask(ref.taskId, ref)).status, 'submitted');
+    assert.strictEqual((await pool.query(`SELECT count(*)::int AS count FROM ${SETTLEMENT_OUTBOX}`)).rows[0].count, 0);
+    assert.deepStrictEqual(await completeScopedPushTask(coordinator, ref, push, { media_buy_id: 'mb_commit_retry' }), {
+      outcome: 'applied',
+      delivery: 'durably_bound',
+    });
+  });
+
+  test('failed push settlement stores one canonical failure artifact and recoverable webhook', async () => {
+    const { createPostgresTaskSettlementCoordinator, failScopedPushTask } = require('../dist/lib/server/decisioning');
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:push-failure',
+    });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+    });
+    const ref = await registry.create({ tool: 'sync_creatives', accountId: 'acc_1', hasWebhook: true });
+    const error = { code: 'GOVERNANCE_DENIED', recovery: 'terminal', message: 'Approval declined' };
+    assert.deepStrictEqual(
+      await failScopedPushTask(
+        coordinator,
+        ref,
+        { url: 'https://buyer.example/webhooks/task', operationId: 'approval-op-failed' },
+        error
+      ),
+      { outcome: 'applied', delivery: 'durably_bound' }
+    );
+    const stored = await registry.getTask(ref.taskId, ref);
+    assert.strictEqual(stored.status, 'failed');
+    assert.deepStrictEqual(stored.error, error);
+    assert.deepStrictEqual(stored.result, { errors: [error] });
+    const [lease] = await coordinator.recovery.claimPending({ ownerToken: 'failed-task-worker', limit: 1 });
+    assert.strictEqual(lease.snapshot.payload.status, 'failed');
+    assert.strictEqual(lease.snapshot.payload.message, 'Approval declined');
+    assert.deepStrictEqual(lease.snapshot.payload.result, { errors: [error] });
+  });
+
+  test('push settlement keeps wrong scoped refs non-enumerating and creates no outbox row', async () => {
+    const {
+      completeScopedPushTask,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:push-scope',
+    });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+    });
+    const ref = await registry.create({
+      tool: 'create_media_buy',
+      accountId: 'acc_1',
+      ownerScope: 'api_key:buyer-a',
+      hasWebhook: true,
+    });
+    const outcome = await completeScopedPushTask(
+      coordinator,
+      { ...ref, ownerScope: 'api_key:buyer-b' },
+      { url: 'https://buyer.example/webhooks/task', operationId: 'approval-op-scope' },
+      { media_buy_id: 'must-not-apply' }
+    );
+    assert.deepStrictEqual(outcome, { outcome: 'not_found_in_scope', delivery: 'not_applicable' });
+    assert.strictEqual((await registry.getTask(ref.taskId, ref)).status, 'submitted');
+    assert.strictEqual((await pool.query(`SELECT count(*)::int AS count FROM ${SETTLEMENT_OUTBOX}`)).rows[0].count, 0);
   });
 
   test('explicit registry identity prevents cross-store settlement with an identical tuple', async () => {

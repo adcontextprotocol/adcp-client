@@ -14,6 +14,7 @@ const {
   redisWebhookDeliveryRecoveryBackend,
   getWebhookDeliveryMigration,
   getWebhookDeliveryRecoveryMigration,
+  WebhookAuthenticationResolutionError,
 } = require('../../dist/lib/server/index.js');
 const {
   runWebhookDeliveryStoreContract,
@@ -24,6 +25,20 @@ runWebhookDeliveryStoreContract('memoryWebhookDeliveryStore', async () => memory
 runWebhookRecoveryBackendContract('memoryWebhookDeliveryRecoveryBackend', async () =>
   memoryWebhookDeliveryRecoveryBackend()
 );
+
+test('PostgreSQL recovery probe rejects an outbox missing the settlement intent fingerprint column', async () => {
+  let probeSql;
+  const backend = pgWebhookDeliveryRecoveryBackend({
+    async query(sql) {
+      probeSql = sql;
+      const error = new Error('column intent_fingerprint does not exist');
+      error.code = '42703';
+      throw error;
+    },
+  });
+  await assert.rejects(() => backend.probe(), /Run getWebhookDeliveryRecoveryMigration/);
+  assert.match(probeSql, /intent_fingerprint/);
+});
 
 test('memory delivery store permanently retires an expired identity', async () => {
   let now = 1_000;
@@ -51,16 +66,19 @@ test('recovery wrapper protects credentials and polling settles only the fenced 
   const memory = memoryWebhookDeliveryRecoveryBackend();
   const backend = { ...memory, durability: 'durable' };
   const protectedValues = [];
+  const authenticationContexts = [];
   const recovery = createWebhookDeliveryRecovery({
     backend,
     authenticationAdapter: {
       protect(authentication, context) {
         assert.equal(context.url, 'https://buyer.invalid/hook');
         protectedValues.push(authentication);
+        authenticationContexts.push(structuredClone(context));
         return { protectedValue: { secretRef: 'kms://webhook/a' }, fingerprint: 'stable-secret-token' };
       },
       resolve(value, context) {
         assert.equal(context.key.deliveryId, 'delivery-recovery-wrapper');
+        authenticationContexts.push(structuredClone(context));
         assert.deepEqual(value, { secretRef: 'kms://webhook/a' });
         return { type: 'bearer', token: 'resolved-only-in-worker' };
       },
@@ -70,10 +88,10 @@ test('recovery wrapper protects credentials and polling settles only the fenced 
   const liveClaim = await recovery.checkpoint(key, {
     url: 'https://buyer.invalid/hook',
     payload: { task_id: 'task-1' },
-    authentication: { type: 'bearer', token: 'plaintext-input' },
+    authentication: { type: 'bearer', token: 'plaintext-input-1' },
     retries: { maxAttempts: 5, initialDelayMs: 1000, maxDelayMs: 60000, jitter: 0.25 },
   });
-  assert.deepEqual(protectedValues, [{ type: 'bearer', token: 'plaintext-input' }]);
+  assert.deepEqual(protectedValues, [{ type: 'bearer', token: 'plaintext-input-1' }]);
   assert.ok(liveClaim, 'checkpoint atomically reserves the live delivery');
   assert.deepEqual(await recovery.claimPending({ ownerToken: 'blocked-worker', limit: 1 }), []);
   assert.equal(await liveClaim.release(0), true);
@@ -89,6 +107,8 @@ test('recovery wrapper protects credentials and polling settles only the fenced 
   });
   assert.deepEqual(result, { claimed: 1, settled: 1, released: 0 });
   assert.deepEqual(seen, [{ type: 'bearer', token: 'resolved-only-in-worker' }]);
+  assert.equal(authenticationContexts[0].purpose, undefined);
+  assert.deepEqual(authenticationContexts[1], authenticationContexts[0], 'legacy KMS context remains upgrade-safe');
 });
 
 test('recovery requires a secret adapter instead of persisting plaintext credentials', async () => {
@@ -106,6 +126,130 @@ test('recovery requires a secret adapter instead of persisting plaintext credent
         }
       ),
     /requires authenticationAdapter/
+  );
+});
+
+test('recovery sanitizes secret-adapter resolution failures', async () => {
+  const backend = { ...memoryWebhookDeliveryRecoveryBackend(), durability: 'durable' };
+  const recovery = createWebhookDeliveryRecovery({
+    backend,
+    authenticationAdapter: {
+      protect() {
+        return { protectedValue: { ref: 'kms://private/key' }, fingerprint: 'stable-secret-token' };
+      },
+      resolve() {
+        throw new Error('private KMS endpoint and credential details');
+      },
+    },
+  });
+  const claim = await recovery.checkpoint(
+    { publisherScope: 'p', tenantScope: 't', deliveryId: 'resolution-failure' },
+    {
+      url: 'https://buyer.invalid/hook',
+      payload: {},
+      authentication: { type: 'bearer', token: 'plaintext-input-1' },
+      retries: { maxAttempts: 1, initialDelayMs: 1, maxDelayMs: 1, jitter: 0 },
+    }
+  );
+  await claim.release(0);
+  await assert.rejects(
+    () => recovery.claimPending({ ownerToken: 'resolution-worker', limit: 1 }),
+    error => {
+      assert.ok(error instanceof WebhookAuthenticationResolutionError);
+      assert.equal(error.message, 'Webhook authentication resolution failed');
+      assert.doesNotMatch(error.message, /private KMS|credential/);
+      assert.match(error.cause.message, /private KMS endpoint/);
+      return true;
+    }
+  );
+});
+
+test('recovery protects and restores task payload validation tokens independently of HTTP auth', async () => {
+  const memory = memoryWebhookDeliveryRecoveryBackend();
+  const backend = { ...memory, durability: 'durable' };
+  const protectedPurposes = [];
+  const recovery = createWebhookDeliveryRecovery({
+    backend,
+    authenticationAdapter: {
+      protect(authentication, context) {
+        protectedPurposes.push(context.purpose);
+        return {
+          protectedValue: { ref: `kms://${context.purpose}` },
+          fingerprint: `fingerprint-${context.purpose}`,
+        };
+      },
+      resolve(_value, context) {
+        assert.equal(context.purpose, 'payload_token');
+        return { type: 'bearer', token: 'restored-validation-token' };
+      },
+    },
+  });
+  const key = { publisherScope: 'p', tenantScope: 't', deliveryId: 'payload-token-delivery' };
+  const prepared = await recovery.prepare(
+    key,
+    {
+      url: 'https://buyer.invalid/hook',
+      payload: { task_id: 'task-token', token: 'plaintext-validation-token' },
+      authentication: null,
+      retries: { maxAttempts: 1, initialDelayMs: 1, maxDelayMs: 1, jitter: 0 },
+    },
+    { protectPayloadToken: true }
+  );
+  const checkpoint = await backend.checkpoint(
+    key,
+    prepared.snapshot,
+    prepared.snapshotFingerprint,
+    prepared.storageFingerprint,
+    { ownerToken: 'settlement-preparer', leaseMs: 1000 }
+  );
+  assert.deepEqual(protectedPurposes, ['payload_token']);
+  assert.ok(checkpoint.lease);
+  await backend.release(checkpoint.lease, 0);
+  const [recovered] = await recovery.claimPending({ ownerToken: 'payload-token-worker', limit: 1 });
+  assert.equal(recovered.snapshot.payload.token, 'restored-validation-token');
+});
+
+test('generic recovery preserves a non-secret payload.token without requiring an adapter', async () => {
+  const backend = { ...memoryWebhookDeliveryRecoveryBackend(), durability: 'durable' };
+  const recovery = createWebhookDeliveryRecovery({ backend });
+  const key = { publisherScope: 'p', tenantScope: 't', deliveryId: 'generic-token-field' };
+  const claim = await recovery.checkpoint(key, {
+    url: 'https://buyer.invalid/hook',
+    payload: { token: 'ordinary-domain-value' },
+    authentication: null,
+    retries: { maxAttempts: 1, initialDelayMs: 1, maxDelayMs: 1, jitter: 0 },
+  });
+  assert.ok(claim);
+  await claim.release(0);
+  const [recovered] = await recovery.claimPending({ ownerToken: 'generic-token-worker', limit: 1 });
+  assert.equal(recovered.snapshot.payload.token, 'ordinary-domain-value');
+});
+
+test('recovery rejects adapters that return cleartext as protected durable state', async () => {
+  const backend = { ...memoryWebhookDeliveryRecoveryBackend(), durability: 'durable' };
+  const recovery = createWebhookDeliveryRecovery({
+    backend,
+    authenticationAdapter: {
+      protect(authentication) {
+        return { protectedValue: { token: authentication.token }, fingerprint: 'safe-looking-fingerprint' };
+      },
+      resolve() {
+        throw new Error('not reached');
+      },
+    },
+  });
+  await assert.rejects(
+    () =>
+      recovery.checkpoint(
+        { publisherScope: 'p', tenantScope: 't', deliveryId: 'plaintext-adapter' },
+        {
+          url: 'https://buyer.invalid/hook',
+          payload: {},
+          authentication: { type: 'bearer', token: 'cleartext-must-not-persist' },
+          retries: { maxAttempts: 1, initialDelayMs: 1, maxDelayMs: 1, jitter: 0 },
+        }
+      ),
+    /durable state containing cleartext/
   );
 });
 
@@ -709,6 +853,7 @@ test('PostgreSQL migrations use separate binding and outbox namespaces', () => {
   assert.match(recovery, /PRIMARY KEY \(publisher_scope, tenant_scope, delivery_id\)/);
   assert.match(recovery, /lease_claim_id\s+TEXT/);
   assert.match(recovery, /lease_version\s+BIGINT NOT NULL DEFAULT 0/);
+  assert.match(recovery, /ADD COLUMN IF NOT EXISTS intent_fingerprint TEXT/);
 });
 
 test('PostgreSQL claim is one backend-clock upsert and never overwrites immutable evidence', async () => {
@@ -749,11 +894,13 @@ test('PostgreSQL recovery claims use SKIP LOCKED and fenced owner/version predic
       return { rows: [], rowCount: 0 };
     },
   };
-  const backend = pgWebhookDeliveryRecoveryBackend(db);
+  const backend = pgWebhookDeliveryRecoveryBackend(db, {
+    claimScope: { publisherScope: 'publisher-a', tenantScope: 'tenant-a' },
+  });
   await backend.claimPending({ ownerToken: 'owner-token', leaseMs: 1000, limit: 10 });
   await backend.settleLease(
     {
-      key: { publisherScope: 'p', tenantScope: 't', deliveryId: 'd' },
+      key: { publisherScope: 'publisher-a', tenantScope: 'tenant-a', deliveryId: 'd' },
       leaseOwner: 'owner-token',
       leaseVersion: 4,
     },
@@ -761,7 +908,14 @@ test('PostgreSQL recovery claims use SKIP LOCKED and fenced owner/version predic
   );
   assert.match(queries[0].sql, /FOR UPDATE SKIP LOCKED/);
   assert.match(queries[0].sql, /lease_version = outbox\.lease_version \+ 1/);
+  assert.match(queries[0].sql, /publisher_scope = \$4 AND tenant_scope = \$5/);
+  assert.deepStrictEqual(queries[0].params, ['owner-token', 1000, 10, 'publisher-a', 'tenant-a']);
   assert.match(queries[1].sql, /lease_owner = \$4 AND lease_version = \$5/);
+  await assert.rejects(
+    backend.settle({ publisherScope: 'publisher-b', tenantScope: 'tenant-a', deliveryId: 'foreign' }, 'terminal'),
+    /outside the configured claim scope/
+  );
+  assert.strictEqual(queries.length, 2, 'out-of-scope mutation fails before reaching PostgreSQL');
 });
 
 test('Redis and PostgreSQL backends require deployment isolation in production', () => {

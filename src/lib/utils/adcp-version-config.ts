@@ -32,6 +32,11 @@ export function isAdcpVersionAtLeast(version: string | undefined, minimum: strin
   return comparable !== undefined && comparableMinimum !== undefined && semverGte(comparable, comparableMinimum);
 }
 
+/** Whether an AdCP identifier is a parseable full or release-precision semver. */
+export function isValidAdcpVersion(version: string | undefined): version is string {
+  return version !== undefined && comparableAdcpSemver(version) !== undefined;
+}
+
 /**
  * Resolve and validate a configured `adcpVersion`. Returns the value to store
  * on the instance — either the caller's pin or the SDK default.

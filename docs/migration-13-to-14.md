@@ -152,8 +152,9 @@ loading; keep using `requires_capability` for a singular predicate.
 12. Replace webhook emitter `operation_id` arguments with SDK-local `delivery_id` values and upgrade custom stores to `WebhookDeliveryStore`. One delivery ID binds one canonical payload and key; use a fresh delivery ID for each changed status observation while retaining the AdCP `operation_id` inside the payload.
 13. Ensure custom 3.2 buyers include `push_notification_config.operation_id`, and update A2A integrations to keep the AdCP registration in skill parameters even when native A2A push configuration is also present.
 14. Treat failed/rejected task results as canonical terminal artifacts when `include_result` is requested; do not discard them while preserving only the summary error.
-15. Persist the complete `ScopedTaskRef` for out-of-process task settlement and acknowledge durable queue items only after `applied` or `already_terminal`. Upgrade populated PostgreSQL task registries with the phased [`getDecisioningTaskRegistryScopeV1Upgrade()` runbook](./migration-task-registry-scoping.md#populated-postgresql-upgrade), not application-boot bootstrap DDL.
-16. Upgrade to Node `^20.19.0 || >=22.12.0`, whose two boundaries enable the `require(esm)` support needed by the SDK's CommonJS dependency graph. Node 21 and Node 22.0–22.11 are not supported. Keep Undici 6 for the fully supported configuration, or use the tested best-effort Undici 7 override on Node 20.19+. See the [Node/Undici compatibility policy](./guides/NODE-UNDICI-COMPATIBILITY.md).
+15. Persist the complete `ScopedTaskRef` for out-of-process task settlement and acknowledge durable queue items only after `applied` or a compatible `already_terminal` outcome with the intended status. Retry or dead-letter scoped misses and conflicting terminal outcomes. Upgrade populated PostgreSQL task registries with the phased [`getDecisioningTaskRegistryScopeV1Upgrade()` runbook](./migration-task-registry-scoping.md#populated-postgresql-upgrade), not application-boot bootstrap DDL.
+16. For out-of-process settlement, return `ctx.handoffToTask(producer, { settlement: 'external' })`; the producer must durably queue the complete handle before returning, and the framework withholds `submitted` until that commit succeeds. For a push-enabled task, configure `createPostgresTaskSettlementCoordinator()` on the same PostgreSQL pool as the task registry and use `completeScopedPushTask()` / `failScopedPushTask()`. Run the webhook recovery outbox migration and recovery worker; the polling-only scoped helpers still reject push tasks. See [task registry scope migration](./migration-task-registry-scoping.md#out-of-process-settlement).
+17. Upgrade to Node `^20.19.0 || >=22.12.0`, whose two boundaries enable the `require(esm)` support needed by the SDK's CommonJS dependency graph. Node 21 and Node 22.0–22.11 are not supported. Keep Undici 6 for the fully supported configuration, or use the tested best-effort Undici 7 override on Node 20.19+. See the [Node/Undici compatibility policy](./guides/NODE-UNDICI-COMPATIBILITY.md).
 
 ### Webhook delivery identity and retry horizons
 
@@ -227,6 +228,14 @@ plus a stable non-secret equality fingerprint. The adapter must authenticate
 the supplied tenant/destination/snapshot context. Settled records redact payload
 and protected secret references. The application still owns KMS
 keys, secret management, tenant authorization/RBAC, and management APIs or UI.
+For crash-safe task settlement, `createPostgresTaskSettlementCoordinator()`
+explicitly removes the top-level validation `token` from the persisted payload
+and protects it with the same adapter under the distinct `payload_token`
+purpose before writing the outbox. Generic recovery checkpoints preserve
+payload fields named `token`; use `recovery.prepare(...,
+{ protectPayloadToken: true })` only for a protocol field known to be secret.
+The legacy transport-authentication adapter context keeps `purpose` undefined
+for upgrade-compatible KMS AAD.
 
 `deliveryRetryHorizonSeconds` defaults to 86,400 seconds and accepts 86,400
 through 604,800. `createAdcpServer()` advertises the configured value under

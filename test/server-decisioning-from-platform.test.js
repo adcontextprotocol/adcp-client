@@ -3772,7 +3772,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     };
   }
 
-  function dispatchCreate(server) {
+  function dispatchCreate(server, overrides = {}) {
     return server.dispatchTestRequest({
       method: 'tools/call',
       params: {
@@ -3784,6 +3784,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
           start_time: '2026-05-01T00:00:00Z',
           end_time: '2026-06-01T00:00:00Z',
           account: { account_id: 'acc_1' },
+          ...overrides,
         },
       },
     });
@@ -4324,6 +4325,133 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     const finalRecord = await server.getTaskState(taskId, { accountId: 'acc_1', ownerScope: 'account:acc_1' });
     assert.strictEqual(finalRecord.status, 'completed');
     assert.deepStrictEqual(finalRecord.result, { media_buy_id: 'mb_final', status: 'active' });
+  });
+
+  it('external handoff acknowledges submitted only after the durable producer commit', async () => {
+    let queuedTaskRef;
+    let markProducerStarted;
+    let releaseProducer;
+    const producerStarted = new Promise(resolve => {
+      markProducerStarted = resolve;
+    });
+    const producerCommit = new Promise(resolve => {
+      releaseProducer = resolve;
+    });
+    const platform = buildHitlPlatform({
+      createMediaBuy: async (_req, ctx) =>
+        ctx.handoffToTask(
+          async taskCtx => {
+            // Represents the application queue transaction. The complete
+            // opaque handle, rather than only taskCtx.id, crosses processes.
+            queuedTaskRef = structuredClone(taskCtx.taskRef);
+            markProducerStarted();
+            await producerCommit;
+          },
+          { settlement: 'external' }
+        ),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'external-settlement',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      taskRegistry: {
+        ...require('../dist/lib/server/decisioning/runtime/task-registry').createInMemoryTaskRegistry(),
+        durability: 'durable',
+      },
+    });
+
+    let responseResolved = false;
+    const submittedPromise = dispatchCreate(server, {
+      push_notification_config: {
+        url: 'https://buyer.example/task-webhook',
+        operation_id: 'external-approval-1',
+      },
+    }).then(result => {
+      responseResolved = true;
+      return result;
+    });
+    await producerStarted;
+    assert.strictEqual(responseResolved, false, 'submitted must wait for the durable producer commit');
+    releaseProducer();
+    const submitted = await submittedPromise;
+    assert.strictEqual(submitted.structuredContent.status, 'submitted');
+
+    assert.strictEqual(queuedTaskRef.taskId, submitted.structuredContent.task_id);
+    assert.strictEqual(queuedTaskRef.accountId, 'acc_1');
+    assert.strictEqual(queuedTaskRef.ownerScope, 'account:acc_1');
+    const state = await server.getTaskState(submitted.structuredContent.task_id, queuedTaskRef);
+    assert.strictEqual(state.status, 'submitted');
+    assert.strictEqual(state.result, undefined);
+  });
+
+  it('external handoff producer failure rejects the initial invocation without exposing queue details', async () => {
+    const errors = [];
+    let failedTaskRef;
+    const platform = buildHitlPlatform({
+      createMediaBuy: async (_req, ctx) =>
+        ctx.handoffToTask(
+          async taskCtx => {
+            failedTaskRef = structuredClone(taskCtx.taskRef);
+            throw new Error('private queue endpoint unavailable');
+          },
+          { settlement: 'external' }
+        ),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'external-settlement-producer-failure',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      taskRegistry: {
+        ...require('../dist/lib/server/decisioning/runtime/task-registry').createInMemoryTaskRegistry(),
+        durability: 'durable',
+      },
+      logger: { debug() {}, info() {}, warn() {}, error: message => errors.push(message) },
+    });
+
+    const rejected = await dispatchCreate(server, {
+      push_notification_config: {
+        url: 'https://buyer.example/task-webhook',
+        operation_id: 'external-approval-failure-1',
+      },
+    });
+    assert.strictEqual(rejected.isError, true);
+    assert.strictEqual(rejected.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
+    assert.strictEqual(rejected.structuredContent.task_id, undefined);
+    assert.doesNotMatch(rejected.structuredContent.adcp_error.message, /private queue endpoint/);
+    const state = await server.getTaskState(failedTaskRef.taskId, failedTaskRef);
+    assert.strictEqual(state.status, 'submitted');
+    assert.strictEqual(state.error, undefined);
+    const producerErrors = errors.filter(message =>
+      /Task remains submitted internally; no terminal state, webhook, or buyer acknowledgment was written/.test(message)
+    );
+    assert.strictEqual(producerErrors.length, 1);
+    assert.doesNotMatch(producerErrors[0], /private queue endpoint/);
+  });
+
+  it('external handoff rejects the unmodified process-local in-memory registry', async () => {
+    const { createInMemoryTaskRegistry } = require('../dist/lib/server/decisioning/runtime/task-registry');
+    const processLocalRegistry = createInMemoryTaskRegistry();
+    let producerCalled = false;
+    const platform = buildHitlPlatform({
+      createMediaBuy: async (_req, ctx) =>
+        ctx.handoffToTask(
+          async () => {
+            producerCalled = true;
+          },
+          { settlement: 'external' }
+        ),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'external-settlement-no-registry-id',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      taskRegistry: processLocalRegistry,
+    });
+
+    const rejected = await dispatchCreate(server);
+    assert.strictEqual(rejected.isError, true);
+    assert.strictEqual(rejected.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
+    assert.strictEqual(producerCalled, false);
   });
 
   it('canonicalizes legacy custom creatives in async terminal media-buy results', async () => {
@@ -7044,25 +7172,34 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
     assert.strictEqual(emits.length, 1);
   });
 
-  it('rejects empty token', async () => {
+  it('rejects token shorter than 16 characters', async () => {
     const emits = [];
     const server = makeServer({ emits });
     const result = await dispatchWithUrl(server, 'https://buyer.example.com/webhook', '');
     assert.strictEqual(result.isError, true);
     assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
     assert.strictEqual(result.structuredContent.adcp_error.field, 'push_notification_config.token');
-    assert.ok(result.structuredContent.adcp_error.message.includes('empty'));
+    assert.ok(result.structuredContent.adcp_error.message.includes('shorter than 16'));
     assert.strictEqual(emits.length, 0);
   });
 
-  it('rejects token over 255 chars', async () => {
+  it('accepts token between 256 and 4096 chars', async () => {
     const emits = [];
     const server = makeServer({ emits });
     const longToken = 'a'.repeat(300);
     const result = await dispatchWithUrl(server, 'https://buyer.example.com/webhook', longToken);
+    assert.notStrictEqual(result.isError, true);
+    await server.awaitTaskUnsafe(result.structuredContent.task_id);
+    assert.strictEqual(emits.length, 1);
+  });
+
+  it('rejects token over 4096 chars', async () => {
+    const emits = [];
+    const server = makeServer({ emits });
+    const result = await dispatchWithUrl(server, 'https://buyer.example.com/webhook', 'a'.repeat(4097));
     assert.strictEqual(result.isError, true);
     assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
-    assert.ok(result.structuredContent.adcp_error.message.includes('longer than'));
+    assert.ok(result.structuredContent.adcp_error.message.includes('longer than 4096'));
     assert.strictEqual(emits.length, 0);
   });
 
