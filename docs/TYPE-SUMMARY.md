@@ -1036,6 +1036,53 @@ _Response (success branch):_
 }
 ```
 
+**`get_reporting_status`** — Request parameters for reconciling managed reporting obligations, revisions, and materializations.
+
+_Request:_
+```
+{
+  account: Canonical Account Ref  // required
+  view: 'summary' | 'periods' | 'revision'  // required
+  media_buy_ids: string[]
+  delivery_config_ids: string[]
+  feed_purposes: ('pacing' | 'analytics' | 'billing')[]
+  period: object
+  health: Reporting Health[]
+  finality: Reporting Finality[]
+  reporting_revision_id: string
+  pagination: Pagination Request
+  context: Context
+}
+```
+
+_Response (success branch):_
+```
+{
+  status: 'completed'  // required
+}
+```
+
+**`sync_reporting_receipts`** — Submit authenticated consumer reconciliation receipts for durable reporting materializations.
+
+_Request:_
+```
+{
+  account: Canonical Account Ref  // required
+  idempotency_key: string  // required
+  receipts: object[]  // required
+  context: Context
+}
+```
+
+_Response (success branch):_
+```
+{
+  status: 'completed'  // required
+  results: (Recorded reporting receipt | Unchanged reporting receipt | Failed reporting receipt)[]  // required
+  context: Context
+}
+```
+
 **`provide_performance_feedback`** — Request parameters for sharing performance outcomes with publishers.
 
 _Request:_

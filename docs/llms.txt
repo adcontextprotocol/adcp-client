@@ -544,6 +544,29 @@ Request parameters for retrieving comprehensive delivery metrics.
 - Required: `reporting_period: object`, `currency: string`, `media_buy_deliveries: object[]`
 - Optional: `notification_type: 'scheduled' | 'final' | 'delayed' | 'adjusted' | 'window_update'`, `partial_data: boolean`, `unavailable_count: integer`, `sequence_number: integer`, `next_expected_at: string`, `attribution_window: Attribution Window`, `aggregated_totals: object`, `errors: Error[]`, +2 more
 
+#### `get_reporting_status`
+
+Request parameters for reconciling managed reporting obligations, revisions, and materializations.
+
+**Request:**
+- Required: `account: Canonical Account Ref`, `view: 'summary' | 'periods' | 'revision'`
+- Optional: `media_buy_ids: string[]`, `delivery_config_ids: string[]`, `feed_purposes: ('pacing' | 'analytics' | 'billing')[]`, `period: object`, `health: Reporting Health[]`, `finality: Reporting Finality[]`, `reporting_revision_id: string`, `pagination: Pagination Request`, +1 more
+
+**Response (success branch):**
+- Required: `status: 'completed'`
+
+#### `sync_reporting_receipts`
+
+Submit authenticated consumer reconciliation receipts for durable reporting materializations.
+
+**Request:**
+- Required: `account: Canonical Account Ref`, `idempotency_key: string`, `receipts: object[]`
+- Optional: `context: Context`
+
+**Response (success branch):**
+- Required: `status: 'completed'`, `results: (Recorded reporting receipt | Unchanged reporting receipt | Failed reporting receipt)[]`
+- Optional: `context: Context`
+
 #### `provide_performance_feedback`
 
 Request parameters for sharing performance outcomes with publishers.
