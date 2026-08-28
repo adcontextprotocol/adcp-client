@@ -470,6 +470,8 @@ export {
   createWebhookDeliveryRecovery,
   pollWebhookDeliveryRecovery,
   memoryWebhookDeliveryRecoveryBackend,
+  WebhookAuthenticationProtectionError,
+  WebhookAuthenticationResolutionError,
   WebhookDeliveryTerminalError,
   isWebhookDeliveryTerminalError,
 } from './webhook-delivery';
@@ -482,6 +484,8 @@ export type {
   WebhookAuthenticationAdapter,
   WebhookAuthenticationContext,
   StoredWebhookDeliverySnapshot,
+  PreparedWebhookDeliverySnapshot,
+  PrepareWebhookDeliveryOptions,
   WebhookRecoveryRecord,
   WebhookRecoveryLease,
   WebhookRecoveryCheckpointResult,

@@ -1848,8 +1848,10 @@ See docs/TYPE-SUMMARY.md for field-level detail. Key types at a glance:
 | `GovernanceConfig` | Buyer-side governance middleware config |
 | `EstablishedProposalStore` | Durable 3.0/3.1 proposal snapshots, atomic mutation fences, seven-day completion proofs, pruning, and submitted-task reconciliation |
 | `WebhooksConfig.tenantScope` | Explicit trusted webhook namespace for a genuinely single-tenant server; multi-tenant servers derive scope per request |
+| `PostgresTaskSettlementCoordinator` | Atomically commits a push task terminal state and PostgreSQL recovery-outbox checkpoint for different-process workers |
 
 Production webhook publishers may construct an unbound emitter and call `forTenantScope(trustedTenant)` before every delivery. Direct unbound `emit()` fails before checkpointing or network access. `createAdcpServer` derives scope from trusted request context; configure `webhooks.tenantScope` only for a genuinely single-tenant factory.
+Push-enabled decisioning tasks settled by another process must return `ctx.handoffToTask(producer, { settlement: 'external' })`; the framework withholds `submitted` until the producer durably queues the complete scoped handle and encrypted route. Workers use `createPostgresTaskSettlementCoordinator()` with `completeScopedPushTask()` / `failScopedPushTask()`; the task mutation and encrypted recovery outbox checkpoint commit together. Acknowledge work only for `applied` or compatible `already_terminal`; retry or dead-letter scope misses and conflicts.
 
 ## Task Statuses
 

@@ -4628,6 +4628,17 @@ async function routeIfHandoff<TInner, TWire>(
       return await project(result as unknown as TInner);
     }
     const { fn: taskFn, options } = entry;
+    if (options && 'settlement' in options && options.settlement === 'external') {
+      return dispatchHitl(
+        taskRegistry,
+        opts,
+        async taskRef => {
+          await taskFn(buildHandoffContext(taskRegistry, taskRef));
+        },
+        options.task_id,
+        'external'
+      );
+    }
     return dispatchHitl(
       taskRegistry,
       opts,
@@ -4648,8 +4659,12 @@ async function dispatchHitl<TResult>(
   taskRegistry: TaskRegistry,
   opts: DispatchHitlOpts,
   taskFn: (taskRef: ScopedTaskRef) => Promise<TResult>,
-  overrideTaskId?: string
+  overrideTaskId?: string,
+  settlement: 'framework' | 'external' = 'framework'
 ): Promise<SubmittedEnvelope> {
+  if (settlement === 'external' && taskRegistry.durability !== 'durable') {
+    throw new Error('External task settlement requires a durable task registry with a stable identity');
+  }
   const createStart = Date.now();
   const createdRef = await taskRegistry.create({
     tool: opts.tool,
@@ -4711,6 +4726,27 @@ async function dispatchHitl<TResult>(
       opts.logger
     );
   };
+
+  if (settlement === 'external') {
+    if (typeof taskRef.registryId !== 'string' || taskRef.registryId.length === 0) {
+      throw new Error('External task settlement requires a durable task registry with a stable identity');
+    }
+    try {
+      // The callback owns the durable application-queue write. Do not tell the
+      // buyer that the task was submitted until that write has committed.
+      await taskFn(taskRef);
+    } catch (taskFnError) {
+      opts.logger.error(
+        `[adcp/decisioning] external task producer for ${taskId} (${opts.tool}) failed before durable handoff. ` +
+          `Task remains submitted internally; no terminal state, webhook, or buyer acknowledgment was written. ` +
+          `Error type: ${taskFnError instanceof Error ? 'Error' : typeof taskFnError}`
+      );
+      // Keep the adopter's private queue error out of the wire response. The
+      // server's ordinary error projection turns this into SERVICE_UNAVAILABLE.
+      throw new Error('External task producer failed before durable handoff');
+    }
+    return { status: 'submitted', task_id: taskId };
+  }
 
   // Three failure surfaces:
   //   1. taskFn throws → record failure → emit failed webhook
@@ -5529,8 +5565,8 @@ async function hydrateForTool(
  *    (10/8, 172.16/12, 192.168/16), link-local (169.254/16, fe80::/10),
  *    loopback (127/8, ::1), CGNAT (100.64/10), and unspecified addresses
  *    (0.0.0.0, ::). Rejects bare hostnames `localhost` / `0`.
- * 3. **Token shape**: rejects tokens longer than 255 chars or containing
- *    control characters. Tokens past 255 chars combined with a malicious
+ * 3. **Token shape**: enforces the protocol's 16–4096 character bounds and
+ *    rejects control characters. Oversized tokens combined with a malicious
  *    URL would inflate webhook payload size; control characters break log
  *    redaction.
  *
@@ -5739,13 +5775,14 @@ function validatePushNotificationUrl(rawUrl: string, opts: { allowPrivate?: bool
   return { ok: true };
 }
 
-const TOKEN_MAX_LENGTH = 255;
+const TOKEN_MIN_LENGTH = 16;
+const TOKEN_MAX_LENGTH = 4096;
 const TOKEN_CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
 const PUSH_OPERATION_ID_RE = /^[A-Za-z0-9_.:-]{1,255}$/;
 
 function validatePushNotificationToken(token: string): UrlValidationResult {
-  if (token.length === 0) {
-    return { ok: false, reason: 'token is empty' };
+  if (token.length < TOKEN_MIN_LENGTH) {
+    return { ok: false, reason: `token shorter than ${TOKEN_MIN_LENGTH} chars` };
   }
   if (token.length > TOKEN_MAX_LENGTH) {
     return { ok: false, reason: `token longer than ${TOKEN_MAX_LENGTH} chars` };

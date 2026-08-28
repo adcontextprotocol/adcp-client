@@ -29,7 +29,7 @@ import type {
   PropertyList,
   CollectionList,
 } from '../../types/tools.generated';
-import type { TaskHandoff, TaskHandoffContext, TaskHandoffOptions } from './async-outcome';
+import type { ExternalTaskHandoffOptions, TaskHandoff, TaskHandoffContext, TaskHandoffOptions } from './async-outcome';
 import type { CtxMetadataRef, ResourceKind } from '../ctx-metadata';
 import type { BuyerAgent } from './buyer-agent';
 import type { Recipe } from './proposal';
@@ -228,7 +228,20 @@ export interface RequestContext<TAccount = Account> {
    * to echo it verbatim (e.g. `force_create_media_buy_arm`). The framework uses
    * the supplied id instead of minting a fresh one; `taskCtx.id` reflects it.
    * Constraints: non-empty, ≤ 128 characters. Throws if violated.
+   *
+   * For crash-safe queue workers, pass `{ settlement: 'external' }`. The
+   * callback must durably enqueue `taskCtx.taskRef` and return only after that
+   * write commits; the submitted response waits for it. Returning does not
+   * complete the task; a trusted worker must
+   * settle it through a scoped settlement helper. If the producer callback
+   * throws, the initial invocation fails and the task remains internally
+   * submitted, so the framework cannot acknowledge unrecoverable work or
+   * create a terminal task without its required durable delivery record.
    */
+  handoffToTask(
+    fn: (taskCtx: TaskHandoffContext) => Promise<void>,
+    options: ExternalTaskHandoffOptions
+  ): TaskHandoff<never>;
   handoffToTask<TResult>(
     fn: (taskCtx: TaskHandoffContext) => Promise<TResult>,
     options?: TaskHandoffOptions

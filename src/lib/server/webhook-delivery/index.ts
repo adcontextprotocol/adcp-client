@@ -13,12 +13,16 @@ export {
   createWebhookDeliveryRecovery,
   pollWebhookDeliveryRecovery,
   memoryWebhookDeliveryRecoveryBackend,
+  WebhookAuthenticationProtectionError,
+  WebhookAuthenticationResolutionError,
 } from './recovery';
 export type {
   ProtectedWebhookAuthentication,
   WebhookAuthenticationAdapter,
   WebhookAuthenticationContext,
   StoredWebhookDeliverySnapshot,
+  PreparedWebhookDeliverySnapshot,
+  PrepareWebhookDeliveryOptions,
   WebhookRecoveryRecord,
   WebhookRecoveryLease,
   WebhookRecoveryCheckpointResult,

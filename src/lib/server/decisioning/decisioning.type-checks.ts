@@ -510,6 +510,25 @@ function _sales_platform_handler_results_accept_task_handoff() {
   return sales;
 }
 
+function _sales_platform_handler_results_accept_external_task_handoff() {
+  const sales: SalesCorePlatform<_SocialMeta> & SalesIngestionPlatform<_SocialMeta> = {
+    getProducts: async (_req, ctx) =>
+      ctx.handoffToTask(async taskCtx => void taskCtx.taskRef, { settlement: 'external' }),
+    createMediaBuy: async (_req, ctx) =>
+      ctx.handoffToTask(async taskCtx => void taskCtx.taskRef, { settlement: 'external' }),
+    updateMediaBuy: async (_buyId, _patch, ctx) =>
+      ctx.handoffToTask(async taskCtx => void taskCtx.taskRef, { settlement: 'external' }),
+    getMediaBuyDelivery: async () => ({
+      reporting_period: { start: '2026-01-01', end: '2026-01-31' },
+      media_buy_deliveries: [],
+    }),
+    getMediaBuys: async () => ({ media_buys: [] }),
+    syncCreatives: async (_creatives, ctx) =>
+      ctx.handoffToTask(async taskCtx => void taskCtx.taskRef, { settlement: 'external' }),
+  };
+  return sales;
+}
+
 function _get_products_handler_accepts_sdk_owned_response_summary() {
   const result: GetProductsHandlerResult = withResponseSummary(
     { products: [], cache_scope: 'public' },
