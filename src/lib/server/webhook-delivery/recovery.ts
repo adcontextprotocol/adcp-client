@@ -722,9 +722,6 @@ async function protectAuthentication(
   }
   canonicalJsonSha256(protectedAuth.protectedValue);
   const cleartext = authentication.type === 'bearer' ? authentication.token : authentication.secret;
-  if (cleartext.length < 16) {
-    throw new TypeError('Durable webhook credentials must contain at least 16 characters');
-  }
   if (
     protectedValueContainsSecret(protectedAuth.protectedValue, cleartext) ||
     protectedAuth.fingerprint.includes(cleartext)

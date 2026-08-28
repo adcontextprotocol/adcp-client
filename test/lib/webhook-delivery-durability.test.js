@@ -88,10 +88,10 @@ test('recovery wrapper protects credentials and polling settles only the fenced 
   const liveClaim = await recovery.checkpoint(key, {
     url: 'https://buyer.invalid/hook',
     payload: { task_id: 'task-1' },
-    authentication: { type: 'bearer', token: 'plaintext-input-1' },
+    authentication: { type: 'bearer', token: 'plaintext-input' },
     retries: { maxAttempts: 5, initialDelayMs: 1000, maxDelayMs: 60000, jitter: 0.25 },
   });
-  assert.deepEqual(protectedValues, [{ type: 'bearer', token: 'plaintext-input-1' }]);
+  assert.deepEqual(protectedValues, [{ type: 'bearer', token: 'plaintext-input' }]);
   assert.ok(liveClaim, 'checkpoint atomically reserves the live delivery');
   assert.deepEqual(await recovery.claimPending({ ownerToken: 'blocked-worker', limit: 1 }), []);
   assert.equal(await liveClaim.release(0), true);
