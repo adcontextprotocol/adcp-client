@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.2.0-beta.6/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.2.0-beta.8/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.2.0-beta.6.
+ * Manifest-derived constants for AdCP 3.2.0-beta.8.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.2.0-beta.6/manifest.json` (adcp_version: 3.2.0-beta.6, generated_at:
- * 2026-08-23T20:02:48.262Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.2.0-beta.8/manifest.json` (adcp_version: 3.2.0-beta.8, generated_at:
+ * 2026-08-27T21:12:10.542Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -228,6 +228,16 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     recovery: "correctable",
     suggestion: "revise the creative according to the applicable advertising policy or validated accessibility criteria"
   },
+  "CREATIVE_REPRESENTATION_UNRESOLVED": {
+    description: "No representation in a CreativeRepresentationSet is compatible with the selected target capability or product format option. The resolver MUST retain the complete representation set and MUST include one `error.details.representation_rejections[]` entry per candidate, conforming to `error-details/creative-representation-unresolved.json`; silent seller guessing is forbidden.",
+    recovery: "correctable",
+    suggestion: "inspect every error.details.representation_rejections entry, then choose a compatible format option or supply a compatible representation"
+  },
+  "CREATIVE_REVISION_CONTENT_MISMATCH": {
+    description: "A sync_creatives item reused a revision_id for different canonical revision content under the same creative_id. Revision identity is scoped to the parent creative and immutable after first acceptance. Sellers MUST evaluate the buyer input before transcoding or normalization, MUST leave the prior creative state unchanged, and SHOULD return details conforming to error-details/creative-revision-content-mismatch.json. Distinct from IDEMPOTENCY_CONFLICT: idempotency_key protects one request replay window, while revision identity protects creative content across requests and retention.",
+    recovery: "correctable",
+    suggestion: "resend the exact content previously bound to this revision_id, or mint a new revision_id for changed content"
+  },
   "CREATIVE_VALUE_NOT_ALLOWED": {
     description: "A submitted text-asset value is not in the format's declared `allowed_values` list. Distinct from `CREATIVE_REJECTED` (generic creative-review failure) by being a closed-set constraint violation that the buyer can resolve mechanically without policy interpretation — the seller has published the complete list of acceptable values on the format, and any value outside that list is rejected by definition. The seller MUST set `error.field` to the offending asset's path within the manifest (e.g., `creatives[0].creative_manifest.assets[0].value` or the field name declared by the format) and SHOULD include the format's `allowed_values` array in `error.details.allowed_values` so the buyer agent can re-prompt its LLM with constrained sampling.",
     recovery: "correctable",
@@ -347,6 +357,11 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     description: "One or more catalog items failed schema validation during sync_catalogs.",
     recovery: "correctable",
     suggestion: "check item_issues for per-item rejection reasons and fix the offending items"
+  },
+  "MACRO_RESOLUTION_FAILED": {
+    description: "One or more declared creative macro tokens cannot be resolved or safely preserved under the selected product and seller capability intersection. Sellers MUST include per-token `error.details.macro_resolution_results`, conforming to `error-details/macro-resolution-failed.json`; unknown or ambiguous tokens remain byte-preserved and MUST NOT receive guessed values.",
+    recovery: "correctable",
+    suggestion: "inspect error.details.macro_resolution_results and route to a resolver that supports the declared dialect, semantic, owner, and encoding depth"
   },
   "MEDIA_BUY_NOT_FOUND": {
     description: "Referenced media buy does not exist or is not accessible to the requesting agent.",
@@ -538,6 +553,11 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     recovery: "correctable",
     suggestion: "verify the request targeted the correct brand domain and agent_url, then re-invoke; if the mismatch persists, the responding agent's server-side tenant resolution may be misconfigured"
   },
+  "SOURCE_ACCESS_FAILED": {
+    description: "Seller could not read an external audience source on sync_audiences (experimental, media_buy.audience_activation). Per-audience: surfaces as action: failed with this code in the audience's errors array. The seller cannot reliably distinguish a revoked grant from an expired one from a transient vendor outage — all three observables are a failed read — so error.field distinguishes what the buyer can act on: 'source.locator' or 'source.segment_ref' means the reference does not resolve (changed request needed); 'source' means access denied (establish or re-grant access to the seller's declared consumer identity, then retry); absence of error.field indicates a vendor-side failure (retry with backoff, no buyer action). On an already-ready audience a failed re-read MUST NOT change audience status — membership stays frozen at the last successful read and source.access_status reports 'unavailable'.",
+    recovery: "correctable",
+    suggestion: "error.field source.locator/source.segment_ref: fix the reference; error.field source: grant the seller's declared consumer identity and retry; no error.field: vendor outage, retry with backoff"
+  },
   "STALE_RESPONSE": {
     description: "Non-fatal advisory raised when the seller's live fetch to an upstream or sub-agent failed (timeout, connection error, downstream 5xx) and the response payload was satisfied from a cached prior result that is past the seller's freshness target for this surface. Emitted **alongside** a populated success payload — the caller's request still completes from a usable cache hit; this code tells downstream consumers that the data is older than the seller would normally serve. Distinct from `SERVICE_UNAVAILABLE` (seller's own service is down, no payload — transient, retry-with-backoff) by signalling **graceful degradation**: the seller's own service is fine, but one of its dependencies is currently unreachable and the seller chose to honor the request from cache rather than return empty. Sellers MUST emit `STALE_RESPONSE` ONLY when the response payload is non-empty AND derived from a cache entry whose `cache_age_seconds` exceeds the surface's freshness target. When no cached entry exists (or the cache hit is within freshness target), sellers MUST NOT emit this code — return the empty-or-fresh response with whatever upstream-failure code applies (e.g., `SERVICE_UNAVAILABLE`). **Wire placement (normative).** Transport-level success markers stay flipped to success (HTTP 200, MCP `isError: false`, A2A `succeeded`) — the task ran successfully and produced a response, even if from cache. The advisory rides in `errors[]` on the payload and MUST NOT be promoted to `adcp_error` on the envelope (envelope-level errors are reserved for the empty-payload failure case per the two-layer model in `error-handling.mdx#envelope-vs-payload-errors-the-two-layer-model`). `error.field` SHOULD point at the affected payload path (e.g., `formats` for `list_creative_formats`, `products` for `get_products`). `error.details` SHOULD conform to `error-details/stale-response.json` — `served_from_cache` (required, always `true`), `cache_age_seconds` (required), and optionally `freshness_target_seconds`, `upstream` (the dependency that failed), and `original_error` (the underlying failure code/message). **Multiple stale upstreams.** When N sub-agents are stale (e.g., a `list_creative_formats` registry aggregating from multiple creative agents), the seller SHOULD emit **one `STALE_RESPONSE` entry per affected upstream** rather than aggregating — the per-upstream shape mirrors the existing precedent set by `PIXEL_TRACKER_LOSSY_DOWNGRADE` (one advisory per downgraded asset) and lets buyer agents reason about which sub-population of the payload is stale. Each entry's `error.field` SHOULD narrow to the affected slice (e.g., `formats` for formats sourced from the stale upstream).",
     recovery: "transient",
@@ -579,9 +599,9 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "inspect error.details.reason (not_xml, no_vast_root, no_ad, no_media_file), fix the VAST document, and resubmit"
   },
   "VAST_VERSION_MISMATCH": {
-    description: "A submitted `vast` asset's document declares a `<VAST version>` attribute that does not match the asset's declared `vast_version`, does not satisfy the format's `vast_version` requirement, or is not in the seller's declared `creative_specs.vast_versions`. Returned by sellers performing document-level VAST validation (`creative_specs.vast_validation` of `document` or `wrapper`). Distinct from `VERSION_UNSUPPORTED` (AdCP protocol version negotiation, unrelated to creative documents). Sellers SHOULD set `error.field` to the offending asset path and SHOULD include the accepted versions in `error.details.supported_versions`.",
+    description: "A submitted `vast` asset is version-incompatible when its exact `vast_version` is absent from the intersection of the selected product format option's `params.vast_versions` and the seller's `execution.creative_specs.vast_versions`, or when an inspected document violates its applicable VAST version rule. Modern `error.details` MUST conform to `error-details/vast-version-mismatch.json`: acceptance failures carry `mismatch_reason: asset_outside_acceptance`, `asset_vast_version`, `product_vast_versions`, and `seller_vast_versions`, plus `format_option_ref` only when the selected option is addressable; inspected-document failures carry `mismatch_reason: document_version_mismatch`, `asset_vast_version`, `observed_document_vast_version`, and `document_role`. Only the submitted document is compared for equality with the asset declaration; wrapper and terminal documents are checked against the acceptance intersection. The deprecated `supported_versions` field remains accepted for older 3.x peers. Distinct from `VERSION_UNSUPPORTED`, which concerns AdCP protocol negotiation.",
     recovery: "correctable",
-    suggestion: "re-tag with a version from error.details.supported_versions, or correct the asset's declared vast_version to match the document"
+    suggestion: "inspect error.details.mismatch_reason and the corresponding acceptance-set or observed-document fields; select a compatible source representation or correct the offending VAST document"
   },
   "VAST_WRAPPER_DEPTH_EXCEEDED": {
     description: "Resolving a `vast` asset's wrapper chain failed: the chain exceeded the format's declared `max_wrapper_depth`, revisited a `VASTAdTagURI` already seen in the chain (a loop), or a hop did not resolve within the seller's per-hop timeout. Returned by sellers that declare `creative_specs.vast_validation: \"wrapper\"`. Sellers SHOULD set `error.field` to the offending asset path and SHOULD populate `error.details.reason` with one of `depth`, `loop`, `timeout`, plus `error.details.depth` with the depth reached.",

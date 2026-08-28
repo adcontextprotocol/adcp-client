@@ -172,6 +172,52 @@ writeFileSync(__OUTPUT__, JSON.stringify({
   assert.equal(result.originalBranchesRemainUntouched, true);
 });
 
+test('codegen ignores annotation-only x-* allOf members without collapsing the structural type', () => {
+  const result = runGeneratorHarness(`
+import { writeFileSync } from 'node:fs';
+import { enforceStrictSchema } from __GENERATOR__;
+
+const transformed = enforceStrictSchema({
+  type: 'object',
+  properties: {
+    creative_id: { type: 'string' },
+    action: { type: 'string' },
+  },
+  required: ['creative_id', 'action'],
+  allOf: [{
+    'x-adcp-validation': {
+      verifier_constraints: { revision_echo: { must_equal_request: true } },
+    },
+  }],
+});
+writeFileSync(__OUTPUT__, JSON.stringify(transformed));
+`);
+
+  assert.deepEqual(Object.keys(result.properties), ['creative_id', 'action']);
+  assert.deepEqual(result.required, ['creative_id', 'action']);
+  assert.equal(result.allOf, undefined);
+});
+
+test('codegen keeps lexical anyOf constraints from creating impossible string intersections', () => {
+  const result = runGeneratorHarness(`
+import { writeFileSync } from 'node:fs';
+import { enforceStrictSchema } from __GENERATOR__;
+
+const transformed = enforceStrictSchema({
+  type: 'string',
+  anyOf: [
+    { format: 'uri-template' },
+    { format: 'uri', pattern: '^https?://' },
+    { pattern: '^https?://[^\\\\s]+$' },
+  ],
+});
+writeFileSync(__OUTPUT__, JSON.stringify(transformed));
+`);
+
+  assert.equal(result.type, 'string');
+  assert.equal(result.anyOf, undefined);
+});
+
 test('PostalArea preserves the native branch fields and non-empty values type', () => {
   const result = runGeneratorHarness(`
 import { readFileSync, writeFileSync } from 'node:fs';

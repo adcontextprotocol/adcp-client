@@ -4,7 +4,10 @@ import {
   CreativeStatusSchema,
   ErrorSchema,
   ContextObjectSchema,
+  CreativeLocalizationReadbackSchema,
+  CreativeRevisionIDSchema,
   ExtensionObjectSchema,
+  MacroResolutionResultSchema,
   SyncCreativesErrorSchema,
   SyncCreativesSubmittedSchema,
 } from '../types/schemas.generated';
@@ -29,13 +32,16 @@ const HttpUrlSchema = z
 export const SyncCreativesItemSchema = z
   .object({
     creative_id: z.string(),
+    revision_id: CreativeRevisionIDSchema.optional(),
     action: SyncCreativesActionSchema,
     account: AccountSchema.optional(),
     status: CreativeStatusSchema.optional(),
     platform_id: z.string().optional(),
+    localization: CreativeLocalizationReadbackSchema.optional(),
     changes: z.array(z.string()).optional(),
     errors: z.array(ErrorSchema).optional(),
     warnings: z.array(z.string()).optional(),
+    macro_resolution_results: z.array(MacroResolutionResultSchema).optional(),
     preview_url: HttpUrlSchema.optional(),
     expires_at: z.string().datetime({ offset: true }).optional(),
     assigned_to: z.array(z.string()).optional(),
@@ -45,12 +51,24 @@ export const SyncCreativesItemSchema = z
   })
   .passthrough()
   .superRefine((item, ctx) => {
-    // Spec: when action ∈ {failed, deleted}, `status` MUST be absent.
-    if ((item.action === 'failed' || item.action === 'deleted') && item.status !== undefined) {
+    // Spec: failed/deleted items have no review, localization, or revision state.
+    if (item.action === 'failed' || item.action === 'deleted') {
+      for (const field of ['status', 'localization', 'revision_id'] as const) {
+        if (item[field] !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [field],
+            message: `${field} must be omitted when action is '${item.action}'`,
+          });
+        }
+      }
+    }
+
+    if (item.localization !== undefined && item.status === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['status'],
-        message: `status must be omitted when action is '${item.action}'`,
+        message: 'status is required when localization is present',
       });
     }
   });
@@ -72,12 +90,10 @@ export type SyncCreativesSuccessStrict = z.infer<typeof SyncCreativesSuccessStri
 /**
  * Strict response schema for sync_creatives.
  *
- * The generated `SyncCreativesResponseSchema` degrades `creatives[]` to
- * `z.array(z.record(z.string(), z.unknown()))` because the upstream JSON
- * Schema inlines the item shape without a named $ref. This schema supplies
- * the per-item shape (creative_id + action required, plus the spec's
- * conditional that forbids `status` on failed/deleted items) so strict
- * response validation catches per-item drift at the SDK boundary.
+ * This hand-authored strict projection preserves the beta.8 per-item fields
+ * and the cross-field conditions that TypeScript-to-Zod generation cannot
+ * express: failed/deleted rows omit lifecycle state, and localization
+ * readback requires an enclosing creative status.
  */
 export const SyncCreativesResponseStrictSchema = z.union([
   SyncCreativesSuccessStrictSchema,

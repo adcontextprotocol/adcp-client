@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-08-27
+> Generated at: 2026-08-28
 > @adcp/sdk v14.0.0-beta.13
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -1067,6 +1067,9 @@ _Request:_
   governance_context: string
   message: string
   creative_manifest: Creative Manifest
+  creative_representation_set: Creative Representation Set
+  representation_destination: Representation Destination
+  representation_selection_strategy: Representation Selection Strategy
   creative_id: string
   concept_id: string
   media_buy_id: string

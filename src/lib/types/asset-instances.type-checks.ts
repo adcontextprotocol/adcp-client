@@ -42,6 +42,8 @@ function describeAsset(asset: AssetInstance): string {
       return asset.content;
     case 'url':
       return asset.url;
+    case 'display_tag':
+      return asset.delivery_type;
     case 'css':
     case 'javascript':
     case 'markdown':
@@ -98,6 +100,7 @@ const _all_types: AssetInstanceType[] = [
   'text',
   'html',
   'url',
+  'display_tag',
   'css',
   'javascript',
   'markdown',

@@ -18,7 +18,9 @@ import { fileURLToPath } from 'node:url';
 // npm reports published package size in MB and issue #2579 set a 20 MB target.
 const MAX_PACKED_TARBALL_BYTES = 20_000_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
-const MAX_PACKED_FILE_COUNT = 5_800;
+// AdCP 3.2.0-beta.8 adds generated tool slices and declaration facades while
+// keeping the compact schema archives and total byte budgets unchanged.
+const MAX_PACKED_FILE_COUNT = 5_900;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

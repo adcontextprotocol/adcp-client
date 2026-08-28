@@ -134,6 +134,8 @@ export const CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_ReferenceM
 
 // ====== CanonicalFormatDisplayTag ======
 
+/** array of | CanonicalFormatDisplayTag.supported_delivery_types */
+export const CanonicalFormatDisplayTag_SupportedDeliveryTypesValues = ["tag_url", "inline_markup", "paired_redirect"] as const;
 /** array of | CanonicalFormatDisplayTag.supported_tag_types */
 export const CanonicalFormatDisplayTag_SupportedTagTypesValues = ["iframe", "javascript", "1x1_redirect"] as const;
 
@@ -325,6 +327,11 @@ export const CreativeVariable_VariableTypeValues = ["text", "image", "video", "a
 /** single | DAASTTrackerAsset.target */
 export const DAASTTrackerAsset_TargetValues = ["linear", "companion"] as const;
 
+// ====== DAASTTrackerConstraints ======
+
+/** single | DAASTTrackerConstraints.daast_event */
+export const DAASTTrackerConstraints_DaastEventValues = ["creativeView", "start", "firstQuartile", "midpoint", "thirdQuartile", "complete", "mute", "unmute", "pause", "resume", "rewind", "skip", "progress", "close"] as const;
+
 // ====== DestinationItem ======
 
 /** single | DestinationItem.destination_type */
@@ -473,6 +480,11 @@ export const Impact_EffectValues = ["preserved", "revalidation_required", "revok
 /** single | Impairment.resource_type */
 export const Impairment_ResourceTypeValues = ["audience", "creative", "catalog_item", "event_source", "property"] as const;
 
+// ====== InlineMarkup ======
+
+/** single | InlineMarkup.markup_type */
+export const InlineMarkup_MarkupTypeValues = ["iframe_javascript", "javascript", "standard"] as const;
+
 // ====== JavaScriptAssetRequirements ======
 
 /** single | JavaScriptAssetRequirements.module_type */
@@ -496,6 +508,28 @@ export const ListCreativeFormatsResponse_SourceValues = ["publisher", "aao_mirro
 export const ListCreativesRequest_AssignmentProjectionValues = ["all", "matching"] as const;
 /** array of | ListCreativesRequest.fields */
 export const ListCreativesRequest_FieldsValues = ["creative_id", "name", "format_id", "format_kind", "format_option_ref", "assets", "status", "created_date", "updated_date", "tags", "rights", "rights_attestation_evaluations", "localization", "localization_unavailable", "assignments", "snapshot", "items", "variables", "concept", "pricing_options"] as const;
+
+// ====== MacroDeclaration ======
+
+/** single | MacroDeclaration.unavailable_behavior */
+export const MacroDeclaration_UnavailableBehaviorValues = ["preserve", "omit_parameter", "dialect_sentinel", "reject"] as const;
+
+// ====== MacroEncoding ======
+
+/** single | MacroEncoding.kind */
+export const MacroEncoding_KindValues = ["none", "rfc3986", "iab_vast_uri"] as const;
+
+// ====== MacroProcessingCapability ======
+
+/** single | MacroProcessingCapability.mapping_status */
+export const MacroProcessingCapability_MappingStatusValues = ["verified_universal", "dialect_defined"] as const;
+/** single | MacroProcessingCapability.operation */
+export const MacroProcessingCapability_OperationValues = ["translate_to_native", "resolve_value"] as const;
+
+// ====== MacroResolutionResult ======
+
+/** single | MacroResolutionResult.status */
+export const MacroResolutionResult_StatusValues = ["resolvable", "preserved_for_downstream", "unsupported", "ambiguous"] as const;
 
 // ====== MediaBuyAvailableAction ======
 
@@ -538,8 +572,6 @@ export const PerformanceFeedback_StatusValues = ["accepted", "queued", "applied"
 
 // ====== PixelTrackerAsset ======
 
-/** single | PixelTrackerAsset.event */
-export const PixelTrackerAsset_EventValues = ["impression", "viewable_mrc_50", "viewable_mrc_100", "viewable_video_50", "audible_video_complete", "click", "custom"] as const;
 /** single | PixelTrackerAsset.method */
 export const PixelTrackerAsset_MethodValues = ["img", "js"] as const;
 
@@ -647,6 +679,11 @@ export const ReportPlanAdjustmentResponse_AdjustmentStateValues = ["reported", "
 export const ReportPlanOutcomeResponse_DeliveryReconciliationStatusValues = ["consistent", "measurement_variance", "disputed", "unmatched", "closed_unresolved"] as const;
 /** single | ReportPlanOutcomeResponse.outcome_state */
 export const ReportPlanOutcomeResponse_OutcomeStateValues = ["accepted", "findings"] as const;
+
+// ====== RepresentationRejection ======
+
+/** single | RepresentationRejection.code */
+export const RepresentationRejection_CodeValues = ["incompatible_format_kind", "format_option_mismatch", "unsupported_delivery_type", "vast_version_mismatch", "macro_unsupported", "tracker_contract_mismatch", "asset_requirement_failed", "other"] as const;
 
 // ====== ResponsePayload ======
 
@@ -780,6 +817,11 @@ export const ValidationResult_StatusValues = ["compliant", "non_compliant", "not
 
 /** single | VASTTrackerAsset.target */
 export const VASTTrackerAsset_TargetValues = ["linear", "non_linear", "companion"] as const;
+
+// ====== VASTTrackerConstraints ======
+
+/** single | VASTTrackerConstraints.vast_event */
+export const VASTTrackerConstraints_VastEventValues = ["creativeView", "loaded", "start", "firstQuartile", "midpoint", "thirdQuartile", "complete", "mute", "unmute", "pause", "resume", "rewind", "skip", "playerExpand", "playerCollapse", "fullscreen", "exitFullscreen", "progress", "acceptInvitation", "adExpand", "adCollapse", "minimize", "overlayViewDuration", "otherAdInteraction", "interactiveStart", "close", "closeLinear"] as const;
 
 // ====== VehicleItem ======
 
@@ -932,9 +974,15 @@ export const CreativeBrief_ObjectiveValues = BriefAsset_ObjectiveValues;
 // --- CreativeLocalizationReadback ---
 /** @deprecated use `CreativeLocalization_UnmatchedLocaleActionValues` — same literal set, CreativeLocalizationReadback.unmatched_locale_action duplicates the canonical export. */
 export const CreativeLocalizationReadback_UnmatchedLocaleActionValues = CreativeLocalization_UnmatchedLocaleActionValues;
+// --- CreativeOperationFormatDeclaration ---
+/** @deprecated use `CanonicalFormatOption_SellerPreferenceValues` — same literal set, CreativeOperationFormatDeclaration.seller_preference duplicates the canonical export. */
+export const CreativeOperationFormatDeclaration_SellerPreferenceValues = CanonicalFormatOption_SellerPreferenceValues;
 // --- CreativeStatusChangedWebhook ---
 /** @deprecated use `CreativePurgedWebhook_InitiatorValues` — same literal set, CreativeStatusChangedWebhook.initiator duplicates the canonical export. */
 export const CreativeStatusChangedWebhook_InitiatorValues = CreativePurgedWebhook_InitiatorValues;
+// --- DAASTTrackerConstraints ---
+/** @deprecated use `DAASTTrackerAsset_TargetValues` — same literal set, DAASTTrackerConstraints.target duplicates the canonical export. */
+export const DAASTTrackerConstraints_TargetValues = DAASTTrackerAsset_TargetValues;
 // --- Error ---
 /** @deprecated use `CatalogItemAvailabilityError_RecoveryValues` — same literal set, Error.recovery duplicates the canonical export. */
 export const Error_RecoveryValues = CatalogItemAvailabilityError_RecoveryValues;
@@ -952,6 +1000,9 @@ export const GetSignalsCompletion_CacheScopeValues = GetProductsCompletion_Cache
 // --- GetSignalsResponse ---
 /** @deprecated use `GetProductsCompletion_CacheScopeValues` — same literal set, GetSignalsResponse.cache_scope duplicates the canonical export. */
 export const GetSignalsResponse_CacheScopeValues = GetProductsCompletion_CacheScopeValues;
+// --- MacroResolutionResult ---
+/** @deprecated use `MacroDeclaration_UnavailableBehaviorValues` — same literal set, MacroResolutionResult.unavailable_behavior duplicates the canonical export. */
+export const MacroResolutionResult_UnavailableBehaviorValues = MacroDeclaration_UnavailableBehaviorValues;
 // --- MediaBuyDeliveryWebhookResult ---
 /** @deprecated use `GetMediaBuyDeliveryResponse_NotificationTypeValues` — same literal set, MediaBuyDeliveryWebhookResult.notification_type duplicates the canonical export. */
 export const MediaBuyDeliveryWebhookResult_NotificationTypeValues = GetMediaBuyDeliveryResponse_NotificationTypeValues;
@@ -992,6 +1043,9 @@ export const SignalSelectionGroupRule_TargetingModeValues = FeatureRequirement_I
 // --- SignalTargetingRules ---
 /** @deprecated use `SignalSelectionGroupRule_SelectionModeValues` — same literal set, SignalTargetingRules.selection_mode duplicates the canonical export. */
 export const SignalTargetingRules_SelectionModeValues = SignalSelectionGroupRule_SelectionModeValues;
+// --- VASTTrackerConstraints ---
+/** @deprecated use `VASTTrackerAsset_TargetValues` — same literal set, VASTTrackerConstraints.target duplicates the canonical export. */
+export const VASTTrackerConstraints_TargetValues = VASTTrackerAsset_TargetValues;
 // --- VerifyBrandClaimsResultSuccess ---
 /** @deprecated use `SignedSuccessPayload_ClaimTypeValues` — same literal set, VerifyBrandClaimsResultSuccess.claim_type duplicates the canonical export. */
 export const VerifyBrandClaimsResultSuccess_ClaimTypeValues = SignedSuccessPayload_ClaimTypeValues;
