@@ -1,7 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { evaluateReportingLedger, loadReportingLedger, reconcileReporting } = require('../dist/lib/index.js');
+const {
+  buildReportingReceipt,
+  evaluateReportingLedger,
+  loadReportingLedger,
+  reconcileReporting,
+} = require('../dist/lib/index.js');
 
 const period = {
   start: '2026-08-01T00:00:00Z',
@@ -190,6 +195,35 @@ test('reconciles a closed billing period, retries inspection, and records a matc
       rowCount: 7,
       controlTotals: totals,
     },
+  ]);
+});
+
+test('records a rejected receipt when consumer billing evidence differs', () => {
+  const raw = response([]);
+  const receipt = buildReportingReceipt(
+    {
+      obligation: raw.periods[0],
+      revision: raw.revisions[0],
+      materialization: raw.materializations[0],
+    },
+    {
+      rowCount: 8,
+      controlTotals: [
+        { name: 'impressions', value: '4199', value_type: 'integer', unit: 'impressions' },
+        { name: 'spend', value: '7000.00', value_type: 'decimal', unit: 'USD' },
+      ],
+      canonicalContentDigest: { ...digest, value: 'd'.repeat(64) },
+      consumerCommitRef: 'buyer-ledger-disputed-42',
+    },
+    'reporting-receipt:billing-dispute',
+    '2026-09-02T00:01:00Z'
+  );
+
+  assert.equal(receipt.status, 'rejected');
+  assert.deepEqual(receipt.rejection_codes, [
+    'ROW_COUNT_MISMATCH',
+    'CONTROL_TOTAL_MISMATCH',
+    'CANONICAL_DIGEST_MISMATCH',
   ]);
 });
 
