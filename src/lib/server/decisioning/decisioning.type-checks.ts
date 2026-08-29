@@ -73,6 +73,7 @@ import {
   defineSignalsPlatform,
   definePlatformWithCompliance,
   createAdcpServerFromPlatform,
+  createTenantRegistry,
 } from './index';
 import type { ComplyControllerConfig } from '../../testing/comply-controller';
 import type { CanonicalListCreativesResponse } from '../../v2/projection/creative-delivery';
@@ -273,6 +274,38 @@ createAdcpServerFromPlatform(_legacy_only_generic_platform, {
         const advertiserId: string = ctx.account!.ctx_metadata.advertiserId;
         void advertiserId;
         return { media_buys: [] };
+      },
+    },
+  },
+});
+
+const _typed_tenant_registry = createTenantRegistry<Account<GAMAccountMeta>>({
+  defaultServerOptions: {
+    name: 'typed-tenant-registry',
+    version: '1.0.0',
+    legacyHandlers: {
+      mediaBuy: {
+        getMediaBuys: async (_req, ctx) => {
+          const networkId: string = ctx.account!.ctx_metadata.networkId;
+          void networkId;
+          return { media_buys: [] };
+        },
+      },
+    },
+  },
+});
+
+_typed_tenant_registry.register('typed-tenant', {
+  agentUrl: 'https://typed-tenant.example',
+  platform: _mixed_generic_platform,
+  serverOptions: {
+    legacyHandlers: {
+      signals: {
+        getSignals: async (_req, ctx) => {
+          const advertiserId: string = ctx.account!.ctx_metadata.advertiserId;
+          void advertiserId;
+          return { signals: [] };
+        },
       },
     },
   },

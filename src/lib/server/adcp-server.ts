@@ -352,6 +352,9 @@ export const ADCP_TOOL_VISIBILITY: unique symbol = Symbol.for('@adcp/client.tool
 /** Framework-owned per-tool protocol-release availability. @internal */
 export const ADCP_TOOL_VERSION_AVAILABILITY: unique symbol = Symbol.for('@adcp/client.toolVersionAvailability');
 
+/** Negotiated/default AdCP release used by transport discovery. @internal */
+export const ADCP_DISCOVERY_VERSION_RESOLVER: unique symbol = Symbol.for('@adcp/client.discoveryVersionResolver');
+
 /** Resolved MCP tool catalog attached by createAdcpServer. @internal */
 export const ADCP_MCP_TOOL_PROFILE: unique symbol = Symbol.for('@adcp/client.mcpToolProfile');
 
@@ -372,10 +375,14 @@ export type AdcpToolVisibilityResolver = (options: {
 export type AdcpToolVersionAvailabilityResolver = (toolName: string, adcpVersion: string) => boolean;
 
 /** @internal */
+export type AdcpDiscoveryVersionResolver = (requestedVersion?: string) => string;
+
+/** @internal */
 export interface AdcpServerInternal extends AdcpServer {
   readonly [ADCP_SDK_SERVER]: McpServer;
   [ADCP_TOOL_VISIBILITY]?: AdcpToolVisibilityResolver;
   [ADCP_TOOL_VERSION_AVAILABILITY]?: AdcpToolVersionAvailabilityResolver;
+  [ADCP_DISCOVERY_VERSION_RESOLVER]?: AdcpDiscoveryVersionResolver;
   [ADCP_MCP_TOOL_PROFILE]?: ResolvedAdcpMcpToolProfile;
   [ADCP_MCP_APP_RESOURCES]?: readonly AdcpMcpResourceDefinition[];
 }
@@ -414,6 +421,22 @@ export function setToolVersionAvailabilityResolver(
 export function isToolAvailableForVersion(server: AdcpServer, toolName: string, adcpVersion: string): boolean {
   const resolver = (server as AdcpServerInternal)[ADCP_TOOL_VERSION_AVAILABILITY];
   return resolver ? resolver(toolName, adcpVersion) : true;
+}
+
+/** Attach the global-version negotiation used by transport discovery. @internal */
+export function setDiscoveryVersionResolver(server: AdcpServer, resolver: AdcpDiscoveryVersionResolver): void {
+  Object.defineProperty(server, ADCP_DISCOVERY_VERSION_RESOLVER, {
+    value: resolver,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+}
+
+/** Resolve a requested discovery version, falling back to the server pin. @internal */
+export function resolveDiscoveryVersion(server: AdcpServer, requestedVersion?: string): string {
+  const resolver = (server as AdcpServerInternal)[ADCP_DISCOVERY_VERSION_RESOLVER];
+  return resolver ? resolver(requestedVersion) : server.getAdcpVersion();
 }
 
 /** Attach the resolved static MCP catalog for transport adapters. @internal */

@@ -10,6 +10,7 @@ const assert = require('node:assert');
 
 const {
   createAdcpServerFromPlatform,
+  createInMemoryTaskRegistry,
   InMemoryProposalStore,
   withResponseSummary,
 } = require('../../dist/lib/server/index.js');
@@ -464,6 +465,226 @@ test('e2e: createMediaBuy with proposal_id reserves + hydrates ctx.recipes + fin
   const record = store.get('p1', { expectedAccountId: 'acct_1' });
   assert.strictEqual(record.state, 'consumed');
   assert.strictEqual(record.mediaBuyId, 'mb_xyz');
+});
+
+test('e2e: proposal-backed createMediaBuy handoff finalizes after task success', async () => {
+  const store = new InMemoryProposalStore();
+  store.putDraft({
+    proposalId: 'p-handoff-success',
+    accountId: 'acct_1',
+    recipes: new Map([['prod_a', { recipe_kind: 'mock', sku: 'async-a' }]]),
+    proposalPayload: { proposal_id: 'p-handoff-success' },
+  });
+  store.commit('p-handoff-success', {
+    expectedAccountId: 'acct_1',
+    expiresAt: new Date(Date.now() + 60_000),
+    proposalPayload: { proposal_id: 'p-handoff-success' },
+  });
+  const server = createAdcpServerFromPlatform(
+    buildPlatform({
+      proposalManager: undefined,
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async (_params, ctx) =>
+          ctx.handoffToTask(async () => ({
+            media_buy_id: 'mb-handoff-success',
+            buyer_ref: 'br',
+            packages: [],
+            status: 'pending_creative',
+          })),
+      },
+    }),
+    { name: 'e2e', version: '1.0', proposalStore: store, validation: { requests: 'off', responses: 'off' } }
+  );
+  const response = await server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: { proposal_id: 'p-handoff-success', idempotency_key: 'idem-handoff-success-0001' },
+      },
+    },
+    { authInfo }
+  );
+  await server.awaitTaskUnsafe(response.structuredContent.task_id);
+  const record = store.get('p-handoff-success', { expectedAccountId: 'acct_1' });
+  assert.strictEqual(record.state, 'consumed');
+  assert.strictEqual(record.mediaBuyId, 'mb-handoff-success');
+});
+
+test('e2e: invalid push configuration is rejected before proposal reservation', async () => {
+  const store = new InMemoryProposalStore();
+  let calls = 0;
+  store.putDraft({
+    proposalId: 'p-invalid-push',
+    accountId: 'acct_1',
+    recipes: new Map(),
+    proposalPayload: { proposal_id: 'p-invalid-push' },
+  });
+  store.commit('p-invalid-push', {
+    expectedAccountId: 'acct_1',
+    expiresAt: new Date(Date.now() + 60_000),
+    proposalPayload: { proposal_id: 'p-invalid-push' },
+  });
+  const server = createAdcpServerFromPlatform(
+    buildPlatform({
+      proposalManager: undefined,
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => {
+          calls += 1;
+          return { media_buy_id: 'must-not-run', packages: [] };
+        },
+      },
+    }),
+    { name: 'e2e', version: '1.0', proposalStore: store, validation: { requests: 'off', responses: 'off' } }
+  );
+  const response = await server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          proposal_id: 'p-invalid-push',
+          idempotency_key: 'idem-invalid-push-0001',
+          push_notification_config: { url: 'https://127.0.0.1/hook', operation_id: 'invalid-push' },
+        },
+      },
+    },
+    { authInfo }
+  );
+  assert.strictEqual(response.isError, true);
+  assert.strictEqual(calls, 0);
+  assert.strictEqual(store.get('p-invalid-push', { expectedAccountId: 'acct_1' }).state, 'committed');
+});
+
+test('e2e: proposal-backed createMediaBuy handoff releases after task failure', async () => {
+  const store = new InMemoryProposalStore();
+  store.putDraft({
+    proposalId: 'p-handoff-failure',
+    accountId: 'acct_1',
+    recipes: new Map(),
+    proposalPayload: { proposal_id: 'p-handoff-failure' },
+  });
+  store.commit('p-handoff-failure', {
+    expectedAccountId: 'acct_1',
+    expiresAt: new Date(Date.now() + 60_000),
+    proposalPayload: { proposal_id: 'p-handoff-failure' },
+  });
+  const server = createAdcpServerFromPlatform(
+    buildPlatform({
+      proposalManager: undefined,
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async (_params, ctx) =>
+          ctx.handoffToTask(async () => {
+            throw new Error('async seller failure');
+          }),
+      },
+    }),
+    { name: 'e2e', version: '1.0', proposalStore: store, validation: { requests: 'off', responses: 'off' } }
+  );
+  const response = await server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: { proposal_id: 'p-handoff-failure', idempotency_key: 'idem-handoff-failure-0001' },
+      },
+    },
+    { authInfo }
+  );
+  await server.awaitTaskUnsafe(response.structuredContent.task_id);
+  assert.strictEqual(store.get('p-handoff-failure', { expectedAccountId: 'acct_1' }).state, 'committed');
+});
+
+test('e2e: proposal-backed handoff keeps its fence when terminal success has no media_buy_id', async () => {
+  const store = new InMemoryProposalStore();
+  store.putDraft({
+    proposalId: 'p-handoff-missing-id',
+    accountId: 'acct_1',
+    recipes: new Map(),
+    proposalPayload: { proposal_id: 'p-handoff-missing-id' },
+  });
+  store.commit('p-handoff-missing-id', {
+    expectedAccountId: 'acct_1',
+    expiresAt: new Date(Date.now() + 60_000),
+    proposalPayload: { proposal_id: 'p-handoff-missing-id' },
+  });
+  const server = createAdcpServerFromPlatform(
+    buildPlatform({
+      proposalManager: undefined,
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async (_params, ctx) =>
+          ctx.handoffToTask(async () => ({ buyer_ref: 'br', packages: [], status: 'pending_creative' })),
+      },
+    }),
+    { name: 'e2e', version: '1.0', proposalStore: store, validation: { requests: 'off', responses: 'off' } }
+  );
+  const response = await server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: { proposal_id: 'p-handoff-missing-id', idempotency_key: 'idem-handoff-missing-id-0001' },
+      },
+    },
+    { authInfo }
+  );
+  await server.awaitTaskUnsafe(response.structuredContent.task_id);
+  assert.strictEqual(store.get('p-handoff-missing-id', { expectedAccountId: 'acct_1' }).state, 'consuming');
+});
+
+test('e2e: proposal-backed handoff releases when task allocation fails', async () => {
+  const store = new InMemoryProposalStore();
+  store.putDraft({
+    proposalId: 'p-handoff-allocation-failure',
+    accountId: 'acct_1',
+    recipes: new Map(),
+    proposalPayload: { proposal_id: 'p-handoff-allocation-failure' },
+  });
+  store.commit('p-handoff-allocation-failure', {
+    expectedAccountId: 'acct_1',
+    expiresAt: new Date(Date.now() + 60_000),
+    proposalPayload: { proposal_id: 'p-handoff-allocation-failure' },
+  });
+  const taskRegistry = createInMemoryTaskRegistry();
+  taskRegistry.create = async () => {
+    throw new Error('task allocation unavailable');
+  };
+  const server = createAdcpServerFromPlatform(
+    buildPlatform({
+      proposalManager: undefined,
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async (_params, ctx) =>
+          ctx.handoffToTask(async () => ({ media_buy_id: 'never-created', packages: [] })),
+      },
+    }),
+    {
+      name: 'e2e',
+      version: '1.0',
+      proposalStore: store,
+      taskRegistry,
+      validation: { requests: 'off', responses: 'off' },
+    }
+  );
+  const response = await server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          proposal_id: 'p-handoff-allocation-failure',
+          idempotency_key: 'idem-handoff-allocation-failure-0001',
+        },
+      },
+    },
+    { authInfo }
+  );
+  assert.strictEqual(response.isError, true);
+  assert.strictEqual(store.get('p-handoff-allocation-failure', { expectedAccountId: 'acct_1' }).state, 'committed');
 });
 
 test('e2e: createMediaBuy adapter throw → reservation rolled back to COMMITTED', async () => {

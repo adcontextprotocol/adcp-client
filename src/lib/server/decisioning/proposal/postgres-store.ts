@@ -2,6 +2,7 @@
 
 import { AdcpError } from '../async-outcome';
 import { isDeepStrictEqual } from 'node:util';
+import { scanArgsForCredentials } from '../../credential-policy';
 import type { Recipe } from './types';
 import type { ProposalRecord, ProposalStore } from './store';
 
@@ -27,8 +28,10 @@ export interface ProposalStoreMigrationOptions {
 const DEFAULT_TABLE = 'adcp_decisioning_proposals';
 const IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
 const NAMESPACE = /^[A-Za-z0-9_.:-]{1,255}$/;
-const SENSITIVE_KEY =
-  /(?:^|_)(?:authorization|bearer|credential|password|secret|token|private_key|api_key|auth_info|ctx_metadata)(?:$|_)/i;
+const CAPABILITY_OVERLAP_KEYS = ['pricingModels', 'targetingDimensions', 'deliveryTypes', 'signalTypes'] as const;
+const STORAGE_CREDENTIAL_PATTERNS = {
+  extend: [/^auth[._\s/-]?info$/i, /^ctx[._\s/-]?metadata$/i],
+};
 
 function quoteTable(raw = DEFAULT_TABLE): string {
   if (!IDENTIFIER.test(raw) || Buffer.byteLength(raw, 'utf8') > 40) {
@@ -52,6 +55,10 @@ function validateNamespace(value: unknown): asserts value is string {
 }
 
 function jsonForStorage(value: unknown, label: string, maxBytes: number): string {
+  const credentialPaths = scanArgsForCredentials(value, STORAGE_CREDENTIAL_PATTERNS);
+  if (credentialPaths.length > 0) {
+    throw new TypeError(`${label}.${credentialPaths[0]} contains credential material or server-only metadata.`);
+  }
   const seen = new Set<object>();
   const visit = (item: unknown, path: string): void => {
     if (item === null || typeof item === 'string' || typeof item === 'boolean') return;
@@ -62,17 +69,19 @@ function jsonForStorage(value: unknown, label: string, maxBytes: number): string
     if (typeof item !== 'object') throw new TypeError(`${label}${path} is not JSON-safe.`);
     if (seen.has(item)) throw new TypeError(`${label}${path} contains a circular reference.`);
     seen.add(item);
-    if (Array.isArray(item)) item.forEach((entry, index) => visit(entry, `${path}[${index}]`));
-    else {
+    if (Array.isArray(item)) {
+      if (
+        typeof item[0] === 'string' &&
+        scanArgsForCredentials({ [item[0]]: true }, STORAGE_CREDENTIAL_PATTERNS).length
+      ) {
+        throw new TypeError(`${label}${path}[0] contains a credential-shaped tuple key.`);
+      }
+      item.forEach((entry, index) => visit(entry, `${path}[${index}]`));
+    } else {
       const proto = Object.getPrototypeOf(item);
       if (proto !== Object.prototype && proto !== null)
         throw new TypeError(`${label}${path} must contain plain JSON objects.`);
-      for (const [key, entry] of Object.entries(item as Record<string, unknown>)) {
-        const normalizedKey = key.replace(/([a-z0-9])([A-Z])/g, '$1_$2');
-        if (SENSITIVE_KEY.test(normalizedKey))
-          throw new TypeError(`${label}${path}.${key} contains credential material or server-only metadata.`);
-        visit(entry, `${path}.${key}`);
-      }
+      for (const [key, entry] of Object.entries(item as Record<string, unknown>)) visit(entry, `${path}.${key}`);
     }
     seen.delete(item);
   };
@@ -80,6 +89,51 @@ function jsonForStorage(value: unknown, label: string, maxBytes: number): string
   const json = JSON.stringify(value);
   if (Buffer.byteLength(json, 'utf8') > maxBytes) throw new RangeError(`${label} exceeds ${maxBytes} UTF-8 bytes.`);
   return json;
+}
+
+function recipesForStorage<TRecipe extends Recipe>(recipes: ReadonlyMap<string, TRecipe>): Record<string, unknown> {
+  return Object.fromEntries(
+    [...recipes].map(([productId, recipe]) => {
+      const overlap = recipe.capability_overlap;
+      if (!overlap) return [productId, recipe];
+      const encodedOverlap: Record<string, unknown> = { ...overlap };
+      for (const key of CAPABILITY_OVERLAP_KEYS) {
+        const values = overlap[key];
+        if (values !== undefined) encodedOverlap[key] = [...values];
+      }
+      return [productId, { ...recipe, capability_overlap: encodedOverlap }];
+    })
+  );
+}
+
+function recipesFromStorage<TRecipe extends Recipe>(value: Record<string, unknown>): Map<string, TRecipe> {
+  return new Map(
+    Object.entries(value).map(([productId, rawRecipe]) => {
+      if (rawRecipe == null || typeof rawRecipe !== 'object' || Array.isArray(rawRecipe)) {
+        throw internal('Stored proposal recipe is corrupt.');
+      }
+      const recipe = rawRecipe as Record<string, unknown>;
+      const rawOverlap = recipe.capability_overlap;
+      if (rawOverlap == null) return [productId, recipe as TRecipe];
+      if (typeof rawOverlap !== 'object' || Array.isArray(rawOverlap)) {
+        throw internal('Stored proposal capability overlap is corrupt.');
+      }
+      const overlap: Record<string, unknown> = { ...(rawOverlap as Record<string, unknown>) };
+      for (const key of CAPABILITY_OVERLAP_KEYS) {
+        const values = overlap[key];
+        if (values === undefined) continue;
+        if (!Array.isArray(values) || values.some(entry => typeof entry !== 'string')) {
+          throw internal('Stored proposal capability overlap is corrupt.');
+        }
+        overlap[key] = new Set(values);
+      }
+      return [productId, { ...recipe, capability_overlap: overlap } as unknown as TRecipe];
+    })
+  );
+}
+
+function postgresError(operation: string, cause: unknown): Error {
+  return new Error(`PostgresProposalStore.${operation}: database operation failed`, { cause });
 }
 
 function internal(message: string): AdcpError {
@@ -104,7 +158,7 @@ function rowToRecord<TRecipe extends Recipe>(row: Record<string, unknown>): Prop
     proposalId: String(row.proposal_id),
     accountId: String(row.account_id),
     state: row.state as ProposalRecord<TRecipe>['state'],
-    recipes: new Map(Object.entries(row.recipes as Record<string, TRecipe>)),
+    recipes: recipesFromStorage<TRecipe>(row.recipes as Record<string, unknown>),
     proposalPayload: structuredClone(row.proposal_payload as Record<string, unknown>),
     ...(expiresAt !== undefined && { expiresAt }),
     ...(row.media_buy_id != null && { mediaBuyId: String(row.media_buy_id) }),
@@ -157,9 +211,33 @@ export class PostgresProposalStore<TRecipe extends Recipe = Recipe> implements P
     this.maxPayloadBytes = positive(options.maxPayloadBytes, 1024 * 1024, 'maxPayloadBytes');
   }
 
+  private async query(operation: string, text: string, values?: unknown[]): ReturnType<ProposalPgQueryable['query']> {
+    try {
+      return await this.db.query(text, values);
+    } catch (cause) {
+      throw postgresError(operation, cause);
+    }
+  }
+
+  private async legacyAccountId(proposalId: string): Promise<string | undefined> {
+    const result = await this.query(
+      'resolveLegacyAccountId',
+      `SELECT account_id FROM ${this.table}
+       WHERE deployment_namespace=$1 AND proposal_id=$2 ORDER BY account_id LIMIT 2`,
+      [this.namespace, proposalId]
+    );
+    if (result.rows.length > 1) {
+      throw internal(
+        `Proposal ${JSON.stringify(proposalId)} exists in multiple tenant scopes; expectedAccountId is required.`
+      );
+    }
+    const accountId = result.rows[0]?.account_id;
+    return typeof accountId === 'string' ? accountId : undefined;
+  }
+
   async probe(): Promise<void> {
     try {
-      await this.db.query(`SELECT 1 FROM ${this.table} WHERE deployment_namespace=$1 LIMIT 1`, [this.namespace]);
+      await this.query('probe', `SELECT 1 FROM ${this.table} WHERE deployment_namespace=$1 LIMIT 1`, [this.namespace]);
     } catch (cause) {
       throw new Error('Postgres proposal store probe failed; run getProposalStoreMigration() before serving.', {
         cause,
@@ -169,11 +247,12 @@ export class PostgresProposalStore<TRecipe extends Recipe = Recipe> implements P
 
   async cleanupExpired(limit = 1000): Promise<number> {
     const bounded = Math.min(positive(limit, 1000, 'limit'), 10_000);
-    const result = await this.db.query(
+    const result = await this.query(
+      'cleanupExpired',
       `DELETE FROM ${this.table} WHERE ctid IN (
          SELECT ctid FROM ${this.table} WHERE deployment_namespace=$1 AND (
            (state='draft' AND created_at < NOW() - ($2 * INTERVAL '1 second')) OR
-           (state<>'draft' AND expires_at IS NOT NULL AND expires_at < NOW() - ($3 * INTERVAL '1 second'))
+           (state IN ('committed','consumed') AND expires_at IS NOT NULL AND expires_at < NOW() - ($3 * INTERVAL '1 second'))
          ) ORDER BY COALESCE(expires_at, created_at) LIMIT $4
        )`,
       [this.namespace, this.draftTtlSeconds, this.committedGraceSeconds, bounded]
@@ -187,9 +266,10 @@ export class PostgresProposalStore<TRecipe extends Recipe = Recipe> implements P
     recipes: ReadonlyMap<string, TRecipe>;
     proposalPayload: Record<string, unknown>;
   }): Promise<void> {
-    const recipes = jsonForStorage(Object.fromEntries(args.recipes), 'recipes', this.maxPayloadBytes);
+    const recipes = jsonForStorage(recipesForStorage(args.recipes), 'recipes', this.maxPayloadBytes);
     const payload = jsonForStorage(args.proposalPayload, 'proposalPayload', this.maxPayloadBytes);
-    const result = await this.db.query(
+    const result = await this.query(
+      'putDraft',
       `INSERT INTO ${this.table} (deployment_namespace,account_id,proposal_id,state,recipes,proposal_payload)
        VALUES ($1,$2,$3,'draft',$4::jsonb,$5::jsonb)
        ON CONFLICT (deployment_namespace,account_id,proposal_id) DO UPDATE
@@ -201,7 +281,8 @@ export class PostgresProposalStore<TRecipe extends Recipe = Recipe> implements P
   }
 
   async get(proposalId: string, args: { expectedAccountId: string }): Promise<ProposalRecord<TRecipe> | null> {
-    const result = await this.db.query(
+    const result = await this.query(
+      'get',
       `SELECT * FROM ${this.table} WHERE deployment_namespace=$1 AND account_id=$2 AND proposal_id=$3`,
       [this.namespace, args.expectedAccountId, proposalId]
     );
@@ -210,17 +291,22 @@ export class PostgresProposalStore<TRecipe extends Recipe = Recipe> implements P
 
   async commit(
     proposalId: string,
-    args: { expiresAt: Date; proposalPayload: Record<string, unknown>; expectedAccountId: string }
+    args: { expiresAt: Date; proposalPayload: Record<string, unknown>; expectedAccountId?: string }
   ): Promise<void> {
-    if (!args.expectedAccountId) throw internal('PostgresProposalStore.commit requires expectedAccountId.');
+    if (!(args.expiresAt instanceof Date) || !Number.isFinite(args.expiresAt.getTime())) {
+      throw new TypeError('PostgresProposalStore.commit expiresAt must be a valid Date.');
+    }
+    const accountId = args.expectedAccountId ?? (await this.legacyAccountId(proposalId));
+    if (!accountId) throw internal(`Cannot commit missing proposal ${JSON.stringify(proposalId)}.`);
     const payload = jsonForStorage(args.proposalPayload, 'proposalPayload', this.maxPayloadBytes);
-    const updated = await this.db.query(
+    const updated = await this.query(
+      'commit',
       `UPDATE ${this.table} SET state='committed',expires_at=$4,proposal_payload=$5::jsonb,updated_at=NOW()
        WHERE deployment_namespace=$1 AND account_id=$2 AND proposal_id=$3 AND state='draft' RETURNING proposal_id`,
-      [this.namespace, args.expectedAccountId, proposalId, args.expiresAt, payload]
+      [this.namespace, accountId, proposalId, args.expiresAt, payload]
     );
     if (updated.rowCount === 1) return;
-    const existing = await this.get(proposalId, { expectedAccountId: args.expectedAccountId });
+    const existing = await this.get(proposalId, { expectedAccountId: accountId });
     if (!existing) throw internal(`Cannot commit missing proposal ${JSON.stringify(proposalId)}.`);
     const samePayload = isDeepStrictEqual(existing.proposalPayload, JSON.parse(payload));
     if (existing.state === 'committed' && existing.expiresAt?.getTime() === args.expiresAt.getTime() && samePayload)
@@ -232,12 +318,17 @@ export class PostgresProposalStore<TRecipe extends Recipe = Recipe> implements P
 
   async tryReserveConsumption(
     proposalId: string,
-    args: { expectedAccountId: string }
+    args: { expectedAccountId: string; expiresAtCutoff?: Date }
   ): Promise<ProposalRecord<TRecipe>> {
-    const result = await this.db.query(
+    if (args.expiresAtCutoff !== undefined && !Number.isFinite(args.expiresAtCutoff.getTime())) {
+      throw new TypeError('PostgresProposalStore.tryReserveConsumption expiresAtCutoff must be a valid Date.');
+    }
+    const result = await this.query(
+      'tryReserveConsumption',
       `UPDATE ${this.table} SET state='consuming',updated_at=NOW()
-       WHERE deployment_namespace=$1 AND account_id=$2 AND proposal_id=$3 AND state='committed' RETURNING *`,
-      [this.namespace, args.expectedAccountId, proposalId]
+       WHERE deployment_namespace=$1 AND account_id=$2 AND proposal_id=$3 AND state='committed'
+         AND (expires_at IS NULL OR expires_at >= COALESCE($4::timestamptz,NOW())) RETURNING *`,
+      [this.namespace, args.expectedAccountId, proposalId, args.expiresAtCutoff ?? null]
     );
     if (result.rows[0]) return rowToRecord<TRecipe>(result.rows[0]);
     const existing = await this.get(proposalId, args);
@@ -261,14 +352,19 @@ export class PostgresProposalStore<TRecipe extends Recipe = Recipe> implements P
   ): Promise<void> {
     let updated: Awaited<ReturnType<ProposalPgQueryable['query']>>;
     try {
-      updated = await this.db.query(
+      updated = await this.query(
+        'finalizeConsumption',
         `UPDATE ${this.table} SET state='consumed',media_buy_id=$4,updated_at=NOW()
          WHERE deployment_namespace=$1 AND account_id=$2 AND proposal_id=$3 AND state='consuming' RETURNING proposal_id`,
         [this.namespace, args.expectedAccountId, proposalId, args.mediaBuyId]
       );
     } catch (cause) {
-      if ((cause as { code?: unknown })?.code === '23505') {
-        throw internal(`Media buy ${JSON.stringify(args.mediaBuyId)} is already bound to another proposal.`);
+      const databaseCause = (cause as { cause?: { code?: unknown } })?.cause;
+      if (databaseCause?.code === '23505') {
+        throw new AdcpError('INTERNAL_ERROR', {
+          recovery: 'terminal',
+          message: `Media buy ${JSON.stringify(args.mediaBuyId)} is already bound to another proposal.`,
+        });
       }
       throw cause;
     }
@@ -279,7 +375,8 @@ export class PostgresProposalStore<TRecipe extends Recipe = Recipe> implements P
   }
 
   async releaseConsumption(proposalId: string, args: { expectedAccountId: string }): Promise<void> {
-    const updated = await this.db.query(
+    const updated = await this.query(
+      'releaseConsumption',
       `UPDATE ${this.table} SET state='committed',updated_at=NOW()
        WHERE deployment_namespace=$1 AND account_id=$2 AND proposal_id=$3 AND state='consuming' RETURNING proposal_id`,
       [this.namespace, args.expectedAccountId, proposalId]
@@ -290,11 +387,13 @@ export class PostgresProposalStore<TRecipe extends Recipe = Recipe> implements P
     throw internal(`Proposal ${JSON.stringify(proposalId)} cannot be released from ${JSON.stringify(existing.state)}.`);
   }
 
-  async discard(proposalId: string, args: { expectedAccountId: string }): Promise<void> {
-    if (!args?.expectedAccountId) throw internal('PostgresProposalStore.discard requires expectedAccountId.');
-    await this.db.query(
+  async discard(proposalId: string, args?: { expectedAccountId: string }): Promise<void> {
+    const accountId = args?.expectedAccountId ?? (await this.legacyAccountId(proposalId));
+    if (!accountId) return;
+    await this.query(
+      'discard',
       `DELETE FROM ${this.table} WHERE deployment_namespace=$1 AND account_id=$2 AND proposal_id=$3`,
-      [this.namespace, args.expectedAccountId, proposalId]
+      [this.namespace, accountId, proposalId]
     );
   }
 
@@ -302,7 +401,8 @@ export class PostgresProposalStore<TRecipe extends Recipe = Recipe> implements P
     mediaBuyId: string,
     args: { expectedAccountId: string }
   ): Promise<ProposalRecord<TRecipe> | null> {
-    const result = await this.db.query(
+    const result = await this.query(
+      'getByMediaBuyId',
       `SELECT * FROM ${this.table} WHERE deployment_namespace=$1 AND account_id=$2 AND media_buy_id=$3`,
       [this.namespace, args.expectedAccountId, mediaBuyId]
     );

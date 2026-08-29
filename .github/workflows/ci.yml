@@ -479,11 +479,14 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6379
         run: node --test --test-timeout=120000 test/lib/webhook-registration-durability.test.js
 
-      - name: Run PostgreSQL decisioning task-registry contract
+      - name: Run PostgreSQL decisioning backend contracts
         env:
           NODE_ENV: test
           DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
-        run: node --test --test-timeout=120000 test/server-decisioning-postgres-task-registry.test.js
+        run: >-
+          node --test --test-timeout=120000
+          test/server-decisioning-postgres-task-registry.test.js
+          test/lib/postgres-proposal-store.test.js
 
   eslint-plugin-tests:
     name: ESLint Plugin Tests

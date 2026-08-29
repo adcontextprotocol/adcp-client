@@ -149,7 +149,16 @@ export interface ProposalStore<TRecipe extends Recipe = Recipe> {
    */
   commit(
     proposalId: string,
-    args: { expiresAt: Date; proposalPayload: Record<string, unknown>; expectedAccountId: string }
+    args: {
+      expiresAt: Date;
+      proposalPayload: Record<string, unknown>;
+      /**
+       * Required by durable/multi-tenant stores. Optional only for backward
+       * compatibility with the process-local InMemoryProposalStore preview.
+       * Framework call sites always provide it.
+       */
+      expectedAccountId?: string;
+    }
   ): MaybePromise<void>;
 
   /**
@@ -164,7 +173,10 @@ export interface ProposalStore<TRecipe extends Recipe = Recipe> {
    * @throws AdcpError `PROPOSAL_NOT_FOUND` when no record exists,
    *   `PROPOSAL_NOT_COMMITTED` when state is not COMMITTED.
    */
-  tryReserveConsumption(proposalId: string, args: { expectedAccountId: string }): MaybePromise<ProposalRecord<TRecipe>>;
+  tryReserveConsumption(
+    proposalId: string,
+    args: { expectedAccountId: string; expiresAtCutoff?: Date }
+  ): MaybePromise<ProposalRecord<TRecipe>>;
 
   /**
    * Promote CONSUMING → CONSUMED and record the `mediaBuyId` back-reference
@@ -183,7 +195,7 @@ export interface ProposalStore<TRecipe extends Recipe = Recipe> {
    * Discard a proposal record. Idempotent — discarding an unknown id is
    * a no-op (no throw).
    */
-  discard(proposalId: string, args: { expectedAccountId: string }): MaybePromise<void>;
+  discard(proposalId: string, args?: { expectedAccountId: string }): MaybePromise<void>;
 
   /**
    * Reverse-index lookup. Hydrate the (consumed) proposal that produced
@@ -255,7 +267,7 @@ export class InMemoryProposalStore<TRecipe extends Recipe = Recipe> implements P
   readonly isDurable = false;
 
   private readonly records: Map<string, ProposalRecord<TRecipe>> = new Map();
-  // Reverse index keyed by `${accountId}::${mediaBuyId}`. Tenant scoping in
+  // Reverse index keyed by an unambiguous `[accountId, mediaBuyId]` tuple. Tenant scoping in
   // the key prevents collisions when adopter media_buy_ids overlap across
   // tenants (sequential IDs, deterministic test fixtures).
   private readonly mediaBuyIndex: Map<string, string> = new Map();
@@ -271,25 +283,42 @@ export class InMemoryProposalStore<TRecipe extends Recipe = Recipe> implements P
   }
 
   private mediaBuyKey(accountId: string, mediaBuyId: string): string {
-    return `${accountId}::${mediaBuyId}`;
+    return JSON.stringify([accountId, mediaBuyId]);
+  }
+
+  private proposalKey(accountId: string, proposalId: string): string {
+    return JSON.stringify([accountId, proposalId]);
+  }
+
+  private legacyProposalKey(proposalId: string): string | undefined {
+    const matches = [...this.records].filter(([, record]) => record.proposalId === proposalId);
+    if (matches.length > 1) {
+      throw new AdcpError('INTERNAL_ERROR', {
+        recovery: 'terminal',
+        message:
+          `Proposal ${JSON.stringify(proposalId)} exists in multiple tenant scopes; ` +
+          `expectedAccountId is required for this operation.`,
+      });
+    }
+    return matches[0]?.[0];
   }
 
   private evictExpired(): void {
     const now = this.clock().getTime();
     const toRemove: string[] = [];
-    for (const [proposalId, record] of this.records) {
-      const created = this.creationTimes.get(proposalId)?.getTime() ?? now;
+    for (const [recordKey, record] of this.records) {
+      const created = this.creationTimes.get(recordKey)?.getTime() ?? now;
       if (record.state === 'draft') {
-        if (now - created > this.draftTtlMs) toRemove.push(proposalId);
-      } else if (record.expiresAt) {
+        if (now - created > this.draftTtlMs) toRemove.push(recordKey);
+      } else if (record.state !== 'consuming' && record.expiresAt) {
         const deadline = record.expiresAt.getTime() + this.committedGraceMs;
-        if (now > deadline) toRemove.push(proposalId);
+        if (now > deadline) toRemove.push(recordKey);
       }
     }
-    for (const proposalId of toRemove) {
-      const removed = this.records.get(proposalId);
-      this.records.delete(proposalId);
-      this.creationTimes.delete(proposalId);
+    for (const recordKey of toRemove) {
+      const removed = this.records.get(recordKey);
+      this.records.delete(recordKey);
+      this.creationTimes.delete(recordKey);
       if (removed?.mediaBuyId) {
         this.mediaBuyIndex.delete(this.mediaBuyKey(removed.accountId, removed.mediaBuyId));
       }
@@ -303,7 +332,8 @@ export class InMemoryProposalStore<TRecipe extends Recipe = Recipe> implements P
     proposalPayload: Record<string, unknown>;
   }): void {
     this.evictExpired();
-    const existing = this.records.get(args.proposalId);
+    const recordKey = this.proposalKey(args.accountId, args.proposalId);
+    const existing = this.records.get(recordKey);
     if (existing && existing.state !== 'draft') {
       throw new AdcpError('INTERNAL_ERROR', {
         recovery: 'terminal',
@@ -320,24 +350,18 @@ export class InMemoryProposalStore<TRecipe extends Recipe = Recipe> implements P
       recipes: new Map(args.recipes),
       proposalPayload: { ...args.proposalPayload },
     };
-    this.records.set(args.proposalId, record);
+    this.records.set(recordKey, record);
     // Refine iterations preserve the original creation time so the 24h
     // draft TTL is anchored to the start of the buyer's session, not the
     // most recent iteration.
-    if (!this.creationTimes.has(args.proposalId)) {
-      this.creationTimes.set(args.proposalId, this.clock());
+    if (!this.creationTimes.has(recordKey)) {
+      this.creationTimes.set(recordKey, this.clock());
     }
   }
 
   get(proposalId: string, args: { expectedAccountId: string }): ProposalRecord<TRecipe> | null {
     this.evictExpired();
-    const record = this.records.get(proposalId);
-    if (!record) return null;
-    if (record.accountId !== args.expectedAccountId) {
-      // Cross-tenant probe — return null, not raw record.
-      return null;
-    }
-    return record;
+    return this.records.get(this.proposalKey(args.expectedAccountId, proposalId)) ?? null;
   }
 
   commit(
@@ -345,8 +369,15 @@ export class InMemoryProposalStore<TRecipe extends Recipe = Recipe> implements P
     args: { expiresAt: Date; proposalPayload: Record<string, unknown>; expectedAccountId?: string }
   ): void {
     this.evictExpired();
-    const record = this.records.get(proposalId);
-    if (args.expectedAccountId !== undefined && record?.accountId !== args.expectedAccountId) {
+    if (!(args.expiresAt instanceof Date) || !Number.isFinite(args.expiresAt.getTime())) {
+      throw new TypeError('InMemoryProposalStore.commit expiresAt must be a valid Date.');
+    }
+    const recordKey =
+      args.expectedAccountId !== undefined
+        ? this.proposalKey(args.expectedAccountId, proposalId)
+        : this.legacyProposalKey(proposalId);
+    const record = recordKey === undefined ? undefined : this.records.get(recordKey);
+    if (args.expectedAccountId !== undefined && !record) {
       throw new AdcpError('INTERNAL_ERROR', {
         recovery: 'terminal',
         message: `Cannot commit proposal ${JSON.stringify(proposalId)} outside the expected tenant.`,
@@ -380,7 +411,7 @@ export class InMemoryProposalStore<TRecipe extends Recipe = Recipe> implements P
           `${JSON.stringify(record.state)}; commit requires DRAFT.`,
       });
     }
-    this.records.set(proposalId, {
+    this.records.set(recordKey!, {
       ...record,
       state: 'committed',
       expiresAt: args.expiresAt,
@@ -388,9 +419,13 @@ export class InMemoryProposalStore<TRecipe extends Recipe = Recipe> implements P
     });
   }
 
-  tryReserveConsumption(proposalId: string, args: { expectedAccountId: string }): ProposalRecord<TRecipe> {
+  tryReserveConsumption(
+    proposalId: string,
+    args: { expectedAccountId: string; expiresAtCutoff?: Date }
+  ): ProposalRecord<TRecipe> {
     this.evictExpired();
-    const record = this.records.get(proposalId);
+    const recordKey = this.proposalKey(args.expectedAccountId, proposalId);
+    const record = this.records.get(recordKey);
     // Cross-tenant probe collapses to PROPOSAL_NOT_FOUND — same
     // principal-enumeration defense as `get`.
     if (!record || record.accountId !== args.expectedAccountId) {
@@ -410,13 +445,21 @@ export class InMemoryProposalStore<TRecipe extends Recipe = Recipe> implements P
         field: 'proposal_id',
       });
     }
+    if (record.expiresAt && args.expiresAtCutoff && record.expiresAt.getTime() < args.expiresAtCutoff.getTime()) {
+      throw new AdcpError('PROPOSAL_NOT_COMMITTED', {
+        recovery: 'correctable',
+        message: `Proposal ${JSON.stringify(proposalId)} expired before it could be reserved.`,
+        field: 'proposal_id',
+      });
+    }
     const reserved: ProposalRecord<TRecipe> = { ...record, state: 'consuming' };
-    this.records.set(proposalId, reserved);
+    this.records.set(recordKey, reserved);
     return reserved;
   }
 
   finalizeConsumption(proposalId: string, args: { mediaBuyId: string; expectedAccountId: string }): void {
-    const record = this.records.get(proposalId);
+    const recordKey = this.proposalKey(args.expectedAccountId, proposalId);
+    const record = this.records.get(recordKey);
     if (!record || record.accountId !== args.expectedAccountId) {
       throw new AdcpError('INTERNAL_ERROR', {
         recovery: 'terminal',
@@ -443,16 +486,17 @@ export class InMemoryProposalStore<TRecipe extends Recipe = Recipe> implements P
           `tryReserveConsumption first.`,
       });
     }
-    this.records.set(proposalId, {
+    this.records.set(recordKey, {
       ...record,
       state: 'consumed',
       mediaBuyId: args.mediaBuyId,
     });
-    this.mediaBuyIndex.set(this.mediaBuyKey(record.accountId, args.mediaBuyId), proposalId);
+    this.mediaBuyIndex.set(this.mediaBuyKey(record.accountId, args.mediaBuyId), recordKey);
   }
 
   releaseConsumption(proposalId: string, args: { expectedAccountId: string }): void {
-    const record = this.records.get(proposalId);
+    const recordKey = this.proposalKey(args.expectedAccountId, proposalId);
+    const record = this.records.get(recordKey);
     if (!record || record.accountId !== args.expectedAccountId) {
       // Idempotent — releasing an unknown id is a no-op so the
       // adapter-failure rollback path can be unconditional.
@@ -470,14 +514,16 @@ export class InMemoryProposalStore<TRecipe extends Recipe = Recipe> implements P
           `is in ${JSON.stringify(record.state)}.`,
       });
     }
-    this.records.set(proposalId, { ...record, state: 'committed' });
+    this.records.set(recordKey, { ...record, state: 'committed' });
   }
 
   discard(proposalId: string, args?: { expectedAccountId: string }): void {
-    const record = this.records.get(proposalId);
-    if (args !== undefined && record?.accountId !== args.expectedAccountId) return;
-    this.records.delete(proposalId);
-    this.creationTimes.delete(proposalId);
+    const recordKey =
+      args !== undefined ? this.proposalKey(args.expectedAccountId, proposalId) : this.legacyProposalKey(proposalId);
+    if (recordKey === undefined) return;
+    const record = this.records.get(recordKey);
+    this.records.delete(recordKey);
+    this.creationTimes.delete(recordKey);
     if (record?.mediaBuyId) {
       this.mediaBuyIndex.delete(this.mediaBuyKey(record.accountId, record.mediaBuyId));
     }
@@ -486,9 +532,9 @@ export class InMemoryProposalStore<TRecipe extends Recipe = Recipe> implements P
   getByMediaBuyId(mediaBuyId: string, args: { expectedAccountId: string }): ProposalRecord<TRecipe> | null {
     this.evictExpired();
     const key = this.mediaBuyKey(args.expectedAccountId, mediaBuyId);
-    const proposalId = this.mediaBuyIndex.get(key);
-    if (!proposalId) return null;
-    const record = this.records.get(proposalId);
+    const recordKey = this.mediaBuyIndex.get(key);
+    if (!recordKey) return null;
+    const record = this.records.get(recordKey);
     if (!record) {
       // Index drift — clean up.
       this.mediaBuyIndex.delete(key);

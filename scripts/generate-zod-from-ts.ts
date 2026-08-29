@@ -86,6 +86,7 @@ const TS7056_SCHEMAS: Array<{
   tsType?: string;
   objectShape?: boolean;
   typeSource?: 'tools' | 'core' | 'v2-projection';
+  typedInput?: boolean;
 }> = [
   { name: 'AdCPAsyncResponseDataSchema' },
   { name: 'MCPWebhookPayloadSchema' },
@@ -104,18 +105,24 @@ const TS7056_SCHEMAS: Array<{
   // parse output must remain assignable to the corresponding generated
   // protocol interfaces. Without explicit annotations, nested passthrough
   // objects such as Provenance acquire incompatible string index signatures.
-  { name: 'ImageAssetSchema', tsType: 'ImageAsset', objectShape: true, typeSource: 'core' },
-  { name: 'VideoAssetSchema', tsType: 'VideoAsset', objectShape: true, typeSource: 'core' },
-  { name: 'AudioAssetSchema', tsType: 'AudioAsset', objectShape: true, typeSource: 'core' },
-  { name: 'TextAssetSchema', tsType: 'TextAsset', objectShape: true, typeSource: 'core' },
-  { name: 'URLAssetSchema', tsType: 'URLAsset', objectShape: true, typeSource: 'core' },
-  { name: 'HTMLAssetSchema', tsType: 'HTMLAsset', objectShape: true, typeSource: 'core' },
-  { name: 'JavaScriptAssetSchema', tsType: 'JavaScriptAsset', objectShape: true, typeSource: 'core' },
-  { name: 'ZipAssetSchema', tsType: 'ZipAsset', objectShape: true, typeSource: 'core' },
-  { name: 'WebhookAssetSchema', tsType: 'WebhookAsset', objectShape: true, typeSource: 'core' },
-  { name: 'CSSAssetSchema', tsType: 'CSSAsset', objectShape: true, typeSource: 'core' },
-  { name: 'MarkdownAssetSchema', tsType: 'MarkdownAsset', objectShape: true, typeSource: 'core' },
-  { name: 'CardAssetSchema', tsType: 'CardAsset', objectShape: true, typeSource: 'core' },
+  { name: 'ImageAssetSchema', tsType: 'ImageAsset', objectShape: true, typeSource: 'core', typedInput: true },
+  { name: 'VideoAssetSchema', tsType: 'VideoAsset', objectShape: true, typeSource: 'core', typedInput: true },
+  { name: 'AudioAssetSchema', tsType: 'AudioAsset', objectShape: true, typeSource: 'core', typedInput: true },
+  { name: 'TextAssetSchema', tsType: 'TextAsset', objectShape: true, typeSource: 'core', typedInput: true },
+  { name: 'URLAssetSchema', tsType: 'URLAsset', objectShape: true, typeSource: 'core', typedInput: true },
+  { name: 'HTMLAssetSchema', tsType: 'HTMLAsset', objectShape: true, typeSource: 'core', typedInput: true },
+  {
+    name: 'JavaScriptAssetSchema',
+    tsType: 'JavaScriptAsset',
+    objectShape: true,
+    typeSource: 'core',
+    typedInput: true,
+  },
+  { name: 'ZipAssetSchema', tsType: 'ZipAsset', objectShape: true, typeSource: 'core', typedInput: true },
+  { name: 'WebhookAssetSchema', tsType: 'WebhookAsset', objectShape: true, typeSource: 'core', typedInput: true },
+  { name: 'CSSAssetSchema', tsType: 'CSSAsset', objectShape: true, typeSource: 'core', typedInput: true },
+  { name: 'MarkdownAssetSchema', tsType: 'MarkdownAsset', objectShape: true, typeSource: 'core', typedInput: true },
+  { name: 'CardAssetSchema', tsType: 'CardAsset', objectShape: true, typeSource: 'core', typedInput: true },
   {
     name: 'GetProductsRequestSchema',
     tsType: 'GetProductsRequest',
@@ -183,7 +190,7 @@ function postProcessTS7056Annotations(content: string): string {
     core: new Set<string>(),
     v2Projection: new Set<string>(),
   };
-  for (const { name, tsType, objectShape, typeSource = 'tools' } of TS7056_SCHEMAS) {
+  for (const { name, tsType, objectShape, typeSource = 'tools', typedInput = false } of TS7056_SCHEMAS) {
     const pattern = new RegExp(`export const ${name} = `);
     if (!pattern.test(result)) {
       throw new Error(
@@ -226,7 +233,9 @@ function postProcessTS7056Annotations(content: string): string {
           name === 'ProductSchema'
             ? `ProductSchemaObject<${objectShapeType}>`
             : `z.ZodObject<${objectShapeType}, z.core.$loose>`;
-        annotation = `${objectType} & z.ZodType<${widened}, ${widened}>`;
+        annotation = typedInput
+          ? `Omit<${objectType}, keyof z.ZodType> & z.ZodType<${widened}, ${tsType}>`
+          : `${objectType} & z.ZodType<${widened}, ${widened}>`;
         const importBucket = typeSource === 'v2-projection' ? typesToImport.v2Projection : typesToImport[typeSource];
         importBucket.add(tsType);
         if (name === 'ProductSchema') typesToImport.tools.add('PublisherPropertySelector');

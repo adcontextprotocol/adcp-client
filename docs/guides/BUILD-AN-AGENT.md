@@ -576,20 +576,21 @@ task-settlement coordinator:
 import {
   createPostgresProposalStore,
   getProposalStoreMigration,
+  serve,
 } from '@adcp/sdk/server';
 
+// Run this migration once from deployment tooling, not in every server replica.
 await pool.query(getProposalStoreMigration({ tableName: 'seller_adcp_proposals' }));
+pool.on('error', err => logger.error({ err }, 'PostgreSQL pool error'));
 const proposalStore = createPostgresProposalStore({
   db: pool,
   namespace: 'seller-prod',
   tableName: 'seller_adcp_proposals',
 });
-await proposalStore.probe();
-
-createAdcpServerFromPlatform(platform, {
-  name: 'Seller',
-  version: '1.0.0',
-  proposalStore,
+serve(() => createAdcpServerFromPlatform(platform, {
+  name: 'Seller', version: '1.0.0', proposalStore,
+}), {
+  readinessCheck: () => proposalStore.probe(),
 });
 ```
 
@@ -599,6 +600,10 @@ enforces `draft → committed → consuming → consumed`. Run bounded
 `proposalStore.cleanupExpired()` from an operations worker; expiry uses the
 database clock. Never place credentials in proposal recipes or payloads—the
 store rejects credential-shaped fields and oversized documents.
+`expectedAccountId` is required by durable store mutations; the framework
+supplies it automatically. The process-local store retains unscoped
+`commit`/`discard` only as a deprecated source-compatibility path for preview
+adopters, and refuses ambiguous duplicate IDs across accounts.
 
 ### Schema-Driven Validation (opt-in)
 

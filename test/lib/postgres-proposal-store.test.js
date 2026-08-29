@@ -44,7 +44,24 @@ describe('PostgresProposalStore', { skip: !DATABASE_URL && 'DATABASE_URL not set
 
   it('survives restart and preserves exact proposal/recipe data', async () => {
     const first = store();
-    await draft(first, 'proposal-restart', 'acct-a');
+    await first.putDraft({
+      proposalId: 'proposal-restart',
+      accountId: 'acct-a',
+      recipes: new Map([
+        [
+          'product-1',
+          {
+            recipe_kind: 'test',
+            placement: 'hero',
+            capability_overlap: {
+              pricingModels: new Set(['cpm']),
+              targetingDimensions: new Set(),
+            },
+          },
+        ],
+      ]),
+      proposalPayload: { proposal_id: 'proposal-restart' },
+    });
     const expiresAt = new Date(Date.now() + 60_000);
     await first.commit('proposal-restart', {
       expectedAccountId: 'acct-a',
@@ -57,6 +74,8 @@ describe('PostgresProposalStore', { skip: !DATABASE_URL && 'DATABASE_URL not set
     const record = await restarted.get('proposal-restart', { expectedAccountId: 'acct-a' });
     assert.strictEqual(record.state, 'committed');
     assert.strictEqual(record.recipes.get('product-1').placement, 'hero');
+    assert.deepStrictEqual([...record.recipes.get('product-1').capability_overlap.pricingModels], ['cpm']);
+    assert.deepStrictEqual([...record.recipes.get('product-1').capability_overlap.targetingDimensions], []);
     assert.deepStrictEqual(record.proposalPayload, { locked: true, proposal_id: 'proposal-restart' });
   });
 
@@ -115,6 +134,22 @@ describe('PostgresProposalStore', { skip: !DATABASE_URL && 'DATABASE_URL not set
     assert.strictEqual((await first.get('same-public-id', { expectedAccountId: 'acct-b' })).accountId, 'acct-b');
     assert.strictEqual(await first.get('same-public-id', { expectedAccountId: 'acct-c' }), null);
     assert.strictEqual((await second.get('same-public-id', { expectedAccountId: 'acct-a' })).accountId, 'acct-a');
+    await assert.rejects(
+      () => first.commit('same-public-id', { expiresAt: new Date(Date.now() + 60_000), proposalPayload: {} }),
+      /multiple tenant scopes/
+    );
+  });
+
+  it('keeps legacy unscoped commit/discard compatible when the proposal id is unambiguous', async () => {
+    const target = store();
+    await draft(target, 'legacy-unscoped', 'acct-a');
+    await target.commit('legacy-unscoped', {
+      expiresAt: new Date(Date.now() + 60_000),
+      proposalPayload: { proposal_id: 'legacy-unscoped' },
+    });
+    assert.strictEqual((await target.get('legacy-unscoped', { expectedAccountId: 'acct-a' })).state, 'committed');
+    await target.discard('legacy-unscoped');
+    assert.strictEqual(await target.get('legacy-unscoped', { expectedAccountId: 'acct-a' }), null);
   });
 
   it('uses bounded database-time cleanup and rejects unsafe payloads', async () => {
@@ -125,6 +160,16 @@ describe('PostgresProposalStore', { skip: !DATABASE_URL && 'DATABASE_URL not set
     ]);
     assert.strictEqual(await target.cleanupExpired(1), 1);
     assert.strictEqual(await target.get('expired-draft', { expectedAccountId: 'acct-a' }), null);
+
+    await draft(target, 'active-consumption', 'acct-a');
+    await target.commit('active-consumption', {
+      expectedAccountId: 'acct-a',
+      expiresAt: new Date(Date.now() - 10_000),
+      proposalPayload: { proposal_id: 'active-consumption' },
+    });
+    await pool.query(`UPDATE "${TABLE}" SET state='consuming' WHERE proposal_id='active-consumption'`);
+    assert.strictEqual(await target.cleanupExpired(10), 0, 'cleanup must never delete an in-flight consumption fence');
+    assert.strictEqual((await target.get('active-consumption', { expectedAccountId: 'acct-a' })).state, 'consuming');
 
     await assert.rejects(
       () =>
@@ -146,6 +191,49 @@ describe('PostgresProposalStore', { skip: !DATABASE_URL && 'DATABASE_URL not set
         }),
       /server-only metadata/
     );
+    for (const credentialKey of [
+      'apikey',
+      'APIKey',
+      'x-api-key',
+      'credentials',
+      'access.token',
+      'access/token',
+      'access token',
+    ]) {
+      await assert.rejects(
+        () =>
+          target.putDraft({
+            proposalId: `unsafe-${credentialKey}`,
+            accountId: 'acct-a',
+            recipes: new Map(),
+            proposalPayload: { [credentialKey]: 'must-not-persist' },
+          }),
+        /credential material/
+      );
+    }
+    await target.putDraft({
+      proposalId: 'safe-key-names',
+      accountId: 'acct-a',
+      recipes: new Map([
+        [
+          'product-a',
+          { recipe_kind: 'test', credential_id: 'ref-1', token_occurrence: 2, headers: [['content-type', 'json']] },
+        ],
+      ]),
+      proposalPayload: { credential_id: 'ref-1', token_occurrence: 2, headers: [['content-type', 'json']] },
+    });
+    await assert.rejects(
+      () =>
+        target.putDraft({
+          proposalId: 'unsafe-header-tuple',
+          accountId: 'acct-a',
+          recipes: new Map([
+            ['product-a', { recipe_kind: 'test', headers: [['authorization', 'Bearer must-not-persist']] }],
+          ]),
+          proposalPayload: {},
+        }),
+      /credential-shaped tuple key/
+    );
     await assert.rejects(
       () =>
         target.putDraft({
@@ -156,5 +244,50 @@ describe('PostgresProposalStore', { skip: !DATABASE_URL && 'DATABASE_URL not set
         }),
       /exceeds 256/
     );
+    await assert.rejects(
+      () =>
+        target.commit('missing', {
+          expectedAccountId: 'acct-a',
+          expiresAt: new Date('invalid'),
+          proposalPayload: {},
+        }),
+      /valid Date/
+    );
+  });
+
+  it('atomically refuses to reserve a proposal after database expiry', async () => {
+    const target = store();
+    await draft(target, 'expired-before-reserve', 'acct-a');
+    await target.commit('expired-before-reserve', {
+      expectedAccountId: 'acct-a',
+      expiresAt: new Date(Date.now() + 60_000),
+      proposalPayload: { proposal_id: 'expired-before-reserve' },
+    });
+    await pool.query(`UPDATE "${TABLE}" SET expires_at=NOW()-INTERVAL '1 second' WHERE proposal_id=$1`, [
+      'expired-before-reserve',
+    ]);
+    await assert.rejects(
+      () => target.tryReserveConsumption('expired-before-reserve', { expectedAccountId: 'acct-a' }),
+      error => error.code === 'PROPOSAL_NOT_COMMITTED'
+    );
+    assert.strictEqual(
+      (await target.get('expired-before-reserve', { expectedAccountId: 'acct-a' })).state,
+      'committed'
+    );
+  });
+
+  it('atomically honors the framework expiry grace cutoff', async () => {
+    const target = store();
+    await draft(target, 'expiry-grace', 'acct-a');
+    await target.commit('expiry-grace', {
+      expectedAccountId: 'acct-a',
+      expiresAt: new Date(Date.now() - 1_000),
+      proposalPayload: { proposal_id: 'expiry-grace' },
+    });
+    const reserved = await target.tryReserveConsumption('expiry-grace', {
+      expectedAccountId: 'acct-a',
+      expiresAtCutoff: new Date(Date.now() - 5_000),
+    });
+    assert.strictEqual(reserved.state, 'consuming');
   });
 });

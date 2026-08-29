@@ -180,14 +180,15 @@ export type CredentialPolicy = CredentialPolicyMode | CredentialPolicyConfig;
  *     want broader coverage extend.
  */
 export const DEFAULT_CREDENTIAL_PATTERNS: readonly RegExp[] = Object.freeze([
-  /_token$/i,
-  /_secret$/i,
-  /_password$/i,
-  /api[_-]?key/i,
-  /private[_-]?key/i,
+  /(?:^|[._\s/-])token$/i,
+  /(?:^|[._\s/-])secret$/i,
+  /(?:^|[._\s/-])password$/i,
+  /api[._\s/-]?key/i,
+  /private[._\s/-]?key/i,
   /^authorization$/i,
   /^cookie$/i,
   /^bearer$/i,
+  /^credentials?$/i,
   /^accessToken$/i,
   /^refreshToken$/i,
 ]);

@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-29T12:52:44.360Z
+// Generated at: 2026-08-29T14:02:43.834Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1053,7 +1053,7 @@ export const ProductLocalFormatOptionReferenceSchema = z.object({
 export const CreativeRevisionIDSchema = z.string().min(1).max(255);
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const ImageAssetSchema: z.ZodObject<{ [K in keyof ImageAsset]-?: undefined extends ImageAsset[K] ? z.ZodOptional<z.ZodType<Exclude<ImageAsset[K], undefined>, Exclude<ImageAsset[K], undefined>>> : z.ZodType<ImageAsset[K], ImageAsset[K]> }, z.core.$loose> & z.ZodType<ImageAsset & Record<string, unknown>, ImageAsset & Record<string, unknown>> = z.object({
+export const ImageAssetSchema: Omit<z.ZodObject<{ [K in keyof ImageAsset]-?: undefined extends ImageAsset[K] ? z.ZodOptional<z.ZodType<Exclude<ImageAsset[K], undefined>, Exclude<ImageAsset[K], undefined>>> : z.ZodType<ImageAsset[K], ImageAsset[K]> }, z.core.$loose>, keyof z.ZodType> & z.ZodType<ImageAsset & Record<string, unknown>, ImageAsset> = z.object({
     asset_type: z.literal("image"),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
     width: z.number().int().gte(1),
@@ -1069,7 +1069,7 @@ export const ImageAssetSchema: z.ZodObject<{ [K in keyof ImageAsset]-?: undefine
 }).passthrough();
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const VideoAssetSchema: z.ZodObject<{ [K in keyof VideoAsset]-?: undefined extends VideoAsset[K] ? z.ZodOptional<z.ZodType<Exclude<VideoAsset[K], undefined>, Exclude<VideoAsset[K], undefined>>> : z.ZodType<VideoAsset[K], VideoAsset[K]> }, z.core.$loose> & z.ZodType<VideoAsset & Record<string, unknown>, VideoAsset & Record<string, unknown>> = z.object({
+export const VideoAssetSchema: Omit<z.ZodObject<{ [K in keyof VideoAsset]-?: undefined extends VideoAsset[K] ? z.ZodOptional<z.ZodType<Exclude<VideoAsset[K], undefined>, Exclude<VideoAsset[K], undefined>>> : z.ZodType<VideoAsset[K], VideoAsset[K]> }, z.core.$loose>, keyof z.ZodType> & z.ZodType<VideoAsset & Record<string, unknown>, VideoAsset> = z.object({
     asset_type: z.literal("video"),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
     width: z.number().int().gte(1),
@@ -1104,7 +1104,7 @@ export const VideoAssetSchema: z.ZodObject<{ [K in keyof VideoAsset]-?: undefine
 }).passthrough();
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const AudioAssetSchema: z.ZodObject<{ [K in keyof AudioAsset]-?: undefined extends AudioAsset[K] ? z.ZodOptional<z.ZodType<Exclude<AudioAsset[K], undefined>, Exclude<AudioAsset[K], undefined>>> : z.ZodType<AudioAsset[K], AudioAsset[K]> }, z.core.$loose> & z.ZodType<AudioAsset & Record<string, unknown>, AudioAsset & Record<string, unknown>> = z.object({
+export const AudioAssetSchema: Omit<z.ZodObject<{ [K in keyof AudioAsset]-?: undefined extends AudioAsset[K] ? z.ZodOptional<z.ZodType<Exclude<AudioAsset[K], undefined>, Exclude<AudioAsset[K], undefined>>> : z.ZodType<AudioAsset[K], AudioAsset[K]> }, z.core.$loose>, keyof z.ZodType> & z.ZodType<AudioAsset & Record<string, unknown>, AudioAsset> = z.object({
     asset_type: z.literal("audio"),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
     duration_ms: z.number().int().gte(0).optional(),
@@ -1122,7 +1122,7 @@ export const AudioAssetSchema: z.ZodObject<{ [K in keyof AudioAsset]-?: undefine
 }).passthrough();
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const TextAssetSchema: z.ZodObject<{ [K in keyof TextAsset]-?: undefined extends TextAsset[K] ? z.ZodOptional<z.ZodType<Exclude<TextAsset[K], undefined>, Exclude<TextAsset[K], undefined>>> : z.ZodType<TextAsset[K], TextAsset[K]> }, z.core.$loose> & z.ZodType<TextAsset & Record<string, unknown>, TextAsset & Record<string, unknown>> = z.object({
+export const TextAssetSchema: Omit<z.ZodObject<{ [K in keyof TextAsset]-?: undefined extends TextAsset[K] ? z.ZodOptional<z.ZodType<Exclude<TextAsset[K], undefined>, Exclude<TextAsset[K], undefined>>> : z.ZodType<TextAsset[K], TextAsset[K]> }, z.core.$loose>, keyof z.ZodType> & z.ZodType<TextAsset & Record<string, unknown>, TextAsset> = z.object({
     asset_type: z.literal("text"),
     content: z.string(),
     language: z.string().optional(),
@@ -1130,7 +1130,7 @@ export const TextAssetSchema: z.ZodObject<{ [K in keyof TextAsset]-?: undefined 
 }).passthrough();
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const HTMLAssetSchema: z.ZodObject<{ [K in keyof HTMLAsset]-?: undefined extends HTMLAsset[K] ? z.ZodOptional<z.ZodType<Exclude<HTMLAsset[K], undefined>, Exclude<HTMLAsset[K], undefined>>> : z.ZodType<HTMLAsset[K], HTMLAsset[K]> }, z.core.$loose> & z.ZodType<HTMLAsset & Record<string, unknown>, HTMLAsset & Record<string, unknown>> = z.object({
+export const HTMLAssetSchema: Omit<z.ZodObject<{ [K in keyof HTMLAsset]-?: undefined extends HTMLAsset[K] ? z.ZodOptional<z.ZodType<Exclude<HTMLAsset[K], undefined>, Exclude<HTMLAsset[K], undefined>>> : z.ZodType<HTMLAsset[K], HTMLAsset[K]> }, z.core.$loose>, keyof z.ZodType> & z.ZodType<HTMLAsset & Record<string, unknown>, HTMLAsset> = z.object({
     asset_type: z.literal("html"),
     content: z.string(),
     version: z.string().optional(),
@@ -1144,7 +1144,7 @@ export const HTMLAssetSchema: z.ZodObject<{ [K in keyof HTMLAsset]-?: undefined 
 }).passthrough();
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const JavaScriptAssetSchema: z.ZodObject<{ [K in keyof JavaScriptAsset]-?: undefined extends JavaScriptAsset[K] ? z.ZodOptional<z.ZodType<Exclude<JavaScriptAsset[K], undefined>, Exclude<JavaScriptAsset[K], undefined>>> : z.ZodType<JavaScriptAsset[K], JavaScriptAsset[K]> }, z.core.$loose> & z.ZodType<JavaScriptAsset & Record<string, unknown>, JavaScriptAsset & Record<string, unknown>> = z.object({
+export const JavaScriptAssetSchema: Omit<z.ZodObject<{ [K in keyof JavaScriptAsset]-?: undefined extends JavaScriptAsset[K] ? z.ZodOptional<z.ZodType<Exclude<JavaScriptAsset[K], undefined>, Exclude<JavaScriptAsset[K], undefined>>> : z.ZodType<JavaScriptAsset[K], JavaScriptAsset[K]> }, z.core.$loose>, keyof z.ZodType> & z.ZodType<JavaScriptAsset & Record<string, unknown>, JavaScriptAsset> = z.object({
     asset_type: z.literal("javascript"),
     content: z.string(),
     module_type: JavaScriptModuleTypeSchema.optional(),
@@ -1158,7 +1158,7 @@ export const JavaScriptAssetSchema: z.ZodObject<{ [K in keyof JavaScriptAsset]-?
 }).passthrough();
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const ZipAssetSchema: z.ZodObject<{ [K in keyof ZipAsset]-?: undefined extends ZipAsset[K] ? z.ZodOptional<z.ZodType<Exclude<ZipAsset[K], undefined>, Exclude<ZipAsset[K], undefined>>> : z.ZodType<ZipAsset[K], ZipAsset[K]> }, z.core.$loose> & z.ZodType<ZipAsset & Record<string, unknown>, ZipAsset & Record<string, unknown>> = z.object({
+export const ZipAssetSchema: Omit<z.ZodObject<{ [K in keyof ZipAsset]-?: undefined extends ZipAsset[K] ? z.ZodOptional<z.ZodType<Exclude<ZipAsset[K], undefined>, Exclude<ZipAsset[K], undefined>>> : z.ZodType<ZipAsset[K], ZipAsset[K]> }, z.core.$loose>, keyof z.ZodType> & z.ZodType<ZipAsset & Record<string, unknown>, ZipAsset> = z.object({
     asset_type: z.literal("zip"),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
     max_file_size_kb: z.number().int().gte(0).optional(),
@@ -1176,7 +1176,7 @@ export const ZipAssetSchema: z.ZodObject<{ [K in keyof ZipAsset]-?: undefined ex
 }).passthrough();
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const WebhookAssetSchema: z.ZodObject<{ [K in keyof WebhookAsset]-?: undefined extends WebhookAsset[K] ? z.ZodOptional<z.ZodType<Exclude<WebhookAsset[K], undefined>, Exclude<WebhookAsset[K], undefined>>> : z.ZodType<WebhookAsset[K], WebhookAsset[K]> }, z.core.$loose> & z.ZodType<WebhookAsset & Record<string, unknown>, WebhookAsset & Record<string, unknown>> = z.object({
+export const WebhookAssetSchema: Omit<z.ZodObject<{ [K in keyof WebhookAsset]-?: undefined extends WebhookAsset[K] ? z.ZodOptional<z.ZodType<Exclude<WebhookAsset[K], undefined>, Exclude<WebhookAsset[K], undefined>>> : z.ZodType<WebhookAsset[K], WebhookAsset[K]> }, z.core.$loose>, keyof z.ZodType> & z.ZodType<WebhookAsset & Record<string, unknown>, WebhookAsset> = z.object({
     asset_type: z.literal("webhook"),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
     method: HTTPMethodSchema.optional(),
@@ -1193,7 +1193,7 @@ export const WebhookAssetSchema: z.ZodObject<{ [K in keyof WebhookAsset]-?: unde
 }).passthrough();
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const CSSAssetSchema: z.ZodObject<{ [K in keyof CSSAsset]-?: undefined extends CSSAsset[K] ? z.ZodOptional<z.ZodType<Exclude<CSSAsset[K], undefined>, Exclude<CSSAsset[K], undefined>>> : z.ZodType<CSSAsset[K], CSSAsset[K]> }, z.core.$loose> & z.ZodType<CSSAsset & Record<string, unknown>, CSSAsset & Record<string, unknown>> = z.object({
+export const CSSAssetSchema: Omit<z.ZodObject<{ [K in keyof CSSAsset]-?: undefined extends CSSAsset[K] ? z.ZodOptional<z.ZodType<Exclude<CSSAsset[K], undefined>, Exclude<CSSAsset[K], undefined>>> : z.ZodType<CSSAsset[K], CSSAsset[K]> }, z.core.$loose>, keyof z.ZodType> & z.ZodType<CSSAsset & Record<string, unknown>, CSSAsset> = z.object({
     asset_type: z.literal("css"),
     content: z.string(),
     media: z.string().optional(),
@@ -1201,7 +1201,7 @@ export const CSSAssetSchema: z.ZodObject<{ [K in keyof CSSAsset]-?: undefined ex
 }).passthrough();
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const MarkdownAssetSchema: z.ZodObject<{ [K in keyof MarkdownAsset]-?: undefined extends MarkdownAsset[K] ? z.ZodOptional<z.ZodType<Exclude<MarkdownAsset[K], undefined>, Exclude<MarkdownAsset[K], undefined>>> : z.ZodType<MarkdownAsset[K], MarkdownAsset[K]> }, z.core.$loose> & z.ZodType<MarkdownAsset & Record<string, unknown>, MarkdownAsset & Record<string, unknown>> = z.object({
+export const MarkdownAssetSchema: Omit<z.ZodObject<{ [K in keyof MarkdownAsset]-?: undefined extends MarkdownAsset[K] ? z.ZodOptional<z.ZodType<Exclude<MarkdownAsset[K], undefined>, Exclude<MarkdownAsset[K], undefined>>> : z.ZodType<MarkdownAsset[K], MarkdownAsset[K]> }, z.core.$loose>, keyof z.ZodType> & z.ZodType<MarkdownAsset & Record<string, unknown>, MarkdownAsset> = z.object({
     asset_type: z.literal("markdown"),
     content: z.string(),
     language: z.string().optional(),
@@ -1386,7 +1386,7 @@ export const RepresentationSelectionSchema = z.object({
 }).passthrough();
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const URLAssetSchema: z.ZodObject<{ [K in keyof URLAsset]-?: undefined extends URLAsset[K] ? z.ZodOptional<z.ZodType<Exclude<URLAsset[K], undefined>, Exclude<URLAsset[K], undefined>>> : z.ZodType<URLAsset[K], URLAsset[K]> }, z.core.$loose> & z.ZodType<URLAsset & Record<string, unknown>, URLAsset & Record<string, unknown>> = z.object({
+export const URLAssetSchema: Omit<z.ZodObject<{ [K in keyof URLAsset]-?: undefined extends URLAsset[K] ? z.ZodOptional<z.ZodType<Exclude<URLAsset[K], undefined>, Exclude<URLAsset[K], undefined>>> : z.ZodType<URLAsset[K], URLAsset[K]> }, z.core.$loose>, keyof z.ZodType> & z.ZodType<URLAsset & Record<string, unknown>, URLAsset> = z.object({
     asset_type: z.literal("url"),
     url: MacroBearingURLSchema,
     url_type: URLAssetTypeSchema.optional(),
@@ -11363,7 +11363,7 @@ export const DAASTAssetSchema = z.object({
     }).passthrough()]));
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const CardAssetSchema: z.ZodObject<{ [K in keyof CardAsset]-?: undefined extends CardAsset[K] ? z.ZodOptional<z.ZodType<Exclude<CardAsset[K], undefined>, Exclude<CardAsset[K], undefined>>> : z.ZodType<CardAsset[K], CardAsset[K]> }, z.core.$loose> & z.ZodType<CardAsset & Record<string, unknown>, CardAsset & Record<string, unknown>> = z.object({
+export const CardAssetSchema: Omit<z.ZodObject<{ [K in keyof CardAsset]-?: undefined extends CardAsset[K] ? z.ZodOptional<z.ZodType<Exclude<CardAsset[K], undefined>, Exclude<CardAsset[K], undefined>>> : z.ZodType<CardAsset[K], CardAsset[K]> }, z.core.$loose>, keyof z.ZodType> & z.ZodType<CardAsset & Record<string, unknown>, CardAsset> = z.object({
     asset_type: z.literal("card"),
     media: z.union([ImageAssetSchema, VideoAssetSchema]),
     headline: z.string().optional(),

@@ -92,8 +92,8 @@ Concrete wins:
 
 ## The merge seam — incremental migration
 
-`createAdcpServerFromPlatform(platform, opts)` accepts the v5 handler-style
-domains as `opts` alongside the v6 platform interface. **Platform-derived
+`createAdcpServerFromPlatform(platform, opts)` accepts v5 handler-style
+domains under `opts.legacyHandlers` alongside the v6 platform interface. **Platform-derived
 handlers WIN per-key**; adopter handlers fill gaps for tools the v6
 platform doesn't yet model. Migrate one specialism at a time.
 
@@ -105,10 +105,12 @@ createAdcpServerFromPlatform(myPlatform, {
   mergeSeam: 'strict',  // CI default — fail on collisions
 
   // v5 leftover handlers — keep until you migrate each specialism
-  brandRights: {
-    get_brand_identity: handleGetBrandIdentity,
-    get_rights: handleGetRights,
-    acquire_rights: handleAcquireRights,
+  legacyHandlers: {
+    brandRights: {
+      getBrandIdentity: handleGetBrandIdentity,
+      getRights: handleGetRights,
+      acquireRights: handleAcquireRights,
+    },
   },
   customTools: {
     update_rights: { /* schema + handler */ },

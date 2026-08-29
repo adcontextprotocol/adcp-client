@@ -44,6 +44,19 @@ type _css = AssertAssignable<CSSAsset, z.output<typeof CSSAssetSchema>>;
 type _markdown = AssertAssignable<MarkdownAsset, z.output<typeof MarkdownAssetSchema>>;
 type _card = AssertAssignable<CardAsset, z.output<typeof CardAssetSchema>>;
 
+type _image_input = AssertAssignable<z.input<typeof ImageAssetSchema>, ImageAsset>;
+type _video_input = AssertAssignable<z.input<typeof VideoAssetSchema>, VideoAsset>;
+type _audio_input = AssertAssignable<z.input<typeof AudioAssetSchema>, AudioAsset>;
+type _text_input = AssertAssignable<z.input<typeof TextAssetSchema>, TextAsset>;
+type _url_input = AssertAssignable<z.input<typeof URLAssetSchema>, URLAsset>;
+type _html_input = AssertAssignable<z.input<typeof HTMLAssetSchema>, HTMLAsset>;
+type _javascript_input = AssertAssignable<z.input<typeof JavaScriptAssetSchema>, JavaScriptAsset>;
+type _zip_input = AssertAssignable<z.input<typeof ZipAssetSchema>, ZipAsset>;
+type _webhook_input = AssertAssignable<z.input<typeof WebhookAssetSchema>, WebhookAsset>;
+type _css_input = AssertAssignable<z.input<typeof CSSAssetSchema>, CSSAsset>;
+type _markdown_input = AssertAssignable<z.input<typeof MarkdownAssetSchema>, MarkdownAsset>;
+type _card_input = AssertAssignable<z.input<typeof CardAssetSchema>, CardAsset>;
+
 type _product_card_image = AssertAssignable<NonNullable<ProductCardFields['image']>, z.output<typeof ImageAssetSchema>>;
 type _product_card_hero = AssertAssignable<
   NonNullable<ProductCardDetailedFields['hero_image']>,

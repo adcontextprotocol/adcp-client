@@ -816,11 +816,13 @@ function buildAgentCard(server: AdcpServer, overrides: A2AAgentCardOverrides): A
   const registeredToolSet = new Set(registeredTools);
   const skills = filterPublicAgentCardSkills(
     (overrides.skills ? normalizeAgentCardSkills(overrides.skills) : deriveSkills(tools)).filter(skill => {
+      const normalizedId = typeof skill.id === 'string' ? a2aSkillToServerToolNames(skill.id)[0] : undefined;
+      const normalizedName = typeof skill.name === 'string' ? a2aSkillToServerToolNames(skill.name)[0] : undefined;
       const registeredName =
-        typeof skill.id === 'string' && registeredToolSet.has(skill.id)
-          ? skill.id
-          : typeof skill.name === 'string' && registeredToolSet.has(skill.name)
-            ? skill.name
+        normalizedId !== undefined && registeredToolSet.has(normalizedId)
+          ? normalizedId
+          : normalizedName !== undefined && registeredToolSet.has(normalizedName)
+            ? normalizedName
             : undefined;
       return registeredName === undefined || availableTools.has(registeredName);
     })

@@ -628,8 +628,12 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     );
 
     assert.deepStrictEqual(resolverAuth, [principal, secondPrincipal]);
-    assert.strictEqual(handlerContexts[0].authInfo, principal);
-    assert.strictEqual(handlerContexts[1].authInfo, secondPrincipal);
+    assert.notStrictEqual(handlerContexts[0].authInfo, principal);
+    assert.notStrictEqual(handlerContexts[1].authInfo, secondPrincipal);
+    assert.deepStrictEqual(handlerContexts[0].authInfo, principal);
+    assert.deepStrictEqual(handlerContexts[1].authInfo, secondPrincipal);
+    assert.ok(Object.isFrozen(handlerContexts[0].authInfo));
+    assert.ok(Object.isFrozen(handlerContexts[0].authInfo.credential));
     assert.strictEqual(handlerContexts[0].account.id, 'acct-buyer-key-1');
     assert.strictEqual(handlerContexts[1].account.id, 'acct-buyer-key-2');
     assert.strictEqual(
@@ -644,6 +648,37 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     );
     assert.ok(!JSON.stringify(result).includes(principal.token), 'principal credentials never enter the wire response');
     assert.ok(!JSON.stringify(secondResult).includes(secondPrincipal.token));
+  });
+
+  it('keeps async task ownership bound when a native handler attempts to mutate authInfo', async () => {
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async (_req, ctx) => {
+            ctx.authInfo.clientId = 'caller-b';
+            return ctx.handoffToTask(async () => ({ products: [], cache_scope: 'account' }));
+          },
+        },
+      }),
+      {
+        name: 'native-auth-ownership',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+    const result = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: { name: 'get_products', arguments: { account: { account_id: 'acct-1' } } },
+      },
+      { authInfo: { token: 'secret', clientId: 'caller-a', scopes: [] } }
+    );
+    const taskId = result.structuredContent.task_id;
+    await server.awaitTaskUnsafe(taskId);
+    assert.ok(await server.getTaskState(taskId, { accountId: 'acct-1', ownerScope: 'client:caller-a' }));
+    assert.strictEqual(await server.getTaskState(taskId, { accountId: 'acct-1', ownerScope: 'client:caller-b' }), null);
   });
 
   it('omits authInfo from unauthenticated native RequestContext calls (#2765)', async () => {

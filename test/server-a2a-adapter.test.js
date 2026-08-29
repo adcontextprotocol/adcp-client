@@ -370,7 +370,7 @@ describe('createA2AAdapter', () => {
         name: '3.0 A2A seller',
         version: '1.0.0',
         adcpVersion: '3.0.25',
-        capabilities: { supported_versions: ['3.0.25'] },
+        capabilities: { supported_versions: ['3.0.25', '3.1.18'] },
         toolVersions: { get_signals: { min: '3.1' } },
         mediaBuy: { getProducts: async () => ({ products: [] }) },
         signals: { getSignals: async () => ({ signals: [] }) },
@@ -379,6 +379,28 @@ describe('createA2AAdapter', () => {
       const skillIds = card.skills.map(skill => skill.id);
       assert.ok(skillIds.includes('get_products'));
       assert.ok(!skillIds.includes('get_signals'));
+    });
+
+    it('cannot reintroduce an unavailable tasks/get through A2A skill overrides', async () => {
+      const adcp = createAdcpServer({
+        name: '3.2 A2A task seller',
+        version: '1.0.0',
+        adcpVersion: '3.2.0-beta.9',
+        capabilities: { supported_versions: ['3.1.18', '3.2.0-beta.9'] },
+        toolVersions: { tasks_get: { max: '3.1' } },
+        customTools: {
+          tasks_get: {
+            handler: async () => ({ content: [{ type: 'text', text: '{}' }], structuredContent: {} }),
+          },
+        },
+      });
+      const card = await createA2AAdapter({
+        server: adcp,
+        agentCard: baseCard({
+          skills: [{ id: 'tasks/get', name: 'tasks/get', description: 'poll tasks', tags: ['adcp'] }],
+        }),
+      }).getAgentCard();
+      assert.ok(!card.skills.some(skill => skill.id === 'tasks/get'));
     });
 
     it('filters comply_test_controller from seller-supplied A2A skill overrides', async () => {
@@ -941,7 +963,10 @@ describe('createA2AAdapter', () => {
       );
 
       assert.strictEqual(resolverAuth, principal);
-      assert.strictEqual(nativeAuth, principal);
+      assert.notStrictEqual(nativeAuth, principal);
+      assert.deepStrictEqual(nativeAuth, principal);
+      assert.ok(Object.isFrozen(nativeAuth));
+      assert.ok(Object.isFrozen(nativeAuth.credential));
       assert.ok(!JSON.stringify(response.body).includes(principal.token));
     });
   });

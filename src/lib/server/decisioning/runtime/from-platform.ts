@@ -4679,7 +4679,11 @@ async function routeIfHandoff<TInner, TWire>(
   taskRegistry: TaskRegistry,
   opts: DispatchHitlOpts,
   result: TInner | TaskHandoff<TInner>,
-  project: (inner: TInner) => TWire | Promise<TWire>
+  project: (inner: TInner) => TWire | Promise<TWire>,
+  lifecycle?: {
+    onHandoffSuccess?(inner: TInner): void | Promise<void>;
+    onHandoffFailure?(error: unknown): void | Promise<void>;
+  }
 ): Promise<TWire | SubmittedEnvelope> {
   const rejectResponseSummary = (value: unknown): void => {
     if (_extractResponseSummaryEntry(value)) {
@@ -4708,16 +4712,36 @@ async function routeIfHandoff<TInner, TWire>(
         'external'
       );
     }
-    return dispatchHitl(
-      taskRegistry,
-      opts,
-      async taskRef => {
-        const inner = await taskFn(buildHandoffContext(taskRegistry, taskRef));
-        rejectResponseSummary(inner);
-        return await project(inner);
-      },
-      options?.task_id
-    );
+    let handoffTaskStarted = false;
+    try {
+      return await dispatchHitl(
+        taskRegistry,
+        opts,
+        async taskRef => {
+          handoffTaskStarted = true;
+          let inner: TInner;
+          try {
+            inner = await taskFn(buildHandoffContext(taskRegistry, taskRef));
+          } catch (error) {
+            await lifecycle?.onHandoffFailure?.(error);
+            throw error;
+          }
+          // Once adopter work reports success, never release the reservation:
+          // a finalization/projection failure may follow a real media-buy side
+          // effect, and reopening the proposal would permit duplicate spend.
+          rejectResponseSummary(inner);
+          await lifecycle?.onHandoffSuccess?.(inner);
+          return await project(inner);
+        },
+        options?.task_id
+      );
+    } catch (error) {
+      // Allocation/registration failures happen before the background task
+      // callback starts. Release any proposal reservation so a retry is not
+      // permanently fenced by a task that was never created.
+      if (!handoffTaskStarted) await lifecycle?.onHandoffFailure?.(error);
+      throw error;
+    }
   }
   rejectHandRolledSubmitted(result);
   rejectResponseSummary(result);
@@ -6311,6 +6335,9 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           logger,
           legacyFormatConverter
         );
+        const push = extractPushConfig(params, logger, {
+          allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
+        });
         // v1.5 seam: when the request carries a proposal_id, reserve
         // the proposal (atomic CAS COMMITTED → CONSUMING), validate
         // expiry + capability overlap, hydrate ctx.recipes. The
@@ -6330,9 +6357,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         }
         return projectSync(
           async () => {
-            const push = extractPushConfig(params, logger, {
-              allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
-            });
             let result: Awaited<ReturnType<NonNullable<typeof sales.createMediaBuy>>>;
             try {
               result = await sales!.createMediaBuy!(params as unknown as CanonicalCreateMediaBuyRequest, reqCtx);
@@ -6368,11 +6392,9 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               );
             }
             // Inline-success path: promote CONSUMING → CONSUMED with the
-            // adapter's media_buy_id. HITL handoff: the proposal stays
-            // CONSUMING until the handoff completes — wiring the
-            // post-completion commit hook is a v1.6 follow-up; for now
-            // adopters using HITL accept the reservation lingers until
-            // eviction. Most adopters use inline create_media_buy.
+            // adapter's media_buy_id. Framework-settled handoffs finalize in
+            // routeIfHandoff's lifecycle hook after the task produces its
+            // terminal success value.
             if (reservation && proposalStore && !isTaskHandoff(result)) {
               const mediaBuyId = (result as { media_buy_id?: string }).media_buy_id;
               if (mediaBuyId) {
@@ -6382,6 +6404,23 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                   mediaBuyId,
                 });
               }
+            }
+            const handoffEntry = isTaskHandoff(result) ? _extractHandoffEntry(result) : undefined;
+            if (
+              reservation &&
+              proposalStore &&
+              handoffEntry?.options &&
+              'settlement' in handoffEntry.options &&
+              handoffEntry.options.settlement === 'external'
+            ) {
+              await releaseProposalReservation({ store: proposalStore, record: reservation, logger });
+              throw new AdcpError('INVALID_REQUEST', {
+                recovery: 'correctable',
+                field: 'proposal_id',
+                message:
+                  'Proposal-backed create_media_buy does not support external task settlement; ' +
+                  'use a framework-settled handoff so proposal consumption can be finalized atomically.',
+              });
             }
             return routeIfHandoff(
               taskRegistry,
@@ -6408,7 +6447,25 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                   canonicalFormatLegacyResolver,
                   responseWireMode
                 );
-              }
+              },
+              reservation && proposalStore
+                ? {
+                    onHandoffSuccess: async r => {
+                      const mediaBuyId = (r as { media_buy_id?: string }).media_buy_id;
+                      if (!mediaBuyId) {
+                        throw new Error('Proposal-backed create_media_buy handoff completed without media_buy_id.');
+                      }
+                      await finalizeProposalConsumption({
+                        store: proposalStore,
+                        record: reservation,
+                        mediaBuyId,
+                      });
+                    },
+                    onHandoffFailure: async () => {
+                      await releaseProposalReservation({ store: proposalStore, record: reservation, logger });
+                    },
+                  }
+                : undefined
             );
           },
           r => r
