@@ -193,6 +193,7 @@ export async function maybeInterceptFinalize<TRecipe extends Recipe, TCtxMeta>(a
     await store.commit(finalizeProposalId, {
       expiresAt: success.expiresAt,
       proposalPayload: success.proposal,
+      expectedAccountId: accountId,
     });
     logFinalizeSucceeded({
       proposalId: finalizeProposalId,

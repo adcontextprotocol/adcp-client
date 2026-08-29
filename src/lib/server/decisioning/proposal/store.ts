@@ -147,7 +147,10 @@ export interface ProposalStore<TRecipe extends Recipe = Recipe> {
    * + `proposalPayload`. A second commit with different values raises
    * `INTERNAL_ERROR`.
    */
-  commit(proposalId: string, args: { expiresAt: Date; proposalPayload: Record<string, unknown> }): MaybePromise<void>;
+  commit(
+    proposalId: string,
+    args: { expiresAt: Date; proposalPayload: Record<string, unknown>; expectedAccountId: string }
+  ): MaybePromise<void>;
 
   /**
    * Atomic CAS: COMMITTED → CONSUMING.
@@ -180,7 +183,7 @@ export interface ProposalStore<TRecipe extends Recipe = Recipe> {
    * Discard a proposal record. Idempotent — discarding an unknown id is
    * a no-op (no throw).
    */
-  discard(proposalId: string): MaybePromise<void>;
+  discard(proposalId: string, args: { expectedAccountId: string }): MaybePromise<void>;
 
   /**
    * Reverse-index lookup. Hydrate the (consumed) proposal that produced
@@ -337,9 +340,18 @@ export class InMemoryProposalStore<TRecipe extends Recipe = Recipe> implements P
     return record;
   }
 
-  commit(proposalId: string, args: { expiresAt: Date; proposalPayload: Record<string, unknown> }): void {
+  commit(
+    proposalId: string,
+    args: { expiresAt: Date; proposalPayload: Record<string, unknown>; expectedAccountId?: string }
+  ): void {
     this.evictExpired();
     const record = this.records.get(proposalId);
+    if (args.expectedAccountId !== undefined && record?.accountId !== args.expectedAccountId) {
+      throw new AdcpError('INTERNAL_ERROR', {
+        recovery: 'terminal',
+        message: `Cannot commit proposal ${JSON.stringify(proposalId)} outside the expected tenant.`,
+      });
+    }
     if (!record) {
       throw new AdcpError('INTERNAL_ERROR', {
         recovery: 'terminal',
@@ -461,8 +473,9 @@ export class InMemoryProposalStore<TRecipe extends Recipe = Recipe> implements P
     this.records.set(proposalId, { ...record, state: 'committed' });
   }
 
-  discard(proposalId: string): void {
+  discard(proposalId: string, args?: { expectedAccountId: string }): void {
     const record = this.records.get(proposalId);
+    if (args !== undefined && record?.accountId !== args.expectedAccountId) return;
     this.records.delete(proposalId);
     this.creationTimes.delete(proposalId);
     if (record?.mediaBuyId) {

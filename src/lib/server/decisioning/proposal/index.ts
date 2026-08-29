@@ -26,6 +26,12 @@ export { validateProposalCapabilities } from './types';
 export type { ProposalState, ProposalRecord, ProposalStore, InMemoryProposalStoreOptions } from './store';
 
 export { InMemoryProposalStore } from './store';
+export { PostgresProposalStore, createPostgresProposalStore, getProposalStoreMigration } from './postgres-store';
+export type {
+  ProposalPgQueryable,
+  PostgresProposalStoreOptions,
+  ProposalStoreMigrationOptions,
+} from './postgres-store';
 
 export { MockProposalManager } from './mock-manager';
 export type { MockProposalManagerOptions } from './mock-manager';
