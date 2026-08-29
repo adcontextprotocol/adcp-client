@@ -1,5 +1,16 @@
 # Changelog
 
+## 14.0.0-beta.18
+
+### Minor Changes
+
+- 6dd9d45: Add a durable PostgreSQL task-settlement intent queue for atomically recording application outcomes before SDK task and webhook settlement. The queue provides immutable scoped bindings, caller-owned transaction participation, leased and fenced recovery, bounded retries and dead letters, payload sanitization, startup probing, and an explicit idempotent settlement callback.
+
+### Patch Changes
+
+- 1801914: Deduplicate repeated Product format and placement validators so adopter OpenAPI documents stay compact when extending `ProductSchema`.
+- 1e01639: Preserve live `AbortSignal` identity in native decisioning request authentication context so provider work observes host cancellation after dispatch begins.
+
 ## 14.0.0-beta.17
 
 ### Minor Changes
