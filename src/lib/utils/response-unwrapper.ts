@@ -367,6 +367,7 @@ export function unwrapProtocolResponse(
             } else {
               validated = restoreLegacyMediaBuyStatusForReturn(validated, stripped, dataToValidate, toolName);
             }
+            validated = restoreCompatibilityVersionForReturn(validated, stripped, dataToValidate);
             if (!('adcp_version' in stripped)) {
               const { adcp_version: _v, ...rest } = validated as unknown as Record<string, unknown>;
               validated = rest as unknown as typeof validated;
@@ -405,6 +406,7 @@ export function unwrapProtocolResponse(
       } else {
         validated = restoreLegacyMediaBuyStatusForReturn(validated, stripped, dataToValidate, toolName);
       }
+      validated = restoreCompatibilityVersionForReturn(validated, stripped, dataToValidate);
       if (!('adcp_version' in stripped)) {
         const { adcp_version: _v, ...rest } = validated as unknown as Record<string, unknown>;
         validated = rest as unknown as typeof validated;
@@ -416,6 +418,21 @@ export function unwrapProtocolResponse(
 
   // Return unwrapped response (no validation) — already tagged above.
   return unwrapped as AdCPResponse;
+}
+
+function restoreCompatibilityVersionForReturn<T extends AdCPResponse & { _message?: string }>(
+  validated: T,
+  original: Record<string, unknown>,
+  compat: Record<string, unknown>
+): T {
+  if (
+    typeof original.adcp_version === 'string' &&
+    typeof compat.adcp_version === 'string' &&
+    original.adcp_version !== compat.adcp_version
+  ) {
+    return { ...validated, adcp_version: original.adcp_version } as T;
+  }
+  return validated;
 }
 
 function restoreLegacyMediaBuyStatusForReturn<T extends AdCPResponse & { _message?: string }>(

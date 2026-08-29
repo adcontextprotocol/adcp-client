@@ -13,7 +13,7 @@
  * diagnostic against the scaffold.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -43,6 +43,39 @@ const ADOPTER_TSCONFIG = {
   },
   include: ['adopter.ts'],
 };
+
+const DECLARATION_TSCONFIG = {
+  compilerOptions: {
+    target: 'ES2022',
+    module: 'ESNext',
+    moduleResolution: 'bundler',
+    strict: true,
+    skipLibCheck: false,
+    declaration: true,
+    emitDeclarationOnly: true,
+    outDir: 'declarations',
+    types: ['node'],
+    ignoreDeprecations: '6.0',
+  },
+  include: ['adopter-declaration.ts'],
+};
+
+const DECLARATION_SOURCE = `
+import { ProductSchema, GetProductsRequestSchema } from '@adcp/sdk/schemas';
+import { z } from 'zod';
+
+export const SavedProductSchema = ProductSchema.safeExtend({
+  local_id: z.string().optional(),
+});
+
+export const LocalGetProductsSchema = GetProductsRequestSchema.extend({
+  ext: z.object({ local: z.record(z.string(), z.unknown()) }).optional(),
+});
+
+export const LocalGetProductsWithoutOptionalExtension: z.output<typeof LocalGetProductsSchema> = {
+  buying_mode: 'brief',
+};
+`;
 
 const ADOPTER_SOURCE = `
 // Mirrors the repro from issue #1236 and locks the server-side handler
@@ -952,7 +985,9 @@ function main(): void {
     JSON.stringify({ name: 'adopter-types-check', version: '0.0.0', private: true })
   );
   writeFileSync(join(adopterDir, 'tsconfig.json'), JSON.stringify(ADOPTER_TSCONFIG, null, 2));
+  writeFileSync(join(adopterDir, 'tsconfig.declaration.json'), JSON.stringify(DECLARATION_TSCONFIG, null, 2));
   writeFileSync(join(adopterDir, 'adopter.ts'), ADOPTER_SOURCE);
+  writeFileSync(join(adopterDir, 'adopter-declaration.ts'), DECLARATION_SOURCE);
 
   // @types/express, @opentelemetry/api, and redis cover transitive type
   // references from the server bundle — adopters who import
@@ -999,6 +1034,17 @@ function main(): void {
   try {
     run('npx', ['--no-install', 'tsc', '--noEmit'], adopterDir, tscEnv);
     console.log('[adopter-types] PASS — published .d.ts files type-check cleanly for an adopter.');
+
+    console.log('[adopter-types] emitting declarations for composed public schemas...');
+    run('npx', ['--no-install', 'tsc', '-p', 'tsconfig.declaration.json'], adopterDir, tscEnv);
+    const declaration = readFileSync(join(adopterDir, 'declarations', 'adopter-declaration.d.ts'), 'utf8');
+    if (/dist\/lib\/types\/[^'"\s]*generated/.test(declaration)) {
+      throw new Error('Composed public schema declaration references SDK-private generated modules.');
+    }
+    if (!declaration.includes('SavedProductSchema') || !declaration.includes('LocalGetProductsSchema')) {
+      throw new Error('Composed public schema declarations were not emitted.');
+    }
+    console.log('[adopter-types] PASS — composed schema declarations are portable.');
   } catch {
     console.error('[adopter-types] FAIL — published .d.ts files do not type-check on a clean adopter project.');
     console.error(`  Scaffold preserved at: ${adopterDir}`);

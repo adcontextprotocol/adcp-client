@@ -9,6 +9,7 @@ import { z } from 'zod';
 import * as schemas from '../types/schemas.generated';
 import { SyncCreativesResponseStrictSchema } from '../validation/sync-creatives';
 import { isPre31AdcpVersion } from './adcp-version-config';
+import { toReleasePrecisionVersion } from '../version';
 
 function declaresLegacy30xPayload(response: Record<string, unknown>): boolean {
   const adcpVersion = response.adcp_version;
@@ -25,11 +26,18 @@ export function prepareResponseForSchemaValidation(
   data: unknown,
   responseAdcpVersion?: string
 ): unknown {
-  if (toolName !== 'get_products') return data;
-  if (!isPre31AdcpVersion(responseAdcpVersion)) return data;
   if (data == null || typeof data !== 'object' || Array.isArray(data)) return data;
 
   const response = data as Record<string, unknown>;
+  // Legacy 3.0 sellers commonly echoed the SDK/bundle's full semver. Current
+  // envelopes correctly require release precision, so normalize only this
+  // established compatibility path for validation. The unwrapper restores
+  // the seller-authored value before returning it to the caller.
+  if (typeof response.adcp_version === 'string' && /^3\.0\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(response.adcp_version)) {
+    return { ...response, adcp_version: toReleasePrecisionVersion(response.adcp_version) };
+  }
+  if (toolName !== 'get_products') return data;
+  if (!isPre31AdcpVersion(responseAdcpVersion)) return data;
   if (response.adcp_version !== undefined || response.adcp_major_version !== undefined) return data;
   return { ...response, adcp_version: '3.0' };
 }

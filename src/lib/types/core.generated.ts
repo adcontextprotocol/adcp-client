@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.2.0-beta.9
-// Generated at: 2026-08-28T19:19:28.685Z
+// Generated at: 2026-08-29T04:43:08.184Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -2320,6 +2320,7 @@ export interface CreativeBrief {
       /**
        * Minimum display duration in milliseconds. For video/audio disclosures, how long the disclosure must be visible or audible. For static formats, how long the disclosure must remain on screen before any auto-advance.
        * @minimum 1
+       * @format int
        */
       min_duration_ms?: number;
       /**
@@ -2903,6 +2904,427 @@ export interface BusinessEntity {
   };
   ext?: ExtensionObject;
 }
+// PROPERTYID PRIORITY CANONICAL SCHEMA
+/**
+ * Identifier for a publisher property. Must be lowercase alphanumeric with underscores only.
+ * @pattern ^[a-z0-9_]+$
+ */
+export type PropertyID = string;
+
+// SIGNALREF PRIORITY CANONICAL SCHEMA
+/**
+ * Reference to a named signal definition. Uses scope as discriminator: 'data_provider' for a signal resolved through published adagents.json signals[], 'signal_source' for a source-native signal resolved through the issuing signal source, or 'product' for a product-local signal option. Scope is the resolution path, not provenance; authoritative enrichment lives on the seller, signal source, or data-provider signal definition, not on this reference.
+ */
+export type SignalRef =
+  | {
+      /**
+       * Discriminator indicating the signal resolves through the selected product's included_signals or signal_targeting_options.
+       */
+      scope: 'product';
+      /**
+       * Product-local signal identifier. For local signals exposed on both get_signals and get_products, this MUST match get_signals.signals[].signal_ref.signal_id for the same signal.
+       * @pattern ^[a-zA-Z0-9_-]+$
+       */
+      signal_id: string;
+    }
+  | {
+      /**
+       * Discriminator indicating the signal resolves through a data provider's published adagents.json signals[].
+       */
+      scope: 'data_provider';
+      /**
+       * Domain that publishes the signal definition in its adagents.json signals[].
+       * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+       */
+      data_provider_domain: string;
+      /**
+       * Signal identifier within the data provider's published adagents.json signals[].
+       * @pattern ^[a-zA-Z0-9_-]+$
+       */
+      signal_id: string;
+    }
+  | {
+      /**
+       * Discriminator indicating the signal resolves through the issuing signal source.
+       */
+      scope: 'signal_source';
+      /**
+       * URL of the signal source that issues this source-native signal.
+       */
+      signal_source_url: string;
+      /**
+       * Signal identifier within the issuing signal source's signal set.
+       * @pattern ^[a-zA-Z0-9_-]+$
+       */
+      signal_id: string;
+    };
+
+// PAGINATIONREQUEST PRIORITY CANONICAL SCHEMA
+/**
+ * Standard cursor-based pagination parameters for list operations
+ */
+export interface PaginationRequest {
+  /**
+   * Maximum number of items to return per page
+   * @minimum 1
+   * @maximum 100
+   * @format int
+   */
+  max_results?: number;
+  /**
+   * Opaque cursor from a previous response to fetch the next page
+   */
+  cursor?: string;
+}
+
+// FORECASTPOINT PRIORITY CANONICAL SCHEMA
+/**
+ * Dimension constraints represented by this forecast point, such as country, region, placement, device type, platform, audience, signal value, time window, or intersections such as placement x country or product x signal. Each item declares one dimension family; when multiple items are present, the point represents their intersection. Sellers MUST NOT emit more than one item for each `kind` on a point; consumers MUST NOT treat repeated kinds as OR semantics. Use multiple points with dimensions to expose country/placement/signal availability within one product, proposal, or signal coverage forecast without creating separate products solely for each dimension. Dimensions describe the forecast row and are independent of pricing_options.
+ *
+ * @minItems 1
+ */
+export type ForecastPointDimensions = [
+  (
+    | GeoForecastDimension
+    | PlacementForecastDimension
+    | DeviceTypeForecastDimension
+    | DevicePlatformForecastDimension
+    | AudienceForecastDimension
+    | SignalForecastDimension
+    | TimeForecastDimension
+  ),
+  ...(
+    | GeoForecastDimension
+    | PlacementForecastDimension
+    | DeviceTypeForecastDimension
+    | DevicePlatformForecastDimension
+    | AudienceForecastDimension
+    | SignalForecastDimension
+    | TimeForecastDimension
+  )[]
+];
+/**
+ * A geographic dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
+ */
+export type GeoForecastDimension = {
+} & {
+} & {
+} & {
+} & {
+  /**
+   * Dimension family discriminator.
+   */
+  kind: 'geo';
+  geo_level: GeographicTargetingLevel;
+  /**
+   * Classification system for metro or postal_area levels. Required when geo_level is 'metro' or 'postal_area'. Metro rows use metro-system enum values such as 'nielsen_dma'; native postal rows use country-local postal-system enum values such as 'zip' with country 'US'; deprecated legacy postal rows may use legacy-postal-system enum values such as 'us_zip'. Omit for country and region rows.
+   */
+  system?: string;
+  /**
+   * ISO 3166-1 alpha-2 country code. Required for native postal_area rows and omitted for legacy postal rows, metro rows, country rows, and region rows.
+   */
+  country?: string;
+  /**
+   * Geographic code within the level and system. Country: ISO 3166-1 alpha-2 ('US'). Region: ISO 3166-2 with country prefix ('US-CA'). Metro/postal: system-specific code ('501', '10001').
+   */
+  geo_code: string;
+  /**
+   * Human-readable geographic name (e.g., 'United States', 'California', 'New York DMA').
+   */
+  geo_name?: string;
+};
+/**
+ * A signal value or signal-presence dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
+ */
+export type SignalForecastDimension = {
+} & {
+} & (
+    | {
+      }
+    | {
+      }
+  ) & {
+    /**
+     * Dimension family discriminator.
+     */
+    kind: 'signal';
+    signal_ref?: SignalRef;
+    /**
+     * Signal identifier shorthand for this forecast row. Use only when the enclosing context already identifies the signal unambiguously, such as a coverage_forecast nested directly under one get_signals signal item. Otherwise use signal_ref.
+     */
+    signal_id?: string;
+    /**
+     * Signal value bucket represented by this point. Use null with presence 'absent' to represent inventory where the signal is not present. Omit when the row describes any present value rather than one specific value.
+     */
+    signal_value?: string | number | boolean | null;
+    /**
+     * Whether the signal is present for this point. Use 'absent' for the explicit not-present bucket.
+     */
+    presence: 'present' | 'absent';
+    /**
+     * Human-readable signal name, useful when the buyer has not resolved the signal definition.
+     */
+    signal_name?: string;
+    /**
+     * Human-readable label for the signal value bucket.
+     */
+    signal_value_name?: string;
+  };
+/**
+ * A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.
+ */
+export interface ForecastRange {
+  /** Conservative (low-end) forecast value. */
+  low?: number;
+  /** Expected (most likely) forecast value. */
+  mid?: number;
+  /** Optimistic (high-end) forecast value. */
+  high?: number;
+}
+export type VendorMetricID = string;
+/**
+ * A forecast data point. When budget is present, the point pairs a spend level with expected delivery — multiple points at ascending budgets form a curve. When budget is omitted, the point represents total available inventory for the requested targeting and dates, independent of spend.
+ */
+export interface ForecastPoint {
+  /**
+   * Human-readable name for this forecast point. Required when forecast_range_unit is 'package' so buyer agents can identify and reference individual packages. Optional for other forecast types.
+   * @maxLength 128
+   */
+  label?: string;
+  /**
+   * Budget amount for this forecast point. Required for spend curves; omit for availability forecasts where the metrics represent total available inventory. For allocation-level forecasts, this is the absolute budget for that allocation (not the percentage). For proposal-level forecasts, this is the total proposal budget. When omitted, use metrics.spend to express the estimated cost of the available inventory.
+   * @minimum 0
+   */
+  budget?: number;
+  /**
+   * Optional product context for this forecast row. Usually omitted on product-level and allocation-level forecasts where the product is already implied. On proposal-level forecasts, populate when a dimensional row, especially a placement row, maps to a specific product allocation so buyers can turn the row into an executable package choice. Omit for true aggregate proposal rows spanning multiple products.
+   */
+  product_id?: string;
+  dimensions?: ForecastPointDimensions;
+  availability_status?: AvailabilityStatus;
+  /**
+   * Forecasted metric values. Keys are forecastable-metric enum values for delivery/engagement or event-type enum values for outcomes. Values are ForecastRange objects (low/mid/high). Use { "mid": value } for point estimates. When budget is present, these are the expected metrics at that spend level. When budget is omitted, these represent total available inventory — use spend to express the estimated cost. Additional keys beyond the documented properties are allowed for event-type values (purchase, lead, app_install, etc.).
+   */
+  metrics: {
+    audience_size?: ForecastRange;
+    reach?: ForecastRange;
+    frequency?: ForecastRange;
+    impressions?: ForecastRange;
+    clicks?: ForecastRange;
+    spend?: ForecastRange;
+    views?: ForecastRange;
+    completed_views?: ForecastRange;
+    grps?: ForecastRange;
+    engagements?: ForecastRange;
+    follows?: ForecastRange;
+    saves?: ForecastRange;
+    profile_visits?: ForecastRange;
+    measured_impressions?: ForecastRange;
+    downloads?: ForecastRange;
+    plays?: ForecastRange;
+    /**
+     * Share of the declared forecast scope represented by this point. For signal coverage forecasts, this is the point's count divided by the coverage_forecast.scope denominator. Range 0.0 to 1.0.
+     */
+    coverage_rate?: ForecastRange & {
+      /**
+       * @maximum 1
+       */
+      low?: number;
+      /**
+       * @maximum 1
+       */
+      mid?: number;
+      /**
+       * @maximum 1
+       */
+      high?: number;
+    };
+    [k: string]: ForecastRange | undefined;
+  };
+  /**
+   * Forecasted viewability metrics. Mirrors delivery-metrics.viewability, but numeric values are ForecastRange objects because forecast rows may provide low/mid/high bounds. Use this for pre-buy viewability expectations by forecast point without folding measurement metrics into pricing_options.
+   */
+  viewability?: {
+    vendor?: BrandReference;
+    measurable_impressions?: ForecastRange;
+    viewable_impressions?: ForecastRange;
+    /**
+     * Forecasted viewable impression rate (viewable_impressions / measurable_impressions). Range 0.0 to 1.0.
+     */
+    viewable_rate?: ForecastRange & {
+      /**
+       * @maximum 1
+       */
+      low?: number;
+      /**
+       * @maximum 1
+       */
+      mid?: number;
+      /**
+       * @maximum 1
+       */
+      high?: number;
+    };
+    viewed_seconds?: ForecastRange;
+    standard?: ViewabilityStandard;
+  };
+  /**
+   * Forecasted values for vendor-defined metrics that the product's reporting_capabilities.vendor_metrics declared. Mirrors delivery-metrics.vendor_metric_values, but value and measurable_impressions use ForecastRange. These forecasted measurement values are independent of pricing_options.
+   */
+  vendor_metric_values?: ForecastVendorMetricValue[];
+}
+/**
+ * A placement dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
+ */
+export interface PlacementForecastDimension {
+  /**
+   * Dimension family discriminator.
+   */
+  kind: 'placement';
+  placement_ref: PlacementReference;
+  /**
+   * Human-readable placement name, useful when the buyer has not resolved the placement catalog.
+   */
+  placement_name?: string;
+}
+/**
+ * Structured placement reference for this forecast row. References an entry from the product's placements array.
+ */
+export interface PlacementReference {
+  /**
+   * Domain where the adagents.json declaring a publisher-catalog placement is hosted, or the inventory publisher associated with an inline placement. Omitted only for legacy single-publisher product-context references.
+   */
+  publisher_domain?: string;
+  /**
+   * Placement ID from the publisher's adagents.json placement catalog, or an inline seller-defined placement ID interpreted within the enclosing seller and product context.
+   */
+  placement_id: string;
+}
+/**
+ * A device form-factor dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
+ */
+export interface DeviceTypeForecastDimension {
+  /**
+   * Dimension family discriminator.
+   */
+  kind: 'device_type';
+  device_type: DeviceType;
+}
+/**
+ * An operating-system or platform dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
+ */
+export interface DevicePlatformForecastDimension {
+  /**
+   * Dimension family discriminator.
+   */
+  kind: 'device_platform';
+  device_platform: DevicePlatform;
+}
+/**
+ * An audience segment dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
+ */
+export interface AudienceForecastDimension {
+  /**
+   * Dimension family discriminator.
+   */
+  kind: 'audience';
+  /**
+   * Audience segment identifier for this forecast row.
+   */
+  audience_id: string;
+  audience_source: AudienceSource;
+  /**
+   * Human-readable audience segment name.
+   */
+  audience_name?: string;
+}
+/**
+ * A calendar-window dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules. Windows are half-open intervals [start_time, end_time): the row covers instants at or after start_time and strictly before end_time, so adjacent windows share a boundary without overlapping. end_time MUST be after start_time; JSON Schema draft-07 cannot compare sibling values, so conformance tooling enforces the ordering. Within one forecast, sellers MUST emit non-overlapping windows and SHOULD coalesce adjacent windows whose availability_status and metrics do not materially differ. When the request scoped the forecast with offer_filters.availability_horizon, a complete forecast partitions the requested horizon; a seller that cannot cover the full horizon signals the gap through the response's incomplete[] mechanism rather than silently omitting windows.
+ */
+export interface TimeForecastDimension {
+  /**
+   * Dimension family discriminator.
+   */
+  kind: 'time';
+  /**
+   * Inclusive window start (RFC 3339 date-time with timezone offset).
+   */
+  start_time: string;
+  /**
+   * Exclusive window end (RFC 3339 date-time with timezone offset). MUST be after start_time.
+   */
+  end_time: string;
+}
+/**
+ * A forecasted value for a vendor-defined metric, emitted on ForecastPoint.vendor_metric_values parallel to delivery-metrics vendor_metric_values. The envelope mirrors VendorMetricValue but uses ForecastRange for value and measurable_impressions because forecasts may carry low/mid/high bounds instead of actual delivered values.
+ */
+export interface ForecastVendorMetricValue {
+  vendor: BrandReference1;
+  metric_id: VendorMetricID;
+  value: ForecastRange;
+  /**
+   * Unit of the value. Free-form to accommodate heterogeneous vendor metrics (e.g., 'score', 'seconds', 'persons', 'gCO2e', 'USD', 'lift_percent', 'index'). When populated inline, SHOULD match the vendor's published unit.
+   */
+  unit?: string;
+  measurable_impressions?: ForecastRange;
+  /**
+   * Optional structured payload for vendor metrics that do not fit a single scalar. Forecast rows SHOULD use ForecastRange values inside breakdown when sub-values are numeric forecasts. Buyers MUST treat this object as opaque without consulting the vendor's documentation.
+   */
+  breakdown?: {
+  };
+}
+/**
+ * Re-export of `BrandReference` under the legacy codegen artifact name.
+ *
+ * `BrandReference1` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `BrandReference` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `BrandReference`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `BrandReference` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type BrandReference1 = BrandReference;
+
+// DELIVERYFORECAST PRIORITY CANONICAL SCHEMA
+/**
+ * Forecasted delivery metrics for a proposal or product allocation. Publishers attach points to help buyers evaluate expected campaign performance before purchase.
+ */
+export interface DeliveryForecast {
+  /**
+   * Forecasted delivery data points. For spend curves (default), points at ascending budget levels show how metrics scale with spend. For availability forecasts, points represent total available inventory independent of budget. See forecast_range_unit for interpretation.
+   */
+  points: ForecastPoint[];
+  forecast_range_unit?: ForecastRangeUnit;
+  method: ForecastMethod;
+  /**
+   * ISO 4217 currency code for monetary values in this forecast (spend, budget)
+   */
+  currency: string;
+  demographic_system?: DemographicSystem;
+  /**
+   * Target demographic code within the specified demographic_system. For Nielsen: P18-49, M25-54, W35+. For BARB: ABC1 Adults, 16-34. For AGF: E 14-49.
+   */
+  demographic?: string;
+  /**
+   * Third-party measurement provider whose data was used to produce this forecast. Distinct from demographic_system, which specifies demographic notation — measurement_source identifies whose data produced the forecast numbers. Should be present when measured_impressions is used. Lowercase slug format.
+   * @maxLength 64
+   * @pattern ^[a-z0-9_]+$
+   */
+  measurement_source?: string;
+  reach_unit?: ReachUnit;
+  /**
+   * When this forecast was computed
+   * @format date-time
+   */
+  generated_at?: string;
+  /**
+   * When this forecast expires. After this time, the forecast should be refreshed. Forecast expiry does not affect proposal executability.
+   * @format date-time
+   */
+  valid_until?: string;
+  ext?: ExtensionObject;
+}
 // PLATFORMEXTENSIONREFERENCE PRIORITY CANONICAL SCHEMA
 /**
  * Reference to a platform extension definition. The agent that owns the URI is authoritative for the extension's schema. Buyers fetch the definition once per content digest and cache it. Platform extensions are typically bundled in `get_products` responses under an `extensions` map keyed by `uri@digest`, eliminating the need for a separate fetch.
@@ -2923,10 +3345,6 @@ export interface PlatformExtensionReference {
 }
 
 // DELIVERYMETRICS PRIORITY CANONICAL SCHEMA
-/**
- * Identifier for the metric within the vendor's vocabulary. Matches a `vendor_metrics[].metric_id` declaration on the product.
- */
-export type VendorMetricID = string;
 /**
  * Standard delivery metrics that can be reported at media buy, package, or creative level
  */
@@ -3140,16 +3558,19 @@ export interface DeliveryMetrics {
     /**
      * Number of times ad played in rotation
      * @minimum 0
+     * @format int
      */
     loop_plays?: number;
     /**
      * Number of unique screens displaying the ad
      * @minimum 0
+     * @format int
      */
     screens_used?: number;
     /**
      * Total display time in seconds
      * @minimum 0
+     * @format int
      */
     screen_time_seconds?: number;
     /**
@@ -3181,16 +3602,19 @@ export interface DeliveryMetrics {
       /**
        * Impressions delivered at this venue
        * @minimum 0
+       * @format int
        */
       impressions: number;
       /**
        * Loop plays at this venue
        * @minimum 0
+       * @format int
        */
       loop_plays?: number;
       /**
        * Number of screens used at this venue
        * @minimum 0
+       * @format int
        */
       screens_used?: number;
     }[];
@@ -3255,6 +3679,7 @@ export interface DeliveryMetrics {
     /**
      * Modeled audience impressions for the panels and period in this row. This is the channel's delivery number — there is no event-counted alternative. The methodology tier MUST be declared in estimation_basis; provider identity is declared in the row-level measurement_source; the billing vendor is declared in measurement_terms.billing_measurement. The row's top-level impressions SHOULD carry the same value so cross-channel aggregation works without channel-specific logic.
      * @minimum 0
+     * @format int
      */
     estimated_impressions?: number;
     /**
@@ -3358,6 +3783,7 @@ export interface DeliveryMetrics {
       /**
        * Number of measurable impressions whose in-view duration falls in this bucket.
        * @minimum 0
+       * @format int
        */
       impressions: number;
     }[];
@@ -3516,19 +3942,6 @@ export interface VendorMetricValue {
   breakdown?: {
   };
 }
-/**
- * Re-export of `BrandReference` under the legacy codegen artifact name.
- *
- * `BrandReference1` is a json-schema-to-typescript under-resolution artifact —
- * the bundler inlined the same schema at two call sites and jsts emitted a numbered
- * sibling. The body it produced was strictly weaker than `BrandReference` (missing the
- * discriminator, canonical wrapper, or named union); aliasing to `BrandReference`
- * gives consumers the correctly-discriminated shape that matches the wire format.
- *
- * @deprecated Use `BrandReference` from `@adcp/sdk/types`. Slated for removal in the next major.
- */
-export type BrandReference1 = BrandReference;
-
 // MEASUREMENTTERMS PRIORITY CANONICAL SCHEMA
 /**
  * Billing measurement and makegood terms for media buys. Declares who counts the billing metric and what remedies apply when thresholds are breached. Appears on products (seller defaults), package requests (buyer proposals), and confirmed packages (agreed terms). All fields are optional — presence indicates the term is declared or proposed.
@@ -3551,6 +3964,7 @@ export interface MeasurementTerms {
     /**
      * Maximum hours by which the authoritative party MUST publish a final record (`is_final: true` / `finalized_at` on `get_media_buy_delivery`, or `final: true` / `finalized_at` on `report_usage`). **Anchor:** when `measurement_window` is set, hours are counted from the close of that window (e.g., 240h after `c7` close = ~10 days after the 7-day DVR accumulation completes); when `measurement_window` is absent, hours are counted from `reporting_period.end`. Picking a single anchor avoids ambiguity for windowed channels where `reporting_period.end` and window close differ by days. The deadline applies to whichever party is named in `vendor` — seller, buyer, or third-party vendor — symmetrically. When the deadline elapses without a final record, the counterparty MAY fall back to its own attestation for invoicing (seller falls back to seller-attested numbers via `get_media_buy_delivery`; buyer falls back to a buyer-attested `report_usage` push), and the breach is treated like any other measurement-terms breach under `makegood_policy`. Absent means no contractual deadline — finalization is best-effort and disagreements resolve out of band.
      * @minimum 0
+     * @format int
      */
     finalization_deadline_hours?: number;
   };
@@ -3619,348 +4033,10 @@ export type PublisherPropertySelector =
       property_tags: PropertyTag[];
     };
 /**
- * Identifier for a publisher property. Must be lowercase alphanumeric with underscores only.
- */
-export type PropertyID = string;
-/**
  * Tag for categorizing publisher properties. Must be lowercase alphanumeric with underscores only.
  */
 export type PropertyTag = string;
 
-// FORECASTPOINT PRIORITY CANONICAL SCHEMA
-/**
- * Dimension constraints represented by this forecast point, such as country, region, placement, device type, platform, audience, signal value, time window, or intersections such as placement x country or product x signal. Each item declares one dimension family; when multiple items are present, the point represents their intersection. Sellers MUST NOT emit more than one item for each `kind` on a point; consumers MUST NOT treat repeated kinds as OR semantics. Use multiple points with dimensions to expose country/placement/signal availability within one product, proposal, or signal coverage forecast without creating separate products solely for each dimension. Dimensions describe the forecast row and are independent of pricing_options.
- *
- * @minItems 1
- */
-export type ForecastPointDimensions = [
-  (
-    | GeoForecastDimension
-    | PlacementForecastDimension
-    | DeviceTypeForecastDimension
-    | DevicePlatformForecastDimension
-    | AudienceForecastDimension
-    | SignalForecastDimension
-    | TimeForecastDimension
-  ),
-  ...(
-    | GeoForecastDimension
-    | PlacementForecastDimension
-    | DeviceTypeForecastDimension
-    | DevicePlatformForecastDimension
-    | AudienceForecastDimension
-    | SignalForecastDimension
-    | TimeForecastDimension
-  )[]
-];
-/**
- * A geographic dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
- */
-export type GeoForecastDimension = {
-} & {
-} & {
-} & {
-} & {
-  /**
-   * Dimension family discriminator.
-   */
-  kind: 'geo';
-  geo_level: GeographicTargetingLevel;
-  /**
-   * Classification system for metro or postal_area levels. Required when geo_level is 'metro' or 'postal_area'. Metro rows use metro-system enum values such as 'nielsen_dma'; native postal rows use country-local postal-system enum values such as 'zip' with country 'US'; deprecated legacy postal rows may use legacy-postal-system enum values such as 'us_zip'. Omit for country and region rows.
-   */
-  system?: string;
-  /**
-   * ISO 3166-1 alpha-2 country code. Required for native postal_area rows and omitted for legacy postal rows, metro rows, country rows, and region rows.
-   */
-  country?: string;
-  /**
-   * Geographic code within the level and system. Country: ISO 3166-1 alpha-2 ('US'). Region: ISO 3166-2 with country prefix ('US-CA'). Metro/postal: system-specific code ('501', '10001').
-   */
-  geo_code: string;
-  /**
-   * Human-readable geographic name (e.g., 'United States', 'California', 'New York DMA').
-   */
-  geo_name?: string;
-};
-/**
- * A signal value or signal-presence dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
- */
-export type SignalForecastDimension = {
-} & {
-} & (
-    | {
-      }
-    | {
-      }
-  ) & {
-    /**
-     * Dimension family discriminator.
-     */
-    kind: 'signal';
-    signal_ref?: SignalRef;
-    /**
-     * Signal identifier shorthand for this forecast row. Use only when the enclosing context already identifies the signal unambiguously, such as a coverage_forecast nested directly under one get_signals signal item. Otherwise use signal_ref.
-     */
-    signal_id?: string;
-    /**
-     * Signal value bucket represented by this point. Use null with presence 'absent' to represent inventory where the signal is not present. Omit when the row describes any present value rather than one specific value.
-     */
-    signal_value?: string | number | boolean | null;
-    /**
-     * Whether the signal is present for this point. Use 'absent' for the explicit not-present bucket.
-     */
-    presence: 'present' | 'absent';
-    /**
-     * Human-readable signal name, useful when the buyer has not resolved the signal definition.
-     */
-    signal_name?: string;
-    /**
-     * Human-readable label for the signal value bucket.
-     */
-    signal_value_name?: string;
-  };
-/**
- * Canonical signal reference for this forecast row. Required when the row needs to disambiguate product-local, data-provider, or signal-source identity. Product-relative forecasts SHOULD use signal_ref.
- */
-export type SignalRef =
-  | {
-      /**
-       * Discriminator indicating the signal resolves through the selected product's included_signals or signal_targeting_options.
-       */
-      scope: 'product';
-      /**
-       * Product-local signal identifier. For local signals exposed on both get_signals and get_products, this MUST match get_signals.signals[].signal_ref.signal_id for the same signal.
-       */
-      signal_id: string;
-    }
-  | {
-      /**
-       * Discriminator indicating the signal resolves through a data provider's published adagents.json signals[].
-       */
-      scope: 'data_provider';
-      /**
-       * Domain that publishes the signal definition in its adagents.json signals[].
-       */
-      data_provider_domain: string;
-      /**
-       * Signal identifier within the data provider's published adagents.json signals[].
-       */
-      signal_id: string;
-    }
-  | {
-      /**
-       * Discriminator indicating the signal resolves through the issuing signal source.
-       */
-      scope: 'signal_source';
-      /**
-       * URL of the signal source that issues this source-native signal.
-       */
-      signal_source_url: string;
-      /**
-       * Signal identifier within the issuing signal source's signal set.
-       */
-      signal_id: string;
-    };
-/**
- * A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.
- */
-export interface ForecastRange {
-  /** Conservative (low-end) forecast value. */
-  low?: number;
-  /** Expected (most likely) forecast value. */
-  mid?: number;
-  /** Optimistic (high-end) forecast value. */
-  high?: number;
-}
-export interface ForecastPoint {
-  /**
-   * Human-readable name for this forecast point. Required when forecast_range_unit is 'package' so buyer agents can identify and reference individual packages. Optional for other forecast types.
-   * @maxLength 128
-   */
-  label?: string;
-  /**
-   * Budget amount for this forecast point. Required for spend curves; omit for availability forecasts where the metrics represent total available inventory. For allocation-level forecasts, this is the absolute budget for that allocation (not the percentage). For proposal-level forecasts, this is the total proposal budget. When omitted, use metrics.spend to express the estimated cost of the available inventory.
-   * @minimum 0
-   */
-  budget?: number;
-  /**
-   * Optional product context for this forecast row. Usually omitted on product-level and allocation-level forecasts where the product is already implied. On proposal-level forecasts, populate when a dimensional row, especially a placement row, maps to a specific product allocation so buyers can turn the row into an executable package choice. Omit for true aggregate proposal rows spanning multiple products.
-   */
-  product_id?: string;
-  dimensions?: ForecastPointDimensions;
-  availability_status?: AvailabilityStatus;
-  /**
-   * Forecasted metric values. Keys are forecastable-metric enum values for delivery/engagement or event-type enum values for outcomes. Values are ForecastRange objects (low/mid/high). Use { "mid": value } for point estimates. When budget is present, these are the expected metrics at that spend level. When budget is omitted, these represent total available inventory — use spend to express the estimated cost. Additional keys beyond the documented properties are allowed for event-type values (purchase, lead, app_install, etc.).
-   */
-  metrics: {
-    audience_size?: ForecastRange;
-    reach?: ForecastRange;
-    frequency?: ForecastRange;
-    impressions?: ForecastRange;
-    clicks?: ForecastRange;
-    spend?: ForecastRange;
-    views?: ForecastRange;
-    completed_views?: ForecastRange;
-    grps?: ForecastRange;
-    engagements?: ForecastRange;
-    follows?: ForecastRange;
-    saves?: ForecastRange;
-    profile_visits?: ForecastRange;
-    measured_impressions?: ForecastRange;
-    downloads?: ForecastRange;
-    plays?: ForecastRange;
-    /**
-     * Share of the declared forecast scope represented by this point. For signal coverage forecasts, this is the point's count divided by the coverage_forecast.scope denominator. Range 0.0 to 1.0.
-     */
-    coverage_rate?: ForecastRange & {
-      /**
-       * @maximum 1
-       */
-      low?: number;
-      /**
-       * @maximum 1
-       */
-      mid?: number;
-      /**
-       * @maximum 1
-       */
-      high?: number;
-    };
-    [k: string]: ForecastRange | undefined;
-  };
-  /**
-   * Forecasted viewability metrics. Mirrors delivery-metrics.viewability, but numeric values are ForecastRange objects because forecast rows may provide low/mid/high bounds. Use this for pre-buy viewability expectations by forecast point without folding measurement metrics into pricing_options.
-   */
-  viewability?: {
-    vendor?: BrandReference;
-    measurable_impressions?: ForecastRange;
-    viewable_impressions?: ForecastRange;
-    /**
-     * Forecasted viewable impression rate (viewable_impressions / measurable_impressions). Range 0.0 to 1.0.
-     */
-    viewable_rate?: ForecastRange & {
-      /**
-       * @maximum 1
-       */
-      low?: number;
-      /**
-       * @maximum 1
-       */
-      mid?: number;
-      /**
-       * @maximum 1
-       */
-      high?: number;
-    };
-    viewed_seconds?: ForecastRange;
-    standard?: ViewabilityStandard;
-  };
-  /**
-   * Forecasted values for vendor-defined metrics that the product's reporting_capabilities.vendor_metrics declared. Mirrors delivery-metrics.vendor_metric_values, but value and measurable_impressions use ForecastRange. These forecasted measurement values are independent of pricing_options.
-   */
-  vendor_metric_values?: ForecastVendorMetricValue[];
-}
-/**
- * A placement dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
- */
-export interface PlacementForecastDimension {
-  /**
-   * Dimension family discriminator.
-   */
-  kind: 'placement';
-  placement_ref: PlacementReference;
-  /**
-   * Human-readable placement name, useful when the buyer has not resolved the placement catalog.
-   */
-  placement_name?: string;
-}
-/**
- * Structured placement reference for this forecast row. References an entry from the product's placements array.
- */
-export interface PlacementReference {
-  /**
-   * Domain where the adagents.json declaring a publisher-catalog placement is hosted, or the inventory publisher associated with an inline placement. Omitted only for legacy single-publisher product-context references.
-   */
-  publisher_domain?: string;
-  /**
-   * Placement ID from the publisher's adagents.json placement catalog, or an inline seller-defined placement ID interpreted within the enclosing seller and product context.
-   */
-  placement_id: string;
-}
-/**
- * A device form-factor dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
- */
-export interface DeviceTypeForecastDimension {
-  /**
-   * Dimension family discriminator.
-   */
-  kind: 'device_type';
-  device_type: DeviceType;
-}
-/**
- * An operating-system or platform dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
- */
-export interface DevicePlatformForecastDimension {
-  /**
-   * Dimension family discriminator.
-   */
-  kind: 'device_platform';
-  device_platform: DevicePlatform;
-}
-/**
- * An audience segment dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
- */
-export interface AudienceForecastDimension {
-  /**
-   * Dimension family discriminator.
-   */
-  kind: 'audience';
-  /**
-   * Audience segment identifier for this forecast row.
-   */
-  audience_id: string;
-  audience_source: AudienceSource;
-  /**
-   * Human-readable audience segment name.
-   */
-  audience_name?: string;
-}
-/**
- * A calendar-window dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules. Windows are half-open intervals [start_time, end_time): the row covers instants at or after start_time and strictly before end_time, so adjacent windows share a boundary without overlapping. end_time MUST be after start_time; JSON Schema draft-07 cannot compare sibling values, so conformance tooling enforces the ordering. Within one forecast, sellers MUST emit non-overlapping windows and SHOULD coalesce adjacent windows whose availability_status and metrics do not materially differ. When the request scoped the forecast with offer_filters.availability_horizon, a complete forecast partitions the requested horizon; a seller that cannot cover the full horizon signals the gap through the response's incomplete[] mechanism rather than silently omitting windows.
- */
-export interface TimeForecastDimension {
-  /**
-   * Dimension family discriminator.
-   */
-  kind: 'time';
-  /**
-   * Inclusive window start (RFC 3339 date-time with timezone offset).
-   */
-  start_time: string;
-  /**
-   * Exclusive window end (RFC 3339 date-time with timezone offset). MUST be after start_time.
-   */
-  end_time: string;
-}
-/**
- * A forecasted value for a vendor-defined metric, emitted on ForecastPoint.vendor_metric_values parallel to delivery-metrics vendor_metric_values. The envelope mirrors VendorMetricValue but uses ForecastRange for value and measurable_impressions because forecasts may carry low/mid/high bounds instead of actual delivered values.
- */
-export interface ForecastVendorMetricValue {
-  vendor: BrandReference1;
-  metric_id: VendorMetricID;
-  value: ForecastRange;
-  /**
-   * Unit of the value. Free-form to accommodate heterogeneous vendor metrics (e.g., 'score', 'seconds', 'persons', 'gCO2e', 'USD', 'lift_percent', 'index'). When populated inline, SHOULD match the vendor's published unit.
-   */
-  unit?: string;
-  measurable_impressions?: ForecastRange;
-  /**
-   * Optional structured payload for vendor metrics that do not fit a single scalar. Forecast rows SHOULD use ForecastRange values inside breakdown when sub-values are numeric forecasts. Buyers MUST treat this object as opaque without consulting the vendor's documentation.
-   */
-  breakdown?: {
-  };
-}
 // TARGETINGOVERLAYSUPPORT PRIORITY CANONICAL SCHEMA
 export type CountrySupport =
   | Supported
@@ -3968,6 +4044,7 @@ export type CountrySupport =
       /**
        * Maximum number of country values accepted in this targeting field on one package.
        * @minimum 1
+       * @format int
        */
       max_values_per_package: number;
       ext?: ExtensionObject;
@@ -3979,11 +4056,13 @@ export type MetroSupport =
       systems: MetroAreaSystem[];
       /**
        * @minimum 1
+       * @format int
        */
       max_values_per_package?: number;
       /**
        * Optional maximum number of independently targeted packages the seller will create from this configured product.
        * @minimum 1
+       * @format int
        */
       max_packages?: number;
       ext?: ExtensionObject;
@@ -4063,6 +4142,7 @@ export interface TargetingOverlaySupport {
         /**
          * Maximum number of proximity entries accepted on one package.
          * @minimum 1
+         * @format int
          */
         max_values_per_package?: number;
         ext?: ExtensionObject;
@@ -4087,10 +4167,12 @@ export interface TargetingOverlaySupport {
     | {
         /**
          * @minimum 1
+         * @format int
          */
         max_values_per_package?: number;
         /**
          * @minimum 1
+         * @format int
          */
         max_packages?: number;
         ext?: ExtensionObject;
@@ -4162,11 +4244,13 @@ export interface PlaceSupport {
   };
   /**
    * @minimum 1
+   * @format int
    */
   max_values_per_package?: number;
   /**
    * Optional maximum number of independently place-targeted packages the seller will create from this configured product.
    * @minimum 1
+   * @format int
    */
   max_packages?: number;
   ext?: ExtensionObject;
@@ -8715,11 +8799,13 @@ export type CanonicalFormatImage = SizeModeMutex & {
   /**
    * Logical render width in pixels — use for fixed-size slots (e.g., a 300×250 IAB MREC). When `pixel_ratios` is absent, the required image asset width is the same value (1x). When `pixel_ratios` is present, an accepted asset's intrinsic width is `width × pixel_ratio`. For multi-size flexible slots, use `sizes[]`; for responsive slots, use the min/max fields. The three size modes are mutually exclusive.
    * @minimum 1
+   * @format int
    */
   width?: number;
   /**
    * Logical render height in pixels. Intrinsic asset height is `height × pixel_ratio`, where the ratio defaults to 1 when `pixel_ratios` is absent. See `width` for size-mode mutual exclusion.
    * @minimum 1
+   * @format int
    */
   height?: number;
   /**
@@ -8728,10 +8814,12 @@ export type CanonicalFormatImage = SizeModeMutex & {
   sizes?: {
     /**
      * @minimum 1
+     * @format int
      */
     width: number;
     /**
      * @minimum 1
+     * @format int
      */
     height: number;
   }[];
@@ -8742,21 +8830,25 @@ export type CanonicalFormatImage = SizeModeMutex & {
   /**
    * Minimum accepted width in pixels for responsive slots that adapt within a range (e.g., 'any width from 300 to 970'). Use with `max_width` (and optionally `min_height`/`max_height`). Mutually exclusive with `(width, height)` and `sizes[]`.
    * @minimum 1
+   * @format int
    */
   min_width?: number;
   /**
    * Maximum accepted width in pixels for responsive slots. Pair with `min_width`. See `min_width` for size-mode mutual exclusion.
    * @minimum 1
+   * @format int
    */
   max_width?: number;
   /**
    * Minimum accepted height in pixels for responsive slots. Pair with `max_height`.
    * @minimum 1
+   * @format int
    */
   min_height?: number;
   /**
    * Maximum accepted height in pixels for responsive slots. Pair with `min_height`.
    * @minimum 1
+   * @format int
    */
   max_height?: number;
   /**
@@ -8767,6 +8859,7 @@ export type CanonicalFormatImage = SizeModeMutex & {
   /**
    * Maximum file size in kilobytes.
    * @minimum 1
+   * @format int
    */
   max_file_size_kb?: number;
   /**
@@ -8779,10 +8872,12 @@ export type CanonicalFormatImage = SizeModeMutex & {
   ssl_required?: boolean;
   /**
    * @minimum 1
+   * @format int
    */
   headline_max_chars?: number;
   /**
    * @minimum 1
+   * @format int
    */
   body_text_max_chars?: number;
   /**
@@ -8891,11 +8986,13 @@ export interface Fixed {
   /**
    * Logical render width in pixels — use for fixed-size slots (e.g., a 300×250 IAB MREC). When `pixel_ratios` is absent, the required image asset width is the same value (1x). When `pixel_ratios` is present, an accepted asset's intrinsic width is `width × pixel_ratio`. For multi-size flexible slots, use `sizes[]`; for responsive slots, use the min/max fields. The three size modes are mutually exclusive.
    * @minimum 1
+   * @format int
    */
   width: number;
   /**
    * Logical render height in pixels. Intrinsic asset height is `height × pixel_ratio`, where the ratio defaults to 1 when `pixel_ratios` is absent. See `width` for size-mode mutual exclusion.
    * @minimum 1
+   * @format int
    */
   height: number;
 }
@@ -8906,10 +9003,12 @@ export interface MultiSize {
   sizes: {
     /**
      * @minimum 1
+     * @format int
      */
     width: number;
     /**
      * @minimum 1
+     * @format int
      */
     height: number;
   }[];
@@ -8918,21 +9017,25 @@ export interface Responsive {
   /**
    * Minimum accepted width in pixels for responsive slots that adapt within a range (e.g., 'any width from 300 to 970'). Use with `max_width` (and optionally `min_height`/`max_height`). Mutually exclusive with `(width, height)` and `sizes[]`.
    * @minimum 1
+   * @format int
    */
   min_width?: number;
   /**
    * Maximum accepted width in pixels for responsive slots. Pair with `min_width`. See `min_width` for size-mode mutual exclusion.
    * @minimum 1
+   * @format int
    */
   max_width?: number;
   /**
    * Minimum accepted height in pixels for responsive slots. Pair with `max_height`.
    * @minimum 1
+   * @format int
    */
   min_height?: number;
   /**
    * Maximum accepted height in pixels for responsive slots. Pair with `min_height`.
    * @minimum 1
+   * @format int
    */
   max_height?: number;
 }
@@ -9082,11 +9185,13 @@ export type CanonicalFormatHTML5Banner = SizeModeMutex & {
   /**
    * Required banner width in pixels — use for fixed-size slots. For multi-size flexible slots use `sizes[]`; for responsive use `min_width`/`max_width`/`min_height`/`max_height`. Exactly one of `(width, height)`, `sizes[]`, or `min/max_width` + `min/max_height` ranges MUST be set.
    * @minimum 1
+   * @format int
    */
   width?: number;
   /**
    * Required banner height in pixels. See `width` for size-mode mutual exclusion.
    * @minimum 1
+   * @format int
    */
   height?: number;
   /**
@@ -9095,41 +9200,49 @@ export type CanonicalFormatHTML5Banner = SizeModeMutex & {
   sizes?: {
     /**
      * @minimum 1
+     * @format int
      */
     width: number;
     /**
      * @minimum 1
+     * @format int
      */
     height: number;
   }[];
   /**
    * Minimum accepted width for responsive HTML5 banners that adapt within a range. Pair with `max_width`. Mutually exclusive with `(width, height)` and `sizes[]`.
    * @minimum 1
+   * @format int
    */
   min_width?: number;
   /**
    * Maximum accepted width for responsive HTML5 banners. Pair with `min_width`.
    * @minimum 1
+   * @format int
    */
   max_width?: number;
   /**
    * Minimum accepted height for responsive HTML5 banners. Pair with `max_height`.
    * @minimum 1
+   * @format int
    */
   min_height?: number;
   /**
    * Maximum accepted height for responsive HTML5 banners. Pair with `min_height`.
    * @minimum 1
+   * @format int
    */
   max_height?: number;
   /**
    * Maximum initial-load file size (zip + above-the-fold assets) in kilobytes. IAB display standards: 200 KB for fixed sizes, 100 KB for mobile.
    * @minimum 1
+   * @format int
    */
   max_initial_load_kb?: number;
   /**
    * Maximum polite-load file size after host-initiated subload, in kilobytes. IAB display standards: 500 KB for fixed sizes.
    * @minimum 1
+   * @format int
    */
   max_polite_load_kb?: number;
   /**
@@ -9139,12 +9252,14 @@ export type CanonicalFormatHTML5Banner = SizeModeMutex & {
   /**
    * Maximum total animation duration in milliseconds. IAB standard: 30000 (30 seconds).
    * @minimum 0
+   * @format int
    */
   max_animation_duration_ms?: number;
   /**
    * Maximum CPU load percentage during render.
    * @minimum 1
    * @maximum 100
+   * @format int
    */
   max_cpu_load_percent?: number;
   /**
@@ -9170,6 +9285,7 @@ export type CanonicalFormatHTML5Banner = SizeModeMutex & {
   /**
    * Maximum backup image file size in kilobytes.
    * @minimum 1
+   * @format int
    */
   backup_image_max_size_kb?: number;
   ssl_required?: boolean;
@@ -9319,11 +9435,13 @@ export type CanonicalFormatDisplayTag = SizeModeMutex & {
   /**
    * Required tag rendering width in pixels — use for fixed-size slots. For multi-size flexible slots use `sizes[]`; for responsive use `min_width`/`max_width`/`min_height`/`max_height`. Exactly one of `(width, height)`, `sizes[]`, or `min/max_width` + `min/max_height` ranges MUST be set.
    * @minimum 1
+   * @format int
    */
   width?: number;
   /**
    * Required tag rendering height in pixels. See `width` for size-mode mutual exclusion.
    * @minimum 1
+   * @format int
    */
   height?: number;
   /**
@@ -9332,31 +9450,37 @@ export type CanonicalFormatDisplayTag = SizeModeMutex & {
   sizes?: {
     /**
      * @minimum 1
+     * @format int
      */
     width: number;
     /**
      * @minimum 1
+     * @format int
      */
     height: number;
   }[];
   /**
    * Minimum accepted width for responsive third-party tags. Pair with `max_width`. Mutually exclusive with `(width, height)` and `sizes[]`.
    * @minimum 1
+   * @format int
    */
   min_width?: number;
   /**
    * Maximum accepted width for responsive third-party tags. Pair with `min_width`.
    * @minimum 1
+   * @format int
    */
   max_width?: number;
   /**
    * Minimum accepted height for responsive third-party tags. Pair with `max_height`.
    * @minimum 1
+   * @format int
    */
   min_height?: number;
   /**
    * Maximum accepted height for responsive third-party tags. Pair with `min_height`.
    * @minimum 1
+   * @format int
    */
   max_height?: number;
   /**
@@ -9375,11 +9499,13 @@ export type CanonicalFormatDisplayTag = SizeModeMutex & {
   /**
    * Maximum redirect chain depth permitted.
    * @minimum 0
+   * @format int
    */
   max_redirect_depth?: number;
   /**
    * Maximum tag-server response time in milliseconds.
    * @minimum 1
+   * @format int
    */
   max_response_time_ms?: number;
   /**
@@ -9388,6 +9514,7 @@ export type CanonicalFormatDisplayTag = SizeModeMutex & {
   backup_image_required?: boolean;
   /**
    * @minimum 1
+   * @format int
    */
   backup_image_max_size_kb?: number;
   /**
@@ -9545,10 +9672,12 @@ export interface CanonicalFormatImageCarousel {
   /**
    * Minimum card count (typical: 2 or 3).
    * @minimum 2
+   * @format int
    */
   min_cards?: number;
   /**
    * Maximum card count (typical: 6, 10, or 35 depending on platform).
+   * @format int
    */
   max_cards?: number;
   /**
@@ -9562,29 +9691,35 @@ export interface CanonicalFormatImageCarousel {
   allowed_card_asset_types?: ('image' | 'video')[];
   /**
    * @minimum 1
+   * @format int
    */
   card_image_max_file_size_kb?: number;
   /**
    * @minimum 1
+   * @format int
    */
   card_video_max_file_size_kb?: number;
   /**
    * @minimum 1
+   * @format int
    */
   card_video_max_duration_ms?: number;
   /**
    * Maximum length of the carousel-level primary text.
    * @minimum 1
+   * @format int
    */
   primary_text_max_chars?: number;
   /**
    * Per-card headline character limit. Governs the `headline` field on each card-asset in the `cards` slot.
    * @minimum 1
+   * @format int
    */
   card_headline_max_chars?: number;
   /**
    * Per-card description character limit. Governs the `description` field on each card-asset in the `cards` slot. Distinct from `card_headline_max_chars`: description is longer body copy (typically 100-500 chars); headline is the short label (typically 25-40 chars).
    * @minimum 1
+   * @format int
    */
   card_description_max_chars?: number;
   ssl_required?: boolean;
@@ -9742,18 +9877,22 @@ export interface CanonicalFormatHostedVideo {
   aspect_ratio?: string;
   /**
    * @minimum 1
+   * @format int
    */
   min_width?: number;
   /**
    * @minimum 1
+   * @format int
    */
   min_height?: number;
   /**
    * @minimum 1
+   * @format int
    */
   max_width?: number;
   /**
    * @minimum 1
+   * @format int
    */
   max_height?: number;
   /**
@@ -9763,6 +9902,7 @@ export interface CanonicalFormatHostedVideo {
   /**
    * When set, duration must equal exactly this value. Takes precedence over `duration_ms_range` when both ship (see `duration_ms_range` description).
    * @minimum 1
+   * @format int
    */
   duration_ms_exact?: number;
   video_codecs?: ('h264' | 'h265' | 'vp8' | 'vp9' | 'av1' | 'prores')[];
@@ -9770,15 +9910,18 @@ export interface CanonicalFormatHostedVideo {
   containers?: ('mp4' | 'webm' | 'mov')[];
   /**
    * @minimum 1
+   * @format int
    */
   min_bitrate_kbps?: number;
   /**
    * @minimum 1
+   * @format int
    */
   max_bitrate_kbps?: number;
   /**
    * Maximum file size, where 1 MB is exactly 1,000,000 bytes.
    * @minimum 1
+   * @format int
    */
   max_file_size_mb?: number;
   frame_rates?: number[];
@@ -9786,14 +9929,17 @@ export interface CanonicalFormatHostedVideo {
   om_sdk_required?: boolean;
   /**
    * @minimum 1
+   * @format int
    */
   headline_max_chars?: number;
   /**
    * @minimum 1
+   * @format int
    */
   primary_text_max_chars?: number;
   /**
    * @minimum 1
+   * @format int
    */
   brand_name_max_chars?: number;
   cta_values?: string[];
@@ -9987,26 +10133,31 @@ export interface CanonicalFormatVASTVideo {
   /**
    * When set, duration must equal exactly this value. Takes precedence over `duration_ms_range` when both ship.
    * @minimum 1
+   * @format int
    */
   duration_ms_exact?: number;
   /**
    * Minimum placement/player width in pixels. MediaFile rendition dimensions are declared in `media_file_requirements`.
    * @minimum 1
+   * @format int
    */
   min_width?: number;
   /**
    * Maximum placement/player width in pixels. MediaFile rendition dimensions are declared in `media_file_requirements`.
    * @minimum 1
+   * @format int
    */
   max_width?: number;
   /**
    * Minimum placement/player height in pixels. MediaFile rendition dimensions are declared in `media_file_requirements`.
    * @minimum 1
+   * @format int
    */
   min_height?: number;
   /**
    * Maximum placement/player height in pixels. MediaFile rendition dimensions are declared in `media_file_requirements`.
    * @minimum 1
+   * @format int
    */
   max_height?: number;
   /**
@@ -10026,11 +10177,13 @@ export interface CanonicalFormatVASTVideo {
   /**
    * When skippable, the buyer-side skip threshold in milliseconds (e.g., 5000 for 5-second skippable pre-roll).
    * @minimum 0
+   * @format int
    */
   skippable_after_ms?: number;
   /**
    * Maximum VAST wrapper redirect depth permitted.
    * @minimum 0
+   * @format int
    */
   max_wrapper_depth?: number;
   ssl_required?: boolean;
@@ -10242,6 +10395,7 @@ export interface CanonicalFormatHostedAudio {
   /**
    * When set, duration must equal exactly this value. Takes precedence over `duration_ms_range` when both ship.
    * @minimum 1
+   * @format int
    */
   duration_ms_exact?: number;
   audio_codecs?: ('mp3' | 'aac' | 'wav' | 'opus' | 'flac')[];
@@ -10249,10 +10403,12 @@ export interface CanonicalFormatHostedAudio {
   audio_channels?: ('mono' | 'stereo')[];
   /**
    * @minimum 1
+   * @format int
    */
   min_bitrate_kbps?: number;
   /**
    * @minimum 1
+   * @format int
    */
   max_bitrate_kbps?: number;
   /**
@@ -10290,10 +10446,12 @@ export interface CanonicalFormatHostedAudio {
   companion_image_aspect_ratio?: string;
   /**
    * @minimum 1
+   * @format int
    */
   companion_image_max_file_size_kb?: number;
   /**
    * @minimum 1
+   * @format int
    */
   brand_name_max_chars?: number;
 }
@@ -10448,11 +10606,13 @@ export interface CanonicalFormatDAASTAudio {
   /**
    * When set, duration must equal exactly this value. Takes precedence over `duration_ms_range` when both ship.
    * @minimum 1
+   * @format int
    */
   duration_ms_exact?: number;
   linear_required?: boolean;
   /**
    * @minimum 0
+   * @format int
    */
   max_wrapper_depth?: number;
   ssl_required?: boolean;
@@ -10614,10 +10774,12 @@ export interface CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven {
   /**
    * Minimum catalog item count buyer must supply.
    * @minimum 1
+   * @format int
    */
   min_items?: number;
   /**
    * Maximum items considered for placement.
+   * @format int
    */
   max_items?: number;
   /**
@@ -10831,16 +10993,19 @@ export interface CanonicalFormatNativeInFeed {
   /**
    * Maximum character length for the title slot. IAB native typical: 25 (short) to 90 (long). Buyer agents SHOULD validate ship-time title length against this.
    * @minimum 1
+   * @format int
    */
   title_max_chars?: number;
   /**
    * Maximum character length for the body_text slot. IAB native typical: 90 (mainline) to 140 (extended).
    * @minimum 1
+   * @format int
    */
   body_text_max_chars?: number;
   /**
    * Maximum character length for the cta slot. Typical: 15–25.
    * @minimum 1
+   * @format int
    */
   cta_max_chars?: number;
   /**
@@ -10853,10 +11018,12 @@ export interface CanonicalFormatNativeInFeed {
   main_image_sizes?: {
     /**
      * @minimum 1
+     * @format int
      */
     width: number;
     /**
      * @minimum 1
+     * @format int
      */
     height: number;
   }[];
@@ -10866,16 +11033,19 @@ export interface CanonicalFormatNativeInFeed {
   icon_size?: {
     /**
      * @minimum 1
+     * @format int
      */
     width: number;
     /**
      * @minimum 1
+     * @format int
      */
     height: number;
   };
   /**
    * Maximum file size in kilobytes for main_image and icon.
    * @minimum 1
+   * @format int
    */
   max_image_file_size_kb?: number;
   /**
@@ -11042,96 +11212,119 @@ export interface CanonicalFormatResponsiveCreative {
   production_window_business_days?: number;
   /**
    * @minimum 0
+   * @format int
    */
   headlines_min?: number;
   /**
    * @minimum 0
+   * @format int
    */
   headlines_max?: number;
   /**
    * @minimum 1
+   * @format int
    */
   headline_max_chars?: number;
   /**
    * @minimum 0
+   * @format int
    */
   long_headlines_min?: number;
   /**
    * @minimum 0
+   * @format int
    */
   long_headlines_max?: number;
   /**
    * @minimum 1
+   * @format int
    */
   long_headline_max_chars?: number;
   /**
    * @minimum 0
+   * @format int
    */
   descriptions_min?: number;
   /**
    * @minimum 0
+   * @format int
    */
   descriptions_max?: number;
   /**
    * @minimum 1
+   * @format int
    */
   description_max_chars?: number;
   /**
    * @minimum 0
+   * @format int
    */
   images_landscape_min?: number;
   /**
    * @minimum 0
+   * @format int
    */
   images_landscape_max?: number;
   images_landscape_aspect_ratio?: string;
   /**
    * @minimum 0
+   * @format int
    */
   images_square_min?: number;
   /**
    * @minimum 0
+   * @format int
    */
   images_square_max?: number;
   /**
    * @minimum 0
+   * @format int
    */
   images_vertical_min?: number;
   /**
    * @minimum 0
+   * @format int
    */
   images_vertical_max?: number;
   /**
    * @minimum 0
+   * @format int
    */
   videos_min?: number;
   /**
    * @minimum 0
+   * @format int
    */
   videos_max?: number;
   /**
    * @minimum 1
+   * @format int
    */
   video_min_duration_ms?: number;
   /**
    * @minimum 1
+   * @format int
    */
   video_max_duration_ms?: number;
   /**
    * @minimum 0
+   * @format int
    */
   logo_min?: number;
   /**
    * @minimum 0
+   * @format int
    */
   logo_max?: number;
   logo_aspect_ratios?: string[];
   /**
    * @minimum 1
+   * @format int
    */
   business_name_max_chars?: number;
   /**
    * @minimum 1
+   * @format int
    */
   asset_image_max_file_size_kb?: number;
   /**
@@ -11288,11 +11481,13 @@ export interface CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement {
   /**
    * For text output: maximum length of the surface-composed mention text.
    * @minimum 1
+   * @format int
    */
   max_mention_length_chars?: number;
   /**
    * For audio output: maximum duration of the spoken mention in milliseconds.
    * @minimum 1
+   * @format int
    */
   max_mention_duration_ms?: number;
   /**
@@ -11530,11 +11725,13 @@ export interface CanonicalFormatSellerRenderedStatefulDisplay {
         /**
          * For `timer`: delay after `from_state_id` activates (re-entry restarts it). For `in_view_timer`: accumulated viewable milliseconds in `from_state_id`. Timer-class transitions in a state cycle MUST declare at least 1000 (anti-strobe floor).
          * @minimum 0
+         * @format int
          */
         delay_ms: number;
         /**
          * Duration of a seller-rendered animated transition.
          * @minimum 0
+         * @format int
          */
         duration_ms?: number;
         /**
@@ -11571,11 +11768,13 @@ export interface CanonicalFormatSellerRenderedStatefulDisplay {
         /**
          * For `timer`: delay after `from_state_id` activates (re-entry restarts it). For `in_view_timer`: accumulated viewable milliseconds in `from_state_id`. Timer-class transitions in a state cycle MUST declare at least 1000 (anti-strobe floor).
          * @minimum 0
+         * @format int
          */
         delay_ms: number;
         /**
          * Duration of a seller-rendered animated transition.
          * @minimum 0
+         * @format int
          */
         duration_ms?: number;
         /**
@@ -11616,6 +11815,7 @@ export interface CanonicalFormatSellerRenderedStatefulDisplay {
         /**
          * Duration of a seller-rendered animated transition.
          * @minimum 0
+         * @format int
          */
         duration_ms?: number;
         /**
@@ -11662,6 +11862,7 @@ export interface CanonicalFormatSellerRenderedStatefulDisplay {
         /**
          * Duration of a seller-rendered animated transition.
          * @minimum 0
+         * @format int
          */
         duration_ms?: number;
         /**
@@ -11723,6 +11924,7 @@ export interface CanonicalFormatSellerRenderedStatefulDisplay {
         /**
          * Duration of a seller-rendered animated transition.
          * @minimum 0
+         * @format int
          */
         duration_ms?: number;
         /**
@@ -11759,6 +11961,7 @@ export interface CanonicalFormatSellerRenderedStatefulDisplay {
         /**
          * Duration of a seller-rendered animated transition.
          * @minimum 0
+         * @format int
          */
         duration_ms?: number;
         /**
@@ -11788,6 +11991,7 @@ export interface CanonicalFormatSellerRenderedStatefulDisplay {
   duration_ms_range?: (number | null)[];
   /**
    * @minimum 1
+   * @format int
    */
   duration_ms_exact?: number;
   /**
@@ -11799,11 +12003,13 @@ export interface CanonicalFormatSellerRenderedStatefulDisplay {
   video_playback?: 'none' | 'auto_muted' | 'user_initiated';
   /**
    * @minimum 1
+   * @format int
    */
   max_initial_load_kb?: number;
   /**
    * Ceiling on assets loaded after the window load event (IAB LEAN subload). Pairs with `max_initial_load_kb` to mirror the New Ad Portfolio initial/subload weight pair.
    * @minimum 1
+   * @format int
    */
   max_subload_kb?: number;
   /**
@@ -12101,10 +12307,12 @@ export interface CanonicalFormatCoordinatedPlacements {
     required?: boolean;
     /**
      * @minimum 0
+     * @format int
      */
     min?: number;
     /**
      * @minimum 1
+     * @format int
      */
     max?: number;
     /**
@@ -12415,42 +12623,52 @@ export interface ValidatePropertyDeliveryResponse {
   summary: {
     /**
      * Total number of records validated
+     * @format int
      */
     total_records: number;
     /**
      * Total impressions across all records
+     * @format int
      */
     total_impressions: number;
     /**
      * Number of records with compliant status
+     * @format int
      */
     compliant_records: number;
     /**
      * Impressions from compliant records
+     * @format int
      */
     compliant_impressions: number;
     /**
      * Number of records with non_compliant status
+     * @format int
      */
     non_compliant_records: number;
     /**
      * Impressions from non_compliant records
+     * @format int
      */
     non_compliant_impressions: number;
     /**
      * Number of records where identifier was recognized but no data available
+     * @format int
      */
     not_covered_records: number;
     /**
      * Impressions from not_covered records
+     * @format int
      */
     not_covered_impressions: number;
     /**
      * Number of records where identifier type was not resolvable
+     * @format int
      */
     unidentified_records: number;
     /**
      * Impressions from unidentified records
+     * @format int
      */
     unidentified_impressions: number;
   };
@@ -12481,34 +12699,42 @@ export interface ValidatePropertyDeliveryResponse {
   authorization_summary?: {
     /**
      * Number of records with sales_agent_url provided
+     * @format int
      */
     records_checked: number;
     /**
      * Total impressions from records with sales_agent_url
+     * @format int
      */
     impressions_checked: number;
     /**
      * Number of records where sales agent was authorized
+     * @format int
      */
     authorized_records: number;
     /**
      * Impressions from authorized records
+     * @format int
      */
     authorized_impressions: number;
     /**
      * Number of records where sales agent was NOT authorized
+     * @format int
      */
     unauthorized_records: number;
     /**
      * Impressions from unauthorized records
+     * @format int
      */
     unauthorized_impressions: number;
     /**
      * Number of records where authorization could not be determined (adagents.json unavailable)
+     * @format int
      */
     unknown_records: number;
     /**
      * Impressions from records where authorization could not be determined
+     * @format int
      */
     unknown_impressions: number;
   };
@@ -12784,6 +13010,7 @@ export interface CanonicalProposal {
   opportunity_id?: string;
   /**
    * @minimum 1
+   * @format int
    */
   base_media_buy_revision?: number;
   proposal_status: ProposalStatus;
@@ -15647,6 +15874,7 @@ export interface MediaBuy {
   /**
    * Monotonically increasing optimistic concurrency token. Incremented on every mutating state change or update; reads, validation-only calls, and exact idempotency replays do not increment it. Callers SHOULD include this in update_media_buy requests intended to change state — when provided, sellers MUST reject with CONFLICT if the revision does not match the current value, and MUST enforce that comparison atomically with the write.
    * @minimum 1
+   * @format int
    */
   revision: number;
   /**
@@ -17054,6 +17282,7 @@ export type Product = {
   /**
    * Maximum number of optimization_goals this product accepts on a package. When absent, no limit is declared. Most social platforms accept only 1 goal — buyers sending arrays longer than this value should expect the seller to use only the highest-priority (lowest priority number) goal.
    * @minimum 1
+   * @format int
    */
   max_optimization_goals?: number;
   measurement_readiness?: MeasurementReadiness;
@@ -17089,11 +17318,13 @@ export type Product = {
     /**
      * Number of catalog items that matched this product's inventory.
      * @minimum 0
+     * @format int
      */
     matched_count?: number;
     /**
      * Total catalog items evaluated from the buyer's catalog.
      * @minimum 0
+     * @format int
      */
     submitted_count: number;
   };
@@ -18137,42 +18368,6 @@ export interface TimeBasedPricingOption {
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
   eligible_adjustments?: PriceAdjustmentKind[];
-}
-/**
- * Forecasted delivery metrics for this product. Concrete discovery targeting scopes the forecast to those effective values. When discovery requested only required_overlay_support for a dimension, the forecast describes the product's discovery/default scope and is not a value-specific forecast for every later selection; buyers rediscover with concrete targeting_overlay values when they need that forecast.
- */
-export interface DeliveryForecast {
-  /**
-   * Forecasted delivery data points. For spend curves (default), points at ascending budget levels show how metrics scale with spend. For availability forecasts, points represent total available inventory independent of budget. See forecast_range_unit for interpretation.
-   *
-   * @minItems 1
-   */
-  points: [ForecastPoint, ...ForecastPoint[]];
-  forecast_range_unit?: ForecastRangeUnit;
-  method: ForecastMethod;
-  /**
-   * ISO 4217 currency code for monetary values in this forecast (spend, budget)
-   */
-  currency: string;
-  demographic_system?: DemographicSystem;
-  /**
-   * Target demographic code within the specified demographic_system. For Nielsen: P18-49, M25-54, W35+. For BARB: ABC1 Adults, 16-34. For AGF: E 14-49.
-   */
-  demographic?: string;
-  /**
-   * Third-party measurement provider whose data was used to produce this forecast. Distinct from demographic_system, which specifies demographic notation — measurement_source identifies whose data produced the forecast numbers. Should be present when measured_impressions is used. Lowercase slug format.
-   */
-  measurement_source?: string;
-  reach_unit?: ReachUnit;
-  /**
-   * When this forecast was computed
-   */
-  generated_at?: string;
-  /**
-   * When this forecast expires. After this time, the forecast should be refreshed. Forecast expiry does not affect proposal executability.
-   */
-  valid_until?: string;
-  ext?: ExtensionObject;
 }
 /**
  * @deprecated
@@ -19604,7 +19799,7 @@ export type Proposal = {
    * Explanation of how this proposal aligns with the campaign brief
    */
   brief_alignment?: string;
-  forecast?: DeliveryForecast;
+  forecast?: DeliveryForecast2;
   ext?: ExtensionObject;
 };
 /**
@@ -21242,9 +21437,21 @@ export interface ProductAllocation {
    * @minItems 1
    */
   daypart_targets?: [DaypartTarget, ...DaypartTarget[]];
-  forecast?: DeliveryForecast;
+  forecast?: DeliveryForecast1;
   ext?: ExtensionObject;
 }
+/**
+ * Re-export of `DeliveryForecast` under the legacy codegen artifact name.
+ *
+ * `DeliveryForecast1` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `DeliveryForecast` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `DeliveryForecast`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `DeliveryForecast` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type DeliveryForecast1 = DeliveryForecast;
 /**
  * Re-export of `BrandReference` under the legacy codegen artifact name.
  *
@@ -21313,6 +21520,18 @@ export interface InsertionOrder {
    */
   requires_signature: boolean;
 }
+/**
+ * Re-export of `DeliveryForecast` under the legacy codegen artifact name.
+ *
+ * `DeliveryForecast2` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `DeliveryForecast` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `DeliveryForecast`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `DeliveryForecast` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type DeliveryForecast2 = DeliveryForecast;
 /**
  * Cursor metadata for paginated get_products responses. In brief/refine mode, continuation pages bound returned products[] for the seller's curated or refined answer; proposals may accompany a page as plan metadata but are not independently counted by this pagination envelope, and pagination does not convert the response into an exhaustive feed contract. In wholesale mode, continuation pages walk the wholesale product feed.
  */
@@ -23621,11 +23840,13 @@ export interface PublisherEntry {
   /**
    * Count of properties under THIS `publisher_domain` only that the agent's selectors resolve to. Never a network-wide count. The directory computes this by applying the publisher's `adagents.json` selector predicates against the publisher's own properties (federated) OR against the parent file's inline properties carrying matching `publisher_domain` (inline, per adcp#4825 resolution rule).
    * @minimum 0
+   * @format int
    */
   properties_authorized: number;
   /**
    * Count of properties under THIS `publisher_domain` only — total inventory the publisher's file declares. Never a network-wide count. On managed-network-shape parent files (per adcp#4825 inline resolution), this is the count of inline `properties[]` entries whose `publisher_domain` field matches this row's domain.
    * @minimum 0
+   * @format int
    */
   properties_total: number;
   /**
@@ -23711,6 +23932,7 @@ export interface AcquireRightsRequest {
     /**
      * Estimated total impressions for the campaign. Required when the brand agent will project commitment against a governance plan AND the selected pricing_option has model: 'cpm' — projection equals (pricing_option.price / 1000) × estimated_impressions evaluated in pricing_option.currency. The brand agent will project commitment whenever the request is governance-aware via either (a) an intent-phase governance_context token on the protocol envelope, or (b) `account` resolving to an account that has a governance agent previously bound via sync_governance. Brand agents MUST reject with INVALID_REQUEST (field: campaign.estimated_impressions) in either path when CPM-priced rights are requested and this field is omitted or zero; implementer-chosen defaults are non-conformant. See the acquire_rights task reference for the full validation contract including currency-mismatch handling.
      * @minimum 0
+     * @format int
      */
     estimated_impressions?: number;
     /**
@@ -24254,10 +24476,12 @@ export interface GetBrandIdentitySuccess {
     usage?: string;
     /**
      * Width in pixels
+     * @format int
      */
     width?: number;
     /**
      * Height in pixels
+     * @format int
      */
     height?: number;
   }[];
@@ -24295,6 +24519,7 @@ export interface GetBrandIdentitySuccess {
              * CSS numeric font-weight
              * @minimum 100
              * @maximum 900
+             * @format int
              */
             weight?: number;
             /**
@@ -24335,6 +24560,7 @@ export interface GetBrandIdentitySuccess {
              * CSS numeric font-weight
              * @minimum 100
              * @maximum 900
+             * @format int
              */
             weight?: number;
             /**
@@ -24373,6 +24599,7 @@ export interface GetBrandIdentitySuccess {
                  * CSS numeric font-weight
                  * @minimum 100
                  * @maximum 900
+                 * @format int
                  */
                 weight?: number;
                 /**
@@ -24471,10 +24698,12 @@ export interface GetBrandIdentitySuccess {
     description?: string;
     /**
      * Image/video width in pixels
+     * @format int
      */
     width?: number;
     /**
      * Image/video height in pixels
+     * @format int
      */
     height?: number;
     /**
@@ -24483,6 +24712,7 @@ export interface GetBrandIdentitySuccess {
     duration_seconds?: number;
     /**
      * File size in bytes
+     * @format int
      */
     file_size_bytes?: number;
     /**
@@ -24572,19 +24802,6 @@ export interface GetRightsRequest {
   pagination?: PaginationRequest;
   context?: ContextObject;
   ext?: ExtensionObject;
-}
-/**
- * Pagination parameters for large result sets
- */
-export interface PaginationRequest {
-  /**
-   * Maximum number of items to return per page
-   */
-  max_results?: number;
-  /**
-   * Opaque cursor from a previous response to fetch the next page
-   */
-  cursor?: string;
 }
 
 // brand/get-rights-response.json
@@ -24819,6 +25036,7 @@ export interface SearchBrandsRequest {
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    * @minimum 1
    * @maximum 99
+   * @format int
    */
   adcp_major_version?: number;
   /**
@@ -24982,6 +25200,7 @@ export interface UpdateRightsRequest {
   /**
    * New impression cap for the grant. Must be >= impressions already delivered.
    * @minimum 1
+   * @format int
    */
   impression_cap?: number;
   /**
@@ -25573,14 +25792,17 @@ export interface CollectionListChangedWebhook {
   change_summary?: {
     /**
      * Number of collections added since last resolution
+     * @format int
      */
     collections_added?: number;
     /**
      * Number of collections removed since last resolution
+     * @format int
      */
     collections_removed?: number;
     /**
      * Total collections in the resolved list
+     * @format int
      */
     total_collections?: number;
   };
@@ -25674,6 +25896,7 @@ export interface CollectionList {
   /**
    * Recommended cache duration for resolved list. Consumers should re-fetch after this period. Defaults to 168 (one week) because collection metadata changes less frequently than property metadata.
    * @minimum 1
+   * @format int
    */
   cache_duration_hours?: number;
   /**
@@ -25688,6 +25911,7 @@ export interface CollectionList {
   updated_at?: string;
   /**
    * Number of collections in the resolved list (at time of last resolution)
+   * @format int
    */
   collection_count?: number;
 }
@@ -26177,14 +26401,17 @@ export interface ArtifactWebhookPayload {
   pagination?: {
     /**
      * Total artifacts in the delivery period
+     * @format int
      */
     total_artifacts?: number;
     /**
      * Current batch number (1-indexed)
+     * @format int
      */
     batch_number?: number;
     /**
      * Total batches for this delivery period
+     * @format int
      */
     total_batches?: number;
   };
@@ -27490,6 +27717,7 @@ export interface AppItem {
   /**
    * Total number of store ratings.
    * @minimum 0
+   * @format int
    */
   rating_count?: number;
   /**
@@ -27656,6 +27884,7 @@ export interface AttestationCapabilities {
    * Maximum UTF-8 byte size accepted for one embedded credential. Evaluators MUST enforce this limit before parsing the credential. The protocol ceiling is 1 MiB.
    * @minimum 1024
    * @maximum 1048576
+   * @format int
    */
   max_embedded_credential_bytes?: number;
   ext?: ExtensionObject;
@@ -28251,6 +28480,7 @@ export interface CatalogItemAvailabilityUpdate {
   /**
    * Required optimistic-concurrency token obtained from item_availability_states. Revision 0 is the initial active state. The seller MUST compare this value atomically with the write and return CONFLICT without mutation when it differs from current state.
    * @minimum 0
+   * @format int
    */
   expected_overlay_revision: number;
   /**
@@ -29148,6 +29378,7 @@ export interface DeliveryBreakdownControls {
   /**
    * Maximum number of rows to return. Defaults to 25.
    * @minimum 1
+   * @format int
    */
   limit?: number;
   sort_by?: SortMetric;
@@ -29458,6 +29689,7 @@ export type EvaluatorSpec = {
     /**
      * Soft cap on the number of judge calls the evaluator should make.
      * @minimum 1
+     * @format int
      */
     max_calls?: number;
     /**
@@ -29567,6 +29799,7 @@ export interface EventCustomData {
   /**
    * Number of items in the event
    * @minimum 0
+   * @format int
    */
   num_items?: number;
   /**
@@ -29595,6 +29828,7 @@ export interface EventCustomData {
     /**
      * Quantity of this item
      * @minimum 1
+     * @format int
      */
     quantity?: number;
     /**
@@ -29654,6 +29888,7 @@ export interface EventSourceHealth {
   /**
    * Number of events received from this source in the last 24 hours. Zero indicates the source is configured but not firing.
    * @minimum 0
+   * @format int
    */
   events_received_24h?: number;
   /**
@@ -30377,11 +30612,13 @@ export interface RepeatableGroupAsset {
   /**
    * Minimum number of repetitions required (if group is required) or allowed (if optional)
    * @minimum 0
+   * @format int
    */
   min_count: number;
   /**
    * Maximum number of repetitions allowed
    * @minimum 1
+   * @format int
    */
   max_count: number;
   /**
@@ -30579,6 +30816,7 @@ export interface GetGeographicPlaceResolutionRequest {
   /**
    * @minimum 1
    * @maximum 100
+   * @format int
    */
   limit?: number;
 }
@@ -30666,6 +30904,7 @@ export interface HotelItem {
    * Official star rating (1–5).
    * @minimum 1
    * @maximum 5
+   * @format int
    */
   star_rating?: number;
   price?: Price;
@@ -31423,6 +31662,7 @@ export interface PerformanceFeedbackAssertion {
   evidence?: {
     /**
      * @minimum 1
+     * @format int
      */
     sample_size?: number;
     /**
@@ -31823,11 +32063,13 @@ export interface PlacementPresentationDocument {
     /**
      * @minimum 1
      * @maximum 8192
+     * @format int
      */
     width: number;
     /**
      * @minimum 1
      * @maximum 8192
+     * @format int
      */
     height: number;
     /**
@@ -31842,21 +32084,25 @@ export interface PlacementPresentationDocument {
     /**
      * @minimum 0
      * @maximum 8192
+     * @format int
      */
     x: number;
     /**
      * @minimum 0
      * @maximum 8192
+     * @format int
      */
     y: number;
     /**
      * @minimum 1
      * @maximum 8192
+     * @format int
      */
     width: number;
     /**
      * @minimum 1
      * @maximum 8192
+     * @format int
      */
     height: number;
     /**
@@ -31880,21 +32126,25 @@ export interface Rectangle {
   /**
    * @minimum 0
    * @maximum 8192
+   * @format int
    */
   x: number;
   /**
    * @minimum 0
    * @maximum 8192
+   * @format int
    */
   y: number;
   /**
    * @minimum 1
    * @maximum 8192
+   * @format int
    */
   width: number;
   /**
    * @minimum 1
    * @maximum 8192
+   * @format int
    */
   height: number;
 }
@@ -31910,6 +32160,7 @@ export interface TextDecoration {
   /**
    * @minimum 6
    * @maximum 256
+   * @format int
    */
   font_size: number;
 }
@@ -32100,6 +32351,7 @@ export interface ProductFilters {
   /**
    * Minimum exposures/impressions needed for measurement validity
    * @minimum 1
+   * @format int
    */
   min_exposures?: number;
   /**
@@ -32420,6 +32672,7 @@ export interface ProductOfferFilters {
   standard_formats_only?: boolean;
   /**
    * @minimum 1
+   * @format int
    */
   min_exposures?: number;
   /**
@@ -32558,6 +32811,7 @@ export interface RealEstateItem {
   /**
    * Number of bedrooms.
    * @minimum 0
+   * @format int
    */
   bedrooms?: number;
   /**
@@ -32614,6 +32868,7 @@ export interface RealEstateItem {
   neighborhood?: string;
   /**
    * Year the property was built.
+   * @format int
    */
   year_built?: number;
   /**
@@ -32880,10 +33135,12 @@ export type RegistryEvent = {
       payload?: PublisherAdagentsPayload & {
         /**
          * @minimum 0
+         * @format int
          */
         properties_added?: number;
         /**
          * @minimum 0
+         * @format int
          */
         properties_removed?: number;
         agents_added?: string[];
@@ -32982,10 +33239,12 @@ export interface AgentProfilePayload {
   delivery_types?: StringArray;
   /**
    * @minimum 0
+   * @format int
    */
   property_count?: number;
   /**
    * @minimum 0
+   * @format int
    */
   publisher_count?: number;
   has_tmp?: boolean;
@@ -33007,10 +33266,12 @@ export interface CompliancePayload {
   };
   /**
    * @minimum 0
+   * @format int
    */
   storyboards_passing: number;
   /**
    * @minimum 0
+   * @format int
    */
   storyboards_total: number;
   storyboards?: {
@@ -33018,10 +33279,12 @@ export interface CompliancePayload {
     status: StoryboardStatus;
     /**
      * @minimum 0
+     * @format int
      */
     steps_passed?: number;
     /**
      * @minimum 0
+     * @format int
      */
     steps_total?: number;
   }[];
@@ -33035,34 +33298,41 @@ export interface PublisherAdagentsPayload {
   domain?: string;
   /**
    * @minimum 0
+   * @format int
    */
   properties_added?: number;
   /**
    * @minimum 0
+   * @format int
    */
   properties_removed?: number;
   agents_added?: string[];
   agents_removed?: string[];
   /**
    * @minimum 0
+   * @format int
    */
   agent_count?: number;
   /**
    * @minimum 0
+   * @format int
    */
   property_count?: number;
   /**
    * @minimum 0
+   * @format int
    */
   collection_count?: number;
   /**
    * Number of top-level formats[] declarations after this revision.
    * @minimum 0
+   * @format int
    */
   format_count?: number;
   /**
    * Number of top-level placements[] declarations after this revision.
    * @minimum 0
+   * @format int
    */
   placement_count?: number;
   changed_fields?: ChangedFields;
@@ -33187,11 +33457,13 @@ export interface RegistryFeedResponse {
     /**
      * Seconds between generated_at and latest_event_created_at. Null when no matching event exists.
      * @minimum 0
+     * @format int
      */
     lag_seconds: number | null;
     /**
      * Number of days the registry retains feed cursors and events.
      * @minimum 1
+     * @format int
      */
     retention_days: number;
   };
@@ -33759,11 +34031,13 @@ export interface CatalogRequirements {
   /**
    * Minimum number of items the catalog must contain for this format to render properly (e.g., a carousel might require at least 3 products)
    * @minimum 1
+   * @format int
    */
   min_items?: number;
   /**
    * Maximum number of items the format can render. Items beyond this limit are ignored. Useful for fixed-slot layouts (e.g., a 3-product card) or feed-size constraints.
    * @minimum 1
+   * @format int
    */
   max_items?: number;
   /**
@@ -33999,6 +34273,7 @@ export interface SignalDefinition {
     /**
      * OpenRTB segtax code when the taxonomy maps to an OpenRTB segment taxonomy.
      * @minimum 1
+     * @format int
      */
     segtax?: number;
     /**
@@ -34224,6 +34499,7 @@ export interface SignalDefinition {
      * Maximum response time in days for rights requests handled through the declared rights channels. For provider-published signals, providers SHOULD avoid duplicating this field across every signal unless the value varies by signal or upstream source; consumers MAY also consult the provider's public privacy policy or registry disclosures when present.
      * @minimum 1
      * @maximum 90
+     * @format int
      */
     response_sla_days?: number;
     /**
@@ -34503,11 +34779,13 @@ export interface TasksGetResponse {
     /**
      * Total number of steps in the operation
      * @minimum 1
+     * @format int
      */
     total_steps?: number;
     /**
      * Current step number
      * @minimum 1
+     * @format int
      */
     step_number?: number;
   };
@@ -34706,11 +34984,13 @@ export interface TasksListResponse {
     /**
      * Total number of tasks matching filters (across all pages)
      * @minimum 0
+     * @format int
      */
     total_matching?: number;
     /**
      * Number of tasks returned in this response
      * @minimum 0
+     * @format int
      */
     returned?: number;
     /**
@@ -34720,16 +35000,19 @@ export interface TasksListResponse {
       /**
        * Number of media-buy tasks in results
        * @minimum 0
+       * @format int
        */
       'media-buy'?: number;
       /**
        * Number of signals tasks in results
        * @minimum 0
+       * @format int
        */
       signals?: number;
       /**
        * Number of creative tasks in results
        * @minimum 0
+       * @format int
        */
       creative?: number;
     };
@@ -34739,6 +35022,7 @@ export interface TasksListResponse {
     status_breakdown?: {
       /**
        * @minimum 0
+       * @format int
        */
       [k: string]: number | undefined;
     };
@@ -34814,6 +35098,7 @@ export interface TransformerParam {
   /**
    * Optional maximum character length for a `free_text` param. Omit for no declared limit.
    * @minimum 1
+   * @format int
    */
   max_length?: number;
   /**
@@ -34948,6 +35233,7 @@ export type Transformer = (CanonicalTransformerOutputs | NamedFormatTransformerO
     /**
      * Per-transformer ceiling on max_creatives (≤ the agent ceiling).
      * @minimum 1
+     * @format int
      */
     max_creatives_limit?: number;
     /**
@@ -34957,6 +35243,7 @@ export type Transformer = (CanonicalTransformerOutputs | NamedFormatTransformerO
     /**
      * Per-transformer ceiling on max_variants (≤ the agent ceiling).
      * @minimum 1
+     * @format int
      */
     max_variants_limit?: number;
     /**
@@ -34985,6 +35272,7 @@ export interface TruncationSentinel {
     /**
      * Size of the untruncated original content in bytes, measured before any encoding overhead. Lets the receiver decide whether to fetch the full value via a payload-bearing surface (when one exists) or proceed with the preview.
      * @minimum 0
+     * @format int
      */
     original_size_bytes: number;
     /**
@@ -35023,6 +35311,7 @@ export interface VehicleItem {
   /**
    * Model year.
    * @minimum 1900
+   * @format int
    */
   year: number;
   price?: Price;
@@ -35355,6 +35644,7 @@ export type WholesaleFeedEvent = {
         /**
          * Approximate count of affected entities.
          * @minimum 1
+         * @format int
          */
         affected_count: number;
         /**
@@ -35970,11 +36260,13 @@ export interface VideoBrief {
     /**
      * 1-indexed sequence position of this segment in the final video.
      * @minimum 1
+     * @format int
      */
     order: number;
     /**
      * Duration of this segment in milliseconds.
      * @minimum 1
+     * @format int
      */
     duration_ms: number;
     /**
@@ -36067,6 +36359,7 @@ export interface AccountMovedDetails {
   /**
    * Current account revision when the seller exposes account revisions.
    * @minimum 1
+   * @format int
    */
   revision?: number;
 }
@@ -36444,11 +36737,13 @@ export interface StaleResponseDetails {
   /**
    * Age of the cached payload in seconds at the time of the response. Informational — buyer agents MAY use this to decide whether to immediately retry for fresh data or accept the cached value.
    * @minimum 0
+   * @format int
    */
   cache_age_seconds: number;
   /**
    * The seller's freshness target for this surface, in seconds. `cache_age_seconds - freshness_target_seconds` is how far beyond target the cached entry is. Optional — sellers MAY omit when no public freshness contract is declared.
    * @minimum 0
+   * @format int
    */
   freshness_target_seconds?: number;
   /**
@@ -37483,6 +37778,7 @@ export type ProposalRefinement = {
      * Number of draft alternatives requested. The protocol maximum is 10. Buyers MUST NOT exceed a seller's lower advertised proposal_refinement.max_alternatives; sellers reject an excessive count at task level with VALIDATION_ERROR rather than clamping it.
      * @minimum 2
      * @maximum 10
+     * @format int
      */
     count: number;
   };
@@ -37756,14 +38052,17 @@ export interface PropertyListChangedWebhook {
   change_summary?: {
     /**
      * Number of properties added since last resolution
+     * @format int
      */
     properties_added?: number;
     /**
      * Number of properties removed since last resolution
+     * @format int
      */
     properties_removed?: number;
     /**
      * Total properties in the resolved list
+     * @format int
      */
     total_properties?: number;
   };
@@ -37843,6 +38142,7 @@ export interface PropertyList {
   /**
    * Recommended cache duration for resolved list. Consumers should re-fetch after this period.
    * @minimum 1
+   * @format int
    */
   cache_duration_hours?: number;
   /**
@@ -37857,6 +38157,7 @@ export interface PropertyList {
   updated_at?: string;
   /**
    * Number of properties in the resolved list (at time of last resolution)
+   * @format int
    */
   property_count?: number;
   /**
@@ -37936,7 +38237,13 @@ export interface V1V2CanonicalFormatMappingRegistry {
             vast_versions?: string[];
             daast_versions?: string[];
             dimensions?: {
+              /**
+               * @format int
+               */
               width?: number;
+              /**
+               * @format int
+               */
               height?: number;
             };
           };
@@ -38019,6 +38326,7 @@ export interface SICapabilities {
           formats?: string[];
           /**
            * Maximum video duration
+           * @format int
            */
           max_duration_seconds?: number;
         };
@@ -38381,6 +38689,7 @@ export interface ContextMatchRequest {
    * DEPRECATED in favor of adcp_version. Removed in 4.0. Inlined alongside adcp_version to preserve strict-mode on this endpoint.
    * @minimum 1
    * @maximum 99
+   * @format int
    */
   adcp_major_version?: number;
   /**
@@ -38463,6 +38772,7 @@ export interface ContextMatchRequest {
     taxonomy_source?: string;
     /**
      * Taxonomy version within the source. For IAB, follows the AdCOM cattax enum: 7 = Content Taxonomy 3.0. Default: 7.
+     * @format int
      */
     taxonomy_id?: number;
     /**
@@ -38499,6 +38809,7 @@ export interface ContextMatchRequest {
      * Number of dimensions in the embedding vector. Required when embedding is present.
      * @minimum 64
      * @maximum 2048
+     * @format int
      */
     embedding_dims?: number;
   };
@@ -38695,6 +39006,7 @@ export interface IdentityMatchRequest {
    * DEPRECATED in favor of adcp_version. Removed in 4.0. Inlined alongside adcp_version to preserve strict-mode on this endpoint.
    * @minimum 1
    * @maximum 99
+   * @format int
    */
   adcp_major_version?: number;
   /**
@@ -38875,6 +39187,7 @@ export interface IdentityMatchResponseRouterPublisher {
    * Per-package single-shot fcap window, in seconds. After serving the user one impression on each eligible package within this window, the publisher MUST re-query Identity Match before serving from those packages again. This is NOT a router response cache TTL — it is a buyer-asserted serve throttle. Multi-impression frequency caps are handled separately by the buyer's impression tracker, which writes cap-fire events to the IdentityMatch cap-state store at the boundary regardless of this window. Maximum 300 — longer windows reduce IdentityMatch load but coarsen fcap granularity below what most campaigns require.
    * @minimum 1
    * @maximum 300
+   * @format int
    */
   serve_window_sec: number;
   /**
@@ -38977,6 +39290,7 @@ export interface ContextMatchResponseProviderRouter {
    * Optional override for the router's default 5-minute response cache TTL, in seconds. When present, the router MUST use this value instead of its default. Set to 0 to disable caching.
    * @minimum 0
    * @maximum 86400
+   * @format int
    */
   cache_ttl?: number;
   /**
@@ -39056,6 +39370,7 @@ export interface IdentityMatchResponseProviderRouter {
    * Per-package single-shot fcap window, in seconds. After serving the user one impression on each eligible package within this window, the publisher MUST re-query Identity Match before serving from those packages again. Not a router response cache TTL — it is a buyer-asserted serve throttle. Multi-impression frequency caps are handled separately by the buyer's impression tracker. Maximum 300.
    * @minimum 1
    * @maximum 300
+   * @format int
    */
   serve_window_sec: number;
   /**
@@ -39111,11 +39426,13 @@ export type TMPProviderRegistration = (
    * Per-provider timeout in milliseconds. The router skips this provider if it does not respond within this budget. Must be less than or equal to the router's overall latency_budget_ms. The router may further reduce this based on adaptive timeout allocation.
    * @minimum 5
    * @maximum 5000
+   * @format int
    */
   timeout_ms?: number;
   /**
    * Provider ordering for Context Match offer conflict resolution. Lower values have higher priority. When two providers return offers for the same package_id (a configuration error), the router keeps the offer from the higher-priority provider; equal priorities are broken by first response received. Identity Match eligibility remains a responder-scoped union because silent omission is not a negative vote. Also used for adaptive timeout allocation — higher-priority providers receive a larger share of the latency budget.
    * @minimum 0
+   * @format int
    */
   priority?: number;
   /**
