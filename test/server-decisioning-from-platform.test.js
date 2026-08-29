@@ -681,6 +681,304 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     assert.strictEqual(await server.getTaskState(taskId, { accountId: 'acct-1', ownerScope: 'client:caller-b' }), null);
   });
 
+  it('preserves live AbortSignal cancellation in native authInfo context (#2773)', async () => {
+    const controller = new AbortController();
+    let receivedSignal;
+    let handlerStartedResolve;
+    const handlerStarted = new Promise(resolve => {
+      handlerStartedResolve = resolve;
+    });
+    let continueHandlerResolve;
+    const continueHandler = new Promise(resolve => {
+      continueHandlerResolve = resolve;
+    });
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async (_req, ctx) => {
+            receivedSignal = ctx.authInfo.extra.signal;
+            handlerStartedResolve();
+            await continueHandler;
+            return { products: [], cache_scope: 'account' };
+          },
+        },
+      }),
+      {
+        name: 'native-auth-cancellation',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const request = server.invoke({
+      toolName: 'get_products',
+      args: { account: { account_id: 'acct-1' }, buying_mode: 'wholesale' },
+      authInfo: {
+        token: 'secret',
+        clientId: 'buyer',
+        scopes: [],
+        extra: { signal: controller.signal },
+      },
+    });
+    await handlerStarted;
+
+    controller.abort(new Error('deadline'));
+    continueHandlerResolve();
+    await request;
+    assert.strictEqual(receivedSignal, controller.signal);
+    assert.strictEqual(receivedSignal.aborted, true);
+  });
+
+  it('does not eagerly invoke accessors while cloning the authInfo signal slot (#2773)', async () => {
+    const controller = new AbortController();
+    let signalReads = 0;
+    const extra = {};
+    Object.defineProperty(extra, 'signal', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        signalReads += 1;
+        return controller.signal;
+      },
+    });
+    let receivedExtra;
+    let receivedSignalDescriptor;
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async (_req, ctx) => {
+            receivedExtra = ctx.authInfo.extra;
+            receivedSignalDescriptor = Object.getOwnPropertyDescriptor(receivedExtra, 'signal');
+            return { products: [], cache_scope: 'account' };
+          },
+        },
+      }),
+      {
+        name: 'native-auth-signal-accessor',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    await server.invoke({
+      toolName: 'get_products',
+      args: { account: { account_id: 'acct-1' }, buying_mode: 'wholesale' },
+      authInfo: { token: 'secret', clientId: 'buyer', scopes: [], extra },
+    });
+
+    assert.strictEqual(signalReads, 0);
+    assert.notStrictEqual(receivedExtra, extra);
+    assert.ok(Object.isFrozen(receivedExtra));
+    assert.strictEqual(receivedSignalDescriptor.get, Object.getOwnPropertyDescriptor(extra, 'signal').get);
+  });
+
+  it('preserves only extra.signal when auth credential and extra records alias in either key order (#2773)', async () => {
+    const controller = new AbortController();
+    const shared = {
+      kind: 'api_key',
+      key_id: 'caller-a',
+      signal: controller.signal,
+    };
+    const principals = [
+      {
+        token: 'secret',
+        clientId: 'caller-a',
+        scopes: [],
+        credential: shared,
+        extra: shared,
+      },
+      {
+        token: 'secret',
+        clientId: 'caller-a',
+        scopes: [],
+        extra: shared,
+        credential: shared,
+      },
+    ];
+    const receivedAuth = [];
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async (_req, ctx) => {
+            receivedAuth.push(ctx.authInfo);
+            return { products: [], cache_scope: 'account' };
+          },
+        },
+      }),
+      {
+        name: 'native-auth-signal-alias',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    for (const principal of principals) {
+      await server.invoke({
+        toolName: 'get_products',
+        args: { account: { account_id: 'acct-1' }, buying_mode: 'wholesale' },
+        authInfo: principal,
+      });
+    }
+    controller.abort(new Error('deadline'));
+
+    for (const authInfo of receivedAuth) {
+      assert.strictEqual(authInfo.extra.signal, controller.signal);
+      assert.strictEqual(authInfo.extra.signal.aborted, true);
+      assert.notStrictEqual(authInfo.credential.signal, controller.signal);
+      assert.notStrictEqual(authInfo.extra, authInfo.credential);
+      assert.ok(Object.isFrozen(authInfo.extra));
+      assert.ok(Object.isFrozen(authInfo.credential));
+    }
+  });
+
+  it('preserves auth record aliases when no live signal requires a path-specific clone (#2773)', async () => {
+    const shared = { kind: 'api_key', key_id: 'caller-a' };
+    let receivedAuthInfo;
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async (_req, ctx) => {
+            receivedAuthInfo = ctx.authInfo;
+            return { products: [], cache_scope: 'account' };
+          },
+        },
+      }),
+      {
+        name: 'native-auth-record-alias',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    await server.invoke({
+      toolName: 'get_products',
+      args: { account: { account_id: 'acct-1' }, buying_mode: 'wholesale' },
+      authInfo: {
+        token: 'secret',
+        clientId: 'caller-a',
+        scopes: [],
+        credential: shared,
+        extra: shared,
+      },
+    });
+
+    assert.strictEqual(receivedAuthInfo.credential, receivedAuthInfo.extra);
+    assert.notStrictEqual(receivedAuthInfo.extra, shared);
+    assert.ok(Object.isFrozen(receivedAuthInfo.extra));
+  });
+
+  it('does not let an AbortSignal prototype spoof bypass authInfo snapshotting (#2773)', async () => {
+    const principal = {
+      token: 'secret',
+      clientId: 'caller-a',
+      scopes: [],
+    };
+    Object.setPrototypeOf(principal, AbortSignal.prototype);
+    let receivedAuthInfo;
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async (_req, ctx) => {
+            receivedAuthInfo = ctx.authInfo;
+            ctx.authInfo.clientId = 'caller-b';
+            return ctx.handoffToTask(async () => ({ products: [], cache_scope: 'account' }));
+          },
+        },
+      }),
+      {
+        name: 'native-auth-signal-spoof',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const result = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: { name: 'get_products', arguments: { account: { account_id: 'acct-1' } } },
+      },
+      { authInfo: principal }
+    );
+    const taskId = result.structuredContent.task_id;
+    await server.awaitTaskUnsafe(taskId);
+
+    assert.notStrictEqual(receivedAuthInfo, principal);
+    assert.ok(Object.isFrozen(receivedAuthInfo));
+    assert.strictEqual(receivedAuthInfo.clientId, 'caller-a');
+    assert.ok(await server.getTaskState(taskId, { accountId: 'acct-1', ownerScope: 'client:caller-a' }));
+    assert.strictEqual(await server.getTaskState(taskId, { accountId: 'acct-1', ownerScope: 'client:caller-b' }), null);
+  });
+
+  it('snapshots root auth principals backed by genuine AbortSignals (#2773)', async () => {
+    const inheritedController = new AbortController();
+    const principals = [
+      Object.assign(new AbortController().signal, {
+        token: 'secret',
+        clientId: 'caller-a',
+        scopes: [],
+      }),
+      Object.setPrototypeOf(
+        {
+          token: 'secret',
+          clientId: 'caller-a',
+          scopes: [],
+        },
+        inheritedController.signal
+      ),
+    ];
+
+    for (const [index, principal] of principals.entries()) {
+      let receivedAuthInfo;
+      const base = buildPlatform();
+      const server = createAdcpServerFromPlatform(
+        buildPlatform({
+          sales: {
+            ...base.sales,
+            getProducts: async (_req, ctx) => {
+              receivedAuthInfo = ctx.authInfo;
+              ctx.authInfo.clientId = 'caller-b';
+              return ctx.handoffToTask(async () => ({ products: [], cache_scope: 'account' }));
+            },
+          },
+        }),
+        {
+          name: `native-auth-signal-root-${index}`,
+          version: '1.0.0',
+          validation: { requests: 'off', responses: 'off' },
+        }
+      );
+
+      const result = await server.dispatchTestRequest(
+        {
+          method: 'tools/call',
+          params: { name: 'get_products', arguments: { account: { account_id: 'acct-1' } } },
+        },
+        { authInfo: principal }
+      );
+      const taskId = result.structuredContent.task_id;
+      await server.awaitTaskUnsafe(taskId);
+
+      assert.notStrictEqual(receivedAuthInfo, principal);
+      assert.ok(Object.isFrozen(receivedAuthInfo));
+      assert.strictEqual(receivedAuthInfo.clientId, 'caller-a');
+      assert.ok(await server.getTaskState(taskId, { accountId: 'acct-1', ownerScope: 'client:caller-a' }));
+      assert.strictEqual(
+        await server.getTaskState(taskId, { accountId: 'acct-1', ownerScope: 'client:caller-b' }),
+        null
+      );
+    }
+  });
+
   it('omits authInfo from unauthenticated native RequestContext calls (#2765)', async () => {
     let handlerCtx;
     const base = buildPlatform();
