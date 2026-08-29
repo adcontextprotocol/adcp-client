@@ -395,12 +395,15 @@ export {
   type TaskPushSettlementOutcome,
 } from './runtime/postgres-task-settlement';
 export {
+  canonicalizeTaskSettlementIntent,
   createPostgresTaskSettlementIntentQueue,
   getTaskSettlementIntentMigration,
+  TASK_SETTLEMENT_INTENT_IDEMPOTENCY_HORIZON_MS,
   TaskSettlementIntentConflictError,
   type CreatePostgresTaskSettlementIntentQueueOptions,
   type DurableTaskSettlementRef,
   type PostgresTaskSettlementIntentQueue,
+  type PruneTaskSettlementIntentAcknowledgementsOptions,
   type RecoverTaskSettlementIntentsOptions,
   type TaskSettlementIntent,
   type TaskSettlementIntentCheckpoint,

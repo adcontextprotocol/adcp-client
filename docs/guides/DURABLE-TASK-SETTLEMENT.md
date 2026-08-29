@@ -29,12 +29,17 @@ await pool.query(
 Then construct one queue per trusted deployment or tenant namespace:
 
 ```ts
-import { createPostgresTaskSettlementIntentQueue } from '@adcp/sdk/server';
+import {
+  createPostgresTaskSettlementIntentQueue,
+  TASK_SETTLEMENT_INTENT_IDEMPOTENCY_HORIZON_MS,
+} from '@adcp/sdk/server';
 
 const settlementIntents = createPostgresTaskSettlementIntentQueue({
   db: pool,
   namespace: 'seller-prod',
   tableName: 'seller_task_settlement_intents',
+  // Keep this at least as long as every upstream retry/replay window.
+  idempotencyHorizonMs: TASK_SETTLEMENT_INTENT_IDEMPOTENCY_HORIZON_MS,
 });
 ```
 
@@ -59,21 +64,26 @@ const durableTaskRef: DurableTaskSettlementRef = {
 ## Commit the domain decision and intent together
 
 Pass the application's active transaction client to `enqueue`. An exact retry
-returns the same checkpoint. While that checkpoint remains unacknowledged,
-reusing the same scoped task for a changed result or error throws
-`TaskSettlementIntentConflictError`. Acknowledgement removes the queue row;
-after that point the scoped task registry and the exact-artifact comparison in
-the settlement helpers below are the durable conflict authority. Keeping queue
-tombstones forever would make this recovery queue grow without bound.
+returns the same checkpoint. Reusing the same scoped task for a changed result
+or error throws `TaskSettlementIntentConflictError`, including after
+acknowledgement: acknowledgement turns the row into a fingerprint tombstone
+for `idempotencyHorizonMs` (seven days by default). Set that horizon to at least
+the longest application, provider, or transport retry/replay window. Recovery
+compacts the acknowledged row so it no longer retains the result/error payload
+and prunes expired tombstones in bounded batches; an expired tombstone may also
+be atomically replaced by a newly enqueued intent.
 
 ```ts
-import type { TaskSettlementIntent } from '@adcp/sdk/server';
+import {
+  canonicalizeTaskSettlementIntent,
+  type TaskSettlementIntent,
+} from '@adcp/sdk/server';
 
-const intent: TaskSettlementIntent = {
+const intent: TaskSettlementIntent = canonicalizeTaskSettlementIntent({
   taskRef: durableTaskRef,
   action: 'complete',
   result: { media_buy_id: mediaBuyId, media_buy_status: 'active' },
-};
+});
 
 const checkpoint = await withTransaction(async tx => {
   await approvals.markApproved(tx, approvalId);
@@ -99,12 +109,12 @@ and proves that an `already_terminal` outcome contains the exact artifact from
 the intent. It deliberately throws for a scope miss or conflicting terminal
 write so the queue retains the intent.
 
-Pass only buyer-wire-safe results and errors to `enqueue`. The queue sanitizes
-its durable copy, but the immediate path above reuses the application object;
-keeping that object wire-safe ensures both paths compare the same artifact.
-Recovery verifies the immutable fingerprint against the exact stored payload
-before applying the current wire sanitizer, so intents written by an older SDK
-remain compatible with the current task registry after an upgrade.
+Build the immediate-path object with `canonicalizeTaskSettlementIntent()` as
+shown above. `enqueue` applies the same clone, validation, and wire sanitizer,
+so both paths compare the same artifact. Recovery verifies the immutable
+fingerprint against the exact stored payload before applying the current wire
+sanitizer, so intents written by an older SDK remain compatible with the
+current task registry after an upgrade.
 
 ```ts
 import { isDeepStrictEqual } from 'node:util';
@@ -278,7 +288,7 @@ Inspect one intent without selecting its potentially sensitive payload:
 
 SELECT queue_namespace, registry_id, account_id, owner_scope, task_id,
        scope_fingerprint, action, intent_fingerprint, state, attempt_count, next_attempt_at,
-       lease_owner, lease_expires_at, last_error, created_at, updated_at,
+       lease_owner, lease_expires_at, last_error, retain_until, created_at, updated_at,
        pg_column_size(payload) AS payload_bytes
 FROM seller_task_settlement_intents
 WHERE queue_namespace = :'queue_namespace'
@@ -295,6 +305,7 @@ Monitor one trusted namespace:
 
 SELECT count(*) FILTER (WHERE state = 'pending') AS pending_count,
        count(*) FILTER (WHERE state = 'dead_letter') AS dead_letter_count,
+       count(*) FILTER (WHERE state = 'acknowledged') AS acknowledged_tombstone_count,
        clock_timestamp() - min(created_at)
          FILTER (WHERE state = 'pending') AS oldest_pending_age,
        sum(pg_column_size(payload)) AS payload_bytes
@@ -304,6 +315,13 @@ WHERE queue_namespace = :'queue_namespace';
 SELECT pg_size_pretty(
   pg_total_relation_size('seller_task_settlement_intents')
 ) AS total_table_size;
+```
+
+Schedule pruning independently of recovery traffic. Each call is bounded and
+returns the number of deleted, already-expired acknowledgement tombstones:
+
+```ts
+const deleted = await settlementIntents.pruneAcknowledged({ limit: 1000 });
 ```
 
 After correcting the cause, requeue exactly one inspected dead letter. Copy
@@ -420,6 +438,10 @@ COMMIT;
   reports that fencing ownership was lost.
 - Recovery loads at most one capped payload into a worker at a time, even when
   a large recovery batch is requested.
+- Acknowledgement retains the exact intent fingerprint through the configured
+  idempotency horizon while discarding the no-longer-needed payload. Each
+  recovery invocation prunes at most `batchSize` expired acknowledgement
+  tombstones; schedule `pruneAcknowledged()` as well if recovery can be idle.
 - Results are sanitized with the same wire sanitizer as the task registry;
   `ctx_metadata` and `implementation_config` are not persisted.
 - Do not place credentials or application-private secrets in custom result or
@@ -430,7 +452,7 @@ COMMIT;
 - Dead letters remain in the table for operator inspection. Requeue them only
   with the exact scoped and fingerprinted operator update above after
   correcting the cause; an exact `enqueue` does not reset a dead letter.
-- Monitor pending/dead-letter row counts and table size, set alerts for oldest
-  pending age, and apply admission limits before untrusted callers can create
-  unbounded asynchronous work. Archive or remove resolved dead letters under
-  an application-owned retention policy.
+- Monitor pending, dead-letter, and acknowledged-tombstone row counts and table
+  size; set alerts for oldest pending age; and apply admission limits before
+  untrusted callers can create unbounded asynchronous work. Archive or remove
+  resolved dead letters under an application-owned retention policy.

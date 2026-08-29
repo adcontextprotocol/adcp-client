@@ -40,10 +40,12 @@ state: persist the complete object, and never include it in the submitted
 envelope, webhook payload, logs, or any other buyer-visible surface.
 
 ```ts
+import { isDeepStrictEqual } from 'node:util';
 import {
+  canonicalizeTaskSettlementIntent,
   completeScopedTask,
   failScopedTask,
-  type ScopedTaskRef,
+  type DurableTaskSettlementRef,
 } from '@adcp/sdk/server';
 
 return ctx.handoffToTask(async taskCtx => {
@@ -54,25 +56,43 @@ return ctx.handoffToTask(async taskCtx => {
 
 // A different process after restart:
 const item = await approvals.claim();
-const taskRef = item.taskRef as ScopedTaskRef;
-const outcome = item.approved
-  ? await completeScopedTask(registry, taskRef, item.result)
-  : await failScopedTask(registry, taskRef, item.error, item.failureArtifact);
+const taskRef = item.taskRef as DurableTaskSettlementRef;
+const intent = canonicalizeTaskSettlementIntent(
+  item.approved
+    ? { taskRef, action: 'complete', result: item.result }
+    : {
+        taskRef,
+        action: 'fail',
+        error: item.error,
+        result: item.failureArtifact,
+      }
+);
+const outcome =
+  intent.action === 'complete'
+    ? await completeScopedTask(registry, taskRef, intent.result)
+    : await failScopedTask(registry, taskRef, intent.error, intent.result);
 
 if (outcome.outcome === 'not_found_in_scope') {
   // Do not acknowledge: unknown id, namespace mismatch, account mismatch,
   // owner mismatch, and deleted rows deliberately share this result.
   await approvals.retryOrDeadLetter(item, 'registry scope did not match');
-} else if (
-  outcome.outcome === 'already_terminal' &&
-  outcome.status !== (item.approved ? 'completed' : 'failed')
-) {
-  // The task reached a different terminal disposition. Do not acknowledge the
-  // requested settlement as successful; reconcile or dead-letter it.
-  await approvals.retryOrDeadLetter(item, `conflicting terminal state: ${outcome.status}`);
+} else if (outcome.outcome === 'already_terminal') {
+  const stored = await registry.getTask(taskRef.taskId, taskRef);
+  const exactArtifact = intent.action === 'complete'
+    ? stored?.status === 'completed' && isDeepStrictEqual(stored.result, intent.result)
+    : stored?.status === 'failed' &&
+      isDeepStrictEqual(stored.error, intent.error) &&
+      isDeepStrictEqual(stored.result, intent.result);
+
+  if (exactArtifact) {
+    await approvals.ack(item);
+  } else {
+    // Matching status alone is insufficient: a different terminal artifact is
+    // a conflict and must remain available for reconciliation/dead-lettering.
+    await approvals.retryOrDeadLetter(item, 'conflicting terminal artifact');
+  }
 } else {
-  // `applied`, or an already-terminal result with the intended disposition,
-  // is safe to acknowledge idempotently.
+  // Only the mutation applied by this worker is safe to acknowledge directly.
   await approvals.ack(item);
 }
 ```

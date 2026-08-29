@@ -19,6 +19,9 @@ const VALID_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
 const VALID_NAMESPACE = /^[A-Za-z0-9_.:-]{1,255}$/;
 const MAX_PAYLOAD_BYTES = 4 * 1024 * 1024;
 
+/** Default conflict-retention window after an intent is acknowledged. */
+export const TASK_SETTLEMENT_INTENT_IDEMPOTENCY_HORIZON_MS = 7 * 24 * 60 * 60 * 1000;
+
 const DEFAULT_RECOVERY = {
   batchSize: 25,
   leaseMs: 45_000,
@@ -88,6 +91,11 @@ export interface TaskSettlementIntentWriteOptions {
   db?: PgQueryable;
 }
 
+export interface PruneTaskSettlementIntentAcknowledgementsOptions extends TaskSettlementIntentWriteOptions {
+  /** Maximum tombstones removed by this call. Defaults to 1000; maximum 10000. */
+  limit?: number;
+}
+
 export interface PostgresTaskSettlementIntentQueue {
   readonly durability: 'durable';
   enqueue(
@@ -96,6 +104,8 @@ export interface PostgresTaskSettlementIntentQueue {
   ): Promise<TaskSettlementIntentCheckpoint>;
   /** Returns false when the exact checkpoint was already absent. */
   acknowledge(checkpoint: TaskSettlementIntentCheckpoint, options?: TaskSettlementIntentWriteOptions): Promise<boolean>;
+  /** Remove a bounded batch of acknowledgement tombstones whose idempotency horizon elapsed. */
+  pruneAcknowledged(options?: PruneTaskSettlementIntentAcknowledgementsOptions): Promise<number>;
   recover(options: RecoverTaskSettlementIntentsOptions): Promise<TaskSettlementIntentRecoveryMetrics>;
   probe(): Promise<void>;
 }
@@ -107,6 +117,11 @@ export interface CreatePostgresTaskSettlementIntentQueueOptions {
   namespace: string;
   /** Defaults to `adcp_task_settlement_intents`. */
   tableName?: string;
+  /**
+   * Retain acknowledged fingerprints for this long so a conflicting terminal
+   * artifact cannot rebind the same scoped task. Defaults to seven days.
+   */
+  idempotencyHorizonMs?: number;
 }
 
 /** An existing scoped task is already bound to a different terminal intent. */
@@ -152,19 +167,28 @@ CREATE TABLE IF NOT EXISTS ${table} (
   lease_version      BIGINT NOT NULL DEFAULT 0,
   lease_expires_at   TIMESTAMPTZ,
   last_error         TEXT,
+  retain_until       TIMESTAMPTZ,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (queue_namespace, scope_fingerprint),
   CONSTRAINT ${table}_valid_scope_fingerprint
     CHECK (scope_fingerprint ~ '^[a-f0-9]{64}$'),
   CONSTRAINT ${table}_valid_action CHECK (action IN ('complete', 'fail')),
-  CONSTRAINT ${table}_valid_state CHECK (state IN ('pending', 'dead_letter')),
+  CONSTRAINT ${table}_valid_state CHECK (state IN ('pending', 'dead_letter', 'acknowledged')),
+  CONSTRAINT ${table}_valid_retention CHECK (
+    (state = 'acknowledged' AND retain_until IS NOT NULL) OR
+    (state <> 'acknowledged' AND retain_until IS NULL)
+  ),
   CONSTRAINT ${table}_valid_payload CHECK (jsonb_typeof(payload) = 'object')
 );
 
 CREATE INDEX IF NOT EXISTS idx_${table}_due
   ON ${table}(queue_namespace, next_attempt_at, lease_expires_at)
   WHERE state = 'pending';
+
+CREATE INDEX IF NOT EXISTS idx_${table}_acknowledged_retention
+  ON ${table}(queue_namespace, retain_until)
+  WHERE state = 'acknowledged';
 `.trim();
 }
 
@@ -202,12 +226,16 @@ export function createPostgresTaskSettlementIntentQueue(
   assertValidNamespace(namespace);
   const table = options.tableName ?? DEFAULT_TABLE;
   assertValidTableName(table);
+  const idempotencyHorizonMs = options.idempotencyHorizonMs ?? TASK_SETTLEMENT_INTENT_IDEMPOTENCY_HORIZON_MS;
+  if (!Number.isSafeInteger(idempotencyHorizonMs) || idempotencyHorizonMs <= 0) {
+    throw new TypeError('idempotencyHorizonMs must be a positive safe integer');
+  }
 
   const queue: PostgresTaskSettlementIntentQueue = {
     durability: 'durable',
 
     async enqueue(intent, writeOptions = {}) {
-      const normalized = normalizeIntent(intent);
+      const normalized = canonicalizeTaskSettlementIntent(intent);
       const fingerprint = canonicalJsonSha256(normalized);
       const payload = payloadForIntent(normalized);
       assertPayloadSize(payload);
@@ -222,13 +250,75 @@ export function createPostgresTaskSettlementIntentQueue(
            action, payload, intent_fingerprint, scope_fingerprint
          ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
          ON CONFLICT (queue_namespace, scope_fingerprint)
-         DO UPDATE SET updated_at = clock_timestamp()
-           WHERE ${table}.registry_id = EXCLUDED.registry_id
+         DO UPDATE SET
+           registry_id = EXCLUDED.registry_id,
+           account_id = EXCLUDED.account_id,
+           owner_scope = EXCLUDED.owner_scope,
+           task_id = EXCLUDED.task_id,
+           action = EXCLUDED.action,
+           payload = CASE
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
+               THEN EXCLUDED.payload
+             ELSE ${table}.payload
+           END,
+           intent_fingerprint = EXCLUDED.intent_fingerprint,
+           state = CASE
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
+               THEN 'pending'
+             ELSE ${table}.state
+           END,
+           attempt_count = CASE
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
+               THEN 0
+             ELSE ${table}.attempt_count
+           END,
+           next_attempt_at = CASE
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
+               THEN clock_timestamp()
+             ELSE ${table}.next_attempt_at
+           END,
+           lease_owner = CASE
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
+               THEN NULL
+             ELSE ${table}.lease_owner
+           END,
+           lease_claim_id = CASE
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
+               THEN NULL
+             ELSE ${table}.lease_claim_id
+           END,
+           lease_expires_at = CASE
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
+               THEN NULL
+             ELSE ${table}.lease_expires_at
+           END,
+           last_error = CASE
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
+               THEN NULL
+             ELSE ${table}.last_error
+           END,
+           retain_until = CASE
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
+               THEN NULL
+             ELSE ${table}.retain_until
+           END,
+           created_at = CASE
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
+               THEN clock_timestamp()
+             ELSE ${table}.created_at
+           END,
+           updated_at = clock_timestamp()
+           WHERE (
+             ${table}.registry_id = EXCLUDED.registry_id
              AND ${table}.account_id = EXCLUDED.account_id
              AND ${table}.owner_scope = EXCLUDED.owner_scope
              AND ${table}.task_id = EXCLUDED.task_id
              AND ${table}.action = EXCLUDED.action
              AND ${table}.intent_fingerprint = EXCLUDED.intent_fingerprint
+           ) OR (
+             ${table}.state = 'acknowledged'
+             AND ${table}.retain_until <= clock_timestamp()
+           )
          RETURNING task_id`,
         [
           namespace,
@@ -256,17 +346,28 @@ export function createPostgresTaskSettlementIntentQueue(
       const result = await queryDb(
         writeDb,
         'acknowledge',
-        `DELETE FROM ${table}
+        `UPDATE ${table}
+            SET state = 'acknowledged',
+                payload = '{}'::jsonb,
+                retain_until = clock_timestamp() + ($8::bigint * INTERVAL '1 millisecond'),
+                lease_owner = NULL, lease_claim_id = NULL, lease_expires_at = NULL,
+                last_error = NULL, updated_at = clock_timestamp()
           WHERE queue_namespace = $1 AND registry_id = $2 AND account_id = $3
             AND owner_scope = $4 AND task_id = $5 AND intent_fingerprint = $6
-            AND scope_fingerprint = $7`,
-        checkpointValues(checkpoint)
+            AND scope_fingerprint = $7 AND state IN ('pending', 'dead_letter')`,
+        [...checkpointValues(checkpoint), idempotencyHorizonMs]
       );
       return result.rowCount === 1;
     },
 
+    async pruneAcknowledged(pruneOptions = {}) {
+      const limit = normalizePruneLimit(pruneOptions.limit);
+      return pruneExpiredAcknowledgements(pruneOptions.db ?? db, table, namespace, limit);
+    },
+
     async recover(recoveryOptions) {
       const config = normalizeRecoveryOptions(recoveryOptions);
+      await pruneExpiredAcknowledgements(db, table, namespace, config.batchSize);
       const metrics: TaskSettlementIntentRecoveryMetrics = {
         claimed: 0,
         settled: 0,
@@ -291,7 +392,7 @@ export function createPostgresTaskSettlementIntentQueue(
           if (outcome !== 'settled') {
             throw new TypeError('Task settlement callback must resolve with the literal `settled`');
           }
-          if (await acknowledgeClaim(db, table, namespace, claim)) {
+          if (await acknowledgeClaim(db, table, namespace, claim, idempotencyHorizonMs)) {
             metrics.settled += 1;
           } else {
             metrics.leaseLost += 1;
@@ -320,7 +421,7 @@ export function createPostgresTaskSettlementIntentQueue(
         `SELECT queue_namespace, registry_id, account_id, owner_scope, task_id, scope_fingerprint,
                 action, payload, intent_fingerprint, state, attempt_count,
                 next_attempt_at, lease_owner, lease_claim_id, lease_version,
-                lease_expires_at, last_error, created_at, updated_at
+                lease_expires_at, last_error, retain_until, created_at, updated_at
            FROM ${table}
           WHERE queue_namespace = $1
           LIMIT 0`,
@@ -331,7 +432,8 @@ export function createPostgresTaskSettlementIntentQueue(
   return queue;
 }
 
-function normalizeIntent(intent: TaskSettlementIntent): TaskSettlementIntent & {
+/** Clone, validate, and reduce an intent to the exact artifact persisted by the task registry. */
+export function canonicalizeTaskSettlementIntent(intent: TaskSettlementIntent): TaskSettlementIntent & {
   taskRef: DurableTaskSettlementRef;
 } {
   if (!intent || typeof intent !== 'object') throw new TypeError('Task settlement intent is required');
@@ -583,19 +685,61 @@ async function acknowledgeClaim(
   db: PgQueryable,
   table: string,
   namespace: string,
-  claim: ClaimedIntent
+  claim: ClaimedIntent,
+  idempotencyHorizonMs: number
 ): Promise<boolean> {
   const result = await queryDb(
     db,
     'acknowledgeClaim',
-    `DELETE FROM ${table}
+    `UPDATE ${table}
+        SET state = 'acknowledged',
+            payload = '{}'::jsonb,
+            retain_until = clock_timestamp() + ($10::bigint * INTERVAL '1 millisecond'),
+            lease_owner = NULL, lease_claim_id = NULL, lease_expires_at = NULL,
+            last_error = NULL, updated_at = clock_timestamp()
       WHERE queue_namespace = $1 AND registry_id = $2 AND account_id = $3
         AND owner_scope = $4 AND task_id = $5 AND intent_fingerprint = $6
         AND state = 'pending' AND lease_claim_id = $7 AND lease_version = $8::bigint
         AND scope_fingerprint = $9 AND lease_expires_at > clock_timestamp()`,
-    claimValues(namespace, claim)
+    [...claimValues(namespace, claim), idempotencyHorizonMs]
   );
   return result.rowCount === 1;
+}
+
+async function pruneExpiredAcknowledgements(
+  db: PgQueryable,
+  table: string,
+  namespace: string,
+  limit: number
+): Promise<number> {
+  const result = await queryDb(
+    db,
+    'pruneExpiredAcknowledgements',
+    `WITH expired AS (
+       SELECT candidate.queue_namespace, candidate.scope_fingerprint
+         FROM ${table} AS candidate
+        WHERE candidate.queue_namespace = $1
+          AND candidate.state = 'acknowledged'
+          AND candidate.retain_until <= clock_timestamp()
+        ORDER BY candidate.retain_until
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED
+     )
+     DELETE FROM ${table} AS intents
+      USING expired
+      WHERE intents.queue_namespace = expired.queue_namespace
+        AND intents.scope_fingerprint = expired.scope_fingerprint`,
+    [namespace, limit]
+  );
+  return result.rowCount ?? 0;
+}
+
+function normalizePruneLimit(value: number | undefined): number {
+  const limit = value ?? 1000;
+  if (!Number.isInteger(limit) || limit <= 0 || limit > 10_000) {
+    throw new TypeError('pruneAcknowledged limit must be a positive integer no greater than 10000');
+  }
+  return limit;
 }
 
 async function extendClaimLease(

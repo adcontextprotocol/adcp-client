@@ -1176,7 +1176,7 @@ function generateLlmsTxt(
     `Push-enabled decisioning tasks settled by another process must return \`ctx.handoffToTask(producer, { settlement: 'external' })\`; the framework withholds \`submitted\` until the producer durably queues the complete scoped handle and encrypted route. Workers use \`createPostgresTaskSettlementCoordinator()\` with \`completeScopedPushTask()\` / \`failScopedPushTask()\`; the task mutation and encrypted recovery outbox checkpoint commit together. Acknowledge work only for \`applied\` or compatible \`already_terminal\`; retry or dead-letter scope misses and conflicts.`
   );
   ln(
-    `When application state commits before SDK task settlement, call \`createPostgresTaskSettlementIntentQueue().enqueue(intent, { db: tx })\` in the same domain transaction. Recovery callbacks are at-least-once and must prove the exact terminal artifact before returning \`settled\`; polling tasks compare the scoped registry record, while push tasks use the PostgreSQL settlement coordinator. See \`docs/guides/DURABLE-TASK-SETTLEMENT.md\` for copyable handlers and scoped dead-letter operations.`
+    `When application state commits before SDK task settlement, call \`createPostgresTaskSettlementIntentQueue().enqueue(intent, { db: tx })\` in the same domain transaction. Acknowledgement discards the payload and retains an immutable fingerprint tombstone through the configured idempotency horizon; \`pruneAcknowledged()\` removes expired tombstones in bounded batches. Recovery callbacks are at-least-once and must prove the exact terminal artifact before returning \`settled\`; polling tasks compare the scoped registry record, while push tasks use the PostgreSQL settlement coordinator. See \`docs/guides/DURABLE-TASK-SETTLEMENT.md\` for copyable handlers and scoped dead-letter operations.`
   );
   ln();
 
@@ -1502,6 +1502,8 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  intentFingerprint: string;`);
   ln(`}`);
   ln();
+  ln(`function canonicalizeTaskSettlementIntent(intent: TaskSettlementIntent): TaskSettlementIntent;`);
+  ln();
   ln(`interface TaskSettlementIntentRecoveryContext {`);
   ln(`  attemptCount: number;`);
   ln(`  extendLease(): Promise<boolean>;`);
@@ -1533,25 +1535,36 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  onError?(error: unknown, context: TaskSettlementIntentRecoveryErrorContext): void | Promise<void>;`);
   ln(`}`);
   ln();
+  ln(`interface CreatePostgresTaskSettlementIntentQueueOptions {`);
+  ln(`  db: PgQueryable;`);
+  ln(`  namespace: string;`);
+  ln(`  tableName?: string;`);
+  ln(`  idempotencyHorizonMs?: number; // defaults to seven days`);
+  ln(`}`);
+  ln();
   ln(`interface PostgresTaskSettlementIntentQueue {`);
   ln(`  readonly durability: 'durable';`);
   ln(
     `  enqueue(intent: TaskSettlementIntent, options?: { db?: PgQueryable }): Promise<TaskSettlementIntentCheckpoint>;`
   );
   ln(`  acknowledge(checkpoint: TaskSettlementIntentCheckpoint, options?: { db?: PgQueryable }): Promise<boolean>;`);
+  ln(`  pruneAcknowledged(options?: { db?: PgQueryable; limit?: number }): Promise<number>;`);
   ln(`  recover(options: RecoverTaskSettlementIntentsOptions): Promise<TaskSettlementIntentRecoveryMetrics>;`);
   ln(`  probe(): Promise<void>;`);
   ln(`}`);
+  ln();
+  ln(`const TASK_SETTLEMENT_INTENT_IDEMPOTENCY_HORIZON_MS: number; // seven days`);
   ln();
   ln(`const settlementIntents = createPostgresTaskSettlementIntentQueue({`);
   ln(`  db: pool,`);
   ln(`  namespace: 'seller-prod',`);
   ln(`  tableName: 'seller_task_settlement_intents',`);
+  ln(`  idempotencyHorizonMs: TASK_SETTLEMENT_INTENT_IDEMPOTENCY_HORIZON_MS,`);
   ln(`});`);
   ln('```');
   ln();
   ln(
-    `The queue requires a complete \`DurableTaskSettlementRef\`, including non-empty \`registryId\`. Pass the active transaction client to \`enqueue(..., { db: tx })\` so the domain outcome and immutable intent commit together. Recovery is at least once: return \`settled\` only after proving the exact terminal artifact. See \`docs/guides/DURABLE-TASK-SETTLEMENT.md\` for polling and push helpers plus scoped dead-letter SQL.`
+    `The queue requires a complete \`DurableTaskSettlementRef\`, including non-empty \`registryId\`. Use \`canonicalizeTaskSettlementIntent()\` for the immediate path so it compares the same cloned, validated, wire-safe artifact that \`enqueue\` persists. Pass the active transaction client to \`enqueue(..., { db: tx })\` so the domain outcome and immutable intent commit together. Acknowledgement compacts the payload and retains the exact fingerprint for \`idempotencyHorizonMs\` (seven days by default), preventing a conflicting artifact from rebinding the scoped task during the replay window. Schedule bounded \`pruneAcknowledged()\` calls when recovery traffic can be idle. Recovery is at least once: return \`settled\` only after proving the exact terminal artifact. See \`docs/guides/DURABLE-TASK-SETTLEMENT.md\` for polling and push helpers plus scoped dead-letter SQL.`
   );
   ln();
 

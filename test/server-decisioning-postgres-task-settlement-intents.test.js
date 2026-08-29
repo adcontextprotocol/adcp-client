@@ -88,7 +88,9 @@ describe('task settlement intent queue contract', () => {
     assert.match(sql, new RegExp(`CREATE TABLE IF NOT EXISTS ${TABLE}`));
     assert.match(sql, /PRIMARY KEY \(queue_namespace, scope_fingerprint\)/);
     assert.match(sql, /scope_fingerprint ~ '\^\[a-f0-9\]\{64\}\$'/);
-    assert.match(sql, /state IN \('pending', 'dead_letter'\)/);
+    assert.match(sql, /state IN \('pending', 'dead_letter', 'acknowledged'\)/);
+    assert.match(sql, /retain_until/);
+    assert.match(sql, /WHERE state = 'acknowledged'/);
     assert.match(sql, /WHERE state = 'pending'/);
     assert.throws(() => getTaskSettlementIntentMigration({ tableName: 'bad;drop' }), /tableName/);
   });
@@ -141,6 +143,10 @@ describe('task settlement intent queue contract', () => {
     const { createPostgresTaskSettlementIntentQueue } = require('../dist/lib/server/decisioning');
     const db = { query: async () => ({ rows: [], rowCount: 0 }) };
     assert.throws(() => createPostgresTaskSettlementIntentQueue({ db, namespace: 'unsafe namespace' }), /namespace/);
+    assert.throws(
+      () => createPostgresTaskSettlementIntentQueue({ db, namespace: NAMESPACE, idempotencyHorizonMs: 0 }),
+      /idempotencyHorizonMs/
+    );
     const queue = createPostgresTaskSettlementIntentQueue({ db, namespace: NAMESPACE, tableName: TABLE });
     await assert.rejects(
       queue.enqueue({ taskRef: { ...ref(), registryId: undefined }, action: 'complete', result: {} }),
@@ -154,6 +160,7 @@ describe('task settlement intent queue contract', () => {
     await assert.rejects(queue.recover({ settle: async () => 'settled', leaseMs: 0 }), /leaseMs/);
     await assert.rejects(queue.recover({ settle: async () => 'settled', batchSize: 1001 }), /batchSize/);
     await assert.rejects(queue.recover({ settle: async () => 'settled', workerId: 7 }), /workerId/);
+    await assert.rejects(queue.pruneAcknowledged({ limit: 0 }), /pruneAcknowledged limit/);
   });
 
   test('configuration is snapshotted so caller mutation cannot redirect the queue', async () => {
@@ -166,26 +173,32 @@ describe('task settlement intent queue contract', () => {
         return { rows: [], rowCount: 0 };
       },
     };
-    const options = { db: originalDb, namespace: NAMESPACE, tableName: TABLE };
+    const options = { db: originalDb, namespace: NAMESPACE, tableName: TABLE, idempotencyHorizonMs: 12_345 };
     const queue = createPostgresTaskSettlementIntentQueue(options);
     options.db = { query: async () => assert.fail('mutated db must not be used') };
     options.namespace = 'redirected';
     options.tableName = 'redirected_table';
+    options.idempotencyHorizonMs = 1;
 
-    await queue.enqueue({ taskRef: ref('task_snapshot'), action: 'complete', result: { ok: true } });
+    const checkpoint = await queue.enqueue({ taskRef: ref('task_snapshot'), action: 'complete', result: { ok: true } });
+    await queue.acknowledge(checkpoint);
     await queue.probe();
     await queue.recover({ settle: async () => 'settled' });
 
-    assert.strictEqual(calls.length, 3);
+    assert.strictEqual(calls.length, 5);
     for (const { sql, values } of calls) {
       assert.match(sql, new RegExp(TABLE));
       assert.doesNotMatch(sql, /redirected_table/);
       assert.strictEqual(values[0], NAMESPACE);
     }
+    assert.strictEqual(calls.find(({ sql }) => sql.includes("SET state = 'acknowledged'")).values[7], 12_345);
   });
 
   test('fail intents validate their structured error before persistence', async () => {
-    const { createPostgresTaskSettlementIntentQueue } = require('../dist/lib/server/decisioning');
+    const {
+      canonicalizeTaskSettlementIntent,
+      createPostgresTaskSettlementIntentQueue,
+    } = require('../dist/lib/server/decisioning');
     let values;
     let queryCount = 0;
     const queue = createPostgresTaskSettlementIntentQueue({
@@ -218,7 +231,7 @@ describe('task settlement intent queue contract', () => {
     );
     assert.strictEqual(queryCount, 0);
 
-    await queue.enqueue({
+    const rawIntent = {
       taskRef: ref('task_error'),
       action: 'fail',
       error: {
@@ -227,11 +240,14 @@ describe('task settlement intent queue contract', () => {
         recovery: 'correctable',
         field: 'legacy-private-field',
       },
-    });
+    };
+    const canonicalIntent = canonicalizeTaskSettlementIntent(rawIntent);
+    await queue.enqueue(rawIntent);
     const storedError = JSON.parse(values[6]).error;
     assert.strictEqual(storedError.code, 'IDEMPOTENCY_CONFLICT');
     assert.strictEqual(storedError.message, 'conflict');
     assert.strictEqual(Object.hasOwn(storedError, 'field'), false);
+    assert.deepStrictEqual(canonicalIntent.error, storedError);
   });
 
   test('recovery fingerprints the exact stored error before normalizing it for current settlement', async () => {
@@ -349,6 +365,7 @@ describe('task settlement intent queue contract', () => {
     });
     await queue.probe();
     assert.match(sql, /created_at/);
+    assert.match(sql, /retain_until/);
     assert.match(sql, /updated_at/);
   });
 });
@@ -452,7 +469,7 @@ describe('Postgres task settlement intent queue', { skip: !DATABASE_URL && 'DATA
       deadLettered: 0,
       leaseLost: 0,
     });
-    assert.strictEqual((await pool.query(`SELECT 1 FROM ${TABLE}`)).rowCount, 0);
+    assert.deepStrictEqual((await pool.query(`SELECT state FROM ${TABLE}`)).rows, [{ state: 'acknowledged' }]);
   });
 
   test('a crash after registry settlement heals through an idempotent retry', async () => {
@@ -585,25 +602,59 @@ describe('Postgres task settlement intent queue', { skip: !DATABASE_URL && 'DATA
     });
   });
 
-  test('failed intents preserve an explicit null result through fingerprint verification', async () => {
+  test('failed intents preserve an explicit null result through crash recovery and registry readback', async () => {
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'intent-registry',
+      tableName: TASK_TABLE,
+    });
+    const taskRef = await registry.create({
+      tool: 'update_media_buy',
+      accountId: 'account-1',
+      ownerScope: 'api_key:buyer-1',
+      overrideTaskId: 'task_null_result',
+    });
     await queue.enqueue({
-      taskRef: ref('task_null_result'),
+      taskRef,
       action: 'fail',
       error: { code: 'INVALID_STATE', message: 'safe message', recovery: 'correctable' },
       result: null,
     });
-    let observed;
-    assert.deepStrictEqual(
-      await queue.recover({
-        settle: async intent => {
-          observed = intent;
-          return 'settled';
-        },
-      }),
-      { claimed: 1, settled: 1, retried: 0, deadLettered: 0, leaseLost: 0 }
-    );
-    assert.strictEqual(Object.hasOwn(observed, 'result'), true);
-    assert.strictEqual(observed.result, null);
+    let simulateCrash = true;
+    const settle = async intent => {
+      assert.strictEqual(Object.hasOwn(intent, 'result'), true);
+      assert.strictEqual(intent.result, null);
+      const outcome = await registry.fail(intent.taskRef.taskId, intent.taskRef, intent.error, intent.result);
+      if (outcome.outcome === 'already_terminal') {
+        const stored = await registry.getTask(intent.taskRef.taskId, intent.taskRef);
+        assert.strictEqual(stored.status, 'failed');
+        assert.strictEqual(Object.hasOwn(stored, 'result'), true);
+        assert.strictEqual(stored.result, null);
+      } else {
+        assert.strictEqual(outcome.outcome, 'applied');
+      }
+      if (simulateCrash) {
+        simulateCrash = false;
+        throw new Error('simulated death after explicit null failure commit');
+      }
+      return 'settled';
+    };
+
+    assert.deepStrictEqual(await queue.recover({ retryAfterMs: 0, settle }), {
+      claimed: 1,
+      settled: 0,
+      retried: 1,
+      deadLettered: 0,
+      leaseLost: 0,
+    });
+    assert.deepStrictEqual(await queue.recover({ retryAfterMs: 0, settle }), {
+      claimed: 1,
+      settled: 1,
+      retried: 0,
+      deadLettered: 0,
+      leaseLost: 0,
+    });
   });
 
   test('task refs are normalized before fingerprinting and persistence', async () => {
@@ -665,7 +716,7 @@ describe('Postgres task settlement intent queue', { skip: !DATABASE_URL && 'DATA
       }),
       { claimed: 1, settled: 1, retried: 0, deadLettered: 0, leaseLost: 0 }
     );
-    assert.strictEqual((await pool.query(`SELECT 1 FROM ${TABLE}`)).rowCount, 0);
+    assert.deepStrictEqual((await pool.query(`SELECT state FROM ${TABLE}`)).rows, [{ state: 'acknowledged' }]);
   });
 
   test('one recovery call cannot reclaim a zero-delay retry it already saw', async () => {
@@ -895,5 +946,43 @@ describe('Postgres task settlement intent queue', { skip: !DATABASE_URL && 'DATA
     });
     assert.strictEqual(await queue.acknowledge(checkpoint), true);
     assert.strictEqual(await queue.acknowledge(checkpoint), false);
+  });
+
+  test('acknowledgement retains the immutable fingerprint through the idempotency horizon', async () => {
+    const taskRef = ref('task_ack_tombstone');
+    const firstIntent = { taskRef, action: 'complete', result: { revision: 1 } };
+    const checkpoint = await queue.enqueue(firstIntent);
+    assert.strictEqual(await queue.acknowledge(checkpoint), true);
+
+    assert.deepStrictEqual(await queue.enqueue(firstIntent), checkpoint);
+    await assert.rejects(
+      queue.enqueue({ ...firstIntent, result: { revision: 2 } }),
+      error => error.name === 'TaskSettlementIntentConflictError'
+    );
+    const retained = await pool.query(
+      `SELECT state, payload, retain_until > clock_timestamp() AS retained FROM ${TABLE}`
+    );
+    assert.deepStrictEqual(retained.rows, [{ state: 'acknowledged', payload: {}, retained: true }]);
+
+    await pool.query(`UPDATE ${TABLE} SET retain_until = clock_timestamp() - INTERVAL '1 second'`);
+    const replacement = await queue.enqueue({ ...firstIntent, result: { revision: 2 } });
+    assert.notStrictEqual(replacement.intentFingerprint, checkpoint.intentFingerprint);
+    assert.deepStrictEqual((await pool.query(`SELECT state, attempt_count FROM ${TABLE}`)).rows, [
+      { state: 'pending', attempt_count: 0 },
+    ]);
+  });
+
+  test('expired acknowledgement tombstones can be pruned in bounded batches', async () => {
+    const checkpoint = await queue.enqueue({
+      taskRef: ref('task_expired_tombstone'),
+      action: 'complete',
+      result: { ok: true },
+    });
+    assert.strictEqual(await queue.acknowledge(checkpoint), true);
+    await pool.query(`UPDATE ${TABLE} SET retain_until = clock_timestamp() - INTERVAL '1 second'`);
+
+    assert.strictEqual(await queue.pruneAcknowledged({ limit: 1 }), 1);
+    assert.strictEqual(await queue.pruneAcknowledged({ limit: 1 }), 0);
+    assert.strictEqual((await pool.query(`SELECT 1 FROM ${TABLE}`)).rowCount, 0);
   });
 });
