@@ -32,8 +32,11 @@ function getAdcpVersion(): string {
 // - `bundled/` is a compose layer that re-shapes schemas for cross-protocol
 //   convenience. Field sets diverge from the canonical schemas, which
 //   would produce false-positive collisions.
+// - `mcp/` contains model-facing projections. Security-sensitive fields can
+//   intentionally be omitted from those prompt schemas, so they are not wire
+//   contracts and must not participate in the request allowlist.
 // - underscore-prefixed dirs are codegen scratch.
-const SKIP_DIRS = new Set(['bundled']);
+const SKIP_DIRS = new Set(['bundled', 'mcp']);
 
 /**
  * Allowlist of fan-out-relevant request basenames. Restricts codegen to
