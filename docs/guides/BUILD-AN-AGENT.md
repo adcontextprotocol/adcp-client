@@ -702,6 +702,12 @@ createAdcpServerFromPlatform(platform, {
 
 See [SIGNING-GUIDE.md](./SIGNING-GUIDE.md) for the full walkthrough: key generation, JWKS publication, brand.json, conformance testing, and KMS-backed production deployment.
 
+When a human approval or provider callback commits before the application can
+settle its SDK task, use the PostgreSQL settlement-intent queue to close that
+earlier crash window. See [Durable task settlement](./DURABLE-TASK-SETTLEMENT.md)
+for the domain transaction → task/webhook transaction → webhook recovery
+sequence.
+
 ### Portable MCP Apps for custom tools
 
 Use `resources` with custom-tool `_meta.ui` to attach one host-neutral MCP
