@@ -338,15 +338,15 @@ before starting scoped writers.
   Symptoms: looks like a transient outage at first run; same call
   consistently fails the second time. Check that `opts.resolveIdempotencyPrincipal`
   is populated before you debug anything else.
-- **`ctx.account.authInfo` (specialism methods) vs `ctx.authInfo`
-  (`ResolveContext` only).** Inside your `accounts.resolve(ref, ctx)`,
-  the second arg is `ResolveContext` and exposes `ctx.authInfo`. Inside
-  a `SalesPlatform` / `AudiencePlatform` / etc. method, the second arg
-  is `RequestContext` and the auth principal lives at
-  `ctx.account.authInfo` — NOT `ctx.authInfo` (which doesn't exist
-  there). The migration doc shows the resolver signature first, so
-  adopters naturally try the same name in their handler bodies and hit
-  a TypeScript error. Distinct shapes; same field, different paths.
+- **`ctx.authInfo` (incoming caller) vs `ctx.account.authInfo` (upstream
+  platform credential).** Both `accounts.resolve(ref, ctx)` and native
+  `SalesPlatform` / `AudiencePlatform` / other specialism methods receive
+  the verified incoming principal at `ctx.authInfo`. It is request-local and
+  must not be persisted. `ctx.account.authInfo` is a distinct adopter-managed
+  credential model that may be refreshed by the framework for upstream API
+  calls. Do not copy the incoming bearer into the account merely to bridge
+  native handlers; background workers must re-resolve credentials, or retain
+  only a stable non-secret identity when durable work needs attribution.
 - **`mergeSeam: 'warn'` is the default.** Set `'strict'` in CI to catch
   silent migration regressions where v6.x adds a tool to a specialism
   interface and your prior v5 handler stops running.

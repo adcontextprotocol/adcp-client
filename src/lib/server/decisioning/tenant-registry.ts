@@ -811,7 +811,9 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
         signerKey: tenantKeyToSignerKey(config.signingKey),
       };
     }
-    return createAdcpServerFromPlatform(config.platform, merged);
+    // Tenant entries may carry different opaque account metadata shapes;
+    // registration already keeps each platform/options pair together.
+    return createAdcpServerFromPlatform(config.platform, merged as never);
   }
 
   async function runValidation(tenantId: string): Promise<TenantStatus> {

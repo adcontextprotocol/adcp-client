@@ -156,6 +156,7 @@ export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
 
   return {
     account,
+    ...(handlerCtx.authInfo != null && { authInfo: handlerCtx.authInfo }),
     ...(handlerCtx.agent != null && { agent: handlerCtx.agent }),
     ...(handlerCtx.callerMutationScope != null && {
       callerMutationScope: Object.freeze({ ...handlerCtx.callerMutationScope }),

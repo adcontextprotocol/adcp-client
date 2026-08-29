@@ -569,6 +569,110 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     assert.strictEqual(typeof sawCtx.resolve.creativeFormat, 'function');
   });
 
+  it('threads authenticated request principals into native RequestContext without serializing them (#2765)', async () => {
+    const principal = {
+      token: 'incoming-secret-token',
+      clientId: 'buyer-1',
+      scopes: ['read'],
+      credential: { kind: 'api_key', key_id: 'buyer-key-1' },
+    };
+    const resolverAuth = [];
+    const handlerContexts = [];
+    const base = buildPlatform();
+    const platform = buildPlatform({
+      accounts: {
+        ...base.accounts,
+        resolve: async (_ref, ctx) => {
+          resolverAuth.push(ctx.authInfo);
+          return {
+            id: `acct-${ctx.authInfo.credential.key_id}`,
+            name: 'Scoped account',
+            status: 'active',
+            ctx_metadata: {},
+          };
+        },
+      },
+      sales: {
+        ...base.sales,
+        getProducts: async (_req, ctx) => {
+          handlerContexts.push(ctx);
+          return { products: [], cache_scope: 'account' };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'native-auth-context',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const result = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: { name: 'get_products', arguments: { account: { account_id: 'acct-1' } } },
+      },
+      { authInfo: principal }
+    );
+    const secondPrincipal = {
+      token: 'second-incoming-secret-token',
+      clientId: 'buyer-2',
+      scopes: ['read'],
+      credential: { kind: 'api_key', key_id: 'buyer-key-2' },
+    };
+    const secondResult = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: { name: 'get_products', arguments: { account: { account_id: 'acct-2' } } },
+      },
+      { authInfo: secondPrincipal }
+    );
+
+    assert.deepStrictEqual(resolverAuth, [principal, secondPrincipal]);
+    assert.strictEqual(handlerContexts[0].authInfo, principal);
+    assert.strictEqual(handlerContexts[1].authInfo, secondPrincipal);
+    assert.strictEqual(handlerContexts[0].account.id, 'acct-buyer-key-1');
+    assert.strictEqual(handlerContexts[1].account.id, 'acct-buyer-key-2');
+    assert.strictEqual(
+      handlerContexts[0].account.authInfo,
+      undefined,
+      'incoming principal is not persisted on account'
+    );
+    assert.strictEqual(
+      handlerContexts[1].account.authInfo,
+      undefined,
+      'incoming principal is not persisted on account'
+    );
+    assert.ok(!JSON.stringify(result).includes(principal.token), 'principal credentials never enter the wire response');
+    assert.ok(!JSON.stringify(secondResult).includes(secondPrincipal.token));
+  });
+
+  it('omits authInfo from unauthenticated native RequestContext calls (#2765)', async () => {
+    let handlerCtx;
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async (_req, ctx) => {
+            handlerCtx = ctx;
+            return { products: [], cache_scope: 'account' };
+          },
+        },
+      }),
+      {
+        name: 'native-anonymous-context',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_products', arguments: { account: { account_id: 'acct-1' } } },
+    });
+    assert.strictEqual(Object.hasOwn(handlerCtx, 'authInfo'), false);
+  });
+
   it('preserves dual format declarations on the AdCP 3.1 canonical product wire (#2440)', async () => {
     const base = buildPlatform();
     const legacyRef = {
