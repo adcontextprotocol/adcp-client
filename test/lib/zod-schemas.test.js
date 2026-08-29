@@ -167,6 +167,46 @@ describe('Zod Schema Validation', () => {
         .success,
       false
     );
+    const proposalWithSignalTargeting = signalSourceUrl => ({
+      ...proposal,
+      commercial_terms: {
+        ...proposal.commercial_terms,
+        purchases: [
+          {
+            ...proposal.commercial_terms.purchases[0],
+            targeting_overlay: {
+              signal_targeting_groups: {
+                operator: 'all',
+                groups: [
+                  {
+                    operator: 'any',
+                    signals: [
+                      {
+                        signal_ref: {
+                          scope: 'signal_source',
+                          signal_source_url: signalSourceUrl,
+                          signal_id: 'segment_1',
+                        },
+                        value_type: 'binary',
+                        value: true,
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    });
+    const validSignalTargeting = schemas.CanonicalProposalSchema.safeParse(
+      proposalWithSignalTargeting('http://[v1.fe80::a+en1]/')
+    );
+    assert.equal(validSignalTargeting.success, true, JSON.stringify(validSignalTargeting.error?.issues));
+    assert.equal(
+      schemas.CanonicalProposalSchema.safeParse(proposalWithSignalTargeting('https://example.com/%zz')).success,
+      false
+    );
   });
 
   test('beta.4 continuation input schema accepts signed vectors and preserves closed loss consent', async () => {
@@ -451,6 +491,19 @@ describe('Zod Schema Validation', () => {
     assert.strictEqual(schemas.CanonicalFormatHostedVideoSchema.safeParse({ max_file_size_mb: 1.5 }).success, false);
     assert.strictEqual(schemas.CanonicalFormatHostedAudioSchema.safeParse({ max_file_size_mb: 0.5 }).success, true);
     assert.strictEqual(schemas.CanonicalFormatHostedAudioSchema.safeParse({ max_file_size_mb: 0 }).success, false);
+  });
+
+  test('legacy structured format references preserve RFC 3986 URI semantics', async () => {
+    if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
+    const formatReference = agent_url => ({ agent_url, id: 'display_static' });
+    assert.equal(
+      schemas.FormatReferenceStructuredObjectSchema.safeParse(formatReference('http://[v1.fe80::a+en1]/')).success,
+      true
+    );
+    assert.equal(
+      schemas.FormatReferenceStructuredObjectSchema.safeParse(formatReference('https://example.com/%zz')).success,
+      false
+    );
   });
 
   test('CreativeBriefSchema requires at least one required disclosure when present', async () => {
@@ -786,6 +839,18 @@ describe('Zod Schema Validation', () => {
     assert.ok(schemas.CanonicalFormatSellerRenderedStatefulDisplaySchema.shape);
     assert.ok(schemas.CanonicalFormatCoordinatedPlacementsSchema.shape);
     assert.ok(schemas.CanonicalFormatSellerRenderedStatefulDisplaySchema.safeParse(stateful).success);
+    const deeplyNestedValue = {};
+    let cursor = deeplyNestedValue;
+    for (let depth = 0; depth < 4000; depth += 1) {
+      cursor.next = {};
+      cursor = cursor.next;
+    }
+    assert.doesNotThrow(() =>
+      schemas.CanonicalFormatSellerRenderedStatefulDisplaySchema.safeParse({
+        ...stateful,
+        slots: [{ asset_group_id: 'body', asset_type: 'text', max_size_kb: deeplyNestedValue }],
+      })
+    );
     for (const invalid of [
       { ...stateful, experimental: 'wrong' },
       { ...stateful, v1_translatable: 42 },

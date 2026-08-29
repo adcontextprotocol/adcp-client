@@ -55,14 +55,22 @@ import { resolveAdcpVersion } from '../utils/adcp-version-config';
 
 export * from '../types/schemas.generated';
 
-type LooseObjectSchemaFor<T extends object> = z.ZodObject<
-  {
-    [K in keyof T]-?: undefined extends T[K]
-      ? z.ZodOptional<z.ZodType<Exclude<T[K], undefined>, Exclude<T[K], undefined>>>
-      : z.ZodType<T[K], T[K]>;
-  },
-  z.core.$loose
-> &
+type LooseObjectShapeFor<T extends object> = {
+  [K in keyof T]-?: undefined extends T[K]
+    ? z.ZodOptional<z.ZodType<Exclude<T[K], undefined>, Exclude<T[K], undefined>>>
+    : z.ZodType<T[K], T[K]>;
+};
+
+type ZodShapeOutput<U extends z.core.$ZodShape> = {
+  [K in keyof U as undefined extends z.output<U[K]> ? never : K]: z.output<U[K]>;
+} & {
+  [K in keyof U as undefined extends z.output<U[K]> ? K : never]?: z.output<U[K]>;
+};
+
+/** Portable loose-object facade retained across adopter declaration emit. */
+export type LooseObjectSchemaFor<T extends object> = {
+  extend<U extends z.core.$ZodShape>(shape: U): LooseObjectSchemaFor<Omit<T, keyof U> & ZodShapeOutput<U>>;
+} & z.ZodObject<LooseObjectShapeFor<T>, z.core.$loose> &
   z.ZodType<T & Record<string, unknown>, T & Record<string, unknown>>;
 
 /** Wire-compatible request schema, including the legacy `format_ids` selector. */

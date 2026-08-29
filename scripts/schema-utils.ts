@@ -123,6 +123,16 @@ export function injectJsdocConstraints(schema: any): any {
 
     if (typeof out.minimum === 'number') addTag('minimum', out.minimum);
     if (typeof out.maximum === 'number') addTag('maximum', out.maximum);
+    // JSON Schema's integer type otherwise collapses to plain `number`
+    // through the TypeScript hop. ts-to-zod's `int` format restores the
+    // runtime integer check without changing the generated TS property type.
+    const integerOrNullUnion =
+      Array.isArray(out.type) &&
+      out.type.includes('integer') &&
+      out.type.every(type => type === 'integer' || type === 'null');
+    if (out.type === 'integer' || integerOrNullUnion) {
+      addTag('format', 'int');
+    }
     const hasStringType = out.type === 'string' || (Array.isArray(out.type) && out.type.includes('string'));
     if (hasStringType && typeof out.minLength === 'number') addTag('minLength', out.minLength);
     if (hasStringType && typeof out.maxLength === 'number') addTag('maxLength', out.maxLength);
