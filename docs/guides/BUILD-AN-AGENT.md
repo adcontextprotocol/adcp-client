@@ -176,6 +176,34 @@ serve(() => createAdcpServerFromPlatform(platform, { name: 'My Publisher', versi
 - **Idempotency, signing, async tasks, status normalization, lifecycle state** are framework-owned. Synchronous terminal responses do not emit completion webhooks by default; the inline result is authoritative. Adopters write the business decisions.
 - **Catches handler errors** — unhandled exceptions return `SERVICE_UNAVAILABLE` instead of crashing. Throw a typed error class (see § "Returning errors from handlers") to surface a structured envelope.
 
+When one tool cannot truthfully project across the server's entire release
+window, narrow that tool with `toolVersions`. The framework applies the same
+inclusive range to MCP discovery (legacy and modern), A2A skills, direct
+dispatch, validation/projection, and capability discovery:
+
+```typescript
+const platform = definePlatform({
+  capabilities: {
+    specialisms: ['sales-non-guaranteed', 'signal-marketplace'] as const,
+    supported_versions: ['3.0.25', '3.1.18'],
+    // ...
+  },
+  // ...
+});
+
+createAdcpServerFromPlatform(platform, {
+  name: 'My Publisher',
+  version: '1.0.0',
+  toolVersions: {
+    get_signals: { min: '3.1' },
+  },
+});
+```
+
+This keeps compatible media-buy tools available to 3.0 buyers while hiding
+and rejecting only `get_signals` at 3.0. Unknown tool names, invalid releases,
+empty ranges, and `min > max` fail during server construction.
+
 ### Customizing human-readable MCP response text
 
 Native platform handlers normally return only structured domain payloads, and
@@ -537,6 +565,40 @@ never re-enter that handler; reconcile an ambiguous operation by its natural
 key before issuing a new intent. Optional idempotency on non-mutating handlers
 may still release its claim after a thrown error because no mutation was
 admitted.
+
+### Durable proposal lifecycle state
+
+Production sellers using the proposal manager should keep proposal recipes
+and consumption fences in PostgreSQL alongside the durable task registry and
+task-settlement coordinator:
+
+```ts
+import {
+  createPostgresProposalStore,
+  getProposalStoreMigration,
+} from '@adcp/sdk/server';
+
+await pool.query(getProposalStoreMigration({ tableName: 'seller_adcp_proposals' }));
+const proposalStore = createPostgresProposalStore({
+  db: pool,
+  namespace: 'seller-prod',
+  tableName: 'seller_adcp_proposals',
+});
+await proposalStore.probe();
+
+createAdcpServerFromPlatform(platform, {
+  name: 'Seller',
+  version: '1.0.0',
+  proposalStore,
+});
+```
+
+The store scopes every read and CAS transition by deployment namespace and
+account, persists exact JSON-safe proposal/recipe documents, and atomically
+enforces `draft → committed → consuming → consumed`. Run bounded
+`proposalStore.cleanupExpired()` from an operations worker; expiry uses the
+database clock. Never place credentials in proposal recipes or payloads—the
+store rejects credential-shaped fields and oversized documents.
 
 ### Schema-Driven Validation (opt-in)
 
