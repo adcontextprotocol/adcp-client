@@ -3,6 +3,7 @@
 import { generate } from 'ts-to-zod';
 import $RefParser from '@apidevtools/json-schema-ref-parser';
 import { jsonSchemaToZod } from 'json-schema-to-zod';
+import ts from 'typescript';
 import { writeFileSync, readFileSync, existsSync, readdirSync } from 'fs';
 import path from 'path';
 
@@ -336,29 +337,216 @@ function postProcessLazyTypeAnnotations(content: string): string {
   return result;
 }
 
+const typePrinter = ts.createPrinter({ removeComments: true });
+const sourcePrinter = ts.createPrinter();
+
+function canonicalTypeText(node: ts.TypeNode, sourceFile: ts.SourceFile): string {
+  let semanticNode = node;
+  while (ts.isParenthesizedTypeNode(semanticNode)) semanticNode = semanticNode.type;
+  return typePrinter.printNode(ts.EmitHint.Unspecified, semanticNode, sourceFile);
+}
+
+function tupleArrayElementType(node: ts.TypeNode, sourceFile: ts.SourceFile): ts.TypeNode | undefined {
+  if (!ts.isTupleTypeNode(node)) return undefined;
+
+  const elements = node.elements.map(element => {
+    if (ts.isRestTypeNode(element)) {
+      return ts.isArrayTypeNode(element.type) ? element.type.elementType : undefined;
+    }
+    if (ts.isNamedTupleMember(element)) {
+      const memberType = element.type;
+      return element.dotDotDotToken && ts.isArrayTypeNode(memberType) ? memberType.elementType : memberType;
+    }
+    return element;
+  });
+  if (elements.some((element): element is undefined => element === undefined)) return undefined;
+
+  const first = elements[0];
+  if (!first) return undefined;
+  const canonical = canonicalTypeText(first, sourceFile);
+  return elements.every(element => canonicalTypeText(element!, sourceFile) === canonical) ? first : undefined;
+}
+
+function cardinalityArrayElementType(node: ts.TypeNode, sourceFile: ts.SourceFile): ts.TypeNode | undefined {
+  let semanticNode = node;
+  while (ts.isParenthesizedTypeNode(semanticNode)) semanticNode = semanticNode.type;
+  if (ts.isTupleTypeNode(semanticNode)) return tupleArrayElementType(semanticNode, sourceFile);
+  if (!ts.isUnionTypeNode(semanticNode)) return undefined;
+
+  const elements = semanticNode.types.map(type => {
+    let arm = type;
+    while (ts.isParenthesizedTypeNode(arm)) arm = arm.type;
+    if (!ts.isTupleTypeNode(arm)) return undefined;
+    return arm.elements.length === 0 ? null : tupleArrayElementType(arm, sourceFile);
+  });
+  const first = elements.find((element): element is ts.TypeNode => element != null);
+  if (!first || elements.some(element => element === undefined)) return undefined;
+  const canonical = canonicalTypeText(first, sourceFile);
+  return elements.every(element => element === null || canonicalTypeText(element, sourceFile) === canonical)
+    ? first
+    : undefined;
+}
+
+function relaxCardinalityTypeNode(
+  type: ts.TypeNode,
+  sourceFile: ts.SourceFile,
+  context: ts.TransformationContext,
+  visit: ts.Visitor
+): ts.TypeNode {
+  const element = cardinalityArrayElementType(type, sourceFile);
+  if (element) {
+    return ts.factory.createArrayTypeNode(ts.visitNode(element, visit, ts.isTypeNode));
+  }
+
+  // Cardinality metadata can apply to an array branch in a wider union or to
+  // an index-signature/record value. Descend through type containers, but not
+  // into object members where an unrelated structural tuple could live.
+  if (ts.isParenthesizedTypeNode(type)) {
+    return ts.factory.updateParenthesizedType(type, relaxCardinalityTypeNode(type.type, sourceFile, context, visit));
+  }
+  if (ts.isUnionTypeNode(type)) {
+    return ts.factory.updateUnionTypeNode(
+      type,
+      type.types.map(member => relaxCardinalityTypeNode(member, sourceFile, context, visit))
+    );
+  }
+  if (ts.isIntersectionTypeNode(type)) {
+    return ts.factory.updateIntersectionTypeNode(
+      type,
+      type.types.map(member => relaxCardinalityTypeNode(member, sourceFile, context, visit))
+    );
+  }
+  if (ts.isTypeReferenceNode(type)) {
+    return ts.factory.updateTypeReferenceNode(
+      type,
+      type.typeName,
+      type.typeArguments?.map(argument => relaxCardinalityTypeNode(argument, sourceFile, context, visit))
+    );
+  }
+  return ts.visitEachChild(type, visit, context) as ts.TypeNode;
+}
+
 /**
- * Post-process generated Zod schemas to convert tuple patterns to arrays.
+ * Relax non-exact JSON Schema array cardinality before passing generated TypeScript
+ * to ts-to-zod. json-schema-to-typescript represents those arrays as tuple/rest or
+ * bounded tuple-union types, which ts-to-zod faithfully projects as Zod tuples.
  *
- * ts-to-zod converts TypeScript arrays with @minItems JSDoc annotations to Zod tuples:
- *   z.tuple([z.string()]).rest(z.string())
- *
- * This requires at least one element, but agents in the wild return empty arrays.
- * Convert these patterns to simple arrays that allow empty arrays:
- *   z.array(z.string())
- *
- * This is more lenient than the JSON Schema spec (which requires minItems: 1),
- * but necessary for real-world interoperability.
- *
- * LIMITATIONS: This regex handles simple patterns like z.tuple([z.string()]).rest(z.string())
- * but may not handle complex nested schemas with brackets (e.g., z.object({ ... })).
- * The [^\]]+ pattern stops at the first closing bracket, which works for primitive types
- * and simple references. If edge cases with nested objects appear, consider using an AST parser.
+ * Scoping the rewrite to declarations carrying @minItems/@maxItems provenance avoids
+ * widening authored structural tuple unions. Exact min=max tuples (for example an
+ * [x, y] focal point) remain tuples on the public Zod surface.
  */
-function postProcessTuplesToArrays(content: string): string {
-  // Match patterns like: z.tuple([SomeSchema]).rest(SomeSchema)
-  // and convert to: z.array(SomeSchema)
-  // The pattern captures the inner schema type and uses a backreference to ensure they match
-  return content.replace(/z\.tuple\(\[([^\]]+)\]\)\.rest\(\1\)/g, 'z.array($1)');
+function relaxArrayCardinalityTypes(source: string): string {
+  const sourceFile = ts.createSourceFile(
+    'adcp-generated-types.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  const relaxedTypeRoots = new Set<ts.TypeNode>();
+
+  const collect = (node: ts.Node): void => {
+    const tags = ts.getJSDocTags(node);
+    const minTag = tags.find(tag => tag.tagName.text === 'minItems');
+    const maxTag = tags.find(tag => tag.tagName.text === 'maxItems');
+    if (minTag || maxTag) {
+      const min = minTag ? Number(String(minTag.comment ?? '').trim()) : undefined;
+      const max = maxTag ? Number(String(maxTag.comment ?? '').trim()) : undefined;
+      const exactTuple = min !== undefined && max !== undefined && min === max;
+      const typedNode = node as ts.Node & { type?: ts.TypeNode };
+      if (!exactTuple && typedNode.type) {
+        relaxedTypeRoots.add(typedNode.type);
+      }
+    }
+    ts.forEachChild(node, collect);
+  };
+  collect(sourceFile);
+
+  const transformed = ts.transform(sourceFile, [
+    context => root => {
+      const visit: ts.Visitor = node => {
+        if (ts.isTypeNode(node) && relaxedTypeRoots.has(node)) {
+          return relaxCardinalityTypeNode(node, sourceFile, context, visit);
+        }
+        return ts.visitEachChild(node, visit, context);
+      };
+      return ts.visitNode(root, visit) as ts.SourceFile;
+    },
+  ]);
+  try {
+    return sourcePrinter.printFile(transformed.transformed[0]!);
+  } finally {
+    transformed.dispose();
+  }
+}
+
+function canonicalSchemaExpression(expression: string): string {
+  const sourceFile = ts.createSourceFile(
+    'zod-expression.ts',
+    `const schema = ${expression};`,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  const statement = sourceFile.statements[0];
+  if (!statement || !ts.isVariableStatement(statement)) return expression;
+  const initializer = statement.declarationList.declarations[0]?.initializer;
+  return initializer ? typePrinter.printNode(ts.EmitHint.Expression, initializer, sourceFile) : expression;
+}
+
+/**
+ * Normalize homogeneous tuple/rest projections whose array provenance was lost
+ * during JSON Schema -> TypeScript generation (for example array branches inside
+ * patternProperties). Fixed tuples and bounded structural tuple unions are not
+ * touched. Token comparison ignores generator indentation without conflating
+ * whitespace inside string or regular-expression literals.
+ */
+function postProcessTupleRestArrays(content: string): string {
+  const marker = 'z.tuple(';
+  let result = '';
+  let cursor = 0;
+
+  while (cursor < content.length) {
+    const tupleStart = content.indexOf(marker, cursor);
+    if (tupleStart < 0) {
+      result += content.slice(cursor);
+      break;
+    }
+
+    result += content.slice(cursor, tupleStart);
+    const tupleCall = scanBalanced(content, tupleStart + 'z.tuple'.length);
+    const tupleArgument = tupleCall?.body.trim();
+    const tupleArray = tupleArgument?.startsWith('[') ? scanBalanced(tupleArgument, 0, '[', ']') : undefined;
+    const members =
+      tupleArray && !tupleArgument!.slice(tupleArray.end).trim() && tupleArray.body.trim()
+        ? splitTopLevelList(tupleArray.body)
+        : undefined;
+    const restStart = tupleCall?.end;
+    const restCall =
+      restStart !== undefined && content.startsWith('.rest(', restStart)
+        ? scanBalanced(content, restStart + '.rest'.length)
+        : undefined;
+
+    if (
+      members?.length === 1 &&
+      restCall &&
+      canonicalSchemaExpression(members[0]!) === canonicalSchemaExpression(restCall.body)
+    ) {
+      result += `z.array(${postProcessTupleRestArrays(members[0]!)})`;
+      cursor = restCall.end;
+      continue;
+    }
+
+    if (!tupleCall) {
+      result += marker;
+      cursor = tupleStart + marker.length;
+      continue;
+    }
+    result += `z.tuple(${postProcessTupleRestArrays(tupleCall.body)})`;
+    cursor = tupleCall.end;
+  }
+
+  return result;
 }
 
 /**
@@ -3409,7 +3597,9 @@ async function generateZodSchemas() {
     }
 
     // Merge both sources so cross-file type dependencies can be resolved
-    const combinedSource = `${coreContent}\n\n// ====== TOOL TYPES ======\n\n${toolsWithoutCrossImports}`;
+    const combinedSource = relaxArrayCardinalityTypes(
+      `${coreContent}\n\n// ====== TOOL TYPES ======\n\n${toolsWithoutCrossImports}`
+    );
 
     console.log('📦 Generating Zod schemas for all types...');
 
@@ -3446,10 +3636,10 @@ async function generateZodSchemas() {
     // Post-process: Fix broken imports from "undefined" (recursive types with z.lazy())
     zodSchemas = postProcessUndefinedImports(zodSchemas);
 
-    // Post-process: Convert tuple patterns to arrays to allow empty arrays
-    // ts-to-zod converts @minItems 1 to z.tuple([]).rest() which requires at least one element,
-    // but agents in the wild return empty arrays. This relaxes validation for interoperability.
-    zodSchemas = postProcessTuplesToArrays(zodSchemas);
+    // Some nested array constraints lose their JSDoc provenance in the
+    // JSON-Schema-to-TypeScript projection. Normalize the remaining exact
+    // homogeneous tuple/rest representation without touching fixed tuples.
+    zodSchemas = postProcessTupleRestArrays(zodSchemas);
 
     // Post-process: Replace z.union([z.unknown(), z.undefined()]) with z.unknown().
     // ts-to-zod generates the union for Record<string, unknown> types, but z.undefined()
@@ -3485,10 +3675,6 @@ async function generateZodSchemas() {
     zodSchemas = postProcessBeta4OfferAndOutcomeConstraints(zodSchemas);
     zodSchemas = postProcessCanonicalSharedConstraints(zodSchemas);
     zodSchemas = postProcessPreviewCreativeRequestConstraints(zodSchemas);
-
-    // TypeScript cannot retain JSON Schema `format: uri` or root oneOf
-    // exclusivity. Restore both for legacy/canonical creative identity.
-    zodSchemas = postProcessCreativeRuntimeConstraints(zodSchemas);
 
     // Placement presentation is a closed, non-executable document boundary.
     // Restore strictness, integer/cardinality rules, and canvas geometry lost
@@ -3633,6 +3819,12 @@ async function generateZodSchemas() {
       });
     })()`;
     zodSchemas = postProcessCanonicalProposalRuntimeConstraints(zodSchemas, exactCanonicalProposal);
+
+    // TypeScript cannot retain JSON Schema `format: uri` or root oneOf
+    // exclusivity. Restore both for legacy/canonical creative identity. This
+    // runs after replacing CanonicalProposalSchema because generated export
+    // ordering can place CreativeManifestSchema immediately after it.
+    zodSchemas = postProcessCreativeRuntimeConstraints(zodSchemas);
 
     // These promoted beta.6 canonical formats contain nested required-only
     // unions, conditionals, and `contains` constraints that TypeScript cannot
@@ -3897,6 +4089,8 @@ if (require.main === module) {
 }
 
 export const __test__ = {
+  postProcessTupleRestArrays,
+  relaxArrayCardinalityTypes,
   postProcessForNullish,
   postProcessRecordIntersections,
   postProcessMarkerUnionObjectIntersections,

@@ -24,6 +24,8 @@ export const AcceptancePolicyProfile_CoverageValues = ["partial", "complete"] as
 
 // ====== AcceptancePolicyRule ======
 
+/** array of | AcceptancePolicyRule.applies_to */
+export const AcceptancePolicyRule_AppliesToValues = ["account", "media_buy", "creative", "landing_page", "targeting", "delivery", "format"] as const;
 /** single | AcceptancePolicyRule.disposition */
 export const AcceptancePolicyRule_DispositionValues = ["allowed", "conditional", "prohibited"] as const;
 
@@ -167,6 +169,11 @@ export const AssignOrUpdate_OperationValues = ["assign"] as const;
 
 /** single | AttestationBrandIssuer.type */
 export const AttestationBrandIssuer_TypeValues = ["brand"] as const;
+
+// ====== AttestationCapabilities ======
+
+/** array of | AttestationCapabilities.supported_delivery_methods */
+export const AttestationCapabilities_SupportedDeliveryMethodsValues = ["credential_uri", "issuer_credential_id", "embedded"] as const;
 
 // ====== AttestationCredentialUriLocator ======
 
@@ -746,6 +753,8 @@ export const EventSurface_CategoryValues = ["owned_property", "website", "app", 
 
 // ====== FileTransfer ======
 
+/** array of | FileTransfer.directions */
+export const FileTransfer_DirectionsValues = ["buyer_to_seller", "seller_to_buyer"] as const;
 /** single | FileTransfer.pattern */
 export const FileTransfer_PatternValues = ["file_transfer"] as const;
 
@@ -987,6 +996,11 @@ export const ListCreativesRequest_AssignmentProjectionValues = ["all", "matching
 /** array of | ListCreativesRequest.fields */
 export const ListCreativesRequest_FieldsValues = ["creative_id", "name", "format_id", "format_kind", "format_option_ref", "assets", "status", "created_date", "updated_date", "tags", "rights", "rights_attestation_evaluations", "localization", "localization_unavailable", "assignments", "snapshot", "items", "variables", "concept", "pricing_options"] as const;
 
+// ====== ListProductsRequest ======
+
+/** array of | ListProductsRequest.fields */
+export const ListProductsRequest_FieldsValues = ["product_id", "name", "description", "publisher_properties", "channels", "video_placement_types", "audio_distribution_types", "sponsored_placement_types", "social_placement_surfaces", "format_options", "placements", "delivery_type", "exclusivity", "pricing_options", "forecast", "reporting_capabilities", "measurement_terms", "performance_standards", "catalog_types", "signal_targeting_allowed", "signal_targeting_rules", "demographic_targeting", "audience_evidence", "audience_evidence_selections", "max_optimization_goals", "catalog_match", "list_applications", "brief_relevance", "acceptance_policy_profile_ids", "expires_at", "allowed_actions"] as const;
+
 // ====== MacroDeclaration ======
 
 /** single | MacroDeclaration.unavailable_behavior */
@@ -1016,6 +1030,8 @@ export const MacroTranslationTarget_NextOperationValues = ["resolve_value"] as c
 
 // ====== MaxBidWithCostPer ======
 
+/** array of | MaxBidWithCostPer.cost_per_strengths */
+export const MaxBidWithCostPer_CostPerStrengthsValues = ["cap", "target"] as const;
 /** single | MaxBidWithCostPer.kind */
 export const MaxBidWithCostPer_KindValues = ["max_bid_with_cost_per"] as const;
 
@@ -1023,6 +1039,13 @@ export const MaxBidWithCostPer_KindValues = ["max_bid_with_cost_per"] as const;
 
 /** single | MaxBidWithRoas.kind */
 export const MaxBidWithRoas_KindValues = ["max_bid_with_roas"] as const;
+/** array of | MaxBidWithRoas.roas_strengths */
+export const MaxBidWithRoas_RoasStrengthsValues = ["floor", "target"] as const;
+
+// ====== MediaBuyChangeTerm ======
+
+/** array of | MediaBuyChangeTerm.allowed_statuses */
+export const MediaBuyChangeTerm_AllowedStatusesValues = ["pending_creatives", "pending_start", "active", "paused"] as const;
 
 // ====== NativeInFeedFormatDeclaration ======
 
@@ -1031,6 +1054,8 @@ export const NativeInFeedFormatDeclaration_FormatKindValues = ["native_in_feed"]
 
 // ====== NotificationConfig ======
 
+/** array of | NotificationConfig.event_types */
+export const NotificationConfig_EventTypesValues = ["creative.status_changed", "creative.assignment_changed", "indicators.changed", "creative.purged", "account.status_changed", "account.change_recorded", "product.created", "product.updated", "product.priced", "product.removed", "signal.created", "signal.updated", "signal.priced", "signal.removed", "wholesale_feed.bulk_change"] as const;
 /** single | NotificationConfig.product_payload_view */
 export const NotificationConfig_ProductPayloadViewValues = ["canonical", "legacy"] as const;
 
@@ -1120,6 +1145,11 @@ export const PlatformSegment_KindValues = ["platform_segment"] as const;
 /** single | PolicyEntry.source */
 export const PolicyEntry_SourceValues = ["registry", "inline"] as const;
 
+// ====== PolicyProfile ======
+
+/** array of | PolicyProfile.modes */
+export const PolicyProfile_ModesValues = ["automatic", "bid_amount", "max_bid", "cost_per", "roas"] as const;
+
 // ====== PolicyViolationDetails ======
 
 /** single | PolicyViolationDetails.origin */
@@ -1133,10 +1163,16 @@ export const PostalAreaSupport_ATValues = ["plz"] as const;
 export const PostalAreaSupport_AUValues = ["postcode"] as const;
 /** array of | PostalAreaSupport.BR */
 export const PostalAreaSupport_BRValues = ["cep"] as const;
+/** array of | PostalAreaSupport.CA */
+export const PostalAreaSupport_CAValues = ["fsa", "full"] as const;
 /** array of | PostalAreaSupport.FR */
 export const PostalAreaSupport_FRValues = ["code_postal"] as const;
+/** array of | PostalAreaSupport.GB */
+export const PostalAreaSupport_GBValues = ["outward", "full"] as const;
 /** array of | PostalAreaSupport.IN */
 export const PostalAreaSupport_INValues = ["pin"] as const;
+/** array of | PostalAreaSupport.US */
+export const PostalAreaSupport_USValues = ["zip", "zip_plus_four"] as const;
 /** array of | PostalAreaSupport.ZA */
 export const PostalAreaSupport_ZAValues = ["postal_code"] as const;
 
@@ -1665,6 +1701,9 @@ export const AttestationAgentSubject_TypeValues = AgentPermissionDeniedDetails_S
 // --- AttestationBrandSubject ---
 /** @deprecated use `AttestationBrandIssuer_TypeValues` — same literal set, AttestationBrandSubject.type duplicates the canonical export. */
 export const AttestationBrandSubject_TypeValues = AttestationBrandIssuer_TypeValues;
+// --- AudienceEvidenceRequirements ---
+/** @deprecated use `AudienceEvidence_EvidenceTypeValues` — same literal set, AudienceEvidenceRequirements.accepted_evidence_types duplicates the canonical export. */
+export const AudienceEvidenceRequirements_AcceptedEvidenceTypesValues = AudienceEvidence_EvidenceTypeValues;
 // --- BuildCreativeSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, BuildCreativeSubmitted.status duplicates the canonical export. */
 export const BuildCreativeSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
@@ -1978,6 +2017,11 @@ export const PairedRedirect_AssetTypeValues = DisplayTagFormatDeclaration_Format
 // --- PlacementPresentationReference ---
 /** @deprecated use `PlacementPresentationDocument_SchemaVersionValues` — same literal set, PlacementPresentationReference.schema_version duplicates the canonical export. */
 export const PlacementPresentationReference_SchemaVersionValues = PlacementPresentationDocument_SchemaVersionValues;
+// --- PolicyProfile ---
+/** @deprecated use `MaxBidWithCostPer_CostPerStrengthsValues` — same literal set, PolicyProfile.cost_per_strengths duplicates the canonical export. */
+export const PolicyProfile_CostPerStrengthsValues = MaxBidWithCostPer_CostPerStrengthsValues;
+/** @deprecated use `MaxBidWithRoas_RoasStrengthsValues` — same literal set, PolicyProfile.roas_strengths duplicates the canonical export. */
+export const PolicyProfile_RoasStrengthsValues = MaxBidWithRoas_RoasStrengthsValues;
 // --- PostalAreaSupport ---
 /** @deprecated use `PostalAreaSupport_ATValues` — same literal set, PostalAreaSupport.CH duplicates the canonical export. */
 export const PostalAreaSupport_CHValues = PostalAreaSupport_ATValues;
@@ -1989,6 +2033,8 @@ export const PreviewCreativeSubmitted_ResponseTypeValues = BuildCreativeAsyncSub
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, PreviewCreativeSubmitted.status duplicates the canonical export. */
 export const PreviewCreativeSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
 // --- ProductAudienceEvidenceRequirements ---
+/** @deprecated use `AudienceEvidence_EvidenceTypeValues` — same literal set, ProductAudienceEvidenceRequirements.accepted_evidence_types duplicates the canonical export. */
+export const ProductAudienceEvidenceRequirements_AcceptedEvidenceTypesValues = AudienceEvidence_EvidenceTypeValues;
 /** @deprecated use `AudienceEvidenceRequirements_EvidencePresenceValues` — same literal set, ProductAudienceEvidenceRequirements.evidence_presence duplicates the canonical export. */
 export const ProductAudienceEvidenceRequirements_EvidencePresenceValues = AudienceEvidenceRequirements_EvidencePresenceValues;
 /** @deprecated use `AudienceEvidenceRequirements_RequirementModeValues` — same literal set, ProductAudienceEvidenceRequirements.requirement_mode duplicates the canonical export. */
@@ -2034,6 +2080,8 @@ export const SignalDefinition_RefreshCadenceValues = SignalDefinition_LookbackWi
 // --- SignalDefinitionEnrichment ---
 /** @deprecated use `SignalDefinition_Art9BasisValues` — same literal set, SignalDefinitionEnrichment.art9_basis duplicates the canonical export. */
 export const SignalDefinitionEnrichment_Art9BasisValues = SignalDefinition_Art9BasisValues;
+/** @deprecated use `SignalDefinition_DataSourcesValues` — same literal set, SignalDefinitionEnrichment.data_sources duplicates the canonical export. */
+export const SignalDefinitionEnrichment_DataSourcesValues = SignalDefinition_DataSourcesValues;
 /** @deprecated use `SignalDefinition_LookbackWindowValues` — same literal set, SignalDefinitionEnrichment.lookback_window duplicates the canonical export. */
 export const SignalDefinitionEnrichment_LookbackWindowValues = SignalDefinition_LookbackWindowValues;
 /** @deprecated use `SignalDefinition_MethodologyValues` — same literal set, SignalDefinitionEnrichment.methodology duplicates the canonical export. */

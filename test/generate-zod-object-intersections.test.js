@@ -54,6 +54,14 @@ function postProcessRecordSizeConstraints(input) {
   return runPostProcess('postProcessRecordSizeConstraints', input, '.zod-record-size-');
 }
 
+function relaxArrayCardinalityTypes(input) {
+  return runPostProcess('relaxArrayCardinalityTypes', input, '.zod-array-cardinality-');
+}
+
+function postProcessTupleRestArrays(input) {
+  return runPostProcess('postProcessTupleRestArrays', input, '.zod-tuple-rest-');
+}
+
 function postProcessMarkerUnionObjectIntersections(input) {
   return runPostProcess('postProcessMarkerUnionObjectIntersections', input, '.zod-marker-union-');
 }
@@ -172,6 +180,50 @@ export const ArraySchema = z.array(z.string()).max(5);
   assert.match(output, /NestedSchema = z\.record\(z\.string\(\), z\.union\(\[z\.string\(\), z\.number\(\)\]\)\);/);
   assert.match(output, /ExactSchema = z\.record\(z\.string\(\), z\.boolean\(\)\);/);
   assert.match(output, /ArraySchema = z\.array\(z\.string\(\)\)\.max\(5\);/);
+});
+
+test('relaxArrayCardinalityTypes uses source metadata and preserves structural tuples', () => {
+  const output = relaxArrayCardinalityTypes(`
+/** @minItems 1 */
+export type ComplexArray = [{ value: string }, ...{ value: string }[]];
+/**
+ * @minItems 1
+ * @maxItems 3
+ */
+export type BoundedArray =
+  | [{ value: string }]
+  | [{ value: string }, { value: string }]
+  | [{ value: string }, { value: string }, { value: string }];
+/** @minItems 2 @maxItems 2 */
+export type Coordinate = [number, number];
+export type StructuralTupleUnion = [string] | [string, string];
+`);
+
+  assert.match(output, /type ComplexArray = \{\s*value: string;\s*\}\[\]/);
+  assert.match(output, /type BoundedArray = \{\s*value: string;\s*\}\[\]/);
+  assert.match(output, /type Coordinate = \[\s*number,\s*number\s*\]/);
+  assert.match(output, /type StructuralTupleUnion = \[\s*string\s*\] \| \[\s*string,\s*string\s*\]/);
+});
+
+test('postProcessTupleRestArrays handles differently-indented complex items only', () => {
+  const output = postProcessTupleRestArrays(`
+export const ComplexArraySchema = z.tuple([z.object({
+        value: z.string()
+    }).passthrough()]).rest(z.object({
+  value: z.string()
+}).passthrough());
+export const FixedTupleSchema = z.tuple([z.number(), z.number()]);
+export const StructuralUnionSchema = z.union([
+  z.tuple([z.string()]),
+  z.tuple([z.string(), z.string()])
+]);
+export const DistinctRegexSchema = z.tuple([z.string().regex(/a b/)]).rest(z.string().regex(/ab/));
+`);
+
+  assert.match(output, /ComplexArraySchema = z\.array\(z\.object\(/);
+  assert.match(output, /FixedTupleSchema = z\.tuple\(\[z\.number\(\), z\.number\(\)\]\)/);
+  assert.match(output, /StructuralUnionSchema = z\.union\(/);
+  assert.match(output, /DistinctRegexSchema = z\.tuple\(/);
 });
 
 test('postProcessMarkerUnionObjectIntersections keeps unions once markers gain fields', () => {

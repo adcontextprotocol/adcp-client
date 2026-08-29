@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-29T06:09:27.041Z
+// Generated at: 2026-08-29T12:03:53.599Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -449,16 +449,7 @@ export const ProvenanceSchema = z.object({
     c2pa: z.object({
         manifest_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI")
     }).passthrough().optional(),
-    embedded_provenance: z.tuple([z.object({
-            method: EmbeddedProvenanceMethodSchema,
-            standard: z.string().optional(),
-            provider: z.string(),
-            verify_agent: z.object({
-                agent_url: z.string(),
-                feature_id: z.string().optional()
-            }).passthrough().optional(),
-            embedded_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-        }).passthrough()]).rest(z.object({
+    embedded_provenance: z.array(z.object({
         method: EmbeddedProvenanceMethodSchema,
         standard: z.string().optional(),
         provider: z.string(),
@@ -468,16 +459,7 @@ export const ProvenanceSchema = z.object({
         }).passthrough().optional(),
         embedded_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
     }).passthrough()).optional(),
-    watermarks: z.tuple([z.object({
-            media_type: WatermarkMediaTypeSchema,
-            provider: z.string(),
-            verify_agent: z.object({
-                agent_url: z.string(),
-                feature_id: z.string().optional()
-            }).passthrough().optional(),
-            c2pa_action: C2PAWatermarkActionSchema.optional(),
-            embedded_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-        }).passthrough()]).rest(z.object({
+    watermarks: z.array(z.object({
         media_type: WatermarkMediaTypeSchema,
         provider: z.string(),
         verify_agent: z.object({
@@ -489,18 +471,7 @@ export const ProvenanceSchema = z.object({
     }).passthrough()).optional(),
     disclosure: z.object({
         required: z.boolean(),
-        jurisdictions: z.tuple([z.object({
-                country: z.string(),
-                region: z.string().optional(),
-                regulation: z.string(),
-                label_text: z.string().optional(),
-                render_guidance: z.object({
-                    persistence: DisclosurePersistenceSchema.optional(),
-                    min_duration_ms: z.number().int().gte(1).optional(),
-                    positions: z.array(DisclosurePositionSchema).optional(),
-                    ext: ExtensionObjectSchema.optional()
-                }).passthrough().optional()
-            }).passthrough()]).rest(z.object({
+        jurisdictions: z.array(z.object({
             country: z.string(),
             region: z.string().optional(),
             regulation: z.string(),
@@ -513,13 +484,7 @@ export const ProvenanceSchema = z.object({
             }).passthrough().optional()
         }).passthrough()).optional()
     }).passthrough().optional(),
-    verification: z.tuple([z.object({
-            verified_by: z.string(),
-            verified_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-            result: z.union([z.literal("authentic"), z.literal("ai_generated"), z.literal("ai_modified"), z.literal("inconclusive")]),
-            confidence: z.number().gte(0).lte(1).optional(),
-            details_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional()
-        }).passthrough()]).rest(z.object({
+    verification: z.array(z.object({
         verified_by: z.string(),
         verified_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
         result: z.union([z.literal("authentic"), z.literal("ai_generated"), z.literal("ai_modified"), z.literal("inconclusive")]),
@@ -670,9 +635,9 @@ export const MetroSupportSchema = z.union([SupportedSchema, z.object({
 export const GeographicPlaceTypeSchema = z.union([z.union([z.literal("airport"), z.literal("borough"), z.literal("city"), z.literal("city_region"), z.literal("commune"), z.literal("county"), z.literal("district"), z.literal("municipality"), z.literal("neighborhood"), z.literal("post_town"), z.literal("prefecture"), z.literal("province"), z.literal("quarter"), z.literal("state"), z.literal("territory"), z.literal("ward")]), z.string()]);
 
 export const PostalAreaSupportSchema = z.object({
-    US: z.tuple([z.union([z.literal("zip"), z.literal("zip_plus_four")])]).rest(z.union([z.literal("zip"), z.literal("zip_plus_four")])).optional(),
-    GB: z.tuple([z.union([z.literal("outward"), z.literal("full")])]).rest(z.union([z.literal("outward"), z.literal("full")])).optional(),
-    CA: z.tuple([z.union([z.literal("fsa"), z.literal("full")])]).rest(z.union([z.literal("fsa"), z.literal("full")])).optional(),
+    US: z.array(z.union([z.literal("zip"), z.literal("zip_plus_four")])).optional(),
+    GB: z.array(z.union([z.literal("outward"), z.literal("full")])).optional(),
+    CA: z.array(z.union([z.literal("fsa"), z.literal("full")])).optional(),
     DE: z.array(z.literal("plz")).optional(),
     CH: z.array(z.literal("plz")).optional(),
     AT: z.array(z.literal("plz")).optional(),
@@ -1281,11 +1246,7 @@ export const MacroBearingURLSchema = z.string();
 
 export const InlineMarkupSchema = z.object({
     asset_type: z.literal("display_tag"),
-    macro_declarations: z.tuple([MacroDeclarationSchema.and(z.object({
-            location: z.object({
-                field: z.literal("markup").optional()
-            }).passthrough().optional()
-        }).passthrough())]).rest(MacroDeclarationSchema.and(z.object({
+    macro_declarations: z.array(MacroDeclarationSchema.and(z.object({
         location: z.object({
             field: z.literal("markup").optional()
         }).passthrough().optional()
@@ -1418,11 +1379,7 @@ export const URLAssetSchema = z.object({
     asset_type: z.literal("url"),
     url: MacroBearingURLSchema,
     url_type: URLAssetTypeSchema.optional(),
-    macro_declarations: z.tuple([MacroDeclarationSchema.and(z.object({
-            location: z.object({
-                field: z.literal("url").optional()
-            }).passthrough().optional()
-        }).passthrough())]).rest(MacroDeclarationSchema.and(z.object({
+    macro_declarations: z.array(MacroDeclarationSchema.and(z.object({
         location: z.object({
             field: z.literal("url").optional()
         }).passthrough().optional()
@@ -2371,7 +2328,7 @@ export const MacroResolutionResultSchema = z.object({}).passthrough().merge(z.ob
 export const NotificationConfigSchema = z.object({}).passthrough().merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.tuple([z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])]).rest(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2382,7 +2339,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.tuple([z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])]).rest(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2393,7 +2350,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.tuple([z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])]).rest(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2404,7 +2361,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.tuple([z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])]).rest(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2415,7 +2372,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.tuple([z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])]).rest(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2426,7 +2383,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.tuple([z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])]).rest(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2437,7 +2394,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.tuple([z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])]).rest(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2448,7 +2405,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.tuple([z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])]).rest(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2459,7 +2416,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.tuple([z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])]).rest(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2470,7 +2427,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.tuple([z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])]).rest(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2481,7 +2438,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.tuple([z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])]).rest(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2492,7 +2449,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.tuple([z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])]).rest(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2503,7 +2460,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.tuple([z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])]).rest(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2514,7 +2471,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.tuple([z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])]).rest(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2525,7 +2482,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.tuple([z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])]).rest(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2536,7 +2493,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.tuple([z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])]).rest(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2562,13 +2519,7 @@ export const OptimizationGoalSchema = z.union([z.object({
         priority: z.number().optional()
     }).passthrough(), z.object({
         kind: z.literal("event"),
-        event_sources: z.tuple([z.object({
-                event_source_id: z.string(),
-                event_type: EventTypeSchema,
-                custom_event_name: z.string().optional(),
-                value_field: z.string().optional(),
-                value_factor: z.number().optional()
-            }).passthrough()]).rest(z.object({
+        event_sources: z.array(z.object({
             event_source_id: z.string(),
             event_type: EventTypeSchema,
             custom_event_name: z.string().optional(),
@@ -2648,7 +2599,7 @@ export const CommittedMetricSchema = z.union([z.object({
 
 export const AudienceCharacteristicSchema = z.object({
     dimension: z.union([z.literal("age"), z.object({}).passthrough()]).and(z.string()),
-    value: z.union([z.string(), z.number(), z.boolean(), z.tuple([z.union([z.string(), z.number(), z.boolean()])]).rest(z.union([z.string(), z.number(), z.boolean()]))]).optional(),
+    value: z.union([z.string(), z.number(), z.boolean(), z.array(z.union([z.string(), z.number(), z.boolean()]))]).optional(),
     range: z.object({
         min: z.number().optional(),
         max: z.number().optional()
@@ -2661,7 +2612,7 @@ export const AudienceCharacteristicSchema = z.object({
     label: z.string().optional()
 }).passthrough().and(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).and(z.object({
     dimension: z.union([z.literal("age"), z.object({}).passthrough()]).and(z.string()),
-    value: z.union([z.string(), z.number(), z.boolean(), z.tuple([z.union([z.string(), z.number(), z.boolean()])]).rest(z.union([z.string(), z.number(), z.boolean()]))]).optional(),
+    value: z.union([z.string(), z.number(), z.boolean(), z.array(z.union([z.string(), z.number(), z.boolean()]))]).optional(),
     range: z.object({
         min: z.number().optional(),
         max: z.number().optional()
@@ -2988,11 +2939,7 @@ export const CreativePolicySchema = z.object({
         require_disclosure_metadata: z.boolean().optional(),
         require_embedded_provenance: z.boolean().optional()
     }).passthrough().optional(),
-    accepted_verifiers: z.tuple([z.object({
-            agent_url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI"),
-            feature_id: z.string().optional(),
-            providers: z.array(z.string()).optional()
-        }).passthrough()]).rest(z.object({
+    accepted_verifiers: z.array(z.object({
         agent_url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI"),
         feature_id: z.string().optional(),
         providers: z.array(z.string()).optional()
@@ -3216,18 +3163,14 @@ export const TMPIdentityMatchSchema = z.object({
 export const FileTransferSchema = z.object({
     pattern: z.literal("file_transfer"),
     transport: CloudStorageProtocolSchema,
-    directions: z.tuple([z.union([z.literal("buyer_to_seller"), z.literal("seller_to_buyer")])]).rest(z.union([z.literal("buyer_to_seller"), z.literal("seller_to_buyer")])).optional(),
+    directions: z.array(z.union([z.literal("buyer_to_seller"), z.literal("seller_to_buyer")])).optional(),
     vendor: BrandReferenceSchema
 }).passthrough();
 
 export const DatasetQuerySchema = z.object({
     pattern: z.literal("dataset_query"),
     vendor: BrandReferenceSchema,
-    consumer_identities: z.tuple([z.object({
-            cloud: z.union([z.literal("aws"), z.literal("azure"), z.literal("gcp")]).optional(),
-            region: z.string().optional(),
-            identity: z.string()
-        }).passthrough()]).rest(z.object({
+    consumer_identities: z.array(z.object({
         cloud: z.union([z.literal("aws"), z.literal("azure"), z.literal("gcp")]).optional(),
         region: z.string().optional(),
         identity: z.string()
@@ -3639,7 +3582,7 @@ export const PaginationResponseSchema = z.object({
 export const GetProductsRejectedSchema = AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).and(z.object({
     status: z.literal("rejected"),
     reason: z.string().min(1).max(2000),
-    suggestions: z.union([z.tuple([z.string()]), z.tuple([z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()])]).optional(),
+    suggestions: z.array(z.string()).optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
@@ -3689,7 +3632,7 @@ export const ProductAudienceEvidenceRequirementsSchema = z.object({}).passthroug
     evidence_presence: z.union([z.literal("required"), z.literal("when_available")]),
     accepted_methodologies: z.array(AudienceEvidenceMethodologySchema).optional(),
     excluded_methodologies: z.array(AudienceEvidenceMethodologySchema).optional(),
-    accepted_evidence_types: z.tuple([z.union([z.literal("measured"), z.literal("forecast"), z.literal("seller_declared")])]).rest(z.union([z.literal("measured"), z.literal("forecast"), z.literal("seller_declared")])).optional(),
+    accepted_evidence_types: z.array(z.union([z.literal("measured"), z.literal("forecast"), z.literal("seller_declared")])).optional(),
     accepted_providers: z.array(BrandKeySchema).optional(),
     excluded_providers: z.array(BrandKeySchema).optional(),
     accepted_subject_types: z.array(AudienceSubjectTypeSchema).optional(),
@@ -3700,19 +3643,7 @@ export const ProductAudienceEvidenceRequirementsSchema = z.object({}).passthroug
     }).passthrough()).optional(),
     methodology_documentation_required: z.boolean().optional(),
     independent_attestation_required: z.boolean().optional(),
-    accepted_attestation_issuers: z.tuple([z.union([z.object({
-                type: z.literal("brand"),
-                brand: BrandKeySchema,
-                ext: ExtensionObjectSchema.optional()
-            }).passthrough(), z.object({
-                type: z.literal("agent"),
-                agent_url: z.string(),
-                ext: ExtensionObjectSchema.optional()
-            }).passthrough(), z.object({
-                type: z.literal("origin"),
-                origin: z.string(),
-                ext: ExtensionObjectSchema.optional()
-            }).passthrough()])]).rest(z.union([z.object({
+    accepted_attestation_issuers: z.array(z.union([z.object({
             type: z.literal("brand"),
             brand: BrandKeySchema,
             ext: ExtensionObjectSchema.optional()
@@ -3744,13 +3675,7 @@ export const CanonicalOptimizationGoalSchema = z.union([z.object({
         priority: z.number().optional()
     }).passthrough(), z.object({
         kind: z.literal("event"),
-        event_sources: z.tuple([z.object({
-                event_source_id: z.string(),
-                event_type: EventTypeSchema,
-                custom_event_name: z.string().optional(),
-                value_field: z.string().optional(),
-                value_factor: z.number().optional()
-            }).passthrough()]).rest(z.object({
+        event_sources: z.array(z.object({
             event_source_id: z.string(),
             event_type: EventTypeSchema,
             custom_event_name: z.string().optional(),
@@ -3918,14 +3843,7 @@ export const ControlSubmittedSchema = z.object({
 
 export const SignalModelingDisclosureSchema = z.object({}).passthrough().merge(z.object({
     required: z.boolean(),
-    jurisdictions: z.tuple([z.object({
-            country: z.string().regex(new RegExp("^[A-Z]{2}$")),
-            region: z.string().optional(),
-            regulation: z.string(),
-            disclosure_text: z.string().optional(),
-            disclosure_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-            audience: z.union([z.literal("buyer"), z.literal("data_subject"), z.literal("regulator"), z.literal("public")]).optional()
-        }).passthrough()]).rest(z.object({
+    jurisdictions: z.array(z.object({
         country: z.string().regex(new RegExp("^[A-Z]{2}$")),
         region: z.string().optional(),
         regulation: z.string(),
@@ -4076,7 +3994,7 @@ export const MediaBuyChangeTermSchema = z.object({
     term_id: z.string().regex(new RegExp("^[A-Za-z0-9_.:-]+$")),
     action: CanonicalMediaBuyActionNameSchema,
     service_mode: CanonicalMediaBuyActionModeSchema,
-    allowed_statuses: z.tuple([z.union([z.literal("pending_creatives"), z.literal("pending_start"), z.literal("active"), z.literal("paused")])]).rest(z.union([z.literal("pending_creatives"), z.literal("pending_start"), z.literal("active"), z.literal("paused")])).optional(),
+    allowed_statuses: z.array(z.union([z.literal("pending_creatives"), z.literal("pending_start"), z.literal("active"), z.literal("paused")])).optional(),
     processing_sla: SLAWindowSchema.optional(),
     conditions: z.array(z.string()).optional(),
     constraints: MediaBuyChangeTermConstraintsSchema.optional(),
@@ -4864,10 +4782,7 @@ export const ResponsePayloadJWSEnvelopeSchema = z.object({
 
 export const DistributionIDsSourceSchema = z.object({
     selection_type: z.literal("distribution_ids"),
-    identifiers: z.tuple([z.object({
-            type: DistributionIdentifierTypeSchema,
-            value: z.string()
-        }).passthrough()]).rest(z.object({
+    identifiers: z.array(z.object({
         type: DistributionIdentifierTypeSchema,
         value: z.string()
     }).passthrough())
@@ -4909,10 +4824,7 @@ export const CollectionListFiltersSchema = z.object({
     genres_include: z.array(z.string()).optional(),
     genre_taxonomy: GenreTaxonomySchema.optional(),
     kinds: z.array(CollectionKindSchema).optional(),
-    exclude_distribution_ids: z.tuple([z.object({
-            type: DistributionIdentifierTypeSchema,
-            value: z.string()
-        }).passthrough()]).rest(z.object({
+    exclude_distribution_ids: z.array(z.object({
         type: DistributionIdentifierTypeSchema,
         value: z.string()
     }).passthrough()).optional(),
@@ -4932,21 +4844,12 @@ export const SignalDefinitionEnrichmentSchema = z.object({}).passthrough().merge
         version: z.string().optional(),
         segtax: z.number().int().gte(1).optional(),
         etag: z.string().optional(),
-        values: z.tuple([z.object({
-                id: z.string().min(1),
-                path: z.string().optional(),
-                modifiers: z.array(z.string()).optional()
-            }).passthrough()]).rest(z.object({
+        values: z.array(z.object({
             id: z.string().min(1),
             path: z.string().optional(),
             modifiers: z.array(z.string()).optional()
         }).passthrough()),
-        value_mappings: z.tuple([z.object({
-                value: z.string(),
-                taxonomy_value_id: z.string(),
-                path: z.string().optional(),
-                modifiers: z.array(z.string()).optional()
-            }).passthrough()]).rest(z.object({
+        value_mappings: z.array(z.object({
             value: z.string(),
             taxonomy_value_id: z.string(),
             path: z.string().optional(),
@@ -4956,14 +4859,14 @@ export const SignalDefinitionEnrichmentSchema = z.object({}).passthrough().merge
     }).passthrough().optional(),
     segmentation_criteria: z.string().max(500).optional(),
     criteria_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-    data_sources: z.tuple([z.union([z.literal("app_behavior"), z.literal("app_usage"), z.literal("web_usage"), z.literal("geo_location"), z.literal("email"), z.literal("tv_ott_or_stb_device"), z.literal("panel"), z.literal("online_ecommerce"), z.literal("credit_data"), z.literal("loyalty_card"), z.literal("transaction"), z.literal("online_survey"), z.literal("offline_survey"), z.literal("public_record_census"), z.literal("public_record_voter_file"), z.literal("public_record_other"), z.literal("offline_transaction")])]).rest(z.union([z.literal("app_behavior"), z.literal("app_usage"), z.literal("web_usage"), z.literal("geo_location"), z.literal("email"), z.literal("tv_ott_or_stb_device"), z.literal("panel"), z.literal("online_ecommerce"), z.literal("credit_data"), z.literal("loyalty_card"), z.literal("transaction"), z.literal("online_survey"), z.literal("offline_survey"), z.literal("public_record_census"), z.literal("public_record_voter_file"), z.literal("public_record_other"), z.literal("offline_transaction")])).optional(),
+    data_sources: z.array(z.union([z.literal("app_behavior"), z.literal("app_usage"), z.literal("web_usage"), z.literal("geo_location"), z.literal("email"), z.literal("tv_ott_or_stb_device"), z.literal("panel"), z.literal("online_ecommerce"), z.literal("credit_data"), z.literal("loyalty_card"), z.literal("transaction"), z.literal("online_survey"), z.literal("offline_survey"), z.literal("public_record_census"), z.literal("public_record_voter_file"), z.literal("public_record_other"), z.literal("offline_transaction")])).optional(),
     methodology: z.union([z.literal("observed"), z.literal("declared"), z.literal("derived"), z.literal("inferred"), z.literal("modeled")]).optional(),
     audience_expansion: z.boolean().optional(),
     device_expansion: z.boolean().optional(),
     refresh_cadence: z.union([z.literal("intra_day"), z.literal("daily"), z.literal("weekly"), z.literal("monthly"), z.literal("bi_monthly"), z.literal("quarterly"), z.literal("bi_annually"), z.literal("annually")]).optional(),
     lookback_window: z.union([z.literal("intra_day"), z.literal("daily"), z.literal("weekly"), z.literal("monthly"), z.literal("bi_monthly"), z.literal("quarterly"), z.literal("bi_annually"), z.literal("annually")]).optional(),
     onboarder: z.object({
-        match_keys: z.tuple([z.union([z.literal("name"), z.literal("address"), z.literal("email"), z.literal("postal"), z.literal("lat_long"), z.literal("mobile_id"), z.literal("cookie_id"), z.literal("ip"), z.literal("customer_id"), z.literal("phone")])]).rest(z.union([z.literal("name"), z.literal("address"), z.literal("email"), z.literal("postal"), z.literal("lat_long"), z.literal("mobile_id"), z.literal("cookie_id"), z.literal("ip"), z.literal("customer_id"), z.literal("phone")])),
+        match_keys: z.array(z.union([z.literal("name"), z.literal("address"), z.literal("email"), z.literal("postal"), z.literal("lat_long"), z.literal("mobile_id"), z.literal("cookie_id"), z.literal("ip"), z.literal("customer_id"), z.literal("phone")])),
         pre_onboarding_audience_expansion: z.boolean().optional(),
         pre_onboarding_device_expansion: z.boolean().optional(),
         pre_onboarding_precision_level: z.union([z.literal("individual"), z.literal("household"), z.literal("business"), z.literal("geography")]).optional()
@@ -4983,7 +4886,7 @@ export const SignalDefinitionEnrichmentSchema = z.object({}).passthrough().merge
     }).passthrough().optional(),
     data_subject_rights: z.object({
         upstream_source_domain: z.string().max(253).optional(),
-        channels: z.tuple([z.union([z.object({}).passthrough(), z.object({}).passthrough()])]).rest(z.union([z.object({}).passthrough(), z.object({}).passthrough()])),
+        channels: z.array(z.union([z.object({}).passthrough(), z.object({}).passthrough()])),
         response_sla_days: z.number().int().gte(1).lte(90).optional(),
         ccpa_opt_out_url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional()
     }).passthrough().optional(),
@@ -5206,281 +5109,11 @@ export const ImpactSchema = z.object({
     reason: z.string().optional()
 }).passthrough();
 
-export const BlockedImpactsSchema = z.union([z.tuple([ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema])]);
+export const BlockedImpactsSchema = z.array(ImpactSchema);
 
-export const NonblockingImpactsSchema = z.union([z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())])]);
+export const NonblockingImpactsSchema = z.array(ImpactSchema.and(z.object({
+    effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
+}).passthrough()));
 
 export const AccountIdentityChangeWouldRequireApprovalSchema = z.object({
     outcome: z.literal("would_require_approval"),
@@ -5607,10 +5240,7 @@ export const AudienceMemberSchema = z.object({}).passthrough().merge(z.object({
     external_id: z.string(),
     hashed_email: z.string().regex(new RegExp("^[a-f0-9]{64}$")).optional(),
     hashed_phone: z.string().regex(new RegExp("^[a-f0-9]{64}$")).optional(),
-    uids: z.tuple([z.object({
-            type: UIDTypeSchema,
-            value: z.string()
-        }).passthrough()]).rest(z.object({
+    uids: z.array(z.object({
         type: UIDTypeSchema,
         value: z.string()
     }).passthrough()).optional(),
@@ -5633,12 +5263,12 @@ export const AuthorizedAgentBaseFieldsSchema = z.object({
 
 export const MaxBidWithCostPerSchema = z.object({
     kind: z.literal("max_bid_with_cost_per"),
-    cost_per_strengths: z.tuple([z.union([z.literal("cap"), z.literal("target")])]).rest(z.union([z.literal("cap"), z.literal("target")]))
+    cost_per_strengths: z.array(z.union([z.literal("cap"), z.literal("target")]))
 }).passthrough();
 
 export const MaxBidWithRoasSchema = z.object({
     kind: z.literal("max_bid_with_roas"),
-    roas_strengths: z.tuple([z.union([z.literal("floor"), z.literal("target")])]).rest(z.union([z.literal("floor"), z.literal("target")]))
+    roas_strengths: z.array(z.union([z.literal("floor"), z.literal("target")]))
 }).passthrough();
 
 export const BrandResponseAuthorizationResultSchema = z.object({
@@ -5804,11 +5434,7 @@ export const LimitedSeriesSchema = z.object({
 export const DeadlinePolicySchema = z.object({
     booking_lead_days: z.number().int().gte(0).optional(),
     cancellation_lead_days: z.number().int().gte(0).optional(),
-    material_stages: z.tuple([z.object({
-            stage: z.string(),
-            lead_days: z.number().int().gte(0),
-            label: z.string().optional()
-        }).passthrough()]).rest(z.object({
+    material_stages: z.array(z.object({
         stage: z.string(),
         lead_days: z.number().int().gte(0),
         label: z.string().optional()
@@ -5971,10 +5597,7 @@ export const EventSurfaceSchema = z.object({
 }).passthrough();
 
 export const UserMatchSchema = z.object({}).passthrough().merge(z.object({
-    uids: z.tuple([z.object({
-            type: UIDTypeSchema,
-            value: z.string()
-        }).passthrough()]).rest(z.object({
+    uids: z.array(z.object({
         type: UIDTypeSchema,
         value: z.string()
     }).passthrough()).optional(),
@@ -6407,11 +6030,7 @@ export const PlacementPresentationReferenceSchema = z.object({
 export const PublisherDesignatedPreviewProviderSchema = z.object({
     agent_url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI"),
     authority: z.literal("publisher_designated"),
-    routes: z.tuple([z.object({
-            format_option_id: z.string().min(1),
-            capability_id: z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")),
-            covers_placement_presentation: z.boolean().optional()
-        }).passthrough()]).rest(z.object({
+    routes: z.array(z.object({
         format_option_id: z.string().min(1),
         capability_id: z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")),
         covers_placement_presentation: z.boolean().optional()
@@ -7168,17 +6787,7 @@ export const CreativeRevisionContentMismatchDetailsSchema = z.object({
 }).passthrough();
 
 export const AcceptedGovernanceAgentsSchema = z.object({
-    any_of: z.tuple([z.union([z.object({
-                kind: z.literal("agent_url"),
-                agent_url: z.string()
-            }).passthrough(), z.object({
-                kind: z.literal("verification"),
-                registry: z.string(),
-                role: z.string(),
-                adcp_version: z.string(),
-                verification_modes: z.tuple([z.union([z.literal("spec"), z.literal("live")])]).rest(z.union([z.literal("spec"), z.literal("live")])),
-                max_age_seconds: z.number()
-            }).passthrough()])]).rest(z.union([z.object({
+    any_of: z.array(z.union([z.object({
             kind: z.literal("agent_url"),
             agent_url: z.string()
         }).passthrough(), z.object({
@@ -7186,7 +6795,7 @@ export const AcceptedGovernanceAgentsSchema = z.object({
             registry: z.string(),
             role: z.string(),
             adcp_version: z.string(),
-            verification_modes: z.tuple([z.union([z.literal("spec"), z.literal("live")])]).rest(z.union([z.literal("spec"), z.literal("live")])),
+            verification_modes: z.array(z.union([z.literal("spec"), z.literal("live")])),
             max_age_seconds: z.number()
         }).passthrough()]))
 }).passthrough();
@@ -7384,10 +6993,7 @@ export const AdCPManifestSchema = z.object({
 }).passthrough();
 
 export const AcceptanceContextSchema = z.object({
-    subjects: z.tuple([z.object({
-            subject_category: z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")),
-            subject_facets: z.array(z.string()).optional()
-        }).passthrough()]).rest(z.object({
+    subjects: z.array(z.object({
         subject_category: z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")),
         subject_facets: z.array(z.string()).optional()
     }).passthrough()).optional(),
@@ -7439,7 +7045,7 @@ export const OutcomeTargetSchema = z.object({
     }
 });
 
-export const ProductResponseFieldsSchema = z.tuple([z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("audio_distribution_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("reporting_capabilities"), z.literal("measurement_terms"), z.literal("performance_standards"), z.literal("catalog_types"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_rules"), z.literal("demographic_targeting"), z.literal("audience_evidence"), z.literal("audience_evidence_selections"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("list_applications"), z.literal("brief_relevance"), z.literal("acceptance_policy_profile_ids"), z.literal("expires_at"), z.literal("allowed_actions")])]).rest(z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("audio_distribution_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("reporting_capabilities"), z.literal("measurement_terms"), z.literal("performance_standards"), z.literal("catalog_types"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_rules"), z.literal("demographic_targeting"), z.literal("audience_evidence"), z.literal("audience_evidence_selections"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("list_applications"), z.literal("brief_relevance"), z.literal("acceptance_policy_profile_ids"), z.literal("expires_at"), z.literal("allowed_actions")]));
+export const ProductResponseFieldsSchema = z.array(z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("audio_distribution_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("reporting_capabilities"), z.literal("measurement_terms"), z.literal("performance_standards"), z.literal("catalog_types"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_rules"), z.literal("demographic_targeting"), z.literal("audience_evidence"), z.literal("audience_evidence_selections"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("list_applications"), z.literal("brief_relevance"), z.literal("acceptance_policy_profile_ids"), z.literal("expires_at"), z.literal("allowed_actions")]));
 
 export const ProductRefinementRequestsSchema = z.array(z.union([z.object({
         scope: z.literal("request"),
@@ -7655,11 +7261,7 @@ export const SISponsoredContextSchema = z.object({
         label_text: z.string().optional(),
         timing: z.union([z.literal("before_use"), z.literal("at_first_influenced_output"), z.literal("near_each_influenced_output")]).optional(),
         proximity: z.union([z.literal("session_level"), z.literal("near_rendered_unit"), z.literal("near_influenced_output")]).optional(),
-        jurisdictions: z.tuple([z.object({
-                country: z.string(),
-                region: z.string().optional(),
-                regulation: z.string()
-            }).passthrough()]).rest(z.object({
+        jurisdictions: z.array(z.object({
             country: z.string(),
             region: z.string().optional(),
             regulation: z.string()
@@ -7948,10 +7550,10 @@ export const TmpxMacroSchema = z.object({
 }).passthrough();
 
 export const PolicyProfileSchema = z.object({}).passthrough().merge(z.object({
-    modes: z.tuple([z.union([z.literal("automatic"), z.literal("bid_amount"), z.literal("max_bid"), z.literal("cost_per"), z.literal("roas")])]).rest(z.union([z.literal("automatic"), z.literal("bid_amount"), z.literal("max_bid"), z.literal("cost_per"), z.literal("roas")])).optional(),
-    cost_per_strengths: z.tuple([z.union([z.literal("cap"), z.literal("target")])]).rest(z.union([z.literal("cap"), z.literal("target")])).optional(),
-    roas_strengths: z.tuple([z.union([z.literal("floor"), z.literal("target")])]).rest(z.union([z.literal("floor"), z.literal("target")])).optional(),
-    supported_combinations: z.tuple([z.union([MaxBidWithCostPerSchema, MaxBidWithRoasSchema])]).rest(z.union([MaxBidWithCostPerSchema, MaxBidWithRoasSchema])).optional()
+    modes: z.array(z.union([z.literal("automatic"), z.literal("bid_amount"), z.literal("max_bid"), z.literal("cost_per"), z.literal("roas")])).optional(),
+    cost_per_strengths: z.array(z.union([z.literal("cap"), z.literal("target")])).optional(),
+    roas_strengths: z.array(z.union([z.literal("floor"), z.literal("target")])).optional(),
+    supported_combinations: z.array(z.union([MaxBidWithCostPerSchema, MaxBidWithRoasSchema])).optional()
 }).passthrough());
 
 export const PostalArea1Schema = PostalCountryAreaSchema;
@@ -8056,14 +7658,14 @@ export const ReportingCapabilitiesSchema = z.object({
 export const ProductSignalTargetingOptionSchema = SignalListingSchema.and(z.object({}).passthrough()).and(z.object({
     signal_agent_segment_id: z.string().optional(),
     activation_status: z.union([z.literal("ready"), z.literal("requires_activation")]).optional(),
-    allowed_targeting_modes: z.tuple([z.union([z.literal("include"), z.literal("exclude")])]).rest(z.union([z.literal("include"), z.literal("exclude")])).optional(),
+    allowed_targeting_modes: z.array(z.union([z.literal("include"), z.literal("exclude")])).optional(),
     default_selected: z.boolean().optional(),
     selection_group: z.string().optional(),
     pricing_options: z.array(VendorPricingOptionSchema).optional()
 }).passthrough()).and(z.object({
     signal_agent_segment_id: z.string().optional(),
     activation_status: z.union([z.literal("ready"), z.literal("requires_activation")]).optional(),
-    allowed_targeting_modes: z.tuple([z.union([z.literal("include"), z.literal("exclude")])]).rest(z.union([z.literal("include"), z.literal("exclude")])).optional(),
+    allowed_targeting_modes: z.array(z.union([z.literal("include"), z.literal("exclude")])).optional(),
     default_selected: z.boolean().optional(),
     selection_group: z.string().optional(),
     pricing_options: z.array(VendorPricingOptionSchema).optional()
@@ -8252,7 +7854,7 @@ export const BiddingPolicyCapabilitySchema = z.object({
     package: ScopeCapabilitySchema.optional()
 }).passthrough();
 
-export const ForecastPointDimensionsSchema = z.tuple([z.union([GeoForecastDimensionSchema, PlacementForecastDimensionSchema, DeviceTypeForecastDimensionSchema, DevicePlatformForecastDimensionSchema, AudienceForecastDimensionSchema, SignalForecastDimensionSchema, TimeForecastDimensionSchema])]).rest(z.union([GeoForecastDimensionSchema, PlacementForecastDimensionSchema, DeviceTypeForecastDimensionSchema, DevicePlatformForecastDimensionSchema, AudienceForecastDimensionSchema, SignalForecastDimensionSchema, TimeForecastDimensionSchema]));
+export const ForecastPointDimensionsSchema = z.array(z.union([GeoForecastDimensionSchema, PlacementForecastDimensionSchema, DeviceTypeForecastDimensionSchema, DevicePlatformForecastDimensionSchema, AudienceForecastDimensionSchema, SignalForecastDimensionSchema, TimeForecastDimensionSchema]));
 
 export const DeclineProposalsRequestSchema = z.object({
     adcp_version: z.string().optional(),
@@ -8426,7 +8028,7 @@ export const AudienceEvidenceRequirementsSchema = z.object({}).passthrough().mer
     evidence_presence: z.union([z.literal("required"), z.literal("when_available")]),
     accepted_methodologies: z.array(AudienceEvidenceMethodologySchema).optional(),
     excluded_methodologies: z.array(AudienceEvidenceMethodologySchema).optional(),
-    accepted_evidence_types: z.tuple([z.union([z.literal("measured"), z.literal("forecast"), z.literal("seller_declared")])]).rest(z.union([z.literal("measured"), z.literal("forecast"), z.literal("seller_declared")])).optional(),
+    accepted_evidence_types: z.array(z.union([z.literal("measured"), z.literal("forecast"), z.literal("seller_declared")])).optional(),
     accepted_providers: z.array(BrandReferenceSchema).optional(),
     excluded_providers: z.array(BrandReferenceSchema).optional(),
     accepted_subject_types: z.array(AudienceSubjectTypeSchema).optional(),
@@ -8468,11 +8070,7 @@ export const MacroBearingURL8Schema = z.string();
 
 export const TagURLSchema = z.object({
     asset_type: z.literal("display_tag"),
-    macro_declarations: z.tuple([MacroDeclarationSchema.and(z.object({
-            location: z.object({
-                field: z.literal("url").optional()
-            }).passthrough().optional()
-        }).passthrough())]).rest(MacroDeclarationSchema.and(z.object({
+    macro_declarations: z.array(MacroDeclarationSchema.and(z.object({
         location: z.object({
             field: z.literal("url").optional()
         }).passthrough().optional()
@@ -8484,11 +8082,7 @@ export const TagURLSchema = z.object({
 
 export const PairedRedirectSchema = z.object({
     asset_type: z.literal("display_tag"),
-    macro_declarations: z.tuple([MacroDeclarationSchema.and(z.object({
-            location: z.object({
-                field: z.union([z.literal("ad_request_url"), z.literal("clickthrough_url")]).optional()
-            }).passthrough().optional()
-        }).passthrough())]).rest(MacroDeclarationSchema.and(z.object({
+    macro_declarations: z.array(MacroDeclarationSchema.and(z.object({
         location: z.object({
             field: z.union([z.literal("ad_request_url"), z.literal("clickthrough_url")]).optional()
         }).passthrough().optional()
@@ -8503,11 +8097,7 @@ export const URLAsset1Schema = z.object({
     asset_type: z.literal("url"),
     url: MacroBearingURL4Schema,
     url_type: URLAssetTypeSchema.optional(),
-    macro_declarations: z.tuple([MacroDeclarationSchema.and(z.object({
-            location: z.object({
-                field: z.literal("url").optional()
-            }).passthrough().optional()
-        }).passthrough())]).rest(MacroDeclarationSchema.and(z.object({
+    macro_declarations: z.array(MacroDeclarationSchema.and(z.object({
         location: z.object({
             field: z.literal("url").optional()
         }).passthrough().optional()
@@ -8588,7 +8178,7 @@ export const AccountSchema = z.object({
         setup_instructions: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional()
     }).passthrough().optional(),
     sandbox: z.boolean().optional(),
-    notification_configs: z.union([z.tuple([]), z.tuple([NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema]), z.tuple([NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema, NotificationConfigSchema])]).optional(),
+    notification_configs: z.array(NotificationConfigSchema).optional(),
     webhook_activity: z.array(WebhookActivityRecordSchema).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -9010,10 +8600,7 @@ export const MultiOutputNamedFormatTargetSchema = z.object({}).passthrough();
 
 export const EvaluatorSpecSchema = z.object({
     feature_requirement: z.array(FeatureRequirementSchema).optional(),
-    rank_by: z.tuple([z.object({
-            feature_id: z.string(),
-            direction: z.union([z.literal("maximize"), z.literal("minimize")]).optional()
-        }).passthrough()]).rest(z.object({
+    rank_by: z.array(z.object({
         feature_id: z.string(),
         direction: z.union([z.literal("maximize"), z.literal("minimize")]).optional()
     }).passthrough()).optional(),
@@ -9058,107 +8645,17 @@ export const RightsConstraintSchema = z.object({}).passthrough().merge(z.object(
     creative_approval_required: z.boolean().optional(),
     verification_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
     content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
-    attestation_refs: z.union([z.tuple([AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough())])]).optional(),
+    attestation_refs: z.array(AttestationReferenceSchema.and(z.object({
+        issuer: z.object({
+            type: z.literal("brand"),
+            brand: BrandReference2Schema
+        }).passthrough().optional(),
+        claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
+        subject: z.object({
+            type: z.literal("resource"),
+            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
+        }).passthrough().optional()
+    }).passthrough())).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough()).merge(z.object({
     rights_id: z.string(),
@@ -9181,107 +8678,17 @@ export const RightsConstraintSchema = z.object({}).passthrough().merge(z.object(
     creative_approval_required: z.boolean().optional(),
     verification_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
     content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
-    attestation_refs: z.union([z.tuple([AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                issuer: z.object({
-                    type: z.literal("brand"),
-                    brand: BrandReference2Schema
-                }).passthrough().optional(),
-                claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-                subject: z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-                }).passthrough().optional()
-            }).passthrough())])]).optional(),
+    attestation_refs: z.array(AttestationReferenceSchema.and(z.object({
+        issuer: z.object({
+            type: z.literal("brand"),
+            brand: BrandReference2Schema
+        }).passthrough().optional(),
+        claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
+        subject: z.object({
+            type: z.literal("resource"),
+            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
+        }).passthrough().optional()
+    }).passthrough())).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
 
@@ -9629,10 +9036,7 @@ export const ForecastPointSchema = z.object({
 }).passthrough();
 
 export const SignalCoverageForecastSchema = z.object({}).passthrough().merge(z.object({
-    points: z.tuple([ForecastPointSchema.and(z.object({
-            dimensions: z.object({}).passthrough(),
-            metrics: z.object({}).passthrough().optional()
-        }).passthrough())]).rest(ForecastPointSchema.and(z.object({
+    points: z.array(ForecastPointSchema.and(z.object({
         dimensions: z.object({}).passthrough(),
         metrics: z.object({}).passthrough().optional()
     }).passthrough())),
@@ -10029,7 +9433,7 @@ export const AcceptancePolicyRuleSchema = z.object({}).passthrough().merge(z.obj
     advertiser_roles: z.array(z.string()).optional(),
     jurisdictions: z.array(z.string()).optional(),
     jurisdiction_groups: z.array(z.string()).optional(),
-    applies_to: z.tuple([z.union([z.literal("account"), z.literal("media_buy"), z.literal("creative"), z.literal("landing_page"), z.literal("targeting"), z.literal("delivery"), z.literal("format")])]).rest(z.union([z.literal("account"), z.literal("media_buy"), z.literal("creative"), z.literal("landing_page"), z.literal("targeting"), z.literal("delivery"), z.literal("format")])),
+    applies_to: z.array(z.union([z.literal("account"), z.literal("media_buy"), z.literal("creative"), z.literal("landing_page"), z.literal("targeting"), z.literal("delivery"), z.literal("format")])),
     disposition: z.union([z.literal("allowed"), z.literal("conditional"), z.literal("prohibited")]),
     requirements: z.array(AcceptancePolicyRequirementSchema).optional(),
     policy_ids: z.array(z.string()).optional(),
@@ -10044,7 +9448,7 @@ export const AcceptancePolicyRuleSchema = z.object({}).passthrough().merge(z.obj
     advertiser_roles: z.array(z.string()).optional(),
     jurisdictions: z.array(z.string()).optional(),
     jurisdiction_groups: z.array(z.string()).optional(),
-    applies_to: z.tuple([z.union([z.literal("account"), z.literal("media_buy"), z.literal("creative"), z.literal("landing_page"), z.literal("targeting"), z.literal("delivery"), z.literal("format")])]).rest(z.union([z.literal("account"), z.literal("media_buy"), z.literal("creative"), z.literal("landing_page"), z.literal("targeting"), z.literal("delivery"), z.literal("format")])),
+    applies_to: z.array(z.union([z.literal("account"), z.literal("media_buy"), z.literal("creative"), z.literal("landing_page"), z.literal("targeting"), z.literal("delivery"), z.literal("format")])),
     disposition: z.union([z.literal("allowed"), z.literal("conditional"), z.literal("prohibited")]),
     requirements: z.array(AcceptancePolicyRequirementSchema).optional(),
     policy_ids: z.array(z.string()).optional(),
@@ -10058,11 +9462,7 @@ export const AcceptancePolicyProfileSchema = z.object({}).passthrough().merge(z.
     profile_id: z.string().regex(new RegExp("^[A-Za-z0-9_.:-]+$")),
     version: z.string().min(1),
     content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
-    policy_refs: z.tuple([z.object({
-            policy_id: z.string().min(1),
-            version: z.string().min(1),
-            content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-        }).passthrough()]).rest(z.object({
+    policy_refs: z.array(z.object({
         policy_id: z.string().min(1),
         version: z.string().min(1),
         content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
@@ -11124,44 +10524,20 @@ export const GetAdCPCapabilitiesRequestSchema = z.object({
 export const AttestationCapabilitiesSchema = z.object({}).passthrough().merge(z.object({
     accepted_claim_types: z.array(z.string()),
     accepted_proof_formats: z.array(z.string()),
-    supported_delivery_methods: z.tuple([z.union([z.literal("credential_uri"), z.literal("issuer_credential_id"), z.literal("embedded")])]).rest(z.union([z.literal("credential_uri"), z.literal("issuer_credential_id"), z.literal("embedded")])),
-    accepted_issuers: z.tuple([z.object({
-            issuer: AttestationIssuerSchema,
-            claim_types: z.array(z.string()).optional(),
-            proof_formats: z.array(z.string()).optional(),
-            credential_origins: z.array(z.string()).optional(),
-            resolvers: z.tuple([z.object({
-                    resolver_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9._:-]+$")),
-                    url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI"),
-                    authentication: z.union([z.literal("none"), z.literal("evaluator_managed")])
-                }).passthrough()]).rest(z.object({
-                resolver_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9._:-]+$")),
-                url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI"),
-                authentication: z.union([z.literal("none"), z.literal("evaluator_managed")])
-            }).passthrough()).optional(),
-            ext: ExtensionObjectSchema.optional()
-        }).passthrough()]).rest(z.object({
+    supported_delivery_methods: z.array(z.union([z.literal("credential_uri"), z.literal("issuer_credential_id"), z.literal("embedded")])),
+    accepted_issuers: z.array(z.object({
         issuer: AttestationIssuerSchema,
         claim_types: z.array(z.string()).optional(),
         proof_formats: z.array(z.string()).optional(),
         credential_origins: z.array(z.string()).optional(),
-        resolvers: z.tuple([z.object({
-                resolver_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9._:-]+$")),
-                url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI"),
-                authentication: z.union([z.literal("none"), z.literal("evaluator_managed")])
-            }).passthrough()]).rest(z.object({
+        resolvers: z.array(z.object({
             resolver_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9._:-]+$")),
             url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI"),
             authentication: z.union([z.literal("none"), z.literal("evaluator_managed")])
         }).passthrough()).optional(),
         ext: ExtensionObjectSchema.optional()
     }).passthrough()),
-    accepted_verifiers: z.tuple([z.object({
-            agent_url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI"),
-            claim_types: z.array(z.string()).optional(),
-            proof_formats: z.array(z.string()).optional(),
-            ext: ExtensionObjectSchema.optional()
-        }).passthrough()]).rest(z.object({
+    accepted_verifiers: z.array(z.object({
         agent_url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI"),
         claim_types: z.array(z.string()).optional(),
         proof_formats: z.array(z.string()).optional(),
@@ -11712,11 +11088,7 @@ export const ViewabilitySchema = z.object({}).passthrough().merge(z.object({
         p90: z.number(),
         p95: z.number()
     }).passthrough().optional(),
-    viewed_seconds_histogram: z.tuple([z.object({
-            lower_bound_seconds: z.number(),
-            upper_bound_seconds: z.number().optional(),
-            impressions: z.number()
-        }).passthrough()]).rest(z.object({
+    viewed_seconds_histogram: z.array(z.object({
         lower_bound_seconds: z.number(),
         upper_bound_seconds: z.number().optional(),
         impressions: z.number()
@@ -11727,11 +11099,7 @@ export const ViewabilitySchema = z.object({}).passthrough().merge(z.object({
 export const GetSignalsCompletionSchema = AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).merge(z.object({
     signals: z.array(SignalListingSchema.and(SignalDefinitionEnrichmentSchema).and(z.object({}).passthrough())).optional(),
     errors: z.array(ErrorSchema).optional(),
-    incomplete: z.tuple([z.object({
-            scope: z.union([z.literal("signals"), z.literal("pricing"), z.literal("wholesale_feed")]),
-            description: z.string(),
-            estimated_wait: DurationSchema.optional()
-        }).passthrough()]).rest(z.object({
+    incomplete: z.array(z.object({
         scope: z.union([z.literal("signals"), z.literal("pricing"), z.literal("wholesale_feed")]),
         description: z.string(),
         estimated_wait: DurationSchema.optional()
@@ -11946,7 +11314,7 @@ export const PackageSignalTargetingGroupsSchema = z.object({
 
 export const SelectedPlacementsSchema = z.object({
     mode: z.literal("selected"),
-    placement_refs: z.tuple([z.union([PlacementReferenceSchema.merge(z.object({}).passthrough()), PlacementIdentitySchema])]).rest(z.union([PlacementReferenceSchema.merge(z.object({}).passthrough()), PlacementIdentitySchema])),
+    placement_refs: z.array(z.union([PlacementReferenceSchema.merge(z.object({}).passthrough()), PlacementIdentitySchema])),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
@@ -11999,11 +11367,7 @@ export const PixelTrackerAssetSchema = z.object({}).passthrough().merge(z.object
     event: PixelTrackingEventSchema,
     method: z.union([z.literal("img"), z.literal("js")]).optional(),
     url: MacroBearingURL6Schema,
-    macro_declarations: z.tuple([MacroDeclarationSchema.and(z.object({
-            location: z.object({
-                field: z.literal("url").optional()
-            }).passthrough().optional()
-        }).passthrough())]).rest(MacroDeclarationSchema.and(z.object({
+    macro_declarations: z.array(MacroDeclarationSchema.and(z.object({
         location: z.object({
             field: z.literal("url").optional()
         }).passthrough().optional()
@@ -12016,11 +11380,7 @@ export const VASTTrackerAssetSchema = z.object({}).passthrough().merge(z.object(
     asset_type: z.literal("vast_tracker"),
     vast_event: VASTTrackingEventSchema.and(z.object({}).passthrough()),
     url: MacroBearingURL7Schema,
-    macro_declarations: z.tuple([MacroDeclarationSchema.and(z.object({
-            location: z.object({
-                field: z.literal("url").optional()
-            }).passthrough().optional()
-        }).passthrough())]).rest(MacroDeclarationSchema.and(z.object({
+    macro_declarations: z.array(MacroDeclarationSchema.and(z.object({
         location: z.object({
             field: z.literal("url").optional()
         }).passthrough().optional()
@@ -12034,11 +11394,7 @@ export const DAASTTrackerAssetSchema = z.object({}).passthrough().merge(z.object
     asset_type: z.literal("daast_tracker"),
     daast_event: DAASTTrackingEventSchema.and(z.object({}).passthrough()),
     url: MacroBearingURL8Schema,
-    macro_declarations: z.tuple([MacroDeclarationSchema.and(z.object({
-            location: z.object({
-                field: z.literal("url").optional()
-            }).passthrough().optional()
-        }).passthrough())]).rest(MacroDeclarationSchema.and(z.object({
+    macro_declarations: z.array(MacroDeclarationSchema.and(z.object({
         location: z.object({
             field: z.literal("url").optional()
         }).passthrough().optional()
@@ -12102,337 +11458,13 @@ export const AudienceEvidenceSchema: z.ZodType = z.object({}).passthrough().merg
     confidence: z.number().gte(0).lte(1).optional(),
     last_updated: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
     methodology_url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-    attestation_refs: z.union([z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())])]).optional(),
+    attestation_refs: z.array(AttestationReferenceSchema.and(z.object({
+        subject: AttestationSubjectSchema.and(z.object({
+            type: z.literal("resource"),
+            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
+            content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
+        }).passthrough())
+    }).passthrough())).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough()).merge(z.object({
     evidence_id: z.string().min(1),
@@ -12459,337 +11491,13 @@ export const AudienceEvidenceSchema: z.ZodType = z.object({}).passthrough().merg
     confidence: z.number().gte(0).lte(1).optional(),
     last_updated: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
     methodology_url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-    attestation_refs: z.union([z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())]), z.tuple([AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough()), AttestationReferenceSchema.and(z.object({
-                subject: AttestationSubjectSchema.and(z.object({
-                    type: z.literal("resource"),
-                    resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-                    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-                }).passthrough())
-            }).passthrough())])]).optional(),
+    attestation_refs: z.array(AttestationReferenceSchema.and(z.object({
+        subject: AttestationSubjectSchema.and(z.object({
+            type: z.literal("resource"),
+            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
+            content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
+        }).passthrough())
+    }).passthrough())).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
 
@@ -12867,502 +11575,16 @@ export const AudienceEvidenceSelectionSchema: z.ZodType = z.object({
     content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
     decision_use: z.union([z.literal("recommendation"), z.literal("eligibility"), z.literal("package_construction")]),
     evidence: AudienceEvidenceSchema.optional(),
-    attestation_evaluations: z.union([z.tuple([z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough()]), z.tuple([z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough()]), z.tuple([z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough()]), z.tuple([z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough()]), z.tuple([z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough()]), z.tuple([z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough()]), z.tuple([z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough()]), z.tuple([z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough()]), z.tuple([z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough()]), z.tuple([z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough(), z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema.and(z.object({
-                    action_binding: z.object({
-                        action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                        action_id: z.string(),
-                        action_digest: z.string()
-                    }).passthrough()
-                }).passthrough())
-            }).passthrough()])]).optional(),
+    attestation_evaluations: z.array(z.object({
+        reference: AttestationReferenceSchema,
+        evaluation: AttestationEvaluationSchema.and(z.object({
+            action_binding: z.object({
+                action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
+                action_id: z.string(),
+                action_digest: z.string()
+            }).passthrough()
+        }).passthrough())
+    }).passthrough()).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
@@ -13643,7 +11865,7 @@ export const ProductSchema: ProductSchemaObject<ProductSchemaShape> & z.ZodType<
     audience_evidence_selections: z.array(AudienceEvidenceSelectionSchema).optional(),
     catalog_types: z.array(CatalogTypeSchema).optional(),
     metric_optimization: z.object({
-        supported_metrics: z.tuple([z.union([z.literal("clicks"), z.literal("views"), z.literal("completed_views"), z.literal("viewed_seconds"), z.literal("attention_seconds"), z.literal("attention_score"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits"), z.literal("reach")])]).rest(z.union([z.literal("clicks"), z.literal("views"), z.literal("completed_views"), z.literal("viewed_seconds"), z.literal("attention_seconds"), z.literal("attention_score"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits"), z.literal("reach")])),
+        supported_metrics: z.array(z.union([z.literal("clicks"), z.literal("views"), z.literal("completed_views"), z.literal("viewed_seconds"), z.literal("attention_seconds"), z.literal("attention_score"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits"), z.literal("reach")])),
         supported_reach_units: z.array(ReachUnitSchema).optional(),
         supported_view_durations: z.array(z.number()).optional(),
         supported_targets: z.array(z.union([z.literal("cost_per"), z.literal("threshold_rate")])).optional()
@@ -13653,7 +11875,7 @@ export const ProductSchema: ProductSchemaObject<ProductSchemaShape> & z.ZodType<
     measurement_readiness: MeasurementReadinessSchema.optional(),
     conversion_tracking: z.object({
         action_sources: z.array(ActionSourceSchema).optional(),
-        supported_targets: z.tuple([z.union([z.literal("cost_per"), z.literal("per_ad_spend"), z.literal("maximize_value")])]).rest(z.union([z.literal("cost_per"), z.literal("per_ad_spend"), z.literal("maximize_value")])).optional(),
+        supported_targets: z.array(z.union([z.literal("cost_per"), z.literal("per_ad_spend"), z.literal("maximize_value")])).optional(),
         platform_managed: z.boolean().optional()
     }).passthrough().optional(),
     catalog_match: z.object({
@@ -13695,13 +11917,7 @@ export const ProductSchema: ProductSchemaObject<ProductSchemaShape> & z.ZodType<
         identity_match: z.boolean().optional(),
         response_types: z.array(TMPResponseTypeSchema).optional(),
         dynamic_brands: z.boolean().optional(),
-        providers: z.tuple([z.object({
-                agent_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-                context_match: z.boolean().optional(),
-                identity_match: z.boolean().optional(),
-                countries: z.array(z.string()).optional(),
-                uid_types: z.array(UIDTypeSchema).optional()
-            }).passthrough()]).rest(z.object({
+        providers: z.array(z.object({
             agent_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
             context_match: z.boolean().optional(),
             identity_match: z.boolean().optional(),
@@ -14161,7 +12377,7 @@ export const ContentStandardsSchema = z.object({
 export const OfferingAssetGroupSchema = z.object({
     asset_group_id: z.string(),
     asset_type: AssetContentTypeSchema,
-    items: z.tuple([z.union([TextAssetSchema, ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, URLAssetSchema, HTMLAssetSchema, MarkdownAssetSchema, VASTAssetSchema, DAASTAssetSchema, CSSAssetSchema, JavaScriptAssetSchema, ZipAssetSchema, WebhookAssetSchema])]).rest(z.union([TextAssetSchema, ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, URLAssetSchema, HTMLAssetSchema, MarkdownAssetSchema, VASTAssetSchema, DAASTAssetSchema, CSSAssetSchema, JavaScriptAssetSchema, ZipAssetSchema, WebhookAssetSchema])),
+    items: z.array(z.union([TextAssetSchema, ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, URLAssetSchema, HTMLAssetSchema, MarkdownAssetSchema, VASTAssetSchema, DAASTAssetSchema, CSSAssetSchema, JavaScriptAssetSchema, ZipAssetSchema, WebhookAssetSchema])),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
@@ -14219,10 +12435,7 @@ export const CreativeLocalizationSchema = z.object({
         locale: LanguageTagSchema,
         assets: z.record(z.string(), z.union([LocalizedCreativeAssetSchema, z.array(LocalizedCreativeAssetSchema)]))
     }).passthrough()),
-    locale_fallbacks: z.tuple([z.object({
-            language_range: LanguageTagSchema,
-            locale_variant_id: z.string().min(1).max(255)
-        }).passthrough()]).rest(z.object({
+    locale_fallbacks: z.array(z.object({
         language_range: LanguageTagSchema,
         locale_variant_id: z.string().min(1).max(255)
     }).passthrough()).optional(),
@@ -14561,10 +12774,7 @@ export const ProductFiltersSchema = z.object({
     budget_range: z.object({}).passthrough().optional(),
     countries: z.array(z.string()).optional(),
     regions: z.array(z.string()).optional(),
-    metros: z.tuple([z.object({
-            system: MetroAreaSystemSchema,
-            code: z.string()
-        }).passthrough()]).rest(z.object({
+    metros: z.array(z.object({
         system: MetroAreaSystemSchema,
         code: z.string()
     }).passthrough()).optional(),
@@ -14575,39 +12785,14 @@ export const ProductFiltersSchema = z.object({
     social_placement_surfaces: z.array(SocialPlacementSurfaceSchema).optional(),
     required_axe_integrations: z.array(z.string()).optional(),
     trusted_match: z.object({
-        providers: z.tuple([z.object({
-                agent_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-                context_match: z.boolean().optional(),
-                identity_match: z.boolean().optional()
-            }).passthrough()]).rest(z.object({
+        providers: z.array(z.object({
             agent_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
             context_match: z.boolean().optional(),
             identity_match: z.boolean().optional()
         }).passthrough()).optional(),
         response_types: z.array(TMPResponseTypeSchema).optional()
     }).passthrough().optional(),
-    audience_activation_methods: z.tuple([z.union([z.object({
-                pattern: z.literal("sync_audiences")
-            }).passthrough(), z.object({
-                pattern: z.literal("tmp_identity_match"),
-                buyer_agent: z.object({
-                    agent_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI")
-                }).passthrough().optional()
-            }).passthrough(), z.object({
-                pattern: z.literal("file_transfer"),
-                transport: CloudStorageProtocolSchema.optional(),
-                directions: z.tuple([z.union([z.literal("buyer_to_seller"), z.literal("seller_to_buyer")])]).rest(z.union([z.literal("buyer_to_seller"), z.literal("seller_to_buyer")])).optional(),
-                vendor: BrandReferenceSchema.optional()
-            }).passthrough(), z.object({
-                pattern: z.literal("dataset_query"),
-                vendor: BrandReferenceSchema.optional()
-            }).passthrough(), z.object({
-                pattern: z.literal("clean_room"),
-                vendor: BrandReferenceSchema.optional()
-            }).passthrough(), z.object({
-                pattern: z.literal("platform_distribution"),
-                vendor: BrandReferenceSchema.optional()
-            }).passthrough()])]).rest(z.union([z.object({
+    audience_activation_methods: z.array(z.union([z.object({
             pattern: z.literal("sync_audiences")
         }).passthrough(), z.object({
             pattern: z.literal("tmp_identity_match"),
@@ -14617,7 +12802,7 @@ export const ProductFiltersSchema = z.object({
         }).passthrough(), z.object({
             pattern: z.literal("file_transfer"),
             transport: CloudStorageProtocolSchema.optional(),
-            directions: z.tuple([z.union([z.literal("buyer_to_seller"), z.literal("seller_to_buyer")])]).rest(z.union([z.literal("buyer_to_seller"), z.literal("seller_to_buyer")])).optional(),
+            directions: z.array(z.union([z.literal("buyer_to_seller"), z.literal("seller_to_buyer")])).optional(),
             vendor: BrandReferenceSchema.optional()
         }).passthrough(), z.object({
             pattern: z.literal("dataset_query"),
@@ -14633,14 +12818,11 @@ export const ProductFiltersSchema = z.object({
     required_geo_targeting: z.array(z.object({}).passthrough().and(z.object({}).passthrough()).and(z.object({}).passthrough())).optional(),
     signal_targeting: z.array(SignalTargetingSchema).optional(),
     postal_areas: z.array(PostalAreaSchema).optional(),
-    geo_proximity: z.tuple([z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()])]).rest(z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()])).optional(),
+    geo_proximity: z.array(z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()])).optional(),
     required_performance_standards: z.array(PerformanceStandardSchema).optional(),
     required_metrics: z.array(AvailableMetricSchema).optional(),
-    required_vendor_metrics: z.tuple([z.union([z.object({}).passthrough(), z.object({}).passthrough()])]).rest(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).optional(),
-    keywords: z.tuple([z.object({
-            keyword: z.string().min(1),
-            match_type: MatchTypeSchema.optional()
-        }).passthrough()]).rest(z.object({
+    required_vendor_metrics: z.array(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).optional(),
+    keywords: z.array(z.object({
         keyword: z.string().min(1),
         match_type: MatchTypeSchema.optional()
     }).passthrough()).optional(),
@@ -14673,11 +12855,7 @@ export const ProductOfferFiltersSchema = z.object({}).passthrough().merge(z.obje
     sponsored_placement_types: z.array(SponsoredPlacementTypeSchema).optional(),
     social_placement_surfaces: z.array(SocialPlacementSurfaceSchema).optional(),
     trusted_match: z.object({
-        providers: z.tuple([z.object({
-                agent_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-                context_match: z.boolean().optional(),
-                identity_match: z.boolean().optional()
-            }).passthrough()]).rest(z.object({
+        providers: z.array(z.object({
             agent_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
             context_match: z.boolean().optional(),
             identity_match: z.boolean().optional()
@@ -14685,19 +12863,14 @@ export const ProductOfferFiltersSchema = z.object({}).passthrough().merge(z.obje
         response_types: z.array(TMPResponseTypeSchema).optional()
     }).passthrough().optional(),
     required_features: CanonicalMediaBuyFeaturesSchema.optional(),
-    required_performance_standards: z.tuple([z.object({
-            metric: PerformanceStandardMetricSchema,
-            threshold: z.number().gte(0).lte(1),
-            standard: ViewabilityStandardSchema.optional(),
-            vendor: BrandKeySchema
-        }).passthrough()]).rest(z.object({
+    required_performance_standards: z.array(z.object({
         metric: PerformanceStandardMetricSchema,
         threshold: z.number().gte(0).lte(1),
         standard: ViewabilityStandardSchema.optional(),
         vendor: BrandKeySchema
     }).passthrough()).optional(),
     required_metrics: z.array(AvailableMetricSchema).optional(),
-    required_vendor_metrics: z.tuple([z.union([z.object({}).passthrough(), z.object({}).passthrough()])]).rest(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).optional(),
+    required_vendor_metrics: z.array(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).optional(),
     audience_evidence_requirements: ProductAudienceEvidenceRequirementsSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough()).superRefine((value, ctx) => {
@@ -14949,14 +13122,7 @@ export const TransformerSchema: z.ZodObject<{ [K in keyof Transformer]-?: undefi
     name: z.string(),
     description: z.string().optional(),
     metadata: z.object({}).passthrough().optional(),
-    voice_synthesis_ref: z.tuple([z.object({
-            brand_agent: z.object({
-                url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-                id: z.string()
-            }).passthrough(),
-            voice_id: z.string(),
-            rights_id: z.string().optional()
-        }).passthrough()]).rest(z.object({
+    voice_synthesis_ref: z.array(z.object({
         brand_agent: z.object({
             url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
             id: z.string()
@@ -15293,17 +13459,11 @@ export const TargetingOverlaySchema = z.object({}).passthrough().merge(z.object(
     geo_countries_exclude: z.array(z.string()).optional(),
     geo_regions: z.array(z.string()).optional(),
     geo_regions_exclude: z.array(z.string()).optional(),
-    geo_metros: z.tuple([z.object({
-            system: MetroAreaSystemSchema,
-            values: z.array(z.string())
-        }).passthrough()]).rest(z.object({
+    geo_metros: z.array(z.object({
         system: MetroAreaSystemSchema,
         values: z.array(z.string())
     }).passthrough()).optional(),
-    geo_metros_exclude: z.tuple([z.object({
-            system: MetroAreaSystemSchema,
-            values: z.array(z.string())
-        }).passthrough()]).rest(z.object({
+    geo_metros_exclude: z.array(z.object({
         system: MetroAreaSystemSchema,
         values: z.array(z.string())
     }).passthrough()).optional(),
@@ -15336,30 +13496,19 @@ export const TargetingOverlaySchema = z.object({}).passthrough().merge(z.object(
     device_type_exclude: z.array(DeviceTypeSchema).optional(),
     browser: z.array(BrowserFamilySchema).optional(),
     browser_exclude: z.array(BrowserFamilySchema).optional(),
-    store_catchments: z.tuple([z.object({
-            catalog_id: z.string(),
-            store_ids: z.array(z.string()).optional(),
-            catchment_ids: z.array(z.string()).optional()
-        }).passthrough()]).rest(z.object({
+    store_catchments: z.array(z.object({
         catalog_id: z.string(),
         store_ids: z.array(z.string()).optional(),
         catchment_ids: z.array(z.string()).optional()
     }).passthrough()).optional(),
-    geo_proximity: z.tuple([z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()])]).rest(z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()])).optional(),
+    geo_proximity: z.array(z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()])).optional(),
     language: z.array(LanguageTagSchema).optional(),
-    keyword_targets: z.tuple([z.object({
-            keyword: z.string().min(1),
-            match_type: MatchTypeSchema,
-            bid_price: z.number().gte(0).optional()
-        }).passthrough()]).rest(z.object({
+    keyword_targets: z.array(z.object({
         keyword: z.string().min(1),
         match_type: MatchTypeSchema,
         bid_price: z.number().gte(0).optional()
     }).passthrough()).optional(),
-    negative_keywords: z.tuple([z.object({
-            keyword: z.string().min(1),
-            match_type: MatchTypeSchema
-        }).passthrough()]).rest(z.object({
+    negative_keywords: z.array(z.object({
         keyword: z.string().min(1),
         match_type: MatchTypeSchema
     }).passthrough()).optional()
@@ -15685,28 +13834,7 @@ export const PackageRequestSchema: z.ZodObject<{ [K in keyof PackageRequest]-?: 
     audience_evidence_pins: z.array(AudienceEvidencePinSchema).optional(),
     measurement_terms: MeasurementTermsSchema.optional(),
     performance_standards: z.array(PerformanceStandardSchema).optional(),
-    committed_metrics: z.tuple([z.union([z.object({
-                scope: z.literal("standard"),
-                metric_id: AvailableMetricSchema,
-                qualifier: z.object({
-                    viewability_standard: ViewabilityStandardSchema.optional(),
-                    completion_source: CompletionSourceSchema.optional(),
-                    attribution_methodology: AttributionMethodologySchema.optional(),
-                    attribution_window: DurationSchema.optional(),
-                    lift_dimension: LiftDimensionSchema.optional()
-                }).passthrough().optional()
-            }).passthrough(), z.object({
-                scope: z.literal("vendor"),
-                vendor: BrandReferenceSchema,
-                metric_id: VendorMetricIDSchema,
-                qualifier: z.object({
-                    viewability_standard: ViewabilityStandardSchema.optional(),
-                    completion_source: CompletionSourceSchema.optional(),
-                    attribution_methodology: AttributionMethodologySchema.optional(),
-                    attribution_window: DurationSchema.optional(),
-                    lift_dimension: LiftDimensionSchema.optional()
-                }).passthrough().optional()
-            }).passthrough()])]).rest(z.union([z.object({
+    committed_metrics: z.array(z.union([z.object({
             scope: z.literal("standard"),
             metric_id: AvailableMetricSchema,
             qualifier: z.object({
@@ -16486,14 +14614,11 @@ export const CreativeLocalizationReadbackSchema: z.ZodType = z.object({
     default_locale_variant_id: z.string().min(1).max(255),
     unmatched_locale_action: z.union([z.literal("serve_default"), z.literal("do_not_serve")]),
     locale_matching: z.literal("rfc4647_lookup"),
-    locale_fallbacks: z.tuple([z.object({
-            language_range: LanguageTagSchema,
-            locale_variant_id: z.string().min(1).max(255)
-        }).passthrough()]).rest(z.object({
+    locale_fallbacks: z.array(z.object({
         language_range: LanguageTagSchema,
         locale_variant_id: z.string().min(1).max(255)
     }).passthrough()).optional(),
-    variants: z.tuple([z.union([SourceLocalizationReadbackSchema, TargetLocalizationReadbackSchema])]).rest(z.union([SourceLocalizationReadbackSchema, TargetLocalizationReadbackSchema]))
+    variants: z.array(z.union([SourceLocalizationReadbackSchema, TargetLocalizationReadbackSchema]))
 }).passthrough();
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
@@ -17262,7 +15387,7 @@ export const GetProductsCompletionSchema: z.ZodType = AdCPVersionEnvelopeSchema.
     proposals: z.array(ProposalSchema).optional(),
     errors: z.array(ErrorSchema).optional(),
     reason: z.string().optional(),
-    suggestions: z.union([z.tuple([]), z.tuple([z.string()]), z.tuple([z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()]), z.tuple([z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string(), z.string()])]).optional(),
+    suggestions: z.array(z.string()).optional(),
     property_list_applied: z.boolean().optional(),
     catalog_applied: z.boolean().optional(),
     refinement_applied: z.array(z.union([z.object({
@@ -17280,11 +15405,7 @@ export const GetProductsCompletionSchema: z.ZodType = AdCPVersionEnvelopeSchema.
             status: z.union([z.literal("applied"), z.literal("partial"), z.literal("unable")]),
             notes: z.string().optional()
         }).passthrough()])).optional(),
-    incomplete: z.tuple([z.object({
-            scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("proposals"), z.literal("wholesale_feed")]),
-            description: z.string(),
-            estimated_wait: DurationSchema.optional()
-        }).passthrough()]).rest(z.object({
+    incomplete: z.array(z.object({
         scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("proposals"), z.literal("wholesale_feed")]),
         description: z.string(),
         estimated_wait: DurationSchema.optional()
@@ -17404,10 +15525,7 @@ export const CommercialTermsSchema = z.object({
     invoice_recipient: BusinessEntitySchema.optional(),
     purchase_order_ref: z.string().min(1).max(255).optional(),
     agency_estimate_number: z.string().max(100).optional(),
-    reporting_commitments: z.tuple([z.object({
-            purchase_index: z.number().int().gte(0),
-            metrics: z.array(CanonicalReportingCommitmentSchema)
-        }).passthrough()]).rest(z.object({
+    reporting_commitments: z.array(z.object({
         purchase_index: z.number().int().gte(0),
         metrics: z.array(CanonicalReportingCommitmentSchema)
     }).passthrough()).optional(),
@@ -18377,19 +16495,12 @@ export const RequestProposalsResponseSchema = z.union([z.object({
         outcome: z.literal("proposed"),
         reason: z.never().optional(),
         suggestions: z.never().optional(),
-        proposals: z.tuple([CanonicalProposalSchema.and(z.object({
-                proposal_status: z.literal("draft"),
-                expires_at: z.iso.datetime()
-            }).passthrough())]).rest(CanonicalProposalSchema.and(z.object({
+        proposals: z.array(CanonicalProposalSchema.and(z.object({
             proposal_status: z.literal("draft"),
             expires_at: z.iso.datetime()
         }).passthrough())),
         products: z.array(CanonicalProductSchema),
-        incomplete: z.tuple([z.object({
-                scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("proposals"), z.literal("wholesale_feed")]),
-                description: z.string().min(1),
-                estimated_wait: DurationSchema.optional()
-            }).passthrough()]).rest(z.object({
+        incomplete: z.array(z.object({
             scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("proposals"), z.literal("wholesale_feed")]),
             description: z.string().min(1),
             estimated_wait: DurationSchema.optional()
@@ -18410,11 +16521,7 @@ export const RequestProposalsResponseSchema = z.union([z.object({
         suggestions: z.never().optional(),
         proposals: z.never().optional(),
         products: z.array(CanonicalProductSchema),
-        incomplete: z.tuple([z.object({
-                scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("proposals"), z.literal("wholesale_feed")]),
-                description: z.string().min(1),
-                estimated_wait: DurationSchema.optional()
-            }).passthrough()]).rest(z.object({
+        incomplete: z.array(z.object({
             scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("proposals"), z.literal("wholesale_feed")]),
             description: z.string().min(1),
             estimated_wait: DurationSchema.optional()
@@ -18431,7 +16538,7 @@ export const RequestProposalsResponseSchema = z.union([z.object({
                 continuation_expires_at: z.iso.datetime(),
                 source_adcp_version: z.union([z.literal("2.5"), z.literal("3.0"), z.literal("3.1")]),
                 product_ids: z.array(z.string()),
-                losses: z.tuple([z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")]), z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")])]).rest(z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")])),
+                losses: z.array(z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")])),
                 requires_explicit_acceptance: z.literal(true)
             }).passthrough().superRefine((value, ctx) => {
             if (value.product_ids.length === 0) {
@@ -18488,19 +16595,12 @@ export const RequestProposalsResponseSchema = z.union([z.object({
         outcome: z.union([z.literal("proposed"), z.literal("products_available"), z.literal("rejected")]).optional(),
         reason: z.string().min(1).optional(),
         suggestions: z.array(z.string()).optional(),
-        proposals: z.tuple([CanonicalProposalSchema.and(z.object({
-                proposal_status: z.literal("draft"),
-                expires_at: z.iso.datetime()
-            }).passthrough())]).rest(CanonicalProposalSchema.and(z.object({
+        proposals: z.array(CanonicalProposalSchema.and(z.object({
             proposal_status: z.literal("draft"),
             expires_at: z.iso.datetime()
         }).passthrough())).optional(),
         products: z.array(CanonicalProductSchema).optional(),
-        incomplete: z.tuple([z.object({
-                scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("proposals"), z.literal("wholesale_feed")]),
-                description: z.string().min(1),
-                estimated_wait: DurationSchema.optional()
-            }).passthrough()]).rest(z.object({
+        incomplete: z.array(z.object({
             scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("proposals"), z.literal("wholesale_feed")]),
             description: z.string().min(1),
             estimated_wait: DurationSchema.optional()
@@ -18517,7 +16617,7 @@ export const RequestProposalsResponseSchema = z.union([z.object({
                 continuation_expires_at: z.iso.datetime(),
                 source_adcp_version: z.union([z.literal("2.5"), z.literal("3.0"), z.literal("3.1")]),
                 product_ids: z.array(z.string()),
-                losses: z.tuple([z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")]), z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")])]).rest(z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")])),
+                losses: z.array(z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")])),
                 requires_explicit_acceptance: z.literal(true)
             }).passthrough().superRefine((value, ctx) => {
             if (value.product_ids.length === 0) {
@@ -18882,19 +16982,13 @@ export const CommittedMediaBuySchema = z.object({
         proposal_status: z.literal("accepted"),
         media_buy_id: z.string()
     }).passthrough()),
-    purchase_bindings: z.tuple([z.object({
-            purchase_index: z.number(),
-            product_id: z.string(),
-            package_id: z.string()
-        }).passthrough()]).rest(z.object({
+    purchase_bindings: z.array(z.object({
         purchase_index: z.number(),
         product_id: z.string(),
         package_id: z.string()
     }).passthrough()),
     available_actions: z.array(CanonicalMediaBuyActionSchema),
-    warnings: z.tuple([WarningSchema.and(z.object({
-            code: z.union([z.literal("inventory_shortfall_forecast"), z.literal("flight_change_creates_pacing_risk")]).optional()
-        }).passthrough())]).rest(WarningSchema.and(z.object({
+    warnings: z.array(WarningSchema.and(z.object({
         code: z.union([z.literal("inventory_shortfall_forecast"), z.literal("flight_change_creates_pacing_risk")]).optional()
     }).passthrough())).optional(),
     context: ContextObjectSchema.optional(),
