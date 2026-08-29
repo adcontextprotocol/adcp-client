@@ -1,5 +1,20 @@
 # Changelog
 
+## 14.0.0-beta.17
+
+### Minor Changes
+
+- 7fb42cb: Expose verified request authentication to native decisioning handlers, preserve resolved account generics across legacy migration handlers, and add framework-owned per-tool AdCP version availability across MCP, A2A, dispatch, validation, projection, and capability discovery.
+
+  Ship a durable PostgreSQL proposal lifecycle store with scoped atomic transitions, bounded database-time cleanup, readiness probing, and migration helpers. Align generated creative asset schemas with their public TypeScript interfaces, including nested provenance-bearing image assets.
+
+- 508d669: Fix public Zod array projection so complex `minItems: 1` arrays no longer render as tuples with an incorrect OpenAPI `minItems: 2`, and collapse bounded homogeneous tuple unions that caused `ProductSchema` OpenAPI documents to grow to roughly 99 MB. Generated public array inference is widened from tuple types to ordinary arrays in line with the documented relaxed-cardinality contract.
+
+### Patch Changes
+
+- 10a7eb3: Exclude MCP prompt projections from generated wire-field allowlists so intentionally reduced model-context schemas cannot conflict with canonical request contracts.
+- 1172a01: Support digest-verified, commit-addressed protocol PR bundles in schema sync and generated-code CI.
+
 ## 14.0.0-beta.16
 
 ### Minor Changes
