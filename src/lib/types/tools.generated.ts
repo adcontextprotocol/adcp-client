@@ -5935,6 +5935,7 @@ export interface GetProductsResponse {
     /**
      * Number of products the seller considered before applying `filters`. Baseline for interpreting per-filter exclusion counts. Approximate — sellers MAY return a sampled or capped count when their candidate pool is large. Optional; sellers whose baseline candidate set size is sensitive (revealing market posture or competitive density) MAY omit this while still emitting `excluded_by`.
      * @minimum 0
+     * @format int
      */
     total_candidates?: number;
     /**
@@ -5946,6 +5947,7 @@ export interface GetProductsResponse {
             /**
              * Number of products excluded by this filter, interpreted per the parent `semantics` field.
              * @minimum 0
+             * @format int
              */
             count: number;
             /**
@@ -9230,6 +9232,7 @@ export interface ListProductsRequest {
   /**
    * @minimum 1
    * @maximum 100
+   * @format int
    */
   max_results?: number;
   /**
@@ -11288,6 +11291,7 @@ export interface ControlMediaBuyRequest {
   /**
    * Required optimistic-concurrency revision from the latest MediaBuy snapshot.
    * @minimum 1
+   * @format int
    */
   revision: number;
   /**
@@ -11366,6 +11370,7 @@ export interface ControlApplied {
   media_buy_id: string;
   /**
    * @minimum 1
+   * @format int
    */
   revision: number;
   media_buy_status?: MediaBuyStatus;
@@ -11435,18 +11440,22 @@ export interface ListCreativeFormatsRequest {
   asset_types?: AssetContentType[];
   /**
    * Maximum width in pixels (inclusive). Returns formats where ANY render has width <= this value. For multi-render formats, matches if at least one render fits.
+   * @format int
    */
   max_width?: number;
   /**
    * Maximum height in pixels (inclusive). Returns formats where ANY render has height <= this value. For multi-render formats, matches if at least one render fits.
+   * @format int
    */
   max_height?: number;
   /**
    * Minimum width in pixels (inclusive). Returns formats where ANY render has width >= this value.
+   * @format int
    */
   min_width?: number;
   /**
    * Minimum height in pixels (inclusive). Returns formats where ANY render has height >= this value.
+   * @format int
    */
   min_height?: number;
   /**
@@ -15115,6 +15124,7 @@ export interface CreateMediaBuySuccess {
   /**
    * Initial revision number for this media buy. Use in subsequent update_media_buy requests intended to change state for optimistic concurrency.
    * @minimum 1
+   * @format int
    */
   revision?: number;
   /**
@@ -15651,6 +15661,7 @@ export interface UpdateMediaBuyRequest {
   /**
    * Expected current revision for optimistic concurrency. Optional for backward compatibility. When provided, sellers MUST reject the update with CONFLICT if the media buy's current revision does not match, and MUST enforce that comparison atomically with the write. Obtain from get_media_buys or the most recent create/update response.
    * @minimum 1
+   * @format int
    */
   revision?: number;
   /**
@@ -15796,6 +15807,7 @@ export interface UpdateMediaBuySuccess {
   /**
    * Revision number after this update. Use this value in subsequent update_media_buy requests intended to change state for optimistic concurrency. Exact idempotency replays return the prior revision and do not increment revision.
    * @minimum 1
+   * @format int
    */
   revision?: number;
   /**
@@ -15927,6 +15939,7 @@ export interface GetMediaBuysRequest {
    * When present, include the last N revision history entries for each media buy (returns min(N, available entries)). Each entry contains revision number, timestamp, actor, and a summary of what changed. Omit or set to 0 to exclude history (default). Recommended: 5-10 for monitoring, 50+ for audit.
    * @minimum 0
    * @maximum 1000
+   * @format int
    */
   include_history?: number;
   /**
@@ -15937,6 +15950,7 @@ export interface GetMediaBuysRequest {
    * Maximum number of webhook delivery records to return per media buy, ordered most-recent first. Ignored when `include_webhook_activity` is false. Sellers that surface webhook activity MUST retain records for at least 30 days from each record's `completed_at` (see `webhook_activity` description in the response schema for the `pending`-status carve-out); sellers unable to honor that floor MUST omit the field entirely rather than truncate. When a buy has more historical fires than the limit, only the most recent are returned — there is no cursor for older fires; this surface is a debug aid, not a full audit log.
    * @minimum 1
    * @maximum 200
+   * @format int
    */
   webhook_activity_limit?: number;
   pagination?: PaginationRequest;
@@ -16129,6 +16143,7 @@ export interface GetMediaBuysResponseMediaBuy {
   /**
    * Current optimistic concurrency token. Pass this in update_media_buy requests intended to change state. Sellers increment it on mutating state changes/updates and reject stale tokens with CONFLICT when a revision token is provided.
    * @minimum 1
+   * @format int
    */
   revision?: number;
   /**
@@ -16162,6 +16177,7 @@ export interface GetMediaBuysResponseMediaBuy {
     /**
      * Revision number after this change was applied.
      * @minimum 1
+     * @format int
      */
     revision: number;
     /**
@@ -16420,6 +16436,7 @@ export interface PackageStatus {
     /**
      * Maximum age of this data in seconds. For example, 900 means the data may be up to 15 minutes old. Use this to interpret zero delivery: a value of 900 means zero impressions is likely real; a value of 14400 means reporting may still be catching up.
      * @minimum 0
+     * @format int
      */
     staleness_seconds: number;
     /**
@@ -16567,6 +16584,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of catalog_item entries to return. When omitted, the seller returns its automatic default set.
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -16579,6 +16597,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of creative entries to return. When omitted, the seller returns its automatic default set.
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -16591,6 +16610,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of keyword entries to return. When omitted, the seller returns its automatic default set.
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -16613,6 +16633,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of geo entries to return. Defaults to 25. When truncated, by_geo_truncated is true in the response.
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -16625,6 +16646,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of entries to return. When omitted, all entries are returned (the enum is small and bounded).
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -16637,6 +16659,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of entries to return. When omitted, all entries are returned (the enum is small and bounded).
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -16649,6 +16672,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of format rows to return. When omitted, all rows are returned because the canonical format-kind vocabulary is small and bounded.
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -16661,6 +16685,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of entries to return. Defaults to 25.
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -16677,6 +16702,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of demographic entries to return. Defaults to 25.
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -16689,6 +16715,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Optional maximum number of spot rows to return. When the response is incomplete because of this limit or a seller-imposed maximum, by_spot_truncated is true.
        * @minimum 1
+       * @format int
        */
       limit?: number;
     };
@@ -16699,6 +16726,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of entries to return. Defaults to 25.
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -17021,11 +17049,13 @@ export interface GetMediaBuyDeliveryResponse {
   /**
    * Number of media buys with reporting_delayed or failed status (only present in webhook deliveries when partial_data is true)
    * @minimum 0
+   * @format int
    */
   unavailable_count?: number;
   /**
    * Sequential notification number (only present in webhook deliveries, starts at 1)
    * @minimum 1
+   * @format int
    */
   sequence_number?: number;
   /**
@@ -17137,6 +17167,7 @@ export interface GetMediaBuyDeliveryResponse {
     /**
      * Number of media buys included in the response
      * @minimum 0
+     * @format int
      */
     media_buy_count: number;
     /**
@@ -17674,7 +17705,36 @@ export interface VendorMetricValue {
   breakdown?: {
   };
 }
-// get_reporting_status parameters
+/**
+ * Primary operational identifier of the property that delivered. Required even when catalog enrichment is unavailable.
+ */
+export interface Identifier {
+  type: PropertyIdentifierTypes;
+  /**
+   * The identifier value. For domain type: 'example.com' matches base domain plus www and m subdomains; 'edition.example.com' matches that specific subdomain; '*.example.com' matches ALL subdomains but NOT base domain
+   */
+  value: string;
+}
+/**
+ * Canonical publisher-scoped catalog identity when the delivered property resolves to adagents.json. Its publisher_domain MUST equal the row's publisher_domain.
+ */
+export interface PropertyReference {
+  /**
+   * Domain where the adagents.json declaring this property is hosted.
+   */
+  publisher_domain: string;
+  property_id: PropertyID;
+}
+/**
+ * Canonical reference to one installment within a publisher-scoped collection. Installment IDs are collection-scoped, so identity is the tuple (collection_ref, installment_id).
+ */
+export interface InstallmentReference {
+  collection_ref: CollectionReference;
+  /**
+   * Installment ID within the referenced collection.
+   */
+  installment_id: string;
+}
 /**
  * Authoritative caller/account-isolated reporting reliability read. The authenticated caller identity comes only from transport authentication, never request fields. summary answers the operational question for independently selected delivery configurations/feeds; periods returns a cursor-paginated obligation ledger; revision resolves one exact retained revision and its materializations/resources. Unknown, unauthorized, cross-caller, and cross-account identifiers MUST be indistinguishable. Sellers implementing this task MUST advertise media_buy.reporting_delivery in experimental_features.
  */
@@ -17834,6 +17894,7 @@ export type GetReportingStatusResponse = {
       delivery_config_id: string;
       /**
        * @minimum 1
+       * @format int
        */
       delivery_config_version: number;
       feed_purpose: 'pacing' | 'analytics' | 'billing';
@@ -17851,6 +17912,7 @@ export type GetReportingStatusResponse = {
     coverage_complete: boolean;
   };
   health?: ReportingHealth;
+  coverage?: ReportingCoverage;
   /**
    * Conservative latest included event time across satisfied obligations in scope, or null when unavailable/unknown.
    * @format date-time
@@ -17864,26 +17926,32 @@ export type GetReportingStatusResponse = {
   obligation_counts?: {
     /**
      * @minimum 0
+     * @format int
      */
     total: number;
     /**
      * @minimum 0
+     * @format int
      */
     waiting: number;
     /**
      * @minimum 0
+     * @format int
      */
     healthy: number;
     /**
      * @minimum 0
+     * @format int
      */
     delayed: number;
     /**
      * @minimum 0
+     * @format int
      */
     action_required: number;
     /**
      * @minimum 0
+     * @format int
      */
     complete: number;
   };
@@ -17915,6 +17983,47 @@ export type SuccessfulLookup = SummaryView | PeriodsView | RevisionView;
 export type FailedLookup = UnavailableLookup | OperationalFailure;
 
 /**
+ * Aggregated effective coverage for the exact selected scope. This remains independent of reporting health and finality so a fresh covered subset cannot look like complete campaign reporting.
+ */
+export interface ReportingCoverage {
+  status: 'full' | 'partial' | 'none' | 'unknown';
+  /**
+   * @format date-time
+   */
+  evaluated_at: string;
+  /**
+   * Exact media-buy denominator, including unsupported and unknown buys. An empty array is an explicitly evaluated zero-buy scope.
+   */
+  media_buy_ids: string[];
+  fully_covered_media_buy_ids: string[];
+  partially_covered_media_buy_ids: string[];
+  unsupported_media_buy_ids: string[];
+  unknown_media_buy_ids: string[];
+  /**
+   * Exact package denominator for the evaluated media buys.
+   */
+  package_ids: string[];
+  covered_package_ids: string[];
+  unsupported_package_ids: string[];
+  unknown_package_ids: string[];
+  /**
+   * Stable reasons that some requested scope is not covered by the exact selected offering. These are capability facts, not delivery failures.
+   */
+  limitations: {
+    reason:
+      | 'offering_unsupported'
+      | 'account_entitlement_unavailable'
+      | 'credential_scope_insufficient'
+      | 'provider_limitation'
+      | 'capability_unknown';
+    /**
+     * @minLength 1
+     */
+    media_buy_id: string;
+    package_ids?: string[];
+  }[];
+}
+/**
  * Structured reporting condition that explains delayed or action_required health without exposing credentials, provider response bodies, or internal stack traces.
  */
 export interface ReportingStatusIssue {
@@ -17924,6 +18033,7 @@ export interface ReportingStatusIssue {
     | 'DELIVERY_FAILED'
     | 'ACCESS_REQUIRED'
     | 'CONFIGURATION_REQUIRED'
+    | 'REPORTING_COVERAGE_INCOMPLETE'
     | 'RESOURCE_EXPIRED'
     | 'READER_INCOMPATIBLE'
     | 'HISTORY_UNAVAILABLE';
@@ -17936,6 +18046,7 @@ export interface ReportingStatusIssue {
     | 'contact_provider'
     | 'repair_access'
     | 'update_configuration'
+    | 'change_reporting_scope'
     | 'use_supported_reader';
   /**
    * Untrusted display text only. SDKs and agents dispatch exclusively on closed code/recommended_action values and never execute embedded links or instructions.
@@ -17956,10 +18067,12 @@ export interface ReportingStatusIssue {
   delivery_config_id?: string;
   /**
    * @minimum 1
+   * @format int
    */
   delivery_config_version?: number;
   feed_purpose?: 'pacing' | 'analytics' | 'billing';
   media_buy_ids?: string[];
+  package_ids?: string[];
   /**
    * @format date-time
    */
@@ -17991,6 +18104,7 @@ export interface ReportingObligation {
   delivery_config_id: string;
   /**
    * @minimum 1
+   * @format int
    */
   delivery_config_version: number;
   /**
@@ -18009,7 +18123,16 @@ export interface ReportingObligation {
    * @minLength 1
    */
   account_id: string;
-  media_buy_ids?: string[];
+  /**
+   * Exact frozen media-buy denominator resolved for this period, including buys with zero rows. An empty array is the definitive zero-buy set; omission is never used to mean all, empty, or unknown.
+   */
+  media_buy_ids: string[];
+  /**
+   * Instant at which the configured scope was resolved and frozen for this obligation. For all_media_buys, include every caller-authorized account media buy whose effective flight overlaps the half-open period and was known by this cutoff. Later-created or backdated buys do not rewrite this obligation.
+   * @format date-time
+   */
+  scope_resolved_at: string;
+  coverage: ReportingCoverage;
   period: {
     /**
      * @format date-time
@@ -18030,7 +18153,7 @@ export interface ReportingObligation {
   expected_at: string;
   schedule: ReportingSchedule;
   /**
-   * Resolved caller/account-bound destination or recipient binding for this obligation.
+   * Immutable caller-owned destination generation selected by this account-authorized obligation. The account/configuration join—not possession of this reusable reference—authorizes disclosure.
    * @minLength 1
    * @maxLength 255
    */
@@ -18049,26 +18172,31 @@ export interface ReportingObligation {
   /**
    * Number of revision records for this obligation in the consistent ledger snapshot.
    * @minimum 0
+   * @format int
    */
   revision_count: number;
   /**
    * Number of materialization records for this obligation's revisions in the consistent ledger snapshot.
    * @minimum 0
+   * @format int
    */
   materialization_count: number;
   /**
    * Number of available/delivered verified materializations in the consistent ledger snapshot.
    * @minimum 0
+   * @format int
    */
   successful_materialization_count: number;
   /**
    * Complete number of authenticated receipts associated with this obligation in the ledger snapshot.
    * @minimum 0
+   * @format int
    */
   receipt_count: number;
   /**
    * Number of accepted receipts. At most one current accepted receipt per consumer and revision contributes to reconciliation_status.
    * @minimum 0
+   * @format int
    */
   accepted_receipt_count: number;
   issues: ReportingStatusIssue[];
@@ -18091,6 +18219,17 @@ export interface ReportingSchedule {
    * Calendar used to establish exact period boundaries. The obligation echoes resolved timestamps and source timezone.
    */
   alignment: 'utc' | 'account_timezone' | 'billing_cycle';
+  /**
+   * Required for billing_cycle alignment. This immutable instant anchors the recurring half-open billing periods so producer and consumer derive the same month, quarter, or other contractual cycle.
+   * @format date-time
+   */
+  period_anchor?: string;
+  /**
+   * Required IANA timezone for billing_cycle calendar arithmetic. A numeric UTC offset is not sufficient because it does not define DST transitions.
+   * @minLength 1
+   * @maxLength 255
+   */
+  period_timezone?: string;
   /**
    * Non-negative maximum time after period end before the required revision is due. PT0S means due at period close; expected_at equals the resolved period end plus this duration.
    * @pattern ^P(?=\d|T)(?=.*\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$
@@ -18115,6 +18254,14 @@ export interface ReportingRevision {
    * @pattern ^[A-Za-z0-9_.:-]{1,255}$
    */
   report_definition_id: string;
+  /**
+   * @pattern ^https:\/\/(?![^\/]*@)(?!localhost(?:[:\/]|$))(?!\[)(?!\d+(?:\.\d+){3}(?::|\/|$))(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:\/|$)
+   */
+  report_definition_uri: string;
+  /**
+   * @pattern ^[A-Fa-f0-9]{64}$
+   */
+  report_definition_sha256: string;
   /**
    * @minLength 1
    * @maxLength 128
@@ -18147,7 +18294,11 @@ export interface ReportingRevision {
    * @minLength 1
    */
   account_id: string;
-  media_buy_ids?: string[];
+  /**
+   * Exact frozen media-buy denominator inherited from the obligation, including buys with zero rows. An empty array proves a zero-buy period rather than an unknown denominator.
+   */
+  media_buy_ids: string[];
+  coverage: ReportingCoverage;
   /**
    * Half-open reporting interval with its source calendar boundary.
    */
@@ -18166,6 +18317,22 @@ export interface ReportingRevision {
     source_timezone: string;
   };
   finality: ReportingFinality;
+  /**
+   * Why an official revision is considered final: an authoritative source signal, a versioned contractual cutoff, or a versioned stabilization rule.
+   */
+  finality_basis?: 'source_final' | 'contractual_cutoff' | 'stabilized';
+  /**
+   * Immutable policy/version reference that defines the selected finality basis. It MUST be bound by report_definition_id.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  finality_policy_id?: string;
+  /**
+   * When the producer applied the declared finality basis to this official revision.
+   * @format date-time
+   */
+  finalized_at?: string;
   /**
    * When the seller obtained or committed this source observation.
    * @format date-time
@@ -18187,6 +18354,7 @@ export interface ReportingRevision {
   /**
    * Logical row count, including zero for a successfully evaluated empty report.
    * @minimum 0
+   * @format int
    */
   row_count: number;
   /**
@@ -18237,6 +18405,11 @@ export interface ReportingCanonicalContentDigest {
    */
   canonicalization_id: string;
   /**
+   * Location of the exact immutable canonicalization contract. Consumers verify canonicalization_sha256 before applying it.
+   * @pattern ^https:\/\/(?![^\/]*@)(?!localhost(?:[:\/]|$))(?!\[)(?!\d+(?:\.\d+){3}(?::|\/|$))(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:\/|$)
+   */
+  canonicalization_uri: string;
+  /**
    * @pattern ^[A-Fa-f0-9]{64}$
    */
   canonicalization_sha256: string;
@@ -18273,10 +18446,11 @@ export interface ReportingMaterialization {
   delivery_config_id: string;
   /**
    * @minimum 1
+   * @format int
    */
   delivery_config_version: number;
   /**
-   * Resolved destination/share binding, scoped to the authenticated caller and account.
+   * Immutable caller-owned destination generation selected by the account-authorized obligation. It may be reused by the same caller across other independently authorized accounts.
    * @minLength 1
    * @maxLength 255
    */
@@ -18291,10 +18465,11 @@ export interface ReportingMaterialization {
   transport?: string;
   /**
    * @minimum 1
+   * @format int
    */
   attempt: number;
   /**
-   * Immutable result of this attempt. Staleness is evaluated in get_reporting_status health, not stored as a materialization state.
+   * Lifecycle of this attempt. pending may transition once to available, delivered, or failed; terminal evidence is immutable. Staleness is evaluated in get_reporting_status health, not stored as a materialization state.
    */
   status: 'pending' | 'available' | 'delivered' | 'failed';
   /**
@@ -18387,6 +18562,7 @@ export interface ReportingVerification {
   /**
    * Verified row count. Zero explicitly distinguishes an empty committed revision from a missing revision.
    * @minimum 0
+   * @format int
    */
   row_count: number;
   /**
@@ -18453,6 +18629,7 @@ export interface ReportingReceipt {
   verification_profile: ReportingVerificationProfile;
   /**
    * @minimum 0
+   * @format int
    */
   observed_row_count: number;
   observed_control_totals: ReportingControlTotal[];
@@ -18501,6 +18678,9 @@ export interface RevisionView {
 }
 export interface UnavailableLookup {
   adcp_version?: string;
+  /**
+   * @format int
+   */
   adcp_major_version?: number;
   status: 'failed';
   view: 'summary' | 'periods' | 'revision';
@@ -18524,6 +18704,9 @@ export interface UnavailableLookup {
 }
 export interface OperationalFailure {
   adcp_version?: string;
+  /**
+   * @format int
+   */
   adcp_major_version?: number;
   status: 'failed';
   view: 'summary' | 'periods' | 'revision';
@@ -18546,6 +18729,15 @@ export interface OperationalFailure {
  * Submit durable authenticated consumer reconciliation results for reporting materializations. This is a batched idempotent upsert, not an acknowledgement of mere webhook receipt. Identity comes from authenticated transport; the request MUST NOT assert a buyer or governance principal.
  */
 export interface SyncReportingReceiptsRequest {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   account: CanonicalAccountReference;
   /**
    * Client-generated batch key. Exact retries reuse the key and body.
@@ -18633,36 +18825,7 @@ export interface FailedReportingReceipt {
   errors: Error[];
 }
 
-/**
- * Primary operational identifier of the property that delivered. Required even when catalog enrichment is unavailable.
- */
-export interface Identifier {
-  type: PropertyIdentifierTypes;
-  /**
-   * The identifier value. For domain type: 'example.com' matches base domain plus www and m subdomains; 'edition.example.com' matches that specific subdomain; '*.example.com' matches ALL subdomains but NOT base domain
-   */
-  value: string;
-}
-/**
- * Canonical publisher-scoped catalog identity when the delivered property resolves to adagents.json. Its publisher_domain MUST equal the row's publisher_domain.
- */
-export interface PropertyReference {
-  /**
-   * Domain where the adagents.json declaring this property is hosted.
-   */
-  publisher_domain: string;
-  property_id: PropertyID;
-}
-/**
- * Canonical reference to one installment within a publisher-scoped collection. Installment IDs are collection-scoped, so identity is the tuple (collection_ref, installment_id).
- */
-export interface InstallmentReference {
-  collection_ref: CollectionReference;
-  /**
-   * Installment ID within the referenced collection.
-   */
-  installment_id: string;
-}
+// provide_performance_feedback parameters
 /**
  * Metric this assertion describes. Omit only for holistic feedback that is not attributable to one metric.
  */
@@ -19411,11 +19574,13 @@ export interface LogEventSuccess {
   /**
    * Number of events received
    * @minimum 0
+   * @format int
    */
   events_received: number;
   /**
    * Number of events successfully queued for processing
    * @minimum 0
+   * @format int
    */
   events_processed: number;
   /**
@@ -19678,16 +19843,19 @@ export interface SyncAudiencesSuccess {
     /**
      * Number of members submitted in this sync operation (delta, not cumulative). In discovery-only calls (no audiences array), this is 0.
      * @minimum 0
+     * @format int
      */
     uploaded_count?: number;
     /**
      * Cumulative number of members uploaded across all syncs for this audience. Compare with matched_count to calculate match rate (matched_count / total_uploaded_count). Populated when the seller tracks cumulative upload counts.
      * @minimum 0
+     * @format int
      */
     total_uploaded_count?: number;
     /**
      * Total members matched to platform users across all syncs (cumulative, not just this call). Populated when status is 'ready'.
      * @minimum 0
+     * @format int
      */
     matched_count?: number;
     /**
@@ -19704,11 +19872,13 @@ export interface SyncAudiencesSuccess {
       /**
        * Cumulative number of members submitted with this identifier type across all syncs (matches total_uploaded_count semantics, not uploaded_count). Compare with matched to calculate per-type match rate.
        * @minimum 0
+       * @format int
        */
       submitted: number;
       /**
        * Cumulative number of members matched via this identifier type across all syncs.
        * @minimum 0
+       * @format int
        */
       matched: number;
       /**
@@ -19752,6 +19922,7 @@ export interface SyncAudiencesSuccess {
     /**
      * Minimum matched audience size required for targeting on this platform. Populated when status is 'too_small'. Helps agents know how many more members are needed.
      * @minimum 1
+     * @format int
      */
     minimum_size?: number;
     /**
@@ -20104,21 +20275,25 @@ export interface SyncCatalogsSuccess {
     /**
      * Total number of items in the catalog after sync. Required when action is 'created', 'updated', or 'unchanged'. Omitted on 'failed' and 'deleted'.
      * @minimum 0
+     * @format int
      */
     item_count?: number;
     /**
      * Number of items approved by the platform. Populated when the platform performs item-level review.
      * @minimum 0
+     * @format int
      */
     items_approved?: number;
     /**
      * Number of items pending platform review. Common for product catalogs where items must pass content policy checks.
      * @minimum 0
+     * @format int
      */
     items_pending?: number;
     /**
      * Number of items rejected by the platform. Check item_issues for rejection reasons.
      * @minimum 0
+     * @format int
      */
     items_rejected?: number;
     /**
@@ -20311,6 +20486,7 @@ export type BuildCreativeRequest = {
     /**
      * Caps how many DISTINCT creatives to produce along the catalog/item fan-out axis — one creative per catalog item. Use it to sample a large catalog (e.g. send 150 job openings, set max_creatives: 5 to preview five). Distinct from item_limit, which caps how many catalog items a SINGLE creative consumes (DCO-style). Omitted with a catalog input means one creative per item up to the catalog/format bound; omitted without a catalog collapses to a single creative. Large fan-outs may return asynchronously. Mutually exclusive with `refine_from_build_variant_id` (refinement targets one prior creative, not a catalog fan-out). Supported only when the agent advertises `creative.multiplicity.supports_catalog_fanout`; values above `max_creatives_limit` are clamped. Pair with `max_spend` to bound the bill of a large fan-out.
      * @minimum 1
+     * @format int
      */
     max_creatives?: number;
     /**
@@ -20325,6 +20501,7 @@ export type BuildCreativeRequest = {
     /**
      * Caps how many ALTERNATIVES to produce per creative (different voices, themes, best-of-N, etc.). Default 1 preserves single-output behavior. Each variant is a real, independently-billed build (you pay for all produced); the buyer keeps one or many. When variant_axis.values[] is provided, its length is authoritative over max_variants. Resolutions/quality tiers are NOT variants — request them as additional target formats.
      * @minimum 1
+     * @format int
      */
     max_variants?: number;
     /**
@@ -20360,6 +20537,7 @@ export type BuildCreativeRequest = {
     /**
      * Maximum number of catalog items a SINGLE creative consumes when generating (DCO-style — e.g. how many items fill one carousel/feed creative). When a catalog asset contains more items than this limit, the creative agent selects the top items based on relevance or catalog ordering. When item_limit exceeds the format's max_items, the creative agent SHOULD use the lesser of the two. Ignored when the manifest contains no catalog assets. Distinct from `max_creatives`, which fans OUT across catalog items to produce one distinct creative per item.
      * @minimum 1
+     * @format int
      */
     item_limit?: number;
     /**
@@ -21380,6 +21558,7 @@ export interface BuildCreativeVariantSuccess {
       /**
        * Agent's ranking of this variant (1 = best) when it scored alternatives (best-of-N). Advisory.
        * @minimum 1
+       * @format int
        */
       rank?: number;
       /**
@@ -21393,11 +21572,13 @@ export interface BuildCreativeVariantSuccess {
         /**
          * Number of leaves this leaf was scored against (the best-of-N N). Lets the buyer interpret rank in context.
          * @minimum 1
+         * @format int
          */
         ranked_against?: number;
         /**
          * Number of judge calls made during evaluation. Sellers SHOULD populate when agent_url was used and an eval_budget was supplied, giving buyers visibility into external call usage. No billing coupling in v1.
          * @minimum 0
+         * @format int
          */
         calls_used?: number;
         /**
@@ -21431,21 +21612,25 @@ export interface BuildCreativeVariantSuccess {
   /**
    * Total catalog items eligible for the build (before max_creatives sampling). Lets the buyer see that creatives[] is a sample of a larger set.
    * @minimum 0
+   * @format int
    */
   items_total?: number;
   /**
    * Number of creatives returned in creatives[] (after max_creatives sampling).
    * @minimum 0
+   * @format int
    */
   items_returned?: number;
   /**
    * Total leaves the request would have produced (≈ items_to_produce × variants_per_item, × conditions_total when signal_conditions was sent). Present when a max_spend cap may have stopped production short. Counts LEAVES, not catalog items — so it expresses a shortfall even for a variant-only fan-out with no catalog.
    * @minimum 0
+   * @format int
    */
   leaves_total?: number;
   /**
    * Number of leaves actually produced and billed across creatives[].variants[]. When budget_status is 'capped', leaves_returned < leaves_total is the leaf-granular shortfall signal (items_returned/items_total are catalog-item counts and do not capture a mid-item or variant-only cap).
    * @minimum 0
+   * @format int
    */
   leaves_returned?: number;
   /**
@@ -21541,26 +21726,31 @@ export interface BuildCreativeEstimate {
     /**
      * Catalog items eligible (before max_creatives sampling).
      * @minimum 0
+     * @format int
      */
     items_total?: number;
     /**
      * Distinct creatives that would be produced (after max_creatives).
      * @minimum 0
+     * @format int
      */
     items_to_produce?: number;
     /**
      * Signal-fan-out conditions axis count (len(signal_conditions)). Present when signal_conditions was sent so leaves_total = items_to_produce × conditions_total × variants_per_item is legible before spend.
      * @minimum 1
+     * @format int
      */
     conditions_total?: number;
     /**
      * Alternatives per creative (max_variants).
      * @minimum 1
+     * @format int
      */
     variants_per_item?: number;
     /**
      * Total billable leaves = items_to_produce × variants_per_item (× conditions_total when signal_conditions was sent — see conditions_total).
      * @minimum 0
+     * @format int
      */
     leaves_total?: number;
     /**
@@ -21704,6 +21894,7 @@ export type PreviewCreativeRequest = {
   /**
    * Maximum number of catalog items to render per preview variant. Used in single mode. Creative agents SHOULD default to a reasonable sample when omitted and the catalog is large.
    * @minimum 1
+   * @format int
    */
   item_limit?: number;
   /**
@@ -21749,6 +21940,7 @@ export type PreviewCreativeRequest = {
     /**
      * Maximum number of catalog items to render in this preview.
      * @minimum 1
+     * @format int
      */
     item_limit?: number;
   }[];
@@ -22358,6 +22550,7 @@ export interface GetCreativeDeliveryRequest {
   /**
    * Maximum number of variants to return per creative. When omitted, the agent returns all variants. Use this to limit response size for generative creatives that may produce large numbers of variants.
    * @minimum 1
+   * @format int
    */
   max_variants?: number;
   pagination?: PaginationRequest;
@@ -22501,6 +22694,7 @@ export interface GetCreativeDeliveryResponse {
     /**
      * Total number of agent-unique variant_id rows for this creative. When max_variants was specified in the request, this may exceed the number of items in the variants array.
      * @minimum 0
+     * @format int
      */
     variant_count?: number;
     /**
@@ -22515,11 +22709,13 @@ export interface GetCreativeDeliveryResponse {
     /**
      * Maximum number of creatives requested
      * @minimum 1
+     * @format int
      */
     limit: number;
     /**
      * Number of creatives skipped
      * @minimum 0
+     * @format int
      */
     offset: number;
     /**
@@ -22529,12 +22725,14 @@ export interface GetCreativeDeliveryResponse {
     /**
      * Total number of creatives matching the request filters. Canonical field name (matches `PaginationResponse.total_count`). Sellers SHOULD populate this and the deprecated `total` field identically until 4.0; buyers SHOULD prefer this field.
      * @minimum 0
+     * @format int
      */
     total_count?: number;
     /**
      * @deprecated
      * **Deprecated** — use `total_count` instead. Retained as a legacy alias for 3.x backward compatibility; removed in AdCP 4.0. Sellers populating this field MUST also populate `total_count` with the same value.
      * @minimum 0
+     * @format int
      */
     total?: number;
   };
@@ -22578,6 +22776,7 @@ export interface ListCreativesRequest {
    * Maximum assigned_packages rows returned per creative. Sellers MUST set assignments.assignments_truncated when additional qualifying rows exist.
    * @minimum 1
    * @maximum 200
+   * @format int
    */
   assignment_limit?: number;
   /**
@@ -22608,6 +22807,7 @@ export interface ListCreativesRequest {
    * Maximum number of `webhook_activity[]` records to return per creative. Only meaningful when `include_webhook_activity: true`. Sellers MUST respect the cap; structural enforcement is provided by the response schema's `maxItems: 200` on the array.
    * @minimum 1
    * @maximum 200
+   * @format int
    */
   webhook_activity_limit?: number;
   account?: AccountReference;
@@ -22854,11 +23054,13 @@ export interface ListCreativesResponse {
     /**
      * Total number of creatives matching filters (across all pages)
      * @minimum 0
+     * @format int
      */
     total_matching: number;
     /**
      * Number of creatives returned in this response
      * @minimum 0
+     * @format int
      */
     returned: number;
     /**
@@ -22885,6 +23087,7 @@ export interface ListCreativesResponse {
     /**
      * Number of creatives with this format
      * @minimum 0
+     * @format int
      *
      * This interface was referenced by `undefined`'s JSON-Schema definition
      * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
@@ -22898,26 +23101,31 @@ export interface ListCreativesResponse {
     /**
      * Number of creatives being processed
      * @minimum 0
+     * @format int
      */
     processing?: number;
     /**
      * Number of approved creatives
      * @minimum 0
+     * @format int
      */
     approved?: number;
     /**
      * Number of creatives pending review
      * @minimum 0
+     * @format int
      */
     pending_review?: number;
     /**
      * Number of rejected creatives
      * @minimum 0
+     * @format int
      */
     rejected?: number;
     /**
      * Number of archived creatives
      * @minimum 0
+     * @format int
      */
     archived?: number;
   };
@@ -23014,17 +23222,20 @@ export interface ListedCreativeNamedFormatReference {
     /**
      * Total number of active package assignments
      * @minimum 0
+     * @format int
      */
     assignment_count: number;
     /**
      * Number of rows present in assigned_packages for this response.
      * @minimum 0
      * @maximum 200
+     * @format int
      */
     returned_assignment_count?: number;
     /**
      * Total active assignments matching filters.indicator_types. MUST be present exactly when assignment_projection was matching. May exceed returned_assignment_count.
      * @minimum 0
+     * @format int
      */
     matching_assignment_count?: number;
     /**
@@ -23090,11 +23301,13 @@ export interface ListedCreativeNamedFormatReference {
     /**
      * Maximum age of this data in seconds. For example, 3600 means the data may be up to 1 hour old.
      * @minimum 0
+     * @format int
      */
     staleness_seconds: number;
     /**
      * Lifetime impressions across all assignments. Not scoped to any date range.
      * @minimum 0
+     * @format int
      */
     impressions: number;
     /**
@@ -23342,17 +23555,20 @@ export interface ListedCreativeCanonicalFormatKind {
     /**
      * Total number of active package assignments
      * @minimum 0
+     * @format int
      */
     assignment_count: number;
     /**
      * Number of rows present in assigned_packages for this response.
      * @minimum 0
      * @maximum 200
+     * @format int
      */
     returned_assignment_count?: number;
     /**
      * Total active assignments matching filters.indicator_types. MUST be present exactly when assignment_projection was matching. May exceed returned_assignment_count.
      * @minimum 0
+     * @format int
      */
     matching_assignment_count?: number;
     /**
@@ -23418,11 +23634,13 @@ export interface ListedCreativeCanonicalFormatKind {
     /**
      * Maximum age of this data in seconds. For example, 3600 means the data may be up to 1 hour old.
      * @minimum 0
+     * @format int
      */
     staleness_seconds: number;
     /**
      * Lifetime impressions across all assignments. Not scoped to any date range.
      * @minimum 0
+     * @format int
      */
     impressions: number;
     /**
@@ -24128,6 +24346,7 @@ export interface GetSignalsRequest {
    * @deprecated
    * DEPRECATED: Use pagination.max_results instead. When both fields are present, agents MUST honor pagination.max_results. When only this field is present without a pagination envelope, agents SHOULD treat it as the page size subject to a maximum of 100 results. This field will be removed in AdCP 4.0.
    * @minimum 1
+   * @format int
    */
   max_results?: number;
   pagination?: PaginationRequest;
@@ -25174,6 +25393,7 @@ export interface GetPropertyListRequest {
      * Maximum number of identifiers to return per page
      * @minimum 1
      * @maximum 10000
+     * @format int
      */
     max_results?: number;
     /**
@@ -25844,6 +26064,7 @@ export interface GetCollectionListRequest {
      * Maximum number of collections to return per page
      * @minimum 1
      * @maximum 10000
+     * @format int
      */
     max_results?: number;
     /**
@@ -27614,8 +27835,17 @@ export type ValidateContentDeliveryResponse = {
        * Summary counts across all records
        */
       summary: {
+        /**
+         * @format int
+         */
         total_records: number;
+        /**
+         * @format int
+         */
         passed_records: number;
+        /**
+         * @format int
+         */
         failed_records: number;
       };
       /**
@@ -27712,6 +27942,7 @@ export interface GetMediaBuyArtifactsRequest {
      * Maximum number of artifacts to return per page
      * @minimum 1
      * @maximum 10000
+     * @format int
      */
     max_results?: number;
     /**
@@ -27829,14 +28060,17 @@ export type GetMediaBuyArtifactsResponse = {
       collection_info?: {
         /**
          * Total deliveries in the requested time range
+         * @format int
          */
         total_deliveries?: number;
         /**
          * Total artifacts collected (per the buy's sampling configuration)
+         * @format int
          */
         total_collected?: number;
         /**
          * Number of artifacts in this response (may be less than total_collected due to pagination or filters)
+         * @format int
          */
         returned_count?: number;
         /**
@@ -28223,6 +28457,7 @@ export interface SyncPlansRequest {
     /**
      * Minimum audience segment size. Prevents micro-targeting by ensuring segments meet a k-anonymity threshold. Applies to the estimated combined (intersection) audience when multiple criteria are used, not just individual criterion sizes. The governance agent validates this by querying published signal metadata or seller-reported segment sizes. When segment size data is unavailable, the governance agent SHOULD produce a finding with reduced confidence rather than silently passing.
      * @minimum 1
+     * @format int
      */
     min_audience_size?: number;
     /**
@@ -28357,6 +28592,7 @@ export interface SyncPlansResponse {
     status: 'active' | 'error';
     /**
      * Plan version (increments on each sync).
+     * @format int
      */
     version: number;
     /**
@@ -28511,6 +28747,7 @@ export interface ReportPlanOutcomeRequest {
         period_closed?: boolean;
         /**
          * @minimum 0
+         * @format int
          */
         impressions?: number;
       }
@@ -28566,6 +28803,7 @@ export interface ReportPlanOutcomeRequest {
         period_closed?: boolean;
         /**
          * @minimum 0
+         * @format int
          */
         impressions?: number;
       };
@@ -29044,6 +29282,7 @@ export interface GetPlanAuditLogsResponse {
     plan_id: string;
     /**
      * Current plan version.
+     * @format int
      */
     plan_version: number;
     /**
@@ -29123,34 +29362,49 @@ export interface GetPlanAuditLogsResponse {
     summary: {
       /**
        * Total governance checks performed.
+       * @format int
        */
       checks_performed?: number;
       /**
        * Total outcomes reported.
+       * @format int
        */
       outcomes_reported?: number;
       /**
        * Total append-only adjustment records reported.
+       * @format int
        */
       adjustments_reported?: number;
       /**
        * Count of adjustment records accepted by the plan owner, including makegoods.
+       * @format int
        */
       adjustments_verified?: number;
       /**
        * Count of each governance check status.
        */
       statuses?: {
+        /**
+         * @format int
+         */
         approved?: number;
+        /**
+         * @format int
+         */
         denied?: number;
+        /**
+         * @format int
+         */
         conditions?: number;
         /**
          * Supplementary count of checks that went through internal human review. These checks are also counted in approved or denied.
+         * @format int
          */
         human_reviewed?: number;
       };
       /**
        * Total findings across all checks and outcomes.
+       * @format int
        */
       findings_count?: number;
       /**
@@ -29327,6 +29581,7 @@ export interface GetPlanAuditLogsResponse {
         statement_digest: string;
         /**
          * @minimum 1
+         * @format int
          */
         sequence: number;
         /**
@@ -29466,6 +29721,7 @@ export interface GetPlanAuditLogsResponse {
         period_closed?: boolean;
         /**
          * @minimum 0
+         * @format int
          */
         impressions?: number;
       };
@@ -29604,6 +29860,7 @@ export interface GetPlanAuditLogsResponse {
       delivery_period_state?: 'open' | 'closed';
       /**
        * Number of governance checks performed for this action.
+       * @format int
        */
       check_count: number;
       /**
@@ -29712,6 +29969,7 @@ export type CheckGovernanceRequest = {
     /**
      * Monotonically increasing sequence for this governed action. A statement ID or sequence cannot be reused with different content.
      * @minimum 1
+     * @format int
      */
     sequence?: number;
     /**
@@ -29750,11 +30008,13 @@ export type CheckGovernanceRequest = {
     /**
      * Impressions delivered during the reporting period.
      * @minimum 0
+     * @format int
      */
     impressions?: number;
     /**
      * Total impressions since the governed action started.
      * @minimum 0
+     * @format int
      */
     cumulative_impressions?: number;
     /**
@@ -29949,6 +30209,7 @@ export interface CheckGovernanceResponse {
     statement_digest: string;
     /**
      * @minimum 1
+     * @format int
      */
     sequence: number;
     /**
@@ -30048,6 +30309,7 @@ export interface SIGetOfferingRequest {
    * Maximum number of matching products to return
    * @minimum 1
    * @maximum 50
+   * @format int
    */
   product_limit?: number;
   ext?: ExtensionObject;
@@ -30119,6 +30381,7 @@ export interface SIGetOfferingResponse {
   /**
    * How long this offering information is valid (seconds). Host should re-fetch after TTL expires.
    * @minimum 0
+   * @format int
    */
   ttl_seconds?: number;
   /**
@@ -30203,6 +30466,7 @@ export interface SIGetOfferingResponse {
   /**
    * Total number of products matching the context (may be more than returned in matching_products)
    * @minimum 0
+   * @format int
    */
   total_matching?: number;
   /**
@@ -30644,6 +30908,7 @@ export interface SIInitiateSessionResponse {
   /**
    * Session inactivity timeout in seconds. After this duration without a message, the brand agent may terminate the session. Hosts SHOULD warn users before timeout when possible.
    * @minimum 1
+   * @format int
    */
   session_ttl_seconds?: number;
   /**
@@ -31037,202 +31302,6 @@ export interface GetAdCPCapabilitiesRequest {
 
 // get_adcp_capabilities response
 /**
- * Portable-attestation trust and delivery capabilities for this evaluator. Present only when the agent accepts AttestationReference inputs on one or more domain task surfaces. This block is an allowlist: presenters cannot expand accepted issuers, resolver endpoints, verifier agents, claim types, or proof formats by supplying values in a request.
- */
-export type AttestationCapabilities = {
-} & {
-  /**
-   * Open claim identifiers the evaluator is prepared to evaluate. Each value is an absolute URI. Absence means the evaluator has not advertised portable-attestation support; an empty list is not permitted.
-   *
-   * @minItems 1
-   */
-  accepted_claim_types: [string, ...string[]];
-  /**
-   * Open credential/proof format identifiers the evaluator can verify. Values are absolute URIs rather than a protocol enum so issuers can adopt new formats without AdCP endorsement.
-   *
-   * @minItems 1
-   */
-  accepted_proof_formats: [string, ...string[]];
-  /**
-   * Credential delivery paths this evaluator supports. credential_uri resolves an HTTPS credential URI from the presentation; issuer_credential_id combines issuer, credential_id, and an evaluator-published resolver_id; embedded accepts an inline credential.
-   *
-   * @minItems 1
-   */
-  supported_delivery_methods: [
-    'credential_uri' | 'issuer_credential_id' | 'embedded',
-    ...('credential_uri' | 'issuer_credential_id' | 'embedded')[]
-  ];
-  /**
-   * Issuer allowlist and resolver policy. Matching is on the canonical AttestationIssuer identity. A presenter-supplied issuer or credential URI that does not match this policy is rejected without an outbound request.
-   *
-   * @minItems 1
-   */
-  accepted_issuers: [
-    {
-      issuer: AttestationIssuer;
-      /**
-       * Optional subset of accepted_claim_types this issuer may assert. Omit to allow any globally accepted claim type for this issuer.
-       *
-       * @minItems 1
-       */
-      claim_types?: [string, ...string[]];
-      /**
-       * Optional subset of accepted_proof_formats allowed for this issuer. Omit to allow any globally accepted proof format for this issuer.
-       *
-       * @minItems 1
-       */
-      proof_formats?: [string, ...string[]];
-      /**
-       * Canonical HTTPS origins from which credential_uri locators may be fetched for this issuer. Exact origin matching happens after URL canonicalization and before DNS resolution. Paths in the credential URI may vary; userinfo is forbidden.
-       *
-       * @minItems 1
-       */
-      credential_origins?: [string, ...string[]];
-      /**
-       * Evaluator-approved resolver endpoints for issuer_credential_id delivery. Presentations carry only resolver_id; they cannot replace url or authentication policy.
-       *
-       * @minItems 1
-       */
-      resolvers?: [
-        {
-          resolver_id: string;
-          /**
-           * Evaluator-configured HTTPS resolver endpoint. Calls use POST with Content-Type application/json and a body containing only credential_id; query-string and path interpolation are forbidden. The evaluator still applies the attestation fetch contract before every call.
-           */
-          url: string;
-          /**
-           * Whether the resolver is public or uses credentials managed outside AdCP task payloads. Presenter-supplied credentials are never accepted.
-           */
-          authentication: 'none' | 'evaluator_managed';
-        },
-        ...{
-          resolver_id: string;
-          /**
-           * Evaluator-configured HTTPS resolver endpoint. Calls use POST with Content-Type application/json and a body containing only credential_id; query-string and path interpolation are forbidden. The evaluator still applies the attestation fetch contract before every call.
-           */
-          url: string;
-          /**
-           * Whether the resolver is public or uses credentials managed outside AdCP task payloads. Presenter-supplied credentials are never accepted.
-           */
-          authentication: 'none' | 'evaluator_managed';
-        }[]
-      ];
-      ext?: ExtensionObject;
-    },
-    ...{
-      issuer: AttestationIssuer;
-      /**
-       * Optional subset of accepted_claim_types this issuer may assert. Omit to allow any globally accepted claim type for this issuer.
-       *
-       * @minItems 1
-       */
-      claim_types?: [string, ...string[]];
-      /**
-       * Optional subset of accepted_proof_formats allowed for this issuer. Omit to allow any globally accepted proof format for this issuer.
-       *
-       * @minItems 1
-       */
-      proof_formats?: [string, ...string[]];
-      /**
-       * Canonical HTTPS origins from which credential_uri locators may be fetched for this issuer. Exact origin matching happens after URL canonicalization and before DNS resolution. Paths in the credential URI may vary; userinfo is forbidden.
-       *
-       * @minItems 1
-       */
-      credential_origins?: [string, ...string[]];
-      /**
-       * Evaluator-approved resolver endpoints for issuer_credential_id delivery. Presentations carry only resolver_id; they cannot replace url or authentication policy.
-       *
-       * @minItems 1
-       */
-      resolvers?: [
-        {
-          resolver_id: string;
-          /**
-           * Evaluator-configured HTTPS resolver endpoint. Calls use POST with Content-Type application/json and a body containing only credential_id; query-string and path interpolation are forbidden. The evaluator still applies the attestation fetch contract before every call.
-           */
-          url: string;
-          /**
-           * Whether the resolver is public or uses credentials managed outside AdCP task payloads. Presenter-supplied credentials are never accepted.
-           */
-          authentication: 'none' | 'evaluator_managed';
-        },
-        ...{
-          resolver_id: string;
-          /**
-           * Evaluator-configured HTTPS resolver endpoint. Calls use POST with Content-Type application/json and a body containing only credential_id; query-string and path interpolation are forbidden. The evaluator still applies the attestation fetch contract before every call.
-           */
-          url: string;
-          /**
-           * Whether the resolver is public or uses credentials managed outside AdCP task payloads. Presenter-supplied credentials are never accepted.
-           */
-          authentication: 'none' | 'evaluator_managed';
-        }[]
-      ];
-      ext?: ExtensionObject;
-    }[]
-  ];
-  /**
-   * Verifier agents the evaluator may call. A presenter's verify_agent nomination must match one of these canonicalized URLs, but the evaluator remains verifier-of-record and chooses whether to use the nominated agent, another accepted agent, or local verification.
-   *
-   * @minItems 1
-   */
-  accepted_verifiers?: [
-    {
-      agent_url: string;
-      /**
-       * @minItems 1
-       */
-      claim_types?: [string, ...string[]];
-      /**
-       * @minItems 1
-       */
-      proof_formats?: [string, ...string[]];
-      ext?: ExtensionObject;
-    },
-    ...{
-      agent_url: string;
-      /**
-       * @minItems 1
-       */
-      claim_types?: [string, ...string[]];
-      /**
-       * @minItems 1
-       */
-      proof_formats?: [string, ...string[]];
-      ext?: ExtensionObject;
-    }[]
-  ];
-  /**
-   * Maximum UTF-8 byte size accepted for one embedded credential. Evaluators MUST enforce this limit before parsing the credential. The protocol ceiling is 1 MiB.
-   */
-  max_embedded_credential_bytes?: number;
-  ext?: ExtensionObject;
-};
-/**
- * Required for sellers implementing AdCP 3.2 advertiser-account provisioning, but optional in the shared 3.x response schema for compatibility. Declares whether the account timezone is seller-wide or fixed per account and whether a buyer must select it during sync_accounts provisioning. Account timezone is the default for account-scoped calendar semantics; feature-specific capability fields explicitly declare exceptions.
- */
-export type AccountTimezoneCapability = {
-} & {
-  /**
-   * seller_fixed means every account uses fixed_timezone. account_fixed means each account has an immutable timezone returned on Account and selected or assigned during account establishment.
-   */
-  mode: 'seller_fixed' | 'account_fixed';
-  /**
-   * Seller-wide timezone used by every account. Required only for seller_fixed. Use UTC or an IANA timezone identifier.
-   */
-  fixed_timezone?: string;
-  /**
-   * How an account_fixed timezone is established. seller_assigned covers an existing upstream account or seller onboarding choice; buyer_selected requires timezone in buyer-declared sync_accounts provisioning.
-   */
-  account_selection?: 'seller_assigned' | 'buyer_selected';
-  /**
-   * Exact timezone values accepted during buyer-selected account provisioning. Required when account_selection is buyer_selected so buyers can validate the choice before sync_accounts.
-   *
-   * @minItems 1
-   */
-  supported_timezones?: [string, ...string[]];
-};
-/**
  * Format declaration on which this agent can perform the listed operations. Creative-agent capability self-description has no seller production authority, so tracker_execution_contract and tracker_execution_contract_digest are forbidden.
  */
 export type CreativeOperationFormatDeclaration = {
@@ -31243,16 +31312,18 @@ export type CreativeOperationFormatDeclaration = {
   format_option_id?: string;
   /**
    * Publisher namespace for format_option_id when this operation claims compatibility with a publisher declaration.
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
    */
   publisher_domain?: string;
   /**
    * Creative-route processing capabilities for exact macro dialect identities, semantics, operations, actors, contexts, and encodings. These capabilities describe build, validation, or preview processing and do not grant seller production authority.
-   *
-   * @minItems 1
    */
-  macro_resolution_capabilities?: [MacroProcessingCapability, ...MacroProcessingCapability[]];
+  macro_resolution_capabilities?: MacroProcessingCapability[];
   technical_requirements_complete?: boolean;
   display_name?: string;
+  /**
+   * @pattern ^https:\/\/
+   */
   sample_render_url?: string;
   applies_to_channels?: MediaChannel[];
   seller_preference?: 'preferred' | 'accepted' | 'discouraged';
@@ -31260,17 +31331,13 @@ export type CreativeOperationFormatDeclaration = {
   canonical_formats_only?: boolean;
   experimental?: boolean;
   format_shape?: string;
-  /**
-   * @minItems 1
-   */
-  v1_format_ref?: [FormatReferenceStructuredObject, ...FormatReferenceStructuredObject[]];
+  v1_format_ref?: FormatReferenceStructuredObject[];
   format_schema?: PlatformExtensionReference;
   format_kind: CanonicalFormatKind;
   /**
    * Canonical creative-shape parameters. Validate against the schema selected by format_kind; custom params validate against the fetched format_schema.
    */
-  params: {
-  };
+  params: {};
 };
 /**
  * Response payload for get_adcp_capabilities task. Protocol-level capability discovery across all AdCP protocols. Each protocol has its own capability section.
@@ -31344,6 +31411,28 @@ export interface GetAdCPCapabilitiesResponse {
      */
     idempotency: IdempotencySupported | IdempotencyUnsupported;
     /**
+     * Caller-scoped durable connection configuration accepted by this agent. This is the buyer-to-seller configuration half of negotiation, not a second seller capability document: the seller advertises objective support here, while each authenticated caller submits its desired webhooks and reusable destinations through sync_agent_configuration. Per-account authority and feed selection remain in account/reporting configuration. Sellers exposing this block MUST list protocol.agent_configuration in experimental_features.
+     */
+    agent_configuration?: {
+      supported: true;
+      sync_task: 'sync_agent_configuration';
+      /**
+       * Connection configuration sections this seller accepts. Unsupported sections are rejected rather than silently ignored.
+       */
+      supported_sections: ('notification_configs' | 'reporting_destinations')[];
+      /**
+       * Maximum caller-scoped destination bindings when reporting_destinations is supported. The task schema has a portable maximum of 64; sellers may advertise a lower operational limit.
+       * @minimum 1
+       * @maximum 64
+       * @format int
+       */
+      max_reporting_destinations?: number;
+      /**
+       * Whether expected_configuration_version is enforced. Sellers SHOULD support it when several services may authenticate as the same stable principal.
+       */
+      optimistic_concurrency: boolean;
+    };
+    /**
      * Freshness metadata and optional invalidation webhooks for this `get_adcp_capabilities` document. Buyers and registries MAY cache capabilities for up to `cache_ttl_seconds` when present, SHOULD compare `capabilities_version` across refreshes when present, and SHOULD re-run `get_adcp_capabilities` after receiving a `capabilities.changed` webhook. This block describes the agent-wide capability document, not per-caller authorization or account-scoped settings. A material capability change is any externally advertised contract change that can affect routing, validation, conformance coverage, task availability, auth/account handling, sandbox support, billing support, reporting delivery methods, creative-library support, targeting support, protocol versions, or other buyer-visible feature gates. Non-contract operational changes that do not alter the response body do not require a revision or webhook fire.
      */
     capability_changes?: {
@@ -31362,10 +31451,11 @@ export interface GetAdCPCapabilitiesResponse {
        * Maximum time a buyer or registry SHOULD reuse this capability response before refreshing when it has no fresher invalidation signal. Sellers that emit `capabilities.changed` webhooks SHOULD still set a bounded TTL so consumers can recover from missed notifications. This is a cache hint, not an authorization lifetime.
        * @minimum 60
        * @maximum 604800
+       * @format int
        */
       cache_ttl_seconds?: number;
       /**
-       * Whether the seller supports agent-level capability-change webhooks. When supported, interested consumers register endpoint subscribers with `sync_agent_notification_configs`; each `capabilities.changed` fire is a small invalidation payload, and consumers repair by re-reading `get_adcp_capabilities`.
+       * Whether the seller supports agent-level capability-change webhooks. When supported, interested consumers register endpoint subscribers with the declared registration_task; sync_agent_configuration is preferred when the broader connection surface is available, while sync_agent_notification_configs remains the specialized compatibility task. Each capabilities.changed fire is a small invalidation payload, and consumers repair by re-reading get_adcp_capabilities.
        */
       notifications?: CapabilityChangeNotificationsSupported | CapabilityChangeNotificationsUnsupported;
     };
@@ -31547,6 +31637,7 @@ export interface GetAdCPCapabilitiesResponse {
        * Optional maximum alternatives.count the seller accepts, up to the protocol maximum of 10. Valid only when supported_dimensions includes alternatives. Requests above this ceiling fail at task level with VALIDATION_ERROR identifying refinements[i].alternatives.count; sellers MUST NOT silently clamp the request or return alternatives_unavailable for the declared ceiling violation.
        * @minimum 2
        * @maximum 10
+       * @format int
        */
       max_alternatives?: number;
     };
@@ -31850,6 +31941,7 @@ export interface GetAdCPCapabilitiesResponse {
       /**
        * Minimum matched audience size required for targeting. Audiences below this threshold will have status: too_small. Varies by platform (100–1000 is typical).
        * @minimum 1
+       * @format int
        */
       minimum_audience_size: number;
       /**
@@ -31862,10 +31954,12 @@ export interface GetAdCPCapabilitiesResponse {
       matching_latency_hours?: {
         /**
          * @minimum 0
+         * @format int
          */
         min?: number;
         /**
          * @minimum 0
+         * @format int
          */
         max?: number;
       };
@@ -32073,6 +32167,7 @@ export interface GetAdCPCapabilitiesResponse {
      * Trailing window (in days) over which this governance agent aggregates committed spend when evaluating dollar-valued thresholds (reallocation_threshold, human_review triggers, registry-policy floors). Required for fragmentation defense: without aggregation, a buyer can split a single large spend into many sub-threshold commits across plans / task surfaces / time and bypass every dollar-gated escalation. Aggregation is keyed on (buyer_agent, seller_agent, account_id) and spans all spend-commit task types. Upper bound 365 represents a one-year trailing window (fiscal-year alignment with grace); governance agents needing longer scopes negotiate via operator sign-off, not this capability. No schema default: absence of this field indicates the governance agent has not committed to any aggregation window and buyers MUST assume per-commit evaluation only (the fragmentation attack surface is open). A declared value of 30 is a common starting point but is not implied by omission. Buyers depending on a specific window for compliance MUST check this capability before relying on aggregation semantics — an agent declaring 7 days does not defend against fragmentation spread across a 30-day quarter-end push.
      * @minimum 1
      * @maximum 365
+     * @format int
      */
     aggregation_window_days?: number;
     /**
@@ -32266,6 +32361,7 @@ export interface GetAdCPCapabilitiesResponse {
     /**
      * When supports_refinement is true, the GUARANTEED-MINIMUM window (a floor, not a ceiling) during which a produced build_variant_id remains refinable via refine_from_build_variant_id: a ref within this window from production SHOULD resolve; the agent MAY retain longer. Omit when the retention window is agent-defined and not advertised — buyers then treat refinability as best-effort and handle REFERENCE_NOT_FOUND.
      * @minimum 0
+     * @format int
      */
     refinable_retention_seconds?: number;
     /**
@@ -32279,6 +32375,7 @@ export interface GetAdCPCapabilitiesResponse {
       /**
        * Ceiling on max_creatives. Omitted means no advertised ceiling.
        * @minimum 1
+       * @format int
        */
       max_creatives_limit?: number;
       /**
@@ -32288,6 +32385,7 @@ export interface GetAdCPCapabilitiesResponse {
       /**
        * Ceiling on len(signal_conditions). Over-limit requests are CLAMPED (not rejected), like max_creatives_limit. Omitted means no advertised ceiling.
        * @minimum 1
+       * @format int
        */
       max_signal_conditions_limit?: number;
       /**
@@ -32297,6 +32395,7 @@ export interface GetAdCPCapabilitiesResponse {
       /**
        * Ceiling on max_variants. Omitted means no advertised ceiling.
        * @minimum 1
+       * @format int
        */
       max_variants_limit?: number;
       /**
@@ -32354,6 +32453,7 @@ export interface GetAdCPCapabilitiesResponse {
        * Maximum target locale variants accepted on one creative. Zero advertises source-only monolingual locale topology. Omit to inherit the protocol ceiling of 50.
        * @minimum 0
        * @maximum 50
+       * @format int
        */
       max_target_variants?: number;
       /**
@@ -32435,13 +32535,14 @@ export interface GetAdCPCapabilitiesResponse {
     algorithms?: ('ed25519' | 'ecdsa-p256-sha256')[];
     /**
      * @deprecated
-     * Whether this agent will fall back to HMAC-SHA256 on the legacy push_notification_config.authentication, accounts[].notification_configs[].authentication, or sync_agent_notification_configs.notification_configs[].authentication paths for receivers that have not adopted RFC 9421. Deprecated; removed in AdCP 4.0.
+     * Whether this agent will fall back to HMAC-SHA256 on the legacy push_notification_config.authentication, accounts[].notification_configs[].authentication, sync_agent_configuration.configuration.notification_configs[].authentication, or sync_agent_notification_configs.notification_configs[].authentication paths for receivers that have not adopted RFC 9421. Deprecated; removed in AdCP 4.0.
      */
     legacy_hmac_fallback?: boolean;
     /**
      * Maximum elapsed time from the first delivery attempt during which this agent may retry the same webhook delivery. The publisher retains the immutable delivery-key-to-RFC-8785-JCS-payload binding and sufficient delivery state for at least this interval, and MUST NOT retry that key afterward. Receivers retain the matching payload binding and terminal publication proof for at least max(86400, this value) seconds in AdCP 3.x. Retries do not extend the horizon. A webhook-emitting AdCP 3.2 agent MUST populate this additive field; it remains schema-optional so existing 3.x capability documents stay valid. Minimum 86400 (24h), maximum 604800 (7d).
      * @minimum 86400
      * @maximum 604800
+     * @format int
      */
     delivery_retry_horizon_seconds?: number;
   };
@@ -32648,12 +32749,14 @@ export interface IdempotencySupported {
    * How long the seller retains a canonical response for an idempotency_key. Within this window, a replay with the same key + equivalent canonical payload returns the cached response; a replay with a different canonical payload returns IDEMPOTENCY_CONFLICT; a replay past the window returns IDEMPOTENCY_EXPIRED when the seller can still distinguish 'seen and evicted' from 'never seen'. Minimum 3600 (1h); recommended 86400 (24h). Maximum 604800 (7 days) — longer windows force buyers to retain secret keys at rest for extended periods and grow the seller's cache table without bounded benefit.
    * @minimum 3600
    * @maximum 604800
+   * @format int
    */
   replay_ttl_seconds: number;
   /**
    * Maximum lifetime in seconds of an in-flight idempotency row before the seller releases it per L1/security.mdx rule 9 (treat the in-flight attempt as failed if the handler does not complete within this bound). Buyer SDKs use this value to compute a retry budget when they see `IDEMPOTENCY_IN_FLIGHT` — cap individual retry waits at this value rather than the much-wider `replay_ttl_seconds` ceiling. Optional in 3.1 (additive declaration); SDKs that don't see the field fall back to rule 9's order-of-magnitude SHOULD heuristic. Required when `supported: true` in 4.0. MUST be no greater than `replay_ttl_seconds` (a bound larger than the replay window is vacuous — any retry past the TTL hits IDEMPOTENCY_EXPIRED regardless of in-flight state); validators MUST enforce this cross-field constraint at the test layer since JSON Schema cannot express field-relative bounds. A buyer that observes top-level `error.retry_after` exceeding this value MAY treat that as a seller bug — the in-flight row cannot legitimately outlive the bound the seller declared.
    * @minimum 1
    * @maximum 604800
+   * @format int
    */
   in_flight_max_seconds?: number;
   /**
@@ -32672,13 +32775,13 @@ export interface IdempotencyUnsupported {
 }
 export interface CapabilityChangeNotificationsSupported {
   /**
-   * Discriminator. True means the seller accepts `sync_agent_notification_configs` for `capabilities.changed` subscriptions.
+   * Discriminator. True means the seller accepts the declared registration_task for capabilities.changed subscriptions.
    */
   supported: true;
   /**
    * Task consumers call to manage their caller-scoped agent-level subscriber set.
    */
-  registration_task: 'sync_agent_notification_configs';
+  registration_task: 'sync_agent_notification_configs' | 'sync_agent_configuration';
   /**
    * Agent-level notification types this seller can emit for capability changes. Currently only `capabilities.changed` is defined.
    */
@@ -32687,6 +32790,7 @@ export interface CapabilityChangeNotificationsSupported {
    * Maximum coalescence window the seller applies before firing a `capabilities.changed` webhook after a burst of related capability edits. The default recommendation is at most 300 seconds; latency-sensitive deactivations SHOULD fire sooner.
    * @minimum 0
    * @maximum 86400
+   * @format int
    */
   coalescence_window_seconds?: number;
 }
@@ -32700,75 +32804,141 @@ export interface CapabilityChangeNotificationsUnsupported {
  * Seller-wide advisory default for governance agents this enforcing service accepts as binding counterparties. A candidate satisfying any matcher is accepted by this declaration. The per-account sync_governance response is authoritative and may apply stricter account-specific criteria. Omission means accept any, preserving legacy behavior.
  */
 export interface AcceptedGovernanceAgents {
+  any_of: (
+    | {
+        kind: 'agent_url';
+        /**
+         * Exact canonical agent endpoint without userinfo, query, or fragment. Redirect targets, DNS aliases, and URLs asserted by the candidate do not satisfy this matcher.
+         * @maxLength 2048
+         * @pattern ^https:\/\/[^\/?#@]+(?:\/[^?#]*)?$
+         */
+        agent_url: string;
+      }
+    | {
+        kind: 'verification';
+        /**
+         * Seller-configured trusted verification registry without userinfo, query, or fragment. The candidate cannot supply or override this URL; fetches use the registry-resolution security contract.
+         * @maxLength 2048
+         * @pattern ^https:\/\/[^\/?#@]+(?:\/[^?#]*)?$
+         */
+        registry: string;
+        /**
+         * Role asserted by the trusted registry's verified record, never by candidate self-description.
+         * @pattern ^[a-z][a-z0-9_-]*$
+         */
+        role: string;
+        /**
+         * Registry protocol version in canonical MAJOR.MINOR form.
+         * @pattern ^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$
+         */
+        adcp_version: string;
+        verification_modes: ('spec' | 'live')[];
+        /**
+         * Maximum age of the registry evidence at binding time. Zero requires a fresh result. Evidence is pinned to the accepted binding; later registry drift does not silently revoke an existing binding.
+         * @minimum 0
+         * @format int
+         */
+        max_age_seconds: number;
+      }
+  )[];
+}
+/**
+ * Portable-attestation trust and delivery capabilities for this evaluator. Present only when the agent accepts AttestationReference inputs on one or more domain task surfaces. This block is an allowlist: presenters cannot expand accepted issuers, resolver endpoints, verifier agents, claim types, or proof formats by supplying values in a request.
+ */
+export interface AttestationCapabilities {
   /**
-   * @minItems 1
+   * Open claim identifiers the evaluator is prepared to evaluate. Each value is an absolute URI. Absence means the evaluator has not advertised portable-attestation support; an empty list is not permitted.
    */
-  any_of: [
-    (
-      | {
-          kind: 'agent_url';
-          /**
-           * Exact canonical agent endpoint without userinfo, query, or fragment. Redirect targets, DNS aliases, and URLs asserted by the candidate do not satisfy this matcher.
-           */
-          agent_url: string;
-        }
-      | {
-          kind: 'verification';
-          /**
-           * Seller-configured trusted verification registry without userinfo, query, or fragment. The candidate cannot supply or override this URL; fetches use the registry-resolution security contract.
-           */
-          registry: string;
-          /**
-           * Role asserted by the trusted registry's verified record, never by candidate self-description.
-           */
-          role: string;
-          /**
-           * Registry protocol version in canonical MAJOR.MINOR form.
-           */
-          adcp_version: string;
-          /**
-           * @minItems 1
-           */
-          verification_modes: ['spec' | 'live', ...('spec' | 'live')[]];
-          /**
-           * Maximum age of the registry evidence at binding time. Zero requires a fresh result. Evidence is pinned to the accepted binding; later registry drift does not silently revoke an existing binding.
-           */
-          max_age_seconds: number;
-        }
-    ),
-    ...(
-      | {
-          kind: 'agent_url';
-          /**
-           * Exact canonical agent endpoint without userinfo, query, or fragment. Redirect targets, DNS aliases, and URLs asserted by the candidate do not satisfy this matcher.
-           */
-          agent_url: string;
-        }
-      | {
-          kind: 'verification';
-          /**
-           * Seller-configured trusted verification registry without userinfo, query, or fragment. The candidate cannot supply or override this URL; fetches use the registry-resolution security contract.
-           */
-          registry: string;
-          /**
-           * Role asserted by the trusted registry's verified record, never by candidate self-description.
-           */
-          role: string;
-          /**
-           * Registry protocol version in canonical MAJOR.MINOR form.
-           */
-          adcp_version: string;
-          /**
-           * @minItems 1
-           */
-          verification_modes: ['spec' | 'live', ...('spec' | 'live')[]];
-          /**
-           * Maximum age of the registry evidence at binding time. Zero requires a fresh result. Evidence is pinned to the accepted binding; later registry drift does not silently revoke an existing binding.
-           */
-          max_age_seconds: number;
-        }
-    )[]
-  ];
+  accepted_claim_types: string[];
+  /**
+   * Open credential/proof format identifiers the evaluator can verify. Values are absolute URIs rather than a protocol enum so issuers can adopt new formats without AdCP endorsement.
+   */
+  accepted_proof_formats: string[];
+  /**
+   * Credential delivery paths this evaluator supports. credential_uri resolves an HTTPS credential URI from the presentation; issuer_credential_id combines issuer, credential_id, and an evaluator-published resolver_id; embedded accepts an inline credential.
+   */
+  supported_delivery_methods: ('credential_uri' | 'issuer_credential_id' | 'embedded')[];
+  /**
+   * Issuer allowlist and resolver policy. Matching is on the canonical AttestationIssuer identity. A presenter-supplied issuer or credential URI that does not match this policy is rejected without an outbound request.
+   */
+  accepted_issuers: {
+    issuer: AttestationIssuer;
+    /**
+     * Optional subset of accepted_claim_types this issuer may assert. Omit to allow any globally accepted claim type for this issuer.
+     */
+    claim_types?: string[];
+    /**
+     * Optional subset of accepted_proof_formats allowed for this issuer. Omit to allow any globally accepted proof format for this issuer.
+     */
+    proof_formats?: string[];
+    /**
+     * Canonical HTTPS origins from which credential_uri locators may be fetched for this issuer. Exact origin matching happens after URL canonicalization and before DNS resolution. Paths in the credential URI may vary; userinfo is forbidden.
+     */
+    credential_origins?: string[];
+    /**
+     * Evaluator-approved resolver endpoints for issuer_credential_id delivery. Presentations carry only resolver_id; they cannot replace url or authentication policy.
+     */
+    resolvers?: {
+      /**
+       * @minLength 1
+       * @maxLength 255
+       * @pattern ^[A-Za-z0-9._:-]+$
+       */
+      resolver_id: string;
+      /**
+       * Evaluator-configured HTTPS resolver endpoint. Calls use POST with Content-Type application/json and a body containing only credential_id; query-string and path interpolation are forbidden. The evaluator still applies the attestation fetch contract before every call.
+       * @pattern ^https:\/\/[^\/?#@]+(?:\/[^?#]*)?(?:\?[^#]*)?$
+       */
+      url: string;
+      /**
+       * Whether the resolver is public or uses credentials managed outside AdCP task payloads. Presenter-supplied credentials are never accepted.
+       */
+      authentication: 'none' | 'evaluator_managed';
+    }[];
+    ext?: ExtensionObject;
+  }[];
+  /**
+   * Verifier agents the evaluator may call. A presenter's verify_agent nomination must match one of these canonicalized URLs, but the evaluator remains verifier-of-record and chooses whether to use the nominated agent, another accepted agent, or local verification.
+   */
+  accepted_verifiers?: {
+    /**
+     * @pattern ^https:\/\/[^\/?#@]+(?:\/[^?#]*)?(?:\?[^#]*)?$
+     */
+    agent_url: string;
+    claim_types?: string[];
+    proof_formats?: string[];
+    ext?: ExtensionObject;
+  }[];
+  /**
+   * Maximum UTF-8 byte size accepted for one embedded credential. Evaluators MUST enforce this limit before parsing the credential. The protocol ceiling is 1 MiB.
+   * @minimum 1024
+   * @maximum 1048576
+   * @format int
+   */
+  max_embedded_credential_bytes?: number;
+  ext?: ExtensionObject;
+}
+/**
+ * Required for sellers implementing AdCP 3.2 advertiser-account provisioning, but optional in the shared 3.x response schema for compatibility. Declares whether the account timezone is seller-wide or fixed per account and whether a buyer must select it during sync_accounts provisioning. Account timezone is the default for account-scoped calendar semantics; feature-specific capability fields explicitly declare exceptions.
+ */
+export interface AccountTimezoneCapability {
+  /**
+   * seller_fixed means every account uses fixed_timezone. account_fixed means each account has an immutable timezone returned on Account and selected or assigned during account establishment.
+   */
+  mode: 'seller_fixed' | 'account_fixed';
+  /**
+   * Seller-wide timezone used by every account. Required only for seller_fixed. Use UTC or an IANA timezone identifier.
+   * @minLength 1
+   */
+  fixed_timezone?: string;
+  /**
+   * How an account_fixed timezone is established. seller_assigned covers an existing upstream account or seller onboarding choice; buyer_selected requires timezone in buyer-declared sync_accounts provisioning.
+   */
+  account_selection?: 'seller_assigned' | 'buyer_selected';
+  /**
+   * Exact timezone values accepted during buyer-selected account provisioning. Required when account_selection is buyer_selected so buyers can validate the choice before sync_accounts.
+   */
+  supported_timezones?: string[];
 }
 export interface AccountNotificationsSupported {
   /**
@@ -32806,6 +32976,7 @@ export interface AccountChangeFeedSupported {
   /**
    * Minimum number of days committed change records remain readable.
    * @minimum 90
+   * @format int
    */
   retention_days: number;
   /**
@@ -32848,22 +33019,26 @@ export interface ReportingDeliveryCapabilities {
   /**
    * Maximum late interval during which a due obligation may remain delayed while automated recovery continues before action_required.
    * @minimum 0
+   * @format int
    */
   automated_recovery_window_seconds: number;
   /**
    * Minimum period for which obligation, revision, and materialization metadata remain queryable.
    * @minimum 1
+   * @format int
    */
   status_retention_days: number;
   /**
    * Minimum period after publication for which at least one verified exact materialization remains readable to every still-authorized intended consumer.
    * @minimum 1
+   * @format int
    */
   resource_retention_days: number;
   supports_webhook_activity?: boolean;
   /**
    * Maximum delay after caller/account authorization ends before seller-controlled transport access, provider grants, and write credentials are revoked. It cannot revoke a buyer's access to data already written into a buyer-owned destination.
    * @minimum 0
+   * @format int
    */
   authorization_revocation_seconds: number;
 }
@@ -32877,7 +33052,27 @@ export interface ReportingDeliveryOffering {
    * @pattern ^[A-Za-z0-9_.:-]{1,128}$
    */
   offering_id: string;
+  /**
+   * Operational use of this independently scheduled offering. pacing commonly selects short-period snapshot revisions; billing requires official revisions and consumer reconciliation.
+   */
   feed_purpose: 'pacing' | 'analytics' | 'billing';
+  /**
+   * Immutable semantic definition for metric, grain, attribution, action-report-time, timezone/calendar, source/API mapping, and restatement/finality policy. Configurations and revisions MUST echo this exact value.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  report_definition_id: string;
+  /**
+   * Retrievable immutable reporting-report-definition.json document on the authenticated seller/provider or AdCP-registry origin.
+   * @pattern ^https:\/\/(?![^\/]*@)(?!localhost(?:[:\/]|$))(?!\[)(?!\d+(?:\.\d+){3}(?::|\/|$))(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:\/|$)
+   */
+  report_definition_uri: string;
+  /**
+   * Digest of the exact report-definition bytes. SDKs verify this before parsing and cache by digest.
+   * @pattern ^[A-Fa-f0-9]{64}$
+   */
+  report_definition_sha256: string;
   /**
    * Machine-readable semantic and validation contract for delivered rows.
    */
@@ -32924,13 +33119,23 @@ export interface ReportingDeliveryOffering {
      * @maxLength 128
      */
     canonicalization_id: string;
+    canonicalization_contract_version: '1.0';
+    canonicalization_media_type: 'application/vnd.adcp.reporting-canonicalization+json';
+    /**
+     * Retrievable exact canonicalization contract on the authenticated seller/provider or AdCP-registry origin. SDKs apply the same bounded, redirect-free SSRF controls as schema_uri and verify canonicalization_sha256 before use.
+     * @pattern ^https:\/\/(?![^\/]*@)(?!localhost(?:[:\/]|$))(?!\[)(?!\d+(?:\.\d+){3}(?::|\/|$))(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:\/|$)
+     */
+    canonicalization_uri: string;
     /**
      * Digest of the exact canonicalization contract identified by canonicalization_id.
      * @pattern ^[A-Fa-f0-9]{64}$
      */
     canonicalization_sha256: string;
   };
-  schedule: ReportingSchedule;
+  schedule: ReportingScheduleOffering;
+  /**
+   * Finality classes available under this exact report definition, schedule, and delivery method. snapshot is an explicit provisional capability, not inferred from poll frequency. Use separate atomic offerings when snapshot and official schedules or methods differ.
+   */
   supported_finality: ReportingFinality[];
   reconciliation_mode: ReportingReconciliationMode;
   method: {
@@ -32982,6 +33187,33 @@ export interface ReportingDeliveryOffering {
   };
 }
 /**
+ * Period and availability SLA this offering can honor. For example, PT1H with snapshot finality explicitly advertises hourly provisional snapshots; a separate P1D official offering advertises daily finalized reporting.
+ */
+export interface ReportingScheduleOffering {
+  /**
+   * @pattern ^P(?=.*[1-9])(?=\d|T)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$
+   */
+  period_duration: string;
+  alignment: 'utc' | 'account_timezone' | 'billing_cycle';
+  /**
+   * For billing_cycle only. fixed requires the advertised anchor and timezone; configurable lets each authorized account configuration select them.
+   */
+  period_anchor_policy?: 'fixed' | 'configurable';
+  /**
+   * @format date-time
+   */
+  period_anchor?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  period_timezone?: string;
+  /**
+   * @pattern ^P(?=\d|T)(?=.*\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$
+   */
+  delivery_sla: string;
+}
+/**
  * Declares exact country-to-place-type support plus catalog resolution and version metadata for one place identifier system. The country map avoids falsely implying a Cartesian product of countries and types.
  */
 export interface GeographicPlaceSystemSupport {
@@ -32989,10 +33221,7 @@ export interface GeographicPlaceSystemSupport {
    * Supported place types keyed by ISO 3166-1 alpha-2 country. Only explicitly listed country/type pairs are supported.
    */
   countries: {
-    /**
-     * @minItems 1
-     */
-    [k: string]: [GeographicPlaceType, ...GeographicPlaceType[]] | undefined;
+    [k: string]: GeographicPlaceType[] | undefined;
   };
   catalog: GeographicPlaceCatalogCapability;
 }
@@ -33153,11 +33382,13 @@ export interface GetTaskStatusResponse {
     /**
      * Total number of steps in the operation
      * @minimum 1
+     * @format int
      */
     total_steps?: number;
     /**
      * Current step number
      * @minimum 1
+     * @format int
      */
     step_number?: number;
   };
@@ -33356,11 +33587,13 @@ export interface ListTasksResponse {
     /**
      * Total number of tasks matching filters (across all pages)
      * @minimum 0
+     * @format int
      */
     total_matching?: number;
     /**
      * Number of tasks returned in this response
      * @minimum 0
+     * @format int
      */
     returned?: number;
     /**
@@ -33370,16 +33603,19 @@ export interface ListTasksResponse {
       /**
        * Number of media-buy tasks in results
        * @minimum 0
+       * @format int
        */
       'media-buy'?: number;
       /**
        * Number of signals tasks in results
        * @minimum 0
+       * @format int
        */
       signals?: number;
       /**
        * Number of creative tasks in results
        * @minimum 0
+       * @format int
        */
       creative?: number;
     };
@@ -33389,6 +33625,7 @@ export interface ListTasksResponse {
     status_breakdown?: {
       /**
        * @minimum 0
+       * @format int
        */
       [k: string]: number | undefined;
     };
@@ -33583,6 +33820,389 @@ export interface SyncAgentNotificationConfigsResponse {
   ext?: ExtensionObject;
 }
 
+// sync_agent_configuration parameters
+/**
+ * Reusable, non-secret reporting destination owned by the authenticated caller's relationship with one seller. It does not grant account authority: account/reporting configuration separately binds authorized data to the seller-issued destination_ref. Sellers key ownership to the stable transport principal, never a signing key, token, or request-body identity. Credentials, private keys, bearer profiles, signed URLs, and embedded passwords are forbidden. Sellers implementing this schema advertise protocol.agent_configuration.
+ */
+export type AgentReportingDestination = {
+  pattern: 'file_transfer' | 'warehouse_materialization' | 'dataset_share';
+  /**
+   * Caller-selected stable key, unique within this seller relationship. Reusing it replaces desired configuration.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  destination_id: string;
+  /**
+   * Whether new account-level delivery configurations may use this destination. False does not delete caller-owned data.
+   */
+  active: boolean;
+  provider: DeliveryProvider;
+  /**
+   * Open provider transport name, such as s3, bigquery, delta_sharing, or snowflake_secure_sharing.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z][a-z0-9_.-]*$
+   */
+  transport: string;
+  /**
+   * Provider-native bucket/prefix, project/dataset, database/schema, catalog/schema, or equivalent locator. Never a credential or signed URL.
+   * @minLength 1
+   * @maxLength 2048
+   * @pattern ^(?![A-Za-z][A-Za-z0-9+.-]*:\/\/[^\/\s]*@)(?!.*\?)[^\r\n]+$
+   */
+  location?: string;
+  /**
+   * Physical formats accepted by a file-transfer destination.
+   */
+  accepted_formats?: ('jsonl' | 'csv' | 'parquet' | 'avro' | 'orc')[];
+  /**
+   * Dataset-share access family, such as databricks_to_databricks, open_sharing, or secure_data_sharing.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z][a-z0-9_.-]*$
+   */
+  access_mode?: string;
+  recipient?: DeliveryRecipient;
+  accepted_verification_profiles: ReportingVerificationProfileSet;
+} & (FileTransferDestination | WarehouseMaterializationDestination | DatasetShareRecipient);
+/**
+ * Verification profiles the destination can accept. native_commit requires provider-native transaction/version evidence plus counts and control totals; manifest_checksums requires a committed file manifest with cryptographic checksums; canonical_digest requires recomputation of the canonical logical-content digest. A reporting feed selects one profile from this allowed set according to the seller offering and the feed's strictness requirements.
+ */
+export type ReportingVerificationProfileSet = ('native_commit' | 'manifest_checksums' | 'canonical_digest')[];
+
+/**
+ * Declaratively synchronize selected sections of the authenticated caller's durable connection with one AdCP agent. Identity is resolved from authenticated transport and MUST NOT be accepted from request-body agent URLs, signing key IDs, account IDs, or other self-asserted fields. Each present section is the caller's complete desired set and replaces only that section; omitted sections remain unchanged. All submitted sections apply atomically or none do. This task configures reusable connection resources but grants no advertiser-account authority. Sellers implementing it MUST advertise adcp.agent_configuration and protocol.agent_configuration.
+ */
+export interface SyncAgentConfigurationRequest {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * Client-generated key for at-most-once execution. Retries MUST reuse the same key with the same body.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
+   */
+  idempotency_key: string;
+  /**
+   * Optional optimistic-concurrency fence returned by a previous successful sync. When present and stale, the seller rejects the whole request without mutation. Compare only for equality.
+   * @minLength 1
+   * @maxLength 255
+   */
+  expected_configuration_version?: string;
+  /**
+   * Sections to replace atomically. At least one section is required. A present array is complete desired state for that section; [] clears it; omission leaves it unchanged.
+   */
+  configuration: {
+    /**
+     * Complete desired agent-level subscriber set. The same caller-scoping, proof-of-control, secret handling, and replacement rules as sync_agent_notification_configs apply.
+     */
+    notification_configs?: AgentNotificationConfig[];
+    /**
+     * Complete desired reusable reporting destination set. [] deactivates/removes the caller's connection-level bindings for new use; it does not delete caller-owned data already delivered. destination_id values MUST be unique.
+     */
+    reporting_destinations?: AgentReportingDestination[];
+  };
+  /**
+   * Validate the proposed replacements and report the would-be action without persisting them, issuing durable identifiers or grants, or sending endpoint proof challenges.
+   */
+  dry_run?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Provider namespace for an external delivery or data-sharing service. This identifies a platform; it is not a credential, trust root, or authorization statement.
+ */
+export interface DeliveryProvider {
+  /**
+   * Lowercase dotted provider domain, such as a provider's operating domain. Single-label and localhost-style names are invalid.
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$
+   */
+  domain: string;
+}
+/**
+ * Provider-interpreted recipient identity for a seller-hosted share. Examples include a sharing identifier or organization/account pair. The value is an identifier, never a credential.
+ */
+export interface DeliveryRecipient {
+  /**
+   * @minLength 1
+   * @maxLength 512
+   */
+  identity: string;
+  cloud?: 'aws' | 'azure' | 'gcp';
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  region?: string;
+}
+export interface FileTransferDestination {
+  pattern: 'file_transfer';
+  /**
+   * Caller-selected stable key, unique within this seller relationship. Reusing it replaces desired configuration.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  destination_id: string;
+  /**
+   * Whether new account-level delivery configurations may use this destination. False does not delete caller-owned data.
+   */
+  active: boolean;
+  provider: DeliveryProvider;
+  /**
+   * Open provider transport name, such as s3, bigquery, delta_sharing, or snowflake_secure_sharing.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z][a-z0-9_.-]*$
+   */
+  transport: string;
+  /**
+   * Provider-native bucket/prefix, project/dataset, database/schema, catalog/schema, or equivalent locator. Never a credential or signed URL.
+   * @minLength 1
+   * @maxLength 2048
+   * @pattern ^(?![A-Za-z][A-Za-z0-9+.-]*:\/\/[^\/\s]*@)(?!.*\?)[^\r\n]+$
+   */
+  location: string;
+  /**
+   * Physical formats accepted by a file-transfer destination.
+   */
+  accepted_formats: ('jsonl' | 'csv' | 'parquet' | 'avro' | 'orc')[];
+  accepted_verification_profiles: ReportingVerificationProfileSet;
+}
+export interface WarehouseMaterializationDestination {
+  pattern: 'warehouse_materialization';
+  /**
+   * Caller-selected stable key, unique within this seller relationship. Reusing it replaces desired configuration.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  destination_id: string;
+  /**
+   * Whether new account-level delivery configurations may use this destination. False does not delete caller-owned data.
+   */
+  active: boolean;
+  provider: DeliveryProvider;
+  /**
+   * Open provider transport name, such as s3, bigquery, delta_sharing, or snowflake_secure_sharing.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z][a-z0-9_.-]*$
+   */
+  transport: string;
+  /**
+   * Provider-native bucket/prefix, project/dataset, database/schema, catalog/schema, or equivalent locator. Never a credential or signed URL.
+   * @minLength 1
+   * @maxLength 2048
+   * @pattern ^(?![A-Za-z][A-Za-z0-9+.-]*:\/\/[^\/\s]*@)(?!.*\?)[^\r\n]+$
+   */
+  location: string;
+  accepted_verification_profiles: ReportingVerificationProfileSet;
+}
+export interface DatasetShareRecipient {
+  pattern: 'dataset_share';
+  /**
+   * Caller-selected stable key, unique within this seller relationship. Reusing it replaces desired configuration.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  destination_id: string;
+  /**
+   * Whether new account-level delivery configurations may use this destination. False does not delete caller-owned data.
+   */
+  active: boolean;
+  provider: DeliveryProvider;
+  /**
+   * Open provider transport name, such as s3, bigquery, delta_sharing, or snowflake_secure_sharing.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z][a-z0-9_.-]*$
+   */
+  transport: string;
+  /**
+   * Dataset-share access family, such as databricks_to_databricks, open_sharing, or secure_data_sharing.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z][a-z0-9_.-]*$
+   */
+  access_mode: string;
+  recipient: DeliveryRecipient;
+  accepted_verification_profiles: ReportingVerificationProfileSet;
+}
+
+// sync_agent_configuration response
+/**
+ * Result of synchronizing selected caller-scoped agent connection sections. Applied responses return the complete current credential-free configuration. Validated dry-run responses report the would-be action without issuing durable identifiers. Failed responses deliberately cannot carry connection identifiers, versions, or configuration state.
+ */
+export interface SyncAgentConfigurationResponse {
+  /**
+   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   */
+  context_id?: string;
+  context?: ContextObject;
+  /**
+   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
+   */
+  task_id?: string;
+  status: TaskStatus;
+  /**
+   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
+   */
+  message?: string;
+  /**
+   * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
+   */
+  timestamp?: string;
+  /**
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   */
+  replayed?: boolean;
+  adcp_error?: Error;
+  push_notification_config?: PushNotificationConfig;
+  /**
+   * Opaque authorization context issued only by an approved check_governance decision. Buyers attach it to governed requests across protocol roles (media buys, rights acquisitions, signal activations, creative services); receiving services persist it and forward it on subsequent execution and lifecycle checks. The context is the authoritative plan binding at service boundaries, so a service MUST NOT require a separate plan_id.
+   *
+   * Governance agents MUST emit a compact JWS per the AdCP JWS profile. Verifiers validate standard authorization claims such as signature, issuer, audience, expiry, and replay protection, but intermediaries MUST NOT interpret embedded governance state for business logic. A conditions or denied verdict never carries an authorization context.
+   *
+   * This is the primary correlation key for audit and reporting across the governance lifecycle.
+   */
+  governance_context?: string;
+  /**
+   * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
+   */
+  payload?: {};
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  result: AppliedAgentConfiguration | ValidatedAgentConfigurationDryRun | FailedAgentConfiguration;
+  ext?: ExtensionObject;
+}
+export interface AppliedAgentConfiguration {
+  kind: 'applied';
+  /**
+   * Persisted outcome for the submitted sections.
+   */
+  action: 'updated' | 'unchanged' | 'cleared';
+  dry_run: false;
+  /**
+   * Seller-issued opaque identifier for this authenticated caller relationship. It is response-only, not a credential, not caller identity, and not advertiser-account authority.
+   * @minLength 1
+   * @maxLength 255
+   */
+  connection_id: string;
+  /**
+   * Opaque version of the persisted configuration. Compare only for equality and return it as expected_configuration_version on a later guarded replacement.
+   * @minLength 1
+   * @maxLength 255
+   */
+  configuration_version: string;
+  configuration: AgentConfigurationState;
+  warnings?: Error[];
+}
+/**
+ * Complete caller-scoped connection configuration visible after sync. Secrets are never returned. The seller keys this state by its own agent identity and the stable authenticated caller principal.
+ */
+export interface AgentConfigurationState {
+  /**
+   * Current agent-level webhook subscribers. authentication.credentials is always omitted because it is write-only.
+   */
+  notification_configs: AgentNotificationConfigState[];
+  /**
+   * Current reusable reporting destination bindings and setup states. destination_id and destination_ref values MUST each be unique within this caller-scoped array.
+   */
+  reporting_destinations: AgentReportingDestinationState[];
+}
+/**
+ * Credential-free readback of one caller-scoped agent-level webhook subscription. The optional legacy authentication selector identifies the scheme only; write-only credentials can never appear.
+ */
+export interface AgentNotificationConfigState {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  subscriber_id: string;
+  url: string;
+  event_types: 'capabilities.changed'[];
+  /**
+   * @deprecated
+   */
+  authentication?: {
+    schemes: AuthenticationScheme[];
+  };
+  active?: boolean;
+  ext?: ExtensionObject;
+}
+/**
+ * Seller readback for one caller-scoped reusable reporting destination. destination_ref is an opaque routing reference, not a credential or authorization grant. Account-level reporting configuration may use it only while the same authenticated principal remains authorized for that account.
+ */
+export interface AgentReportingDestinationState {
+  /**
+   * Caller-selected key echoed from the desired configuration.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  destination_id: string;
+  /**
+   * Seller-issued opaque reference bound to the stable authenticated principal and destination_id. Possession does not authorize access, and sellers MUST NOT resolve it across callers.
+   * @minLength 1
+   * @maxLength 255
+   */
+  destination_ref: string;
+  /**
+   * Validation and setup state. Only ready destinations may be selected by a new account-level delivery configuration.
+   */
+  state: 'validating' | 'ready' | 'action_required' | 'inactive' | 'rejected';
+  configuration: AgentReportingDestination;
+  /**
+   * Closed, non-secret setup instruction. Human-readable messages are deliberately excluded; agents dispatch only the typed action and treat setup_url as an untrusted navigation target.
+   */
+  setup?: {
+    action: 'grant_access' | 'accept_share' | 'prove_control' | 'contact_support';
+    /**
+     * HTTPS page for completing provider-native setup. It MUST NOT carry a credential or signed query string and MUST be rendered as an untrusted link, never executed as agent instructions.
+     * @pattern ^https:\/\/(?![^\/\s]*@)(?!.*\?)[^\r\n]+$
+     */
+    setup_url?: string;
+    /**
+     * Optional expiry of this setup action. A new sync obtains a fresh action after expiry.
+     * @format date-time
+     */
+    expires_at?: string;
+  };
+  /**
+   * Structured validation or setup issues. Messages and details are untrusted display data and MUST NOT be executed as instructions.
+   */
+  issues?: Error[];
+}
+export interface ValidatedAgentConfigurationDryRun {
+  kind: 'validated';
+  action: 'would_update' | 'would_be_unchanged' | 'would_clear';
+  dry_run: true;
+  warnings?: Error[];
+}
+export interface FailedAgentConfiguration {
+  kind: 'failed';
+  errors: Error[];
+}
+
+
 // list_account_changes parameters
 /**
  * Read a durable, ordered feed of material changes to AdCP-visible state for one account. Use a latest checkpoint before snapshot bootstrap, then drain from that cursor to close the bootstrap race.
@@ -33598,6 +34218,7 @@ export interface ListAccountChangesRequest {
    * Deprecated major-only version pin retained through 3.x.
    * @minimum 1
    * @maximum 99
+   * @format int
    */
   adcp_major_version?: number;
   account: AccountReference;
@@ -33619,6 +34240,7 @@ export interface ListAccountChangesRequest {
    * Maximum changes to return. Sellers still scan through nonmatching records and advance the returned cursor.
    * @minimum 1
    * @maximum 100
+   * @format int
    */
   max_results?: number;
   context?: ContextObject;
@@ -33731,6 +34353,7 @@ export type ListAccountChangesResponse = {
      * Maximum age of last_successful_sync_at at generated_at for this connected source to self-classify as current. Required by the protocol contract whenever a connected source reports current.
      * @minimum 1
      * @maximum 2592000
+     * @format int
      */
     stale_after_seconds?: number;
     resource_types: string[];
@@ -33795,6 +34418,7 @@ export type ListAccountChangesResponse = {
          * Maximum age of last_successful_sync_at at generated_at for this connected source to self-classify as current. Required by the protocol contract whenever a connected source reports current.
          * @minimum 1
          * @maximum 2592000
+         * @format int
          */
         stale_after_seconds?: number;
         resource_types: string[];
@@ -33861,6 +34485,7 @@ export type ListAccountChangesResponse = {
          * Maximum age of last_successful_sync_at at generated_at for this connected source to self-classify as current. Required by the protocol contract whenever a connected source reports current.
          * @minimum 1
          * @maximum 2592000
+         * @format int
          */
         stale_after_seconds?: number;
         resource_types: string[];
@@ -34018,6 +34643,7 @@ export interface ListAccountsRequest {
    * Maximum number of webhook_activity[] records to return per account when include_webhook_activity is true.
    * @minimum 1
    * @maximum 200
+   * @format int
    */
   webhook_activity_limit?: number;
   context?: ContextObject;
@@ -34130,13 +34756,13 @@ export interface AccountAuthorization {
  */
 export type ReportingDeliveryMethod = FileTransfer | DatasetShare | WarehouseMaterialization;
 /**
- * Storage or warehouse destination for durable reporting. The caller either references an existing seller-issued binding or asks the seller to validate and bind a provider-native location. The seller verifies authenticated-caller authority for the account/feed/scope and destination control before readiness. A destination_ref is bound to that caller/account and cannot be probed or reused across scopes. Access grants name advertised producer identities; credentials never transit AdCP.
+ * Storage or warehouse destination for durable reporting. The caller either references an existing seller-issued immutable destination generation or asks the seller to validate and bind a provider-native location. A destination_ref is owned by the stable authenticated principal's relationship with this seller and may be reused across accounts; each account delivery configuration separately authorizes its feed and scope. Changing proof-bound coordinates or the accepted delivery contract produces a new destination_ref. Access grants name advertised producer identities; credentials never transit AdCP.
  */
 export type ReportingWriteDestination = ExistingBinding | ProvisionBinding;
 /**
- * Recipient configuration for a producer-hosted reporting share. The caller either references an existing seller-issued binding or asks the seller to provision one for the named recipient. The seller verifies authenticated-caller authority to disclose the selected account/feed/scope and proves recipient control before readiness. A destination_ref is bound to that caller/account and cannot be probed or reused across scopes. No bearer profile, token, private key, password, or other credential may appear here.
+ * Recipient configuration for a producer-hosted reporting share. The caller either references an existing seller-issued immutable recipient/destination generation or asks the seller to provision one for the named recipient. A destination_ref is owned by the stable authenticated principal's relationship with this seller and may be reused across accounts; each account delivery configuration separately authorizes disclosure of its feed and scope. Changing proof-bound recipient coordinates or the accepted delivery contract produces a new destination_ref. No bearer profile, token, private key, password, or other credential may appear here.
  */
-export type ReportingDatasetShareDestination = ExistingBinding | ProvisionRecipient;
+export type ReportingDatasetShareDestination = ExistingBinding1 | ProvisionRecipient;
 /**
  * Sync advertiser account state with a seller. Two modes, distinguished by the key on each per-account entry:
  *
@@ -34209,7 +34835,7 @@ export interface ProvisioningMode {
   sandbox?: boolean;
   preferred_reporting_protocol?: CloudStorageProtocol;
   /**
-   * Caller-owned desired state for durable reporting delivery on this account. Declarative replacement is scoped to (authenticated caller, resolved account): omission leaves that caller's set unchanged; [] deactivates that caller's set and starts grant revocation; another caller's entries MUST NOT be read, replaced, or deleted. Entries are keyed by immutable (delivery_config_id, delivery_config_version); duplicate tuples MUST reject the entire account entry, and reusing a tuple with changed content MUST be rejected. destination.mode provision asks the seller to verify caller disclosure authority and destination/recipient control from non-secret provider coordinates; destination.mode existing reuses a caller/account-bound seller-issued destination_ref. Unknown, unauthorized, cross-account, and cross-caller refs MUST be indistinguishable. Credentials never transit AdCP, including nested extension fields. Permitted in both provisioning and settings-update modes. Sellers accepting this field MUST advertise media_buy.reporting_delivery in experimental_features and echo resolved secret-free state on sync_accounts and list_accounts.
+   * Caller-owned desired state for durable reporting delivery on this account. Declarative replacement is scoped to (authenticated caller, resolved account): omission leaves that caller's set unchanged; [] deactivates that caller's set and starts grant revocation; another caller's entries MUST NOT be read, replaced, or deleted. Entries are keyed by immutable (delivery_config_id, delivery_config_version); duplicate tuples MUST reject the entire account entry, and reusing a tuple with changed content MUST be rejected. Each generation binds the exact report_definition_id advertised by its offering. destination.mode provision asks the seller to verify caller disclosure authority and destination/recipient control from non-secret provider coordinates; destination.mode existing reuses a caller-scoped immutable destination-generation reference, including one registered through sync_agent_configuration. The account configuration independently authorizes disclosure for this feed and scope, so possession of a reusable reference is never account authority. Unknown, unauthorized, and cross-caller refs MUST be indistinguishable. Credentials never transit AdCP, including nested extension fields. Permitted in both provisioning and settings-update modes. Sellers accepting this field MUST advertise media_buy.reporting_delivery in experimental_features and echo resolved secret-free state on sync_accounts and list_accounts.
    */
   reporting_delivery_configs?: ReportingDeliveryConfiguration[];
   /**
@@ -34222,7 +34848,7 @@ export interface ProvisioningMode {
   notification_configs?: NotificationConfig[];
 }
 /**
- * Desired durable reporting delivery for one account. Entries are owned by (authenticated caller, account) and keyed by (delivery_config_id, delivery_config_version). The generation's feed, profile, scope, finality, schedule, method, and destination are immutable; only lifecycle intent (`active` and `revocation_effective_at`) may change without a new generation. Sellers reject a reused version with different immutable content. sync_accounts replacement semantics apply only to the calling principal's set. Omission leaves that set unchanged; [] deactivates that caller's set and stops new publication without affecting another caller. Sellers implementing this schema MUST advertise media_buy.reporting_delivery in experimental_features.
+ * Desired durable reporting delivery for one account. Entries are owned by (authenticated caller, account) and keyed by (delivery_config_id, delivery_config_version). The generation's feed, report definition, profile, scope, coverage requirement, finality, schedule, method, and immutable destination generation are fixed; only lifecycle intent (`active` and `revocation_effective_at`) may change without a new generation. Sellers reject a reused version with different immutable content. sync_accounts replacement semantics apply only to the calling principal's set. Omission leaves that set unchanged; [] deactivates that caller's set and stops new publication without affecting another caller. Sellers implementing this schema MUST advertise media_buy.reporting_delivery in experimental_features.
  */
 export interface ReportingDeliveryConfiguration {
   /**
@@ -34235,6 +34861,7 @@ export interface ReportingDeliveryConfiguration {
   /**
    * Caller-selected immutable semantic generation. Increment when feed/profile/scope/finality/schedule/method/destination changes; lifecycle fields may change in place.
    * @minimum 1
+   * @format int
    */
   delivery_config_version: number;
   /**
@@ -34253,6 +34880,13 @@ export interface ReportingDeliveryConfiguration {
    */
   feed_purpose: 'pacing' | 'analytics' | 'billing';
   /**
+   * Exact immutable semantic definition selected from the offering. This makes the expected obligation identity independently derivable and prevents attribution, timezone, source-mapping, or restatement-policy drift behind a profile label.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  report_definition_id: string;
+  /**
    * Versioned semantic profile for the aggregate report, such as media_buy_delivery_v1. It MUST match the selected offering.
    * @minLength 1
    * @maxLength 128
@@ -34266,6 +34900,10 @@ export interface ReportingDeliveryConfiguration {
     all_media_buys?: true;
     media_buy_ids?: string[];
   };
+  /**
+   * Whether every package in the resolved media-buy scope must support the exact selected offering. full fails closed when any package is unsupported or unknown. allow_partial permits publication only for the explicitly covered package denominator; every revision and status response still exposes partial coverage and MUST NOT present covered-subset totals as whole-buy totals.
+   */
+  coverage_requirement: 'full' | 'allow_partial';
   required_finality: ReportingFinality;
   reconciliation_mode: ReportingReconciliationMode;
   schedule: ReportingSchedule;
@@ -34279,7 +34917,7 @@ export interface ReportingDeliveryConfiguration {
 export interface ExistingBinding {
   mode: 'existing';
   /**
-   * Seller-issued reference returned by an earlier sync or bilateral setup.
+   * Seller-issued immutable destination-generation reference returned by sync_agent_configuration, an earlier sync, or bilateral setup.
    * @minLength 1
    * @maxLength 255
    */
@@ -34327,6 +34965,15 @@ export interface DatasetShare {
    */
   orchestration: 'producer_managed' | 'consumer_managed';
   destination: ReportingDatasetShareDestination;
+}
+export interface ExistingBinding1 {
+  mode: 'existing';
+  /**
+   * Seller-issued immutable recipient/destination-generation reference returned by sync_agent_configuration, an earlier sync, or bilateral setup.
+   * @minLength 1
+   * @maxLength 255
+   */
+  destination_ref: string;
 }
 export interface ProvisionRecipient {
   mode: 'provision';
@@ -34389,6 +35036,7 @@ export interface SettingsUpdateMode {
   /**
    * Expected current account revision for optimistic concurrency in settings-update mode. Required whenever operator_identity is present; optional for existing non-identity settings updates. The seller MUST compare it atomically with the write, reject a mismatch with CONFLICT, and leave the account unchanged. Obtain it from list_accounts or the most recent sync_accounts result. Reads, dry runs, validation failures, and exact idempotency replays do not increment revision; every persisted settings or identity-change state transition does. MUST be absent in provisioning mode.
    * @minimum 1
+   * @format int
    */
   revision?: number;
   operator_identity?: OperatorIdentity;
@@ -34401,7 +35049,7 @@ export interface SettingsUpdateMode {
   sandbox?: boolean;
   preferred_reporting_protocol?: CloudStorageProtocol;
   /**
-   * Caller-owned desired state for durable reporting delivery on this account. Declarative replacement is scoped to (authenticated caller, resolved account): omission leaves that caller's set unchanged; [] deactivates that caller's set and starts grant revocation; another caller's entries MUST NOT be read, replaced, or deleted. Entries are keyed by immutable (delivery_config_id, delivery_config_version); duplicate tuples MUST reject the entire account entry, and reusing a tuple with changed content MUST be rejected. destination.mode provision asks the seller to verify caller disclosure authority and destination/recipient control from non-secret provider coordinates; destination.mode existing reuses a caller/account-bound seller-issued destination_ref. Unknown, unauthorized, cross-account, and cross-caller refs MUST be indistinguishable. Credentials never transit AdCP, including nested extension fields. Permitted in both provisioning and settings-update modes. Sellers accepting this field MUST advertise media_buy.reporting_delivery in experimental_features and echo resolved secret-free state on sync_accounts and list_accounts.
+   * Caller-owned desired state for durable reporting delivery on this account. Declarative replacement is scoped to (authenticated caller, resolved account): omission leaves that caller's set unchanged; [] deactivates that caller's set and starts grant revocation; another caller's entries MUST NOT be read, replaced, or deleted. Entries are keyed by immutable (delivery_config_id, delivery_config_version); duplicate tuples MUST reject the entire account entry, and reusing a tuple with changed content MUST be rejected. Each generation binds the exact report_definition_id advertised by its offering. destination.mode provision asks the seller to verify caller disclosure authority and destination/recipient control from non-secret provider coordinates; destination.mode existing reuses a caller-scoped immutable destination-generation reference, including one registered through sync_agent_configuration. The account configuration independently authorizes disclosure for this feed and scope, so possession of a reusable reference is never account authority. Unknown, unauthorized, and cross-caller refs MUST be indistinguishable. Credentials never transit AdCP, including nested extension fields. Permitted in both provisioning and settings-update modes. Sellers accepting this field MUST advertise media_buy.reporting_delivery in experimental_features and echo resolved secret-free state on sync_accounts and list_accounts.
    */
   reporting_delivery_configs?: ReportingDeliveryConfiguration[];
   /**
@@ -34472,507 +35120,14 @@ export type AccountIdentityChangePreview =
   | AccountIdentityChangeBlocked;
 /**
  * Account areas the seller evaluated for continuity or reauthorization. Non-blocked outcomes cannot carry a blocked effect.
- *
- * @minItems 1
- * @maxItems 16
  */
-export type NonblockingImpacts =
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ];
+export type NonblockingImpacts = (Impact & {
+  effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
+})[];
 /**
  * Account areas evaluated for a blocked change. At least one impact identifies the blocking area.
- *
- * @minItems 1
- * @maxItems 16
  */
-export type BlockedImpacts =
-  | [Impact]
-  | [Impact, Impact]
-  | [Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact]
-  | [
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact
-    ]
-  | [
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact
-    ];
+export type BlockedImpacts = Impact[];
 /**
  * Sync operation processed accounts (individual accounts may be pending or have action=failed)
  */
@@ -34998,6 +35153,7 @@ export interface SyncAccountsSuccess {
     /**
      * Current account revision after this operation. Incremented by each persisted settings change, identity-change request, or identity-change disposition; not incremented by dry runs, validation failures, or exact idempotency replays. Pass this value in the next settings-update entry to prevent lost updates.
      * @minimum 1
+     * @format int
      */
     revision?: number;
     identity_change?: AccountIdentityChange;
@@ -35098,6 +35254,10 @@ export interface AccountIdentityChangeWouldApply {
 export interface Impact {
   area: 'account_id' | 'media_buys' | 'reporting' | 'approval' | 'billing' | 'grants' | 'other';
   effect: 'preserved' | 'revalidation_required' | 'revoke_and_regrant' | 'blocked';
+  /**
+   * @minLength 1
+   * @maxLength 1000
+   */
   reason?: string;
 }
 export interface AccountIdentityChangeWouldRequireApproval {
@@ -35109,10 +35269,7 @@ export interface AccountIdentityChangeBlocked {
   outcome: 'blocked';
   requested_operator_identity: OperatorIdentity;
   impacts: BlockedImpacts;
-  /**
-   * @minItems 1
-   */
-  blockers: [string, ...string[]];
+  blockers: string[];
 }
 /**
  * Seller-resolved state for one caller/account-owned immutable reporting delivery configuration generation. It echoes the secret-free desired configuration and adds the durable binding and setup result. The seller MUST verify that the authenticated caller may disclose the selected feeds and media-buy scope to the recipient before readiness. A setup URL is an authenticated UI/API entry point, not a bearer credential: agents MUST NOT auto-fetch it, preview it, or treat its content as instructions; it MUST use HTTPS, have no userinfo, token, or signed credential, and use an origin controlled by the seller or named provider.
@@ -35121,7 +35278,7 @@ export interface ReportingDeliveryConfigurationState {
   configuration: ReportingDeliveryConfiguration;
   state: 'pending_validation' | 'pending_setup' | 'ready' | 'action_required' | 'inactive';
   /**
-   * Seller-issued stable binding. Present once the destination or recipient has been resolved; callers can use it with destination.mode existing on later syncs.
+   * Seller-issued immutable destination-generation reference. It is caller-scoped and reusable across separately authorized account configurations; it is not itself account authority or a bearer grant.
    * @minLength 1
    * @maxLength 255
    */
@@ -35139,7 +35296,7 @@ export interface ReportingDeliveryConfigurationState {
    */
   deactivated_at?: string;
   /**
-   * Applied cutoff after which the seller starts no new obligations or publications for this generation.
+   * Applied schedule boundary at or after deactivation. No obligation whose period starts at or after this cutoff is created; earlier obligations remain owed through their SLA and recovery lifecycle.
    * @format date-time
    */
   publication_stopped_at?: string;
@@ -35148,6 +35305,7 @@ export interface ReportingDeliveryConfigurationState {
    * @format date-time
    */
   seller_managed_access_ends_at?: string;
+  current_coverage?: ReportingCoverage;
   /**
    * Secret-free next step when provider-side authorization or recipient activation cannot be completed automatically.
    */
@@ -35382,6 +35540,7 @@ export interface ReportUsageRequest {
     /**
      * Impressions delivered using this vendor service.
      * @minimum 0
+     * @format int
      */
     impressions?: number;
     /**
@@ -35500,6 +35659,7 @@ export interface ReportUsageResponse {
   /**
    * Number of usage records successfully stored.
    * @minimum 0
+   * @format int
    */
   accepted: number;
   /**
@@ -35611,6 +35771,7 @@ export interface GetAccountFinancialsSuccess {
     /**
      * Number of active media buys in the period
      * @minimum 0
+     * @format int
      */
     media_buy_count?: number;
   };
@@ -36318,16 +36479,19 @@ export interface ComplyTestControllerRequest {
     /**
      * Impressions to simulate. Used by simulate_delivery.
      * @minimum 0
+     * @format int
      */
     impressions?: number;
     /**
      * Clicks to simulate. Used by simulate_delivery.
      * @minimum 0
+     * @format int
      */
     clicks?: number;
     /**
      * Conversions to simulate. Used by simulate_delivery.
      * @minimum 0
+     * @format int
      */
     conversions?: number;
     /**
@@ -36468,6 +36632,7 @@ export interface ComplyTestControllerRequest {
     /**
      * Deterministic age of the stale cache entry used by force_upstream_unavailable. When supplied, the seller MUST emit this exact value in the matching STALE_RESPONSE error.details.cache_age_seconds on the next affected response. This lets the conformance runner bind the advisory code and its required detail fields to the same errors[] entry without assuming array order.
      * @minimum 0
+     * @format int
      */
     cache_age_seconds?: number;
     result?: ComplianceTaskCompletionData;
@@ -36484,6 +36649,7 @@ export interface ComplyTestControllerRequest {
      * Maximum number of calls to return. The response carries `total_count` and `truncated` so the runner can detect overflow.
      * @minimum 1
      * @maximum 1000
+     * @format int
      */
     limit?: number;
     /**
@@ -36701,6 +36867,7 @@ export interface UpstreamTrafficSuccess {
   /**
    * Total calls in the requested window before any pagination — `recorded_calls.length` may be smaller when `params.limit` truncated the response.
    * @minimum 0
+   * @format int
    */
   total_count: number;
   /**
@@ -36759,6 +36926,7 @@ export interface RawAttestation {
   /**
    * Byte length of the post-redaction body bytes represented by this recorded_call. Required in both `raw` and `digest` modes — symmetric across modes so runners can detect adopter-side truncation regardless of attestation choice. In `raw` mode this MUST equal the UTF-8 byte length of the emitted `payload` value after the same recursive secret-key redaction the controller applied before returning it. In `digest` mode this MUST equal the exact number of bytes fed into SHA-256 for `payload_digest_sha256`: RFC 8785 (JCS) canonical bytes for JSON-shaped content after redaction, or the post-redaction raw body bytes for non-JSON content. Digest-mode `payload_length` is therefore NOT the original outbound body length before JSON parsing, redaction, or canonicalization. Mismatch between observed payload length and reported `payload_length` is a controller-side bug worth surfacing in the report.
    * @minimum 0
+   * @format int
    */
   payload_length: number;
   /**
@@ -36770,6 +36938,7 @@ export interface RawAttestation {
    * HTTP status code returned by the upstream. Optional — adopters MAY omit when the call was instrumented before the response arrived.
    * @minimum 100
    * @maximum 599
+   * @format int
    */
   status_code?: number;
 }
@@ -36817,6 +36986,7 @@ export interface DigestAttestation {
   /**
    * Byte length of the post-redaction body bytes represented by this recorded_call. Required in both `raw` and `digest` modes — symmetric across modes so runners can detect adopter-side truncation regardless of attestation choice. In `raw` mode this MUST equal the UTF-8 byte length of the emitted `payload` value after the same recursive secret-key redaction the controller applied before returning it. In `digest` mode this MUST equal the exact number of bytes fed into SHA-256 for `payload_digest_sha256`: RFC 8785 (JCS) canonical bytes for JSON-shaped content after redaction, or the post-redaction raw body bytes for non-JSON content. Digest-mode `payload_length` is therefore NOT the original outbound body length before JSON parsing, redaction, or canonicalization. Mismatch between observed payload length and reported `payload_length` is a controller-side bug worth surfacing in the report.
    * @minimum 0
+   * @format int
    */
   payload_length: number;
   /**
@@ -36842,6 +37012,7 @@ export interface DigestAttestation {
    * HTTP status code returned by the upstream. Optional — adopters MAY omit when the call was instrumented before the response arrived.
    * @minimum 100
    * @maximum 599
+   * @format int
    */
   status_code?: number;
 }

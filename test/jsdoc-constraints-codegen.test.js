@@ -4,7 +4,7 @@
  * JSON Schema → TypeScript → Zod codegen hop. Fixes adcp-client#1745.
  *
  * - Unit slice (via tsx harness): exercises `injectJsdocConstraints` on a
- *   synthetic schema covering all six supported tag kinds plus a nested
+ *   synthetic schema covering all supported tag kinds plus a nested
  *   object, then runs the actual `json-schema-to-typescript` + `ts-to-zod`
  *   pipeline on the result to confirm the chain end-to-end.
  *
@@ -74,7 +74,7 @@ const { injectJsdocConstraints } = require(${JSON.stringify(path.resolve(REPO_RO
 }
 
 describe('injectJsdocConstraints — synthetic end-to-end', () => {
-  it('injects all six supported constraint kinds plus walks into nested objects', () => {
+  it('injects supported constraint kinds plus walks into nested objects', () => {
     const schema = {
       title: 'Fixture',
       type: 'object',
@@ -105,16 +105,35 @@ describe('injectJsdocConstraints — synthetic end-to-end', () => {
     assert.match(ts, /@minLength 1/);
     assert.match(ts, /@maxLength 50/);
     assert.match(ts, /@format date-time/);
+    assert.match(ts, /@format int/);
     assert.match(ts, /@minimum 5/, 'nested inner minimum lost — recursion broken');
     assert.match(ts, /@maximum 10/, 'nested inner maximum lost — recursion broken');
 
     // Zod renders them as validators
-    assert.match(zod, /revision: z\.number\(\)\.min\(1\)/);
+    assert.match(zod, /revision: z\.int\(\)\.min\(1\)/);
     assert.match(zod, /score: z\.number\(\)\.min\(0\)\.max\(100\)/);
     assert.match(zod, /slug: z\.string\(\)\.regex\(\/\^\[a-z0-9_\]\+\$\//);
     assert.match(zod, /short: z\.string\(\)\.min\(1\)\.max\(50\)/);
     assert.match(zod, /created_at: z\.iso\.datetime\(\)/);
-    assert.match(zod, /inner: z\.number\(\)\.min\(5\)\.max\(10\)/);
+    assert.match(zod, /inner: z\.int\(\)\.min\(5\)\.max\(10\)/);
+  });
+
+  it('emits a safe integer check for nullable numbers without attaching it to a heterogeneous union', () => {
+    const schema = {
+      title: 'Fixture',
+      type: 'object',
+      properties: {
+        nullable_count: { type: ['integer', 'null'] },
+        revision_or_label: { type: ['integer', 'string'] },
+      },
+    };
+    const { ts, zod, errors } = runCodegenPipeline(schema);
+    assert.deepEqual(errors, []);
+    assert.match(ts, /@format int[\s\S]*nullable_count/);
+    assert.equal((ts.match(/@format int/g) ?? []).length, 1);
+    assert.match(zod, /nullable_count: z\.int\(\)\.optional\(\)\.nullable\(\)/);
+    assert.match(zod, /revision_or_label: z\.union\(\[z\.number\(\), z\.string\(\)\]\)\.optional\(\)/);
+    assert.doesNotMatch(zod, /z\.union\([^\n]+\.int\(\)/);
   });
 
   it('skips unsupported format values (Ajv enforces them at runtime)', () => {
@@ -227,9 +246,43 @@ describe('generated Zod schemas — constraint pinning', () => {
   let MediaBuySchema;
   let BrandReferenceSchema;
   let BusinessEntitySchema;
+  let PropertyIDSchema;
+  let SignalRefSchema;
+  let PaginationRequestSchema;
+  let DeliveryForecastSchema;
+  let PlacementReferenceSchema;
+  let LimitedSeriesSchema;
+  let DeadlinePolicySchema;
+  let CollectionReferenceSchema;
+  let AccountChangeSchema;
+  let ForecastPointSchema;
+  let BrandIDSchema;
+  let CreativeRevisionIDSchema;
+  let PropertyTagSchema;
+  let VendorMetricIDSchema;
+  let LanguageTagSchema;
 
   try {
-    ({ MediaBuySchema, BrandReferenceSchema, BusinessEntitySchema } = require('../dist/lib/types/schemas.generated'));
+    ({
+      MediaBuySchema,
+      BrandReferenceSchema,
+      BusinessEntitySchema,
+      PropertyIDSchema,
+      SignalRefSchema,
+      PaginationRequestSchema,
+      DeliveryForecastSchema,
+      PlacementReferenceSchema,
+      LimitedSeriesSchema,
+      DeadlinePolicySchema,
+      CollectionReferenceSchema,
+      AccountChangeSchema,
+      ForecastPointSchema,
+      BrandIDSchema,
+      CreativeRevisionIDSchema,
+      PropertyTagSchema,
+      VendorMetricIDSchema,
+      LanguageTagSchema,
+    } = require('../dist/lib/types/schemas.generated'));
   } catch (e) {
     // Build hasn't run yet — skip the pinning slice rather than fail the unit slice.
     console.warn(`⏭️  Skipping pinning tests — dist not built: ${e.message}`);
@@ -270,6 +323,138 @@ describe('generated Zod schemas — constraint pinning', () => {
       assert.strictEqual(r.success, false, 'lowercase country should fail pattern');
     }
   );
+
+  it('preserves canonical property, signal, and publisher-domain patterns', { skip: !PropertyIDSchema }, () => {
+    assert.equal(PropertyIDSchema.safeParse('homepage_slot').success, true);
+    assert.equal(PropertyIDSchema.safeParse('publisher.example').success, false);
+    assert.equal(PropertyIDSchema.safeParse('bad value!').success, false);
+
+    assert.equal(SignalRefSchema.safeParse({ scope: 'product', signal_id: 'sports_fans-1' }).success, true);
+    assert.equal(SignalRefSchema.safeParse({ scope: 'product', signal_id: '<script>' }).success, false);
+    assert.equal(
+      SignalRefSchema.safeParse({
+        scope: 'data_provider',
+        data_provider_domain: 'data.example',
+        signal_id: 'segment_1',
+      }).success,
+      true
+    );
+    assert.equal(
+      SignalRefSchema.safeParse({
+        scope: 'data_provider',
+        data_provider_domain: 'NOT A DOMAIN',
+        signal_id: 'segment_1',
+      }).success,
+      false
+    );
+    assert.equal(
+      SignalRefSchema.safeParse({
+        scope: 'signal_source',
+        signal_source_url: 'http://[v1.fe80::a+en1]/',
+        signal_id: 'segment_1',
+      }).success,
+      true
+    );
+    assert.equal(
+      SignalRefSchema.safeParse({
+        scope: 'signal_source',
+        signal_source_url: 'https://example.com/%zz',
+        signal_id: 'segment_1',
+      }).success,
+      false
+    );
+    assert.equal(
+      SignalRefSchema.safeParse({
+        scope: 'signal_source',
+        signal_source_url: 'http://signals.example/\\evil',
+        signal_id: 'segment_1',
+      }).success,
+      false
+    );
+    assert.equal(PlacementReferenceSchema.shape.publisher_domain.unwrap().safeParse('news.example').success, true);
+    assert.equal(
+      PlacementReferenceSchema.shape.publisher_domain.unwrap().safeParse('https://news.example').success,
+      false
+    );
+  });
+
+  it('preserves pagination integer bounds without materializing defaults', { skip: !PaginationRequestSchema }, () => {
+    for (const value of [-1, 0, 1.5, 101, 1000]) {
+      assert.equal(PaginationRequestSchema.safeParse({ max_results: value }).success, false, String(value));
+    }
+    for (const value of [1, 100]) {
+      assert.equal(PaginationRequestSchema.safeParse({ max_results: value }).success, true, String(value));
+    }
+    assert.deepEqual(PaginationRequestSchema.parse({}), {});
+  });
+
+  it('preserves delivery forecast date-time and slug constraints', { skip: !DeliveryForecastSchema }, () => {
+    const shape = DeliveryForecastSchema.shape;
+    assert.equal(shape.generated_at.unwrap().safeParse('2026-08-24T00:16:57.123456Z').success, true);
+    assert.equal(shape.generated_at.unwrap().safeParse('2026-08-24 00:16:57.123456').success, false);
+    assert.equal(shape.generated_at.unwrap().safeParse('2026-02-31T00:00:00Z').success, false);
+    assert.equal(shape.measurement_source.unwrap().safeParse('nielsen_panel').success, true);
+    assert.equal(shape.measurement_source.unwrap().safeParse('Nielsen Panel!').success, false);
+  });
+
+  it(
+    'reconciles canonical constraints lost through transitive first-definition ownership',
+    {
+      skip: !LimitedSeriesSchema,
+    },
+    () => {
+      assert.equal(LimitedSeriesSchema.safeParse({ total_installments: 1 }).success, true);
+      assert.equal(LimitedSeriesSchema.safeParse({ total_installments: 0 }).success, false);
+      assert.equal(LimitedSeriesSchema.safeParse({ total_installments: 1.5 }).success, false);
+      assert.equal(LimitedSeriesSchema.safeParse({ total_installments: 1, starts: 'not-a-date' }).success, false);
+
+      assert.equal(DeadlinePolicySchema.safeParse({ booking_lead_days: -1 }).success, false);
+      assert.equal(DeadlinePolicySchema.safeParse({ cancellation_lead_days: 1.5 }).success, false);
+      assert.equal(
+        DeadlinePolicySchema.safeParse({ material_stages: [{ stage: 'draft', lead_days: -1 }] }).success,
+        false
+      );
+
+      assert.equal(
+        CollectionReferenceSchema.safeParse({ publisher_domain: 'NOT A DOMAIN', collection_id: 'collection' }).success,
+        false
+      );
+      assert.equal(
+        CollectionReferenceSchema.safeParse({ publisher_domain: 'publisher.example', collection_id: '' }).success,
+        false
+      );
+      assert.equal(AccountChangeSchema.shape.resource_revision.unwrap().safeParse(1.5).success, false);
+      assert.equal(AccountChangeSchema.shape.resource_revision.unwrap().safeParse(2).success, true);
+      assert.equal(AccountChangeSchema.shape.resource_revision.unwrap().safeParse('revision-two').success, true);
+    }
+  );
+
+  it('keeps the canonical forecast point constraints on direct and nested use', { skip: !ForecastPointSchema }, () => {
+    assert.equal(ForecastPointSchema.safeParse({ metrics: {}, budget: 0 }).success, true);
+    assert.equal(ForecastPointSchema.safeParse({ metrics: {}, budget: -1 }).success, false);
+    assert.equal(ForecastPointSchema.safeParse({ metrics: {}, label: 'x'.repeat(128) }).success, true);
+    assert.equal(ForecastPointSchema.safeParse({ metrics: {}, label: 'x'.repeat(129) }).success, false);
+    assert.equal(
+      DeliveryForecastSchema.safeParse({
+        points: [{ metrics: {}, budget: -1 }],
+        method: 'modeled',
+        currency: 'USD',
+      }).success,
+      false,
+      'DeliveryForecast must use the canonical constrained ForecastPoint schema'
+    );
+  });
+
+  it('reconciles constraints on canonical primitive root schemas', { skip: !BrandIDSchema }, () => {
+    assert.equal(BrandIDSchema.safeParse('valid_brand').success, true);
+    assert.equal(BrandIDSchema.safeParse('NOT_VALID').success, false);
+    assert.equal(CreativeRevisionIDSchema.safeParse('').success, false);
+    assert.equal(CreativeRevisionIDSchema.safeParse('x'.repeat(256)).success, false);
+    assert.equal(PropertyTagSchema.safeParse('bad tag').success, false);
+    assert.equal(VendorMetricIDSchema.safeParse('1 BAD').success, false);
+    assert.equal(LanguageTagSchema.safeParse('en-US').success, true);
+    assert.equal(LanguageTagSchema.safeParse('not a locale').success, false);
+  });
 });
 
 describe('@deprecated JSDoc — codegen regression lock (adcp-client#1915)', () => {

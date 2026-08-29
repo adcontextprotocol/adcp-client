@@ -124,11 +124,15 @@ const PRIORITY_CANONICAL_SCHEMAS = [
   // transitive $ref.
   'core/brand-ref.json',
   'core/business-entity.json',
+  'core/property-id.json',
+  'core/signal-ref.json',
+  'core/pagination-request.json',
+  'core/forecast-point.json',
+  'core/delivery-forecast.json',
   'core/platform-extension-ref.json',
   'core/delivery-metrics.json',
   'core/measurement-terms.json',
   'core/publisher-property-selector.json',
-  'core/forecast-point.json',
   'core/targeting-overlay-support.json',
   'core/targeting-overlay-requirements.json',
   'core/canonical-format-option.json',
@@ -3283,6 +3287,8 @@ const JSTS_UNDER_RESOLUTION_ALIASES: Array<{ numbered: string; base: string }> =
   { numbered: 'Responsive2', base: 'Responsive' },
   { numbered: 'None1', base: 'None' },
   { numbered: 'None2', base: 'None' },
+  { numbered: 'DeliveryForecast1', base: 'DeliveryForecast' },
+  { numbered: 'DeliveryForecast2', base: 'DeliveryForecast' },
   { numbered: 'TaskType1', base: 'TaskType' },
 ];
 

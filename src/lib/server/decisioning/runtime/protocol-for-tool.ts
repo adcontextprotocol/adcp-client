@@ -84,6 +84,7 @@ export const TOOL_PROTOCOL_MAP: Readonly<Record<string, AdcpProtocol>> = {
   accept_proposal: 'media-buy',
   control_media_buy: 'media-buy',
   sync_agent_notification_configs: 'media-buy',
+  sync_agent_configuration: 'media-buy',
   create_media_buy: 'media-buy',
   update_media_buy: 'media-buy',
   media_buy_delivery: 'media-buy',
