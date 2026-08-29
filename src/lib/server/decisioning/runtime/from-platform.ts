@@ -7024,7 +7024,7 @@ function buildEventTrackingHandlers<P extends DecisioningPlatform<any, any>>(
     handlers.logEvent = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => sales.logEvent!(params, reqCtx),
+        () => sales.logEvent!(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     };
