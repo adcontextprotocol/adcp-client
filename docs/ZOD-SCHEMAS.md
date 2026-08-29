@@ -133,6 +133,20 @@ This single command:
 
 See `VALIDATION_WORKFLOW.md` for CI integration details.
 
+### JSON Schema parity
+
+Generated Zod validators preserve protocol-authored string length bounds,
+patterns and supported formats, numeric minimum/maximum bounds, and integer checks. JSON Schema
+`default` values remain documentation-only: parsing `{ pagination: {} }` does
+not insert `max_results: 50`, so validation never mutates an adopter's payload.
+
+Array cardinality is not guaranteed to match every source schema. The
+TypeScript generation hop deliberately removes some `minItems` and `maxItems`
+constraints to avoid tuple explosions and preserve compatibility, while direct
+schema projections can retain them. Use the protocol JSON Schema returned by
+`getToolInputSchema()` or the framework's strict request validation when exact
+array cardinality matters.
+
 ## Error Handling
 
 ```typescript

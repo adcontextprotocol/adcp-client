@@ -5933,6 +5933,7 @@ export interface GetProductsResponse {
     /**
      * Number of products the seller considered before applying `filters`. Baseline for interpreting per-filter exclusion counts. Approximate — sellers MAY return a sampled or capped count when their candidate pool is large. Optional; sellers whose baseline candidate set size is sensitive (revealing market posture or competitive density) MAY omit this while still emitting `excluded_by`.
      * @minimum 0
+     * @format int
      */
     total_candidates?: number;
     /**
@@ -5944,6 +5945,7 @@ export interface GetProductsResponse {
             /**
              * Number of products excluded by this filter, interpreted per the parent `semantics` field.
              * @minimum 0
+             * @format int
              */
             count: number;
             /**
@@ -9228,6 +9230,7 @@ export interface ListProductsRequest {
   /**
    * @minimum 1
    * @maximum 100
+   * @format int
    */
   max_results?: number;
   /**
@@ -11286,6 +11289,7 @@ export interface ControlMediaBuyRequest {
   /**
    * Required optimistic-concurrency revision from the latest MediaBuy snapshot.
    * @minimum 1
+   * @format int
    */
   revision: number;
   /**
@@ -11364,6 +11368,7 @@ export interface ControlApplied {
   media_buy_id: string;
   /**
    * @minimum 1
+   * @format int
    */
   revision: number;
   media_buy_status?: MediaBuyStatus;
@@ -11433,18 +11438,22 @@ export interface ListCreativeFormatsRequest {
   asset_types?: AssetContentType[];
   /**
    * Maximum width in pixels (inclusive). Returns formats where ANY render has width <= this value. For multi-render formats, matches if at least one render fits.
+   * @format int
    */
   max_width?: number;
   /**
    * Maximum height in pixels (inclusive). Returns formats where ANY render has height <= this value. For multi-render formats, matches if at least one render fits.
+   * @format int
    */
   max_height?: number;
   /**
    * Minimum width in pixels (inclusive). Returns formats where ANY render has width >= this value.
+   * @format int
    */
   min_width?: number;
   /**
    * Minimum height in pixels (inclusive). Returns formats where ANY render has height >= this value.
+   * @format int
    */
   min_height?: number;
   /**
@@ -15113,6 +15122,7 @@ export interface CreateMediaBuySuccess {
   /**
    * Initial revision number for this media buy. Use in subsequent update_media_buy requests intended to change state for optimistic concurrency.
    * @minimum 1
+   * @format int
    */
   revision?: number;
   /**
@@ -15649,6 +15659,7 @@ export interface UpdateMediaBuyRequest {
   /**
    * Expected current revision for optimistic concurrency. Optional for backward compatibility. When provided, sellers MUST reject the update with CONFLICT if the media buy's current revision does not match, and MUST enforce that comparison atomically with the write. Obtain from get_media_buys or the most recent create/update response.
    * @minimum 1
+   * @format int
    */
   revision?: number;
   /**
@@ -15794,6 +15805,7 @@ export interface UpdateMediaBuySuccess {
   /**
    * Revision number after this update. Use this value in subsequent update_media_buy requests intended to change state for optimistic concurrency. Exact idempotency replays return the prior revision and do not increment revision.
    * @minimum 1
+   * @format int
    */
   revision?: number;
   /**
@@ -15925,6 +15937,7 @@ export interface GetMediaBuysRequest {
    * When present, include the last N revision history entries for each media buy (returns min(N, available entries)). Each entry contains revision number, timestamp, actor, and a summary of what changed. Omit or set to 0 to exclude history (default). Recommended: 5-10 for monitoring, 50+ for audit.
    * @minimum 0
    * @maximum 1000
+   * @format int
    */
   include_history?: number;
   /**
@@ -15935,6 +15948,7 @@ export interface GetMediaBuysRequest {
    * Maximum number of webhook delivery records to return per media buy, ordered most-recent first. Ignored when `include_webhook_activity` is false. Sellers that surface webhook activity MUST retain records for at least 30 days from each record's `completed_at` (see `webhook_activity` description in the response schema for the `pending`-status carve-out); sellers unable to honor that floor MUST omit the field entirely rather than truncate. When a buy has more historical fires than the limit, only the most recent are returned — there is no cursor for older fires; this surface is a debug aid, not a full audit log.
    * @minimum 1
    * @maximum 200
+   * @format int
    */
   webhook_activity_limit?: number;
   pagination?: PaginationRequest;
@@ -16127,6 +16141,7 @@ export interface GetMediaBuysResponseMediaBuy {
   /**
    * Current optimistic concurrency token. Pass this in update_media_buy requests intended to change state. Sellers increment it on mutating state changes/updates and reject stale tokens with CONFLICT when a revision token is provided.
    * @minimum 1
+   * @format int
    */
   revision?: number;
   /**
@@ -16160,6 +16175,7 @@ export interface GetMediaBuysResponseMediaBuy {
     /**
      * Revision number after this change was applied.
      * @minimum 1
+     * @format int
      */
     revision: number;
     /**
@@ -16418,6 +16434,7 @@ export interface PackageStatus {
     /**
      * Maximum age of this data in seconds. For example, 900 means the data may be up to 15 minutes old. Use this to interpret zero delivery: a value of 900 means zero impressions is likely real; a value of 14400 means reporting may still be catching up.
      * @minimum 0
+     * @format int
      */
     staleness_seconds: number;
     /**
@@ -16565,6 +16582,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of catalog_item entries to return. When omitted, the seller returns its automatic default set.
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -16577,6 +16595,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of creative entries to return. When omitted, the seller returns its automatic default set.
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -16589,6 +16608,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of keyword entries to return. When omitted, the seller returns its automatic default set.
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -16611,6 +16631,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of geo entries to return. Defaults to 25. When truncated, by_geo_truncated is true in the response.
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -16623,6 +16644,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of entries to return. When omitted, all entries are returned (the enum is small and bounded).
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -16635,6 +16657,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of entries to return. When omitted, all entries are returned (the enum is small and bounded).
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -16647,6 +16670,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of format rows to return. When omitted, all rows are returned because the canonical format-kind vocabulary is small and bounded.
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -16659,6 +16683,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of entries to return. Defaults to 25.
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -16675,6 +16700,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of demographic entries to return. Defaults to 25.
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -16687,6 +16713,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Optional maximum number of spot rows to return. When the response is incomplete because of this limit or a seller-imposed maximum, by_spot_truncated is true.
        * @minimum 1
+       * @format int
        */
       limit?: number;
     };
@@ -16697,6 +16724,7 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of entries to return. Defaults to 25.
        * @minimum 1
+       * @format int
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -17019,11 +17047,13 @@ export interface GetMediaBuyDeliveryResponse {
   /**
    * Number of media buys with reporting_delayed or failed status (only present in webhook deliveries when partial_data is true)
    * @minimum 0
+   * @format int
    */
   unavailable_count?: number;
   /**
    * Sequential notification number (only present in webhook deliveries, starts at 1)
    * @minimum 1
+   * @format int
    */
   sequence_number?: number;
   /**
@@ -17135,6 +17165,7 @@ export interface GetMediaBuyDeliveryResponse {
     /**
      * Number of media buys included in the response
      * @minimum 0
+     * @format int
      */
     media_buy_count: number;
     /**
@@ -18450,11 +18481,13 @@ export interface LogEventSuccess {
   /**
    * Number of events received
    * @minimum 0
+   * @format int
    */
   events_received: number;
   /**
    * Number of events successfully queued for processing
    * @minimum 0
+   * @format int
    */
   events_processed: number;
   /**
@@ -18717,16 +18750,19 @@ export interface SyncAudiencesSuccess {
     /**
      * Number of members submitted in this sync operation (delta, not cumulative). In discovery-only calls (no audiences array), this is 0.
      * @minimum 0
+     * @format int
      */
     uploaded_count?: number;
     /**
      * Cumulative number of members uploaded across all syncs for this audience. Compare with matched_count to calculate match rate (matched_count / total_uploaded_count). Populated when the seller tracks cumulative upload counts.
      * @minimum 0
+     * @format int
      */
     total_uploaded_count?: number;
     /**
      * Total members matched to platform users across all syncs (cumulative, not just this call). Populated when status is 'ready'.
      * @minimum 0
+     * @format int
      */
     matched_count?: number;
     /**
@@ -18743,11 +18779,13 @@ export interface SyncAudiencesSuccess {
       /**
        * Cumulative number of members submitted with this identifier type across all syncs (matches total_uploaded_count semantics, not uploaded_count). Compare with matched to calculate per-type match rate.
        * @minimum 0
+       * @format int
        */
       submitted: number;
       /**
        * Cumulative number of members matched via this identifier type across all syncs.
        * @minimum 0
+       * @format int
        */
       matched: number;
       /**
@@ -18791,6 +18829,7 @@ export interface SyncAudiencesSuccess {
     /**
      * Minimum matched audience size required for targeting on this platform. Populated when status is 'too_small'. Helps agents know how many more members are needed.
      * @minimum 1
+     * @format int
      */
     minimum_size?: number;
     /**
@@ -19143,21 +19182,25 @@ export interface SyncCatalogsSuccess {
     /**
      * Total number of items in the catalog after sync. Required when action is 'created', 'updated', or 'unchanged'. Omitted on 'failed' and 'deleted'.
      * @minimum 0
+     * @format int
      */
     item_count?: number;
     /**
      * Number of items approved by the platform. Populated when the platform performs item-level review.
      * @minimum 0
+     * @format int
      */
     items_approved?: number;
     /**
      * Number of items pending platform review. Common for product catalogs where items must pass content policy checks.
      * @minimum 0
+     * @format int
      */
     items_pending?: number;
     /**
      * Number of items rejected by the platform. Check item_issues for rejection reasons.
      * @minimum 0
+     * @format int
      */
     items_rejected?: number;
     /**
@@ -19350,6 +19393,7 @@ export type BuildCreativeRequest = {
     /**
      * Caps how many DISTINCT creatives to produce along the catalog/item fan-out axis — one creative per catalog item. Use it to sample a large catalog (e.g. send 150 job openings, set max_creatives: 5 to preview five). Distinct from item_limit, which caps how many catalog items a SINGLE creative consumes (DCO-style). Omitted with a catalog input means one creative per item up to the catalog/format bound; omitted without a catalog collapses to a single creative. Large fan-outs may return asynchronously. Mutually exclusive with `refine_from_build_variant_id` (refinement targets one prior creative, not a catalog fan-out). Supported only when the agent advertises `creative.multiplicity.supports_catalog_fanout`; values above `max_creatives_limit` are clamped. Pair with `max_spend` to bound the bill of a large fan-out.
      * @minimum 1
+     * @format int
      */
     max_creatives?: number;
     /**
@@ -19364,6 +19408,7 @@ export type BuildCreativeRequest = {
     /**
      * Caps how many ALTERNATIVES to produce per creative (different voices, themes, best-of-N, etc.). Default 1 preserves single-output behavior. Each variant is a real, independently-billed build (you pay for all produced); the buyer keeps one or many. When variant_axis.values[] is provided, its length is authoritative over max_variants. Resolutions/quality tiers are NOT variants — request them as additional target formats.
      * @minimum 1
+     * @format int
      */
     max_variants?: number;
     /**
@@ -19399,6 +19444,7 @@ export type BuildCreativeRequest = {
     /**
      * Maximum number of catalog items a SINGLE creative consumes when generating (DCO-style — e.g. how many items fill one carousel/feed creative). When a catalog asset contains more items than this limit, the creative agent selects the top items based on relevance or catalog ordering. When item_limit exceeds the format's max_items, the creative agent SHOULD use the lesser of the two. Ignored when the manifest contains no catalog assets. Distinct from `max_creatives`, which fans OUT across catalog items to produce one distinct creative per item.
      * @minimum 1
+     * @format int
      */
     item_limit?: number;
     /**
@@ -20419,6 +20465,7 @@ export interface BuildCreativeVariantSuccess {
       /**
        * Agent's ranking of this variant (1 = best) when it scored alternatives (best-of-N). Advisory.
        * @minimum 1
+       * @format int
        */
       rank?: number;
       /**
@@ -20432,11 +20479,13 @@ export interface BuildCreativeVariantSuccess {
         /**
          * Number of leaves this leaf was scored against (the best-of-N N). Lets the buyer interpret rank in context.
          * @minimum 1
+         * @format int
          */
         ranked_against?: number;
         /**
          * Number of judge calls made during evaluation. Sellers SHOULD populate when agent_url was used and an eval_budget was supplied, giving buyers visibility into external call usage. No billing coupling in v1.
          * @minimum 0
+         * @format int
          */
         calls_used?: number;
         /**
@@ -20470,21 +20519,25 @@ export interface BuildCreativeVariantSuccess {
   /**
    * Total catalog items eligible for the build (before max_creatives sampling). Lets the buyer see that creatives[] is a sample of a larger set.
    * @minimum 0
+   * @format int
    */
   items_total?: number;
   /**
    * Number of creatives returned in creatives[] (after max_creatives sampling).
    * @minimum 0
+   * @format int
    */
   items_returned?: number;
   /**
    * Total leaves the request would have produced (≈ items_to_produce × variants_per_item, × conditions_total when signal_conditions was sent). Present when a max_spend cap may have stopped production short. Counts LEAVES, not catalog items — so it expresses a shortfall even for a variant-only fan-out with no catalog.
    * @minimum 0
+   * @format int
    */
   leaves_total?: number;
   /**
    * Number of leaves actually produced and billed across creatives[].variants[]. When budget_status is 'capped', leaves_returned < leaves_total is the leaf-granular shortfall signal (items_returned/items_total are catalog-item counts and do not capture a mid-item or variant-only cap).
    * @minimum 0
+   * @format int
    */
   leaves_returned?: number;
   /**
@@ -20580,26 +20633,31 @@ export interface BuildCreativeEstimate {
     /**
      * Catalog items eligible (before max_creatives sampling).
      * @minimum 0
+     * @format int
      */
     items_total?: number;
     /**
      * Distinct creatives that would be produced (after max_creatives).
      * @minimum 0
+     * @format int
      */
     items_to_produce?: number;
     /**
      * Signal-fan-out conditions axis count (len(signal_conditions)). Present when signal_conditions was sent so leaves_total = items_to_produce × conditions_total × variants_per_item is legible before spend.
      * @minimum 1
+     * @format int
      */
     conditions_total?: number;
     /**
      * Alternatives per creative (max_variants).
      * @minimum 1
+     * @format int
      */
     variants_per_item?: number;
     /**
      * Total billable leaves = items_to_produce × variants_per_item (× conditions_total when signal_conditions was sent — see conditions_total).
      * @minimum 0
+     * @format int
      */
     leaves_total?: number;
     /**
@@ -20743,6 +20801,7 @@ export type PreviewCreativeRequest = {
   /**
    * Maximum number of catalog items to render per preview variant. Used in single mode. Creative agents SHOULD default to a reasonable sample when omitted and the catalog is large.
    * @minimum 1
+   * @format int
    */
   item_limit?: number;
   /**
@@ -20788,6 +20847,7 @@ export type PreviewCreativeRequest = {
     /**
      * Maximum number of catalog items to render in this preview.
      * @minimum 1
+     * @format int
      */
     item_limit?: number;
   }[];
@@ -21397,6 +21457,7 @@ export interface GetCreativeDeliveryRequest {
   /**
    * Maximum number of variants to return per creative. When omitted, the agent returns all variants. Use this to limit response size for generative creatives that may produce large numbers of variants.
    * @minimum 1
+   * @format int
    */
   max_variants?: number;
   pagination?: PaginationRequest;
@@ -21540,6 +21601,7 @@ export interface GetCreativeDeliveryResponse {
     /**
      * Total number of agent-unique variant_id rows for this creative. When max_variants was specified in the request, this may exceed the number of items in the variants array.
      * @minimum 0
+     * @format int
      */
     variant_count?: number;
     /**
@@ -21554,11 +21616,13 @@ export interface GetCreativeDeliveryResponse {
     /**
      * Maximum number of creatives requested
      * @minimum 1
+     * @format int
      */
     limit: number;
     /**
      * Number of creatives skipped
      * @minimum 0
+     * @format int
      */
     offset: number;
     /**
@@ -21568,12 +21632,14 @@ export interface GetCreativeDeliveryResponse {
     /**
      * Total number of creatives matching the request filters. Canonical field name (matches `PaginationResponse.total_count`). Sellers SHOULD populate this and the deprecated `total` field identically until 4.0; buyers SHOULD prefer this field.
      * @minimum 0
+     * @format int
      */
     total_count?: number;
     /**
      * @deprecated
      * **Deprecated** — use `total_count` instead. Retained as a legacy alias for 3.x backward compatibility; removed in AdCP 4.0. Sellers populating this field MUST also populate `total_count` with the same value.
      * @minimum 0
+     * @format int
      */
     total?: number;
   };
@@ -21617,6 +21683,7 @@ export interface ListCreativesRequest {
    * Maximum assigned_packages rows returned per creative. Sellers MUST set assignments.assignments_truncated when additional qualifying rows exist.
    * @minimum 1
    * @maximum 200
+   * @format int
    */
   assignment_limit?: number;
   /**
@@ -21647,6 +21714,7 @@ export interface ListCreativesRequest {
    * Maximum number of `webhook_activity[]` records to return per creative. Only meaningful when `include_webhook_activity: true`. Sellers MUST respect the cap; structural enforcement is provided by the response schema's `maxItems: 200` on the array.
    * @minimum 1
    * @maximum 200
+   * @format int
    */
   webhook_activity_limit?: number;
   account?: AccountReference;
@@ -21893,11 +21961,13 @@ export interface ListCreativesResponse {
     /**
      * Total number of creatives matching filters (across all pages)
      * @minimum 0
+     * @format int
      */
     total_matching: number;
     /**
      * Number of creatives returned in this response
      * @minimum 0
+     * @format int
      */
     returned: number;
     /**
@@ -21924,6 +21994,7 @@ export interface ListCreativesResponse {
     /**
      * Number of creatives with this format
      * @minimum 0
+     * @format int
      *
      * This interface was referenced by `undefined`'s JSON-Schema definition
      * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
@@ -21937,26 +22008,31 @@ export interface ListCreativesResponse {
     /**
      * Number of creatives being processed
      * @minimum 0
+     * @format int
      */
     processing?: number;
     /**
      * Number of approved creatives
      * @minimum 0
+     * @format int
      */
     approved?: number;
     /**
      * Number of creatives pending review
      * @minimum 0
+     * @format int
      */
     pending_review?: number;
     /**
      * Number of rejected creatives
      * @minimum 0
+     * @format int
      */
     rejected?: number;
     /**
      * Number of archived creatives
      * @minimum 0
+     * @format int
      */
     archived?: number;
   };
@@ -22053,17 +22129,20 @@ export interface ListedCreativeNamedFormatReference {
     /**
      * Total number of active package assignments
      * @minimum 0
+     * @format int
      */
     assignment_count: number;
     /**
      * Number of rows present in assigned_packages for this response.
      * @minimum 0
      * @maximum 200
+     * @format int
      */
     returned_assignment_count?: number;
     /**
      * Total active assignments matching filters.indicator_types. MUST be present exactly when assignment_projection was matching. May exceed returned_assignment_count.
      * @minimum 0
+     * @format int
      */
     matching_assignment_count?: number;
     /**
@@ -22129,11 +22208,13 @@ export interface ListedCreativeNamedFormatReference {
     /**
      * Maximum age of this data in seconds. For example, 3600 means the data may be up to 1 hour old.
      * @minimum 0
+     * @format int
      */
     staleness_seconds: number;
     /**
      * Lifetime impressions across all assignments. Not scoped to any date range.
      * @minimum 0
+     * @format int
      */
     impressions: number;
     /**
@@ -22381,17 +22462,20 @@ export interface ListedCreativeCanonicalFormatKind {
     /**
      * Total number of active package assignments
      * @minimum 0
+     * @format int
      */
     assignment_count: number;
     /**
      * Number of rows present in assigned_packages for this response.
      * @minimum 0
      * @maximum 200
+     * @format int
      */
     returned_assignment_count?: number;
     /**
      * Total active assignments matching filters.indicator_types. MUST be present exactly when assignment_projection was matching. May exceed returned_assignment_count.
      * @minimum 0
+     * @format int
      */
     matching_assignment_count?: number;
     /**
@@ -22457,11 +22541,13 @@ export interface ListedCreativeCanonicalFormatKind {
     /**
      * Maximum age of this data in seconds. For example, 3600 means the data may be up to 1 hour old.
      * @minimum 0
+     * @format int
      */
     staleness_seconds: number;
     /**
      * Lifetime impressions across all assignments. Not scoped to any date range.
      * @minimum 0
+     * @format int
      */
     impressions: number;
     /**
@@ -23167,6 +23253,7 @@ export interface GetSignalsRequest {
    * @deprecated
    * DEPRECATED: Use pagination.max_results instead. When both fields are present, agents MUST honor pagination.max_results. When only this field is present without a pagination envelope, agents SHOULD treat it as the page size subject to a maximum of 100 results. This field will be removed in AdCP 4.0.
    * @minimum 1
+   * @format int
    */
   max_results?: number;
   pagination?: PaginationRequest;
@@ -24213,6 +24300,7 @@ export interface GetPropertyListRequest {
      * Maximum number of identifiers to return per page
      * @minimum 1
      * @maximum 10000
+     * @format int
      */
     max_results?: number;
     /**
@@ -24883,6 +24971,7 @@ export interface GetCollectionListRequest {
      * Maximum number of collections to return per page
      * @minimum 1
      * @maximum 10000
+     * @format int
      */
     max_results?: number;
     /**
@@ -26653,8 +26742,17 @@ export type ValidateContentDeliveryResponse = {
        * Summary counts across all records
        */
       summary: {
+        /**
+         * @format int
+         */
         total_records: number;
+        /**
+         * @format int
+         */
         passed_records: number;
+        /**
+         * @format int
+         */
         failed_records: number;
       };
       /**
@@ -26751,6 +26849,7 @@ export interface GetMediaBuyArtifactsRequest {
      * Maximum number of artifacts to return per page
      * @minimum 1
      * @maximum 10000
+     * @format int
      */
     max_results?: number;
     /**
@@ -26868,14 +26967,17 @@ export type GetMediaBuyArtifactsResponse = {
       collection_info?: {
         /**
          * Total deliveries in the requested time range
+         * @format int
          */
         total_deliveries?: number;
         /**
          * Total artifacts collected (per the buy's sampling configuration)
+         * @format int
          */
         total_collected?: number;
         /**
          * Number of artifacts in this response (may be less than total_collected due to pagination or filters)
+         * @format int
          */
         returned_count?: number;
         /**
@@ -27262,6 +27364,7 @@ export interface SyncPlansRequest {
     /**
      * Minimum audience segment size. Prevents micro-targeting by ensuring segments meet a k-anonymity threshold. Applies to the estimated combined (intersection) audience when multiple criteria are used, not just individual criterion sizes. The governance agent validates this by querying published signal metadata or seller-reported segment sizes. When segment size data is unavailable, the governance agent SHOULD produce a finding with reduced confidence rather than silently passing.
      * @minimum 1
+     * @format int
      */
     min_audience_size?: number;
     /**
@@ -27396,6 +27499,7 @@ export interface SyncPlansResponse {
     status: 'active' | 'error';
     /**
      * Plan version (increments on each sync).
+     * @format int
      */
     version: number;
     /**
@@ -27550,6 +27654,7 @@ export interface ReportPlanOutcomeRequest {
         period_closed?: boolean;
         /**
          * @minimum 0
+         * @format int
          */
         impressions?: number;
       }
@@ -27605,6 +27710,7 @@ export interface ReportPlanOutcomeRequest {
         period_closed?: boolean;
         /**
          * @minimum 0
+         * @format int
          */
         impressions?: number;
       };
@@ -28083,6 +28189,7 @@ export interface GetPlanAuditLogsResponse {
     plan_id: string;
     /**
      * Current plan version.
+     * @format int
      */
     plan_version: number;
     /**
@@ -28162,34 +28269,49 @@ export interface GetPlanAuditLogsResponse {
     summary: {
       /**
        * Total governance checks performed.
+       * @format int
        */
       checks_performed?: number;
       /**
        * Total outcomes reported.
+       * @format int
        */
       outcomes_reported?: number;
       /**
        * Total append-only adjustment records reported.
+       * @format int
        */
       adjustments_reported?: number;
       /**
        * Count of adjustment records accepted by the plan owner, including makegoods.
+       * @format int
        */
       adjustments_verified?: number;
       /**
        * Count of each governance check status.
        */
       statuses?: {
+        /**
+         * @format int
+         */
         approved?: number;
+        /**
+         * @format int
+         */
         denied?: number;
+        /**
+         * @format int
+         */
         conditions?: number;
         /**
          * Supplementary count of checks that went through internal human review. These checks are also counted in approved or denied.
+         * @format int
          */
         human_reviewed?: number;
       };
       /**
        * Total findings across all checks and outcomes.
+       * @format int
        */
       findings_count?: number;
       /**
@@ -28366,6 +28488,7 @@ export interface GetPlanAuditLogsResponse {
         statement_digest: string;
         /**
          * @minimum 1
+         * @format int
          */
         sequence: number;
         /**
@@ -28505,6 +28628,7 @@ export interface GetPlanAuditLogsResponse {
         period_closed?: boolean;
         /**
          * @minimum 0
+         * @format int
          */
         impressions?: number;
       };
@@ -28643,6 +28767,7 @@ export interface GetPlanAuditLogsResponse {
       delivery_period_state?: 'open' | 'closed';
       /**
        * Number of governance checks performed for this action.
+       * @format int
        */
       check_count: number;
       /**
@@ -28751,6 +28876,7 @@ export type CheckGovernanceRequest = {
     /**
      * Monotonically increasing sequence for this governed action. A statement ID or sequence cannot be reused with different content.
      * @minimum 1
+     * @format int
      */
     sequence?: number;
     /**
@@ -28789,11 +28915,13 @@ export type CheckGovernanceRequest = {
     /**
      * Impressions delivered during the reporting period.
      * @minimum 0
+     * @format int
      */
     impressions?: number;
     /**
      * Total impressions since the governed action started.
      * @minimum 0
+     * @format int
      */
     cumulative_impressions?: number;
     /**
@@ -28988,6 +29116,7 @@ export interface CheckGovernanceResponse {
     statement_digest: string;
     /**
      * @minimum 1
+     * @format int
      */
     sequence: number;
     /**
@@ -29087,6 +29216,7 @@ export interface SIGetOfferingRequest {
    * Maximum number of matching products to return
    * @minimum 1
    * @maximum 50
+   * @format int
    */
   product_limit?: number;
   ext?: ExtensionObject;
@@ -29158,6 +29288,7 @@ export interface SIGetOfferingResponse {
   /**
    * How long this offering information is valid (seconds). Host should re-fetch after TTL expires.
    * @minimum 0
+   * @format int
    */
   ttl_seconds?: number;
   /**
@@ -29242,6 +29373,7 @@ export interface SIGetOfferingResponse {
   /**
    * Total number of products matching the context (may be more than returned in matching_products)
    * @minimum 0
+   * @format int
    */
   total_matching?: number;
   /**
@@ -29683,6 +29815,7 @@ export interface SIInitiateSessionResponse {
   /**
    * Session inactivity timeout in seconds. After this duration without a message, the brand agent may terminate the session. Hosts SHOULD warn users before timeout when possible.
    * @minimum 1
+   * @format int
    */
   session_ttl_seconds?: number;
   /**
@@ -30401,6 +30534,7 @@ export interface GetAdCPCapabilitiesResponse {
        * Maximum time a buyer or registry SHOULD reuse this capability response before refreshing when it has no fresher invalidation signal. Sellers that emit `capabilities.changed` webhooks SHOULD still set a bounded TTL so consumers can recover from missed notifications. This is a cache hint, not an authorization lifetime.
        * @minimum 60
        * @maximum 604800
+       * @format int
        */
       cache_ttl_seconds?: number;
       /**
@@ -30586,6 +30720,7 @@ export interface GetAdCPCapabilitiesResponse {
        * Optional maximum alternatives.count the seller accepts, up to the protocol maximum of 10. Valid only when supported_dimensions includes alternatives. Requests above this ceiling fail at task level with VALIDATION_ERROR identifying refinements[i].alternatives.count; sellers MUST NOT silently clamp the request or return alternatives_unavailable for the declared ceiling violation.
        * @minimum 2
        * @maximum 10
+       * @format int
        */
       max_alternatives?: number;
     };
@@ -30888,6 +31023,7 @@ export interface GetAdCPCapabilitiesResponse {
       /**
        * Minimum matched audience size required for targeting. Audiences below this threshold will have status: too_small. Varies by platform (100–1000 is typical).
        * @minimum 1
+       * @format int
        */
       minimum_audience_size: number;
       /**
@@ -30900,10 +31036,12 @@ export interface GetAdCPCapabilitiesResponse {
       matching_latency_hours?: {
         /**
          * @minimum 0
+         * @format int
          */
         min?: number;
         /**
          * @minimum 0
+         * @format int
          */
         max?: number;
       };
@@ -31111,6 +31249,7 @@ export interface GetAdCPCapabilitiesResponse {
      * Trailing window (in days) over which this governance agent aggregates committed spend when evaluating dollar-valued thresholds (reallocation_threshold, human_review triggers, registry-policy floors). Required for fragmentation defense: without aggregation, a buyer can split a single large spend into many sub-threshold commits across plans / task surfaces / time and bypass every dollar-gated escalation. Aggregation is keyed on (buyer_agent, seller_agent, account_id) and spans all spend-commit task types. Upper bound 365 represents a one-year trailing window (fiscal-year alignment with grace); governance agents needing longer scopes negotiate via operator sign-off, not this capability. No schema default: absence of this field indicates the governance agent has not committed to any aggregation window and buyers MUST assume per-commit evaluation only (the fragmentation attack surface is open). A declared value of 30 is a common starting point but is not implied by omission. Buyers depending on a specific window for compliance MUST check this capability before relying on aggregation semantics — an agent declaring 7 days does not defend against fragmentation spread across a 30-day quarter-end push.
      * @minimum 1
      * @maximum 365
+     * @format int
      */
     aggregation_window_days?: number;
     /**
@@ -31304,6 +31443,7 @@ export interface GetAdCPCapabilitiesResponse {
     /**
      * When supports_refinement is true, the GUARANTEED-MINIMUM window (a floor, not a ceiling) during which a produced build_variant_id remains refinable via refine_from_build_variant_id: a ref within this window from production SHOULD resolve; the agent MAY retain longer. Omit when the retention window is agent-defined and not advertised — buyers then treat refinability as best-effort and handle REFERENCE_NOT_FOUND.
      * @minimum 0
+     * @format int
      */
     refinable_retention_seconds?: number;
     /**
@@ -31317,6 +31457,7 @@ export interface GetAdCPCapabilitiesResponse {
       /**
        * Ceiling on max_creatives. Omitted means no advertised ceiling.
        * @minimum 1
+       * @format int
        */
       max_creatives_limit?: number;
       /**
@@ -31326,6 +31467,7 @@ export interface GetAdCPCapabilitiesResponse {
       /**
        * Ceiling on len(signal_conditions). Over-limit requests are CLAMPED (not rejected), like max_creatives_limit. Omitted means no advertised ceiling.
        * @minimum 1
+       * @format int
        */
       max_signal_conditions_limit?: number;
       /**
@@ -31335,6 +31477,7 @@ export interface GetAdCPCapabilitiesResponse {
       /**
        * Ceiling on max_variants. Omitted means no advertised ceiling.
        * @minimum 1
+       * @format int
        */
       max_variants_limit?: number;
       /**
@@ -31392,6 +31535,7 @@ export interface GetAdCPCapabilitiesResponse {
        * Maximum target locale variants accepted on one creative. Zero advertises source-only monolingual locale topology. Omit to inherit the protocol ceiling of 50.
        * @minimum 0
        * @maximum 50
+       * @format int
        */
       max_target_variants?: number;
       /**
@@ -31480,6 +31624,7 @@ export interface GetAdCPCapabilitiesResponse {
      * Maximum elapsed time from the first delivery attempt during which this agent may retry the same webhook delivery. The publisher retains the immutable delivery-key-to-RFC-8785-JCS-payload binding and sufficient delivery state for at least this interval, and MUST NOT retry that key afterward. Receivers retain the matching payload binding and terminal publication proof for at least max(86400, this value) seconds in AdCP 3.x. Retries do not extend the horizon. A webhook-emitting AdCP 3.2 agent MUST populate this additive field; it remains schema-optional so existing 3.x capability documents stay valid. Minimum 86400 (24h), maximum 604800 (7d).
      * @minimum 86400
      * @maximum 604800
+     * @format int
      */
     delivery_retry_horizon_seconds?: number;
   };
@@ -31686,12 +31831,14 @@ export interface IdempotencySupported {
    * How long the seller retains a canonical response for an idempotency_key. Within this window, a replay with the same key + equivalent canonical payload returns the cached response; a replay with a different canonical payload returns IDEMPOTENCY_CONFLICT; a replay past the window returns IDEMPOTENCY_EXPIRED when the seller can still distinguish 'seen and evicted' from 'never seen'. Minimum 3600 (1h); recommended 86400 (24h). Maximum 604800 (7 days) — longer windows force buyers to retain secret keys at rest for extended periods and grow the seller's cache table without bounded benefit.
    * @minimum 3600
    * @maximum 604800
+   * @format int
    */
   replay_ttl_seconds: number;
   /**
    * Maximum lifetime in seconds of an in-flight idempotency row before the seller releases it per L1/security.mdx rule 9 (treat the in-flight attempt as failed if the handler does not complete within this bound). Buyer SDKs use this value to compute a retry budget when they see `IDEMPOTENCY_IN_FLIGHT` — cap individual retry waits at this value rather than the much-wider `replay_ttl_seconds` ceiling. Optional in 3.1 (additive declaration); SDKs that don't see the field fall back to rule 9's order-of-magnitude SHOULD heuristic. Required when `supported: true` in 4.0. MUST be no greater than `replay_ttl_seconds` (a bound larger than the replay window is vacuous — any retry past the TTL hits IDEMPOTENCY_EXPIRED regardless of in-flight state); validators MUST enforce this cross-field constraint at the test layer since JSON Schema cannot express field-relative bounds. A buyer that observes top-level `error.retry_after` exceeding this value MAY treat that as a seller bug — the in-flight row cannot legitimately outlive the bound the seller declared.
    * @minimum 1
    * @maximum 604800
+   * @format int
    */
   in_flight_max_seconds?: number;
   /**
@@ -31725,6 +31872,7 @@ export interface CapabilityChangeNotificationsSupported {
    * Maximum coalescence window the seller applies before firing a `capabilities.changed` webhook after a burst of related capability edits. The default recommendation is at most 300 seconds; latency-sensitive deactivations SHOULD fire sooner.
    * @minimum 0
    * @maximum 86400
+   * @format int
    */
   coalescence_window_seconds?: number;
 }
@@ -31844,6 +31992,7 @@ export interface AccountChangeFeedSupported {
   /**
    * Minimum number of days committed change records remain readable.
    * @minimum 90
+   * @format int
    */
   retention_days: number;
   /**
@@ -32042,11 +32191,13 @@ export interface GetTaskStatusResponse {
     /**
      * Total number of steps in the operation
      * @minimum 1
+     * @format int
      */
     total_steps?: number;
     /**
      * Current step number
      * @minimum 1
+     * @format int
      */
     step_number?: number;
   };
@@ -32245,11 +32396,13 @@ export interface ListTasksResponse {
     /**
      * Total number of tasks matching filters (across all pages)
      * @minimum 0
+     * @format int
      */
     total_matching?: number;
     /**
      * Number of tasks returned in this response
      * @minimum 0
+     * @format int
      */
     returned?: number;
     /**
@@ -32259,16 +32412,19 @@ export interface ListTasksResponse {
       /**
        * Number of media-buy tasks in results
        * @minimum 0
+       * @format int
        */
       'media-buy'?: number;
       /**
        * Number of signals tasks in results
        * @minimum 0
+       * @format int
        */
       signals?: number;
       /**
        * Number of creative tasks in results
        * @minimum 0
+       * @format int
        */
       creative?: number;
     };
@@ -32278,6 +32434,7 @@ export interface ListTasksResponse {
     status_breakdown?: {
       /**
        * @minimum 0
+       * @format int
        */
       [k: string]: number | undefined;
     };
@@ -32487,6 +32644,7 @@ export interface ListAccountChangesRequest {
    * Deprecated major-only version pin retained through 3.x.
    * @minimum 1
    * @maximum 99
+   * @format int
    */
   adcp_major_version?: number;
   account: AccountReference;
@@ -32508,6 +32666,7 @@ export interface ListAccountChangesRequest {
    * Maximum changes to return. Sellers still scan through nonmatching records and advance the returned cursor.
    * @minimum 1
    * @maximum 100
+   * @format int
    */
   max_results?: number;
   context?: ContextObject;
@@ -32620,6 +32779,7 @@ export type ListAccountChangesResponse = {
      * Maximum age of last_successful_sync_at at generated_at for this connected source to self-classify as current. Required by the protocol contract whenever a connected source reports current.
      * @minimum 1
      * @maximum 2592000
+     * @format int
      */
     stale_after_seconds?: number;
     resource_types: string[];
@@ -32684,6 +32844,7 @@ export type ListAccountChangesResponse = {
          * Maximum age of last_successful_sync_at at generated_at for this connected source to self-classify as current. Required by the protocol contract whenever a connected source reports current.
          * @minimum 1
          * @maximum 2592000
+         * @format int
          */
         stale_after_seconds?: number;
         resource_types: string[];
@@ -32750,6 +32911,7 @@ export type ListAccountChangesResponse = {
          * Maximum age of last_successful_sync_at at generated_at for this connected source to self-classify as current. Required by the protocol contract whenever a connected source reports current.
          * @minimum 1
          * @maximum 2592000
+         * @format int
          */
         stale_after_seconds?: number;
         resource_types: string[];
@@ -32907,6 +33069,7 @@ export interface ListAccountsRequest {
    * Maximum number of webhook_activity[] records to return per account when include_webhook_activity is true.
    * @minimum 1
    * @maximum 200
+   * @format int
    */
   webhook_activity_limit?: number;
   context?: ContextObject;
@@ -33102,6 +33265,7 @@ export interface SettingsUpdateMode {
   /**
    * Expected current account revision for optimistic concurrency in settings-update mode. Required whenever operator_identity is present; optional for existing non-identity settings updates. The seller MUST compare it atomically with the write, reject a mismatch with CONFLICT, and leave the account unchanged. Obtain it from list_accounts or the most recent sync_accounts result. Reads, dry runs, validation failures, and exact idempotency replays do not increment revision; every persisted settings or identity-change state transition does. MUST be absent in provisioning mode.
    * @minimum 1
+   * @format int
    */
   revision?: number;
   operator_identity?: OperatorIdentity;
@@ -33707,6 +33871,7 @@ export interface SyncAccountsSuccess {
     /**
      * Current account revision after this operation. Incremented by each persisted settings change, identity-change request, or identity-change disposition; not incremented by dry runs, validation failures, or exact idempotency replays. Pass this value in the next settings-update entry to prevent lost updates.
      * @minimum 1
+     * @format int
      */
     revision?: number;
     identity_change?: AccountIdentityChange;
@@ -34031,6 +34196,7 @@ export interface ReportUsageRequest {
     /**
      * Impressions delivered using this vendor service.
      * @minimum 0
+     * @format int
      */
     impressions?: number;
     /**
@@ -34149,6 +34315,7 @@ export interface ReportUsageResponse {
   /**
    * Number of usage records successfully stored.
    * @minimum 0
+   * @format int
    */
   accepted: number;
   /**
@@ -34260,6 +34427,7 @@ export interface GetAccountFinancialsSuccess {
     /**
      * Number of active media buys in the period
      * @minimum 0
+     * @format int
      */
     media_buy_count?: number;
   };
@@ -34967,16 +35135,19 @@ export interface ComplyTestControllerRequest {
     /**
      * Impressions to simulate. Used by simulate_delivery.
      * @minimum 0
+     * @format int
      */
     impressions?: number;
     /**
      * Clicks to simulate. Used by simulate_delivery.
      * @minimum 0
+     * @format int
      */
     clicks?: number;
     /**
      * Conversions to simulate. Used by simulate_delivery.
      * @minimum 0
+     * @format int
      */
     conversions?: number;
     /**
@@ -35117,6 +35288,7 @@ export interface ComplyTestControllerRequest {
     /**
      * Deterministic age of the stale cache entry used by force_upstream_unavailable. When supplied, the seller MUST emit this exact value in the matching STALE_RESPONSE error.details.cache_age_seconds on the next affected response. This lets the conformance runner bind the advisory code and its required detail fields to the same errors[] entry without assuming array order.
      * @minimum 0
+     * @format int
      */
     cache_age_seconds?: number;
     result?: ComplianceTaskCompletionData;
@@ -35133,6 +35305,7 @@ export interface ComplyTestControllerRequest {
      * Maximum number of calls to return. The response carries `total_count` and `truncated` so the runner can detect overflow.
      * @minimum 1
      * @maximum 1000
+     * @format int
      */
     limit?: number;
     /**
@@ -35350,6 +35523,7 @@ export interface UpstreamTrafficSuccess {
   /**
    * Total calls in the requested window before any pagination — `recorded_calls.length` may be smaller when `params.limit` truncated the response.
    * @minimum 0
+   * @format int
    */
   total_count: number;
   /**
@@ -35408,6 +35582,7 @@ export interface RawAttestation {
   /**
    * Byte length of the post-redaction body bytes represented by this recorded_call. Required in both `raw` and `digest` modes — symmetric across modes so runners can detect adopter-side truncation regardless of attestation choice. In `raw` mode this MUST equal the UTF-8 byte length of the emitted `payload` value after the same recursive secret-key redaction the controller applied before returning it. In `digest` mode this MUST equal the exact number of bytes fed into SHA-256 for `payload_digest_sha256`: RFC 8785 (JCS) canonical bytes for JSON-shaped content after redaction, or the post-redaction raw body bytes for non-JSON content. Digest-mode `payload_length` is therefore NOT the original outbound body length before JSON parsing, redaction, or canonicalization. Mismatch between observed payload length and reported `payload_length` is a controller-side bug worth surfacing in the report.
    * @minimum 0
+   * @format int
    */
   payload_length: number;
   /**
@@ -35419,6 +35594,7 @@ export interface RawAttestation {
    * HTTP status code returned by the upstream. Optional — adopters MAY omit when the call was instrumented before the response arrived.
    * @minimum 100
    * @maximum 599
+   * @format int
    */
   status_code?: number;
 }
@@ -35466,6 +35642,7 @@ export interface DigestAttestation {
   /**
    * Byte length of the post-redaction body bytes represented by this recorded_call. Required in both `raw` and `digest` modes — symmetric across modes so runners can detect adopter-side truncation regardless of attestation choice. In `raw` mode this MUST equal the UTF-8 byte length of the emitted `payload` value after the same recursive secret-key redaction the controller applied before returning it. In `digest` mode this MUST equal the exact number of bytes fed into SHA-256 for `payload_digest_sha256`: RFC 8785 (JCS) canonical bytes for JSON-shaped content after redaction, or the post-redaction raw body bytes for non-JSON content. Digest-mode `payload_length` is therefore NOT the original outbound body length before JSON parsing, redaction, or canonicalization. Mismatch between observed payload length and reported `payload_length` is a controller-side bug worth surfacing in the report.
    * @minimum 0
+   * @format int
    */
   payload_length: number;
   /**
@@ -35491,6 +35668,7 @@ export interface DigestAttestation {
    * HTTP status code returned by the upstream. Optional — adopters MAY omit when the call was instrumented before the response arrived.
    * @minimum 100
    * @maximum 599
+   * @format int
    */
   status_code?: number;
 }

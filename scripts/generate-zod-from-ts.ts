@@ -3,7 +3,7 @@
 import { generate } from 'ts-to-zod';
 import $RefParser from '@apidevtools/json-schema-ref-parser';
 import { jsonSchemaToZod } from 'json-schema-to-zod';
-import { writeFileSync, readFileSync, existsSync } from 'fs';
+import { writeFileSync, readFileSync, existsSync, readdirSync } from 'fs';
 import path from 'path';
 
 /**
@@ -248,8 +248,8 @@ function postProcessTS7056Annotations(content: string): string {
     ]
       .filter(Boolean)
       .join('\n');
-    const productSchemaHelperTypes = `type ProductSchemaShape = ${productObjectShapeType};
-type ProductSchemaSafeExtendShape<
+    const productSchemaHelperTypes = `export type ProductSchemaShape = ${productObjectShapeType};
+export type ProductSchemaSafeExtendShape<
   Base extends z.core.$ZodShape,
   U extends z.core.$ZodShape,
 > = {
@@ -263,7 +263,7 @@ type ProductSchemaSafeExtendShape<
         : never
       : U[K];
 };
-type ProductSchemaObject<Shape extends z.core.$ZodShape> = {
+export type ProductSchemaObject<Shape extends z.core.$ZodShape> = {
   safeExtend<U extends z.core.$ZodShape>(
     shape: ProductSchemaSafeExtendShape<Shape, U>
   ): ProductSchemaObject<Omit<Shape, keyof U> & U>;
@@ -1018,12 +1018,14 @@ function postProcessCanonicalProposalRuntimeConstraints(content: string, exactSc
   // The SDK deliberately preserves unknown extension fields on public Zod
   // objects. Keep that documented policy while retaining every other scalar,
   // cardinality, conditional, and nested commercial-term constraint.
-  const exactWithPassthrough = exactSchemaExpression.replaceAll('.strict()', '.passthrough()');
+  const exactWithPassthrough = exactSchemaExpression
+    .replaceAll('.strict()', '.passthrough()')
+    .replaceAll('.url()', '.refine(adcpJsonSchemaUri, "Invalid URI")');
   const replacement = `export const CanonicalProposalSchema = ${exactWithPassthrough};`;
   const replaced = content.slice(0, schemaStart) + replacement + content.slice(schemaEnd);
   return replaced.replace(
     'import { z } from "zod";\n',
-    `import { z } from "zod";\nimport { fullFormats as adcpJsonSchemaFormats } from "ajv-formats/dist/formats.js";\n\nconst adcpDateTimeFormat = adcpJsonSchemaFormats["date-time"] as { validate: (value: string) => boolean };\nconst adcpJsonSchemaDateTime = (value: string): boolean => adcpDateTimeFormat.validate(value);\n`
+    `import { z } from "zod";\nimport { fullFormats as adcpJsonSchemaFormats } from "ajv-formats/dist/formats.js";\n\nconst adcpDateTimeFormat = adcpJsonSchemaFormats["date-time"] as { validate: (value: string) => boolean };\nconst adcpUriFormat = adcpJsonSchemaFormats.uri as (value: string) => boolean;\nconst adcpJsonSchemaDateTime = (value: string): boolean => adcpDateTimeFormat.validate(value);\nconst adcpJsonSchemaUri = (value: string): boolean => adcpUriFormat(value);\n`
   );
 }
 
@@ -1379,7 +1381,7 @@ const CreativeAssetsRuntimeSchema: z.ZodType<Record<string, unknown>> = z.record
   const formatReference = schemaBlock('FormatReferenceStructuredObjectSchema');
   const strictFormatReference = formatReference.block.replace(
     'agent_url: z.string()',
-    'agent_url: z.string().regex(/^[\\x21-\\x7E]+$/).regex(/^(?:[^%]|%[0-9A-Fa-f]{2})*$/).url()'
+    'agent_url: z.string().regex(/^[\\x21-\\x7E]+$/).regex(/^(?:[^%]|%[0-9A-Fa-f]{2})*$/).refine(adcpJsonSchemaUri, "Invalid URI")'
   );
   if (strictFormatReference === formatReference.block) {
     throw new Error('Unable to apply URI validation to FormatReferenceStructuredObjectSchema.agent_url.');
@@ -1487,6 +1489,7 @@ function postProcessPlacementPresentationRuntimeConstraints(content: string): st
     const end = content.indexOf('\n\nexport const ', start + 1);
     if (start === -1 || end === -1) throw new Error(`Unable to locate generated ${schemaName} boundary.`);
     const block = content.slice(start, end);
+    if (block.includes(after) || block.includes(after.replace('z.number().int()', 'z.int()'))) return;
     const constrained = block.replace(before, after);
     if (constrained === block) throw new Error(`Unable to preserve numeric constraints on ${schemaName}.`);
     content = content.slice(0, start) + constrained + content.slice(end);
@@ -1509,6 +1512,266 @@ function postProcessPlacementPresentationRuntimeConstraints(content: string): st
   );
 
   return content;
+}
+
+/**
+ * Restore constraints from authoritative shared schemas whose JSDoc is lost
+ * when ts-to-zod encounters aliases, union members, or a duplicate transitive
+ * declaration before the canonical definition. Each rewrite is guarded so a
+ * future schema/codegen change fails generation instead of silently weakening
+ * the public validator again.
+ */
+function postProcessCanonicalSharedConstraints(content: string): string {
+  const domainPattern = '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$';
+  const signalIdPattern = '^[a-zA-Z0-9_-]+$';
+
+  const rewrite = (schemaName: string, before: string, after: string, expectedCount = 1): void => {
+    const start = content.indexOf(`export const ${schemaName} = `);
+    const end = content.indexOf('\n\nexport const ', start + 1);
+    if (start === -1 || end === -1) throw new Error(`Unable to locate generated ${schemaName} boundary.`);
+    const block = content.slice(start, end);
+    const actualCount = block.split(before).length - 1;
+    if (actualCount !== expectedCount) {
+      throw new Error(
+        `Unable to restore canonical constraints on ${schemaName}: expected ${expectedCount} occurrence(s), found ${actualCount}.`
+      );
+    }
+    content = content.slice(0, start) + block.split(before).join(after) + content.slice(end);
+  };
+
+  rewrite('PropertyIDSchema', 'z.string();', 'z.string().regex(/^[a-z0-9_]+$/);');
+  rewrite('SignalRefSchema', 'signal_id: z.string()', `signal_id: z.string().regex(/${signalIdPattern}/)`, 3);
+  rewrite(
+    'SignalRefSchema',
+    'data_provider_domain: z.string()',
+    `data_provider_domain: z.string().regex(/${domainPattern}/)`
+  );
+  rewrite(
+    'SignalRefSchema',
+    'signal_source_url: z.string()',
+    'signal_source_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI")'
+  );
+  rewrite(
+    'PaginationRequestSchema',
+    'max_results: z.number().optional()',
+    'max_results: z.number().int().min(1).max(100).optional()'
+  );
+  rewrite(
+    'DeliveryForecastSchema',
+    'measurement_source: z.string().optional()',
+    'measurement_source: z.string().max(64).regex(/^[a-z0-9_]+$/).optional()'
+  );
+  rewrite(
+    'DeliveryForecastSchema',
+    'generated_at: z.string().optional()',
+    'generated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()'
+  );
+  rewrite(
+    'DeliveryForecastSchema',
+    'valid_until: z.string().optional()',
+    'valid_until: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()'
+  );
+
+  for (const [schemaName, optional] of [
+    ['PlacementReferenceSchema', true],
+    ['IndicatorScopeSchema', false],
+    ['CollectionSelectorSchema', false],
+    ['PropertyReferenceSchema', false],
+  ] as const) {
+    const suffix = optional ? '.optional()' : '';
+    rewrite(
+      schemaName,
+      `publisher_domain: z.string()${suffix}`,
+      `publisher_domain: z.string().regex(/${domainPattern}/)${suffix}`
+    );
+  }
+
+  return content;
+}
+
+type CanonicalPrimitiveConstraints = {
+  integer?: true;
+  minimum?: number;
+  maximum?: number;
+  exclusiveMinimum?: number;
+  exclusiveMaximum?: number;
+  multipleOf?: number;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  dateTime?: true;
+  uri?: true;
+};
+
+/**
+ * Reconcile primitive constraints from the canonical JSON Schema documents
+ * after every structural Zod rewrite has run. The TypeScript intermediary can
+ * lose JSDoc when a transitive occurrence wins first-definition ownership;
+ * this pass makes the canonical document authoritative without relying on a
+ * growing allowlist of field names.
+ *
+ * Constraints are applied by property name only when every occurrence of that
+ * name inside the canonical document has the same constraint set. Ambiguous
+ * nested names are deliberately left alone rather than applying a constraint
+ * in the wrong context. Defaults and array cardinality remain documentation-
+ * only by design and are not handled here.
+ */
+function postProcessCanonicalPrimitiveConstraints(content: string): string {
+  const cacheRoot = path.join(__dirname, '../schemas/cache/latest');
+  const schemaFiles: string[] = [];
+  const visitDirectory = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.name === 'bundled') continue;
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) visitDirectory(absolute);
+      else if (entry.isFile() && entry.name.endsWith('.json')) schemaFiles.push(absolute);
+    }
+  };
+  visitDirectory(cacheRoot);
+
+  const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const constraintsFor = (schema: Record<string, unknown>): CanonicalPrimitiveConstraints => {
+    const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+    const includes = (type: string): boolean => types.includes(type);
+    const constraints: CanonicalPrimitiveConstraints = {};
+    if (includes('integer')) constraints.integer = true;
+    if (includes('integer') || includes('number')) {
+      for (const key of ['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf'] as const) {
+        if (typeof schema[key] === 'number' && Number.isFinite(schema[key])) constraints[key] = schema[key];
+      }
+    }
+    if (includes('string')) {
+      if (typeof schema.minLength === 'number' && Number.isInteger(schema.minLength)) {
+        constraints.minLength = schema.minLength;
+      }
+      if (typeof schema.maxLength === 'number' && Number.isInteger(schema.maxLength)) {
+        constraints.maxLength = schema.maxLength;
+      }
+      if (typeof schema.pattern === 'string') constraints.pattern = schema.pattern;
+      if (schema.format === 'date-time') constraints.dateTime = true;
+      if (schema.format === 'uri') constraints.uri = true;
+    }
+    return constraints;
+  };
+
+  const constrainExpression = (expression: string, constraints: CanonicalPrimitiveConstraints): string => {
+    let result = expression;
+    if (result.includes('z.number()')) {
+      let suffix = '';
+      if (constraints.integer && !/z\.(?:number\(\)\.int|int)\(\)/.test(result)) suffix += '.int()';
+      if (
+        constraints.minimum !== undefined &&
+        !result.includes(`.min(${constraints.minimum})`) &&
+        !result.includes(`.gte(${constraints.minimum})`)
+      ) {
+        suffix += `.gte(${constraints.minimum})`;
+      }
+      if (
+        constraints.maximum !== undefined &&
+        !result.includes(`.max(${constraints.maximum})`) &&
+        !result.includes(`.lte(${constraints.maximum})`)
+      ) {
+        suffix += `.lte(${constraints.maximum})`;
+      }
+      if (constraints.exclusiveMinimum !== undefined && !result.includes(`.gt(${constraints.exclusiveMinimum})`)) {
+        suffix += `.gt(${constraints.exclusiveMinimum})`;
+      }
+      if (constraints.exclusiveMaximum !== undefined && !result.includes(`.lt(${constraints.exclusiveMaximum})`)) {
+        suffix += `.lt(${constraints.exclusiveMaximum})`;
+      }
+      if (constraints.multipleOf !== undefined && !result.includes(`.multipleOf(${constraints.multipleOf})`)) {
+        suffix += `.multipleOf(${constraints.multipleOf})`;
+      }
+      if (suffix) result = result.replace('z.number()', `z.number()${suffix}`);
+    }
+    if (result.includes('z.string()')) {
+      let suffix = '';
+      if (constraints.minLength !== undefined && !result.includes(`.min(${constraints.minLength})`)) {
+        suffix += `.min(${constraints.minLength})`;
+      }
+      if (constraints.maxLength !== undefined && !result.includes(`.max(${constraints.maxLength})`)) {
+        suffix += `.max(${constraints.maxLength})`;
+      }
+      if (constraints.pattern !== undefined && !result.includes('.regex(')) {
+        suffix += `.regex(new RegExp(${JSON.stringify(constraints.pattern)}))`;
+      }
+      if (constraints.dateTime && !result.includes('adcpJsonSchemaDateTime') && !result.includes('z.iso.datetime()')) {
+        suffix += '.refine(adcpJsonSchemaDateTime, "Invalid date-time")';
+      }
+      if (constraints.uri && !result.includes('adcpJsonSchemaUri')) {
+        suffix += '.refine(adcpJsonSchemaUri, "Invalid URI")';
+      }
+      if (suffix) result = result.replace('z.string()', `z.string()${suffix}`);
+    }
+    return result;
+  };
+
+  for (const schemaFile of schemaFiles.sort()) {
+    const schema = JSON.parse(readFileSync(schemaFile, 'utf8')) as Record<string, unknown>;
+    const schemaName = typeof schema.title === 'string' ? schema.title.replace(/[^A-Za-z0-9]/g, '') : '';
+    if (!schemaName) continue;
+    const exportStart = content.indexOf(`export const ${schemaName}Schema`);
+    if (exportStart < 0) continue;
+    const exportEndCandidate = content.indexOf('\n\nexport const ', exportStart + 1);
+    const exportEnd = exportEndCandidate < 0 ? content.length : exportEndCandidate;
+    let block = content.slice(exportStart, exportEnd);
+
+    const rootConstraints = constraintsFor(schema);
+    if (Object.keys(rootConstraints).length > 0) {
+      const rootExpression = new RegExp(`^(export const ${schemaName}Schema(?:[^=]*)= )([^;\\n]+);$`, 'm');
+      block = block.replace(rootExpression, (_line, prefix: string, expression: string) => {
+        return `${prefix}${constrainExpression(expression, rootConstraints)};`;
+      });
+    }
+
+    const occurrences = new Map<string, Map<string, CanonicalPrimitiveConstraints>>();
+    const visitSchema = (value: unknown): void => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+      const node = value as Record<string, unknown>;
+      if (node.properties && typeof node.properties === 'object' && !Array.isArray(node.properties)) {
+        for (const [propertyName, propertySchema] of Object.entries(node.properties)) {
+          if (!propertySchema || typeof propertySchema !== 'object' || Array.isArray(propertySchema)) continue;
+          const constraints = constraintsFor(propertySchema as Record<string, unknown>);
+          const signature = JSON.stringify(constraints);
+          const bySignature = occurrences.get(propertyName) ?? new Map<string, CanonicalPrimitiveConstraints>();
+          bySignature.set(signature, constraints);
+          occurrences.set(propertyName, bySignature);
+          visitSchema(propertySchema);
+        }
+      }
+      for (const [key, child] of Object.entries(node)) {
+        if (key !== 'properties') visitSchema(child);
+      }
+    };
+    visitSchema(schema);
+
+    for (const [propertyName, bySignature] of occurrences) {
+      if (bySignature.size !== 1) continue;
+      const constraints = bySignature.values().next().value as CanonicalPrimitiveConstraints;
+      if (Object.keys(constraints).length === 0) continue;
+      const escapedName = escapeRegExp(propertyName);
+      const propertyLine = new RegExp(`^(\\s*)(?:${escapedName}|${JSON.stringify(propertyName)}): ([^\\n]+)$`, 'gm');
+      block = block.replace(propertyLine, (line, indent: string, expression: string) => {
+        return `${indent}${line.slice(indent.length, line.length - expression.length)}${constrainExpression(expression, constraints)}`;
+      });
+    }
+
+    content = content.slice(0, exportStart) + block + content.slice(exportEnd);
+  }
+  return content;
+}
+
+/**
+ * Zod's WHATWG URL validators are not equivalent to JSON Schema draft-07's
+ * RFC 3986 `format: uri`. Normalize every URI projection to the same
+ * ajv-formats predicate used by the SDK's authoritative Ajv validation path,
+ * including one-line dereferenced schemas that property reconciliation cannot
+ * address individually.
+ */
+function postProcessJsonSchemaUriFormats(content: string): string {
+  return content
+    .replaceAll('z.url()', 'z.string().refine(adcpJsonSchemaUri, "Invalid URI")')
+    .replaceAll('.url()', '.refine(adcpJsonSchemaUri, "Invalid URI")');
 }
 
 function postProcessTrustedMatchResponseSchemas(content: string): string {
@@ -3220,6 +3483,7 @@ async function generateZodSchemas() {
     zodSchemas = postProcessForecastRangeConstraint(zodSchemas);
     zodSchemas = postProcessPriceBreakdownConstraints(zodSchemas);
     zodSchemas = postProcessBeta4OfferAndOutcomeConstraints(zodSchemas);
+    zodSchemas = postProcessCanonicalSharedConstraints(zodSchemas);
     zodSchemas = postProcessPreviewCreativeRequestConstraints(zodSchemas);
 
     // TypeScript cannot retain JSON Schema `format: uri` or root oneOf
@@ -3336,7 +3600,13 @@ async function generateZodSchemas() {
           return `${underlying}.refine((value) => Object.keys(value).length >= ${minimum}, "Object must contain at least ${minimum} propert${minimum === 1 ? 'y' : 'ies'}")`;
         }
         if (!schema.properties && Array.isArray(schema.required) && schema.required.length > 0) {
-          const fields = schema.required.map(field => `${JSON.stringify(field)}: z.any().nonoptional()`).join(', ');
+          // Keep this presence-only guard constant-time with respect to the
+          // supplied value. Recursive validators such as `z.json()` can
+          // overflow on deeply nested untrusted payloads, while `z.unknown()`
+          // alone treats a missing key as valid on the supported Zod floor.
+          const fields = schema.required
+            .map(field => `${JSON.stringify(field)}: z.any().refine((value) => value !== undefined, "Required")`)
+            .join(', ');
           return `z.object({ ${fields} }).passthrough()`;
         }
       },
@@ -3484,7 +3754,14 @@ async function generateZodSchemas() {
                 return;
               }
               if (!referenced) {
-                const paramsSchema = CoordinatedPlacementInlineParamsRuntimeSchemas[component.format_kind];
+                const formatKind = component.format_kind;
+                if (typeof formatKind !== "string") {
+                  ctx.addIssue({ code: "custom", path: [index, "format_kind"], message: "Unsupported coordinated placement format_kind" });
+                  return;
+                }
+                const paramsSchema = CoordinatedPlacementInlineParamsRuntimeSchemas[
+                  formatKind as keyof typeof CoordinatedPlacementInlineParamsRuntimeSchemas
+                ];
                 if (!paramsSchema) {
                   ctx.addIssue({ code: "custom", path: [index, "format_kind"], message: "Unsupported coordinated placement format_kind" });
                 } else if (!paramsSchema.safeParse(component.params).success) {
@@ -3562,6 +3839,11 @@ async function generateZodSchemas() {
     // Restore the schema's country-key catchall after ts-to-zod widens the
     // template-literal index signature during conversion.
     zodSchemas = postProcessPostalAreaSupportCatchall(zodSchemas);
+
+    // Reconcile canonical primitive constraints last, after structural and
+    // exact-schema rewrites that may replace earlier generated blocks.
+    zodSchemas = postProcessCanonicalPrimitiveConstraints(zodSchemas);
+    zodSchemas = postProcessJsonSchemaUriFormats(zodSchemas);
 
     // Post-process: Add explicit z.ZodType annotations to schemas that trip TS7056.
     zodSchemas = postProcessTS7056Annotations(zodSchemas);
