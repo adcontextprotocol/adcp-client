@@ -66,6 +66,10 @@ function postProcessMarkerUnionObjectIntersections(input) {
   return runPostProcess('postProcessMarkerUnionObjectIntersections', input, '.zod-marker-union-');
 }
 
+function postProcessRepeatedProductIntersections(input) {
+  return runPostProcess('postProcessRepeatedProductIntersections', input, '.zod-product-intersections-');
+}
+
 function postProcessObjectUnionIntersections(input) {
   return runPostProcess('postProcessObjectUnionIntersections', input, '.zod-object-union-');
 }
@@ -241,6 +245,64 @@ export const FutureProductSchema = z.union([V1MarkerSchema, V2MarkerSchema]).and
 
   assert.match(output, /export const FutureProductSchema = z\.union\(\[V1MarkerSchema, V2MarkerSchema\]\)\.and/);
   assert.doesNotMatch(output, /FutureProductSchema = z\.object\(/);
+});
+
+test('postProcessRepeatedProductIntersections collapses repeated format and placement validators', () => {
+  const output = postProcessRepeatedProductIntersections(`
+export const CommonBFormatSchema = z.object({ value: z.string() }).passthrough();
+export const FormatKindsSchema = z.union([z.object({ format_kind: z.literal("image") })]);
+export const ProductFormatDeclarationSchema = z.object({ id: z.string() }).merge(CommonBFormatSchema)
+  .and(FormatKindsSchema)
+  .and(CommonBFormatSchema)
+  .and(FormatKindsSchema)
+  .and(CommonBFormatSchema)
+  .and(FormatKindsSchema)
+  .and(CommonBFormatSchema)
+  .and(FormatKindsSchema);
+export const PlacementBaseSchema = z.object({ placement_id: z.string() });
+export const PlacementChoiceSchema = z.union([z.object({ required: z.boolean() })]);
+export const PlacementSchema = PlacementBaseSchema
+  .and(PlacementChoiceSchema)
+  .and(CommonBFormatSchema)
+  .and(PlacementChoiceSchema)
+  .and(CommonBFormatSchema);
+`);
+
+  assert.match(
+    output,
+    /ProductFormatDeclarationSchema = z\.object\(\{ id: z\.string\(\) \}\)\.merge\(CommonBFormatSchema\)\.and\(FormatKindsSchema\);/
+  );
+  assert.match(
+    output,
+    /PlacementSchema = PlacementBaseSchema\.and\(PlacementChoiceSchema\)\.and\(CommonBFormatSchema\);/
+  );
+});
+
+test('postProcessRepeatedProductIntersections fails closed when the common Product validator is not contained', () => {
+  assert.throws(
+    () =>
+      postProcessRepeatedProductIntersections(`
+export const ProductFormatDeclarationSchema = z.object({ id: z.string() })
+  .and(z.literal("format"))
+  .and(z.object({ constraint: z.string() }))
+  .and(z.literal("format"))
+  .and(z.object({ constraint: z.string() }))
+  .and(z.literal("format"))
+  .and(z.object({ constraint: z.string() }))
+  .and(z.literal("format"));
+export const PlacementSchema = z.object({ placement_id: z.string() });
+`),
+    /no longer matches the verified repeated allOf projection/
+  );
+});
+
+test('postProcessRepeatedProductIntersections preserves literal whitespace semantics', () => {
+  const output = postProcessRepeatedProductIntersections(`
+export const ProductFormatDeclarationSchema = z.object({ product_id: z.string() });
+export const PlacementSchema = z.literal("a b").and(z.literal("a  b")).and(z.literal("a b"));
+`);
+
+  assert.match(output, /PlacementSchema = z\.literal\("a b"\)\.and\(z\.literal\("a  b"\)\);/);
 });
 
 test('postProcessObjectUnionIntersections distributes object envelope over union arms', () => {
