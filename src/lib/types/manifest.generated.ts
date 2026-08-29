@@ -698,6 +698,7 @@ export const MEDIA_BUY_TOOLS_FROM_MANIFEST = [
   "get_media_buy_delivery",
   "get_media_buys",
   "get_products",
+  "get_reporting_status",
   "list_creative_formats",
   "list_products",
   "log_event",
@@ -707,6 +708,7 @@ export const MEDIA_BUY_TOOLS_FROM_MANIFEST = [
   "sync_audiences",
   "sync_catalogs",
   "sync_event_sources",
+  "sync_reporting_receipts",
   "update_media_buy",
 ] as const;
 

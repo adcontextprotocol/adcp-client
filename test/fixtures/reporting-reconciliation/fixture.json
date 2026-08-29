@@ -1,0 +1,61 @@
+{
+  "version": "1.0",
+  "files": {
+    "manifest.json": {
+      "size_bytes": 851,
+      "sha256": "61ca5b7472c91dd48b8690f230ae37d13893ef527af43ebd959edcbdd3a81326"
+    },
+    "rows.jsonl": { "size_bytes": 156, "sha256": "735610f303d6d91aa618df3aa6d7f18bcf5dfa52bdbd9ef551293e6bd14c92d9" },
+    "row-schema.json": {
+      "size_bytes": 430,
+      "sha256": "a76b10957579a086c3b8cb800b884a72fcec039b496947982f2f1068c0178103"
+    },
+    "report-definition.json": {
+      "size_bytes": 902,
+      "sha256": "e76fd773afe79938b17db11fd07f1274db311f842d8ae94586168229d38d9086"
+    },
+    "canonicalization.json": {
+      "size_bytes": 1069,
+      "sha256": "53b0d4da04a1a42f87e3328dcd3fd86d71737ad0b1faf3a954835a2ae14e8103"
+    }
+  },
+  "expected": {
+    "row_count": 2,
+    "control_totals": [
+      { "name": "impressions", "value": "5", "value_type": "integer", "unit": "impressions" },
+      { "name": "spend", "value": "8.00", "value_type": "decimal", "unit": "USD" }
+    ],
+    "canonical_content_sha256": "bcd079902f3c8edb4315dbbdaf9b4e37f6fd5af33c80d1fe6ac8c655581342d4"
+  },
+  "scenarios": [
+    { "id": "valid", "expected_receipt_status": "accepted" },
+    {
+      "id": "missing_file",
+      "mutation": "reader_missing_object",
+      "expected_error": { "code": "RESOURCE_READ_FAILED", "retryable": false }
+    },
+    {
+      "id": "checksum_mismatch",
+      "mutation": "corrupt_object_bytes",
+      "expected_error": { "code": "OBJECT_DIGEST_MISMATCH", "retryable": false }
+    },
+    {
+      "id": "row_count_mismatch",
+      "mutation": "increment_revision_row_count",
+      "expected_error": { "code": "ROW_COUNT_MISMATCH", "retryable": false }
+    },
+    {
+      "id": "control_total_mismatch",
+      "mutation": "increment_revision_impressions",
+      "expected_error": { "code": "CONTROL_TOTAL_MISMATCH", "retryable": false }
+    },
+    {
+      "id": "canonical_digest_mismatch",
+      "mutation": "replace_revision_canonical_digest",
+      "expected_error": { "code": "CANONICAL_DIGEST_MISMATCH", "retryable": false }
+    },
+    { "id": "retry", "flow": "first_manifest_read_not_ready", "expected_manifest_attempts": 2 },
+    { "id": "checkpoint", "flow": "receipt_write_fails_then_restarts", "expected_resource_reads": 2 },
+    { "id": "rejected_receipt", "mutation": "replace_observed_row_count", "expected_receipt_status": "rejected" }
+  ]
+}

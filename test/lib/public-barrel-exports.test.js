@@ -20,7 +20,9 @@ import {
   IdempotencyClaimOwnershipError,
   WebhookDedupConflictError,
   WebhookDedupInputError,
+  createHttpsReportingResourceReader,
   createLazyBackend,
+  createReportingManifestInspector,
   ensureGetProductsCacheScope,
   getFormatAssets,
   LEGACY_PURCHASE_PUBLICATION_PROOF_RETENTION_MS,
@@ -35,6 +37,8 @@ import {
   type ManagerRevalidationResponse,
   type Placement,
   type ProductFormatDeclaration,
+  type ReportingManifestInspectorOptions,
+  type ReportingResourceReader,
   type ResolvedTaskState,
   type SyncCreativesPayload,
 } from '@adcp/sdk';
@@ -197,6 +201,16 @@ const managerRevalidationResponse: ManagerRevalidationResponse = {
   publishers_enqueued: 1,
 };
 
+const reportingReader: ReportingResourceReader = {
+  async read() { return { body: new Uint8Array() }; },
+};
+const reportingInspectorOptions: ReportingManifestInspectorOptions = {
+  reader: reportingReader,
+  referenceAllowedOrigins: ['https://schemas.example.net'],
+};
+const reportingInspector = createReportingManifestInspector(reportingInspectorOptions);
+const httpsReportingReader = createHttpsReportingResourceReader();
+
 const acceptsRootPlacement = (_placement: Placement) => {};
 const acceptsTypesPlacement = (_placement: TypesPlacement) => {};
 
@@ -219,6 +233,8 @@ void required;
 void generatedScope;
 void generatedInjectedScope;
 void managerRevalidationResponse;
+void reportingInspector;
+void httpsReportingReader;
 void acceptsRootPlacement;
 void acceptsTypesPlacement;
 `,

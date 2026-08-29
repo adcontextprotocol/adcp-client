@@ -9,6 +9,7 @@ import { z } from 'zod';
 import * as schemas from '../types/schemas.generated';
 import { SyncCreativesResponseStrictSchema } from '../validation/sync-creatives';
 import { isPre31AdcpVersion } from './adcp-version-config';
+import { GetReportingStatusResponseCurrentSchema } from './reporting-status-response';
 
 function declaresLegacy30xPayload(response: Record<string, unknown>): boolean {
   const adcpVersion = response.adcp_version;
@@ -47,6 +48,11 @@ const GetProductsResponseStrictSchema = schemas.GetProductsResponseSchema.superR
   }
 });
 
+// The bundled generated reporting response schema predates adcp#6953 and
+// rejects current issue codes. Keep this strict overlay self-contained until
+// the next protocol bundle is generated, rather than intersecting a stale enum.
+const GetReportingStatusResponseStrictSchema: z.ZodType = GetReportingStatusResponseCurrentSchema;
+
 export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   // Product discovery & media buy
   list_products: schemas.ListProductsResponseSchema,
@@ -61,6 +67,8 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   update_media_buy: schemas.UpdateMediaBuyResponseSchema,
   get_media_buys: schemas.GetMediaBuysResponseSchema,
   get_media_buy_delivery: schemas.GetMediaBuyDeliveryResponseSchema,
+  get_reporting_status: GetReportingStatusResponseStrictSchema,
+  sync_reporting_receipts: schemas.SyncReportingReceiptsResponseSchema,
   provide_performance_feedback: schemas.ProvidePerformanceFeedbackResponseSchema,
 
   // Creative

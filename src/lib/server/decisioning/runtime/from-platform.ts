@@ -5532,6 +5532,7 @@ export const INTENTIONALLY_UNHYDRATED_ENTITIES: ReadonlySet<string> = new Set([
   'governance_adjustment', // Durable governance receipt identifier; no SDK ResourceKind/store yet.
   'governance_outcome', // Durable governance receipt identifier; no SDK ResourceKind/store yet.
   'seller_adjustment', // Seller-authored adjustment reference; resolved by governance workflows, not ctx metadata.
+  'reporting_revision', // Reporting reconciliation owns immutable revision lookup and evidence binding.
 ]);
 
 /**

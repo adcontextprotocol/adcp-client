@@ -3283,6 +3283,7 @@ const JSTS_UNDER_RESOLUTION_ALIASES: Array<{ numbered: string; base: string }> =
   { numbered: 'Responsive2', base: 'Responsive' },
   { numbered: 'None1', base: 'None' },
   { numbered: 'None2', base: 'None' },
+  { numbered: 'TaskType1', base: 'TaskType' },
 ];
 
 const JSTS_REPEATED_UNDER_RESOLUTION_BASES = [
