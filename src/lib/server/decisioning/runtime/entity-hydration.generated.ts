@@ -64,9 +64,6 @@ export const TOOL_ENTITY_FIELDS: Readonly<Record<string, ReadonlyArray<EntityHyd
   get_property_list: [
     { field: "list_id", xEntity: "property_list" },
   ],
-  get_reporting_status: [
-    { field: "reporting_revision_id", xEntity: "reporting_revision" },
-  ],
   get_rights: [
     { field: "brand_id", xEntity: "rights_holder_brand" },
   ],

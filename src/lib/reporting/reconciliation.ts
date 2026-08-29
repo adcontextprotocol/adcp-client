@@ -133,6 +133,27 @@ function normalizedTotals(totals: ReportingControlTotal[]): ReportingControlTota
   return [...totals].sort((left, right) => left.name.localeCompare(right.name));
 }
 
+function sortedStrings(values: readonly unknown[] | undefined): string[] {
+  return [...(values ?? [])].map(String).sort();
+}
+
+function coverageIsFull(obligation: ManagedReportingObligation): boolean {
+  const coverage = obligation.coverage;
+  const mediaBuyIds = sortedStrings(obligation.media_buy_ids);
+  const packageIds = sortedStrings(coverage.package_ids);
+  return (
+    coverage.status === 'full' &&
+    same(sortedStrings(coverage.media_buy_ids), mediaBuyIds) &&
+    same(sortedStrings(coverage.fully_covered_media_buy_ids), mediaBuyIds) &&
+    coverage.partially_covered_media_buy_ids.length === 0 &&
+    coverage.unsupported_media_buy_ids.length === 0 &&
+    coverage.unknown_media_buy_ids.length === 0 &&
+    same(sortedStrings(coverage.covered_package_ids), packageIds) &&
+    coverage.unsupported_package_ids.length === 0 &&
+    coverage.unknown_package_ids.length === 0
+  );
+}
+
 function receiptMatches(
   receipt: ReportingReceipt,
   revision: ManagedReportingRevision,
@@ -335,6 +356,10 @@ function selectCurrent(
   ) {
     reasons.push('REVISION_SCOPE_MISMATCH');
   }
+  if (!coverageIsFull(obligation) || obligation.coverage.evaluated_at !== obligation.scope_resolved_at) {
+    reasons.push('REPORTING_COVERAGE_INCOMPLETE');
+  }
+  if (!same(revision.coverage, obligation.coverage)) reasons.push('REVISION_COVERAGE_MISMATCH');
   if (obligation.scope_resolved_at !== obligation.period.end) reasons.push('SCOPE_CUTOFF_MISMATCH');
   if (!revision.report_definition_uri || !revision.report_definition_sha256) {
     reasons.push('REPORT_DEFINITION_NOT_PINNED');

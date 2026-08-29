@@ -13,6 +13,20 @@ const period = {
   end: '2026-09-01T00:00:00Z',
   source_timezone: 'UTC',
 };
+const coverage = {
+  status: 'full',
+  evaluated_at: period.end,
+  media_buy_ids: ['buy-1', 'buy-2'],
+  fully_covered_media_buy_ids: ['buy-1', 'buy-2'],
+  partially_covered_media_buy_ids: [],
+  unsupported_media_buy_ids: [],
+  unknown_media_buy_ids: [],
+  package_ids: [],
+  covered_package_ids: [],
+  unsupported_package_ids: [],
+  unknown_package_ids: [],
+  limitations: [],
+};
 const totals = [
   { name: 'impressions', value: '4200', value_type: 'integer', unit: 'impressions' },
   { name: 'spend', value: '7000.00', value_type: 'decimal', unit: 'USD' },
@@ -37,6 +51,7 @@ const revision = {
   schema_ref_policy: 'local_fragment_only',
   account_id: 'account-1',
   media_buy_ids: ['buy-1', 'buy-2'],
+  coverage: structuredClone(coverage),
   period,
   finality: 'official',
   finality_basis: 'contractual_cutoff',
@@ -61,6 +76,7 @@ function obligation(id = 'obligation-billing') {
     reporting_profile: 'billing-v1',
     account_id: 'account-1',
     media_buy_ids: ['buy-1', 'buy-2'],
+    coverage: structuredClone(coverage),
     scope_resolved_at: period.end,
     period,
     expected_at: '2026-09-02T00:00:00Z',
@@ -399,6 +415,35 @@ test('does not claim completeness without an independent expected-period denomin
   const result = evaluateReportingLedger(ledger, undefined, new Date('2026-09-03T00:00:00Z'));
   assert.equal(result.definitive, false);
   assert.deepEqual(result.missingExpectedPeriods, []);
+});
+
+test('does not close a period whose reporting coverage is partial', async () => {
+  const raw = response([]);
+  const partial = {
+    ...structuredClone(coverage),
+    status: 'partial',
+    fully_covered_media_buy_ids: ['buy-1'],
+    partially_covered_media_buy_ids: ['buy-2'],
+  };
+  raw.periods[0].coverage = partial;
+  raw.periods[0].reconciliation_mode = 'delivery_only';
+  raw.periods[0].reconciliation_status = 'not_required';
+  raw.periods[0].health = 'complete';
+  raw.revisions[0].coverage = structuredClone(partial);
+  const ledger = await loadReportingLedger(
+    {
+      async getReportingStatus() {
+        return raw;
+      },
+      async syncReportingReceipts() {
+        throw new Error('not called');
+      },
+    },
+    { account: { account_id: 'account-1' } }
+  );
+  const result = evaluateReportingLedger(ledger, [], new Date('2026-09-03T00:00:00Z'));
+  assert.equal(result.definitive, false);
+  assert.ok(result.obligations[0].reasons.includes('REPORTING_COVERAGE_INCOMPLETE'));
 });
 
 test('does not claim completeness when obligation history counts exceed returned records', async () => {

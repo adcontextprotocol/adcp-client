@@ -138,6 +138,11 @@ export const AgentPlacementFormatDeclaration_FormatKindValues = ["agent_placemen
 /** single | AgentProfilePayload.type */
 export const AgentProfilePayload_TypeValues = ["sales", "creative", "signals", "governance", "measurement", "unknown"] as const;
 
+// ====== AgentReportingDestinationState ======
+
+/** single | AgentReportingDestinationState.state */
+export const AgentReportingDestinationState_StateValues = ["validating", "ready", "action_required", "inactive", "rejected"] as const;
+
 // ====== AgentWebhookChallenge ======
 
 /** single | AgentWebhookChallenge.type */
@@ -147,6 +152,13 @@ export const AgentWebhookChallenge_TypeValues = ["webhook.challenge"] as const;
 
 /** single | AppItem.platform */
 export const AppItem_PlatformValues = ["ios", "android"] as const;
+
+// ====== AppliedAgentConfiguration ======
+
+/** single | AppliedAgentConfiguration.action */
+export const AppliedAgentConfiguration_ActionValues = ["updated", "unchanged", "cleared"] as const;
+/** single | AppliedAgentConfiguration.kind */
+export const AppliedAgentConfiguration_KindValues = ["applied"] as const;
 
 // ====== AssetOutsideAcceptedVersionIntersection ======
 
@@ -167,6 +179,11 @@ export const AssignOrUpdate_OperationValues = ["assign"] as const;
 
 /** single | AttestationBrandIssuer.type */
 export const AttestationBrandIssuer_TypeValues = ["brand"] as const;
+
+// ====== AttestationCapabilities ======
+
+/** array of | AttestationCapabilities.supported_delivery_methods */
+export const AttestationCapabilities_SupportedDeliveryMethodsValues = ["credential_uri", "issuer_credential_id", "embedded"] as const;
 
 // ====== AttestationCredentialUriLocator ======
 
@@ -416,7 +433,7 @@ export const CapabilitiesChangedWebhook_ReasonValues = ["configuration_changed",
 // ====== CapabilityChangeNotificationsSupported ======
 
 /** single | CapabilityChangeNotificationsSupported.registration_task */
-export const CapabilityChangeNotificationsSupported_RegistrationTaskValues = ["sync_agent_notification_configs"] as const;
+export const CapabilityChangeNotificationsSupported_RegistrationTaskValues = ["sync_agent_notification_configs", "sync_agent_configuration"] as const;
 
 // ====== CardAsset ======
 
@@ -667,6 +684,18 @@ export const Dataset_KindValues = ["dataset"] as const;
 /** single | DatasetQuery.pattern */
 export const DatasetQuery_PatternValues = ["dataset_query"] as const;
 
+// ====== DatasetShare ======
+
+/** single | DatasetShare.orchestration */
+export const DatasetShare_OrchestrationValues = ["producer_managed", "consumer_managed"] as const;
+/** single | DatasetShare.pattern */
+export const DatasetShare_PatternValues = ["dataset_share"] as const;
+
+// ====== DeliveryRecipient ======
+
+/** single | DeliveryRecipient.cloud */
+export const DeliveryRecipient_CloudValues = ["aws", "azure", "gcp"] as const;
+
 // ====== DestinationItem ======
 
 /** single | DestinationItem.destination_type */
@@ -744,10 +773,20 @@ export const EducationItem_ModalityValues = ["online", "in_person", "hybrid"] as
 /** single | EventSurface.category */
 export const EventSurface_CategoryValues = ["owned_property", "website", "app", "offline", "phone_call", "chat", "email", "in_store", "system_generated", "other"] as const;
 
+// ====== ExistingBinding ======
+
+/** single | ExistingBinding.mode */
+export const ExistingBinding_ModeValues = ["existing"] as const;
+
 // ====== FileTransfer ======
 
 /** single | FileTransfer.pattern */
 export const FileTransfer_PatternValues = ["file_transfer"] as const;
+
+// ====== FileTransferDestination ======
+
+/** array of | FileTransferDestination.accepted_formats */
+export const FileTransferDestination_AcceptedFormatsValues = ["jsonl", "csv", "parquet", "avro", "orc"] as const;
 
 // ====== FlatFeePricing ======
 
@@ -829,6 +868,13 @@ export const GetProductsCompletion_CacheScopeValues = ["public", "account"] as c
 export const GetProductsRequest_BuyingModeValues = ["brief", "wholesale", "refine"] as const;
 /** array of | GetProductsRequest.fields */
 export const GetProductsRequest_FieldsValues = ["product_id", "name", "description", "publisher_properties", "channels", "video_placement_types", "audio_distribution_types", "sponsored_placement_types", "social_placement_surfaces", "format_options", "placements", "delivery_type", "exclusivity", "pricing_options", "forecast", "reporting_capabilities", "measurement_terms", "performance_standards", "catalog_types", "signal_targeting_allowed", "signal_targeting_rules", "demographic_targeting", "audience_evidence", "audience_evidence_selections", "max_optimization_goals", "catalog_match", "list_applications", "brief_relevance", "acceptance_policy_profile_ids", "expires_at", "allowed_actions", "format_ids", "outcome_measurement", "delivery_measurement", "creative_policy", "metric_optimization", "conversion_tracking", "data_provider_signals", "included_signals", "signal_targeting_options", "overlay_support", "targeting_resolution", "collections", "collection_targeting_allowed", "installments", "is_custom", "product_card", "product_card_detailed", "enforced_policies", "trusted_match"] as const;
+
+// ====== GetReportingStatusRequest ======
+
+/** array of | GetReportingStatusRequest.feed_purposes */
+export const GetReportingStatusRequest_FeedPurposesValues = ["pacing", "analytics", "billing"] as const;
+/** single | GetReportingStatusRequest.view */
+export const GetReportingStatusRequest_ViewValues = ["summary", "periods", "revision"] as const;
 
 // ====== GetSignalsRequest ======
 
@@ -1039,6 +1085,11 @@ export const NotificationConfig_ProductPayloadViewValues = ["canonical", "legacy
 /** single | OfferPrice.model */
 export const OfferPrice_ModelValues = ["cpm", "cpc", "cpcv", "cpa", "flat"] as const;
 
+// ====== OperationalFailure ======
+
+/** single | OperationalFailure.failure_kind */
+export const OperationalFailure_FailureKindValues = ["operational"] as const;
+
 // ====== OpportunityContext ======
 
 /** single | OpportunityContext.close_reason */
@@ -1077,6 +1128,11 @@ export const PercentOfMediaPricing_ModelValues = ["percent_of_media"] as const;
 
 /** single | PerformanceFeedback.status */
 export const PerformanceFeedback_StatusValues = ["accepted", "queued", "applied", "rejected"] as const;
+
+// ====== PeriodsView ======
+
+/** single | PeriodsView.view */
+export const PeriodsView_ViewValues = ["periods"] as const;
 
 // ====== PerUnitPricing ======
 
@@ -1220,6 +1276,11 @@ export const Provenance_HumanOversightValues = ["none", "prompt_only", "selected
 /** single | ProvidePerformanceFeedbackSuccess.application_status */
 export const ProvidePerformanceFeedbackSuccess_ApplicationStatusValues = ["accepted", "applied", "not_applied"] as const;
 
+// ====== ProvisionBinding ======
+
+/** single | ProvisionBinding.mode */
+export const ProvisionBinding_ModeValues = ["provision"] as const;
+
 // ====== PublishedPostAsset ======
 
 /** single | PublishedPostAsset.asset_type */
@@ -1284,6 +1345,11 @@ export const RealEstateItem_ListingTypeValues = ["for_sale", "for_rent"] as cons
 /** single | RealEstateItem.property_type */
 export const RealEstateItem_PropertyTypeValues = ["house", "apartment", "condo", "townhouse", "land", "commercial"] as const;
 
+// ====== RecordedReportingReceipt ======
+
+/** single | RecordedReportingReceipt.result */
+export const RecordedReportingReceipt_ResultValues = ["recorded"] as const;
+
 // ====== ReferenceAsset ======
 
 /** single | ReferenceAsset.role */
@@ -1310,6 +1376,115 @@ export const ReplaceAssignment_OperationValues = ["replace"] as const;
 
 /** single | ReportedOutcomeError.classification_source */
 export const ReportedOutcomeError_ClassificationSourceValues = ["seller_response_copy", "buyer_classification"] as const;
+
+// ====== ReportingCanonicalContentDigest ======
+
+/** single | ReportingCanonicalContentDigest.algorithm */
+export const ReportingCanonicalContentDigest_AlgorithmValues = ["sha256"] as const;
+
+// ====== ReportingCanonicalizationContract ======
+
+/** single | ReportingCanonicalizationContract.algorithm */
+export const ReportingCanonicalizationContract_AlgorithmValues = ["adcp_jcs_rows_v1"] as const;
+/** single | ReportingCanonicalizationContract.media_type */
+export const ReportingCanonicalizationContract_MediaTypeValues = ["application/vnd.adcp.reporting-canonicalization+json"] as const;
+
+// ====== ReportingControlTotal ======
+
+/** single | ReportingControlTotal.value_type */
+export const ReportingControlTotal_ValueTypeValues = ["integer", "decimal"] as const;
+
+// ====== ReportingCoverage ======
+
+/** single | ReportingCoverage.status */
+export const ReportingCoverage_StatusValues = ["full", "partial", "none", "unknown"] as const;
+
+// ====== ReportingDeliveryCapabilities ======
+
+/** single | ReportingDeliveryCapabilities.readiness_notification */
+export const ReportingDeliveryCapabilities_ReadinessNotificationValues = ["reporting.delivery_ready"] as const;
+/** single | ReportingDeliveryCapabilities.receipt_task */
+export const ReportingDeliveryCapabilities_ReceiptTaskValues = ["sync_reporting_receipts"] as const;
+/** single | ReportingDeliveryCapabilities.status_task */
+export const ReportingDeliveryCapabilities_StatusTaskValues = ["get_reporting_status"] as const;
+
+// ====== ReportingDeliveryConfiguration ======
+
+/** single | ReportingDeliveryConfiguration.coverage_requirement */
+export const ReportingDeliveryConfiguration_CoverageRequirementValues = ["full", "allow_partial"] as const;
+
+// ====== ReportingDeliveryConfigurationState ======
+
+/** single | ReportingDeliveryConfigurationState.state */
+export const ReportingDeliveryConfigurationState_StateValues = ["pending_validation", "pending_setup", "ready", "action_required", "inactive"] as const;
+
+// ====== ReportingDeliveryReadyWebhook ======
+
+/** single | ReportingDeliveryReadyWebhook.readiness */
+export const ReportingDeliveryReadyWebhook_ReadinessValues = ["available", "delivered"] as const;
+
+// ====== ReportingMaterialization ======
+
+/** single | ReportingMaterialization.method */
+export const ReportingMaterialization_MethodValues = ["file_transfer", "dataset_share", "warehouse_materialization"] as const;
+/** single | ReportingMaterialization.status */
+export const ReportingMaterialization_StatusValues = ["pending", "available", "delivered", "failed"] as const;
+
+// ====== ReportingObligation ======
+
+/** single | ReportingObligation.production_status */
+export const ReportingObligation_ProductionStatusValues = ["not_due", "pending", "published", "failed"] as const;
+/** single | ReportingObligation.reconciliation_status */
+export const ReportingObligation_ReconciliationStatusValues = ["not_required", "pending", "accepted", "rejected"] as const;
+
+// ====== ReportingReportDefinition ======
+
+/** single | ReportingReportDefinition.media_type */
+export const ReportingReportDefinition_MediaTypeValues = ["application/vnd.adcp.reporting-definition+json"] as const;
+
+// ====== ReportingResource ======
+
+/** single | ReportingResource.immutability */
+export const ReportingResource_ImmutabilityValues = ["immutable_location", "native_version"] as const;
+/** single | ReportingResource.kind */
+export const ReportingResource_KindValues = ["manifest", "dataset", "warehouse_relation"] as const;
+
+// ====== ReportingRevision ======
+
+/** single | ReportingRevision.data_through_precision */
+export const ReportingRevision_DataThroughPrecisionValues = ["exact", "lower_bound", "unknown"] as const;
+/** single | ReportingRevision.finality_basis */
+export const ReportingRevision_FinalityBasisValues = ["source_final", "contractual_cutoff", "stabilized"] as const;
+/** single | ReportingRevision.schema_dialect */
+export const ReportingRevision_SchemaDialectValues = ["https://json-schema.org/draft/2020-12/schema"] as const;
+/** single | ReportingRevision.schema_ref_policy */
+export const ReportingRevision_SchemaRefPolicyValues = ["local_fragment_only"] as const;
+
+// ====== ReportingSchedule ======
+
+/** single | ReportingSchedule.alignment */
+export const ReportingSchedule_AlignmentValues = ["utc", "account_timezone", "billing_cycle"] as const;
+
+// ====== ReportingScheduleOffering ======
+
+/** single | ReportingScheduleOffering.period_anchor_policy */
+export const ReportingScheduleOffering_PeriodAnchorPolicyValues = ["fixed", "configurable"] as const;
+
+// ====== ReportingStatusIssue ======
+
+/** single | ReportingStatusIssue.code */
+export const ReportingStatusIssue_CodeValues = ["REPORT_OVERDUE", "PRODUCTION_FAILED", "DELIVERY_FAILED", "ACCESS_REQUIRED", "CONFIGURATION_REQUIRED", "REPORTING_COVERAGE_INCOMPLETE", "RESOURCE_EXPIRED", "READER_INCOMPATIBLE", "HISTORY_UNAVAILABLE"] as const;
+/** single | ReportingStatusIssue.recommended_action */
+export const ReportingStatusIssue_RecommendedActionValues = ["wait_for_retry", "contact_buyer", "contact_seller", "contact_provider", "repair_access", "update_configuration", "change_reporting_scope", "use_supported_reader"] as const;
+/** single | ReportingStatusIssue.responsible_party */
+export const ReportingStatusIssue_ResponsiblePartyValues = ["buyer", "seller", "provider"] as const;
+/** single | ReportingStatusIssue.severity */
+export const ReportingStatusIssue_SeverityValues = ["delayed", "action_required"] as const;
+
+// ====== ReportingVerification ======
+
+/** single | ReportingVerification.verification_path */
+export const ReportingVerification_VerificationPathValues = ["producer", "representative_consumer", "destination"] as const;
 
 // ====== ReportingWebhook ======
 
@@ -1358,6 +1533,11 @@ export const ResponsiveCreativeFormatDeclaration_FormatKindValues = ["responsive
 
 /** single | RevenueSharePricingOption.pricing_model */
 export const RevenueSharePricingOption_PricingModelValues = ["revenue_share"] as const;
+
+// ====== RevisionView ======
+
+/** single | RevisionView.view */
+export const RevisionView_ViewValues = ["revision"] as const;
 
 // ====== RightsConstraint ======
 
@@ -1460,6 +1640,11 @@ export const SourceLocalizationReadback_RoleValues = ["source"] as const;
 /** single | SponsoredPlacementFormatDeclaration.format_kind */
 export const SponsoredPlacementFormatDeclaration_FormatKindValues = ["sponsored_placement"] as const;
 
+// ====== SummaryView ======
+
+/** single | SummaryView.view */
+export const SummaryView_ViewValues = ["summary"] as const;
+
 // ====== SyncAgentNotificationConfigsResponse ======
 
 /** single | SyncAgentNotificationConfigsResponse.action */
@@ -1524,6 +1709,18 @@ export const TransformerParam_ValueSourceValues = ["inline", "range", "enumerabl
 /** single | Unassign.operation */
 export const Unassign_OperationValues = ["unassign"] as const;
 
+// ====== UnavailableLookup ======
+
+/** single | UnavailableLookup.failure_kind */
+export const UnavailableLookup_FailureKindValues = ["lookup_unavailable"] as const;
+/** single | UnavailableLookup.message */
+export const UnavailableLookup_MessageValues = ["Reporting status resource is unavailable."] as const;
+
+// ====== UnchangedReportingReceipt ======
+
+/** single | UnchangedReportingReceipt.result */
+export const UnchangedReportingReceipt_ResultValues = ["unchanged"] as const;
+
 // ====== UpdateMediaBuyAsyncInputRequired ======
 
 /** single | UpdateMediaBuyAsyncInputRequired.reason */
@@ -1535,6 +1732,13 @@ export const UpdateMediaBuyAsyncInputRequired_ReasonValues = ["APPROVAL_REQUIRED
 export const URLAssetRequirements_ProtocolsValues = ["https", "http"] as const;
 /** single | URLAssetRequirements.role */
 export const URLAssetRequirements_RoleValues = ["clickthrough", "landing_page", "impression_tracker", "click_tracker", "viewability_tracker", "third_party_tracker"] as const;
+
+// ====== ValidatedAgentConfigurationDryRun ======
+
+/** single | ValidatedAgentConfigurationDryRun.action */
+export const ValidatedAgentConfigurationDryRun_ActionValues = ["would_update", "would_be_unchanged", "would_clear"] as const;
+/** single | ValidatedAgentConfigurationDryRun.kind */
+export const ValidatedAgentConfigurationDryRun_KindValues = ["validated"] as const;
 
 // ====== ValidateInputResult ======
 
@@ -1615,6 +1819,11 @@ export const VideoAssetRequirements_AudioCodecsValues = ["aac", "pcm", "ac3", "e
 /** array of | VideoAssetRequirements.containers */
 export const VideoAssetRequirements_ContainersValues = ["mp4", "webm", "mov", "avi", "mkv"] as const;
 
+// ====== WarehouseMaterialization ======
+
+/** single | WarehouseMaterialization.pattern */
+export const WarehouseMaterialization_PatternValues = ["warehouse_materialization"] as const;
+
 // ====== WebhookActivityRecord ======
 
 /** single | WebhookActivityRecord.status */
@@ -1651,6 +1860,9 @@ export const AcquireRightsPendingApproval_RightsStatusValues = AccountIdentityCh
 // --- AcquireRightsRejected ---
 /** @deprecated use `AccountIdentityChangeRejected_StatusValues` — same literal set, AcquireRightsRejected.rights_status duplicates the canonical export. */
 export const AcquireRightsRejected_RightsStatusValues = AccountIdentityChangeRejected_StatusValues;
+// --- AgentNotificationConfigState ---
+/** @deprecated use `AgentNotificationConfig_EventTypesValues` — same literal set, AgentNotificationConfigState.event_types duplicates the canonical export. */
+export const AgentNotificationConfigState_EventTypesValues = AgentNotificationConfig_EventTypesValues;
 // --- AgentWebhookChallenge ---
 /** @deprecated use `AgentNotificationConfig_EventTypesValues` — same literal set, AgentWebhookChallenge.event_types duplicates the canonical export. */
 export const AgentWebhookChallenge_EventTypesValues = AgentNotificationConfig_EventTypesValues;
@@ -1825,14 +2037,29 @@ export const CustomPricing_ModelValues = CustomFormatDeclaration_FormatKindValue
 // --- DAASTTrackerConstraints ---
 /** @deprecated use `DAASTTrackerAsset_TargetValues` — same literal set, DAASTTrackerConstraints.target duplicates the canonical export. */
 export const DAASTTrackerConstraints_TargetValues = DAASTTrackerAsset_TargetValues;
+// --- DatasetShareRecipient ---
+/** @deprecated use `DatasetShare_PatternValues` — same literal set, DatasetShareRecipient.pattern duplicates the canonical export. */
+export const DatasetShareRecipient_PatternValues = DatasetShare_PatternValues;
 // --- Error ---
 /** @deprecated use `CatalogItemAvailabilityError_RecoveryValues` — same literal set, Error.recovery duplicates the canonical export. */
 export const Error_RecoveryValues = CatalogItemAvailabilityError_RecoveryValues;
 /** @deprecated use `CatalogItemAvailabilityError_SourceValues` — same literal set, Error.source duplicates the canonical export. */
 export const Error_SourceValues = CatalogItemAvailabilityError_SourceValues;
+// --- ExistingBinding1 ---
+/** @deprecated use `ExistingBinding_ModeValues` — same literal set, ExistingBinding1.mode duplicates the canonical export. */
+export const ExistingBinding1_ModeValues = ExistingBinding_ModeValues;
+// --- FailedAgentConfiguration ---
+/** @deprecated use `CommitmentError_StatusValues` — same literal set, FailedAgentConfiguration.kind duplicates the canonical export. */
+export const FailedAgentConfiguration_KindValues = CommitmentError_StatusValues;
+// --- FailedReportingReceipt ---
+/** @deprecated use `CommitmentError_StatusValues` — same literal set, FailedReportingReceipt.result duplicates the canonical export. */
+export const FailedReportingReceipt_ResultValues = CommitmentError_StatusValues;
 // --- FeatureRequirement ---
 /** @deprecated use `CollectionListApplication_EffectValues` — same literal set, FeatureRequirement.if_not_covered duplicates the canonical export. */
 export const FeatureRequirement_IfNotCoveredValues = CollectionListApplication_EffectValues;
+// --- FileTransferDestination ---
+/** @deprecated use `FileTransfer_PatternValues` — same literal set, FileTransferDestination.pattern duplicates the canonical export. */
+export const FileTransferDestination_PatternValues = FileTransfer_PatternValues;
 // --- GetBrandIdentitySuccess ---
 /** @deprecated use `GetBrandIdentityRequest_FieldsValues` — same literal set, GetBrandIdentitySuccess.available_fields duplicates the canonical export. */
 export const GetBrandIdentitySuccess_AvailableFieldsValues = GetBrandIdentityRequest_FieldsValues;
@@ -1972,9 +2199,17 @@ export const MediaBuyAvailableAction_TaskValues = CanonicalMediaBuyAction_TaskVa
 // --- MediaBuyDeliveryWebhookResult ---
 /** @deprecated use `GetMediaBuyDeliveryResponse_NotificationTypeValues` — same literal set, MediaBuyDeliveryWebhookResult.notification_type duplicates the canonical export. */
 export const MediaBuyDeliveryWebhookResult_NotificationTypeValues = GetMediaBuyDeliveryResponse_NotificationTypeValues;
+// --- OperationalFailure ---
+/** @deprecated use `CommitmentError_StatusValues` — same literal set, OperationalFailure.status duplicates the canonical export. */
+export const OperationalFailure_StatusValues = CommitmentError_StatusValues;
+/** @deprecated use `GetReportingStatusRequest_ViewValues` — same literal set, OperationalFailure.view duplicates the canonical export. */
+export const OperationalFailure_ViewValues = GetReportingStatusRequest_ViewValues;
 // --- PairedRedirect ---
 /** @deprecated use `DisplayTagFormatDeclaration_FormatKindValues` — same literal set, PairedRedirect.asset_type duplicates the canonical export. */
 export const PairedRedirect_AssetTypeValues = DisplayTagFormatDeclaration_FormatKindValues;
+// --- PeriodsView ---
+/** @deprecated use `CommittedMediaBuy_StatusValues` — same literal set, PeriodsView.status duplicates the canonical export. */
+export const PeriodsView_StatusValues = CommittedMediaBuy_StatusValues;
 // --- PlacementPresentationReference ---
 /** @deprecated use `PlacementPresentationDocument_SchemaVersionValues` — same literal set, PlacementPresentationReference.schema_version duplicates the canonical export. */
 export const PlacementPresentationReference_SchemaVersionValues = PlacementPresentationDocument_SchemaVersionValues;
@@ -1999,6 +2234,9 @@ export const ProductTarget_KindValues = ProductLocalFormatOptionReference_ScopeV
 // --- PropertyListApplication ---
 /** @deprecated use `CollectionListApplication_EffectValues` — same literal set, PropertyListApplication.effect duplicates the canonical export. */
 export const PropertyListApplication_EffectValues = CollectionListApplication_EffectValues;
+// --- ProvisionRecipient ---
+/** @deprecated use `ProvisionBinding_ModeValues` — same literal set, ProvisionRecipient.mode duplicates the canonical export. */
+export const ProvisionRecipient_ModeValues = ProvisionBinding_ModeValues;
 // --- RawAttestation ---
 /** @deprecated use `DigestAttestation_MethodValues` — same literal set, RawAttestation.method duplicates the canonical export. */
 export const RawAttestation_MethodValues = DigestAttestation_MethodValues;
@@ -2013,15 +2251,61 @@ export const ReplaceTargetingValue_OperationValues = ReplaceAssignment_Operation
 // --- ReportedOutcomeError ---
 /** @deprecated use `CatalogItemAvailabilityError_RecoveryValues` — same literal set, ReportedOutcomeError.recovery duplicates the canonical export. */
 export const ReportedOutcomeError_RecoveryValues = CatalogItemAvailabilityError_RecoveryValues;
+// --- ReportingCanonicalizationContract ---
+/** @deprecated use `PlacementPresentationDocument_SchemaVersionValues` — same literal set, ReportingCanonicalizationContract.contract_version duplicates the canonical export. */
+export const ReportingCanonicalizationContract_ContractVersionValues = PlacementPresentationDocument_SchemaVersionValues;
 // --- ReportingCapabilities ---
 /** @deprecated use `CanonicalReportingCapabilities_DateRangeSupportValues` — same literal set, ReportingCapabilities.date_range_support duplicates the canonical export. */
 export const ReportingCapabilities_DateRangeSupportValues = CanonicalReportingCapabilities_DateRangeSupportValues;
+// --- ReportingDeliveryCapabilities ---
+/** @deprecated use `AccountChangeFeedSupported_RegistrationTaskValues` — same literal set, ReportingDeliveryCapabilities.configuration_task duplicates the canonical export. */
+export const ReportingDeliveryCapabilities_ConfigurationTaskValues = AccountChangeFeedSupported_RegistrationTaskValues;
+// --- ReportingDeliveryConfiguration ---
+/** @deprecated use `GetReportingStatusRequest_FeedPurposesValues` — same literal set, ReportingDeliveryConfiguration.feed_purpose duplicates the canonical export. */
+export const ReportingDeliveryConfiguration_FeedPurposeValues = GetReportingStatusRequest_FeedPurposesValues;
+// --- ReportingDeliveryOffering ---
+/** @deprecated use `GetReportingStatusRequest_FeedPurposesValues` — same literal set, ReportingDeliveryOffering.feed_purpose duplicates the canonical export. */
+export const ReportingDeliveryOffering_FeedPurposeValues = GetReportingStatusRequest_FeedPurposesValues;
+// --- ReportingDeliveryReadyWebhook ---
+/** @deprecated use `GetReportingStatusRequest_FeedPurposesValues` — same literal set, ReportingDeliveryReadyWebhook.feed_purpose duplicates the canonical export. */
+export const ReportingDeliveryReadyWebhook_FeedPurposeValues = GetReportingStatusRequest_FeedPurposesValues;
+/** @deprecated use `ReportingDeliveryCapabilities_ReadinessNotificationValues` — same literal set, ReportingDeliveryReadyWebhook.notification_type duplicates the canonical export. */
+export const ReportingDeliveryReadyWebhook_NotificationTypeValues = ReportingDeliveryCapabilities_ReadinessNotificationValues;
+// --- ReportingFileManifest ---
+/** @deprecated use `FileTransferDestination_AcceptedFormatsValues` — same literal set, ReportingFileManifest.format duplicates the canonical export. */
+export const ReportingFileManifest_FormatValues = FileTransferDestination_AcceptedFormatsValues;
+/** @deprecated use `PlacementPresentationDocument_SchemaVersionValues` — same literal set, ReportingFileManifest.manifest_version duplicates the canonical export. */
+export const ReportingFileManifest_ManifestVersionValues = PlacementPresentationDocument_SchemaVersionValues;
+// --- ReportingMaterialization ---
+/** @deprecated use `GetReportingStatusRequest_FeedPurposesValues` — same literal set, ReportingMaterialization.feed_purpose duplicates the canonical export. */
+export const ReportingMaterialization_FeedPurposeValues = GetReportingStatusRequest_FeedPurposesValues;
+// --- ReportingObligation ---
+/** @deprecated use `GetReportingStatusRequest_FeedPurposesValues` — same literal set, ReportingObligation.feed_purpose duplicates the canonical export. */
+export const ReportingObligation_FeedPurposeValues = GetReportingStatusRequest_FeedPurposesValues;
+// --- ReportingReceipt ---
+/** @deprecated use `CanonicalFormatHostedAudio_BuyerAssetAcceptanceValues` — same literal set, ReportingReceipt.status duplicates the canonical export. */
+export const ReportingReceipt_StatusValues = CanonicalFormatHostedAudio_BuyerAssetAcceptanceValues;
+// --- ReportingReportDefinition ---
+/** @deprecated use `PlacementPresentationDocument_SchemaVersionValues` — same literal set, ReportingReportDefinition.contract_version duplicates the canonical export. */
+export const ReportingReportDefinition_ContractVersionValues = PlacementPresentationDocument_SchemaVersionValues;
+// --- ReportingResource ---
+/** @deprecated use `PlacementPresentationDocument_SchemaVersionValues` — same literal set, ReportingResource.manifest_version duplicates the canonical export. */
+export const ReportingResource_ManifestVersionValues = PlacementPresentationDocument_SchemaVersionValues;
+// --- ReportingScheduleOffering ---
+/** @deprecated use `ReportingSchedule_AlignmentValues` — same literal set, ReportingScheduleOffering.alignment duplicates the canonical export. */
+export const ReportingScheduleOffering_AlignmentValues = ReportingSchedule_AlignmentValues;
+// --- ReportingStatusIssue ---
+/** @deprecated use `GetReportingStatusRequest_FeedPurposesValues` — same literal set, ReportingStatusIssue.feed_purpose duplicates the canonical export. */
+export const ReportingStatusIssue_FeedPurposeValues = GetReportingStatusRequest_FeedPurposesValues;
 // --- ReportPlanAdjustmentResponse ---
 /** @deprecated use `ReportPlanAdjustmentRequest_AdjustmentTypeValues` — same literal set, ReportPlanAdjustmentResponse.adjustment_type duplicates the canonical export. */
 export const ReportPlanAdjustmentResponse_AdjustmentTypeValues = ReportPlanAdjustmentRequest_AdjustmentTypeValues;
 // --- RequestProposalsAsyncSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, RequestProposalsAsyncSubmitted.status duplicates the canonical export. */
 export const RequestProposalsAsyncSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
+// --- RevisionView ---
+/** @deprecated use `CommittedMediaBuy_StatusValues` — same literal set, RevisionView.status duplicates the canonical export. */
+export const RevisionView_StatusValues = CommittedMediaBuy_StatusValues;
 // --- SearchBrandResult ---
 /** @deprecated use `GetBrandIdentitySuccess_KellerTypeValues` — same literal set, SearchBrandResult.keller_type duplicates the canonical export. */
 export const SearchBrandResult_KellerTypeValues = GetBrandIdentitySuccess_KellerTypeValues;
@@ -2046,6 +2330,9 @@ export const SignalSelectionGroupRule_TargetingModeValues = CollectionListApplic
 // --- SignalTargetingRules ---
 /** @deprecated use `SignalSelectionGroupRule_SelectionModeValues` — same literal set, SignalTargetingRules.selection_mode duplicates the canonical export. */
 export const SignalTargetingRules_SelectionModeValues = SignalSelectionGroupRule_SelectionModeValues;
+// --- SummaryView ---
+/** @deprecated use `CommittedMediaBuy_StatusValues` — same literal set, SummaryView.status duplicates the canonical export. */
+export const SummaryView_StatusValues = CommittedMediaBuy_StatusValues;
 // --- SyncAudiencesSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, SyncAudiencesSubmitted.status duplicates the canonical export. */
 export const SyncAudiencesSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
@@ -2076,6 +2363,11 @@ export const TextDecoration_KindValues = GroupTextAsset_AssetTypeValues;
 // --- TimeForecastDimension ---
 /** @deprecated use `TimeBasedPricingOption_PricingModelValues` — same literal set, TimeForecastDimension.kind duplicates the canonical export. */
 export const TimeForecastDimension_KindValues = TimeBasedPricingOption_PricingModelValues;
+// --- UnavailableLookup ---
+/** @deprecated use `CommitmentError_StatusValues` — same literal set, UnavailableLookup.status duplicates the canonical export. */
+export const UnavailableLookup_StatusValues = CommitmentError_StatusValues;
+/** @deprecated use `GetReportingStatusRequest_ViewValues` — same literal set, UnavailableLookup.view duplicates the canonical export. */
+export const UnavailableLookup_ViewValues = GetReportingStatusRequest_ViewValues;
 // --- UpdateMediaBuyAsyncSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, UpdateMediaBuyAsyncSubmitted.status duplicates the canonical export. */
 export const UpdateMediaBuyAsyncSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
@@ -2106,6 +2398,12 @@ export const VideoAsset_AssetTypeValues = GroupVideoAsset_AssetTypeValues;
 // --- VideoAssetRequirements ---
 /** @deprecated use `CanonicalFormatHostedVideo_VideoCodecsValues` — same literal set, VideoAssetRequirements.codecs duplicates the canonical export. */
 export const VideoAssetRequirements_CodecsValues = CanonicalFormatHostedVideo_VideoCodecsValues;
+// --- WarehouseMaterialization ---
+/** @deprecated use `DatasetShare_OrchestrationValues` — same literal set, WarehouseMaterialization.orchestration duplicates the canonical export. */
+export const WarehouseMaterialization_OrchestrationValues = DatasetShare_OrchestrationValues;
+// --- WarehouseMaterializationDestination ---
+/** @deprecated use `WarehouseMaterialization_PatternValues` — same literal set, WarehouseMaterializationDestination.pattern duplicates the canonical export. */
+export const WarehouseMaterializationDestination_PatternValues = WarehouseMaterialization_PatternValues;
 // --- WebhookAsset ---
 /** @deprecated use `GroupWebhookAsset_AssetTypeValues` — same literal set, WebhookAsset.asset_type duplicates the canonical export. */
 export const WebhookAsset_AssetTypeValues = GroupWebhookAsset_AssetTypeValues;
