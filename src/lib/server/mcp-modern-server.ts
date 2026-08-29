@@ -27,6 +27,7 @@ import {
   getSdkServerInstructions,
   getMcpToolProfile,
   isRegisteredToolVisible,
+  isToolAvailableForVersion,
   listMcpAppResources,
   listRegisteredToolDefinitions,
   type AdcpAuthInfo,
@@ -191,7 +192,9 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
       const toolVisibility = new Map<string, boolean>();
       const registeredTools = new Map<string, ModernRegisteredTool>();
       for (const tool of modernToolDefinitions) {
-        const visible = await isRegisteredToolVisible(agentServer, { toolName: tool.name, authInfo });
+        const versionAvailable = isToolAvailableForVersion(agentServer, tool.name, agentServer.getAdcpVersion());
+        const visible =
+          versionAvailable && (await isRegisteredToolVisible(agentServer, { toolName: tool.name, authInfo }));
         toolVisibility.set(tool.name, visible);
         if (!visible) continue;
         const config = {

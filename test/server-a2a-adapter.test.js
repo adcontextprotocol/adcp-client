@@ -365,6 +365,22 @@ describe('createA2AAdapter', () => {
       assert.ok(skillIds.includes('get_adcp_capabilities'), 'capabilities tool remains discoverable');
     });
 
+    it('uses per-tool version availability when deriving A2A skills', async () => {
+      const adcp = createAdcpServer({
+        name: '3.0 A2A seller',
+        version: '1.0.0',
+        adcpVersion: '3.0.25',
+        capabilities: { supported_versions: ['3.0.25'] },
+        toolVersions: { get_signals: { min: '3.1' } },
+        mediaBuy: { getProducts: async () => ({ products: [] }) },
+        signals: { getSignals: async () => ({ signals: [] }) },
+      });
+      const card = await createA2AAdapter({ server: adcp, agentCard: baseCard() }).getAgentCard();
+      const skillIds = card.skills.map(skill => skill.id);
+      assert.ok(skillIds.includes('get_products'));
+      assert.ok(!skillIds.includes('get_signals'));
+    });
+
     it('filters comply_test_controller from seller-supplied A2A skill overrides', async () => {
       const adcp = createComplianceDecisioningServer();
       const a2a = createA2AAdapter({
@@ -883,6 +899,50 @@ describe('createA2AAdapter', () => {
       assert.ok(sawAuth, 'authInfo threaded into handler');
       assert.strictEqual(sawAuth.clientId, 'buyer_1');
       assert.deepStrictEqual(sawAuth.scopes, ['read']);
+    });
+
+    it('propagates the same A2A principal through account resolution and native platform context (#2765)', async () => {
+      let resolverAuth;
+      let nativeAuth;
+      const platform = {
+        capabilities: { specialisms: [], config: {} },
+        accounts: {
+          resolve: async (_ref, ctx) => {
+            resolverAuth = ctx.authInfo;
+            return { id: 'acct-a2a', name: 'A2A account', status: 'active', ctx_metadata: {} };
+          },
+        },
+        statusMappers: {},
+        sales: {
+          getProducts: async (_req, ctx) => {
+            nativeAuth = ctx.authInfo;
+            return { products: [], cache_scope: 'account' };
+          },
+        },
+      };
+      const adcp = createAdcpServerFromPlatform(platform, {
+        name: 'a2a-native-auth',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+        stateStore: new InMemoryStateStore(),
+      });
+      const principal = {
+        token: 'a2a-secret',
+        clientId: 'buyer-a2a',
+        scopes: ['read'],
+        credential: { kind: 'api_key', key_id: 'buyer-a2a-key' },
+      };
+      const app = mountAdapter(
+        createA2AAdapter({ server: adcp, agentCard: baseCard(), authenticate: async () => principal })
+      );
+      const response = await postJsonRpc(
+        app,
+        messageSend(dataPartMessage('get_products', { account: { account_id: 'acct-a2a' } }))
+      );
+
+      assert.strictEqual(resolverAuth, principal);
+      assert.strictEqual(nativeAuth, principal);
+      assert.ok(!JSON.stringify(response.body).includes(principal.token));
     });
   });
 

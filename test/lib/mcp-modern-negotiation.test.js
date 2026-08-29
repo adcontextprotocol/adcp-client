@@ -788,6 +788,41 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
   assert.equal(all._meta.adcp_profile, 'all');
 });
 
+test('modern discovery applies framework per-tool version availability', async t => {
+  const { Client, StreamableHTTPClientTransport } = require('@modelcontextprotocol/client');
+  const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server.js');
+  const { createModernMcpServerAdapter } = require('../../dist/lib/server/mcp-modern-server.js');
+
+  const server = createAdcpServer({
+    name: 'modern-version-range-test',
+    version: '1.0.0',
+    adcpVersion: '3.0.25',
+    capabilities: { supported_versions: ['3.0.25'] },
+    validation: { requests: 'off', responses: 'off' },
+    toolVersions: { get_signals: { min: '3.1' } },
+    mediaBuy: { getProducts: async () => ({ products: [] }) },
+    signals: { getSignals: async () => ({ signals: [] }) },
+  });
+  const adapter = createModernMcpServerAdapter(server);
+  const httpServer = createServer((req, res) => void adapter.handle(req, res));
+  const url = await listen(httpServer);
+  const client = new Client(
+    { name: 'modern-version-range-client', version: '1.0.0' },
+    { versionNegotiation: { mode: { pin: '2026-07-28' } } }
+  );
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await adapter.close();
+    await closeServer(httpServer);
+  });
+
+  await client.connect(new StreamableHTTPClientTransport(new URL(url)));
+  const listed = await client.listTools();
+  const names = listed.tools.map(tool => tool.name);
+  assert.ok(names.includes('get_products'));
+  assert.ok(!names.includes('get_signals'));
+});
+
 test('modern serving preserves explicitly registered custom schemas and descriptions', async t => {
   const { z } = require('zod');
   const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');

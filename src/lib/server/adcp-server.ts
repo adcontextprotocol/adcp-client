@@ -349,6 +349,9 @@ export const ADCP_CAPABILITIES: unique symbol = Symbol.for('@adcp/client.capabil
 /** Per-request tool visibility policy consumed by transport adapters. @internal */
 export const ADCP_TOOL_VISIBILITY: unique symbol = Symbol.for('@adcp/client.toolVisibility');
 
+/** Framework-owned per-tool protocol-release availability. @internal */
+export const ADCP_TOOL_VERSION_AVAILABILITY: unique symbol = Symbol.for('@adcp/client.toolVersionAvailability');
+
 /** Resolved MCP tool catalog attached by createAdcpServer. @internal */
 export const ADCP_MCP_TOOL_PROFILE: unique symbol = Symbol.for('@adcp/client.mcpToolProfile');
 
@@ -366,9 +369,13 @@ export type AdcpToolVisibilityResolver = (options: {
 }) => boolean | Promise<boolean>;
 
 /** @internal */
+export type AdcpToolVersionAvailabilityResolver = (toolName: string, adcpVersion: string) => boolean;
+
+/** @internal */
 export interface AdcpServerInternal extends AdcpServer {
   readonly [ADCP_SDK_SERVER]: McpServer;
   [ADCP_TOOL_VISIBILITY]?: AdcpToolVisibilityResolver;
+  [ADCP_TOOL_VERSION_AVAILABILITY]?: AdcpToolVersionAvailabilityResolver;
   [ADCP_MCP_TOOL_PROFILE]?: ResolvedAdcpMcpToolProfile;
   [ADCP_MCP_APP_RESOURCES]?: readonly AdcpMcpResourceDefinition[];
 }
@@ -388,6 +395,25 @@ export function getSdkServer(server: AdcpServer | McpServer): McpServer | undefi
 /** Attach a transport-independent per-request tool visibility policy. @internal */
 export function setToolVisibilityResolver(server: AdcpServer, resolver: AdcpToolVisibilityResolver): void {
   (server as AdcpServerInternal)[ADCP_TOOL_VISIBILITY] = resolver;
+}
+
+/** Attach framework-owned per-tool release availability for transport discovery. @internal */
+export function setToolVersionAvailabilityResolver(
+  server: AdcpServer,
+  resolver: AdcpToolVersionAvailabilityResolver
+): void {
+  Object.defineProperty(server, ADCP_TOOL_VERSION_AVAILABILITY, {
+    value: resolver,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+}
+
+/** Resolve whether a tool is available in a selected AdCP release. @internal */
+export function isToolAvailableForVersion(server: AdcpServer, toolName: string, adcpVersion: string): boolean {
+  const resolver = (server as AdcpServerInternal)[ADCP_TOOL_VERSION_AVAILABILITY];
+  return resolver ? resolver(toolName, adcpVersion) : true;
 }
 
 /** Attach the resolved static MCP catalog for transport adapters. @internal */

@@ -80,7 +80,13 @@ import type {
 import type { Request, RequestHandler } from 'express';
 import { randomUUID } from 'node:crypto';
 import { redactSecrets } from '../utils/redact-secrets';
-import { getSdkServer, listRegisteredToolNames, type AdcpAuthInfo, type AdcpServer } from './adcp-server';
+import {
+  getSdkServer,
+  isToolAvailableForVersion,
+  listRegisteredToolNames,
+  type AdcpAuthInfo,
+  type AdcpServer,
+} from './adcp-server';
 import type { McpToolResponse } from './responses';
 import type { AdcpLogger } from './create-adcp-server';
 
@@ -802,9 +808,22 @@ function buildAgentCard(server: AdcpServer, overrides: A2AAgentCardOverrides): A
   if (overrides.preferredTransport && overrides.preferredTransport.toUpperCase() !== 'JSONRPC') {
     throw new Error('createA2AAdapter: only the JSONRPC A2A transport is supported');
   }
-  const tools = listRegisteredTools(server);
+  const registeredTools = listRegisteredTools(server);
+  const tools = registeredTools.filter(toolName =>
+    isToolAvailableForVersion(server, toolName, server.getAdcpVersion())
+  );
+  const availableTools = new Set(tools);
+  const registeredToolSet = new Set(registeredTools);
   const skills = filterPublicAgentCardSkills(
-    overrides.skills ? normalizeAgentCardSkills(overrides.skills) : deriveSkills(tools)
+    (overrides.skills ? normalizeAgentCardSkills(overrides.skills) : deriveSkills(tools)).filter(skill => {
+      const registeredName =
+        typeof skill.id === 'string' && registeredToolSet.has(skill.id)
+          ? skill.id
+          : typeof skill.name === 'string' && registeredToolSet.has(skill.name)
+            ? skill.name
+            : undefined;
+      return registeredName === undefined || availableTools.has(registeredName);
+    })
   );
   // Capability discovery is an invocable AdCP skill and is required for safe
   // version/lifecycle selection. Keep it visible even when sellers override
