@@ -13,6 +13,35 @@ function findSinglePrefixMinItemsTwo(value, path = '$', matches = []) {
 }
 
 describe('public Zod schema portability', () => {
+  test('an adopter extension does not repeat Product format intersection blocks', async () => {
+    const [{ ProductSchema }, { createDocument }, { z }] = await Promise.all([
+      import('../../dist/lib/schemas/index.js'),
+      import('zod-openapi'),
+      import('zod'),
+    ]);
+    const adopterProduct = ProductSchema.extend({
+      product_id: z.string().min(1),
+      ext: z.object({ local: z.string().optional() }),
+    });
+    const document = createDocument({
+      openapi: '3.1.0',
+      info: { title: 'adopter-schema-portability', version: '1.0.0' },
+      components: { schemas: { InterchangeProduct: adopterProduct } },
+      paths: {},
+    });
+    const component = document.components.schemas.InterchangeProduct;
+    const formatItems = component.properties.format_options.items;
+    const serializedMembers = formatItems.allOf.map(member => JSON.stringify(member));
+    const renderedBytes = Buffer.byteLength(JSON.stringify(document), 'utf8');
+
+    assert.equal(formatItems.allOf.length, 2);
+    assert.equal(new Set(serializedMembers).size, serializedMembers.length);
+    assert.ok(
+      renderedBytes < 1024 * 1024,
+      `extended ProductSchema OpenAPI document must stay below 1 MiB; rendered ${(renderedBytes / 1024 / 1024).toFixed(2)} MiB`
+    );
+  });
+
   test('ProductSchema renders as OpenAPI 3.1 with every canonical format branch', async () => {
     const [{ PostalAreaSupportSchema, ProductSchema, ProvenanceSchema }, { createDocument }] = await Promise.all([
       import('../../dist/lib/schemas/index.js'),

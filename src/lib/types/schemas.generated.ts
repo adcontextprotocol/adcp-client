@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-29T14:02:43.834Z
+// Generated at: 2026-08-29T20:19:54.191Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -11530,54 +11530,6 @@ export const ProductFormatDeclarationSchema: z.ZodObject<{ [K in keyof ProductFo
     format_shape: z.string().optional(),
     v1_format_ref: z.array(FormatReferenceStructuredObjectSchema).optional(),
     format_schema: PlatformExtensionReferenceSchema.optional()
-}).passthrough()).and(z.union([ImageFormatDeclarationSchema, HTML5FormatDeclarationSchema, DisplayTagFormatDeclarationSchema, ImageCarouselFormatDeclarationSchema, HostedVideoFormatDeclarationSchema, VASTVideoFormatDeclarationSchema, HostedAudioFormatDeclarationSchema, DAASTAudioFormatDeclarationSchema, SponsoredPlacementFormatDeclarationSchema, NativeInFeedFormatDeclarationSchema, ResponsiveCreativeFormatDeclarationSchema, AgentPlacementFormatDeclarationSchema, SellerRenderedStatefulDisplayFormatDeclarationSchema, CoordinatedPlacementsFormatDeclarationSchema, CustomFormatDeclarationSchema])).and(z.object({
-    format_option_id: z.string().optional(),
-    publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).optional(),
-    tracker_execution_contract: TrackerExecutionContractSchema.optional(),
-    macro_resolution_capabilities: z.array(MacroProcessingCapabilitySchema).optional(),
-    technical_requirements_complete: z.boolean().optional(),
-    display_name: z.string().optional(),
-    sample_render_url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-    applies_to_channels: z.array(MediaChannelSchema).optional(),
-    seller_preference: z.union([z.literal("preferred"), z.literal("accepted"), z.literal("discouraged")]).optional(),
-    locale_policy: CreativeLocalePolicySchema.optional(),
-    canonical_formats_only: z.boolean().optional(),
-    experimental: z.boolean().optional(),
-    format_shape: z.string().optional(),
-    v1_format_ref: z.array(FormatReferenceStructuredObjectSchema).optional(),
-    format_schema: PlatformExtensionReferenceSchema.optional()
-}).passthrough()).and(z.union([ImageFormatDeclarationSchema, HTML5FormatDeclarationSchema, DisplayTagFormatDeclarationSchema, ImageCarouselFormatDeclarationSchema, HostedVideoFormatDeclarationSchema, VASTVideoFormatDeclarationSchema, HostedAudioFormatDeclarationSchema, DAASTAudioFormatDeclarationSchema, SponsoredPlacementFormatDeclarationSchema, NativeInFeedFormatDeclarationSchema, ResponsiveCreativeFormatDeclarationSchema, AgentPlacementFormatDeclarationSchema, SellerRenderedStatefulDisplayFormatDeclarationSchema, CoordinatedPlacementsFormatDeclarationSchema, CustomFormatDeclarationSchema])).and(z.object({
-    format_option_id: z.string().optional(),
-    publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).optional(),
-    tracker_execution_contract: TrackerExecutionContractSchema.optional(),
-    macro_resolution_capabilities: z.array(MacroProcessingCapabilitySchema).optional(),
-    technical_requirements_complete: z.boolean().optional(),
-    display_name: z.string().optional(),
-    sample_render_url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-    applies_to_channels: z.array(MediaChannelSchema).optional(),
-    seller_preference: z.union([z.literal("preferred"), z.literal("accepted"), z.literal("discouraged")]).optional(),
-    locale_policy: CreativeLocalePolicySchema.optional(),
-    canonical_formats_only: z.boolean().optional(),
-    experimental: z.boolean().optional(),
-    format_shape: z.string().optional(),
-    v1_format_ref: z.array(FormatReferenceStructuredObjectSchema).optional(),
-    format_schema: PlatformExtensionReferenceSchema.optional()
-}).passthrough()).and(z.union([ImageFormatDeclarationSchema, HTML5FormatDeclarationSchema, DisplayTagFormatDeclarationSchema, ImageCarouselFormatDeclarationSchema, HostedVideoFormatDeclarationSchema, VASTVideoFormatDeclarationSchema, HostedAudioFormatDeclarationSchema, DAASTAudioFormatDeclarationSchema, SponsoredPlacementFormatDeclarationSchema, NativeInFeedFormatDeclarationSchema, ResponsiveCreativeFormatDeclarationSchema, AgentPlacementFormatDeclarationSchema, SellerRenderedStatefulDisplayFormatDeclarationSchema, CoordinatedPlacementsFormatDeclarationSchema, CustomFormatDeclarationSchema])).and(z.object({
-    format_option_id: z.string().optional(),
-    publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).optional(),
-    tracker_execution_contract: TrackerExecutionContractSchema.optional(),
-    macro_resolution_capabilities: z.array(MacroProcessingCapabilitySchema).optional(),
-    technical_requirements_complete: z.boolean().optional(),
-    display_name: z.string().optional(),
-    sample_render_url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-    applies_to_channels: z.array(MediaChannelSchema).optional(),
-    seller_preference: z.union([z.literal("preferred"), z.literal("accepted"), z.literal("discouraged")]).optional(),
-    locale_policy: CreativeLocalePolicySchema.optional(),
-    canonical_formats_only: z.boolean().optional(),
-    experimental: z.boolean().optional(),
-    format_shape: z.string().optional(),
-    v1_format_ref: z.array(FormatReferenceStructuredObjectSchema).optional(),
-    format_schema: PlatformExtensionReferenceSchema.optional()
 }).passthrough()).and(z.union([ImageFormatDeclarationSchema, HTML5FormatDeclarationSchema, DisplayTagFormatDeclarationSchema, ImageCarouselFormatDeclarationSchema, HostedVideoFormatDeclarationSchema, VASTVideoFormatDeclarationSchema, HostedAudioFormatDeclarationSchema, DAASTAudioFormatDeclarationSchema, SponsoredPlacementFormatDeclarationSchema, NativeInFeedFormatDeclarationSchema, ResponsiveCreativeFormatDeclarationSchema, AgentPlacementFormatDeclarationSchema, SellerRenderedStatefulDisplayFormatDeclarationSchema, CoordinatedPlacementsFormatDeclarationSchema, CustomFormatDeclarationSchema]));
 
 export const AudienceEvidenceSelectionSchema: z.ZodType = z.object({
@@ -11602,21 +11554,6 @@ export const AudienceEvidenceSelectionSchema: z.ZodType = z.object({
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
 export const PlacementSchema: z.ZodType<Placement & Record<string, unknown>, Placement & Record<string, unknown>> = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).and(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).and(z.object({
-    kind: z.union([z.literal("publisher_ref"), z.literal("seller_inline")]),
-    placement_id: z.string(),
-    publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).optional(),
-    seller_agent: SellerAgentReferenceSchema.optional(),
-    name: z.string().optional(),
-    description: z.string().optional(),
-    mode: z.union([z.literal("targetable"), z.literal("included")]),
-    tags: z.array(z.string()).optional(),
-    format_ids: z.array(FormatReferenceStructuredObjectSchema).optional(),
-    format_options: z.array(ProductFormatDeclarationSchema).optional(),
-    video_placement_types: z.array(VideoPlacementTypeSchema).optional(),
-    audio_distribution_types: z.array(AudioDistributionTypeSchema).optional(),
-    sponsored_placement_types: z.array(SponsoredPlacementTypeSchema).optional(),
-    social_placement_surfaces: z.array(SocialPlacementSurfaceSchema).optional()
-}).passthrough()).and(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).and(z.object({
     kind: z.union([z.literal("publisher_ref"), z.literal("seller_inline")]),
     placement_id: z.string(),
     publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).optional(),

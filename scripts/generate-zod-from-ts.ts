@@ -3121,6 +3121,92 @@ function postProcessMarkerUnionObjectIntersections(content: string): string {
   return result;
 }
 
+function topLevelAndOperands(expression: string): string[] | undefined {
+  let depth = 0;
+  let firstAnd = -1;
+  for (let i = 0; i < expression.length; i++) {
+    const literalEnd = skipQuotedOrRegexLiteral(expression, i);
+    if (literalEnd !== undefined) {
+      i = literalEnd - 1;
+      continue;
+    }
+    const ch = expression[i];
+    if (ch === '(' || ch === '{' || ch === '[') depth++;
+    else if (ch === ')' || ch === '}' || ch === ']') depth--;
+    else if (depth === 0 && expression.startsWith('.and(', i)) {
+      firstAnd = i;
+      break;
+    }
+  }
+  if (firstAnd < 0) return [expression.trim()];
+
+  const operands = [expression.slice(0, firstAnd).trim()];
+  let cursor = firstAnd;
+  while (cursor < expression.length) {
+    cursor = skipWhitespace(expression, cursor);
+    if (!expression.startsWith('.and(', cursor)) return undefined;
+    const argument = scanBalanced(expression, cursor + '.and'.length);
+    if (!argument) return undefined;
+    operands.push(argument.body.trim());
+    cursor = argument.end;
+  }
+  return operands;
+}
+
+/**
+ * Collapse repeated Product format/placement intersection operands introduced
+ * when json-schema-to-typescript follows the same dereferenced allOf layers
+ * through compatibility aliases. Re-validating an identical pure object or
+ * union adds no semantics, but zod-openapi expands every copy recursively.
+ */
+function postProcessRepeatedProductIntersections(content: string): string {
+  let result = content;
+
+  for (const schemaName of ['ProductFormatDeclarationSchema', 'PlacementSchema']) {
+    const target = findSchemaExportExpressions(result).find(entry => entry.name === schemaName);
+    if (!target) throw new Error(`postProcessRepeatedProductIntersections: ${schemaName} export not found.`);
+    const operands = topLevelAndOperands(target.expression);
+    if (!operands) throw new Error(`postProcessRepeatedProductIntersections: could not parse ${schemaName}.`);
+
+    const seen = new Set<string>();
+    const unique = operands.filter(operand => {
+      const exact = operand.trim();
+      if (seen.has(exact)) return false;
+      seen.add(exact);
+      return true;
+    });
+
+    if (schemaName === 'ProductFormatDeclarationSchema' && unique.length === 3 && unique.length < operands.length) {
+      const exactOperands = operands.map(operand => operand.trim());
+      const [commonA, formatUnion, commonB] = unique;
+      const expected = [commonA, formatUnion, commonB, formatUnion, commonB, formatUnion, commonB, formatUnion];
+      if (
+        exactOperands.length !== expected.length ||
+        exactOperands.some((operand, index) => operand !== expected[index]) ||
+        !commonA?.endsWith(`.merge(${commonB})`)
+      ) {
+        const classes: string[] = [];
+        const classByOperand = new Map<string, string>();
+        for (const operand of exactOperands) {
+          const label = classByOperand.get(operand) ?? String.fromCharCode(65 + classByOperand.size);
+          classByOperand.set(operand, label);
+          classes.push(label);
+        }
+        throw new Error(
+          `postProcessRepeatedProductIntersections: ProductFormatDeclaration no longer matches the verified repeated allOf projection (${classes.join('')}).`
+        );
+      }
+      unique.pop();
+    }
+
+    if (unique.length === operands.length) continue;
+    const rewritten = unique.slice(1).reduce((chain, operand) => `${chain}.and(${operand})`, unique[0]!);
+    result = result.slice(0, target.expressionStart) + rewritten + result.slice(target.expressionEnd);
+  }
+
+  return result;
+}
+
 function postProcessObjectIntersections(content: string): string {
   const schemaExpressions = extractSchemaExports(content);
   const shapeCache = new Map<string, ObjectShape | undefined>();
@@ -4062,6 +4148,11 @@ async function generateZodSchemas() {
     zodSchemas = postProcessCanonicalPrimitiveConstraints(zodSchemas);
     zodSchemas = postProcessJsonSchemaUriFormats(zodSchemas);
 
+    // Compatibility aliases can make jsts emit repeated format/placement
+    // intersections. Collapse them before annotation so adopter OpenAPI
+    // generators see each validation block once.
+    zodSchemas = postProcessRepeatedProductIntersections(zodSchemas);
+
     // Post-process: Add explicit z.ZodType annotations to schemas that trip TS7056.
     zodSchemas = postProcessTS7056Annotations(zodSchemas);
 
@@ -4119,6 +4210,7 @@ export const __test__ = {
   postProcessForNullish,
   postProcessRecordIntersections,
   postProcessMarkerUnionObjectIntersections,
+  postProcessRepeatedProductIntersections,
   postProcessCanonicalFormatSlots,
   postProcessCreativeBriefRequiredDisclosures,
   postProcessObjectUnionIntersections,
