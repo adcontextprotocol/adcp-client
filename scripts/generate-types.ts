@@ -3819,7 +3819,7 @@ function discoverAllSchemaFiles(dir: string, base: string = dir): string[] {
       const relativeDirectory = path.relative(base, fullPath);
       if (entry === 'tmp' || relativeDirectory === 'mcp' || relativeDirectory === 'bundled') continue;
       results.push(...discoverAllSchemaFiles(fullPath, base));
-    } else if (entry.endsWith('.json') && entry !== 'index.json') {
+    } else if (entry.endsWith('.json') && entry !== 'index.json' && entry !== '_provenance.json') {
       results.push(path.relative(base, fullPath));
     }
   }
@@ -4344,4 +4344,4 @@ if (require.main === module) {
   })();
 }
 
-export { generateTypes };
+export { discoverAllSchemaFiles, generateTypes };

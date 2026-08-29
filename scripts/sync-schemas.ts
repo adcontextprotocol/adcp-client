@@ -31,6 +31,32 @@ const REPO_ROOT = path.join(__dirname, '..');
 const SCHEMA_CACHE_DIR = path.join(REPO_ROOT, 'schemas/cache');
 const COMPLIANCE_CACHE_DIR = path.join(REPO_ROOT, 'compliance/cache');
 const SKILLS_DIR = path.join(REPO_ROOT, 'skills');
+const CODEGEN_PROVENANCE_PATH = path.join(REPO_ROOT, 'schemas/codegen-provenance.json');
+const PROTOCOL_SOURCE_REPOSITORY = 'adcontextprotocol/adcp';
+const SHA256_PATTERN = /^(?:sha256:)?([0-9a-f]{64})$/;
+const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/;
+const PROTOCOL_SKILL_NAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9_-]*[A-Za-z0-9])?$/;
+
+interface ProtocolBundleProvenance {
+  schema_version: 1;
+  source_repository: typeof PROTOCOL_SOURCE_REPOSITORY;
+  source_commit: string;
+  published_version: string;
+  bundle_sha256: string;
+  bundle_url?: string;
+}
+
+interface CustomBundleRequest {
+  bundle: string;
+  bundleSha256: string;
+  protocolCommit: string;
+}
+
+interface SyncCommandLine {
+  version?: string;
+  bundle?: CustomBundleRequest;
+  bundleSource?: 'arguments' | 'environment';
+}
 
 /**
  * GitHub mirrors used when adcontextprotocol.org is unavailable.
@@ -83,6 +109,275 @@ function assertBundleVersion(requestedVersion: string, bundledVersion: unknown):
   if (requestedVersion !== 'latest' && bundledVersion !== requestedVersion) {
     throw new Error(`Protocol bundle version mismatch: requested ${requestedVersion}, received ${bundledVersion}.`);
   }
+}
+
+function normalizeBundleSha256(value: string): string {
+  const match = SHA256_PATTERN.exec(value.trim());
+  if (!match) {
+    throw new Error(
+      'Protocol bundle SHA-256 must be 64 lowercase hexadecimal characters (optionally prefixed by "sha256:").'
+    );
+  }
+  return match[1];
+}
+
+function assertProtocolCommit(value: string): void {
+  if (!COMMIT_SHA_PATTERN.test(value)) {
+    throw new Error('Protocol commit must be a lowercase 40-character Git commit SHA.');
+  }
+}
+
+function officialBundleUrlForCommit(source: string, protocolCommit: string): string | undefined {
+  if (!source.includes('://')) return undefined;
+  let url: URL;
+  try {
+    url = new URL(source);
+  } catch {
+    return undefined;
+  }
+  const expectedPath = `/protocol/pr/${protocolCommit}/latest.tgz`;
+  if (
+    url.protocol !== 'https:' ||
+    url.hostname !== 'adcontextprotocol.org' ||
+    url.port ||
+    url.username ||
+    url.password ||
+    url.pathname !== expectedPath ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(
+      `Protocol PR bundle URL must be the official immutable URL ` +
+        `https://adcontextprotocol.org${expectedPath}. Use a local file path for unpublished bundles.`
+    );
+  }
+  return url.href;
+}
+
+function validateCustomBundleRequest(request: CustomBundleRequest): CustomBundleRequest {
+  const protocolCommit = request.protocolCommit.trim();
+  assertProtocolCommit(protocolCommit);
+  const bundleSha256 = normalizeBundleSha256(request.bundleSha256);
+  const bundle = request.bundle.trim();
+  if (!bundle) throw new Error('Protocol bundle path or URL must not be empty.');
+  officialBundleUrlForCommit(bundle, protocolCommit);
+  return { bundle, bundleSha256, protocolCommit };
+}
+
+function readCodegenProvenance(filePath = CODEGEN_PROVENANCE_PATH): ProtocolBundleProvenance | undefined {
+  if (!existsSync(filePath)) return undefined;
+  let document: unknown;
+  try {
+    document = JSON.parse(readFileSync(filePath, 'utf8'));
+  } catch (cause) {
+    throw new Error(`Invalid codegen provenance at ${filePath}: ${cause instanceof Error ? cause.message : cause}`, {
+      cause,
+    });
+  }
+  if (!document || typeof document !== 'object') {
+    throw new Error(`Invalid codegen provenance at ${filePath}: expected a JSON object.`);
+  }
+  const candidate = document as Partial<ProtocolBundleProvenance>;
+  if (candidate.schema_version !== 1) {
+    throw new Error(`Invalid codegen provenance at ${filePath}: schema_version must be 1.`);
+  }
+  if (candidate.source_repository !== PROTOCOL_SOURCE_REPOSITORY) {
+    throw new Error(
+      `Invalid codegen provenance at ${filePath}: source_repository must be ${PROTOCOL_SOURCE_REPOSITORY}.`
+    );
+  }
+  if (typeof candidate.source_commit !== 'string') {
+    throw new Error(`Invalid codegen provenance at ${filePath}: source_commit is required.`);
+  }
+  assertProtocolCommit(candidate.source_commit);
+  if (typeof candidate.bundle_sha256 !== 'string') {
+    throw new Error(`Invalid codegen provenance at ${filePath}: bundle_sha256 is required.`);
+  }
+  const bundleSha256 = normalizeBundleSha256(candidate.bundle_sha256);
+  if (typeof candidate.published_version !== 'string') {
+    throw new Error(`Invalid codegen provenance at ${filePath}: published_version is required.`);
+  }
+  assertValidAdcpVersion(candidate.published_version);
+  if (candidate.bundle_url !== undefined) {
+    if (typeof candidate.bundle_url !== 'string') {
+      throw new Error(`Invalid codegen provenance at ${filePath}: bundle_url must be a string.`);
+    }
+    if (!officialBundleUrlForCommit(candidate.bundle_url, candidate.source_commit)) {
+      throw new Error(`Invalid codegen provenance at ${filePath}: bundle_url must be an HTTPS URL.`);
+    }
+  }
+  return {
+    schema_version: 1,
+    source_repository: PROTOCOL_SOURCE_REPOSITORY,
+    source_commit: candidate.source_commit,
+    published_version: candidate.published_version,
+    bundle_sha256: bundleSha256,
+    ...(candidate.bundle_url ? { bundle_url: candidate.bundle_url } : {}),
+  };
+}
+
+function writeCodegenProvenance(provenance: ProtocolBundleProvenance): void {
+  mkdirSync(path.dirname(CODEGEN_PROVENANCE_PATH), { recursive: true });
+  writeFileSync(CODEGEN_PROVENANCE_PATH, `${JSON.stringify(provenance, null, 2)}\n`);
+}
+
+function cacheMatchesCodegenProvenance(
+  declarationPath = CODEGEN_PROVENANCE_PATH,
+  cacheProvenancePath = path.join(SCHEMA_CACHE_DIR, getTargetAdCPVersion(), '_provenance.json')
+): boolean {
+  const declarationExists = existsSync(declarationPath);
+  const cacheProvenanceExists = existsSync(cacheProvenancePath);
+  if (!declarationExists) return !cacheProvenanceExists;
+  if (!cacheProvenanceExists) return false;
+
+  const declaration = readCodegenProvenance(declarationPath)!;
+  const cached = readCodegenProvenance(cacheProvenancePath)!;
+  return (
+    declaration.source_repository === cached.source_repository &&
+    declaration.source_commit === cached.source_commit &&
+    declaration.published_version === cached.published_version &&
+    declaration.bundle_sha256 === cached.bundle_sha256 &&
+    declaration.bundle_url === cached.bundle_url
+  );
+}
+
+function createProtocolBundleProvenance(
+  manifest: {
+    published_version?: unknown;
+    source?: { repository?: unknown; commit_sha?: unknown };
+  },
+  bundledVersion: string,
+  expectedProtocolCommit: string,
+  bundleSha256: string,
+  bundleUrl?: string
+): ProtocolBundleProvenance {
+  if (manifest.source?.repository !== PROTOCOL_SOURCE_REPOSITORY) {
+    throw new Error(
+      `Protocol bundle source repository mismatch: expected ${PROTOCOL_SOURCE_REPOSITORY}, ` +
+        `received ${JSON.stringify(manifest.source?.repository)}.`
+    );
+  }
+  if (manifest.source.commit_sha !== expectedProtocolCommit) {
+    throw new Error(
+      `Protocol bundle commit mismatch: expected ${expectedProtocolCommit}, ` +
+        `received ${JSON.stringify(manifest.source.commit_sha)}.`
+    );
+  }
+  if (manifest.published_version !== bundledVersion) {
+    throw new Error(
+      `Protocol bundle manifest version mismatch: schemas report ${bundledVersion}, ` +
+        `manifest reports ${JSON.stringify(manifest.published_version)}.`
+    );
+  }
+  return {
+    schema_version: 1,
+    source_repository: PROTOCOL_SOURCE_REPOSITORY,
+    source_commit: expectedProtocolCommit,
+    published_version: bundledVersion,
+    bundle_sha256: normalizeBundleSha256(bundleSha256),
+    ...(bundleUrl ? { bundle_url: bundleUrl } : {}),
+  };
+}
+
+function parseSyncCommandLine(args: string[], env: NodeJS.ProcessEnv = process.env): SyncCommandLine {
+  let version: string | undefined;
+  let bundleSource: SyncCommandLine['bundleSource'];
+  if (env.ADCP_BUNDLE && env.ADCP_BUNDLE_URL && env.ADCP_BUNDLE !== env.ADCP_BUNDLE_URL) {
+    throw new Error('ADCP_BUNDLE and ADCP_BUNDLE_URL disagree; set only one bundle source.');
+  }
+  let bundle = env.ADCP_BUNDLE ?? env.ADCP_BUNDLE_URL;
+  let bundleSha256 = env.ADCP_BUNDLE_SHA256;
+  let protocolCommit = env.ADCP_PROTOCOL_COMMIT_SHA;
+
+  const takeValue = (flag: string, index: number): [string, number] => {
+    const argument = args[index];
+    const inlinePrefix = `${flag}=`;
+    if (argument.startsWith(inlinePrefix)) return [argument.slice(inlinePrefix.length), index];
+    const value = args[index + 1];
+    if (!value || value.startsWith('--')) throw new Error(`${flag} requires a value.`);
+    return [value, index + 1];
+  };
+
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === '--bundle' || argument.startsWith('--bundle=')) {
+      [bundle, index] = takeValue('--bundle', index);
+      bundleSource = 'arguments';
+    } else if (argument === '--bundle-sha256' || argument.startsWith('--bundle-sha256=')) {
+      [bundleSha256, index] = takeValue('--bundle-sha256', index);
+      bundleSource = 'arguments';
+    } else if (argument === '--protocol-commit' || argument.startsWith('--protocol-commit=')) {
+      [protocolCommit, index] = takeValue('--protocol-commit', index);
+      bundleSource = 'arguments';
+    } else if (argument.startsWith('--')) {
+      throw new Error(`Unknown schema sync option ${argument}.`);
+    } else if (version === undefined) {
+      version = argument;
+    } else {
+      throw new Error(`Unexpected schema sync argument ${argument}.`);
+    }
+  }
+
+  const suppliedBundleFields = [bundle, bundleSha256, protocolCommit].filter(value => value !== undefined).length;
+  if (suppliedBundleFields !== 0 && suppliedBundleFields !== 3) {
+    throw new Error(
+      'Custom protocol bundles require --bundle, --bundle-sha256, and --protocol-commit ' +
+        '(or ADCP_BUNDLE_URL, ADCP_BUNDLE_SHA256, and ADCP_PROTOCOL_COMMIT_SHA).'
+    );
+  }
+
+  return {
+    ...(version ? { version } : {}),
+    ...(suppliedBundleFields === 3
+      ? {
+          bundle: validateCustomBundleRequest({
+            bundle: bundle!,
+            bundleSha256: bundleSha256!,
+            protocolCommit: protocolCommit!,
+          }),
+        }
+      : {}),
+    ...(suppliedBundleFields === 3 ? { bundleSource: bundleSource ?? 'environment' } : {}),
+  };
+}
+
+function resolveCustomBundleRequest(
+  adcpVersion: string,
+  primaryPin: string,
+  explicitBundle?: CustomBundleRequest,
+  provenancePath = CODEGEN_PROVENANCE_PATH,
+  bundleSource: SyncCommandLine['bundleSource'] = 'arguments'
+): CustomBundleRequest | undefined {
+  if (adcpVersion !== primaryPin) {
+    if (explicitBundle && bundleSource === 'arguments') {
+      throw new Error(
+        `Explicit protocol bundles may only target the primary ADCP_VERSION (${primaryPin}); ` +
+          `received side-bundle version ${adcpVersion}.`
+      );
+    }
+    return undefined;
+  }
+  if (explicitBundle) return validateCustomBundleRequest(explicitBundle);
+
+  const declared = readCodegenProvenance(provenancePath);
+  if (!declared) return undefined;
+  if (declared.published_version !== adcpVersion) {
+    throw new Error(
+      `Codegen provenance version mismatch: ADCP_VERSION is ${adcpVersion}, ` +
+        `${path.relative(REPO_ROOT, provenancePath)} declares ${declared.published_version}.`
+    );
+  }
+  if (!declared.bundle_url) {
+    throw new Error(
+      `${path.relative(REPO_ROOT, provenancePath)} was generated from a local bundle and has no ` +
+        'bundle_url for reproducible CI. Re-run sync with the official commit-addressed PR bundle URL.'
+    );
+  }
+  return {
+    bundle: declared.bundle_url,
+    bundleSha256: declared.bundle_sha256,
+    protocolCommit: declared.source_commit,
+  };
 }
 
 interface DomainEntry {
@@ -244,8 +539,8 @@ function assertNoSymlinks(root: string): void {
   }
 }
 
-async function fetchBinary(url: string): Promise<Buffer> {
-  const res = await fetchAvailable(url);
+async function fetchBinary(url: string, init?: RequestInit): Promise<Buffer> {
+  const res = await fetchAvailable(url, init);
   if (!res.ok) throw fetchStatusError(url, res);
   try {
     return Buffer.from(await res.arrayBuffer());
@@ -404,13 +699,17 @@ function copyTreeFiltered(srcDir: string, destDir: string): void {
  */
 const SDK_LOCAL_SKILLS = new Set(['call-adcp-agent']);
 
+function isSafeProtocolSkillName(value: unknown): value is string {
+  return typeof value === 'string' && PROTOCOL_SKILL_NAME_PATTERN.test(value);
+}
+
 /**
  * Sync protocol-managed skills from the extracted bundle into the SDK's
  * top-level `skills/` tree. Driven by `manifest.contents.skills` (a list of
  * skill directory names) so we only overwrite the entries the spec repo
  * publishes — leaves SDK-local skills (`build-seller-agent/`, etc.) alone.
  */
-function syncSkillsFromBundle(extractRoot: string): void {
+function syncSkillsFromBundle(extractRoot: string, skillsDir = SKILLS_DIR): void {
   const skillsInBundle = path.join(extractRoot, 'skills');
   const manifestPath = path.join(extractRoot, 'manifest.json');
   if (!existsSync(skillsInBundle) || !existsSync(manifestPath)) {
@@ -430,12 +729,10 @@ function syncSkillsFromBundle(extractRoot: string): void {
   }
   let synced = 0;
   for (const name of skillNames) {
-    if (typeof name !== 'string' || name.includes('/') || name.includes('..')) {
-      continue;
-    }
+    if (!isSafeProtocolSkillName(name)) continue;
     if (SDK_LOCAL_SKILLS.has(name)) continue;
     const src = path.join(skillsInBundle, name);
-    const dst = path.join(SKILLS_DIR, name);
+    const dst = path.join(skillsDir, name);
     if (!existsSync(src) || !statSync(src).isDirectory()) continue;
     // Skip nested `schemas/` subdirs — those duplicate `schemas/cache/<version>/`
     // already extracted from the same tarball. Per-protocol skills in the spec
@@ -446,7 +743,137 @@ function syncSkillsFromBundle(extractRoot: string): void {
     synced++;
   }
   if (synced > 0) {
-    console.log(`📁 Skills:     ${SKILLS_DIR} (${synced} protocol-managed)`);
+    console.log(`📁 Skills:     ${skillsDir} (${synced} protocol-managed)`);
+  }
+}
+
+interface InstallProtocolBundleOptions {
+  version: string;
+  tgzBuf: Buffer;
+  expectedSha256: string;
+  source: string;
+  includeSharedSurfaces: boolean;
+  verifySignature?: (tgzPath: string) => Promise<void>;
+  expectedProtocolCommit?: string;
+  bundleUrl?: string;
+  repoRoot?: string;
+  schemaCacheDir?: string;
+  complianceCacheDir?: string;
+  skillsDir?: string;
+}
+
+/** Verify, inspect, and install a complete protocol bundle into the local caches. */
+async function installProtocolBundle(
+  options: InstallProtocolBundleOptions
+): Promise<ProtocolBundleProvenance | undefined> {
+  const { version, tgzBuf, source, includeSharedSurfaces, verifySignature, expectedProtocolCommit, bundleUrl } =
+    options;
+  const repoRoot = options.repoRoot ?? REPO_ROOT;
+  const schemaCacheDir = options.schemaCacheDir ?? SCHEMA_CACHE_DIR;
+  const complianceCacheDir = options.complianceCacheDir ?? COMPLIANCE_CACHE_DIR;
+  const skillsDir = options.skillsDir ?? SKILLS_DIR;
+  const expectedSha256 = normalizeBundleSha256(options.expectedSha256);
+  const actualSha256 = createHash('sha256').update(tgzBuf).digest('hex');
+  if (actualSha256 !== expectedSha256) {
+    throw new Error(
+      `Tarball sha256 mismatch for ${source}\n  expected: ${expectedSha256}\n  actual:   ${actualSha256}`
+    );
+  }
+  console.log(`✅ sha256 verified (${expectedSha256.slice(0, 12)}…)`);
+
+  // Keep the work dir inside the repo so renameSync never crosses filesystems (EXDEV).
+  mkdirSync(repoRoot, { recursive: true });
+  const workDir = mkdtempSync(path.join(repoRoot, '.adcp-sync-'));
+  try {
+    const tgzPath = path.join(workDir, 'bundle.tgz');
+    writeFileSync(tgzPath, tgzBuf);
+
+    if (verifySignature) await verifySignature(tgzPath);
+
+    await tar.x({ file: tgzPath, cwd: workDir, strict: true });
+
+    const extractRoot = path.join(workDir, `adcp-${version}`);
+    if (!existsSync(extractRoot)) {
+      throw new Error(`Tarball root ${extractRoot} not found — upstream wrapping directory may have changed.`);
+    }
+    assertNoSymlinks(extractRoot);
+
+    const bundleIndex = JSON.parse(readFileSync(path.join(extractRoot, 'schemas/index.json'), 'utf8'));
+    const bundledVersion: string | undefined = bundleIndex.adcp_version;
+    assertBundleVersion(version, bundledVersion);
+
+    let provenance: ProtocolBundleProvenance | undefined;
+    if (expectedProtocolCommit) {
+      assertProtocolCommit(expectedProtocolCommit);
+      const manifestPath = path.join(extractRoot, 'manifest.json');
+      if (!existsSync(manifestPath)) {
+        throw new Error('Protocol PR bundle is missing manifest.json provenance.');
+      }
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+        published_version?: unknown;
+        source?: { repository?: unknown; commit_sha?: unknown };
+      };
+      provenance = createProtocolBundleProvenance(
+        manifest,
+        bundledVersion,
+        expectedProtocolCommit,
+        actualSha256,
+        bundleUrl
+      );
+    }
+
+    for (const requiredTree of ['schemas', 'compliance']) {
+      const requiredPath = path.join(extractRoot, requiredTree);
+      if (!existsSync(requiredPath) || !statSync(requiredPath).isDirectory()) {
+        throw new Error(`Protocol bundle is missing required ${requiredTree}/ tree.`);
+      }
+    }
+
+    replaceTree(path.join(extractRoot, 'schemas'), path.join(schemaCacheDir, version));
+    replaceTree(path.join(extractRoot, 'compliance'), path.join(complianceCacheDir, version));
+
+    // Skills sync is manifest-driven and per-name. SDK-local skills like
+    // build-seller-agent/ stay untouched; protocol-canonical ones (the
+    // call-adcp-agent buyer skill plus per-protocol skills) are kept aligned
+    // with the pinned spec version. Older tarballs (no manifest.contents.skills
+    // array) are silently skipped — the SDK-local copies stay as-is. Skipped
+    // entirely for side-bundle syncs so they keep the primary pin's skills.
+    if (includeSharedSurfaces) {
+      syncSkillsFromBundle(extractRoot, skillsDir);
+    }
+
+    // Refs inside the tarball point to /schemas/latest/; rewrite for pinned versions.
+    const schemaDest = path.join(schemaCacheDir, version);
+    const semanticVersion: string = bundledVersion || version;
+    normalizeRefsInTree(schemaDest, semanticVersion);
+    if (provenance) {
+      writeFileSync(path.join(schemaDest, '_provenance.json'), `${JSON.stringify(provenance, null, 2)}\n`);
+    }
+
+    // schemas/registry/registry.yaml is intentionally NOT written here. Although
+    // the protocol tarball ships an openapi/registry.yaml, the registry spec has
+    // its own upstream (agenticadvertising.org) and its own owner,
+    // `generate-registry-types --sync`. That live spec runs ahead of the pinned
+    // protocol bundle, so copying the tarball's copy only downgraded the checked-in
+    // file and left a spurious diff in every working tree after a plain sync.
+
+    // `latest/` is a shared, non-version-scoped pointer that resolves to the
+    // default bundle — so it tracks the primary pin, not whichever side-bundle
+    // is being synced. Repointing it for a legacy/beta sync would silently make
+    // the SDK validate against an older version by default. Gate it like skills.
+    if (includeSharedSurfaces) {
+      updateLatestSymlink(schemaCacheDir, version);
+      updateLatestSymlink(complianceCacheDir, version);
+    }
+
+    console.log(`📁 Schemas:    ${path.join(schemaCacheDir, version)}`);
+    console.log(`📁 Compliance: ${path.join(complianceCacheDir, version)}`);
+    if (existsSync(`${path.join(schemaCacheDir, version)}.previous`)) {
+      console.log(`💡 Wire-level deltas: npm run schema-diff`);
+    }
+    return provenance;
+  } finally {
+    rmSync(workDir, { recursive: true, force: true });
   }
 }
 
@@ -480,80 +907,53 @@ async function syncFromTarball(
 
   console.log(`📥 Fetching protocol bundle: ${tgzUrl}`);
   const [tgzBuf, shaText] = await Promise.all([fetchBinary(tgzUrl), fetchText(shaUrl)]);
+  await installProtocolBundle({
+    version,
+    tgzBuf,
+    expectedSha256: shaText.trim().split(/\s+/)[0],
+    source: tgzUrl,
+    includeSharedSurfaces,
+    verifySignature: tgzPath => verifyCosignSignature(tgzPath, version, baseUrl),
+  });
+  return true;
+}
 
-  const expectedSha = shaText.trim().split(/\s+/)[0];
-  const actualSha = createHash('sha256').update(tgzBuf).digest('hex');
-  if (actualSha !== expectedSha) {
-    throw new Error(`Tarball sha256 mismatch for ${tgzUrl}\n  expected: ${expectedSha}\n  actual:   ${actualSha}`);
+async function readCustomBundle(source: string): Promise<Buffer> {
+  const bundlePath = path.resolve(process.cwd(), source);
+  if (!existsSync(bundlePath) || !statSync(bundlePath).isFile()) {
+    throw new Error(`Protocol bundle file not found: ${bundlePath}`);
   }
-  console.log(`✅ sha256 verified (${expectedSha.slice(0, 12)}…)`);
+  return readFileSync(bundlePath);
+}
 
-  // Keep the work dir inside the repo so renameSync never crosses filesystems (EXDEV).
-  mkdirSync(REPO_ROOT, { recursive: true });
-  const workDir = mkdtempSync(path.join(REPO_ROOT, '.adcp-sync-'));
-  try {
-    const tgzPath = path.join(workDir, 'bundle.tgz');
-    writeFileSync(tgzPath, tgzBuf);
-
-    // Cosign keyless signature verification (adcontextprotocol/adcp#2273).
-    // Best-effort: latest is unsigned, sidecars may be absent on older releases.
-    await verifyCosignSignature(tgzPath, version, baseUrl);
-
-    await tar.x({ file: tgzPath, cwd: workDir, strict: true });
-
-    const extractRoot = path.join(workDir, `adcp-${version}`);
-    if (!existsSync(extractRoot)) {
-      throw new Error(`Tarball root ${extractRoot} not found — upstream wrapping directory may have changed.`);
-    }
-    assertNoSymlinks(extractRoot);
-
-    const bundleIndex = JSON.parse(readFileSync(path.join(extractRoot, 'schemas/index.json'), 'utf8'));
-    const bundledVersion: string | undefined = bundleIndex.adcp_version;
-    assertBundleVersion(version, bundledVersion);
-
-    replaceTree(path.join(extractRoot, 'schemas'), path.join(SCHEMA_CACHE_DIR, version));
-    replaceTree(path.join(extractRoot, 'compliance'), path.join(COMPLIANCE_CACHE_DIR, version));
-
-    // Skills sync is manifest-driven and per-name. SDK-local skills like
-    // build-seller-agent/ stay untouched; protocol-canonical ones (the
-    // call-adcp-agent buyer skill plus per-protocol skills) are kept aligned
-    // with the pinned spec version. Older tarballs (no manifest.contents.skills
-    // array) are silently skipped — the SDK-local copies stay as-is. Skipped
-    // entirely for side-bundle syncs so they keep the primary pin's skills.
-    if (includeSharedSurfaces) {
-      syncSkillsFromBundle(extractRoot);
-    }
-
-    // Refs inside the tarball point to /schemas/latest/; rewrite for pinned versions.
-    const schemaDest = path.join(SCHEMA_CACHE_DIR, version);
-    const semanticVersion: string = bundledVersion || version;
-    normalizeRefsInTree(schemaDest, semanticVersion);
-
-    // schemas/registry/registry.yaml is intentionally NOT written here. Although
-    // the protocol tarball ships an openapi/registry.yaml, the registry spec has
-    // its own upstream (agenticadvertising.org) and its own owner,
-    // `generate-registry-types --sync`. That live spec runs ahead of the pinned
-    // protocol bundle, so copying the tarball's copy only downgraded the checked-in
-    // file and left a spurious diff in every working tree after a plain sync.
-
-    // `latest/` is a shared, non-version-scoped pointer that resolves to the
-    // default bundle — so it tracks the primary pin, not whichever side-bundle
-    // is being synced. Repointing it for a legacy/beta sync would silently make
-    // the SDK validate against an older version by default. Gate it like skills.
-    if (includeSharedSurfaces) {
-      updateLatestSymlink(SCHEMA_CACHE_DIR, version);
-      updateLatestSymlink(COMPLIANCE_CACHE_DIR, version);
-    }
-
-    console.log(`📁 Schemas:    ${path.join(SCHEMA_CACHE_DIR, version)}`);
-    console.log(`📁 Compliance: ${path.join(COMPLIANCE_CACHE_DIR, version)}`);
-    if (existsSync(`${path.join(SCHEMA_CACHE_DIR, version)}.previous`)) {
-      console.log(`💡 Wire-level deltas: npm run schema-diff`);
-    }
-    return true;
-  } finally {
-    rmSync(workDir, { recursive: true, force: true });
+async function syncFromCustomBundle(
+  version: string,
+  request: CustomBundleRequest,
+  includeSharedSurfaces: boolean,
+  requireSignature: boolean
+): Promise<ProtocolBundleProvenance> {
+  const validated = validateCustomBundleRequest(request);
+  if (requireSignature) {
+    throw new Error(
+      'Protocol PR bundles are unsigned development artifacts; refusing --bundle because ADCP_REQUIRE_SIGNATURE=1.'
+    );
   }
+  const bundleUrl = officialBundleUrlForCommit(validated.bundle, validated.protocolCommit);
+  console.log(`📥 Reading immutable protocol PR bundle: ${validated.bundle}`);
+  const tgzBuf = bundleUrl
+    ? await fetchBinary(bundleUrl, { redirect: 'error' })
+    : await readCustomBundle(validated.bundle);
+  const provenance = await installProtocolBundle({
+    version,
+    tgzBuf,
+    expectedSha256: validated.bundleSha256,
+    source: validated.bundle,
+    includeSharedSurfaces,
+    expectedProtocolCommit: validated.protocolCommit,
+    ...(bundleUrl ? { bundleUrl } : {}),
+  });
+  if (!provenance) throw new Error('Protocol PR bundle did not produce codegen provenance.');
+  return provenance;
 }
 
 // Per-file schema fallback. Used only if the tarball endpoint is unavailable.
@@ -697,15 +1097,49 @@ function findMissingRefs(cacheDir: string, alreadyAttempted: Set<string>): Set<s
  * clobbering the checked-in skills or silently repointing `latest/` — callers
  * no longer need to restore them afterward.
  */
-async function sync(version?: string, options: { includeSharedSurfaces?: boolean } = {}): Promise<void> {
+async function sync(
+  version?: string,
+  options: {
+    includeSharedSurfaces?: boolean;
+    bundle?: CustomBundleRequest;
+    bundleSource?: SyncCommandLine['bundleSource'];
+  } = {}
+): Promise<void> {
   const adcpVersion = version || getTargetAdCPVersion();
   assertValidAdcpVersion(adcpVersion);
   const primaryPin = getTargetAdCPVersion();
   const includeSharedSurfaces = options.includeSharedSurfaces ?? adcpVersion === primaryPin;
+  const customBundle = resolveCustomBundleRequest(
+    adcpVersion,
+    primaryPin,
+    options.bundle,
+    CODEGEN_PROVENANCE_PATH,
+    options.bundleSource
+  );
   console.log(
     `🔄 Syncing AdCP @ ${adcpVersion}` +
       (includeSharedSurfaces ? '' : ' (schemas only — skills + latest pointer stay at the primary pin)')
   );
+
+  if (customBundle) {
+    const provenance = await syncFromCustomBundle(
+      adcpVersion,
+      customBundle,
+      includeSharedSurfaces,
+      process.env.ADCP_REQUIRE_SIGNATURE === '1'
+    );
+    writeCodegenProvenance(provenance);
+    console.log(`📌 Protocol commit: ${provenance.source_commit}`);
+    console.log(`📌 Bundle SHA-256: ${provenance.bundle_sha256}`);
+    if (includeSharedSurfaces && process.env.GITHUB_OUTPUT) {
+      appendFileSync(process.env.GITHUB_OUTPUT, `primary_schema_source=bundle\n`);
+      appendFileSync(process.env.GITHUB_OUTPUT, `protocol_commit=${provenance.source_commit}\n`);
+      appendFileSync(process.env.GITHUB_OUTPUT, `bundle_sha256=${provenance.bundle_sha256}\n`);
+      appendFileSync(process.env.GITHUB_OUTPUT, `bundle_version=${provenance.published_version}\n`);
+    }
+    console.log(`✅ Sync complete for AdCP ${adcpVersion} from immutable protocol PR bundle`);
+    return;
+  }
 
   const syncSource = await syncSchemasWithFallbacks(
     {
@@ -804,19 +1238,39 @@ async function syncSchemasWithFallbacks(
 }
 
 if (require.main === module) {
-  const version = process.argv[2];
-  sync(version).catch(error => {
+  try {
+    const commandLine = parseSyncCommandLine(process.argv.slice(2));
+    sync(commandLine.version, {
+      bundle: commandLine.bundle,
+      bundleSource: commandLine.bundleSource,
+    }).catch(error => {
+      console.error('❌ Sync failed:', error);
+      process.exit(1);
+    });
+  } catch (error) {
     console.error('❌ Sync failed:', error);
     process.exit(1);
-  });
+  }
 }
 
 export {
+  CODEGEN_PROVENANCE_PATH,
   assertBundleVersion,
+  assertProtocolCommit,
   assertValidAdcpVersion,
+  cacheMatchesCodegenProvenance,
+  createProtocolBundleProvenance,
   getGithubDistFallbackBaseUrls,
+  installProtocolBundle,
+  isSafeProtocolSkillName,
+  normalizeBundleSha256,
+  officialBundleUrlForCommit,
+  parseSyncCommandLine,
+  readCodegenProvenance,
+  resolveCustomBundleRequest,
   SchemaSyncAvailabilityError,
   sync as syncSchemas,
+  syncFromCustomBundle,
   syncFromTarball,
   syncSchemasPerFile,
   syncSchemasWithFallbacks,

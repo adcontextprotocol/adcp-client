@@ -38,6 +38,10 @@ npm test
 npm run build
 ```
 
+If your change depends on schemas from an unreleased protocol pull request,
+follow [the immutable protocol bundle workflow](docs/development/PROTOCOL-PR-BUNDLES.md)
+so local generation and CI use the same commit-addressed artifact.
+
 #### npm-only workspaces
 
 This repo is an npm workspace with two packages — the SDK at the root (`@adcp/sdk`) and the legacy-name compat shim under `packages/client-shim/` (`@adcp/client`). The root `package.json` lists `workspaces: [".", "packages/*"]`, with the leading `"."` so the shim can resolve the root package as a workspace member rather than reaching for the registry.
