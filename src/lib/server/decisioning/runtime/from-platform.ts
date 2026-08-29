@@ -174,7 +174,11 @@ const DEFAULT_FRAMEWORK_LOGGER: AdcpLogger = {
   error: console.error.bind(console),
 };
 import { createInMemoryStatusChangeBus, type StatusChangeBus, type PublishStatusChangeOpts } from '../status-changes';
-import { createComplyController, type ComplyControllerConfig } from '../../../testing/comply-controller';
+import {
+  _handleComplyControllerWithResolvedAuthority,
+  createComplyController,
+  type ComplyControllerConfig,
+} from '../../../testing/comply-controller';
 import type { TestControllerBridge } from '../../test-controller-bridge';
 import { mergeSeedProduct } from '../../../testing/seed-merge';
 import {
@@ -3223,11 +3227,11 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     }
   };
 
-  const resolveComplyControllerVisible = async (
+  const resolveComplyPrincipalAuthority = async (
     extra: McpExtra,
     toolName?: string,
     input?: Readonly<Record<string, unknown>>
-  ): Promise<boolean> => {
+  ): Promise<{ agent?: BuyerAgent; principalAccount: Account | null }> => {
     const agent = await resolveComplyBuyerAgent(extra, input);
     let principalAccount: Account | null = null;
     try {
@@ -3245,7 +3249,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     } catch {
       principalAccount = null;
     }
+    return { ...(agent !== undefined && { agent }), principalAccount };
+  };
 
+  const isComplyControllerVisible = (principalAccount: Account | null): boolean => {
     recordResolvedAccountMode(principalAccount);
 
     if (isSandboxOrMockAccount(principalAccount)) return true;
@@ -3263,6 +3270,15 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     }
 
     return false;
+  };
+
+  const resolveComplyControllerVisible = async (
+    extra: McpExtra,
+    toolName?: string,
+    input?: Readonly<Record<string, unknown>>
+  ): Promise<boolean> => {
+    const { principalAccount } = await resolveComplyPrincipalAuthority(extra, toolName, input);
+    return isComplyControllerVisible(principalAccount);
   };
 
   if (hasComplianceTestingProjection) {
@@ -3319,30 +3335,16 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       // when the adopter didn't wire explicit ones. Explicit adapters win — the
       // spread only fills the undefined slots.
       //
-      // **Namespace key: raw `account.account_id`.** The adapter does NOT call
-      // `platform.accounts.resolve` even though that would seem symmetric with
-      // the bridge's `ctx.account?.id` read — calling resolve here without
-      // `authInfo` (which `ComplyControllerContext` doesn't expose) lets a
-      // caller spoof `account.account_id: 'victim'` and have a non-validating
-      // resolver write seeds into the victim's resolved namespace. Raw id is
-      // the safe choice: a caller can only write to their own claimed id, and
-      // the sandboxGate already filters non-sandbox traffic.
-      //
-      // **Trade-off.** Adopters whose resolver maps `account_id` to a distinct
-      // internal id (e.g., `acc_1` → `tenant_a:acc_1`) will see seeded fixtures
-      // disappear — the adapter writes to `acc_1`, the bridge reads
-      // `tenant_a:acc_1`, no match. That's a documented limitation, not a
-      // security issue: silent test loss, not cross-tenant pollution. The
-      // architectural fix (widen `ComplyControllerContext` to expose the
-      // framework-resolved account so writes match reads even under mapping
-      // resolvers) is tracked at #2723. Mapping-resolver adopters wire
-      // explicit seed adapters today.
+      // Namespace writes with the same trusted account id the framework used
+      // for the sandbox gate. The raw account reference remains only as a
+      // compatibility fallback for custom transports that do not provide
+      // resolved authority to the controller.
       const explicitSeed = opts.complyTest.seed ?? {};
       const autoSeed = { ...explicitSeed };
 
       if (!explicitSeed.product) {
         autoSeed.product = async (params, ctx) => {
-          const accountId = readAutoSeedAccountId(ctx.input);
+          const accountId = ctx.account?.id ?? readAutoSeedAccountId(ctx.input);
           if (accountId == null) {
             fwLogger.warn(
               '[adcp/auto-seed] seed_product fired without `account.account_id`; dropping write. ' +
@@ -3360,7 +3362,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
 
       if (!explicitSeed.pricing_option) {
         autoSeed.pricing_option = async (params, ctx) => {
-          const accountId = readAutoSeedAccountId(ctx.input);
+          const accountId = ctx.account?.id ?? readAutoSeedAccountId(ctx.input);
           if (accountId == null) {
             fwLogger.warn(
               '[adcp/auto-seed] seed_pricing_option fired without `account.account_id`; dropping write. ' +
@@ -3464,7 +3466,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           inputSchema: gatedInputSchema,
         },
         (async (input: Record<string, unknown>, extra: { authInfo?: ResolvedAuthInfo } | undefined) => {
-          if (!(await resolveComplyControllerVisible(extra, 'comply_test_controller', input))) {
+          const principalAuthority = await resolveComplyPrincipalAuthority(extra, 'comply_test_controller', input);
+          if (!isComplyControllerVisible(principalAuthority.principalAccount)) {
             throw new McpError(ErrorCode.MethodNotFound, 'Method not found');
           }
 
@@ -3480,8 +3483,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           const accountRef = refFromTop ?? refFromContext;
 
           let resolvedAccount: Account | null = null;
+          const agent = principalAuthority.agent;
           try {
-            const agent = await resolveComplyBuyerAgent(extra, input);
             resolvedAccount = await platform.accounts.resolve(
               accountRef,
               toResolveCtx(
@@ -3575,7 +3578,62 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
             return response;
           }
 
-          return controller.handle(input);
+          const controllerParams =
+            input.params !== null && typeof input.params === 'object'
+              ? (input.params as { task_id?: unknown })
+              : undefined;
+          const controllerTaskId = controllerParams?.task_id;
+          const taskLookupParams =
+            input.scenario === 'force_task_completion' &&
+            typeof controllerTaskId === 'string' &&
+            controllerTaskId.length > 0 &&
+            controllerTaskId.length <= 255
+              ? { task_id: controllerTaskId }
+              : undefined;
+          let sessionKey: string | undefined;
+          if (opts.resolveSessionKey !== undefined && resolvedAccount !== null && taskLookupParams !== undefined) {
+            try {
+              sessionKey = await opts.resolveSessionKey({
+                // Resolve exactly the scope the framework's tasks/get path
+                // would authorize for this task-oriented controller action.
+                toolName: 'tasks_get' as AdcpServerToolName,
+                params: taskLookupParams,
+                account: resolvedAccount,
+                ...(agent !== undefined && { agent }),
+              });
+            } catch (err) {
+              fwLogger.warn?.('Session key resolution failed during comply controller dispatch', {
+                error: redactCredentialPatterns(err instanceof Error ? err.message : String(err)),
+              });
+              return adcpError('SERVICE_UNAVAILABLE', {
+                message: 'Session key resolution failed',
+                recovery: 'transient',
+              });
+            }
+          }
+
+          let taskScope: Readonly<TaskRegistryScope> | undefined;
+          if (resolvedAccount !== null) {
+            const ownerCtx: HandlerContext<Account> = {
+              store: {} as HandlerContext<Account>['store'],
+              account: resolvedAccount,
+              ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
+              ...(agent !== undefined && { agent }),
+              ...(sessionKey !== undefined && { sessionKey }),
+            };
+            taskScope = Object.freeze({
+              accountId: resolvedAccount.id,
+              ownerScope: taskOwnerScopeFor(ownerCtx, resolvedAccount.id),
+              ...(taskRegistry.registryId !== undefined && { registryId: taskRegistry.registryId }),
+            });
+          }
+
+          return _handleComplyControllerWithResolvedAuthority(controller, input, {
+            ...(resolvedAccount !== null && { account: resolvedAccount }),
+            ...(agent !== undefined && { agent }),
+            ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
+            ...(taskScope !== undefined && { taskScope }),
+          });
         }) as Parameters<typeof mcp.registerTool>[2]
       );
 
@@ -7845,13 +7903,9 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
 // when `ctx.account?.id` is absent — i.e., the framework didn't
 // pre-resolve the account on a custom dispatcher path).
 //
-// Write-side rationale: the adapter cannot reach the framework-resolved
-// `ctx.account.id` (the comply-controller's `ComplyControllerContext`
-// only exposes `{ input }`), and calling `platform.accounts.resolve`
-// here without `authInfo` would let a caller spoof `account.account_id`
-// and write into another tenant's resolved namespace. The architectural
-// fix (widen `ComplyControllerContext` to surface the resolved authority)
-// is tracked at #2723 — until then, raw id is the secure choice.
+// Framework-managed writes and reads prefer `ctx.account.id`. This extractor
+// remains only for custom controller paths that cannot supply resolved
+// authority and therefore must stay in the caller-provided namespace.
 function readAutoSeedAccountId(input: Record<string, unknown>): string | undefined {
   const account = input.account;
   if (account == null || typeof account !== 'object') return undefined;

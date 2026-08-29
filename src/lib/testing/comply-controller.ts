@@ -75,7 +75,9 @@ import type {
   CreativeStatus,
   MediaBuyStatus,
 } from '../types/core.generated';
+import type { Account, ResolvedAuthInfo } from '../server/decisioning/account';
 import type { BuyerAgent, BuyerAgentBillingMode, BuyerAgentStatus } from '../server/decisioning/buyer-agent';
+import type { TaskRegistryScope } from '../server/decisioning/runtime/task-registry';
 import type { McpToolResponse } from '../server/responses';
 
 // ────────────────────────────────────────────────────────────
@@ -87,6 +89,28 @@ import type { McpToolResponse } from '../server/responses';
 export interface ComplyControllerContext {
   /** The tool input as received over the wire, pre-validation. */
   input: Record<string, unknown>;
+  /**
+   * Framework-resolved target account. Never derived from `input.account`.
+   * This is a trusted server-side reference; adapters must not mutate it.
+   */
+  readonly account?: Readonly<Account>;
+  /** Authenticated buyer agent used while resolving the target account. */
+  readonly agent?: Readonly<BuyerAgent>;
+  /**
+   * Trusted transport authentication context supplied by the server framework.
+   * It may contain credentials or claims; do not mutate, log, or persist it wholesale.
+   */
+  readonly authInfo?: Readonly<ResolvedAuthInfo>;
+  /** Trusted account/principal scope for task-oriented controller adapters. */
+  readonly taskScope?: Readonly<TaskRegistryScope>;
+}
+
+/** @internal Trusted authority supplied only by the decisioning framework. */
+export interface ResolvedComplyControllerAuthority {
+  readonly account?: Readonly<Account>;
+  readonly agent?: Readonly<BuyerAgent>;
+  readonly authInfo?: Readonly<ResolvedAuthInfo>;
+  readonly taskScope?: Readonly<TaskRegistryScope>;
 }
 
 /** Params for `seed_product`. `fixture` mirrors the persisted product shape
@@ -694,6 +718,28 @@ function advertisedScenarios(config: ComplyControllerConfig): ControllerScenario
   return out;
 }
 
+type ResolvedContextHandler = (
+  input: Record<string, unknown>,
+  authority: ResolvedComplyControllerAuthority
+) => Promise<ComplyTestControllerResponse>;
+
+// Keep the authority-bearing entry point off the public ComplyController
+// object. Custom transports retain the existing raw-input-only API, while the
+// decisioning framework can thread the authority it already resolved without
+// making a second lookup or accepting authority from request extension fields.
+const resolvedContextHandlers = new WeakMap<ComplyController, ResolvedContextHandler>();
+
+/** @internal Decisioning-framework bridge; not exported from the package barrel. */
+export async function _handleComplyControllerWithResolvedAuthority(
+  controller: ComplyController,
+  input: Record<string, unknown>,
+  authority: ResolvedComplyControllerAuthority
+): Promise<McpToolResponse & { isError?: true }> {
+  const handler = resolvedContextHandlers.get(controller);
+  if (!handler) throw new TypeError('ComplyController was not created by createComplyController');
+  return toMcpResponse(await handler(input, authority));
+}
+
 /** Create a comply_test_controller scaffold from domain-grouped adapters. */
 export function createComplyController(config: ComplyControllerConfig): ComplyController {
   const seedCache = config.seedCache ?? createSeedFixtureCache();
@@ -702,7 +748,10 @@ export function createComplyController(config: ComplyControllerConfig): ComplyCo
   // createStore — handleTestControllerRequest inspects the `scenarios` field.
   const factoryScenarios = Object.freeze([...scenarios]) as readonly ControllerScenario[];
 
-  async function handleRaw(input: Record<string, unknown>): Promise<ComplyTestControllerResponse> {
+  async function handleRawWithResolvedAuthority(
+    input: Record<string, unknown>,
+    authority: ResolvedComplyControllerAuthority
+  ): Promise<ComplyTestControllerResponse> {
     const inputCtx = input.context;
     // Echoes input.context on FORBIDDEN early-returns (sandboxGate denial/throw)
     // that bypass handleTestControllerRequest. The delegated call at the end of
@@ -741,10 +790,33 @@ export function createComplyController(config: ComplyControllerConfig): ComplyCo
       }
     }
 
+    // Keep the pre-existing mutable `input` slot for source/runtime
+    // compatibility while making trusted authority slots non-overridable even
+    // for JavaScript adapters. The authority objects themselves are the exact
+    // framework-resolved references and must be treated as readonly.
     const ctx: ComplyControllerContext = { input };
+    for (const [key, value] of Object.entries(authority)) {
+      if (value === undefined) continue;
+      Object.defineProperty(ctx, key, {
+        value,
+        enumerable: true,
+        writable: false,
+        configurable: false,
+      });
+    }
     const store = buildStore(config, ctx);
 
-    return handleTestControllerRequest({ scenarios: factoryScenarios, createStore: () => store }, input, { seedCache });
+    const resolvedAccountId = authority.account?.id;
+    return handleTestControllerRequest({ scenarios: factoryScenarios, createStore: () => store }, input, {
+      seedCache,
+      ...(resolvedAccountId !== undefined && {
+        seedScopePrefix: `resolved_account:${resolvedAccountId.length}:${resolvedAccountId}`,
+      }),
+    });
+  }
+
+  async function handleRaw(input: Record<string, unknown>): Promise<ComplyTestControllerResponse> {
+    return handleRawWithResolvedAuthority(input, {});
   }
 
   async function handle(input: Record<string, unknown>) {
@@ -789,5 +861,7 @@ export function createComplyController(config: ComplyControllerConfig): ComplyCo
     );
   }
 
-  return { toolDefinition, handleRaw, handle, register };
+  const controller = { toolDefinition, handleRaw, handle, register };
+  resolvedContextHandlers.set(controller, handleRawWithResolvedAuthority);
+  return controller;
 }
