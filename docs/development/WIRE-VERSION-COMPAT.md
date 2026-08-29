@@ -42,6 +42,12 @@ npm run sync-schemas:v2.5    # legacy bundle
 npm run sync-schemas:all     # primary pin plus maintained side bundles
 ```
 
+When the primary types must be generated from an unreleased protocol PR, use
+the immutable bundle workflow in
+[Generate from an unreleased protocol bundle](./PROTOCOL-PR-BUNDLES.md). It
+records the upstream commit and tarball digest in checked-in provenance so the
+normal CI drift check uses the identical input.
+
 `sync-v2-5-schemas.ts` pulls from a pinned `2.5-maintenance` SHA with a sha256 verification — published v2.5 tags are stale (see `adcontextprotocol/adcp#3689` upstream).
 
 ### Generated types
@@ -447,10 +453,10 @@ const BETA_VERSION = '3.X.0-beta.N';
 await syncSchemas(BETA_VERSION); // inherits cosign + sha256 + tarball extract
 ```
 
-After the wrapped call, **restore two side-effect classes** that `syncSchemas()` overwrites:
-
-- **The `latest/` symlink** in `schemas/cache/` and `compliance/cache/`. `syncSchemas()` points it at whatever it just synced; for an opt-in side-bundle, repoint it back at the primary GA pin (read from `ADCP_VERSION` file). The SDK's runtime loader doesn't consult `latest/` for opt-in resolution (it uses release-precision fuzzy match against the prerelease directory directly), but downstream tooling does.
-- **Tracked side-effect paths.** `syncSchemas()` also extracts `schemas/registry/registry.yaml` and protocol-managed skills from the synced tarball. These track the SDK's primary pin, not the opt-in beta — restore them from `HEAD` with `git checkout HEAD -- <paths>`. Hardcode the list in a `RESTORE_PATHS` constant so the next contributor sees exactly what the wrapper protects.
+`syncSchemas()` recognizes that this is not the primary `ADCP_VERSION` and updates
+only the versioned schema and compliance caches. It leaves the shared `latest/`
+symlinks, registry schema, and protocol-managed skills at the primary pin; the
+wrapper does not need to restore those paths.
 
 Wire into `package.json#scripts`:
 - `sync-schemas:<version>` — direct invocation
