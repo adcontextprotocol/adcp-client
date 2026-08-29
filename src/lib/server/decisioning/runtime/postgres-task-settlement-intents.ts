@@ -9,6 +9,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { canonicalJsonSha256 } from '../../../utils/jcs';
+import { assertWellFormedUnicode } from '../../../utils/well-formed-unicode';
 import { sanitizeStructuredAdcpError } from '../../errors';
 import type { AdcpStructuredError } from '../async-outcome';
 import type { PgQueryable } from './postgres-task-registry';
@@ -134,14 +135,22 @@ interface StoredPayload {
   error?: AdcpStructuredError;
 }
 
-interface ClaimedIntent {
+interface IntentAttempt {
   taskRef: DurableTaskSettlementRef;
-  scopeFingerprint: string;
   action: unknown;
   intentFingerprint: string;
   attemptCount: number;
+}
+
+interface ClaimedIntent extends IntentAttempt {
+  kind: 'claimed';
+  scopeFingerprint: string;
   leaseClaimId: string;
   leaseVersion: string;
+}
+
+interface ExhaustedIntent extends IntentAttempt {
+  kind: 'dead_letter';
 }
 
 /** Bootstrap DDL for a new durable settlement-intent queue. */
@@ -377,10 +386,21 @@ export function createPostgresTaskSettlementIntentQueue(
       };
       const seenFingerprints: string[] = [];
       while (metrics.claimed < config.batchSize) {
-        const claim = await claimOneDue(db, table, namespace, config, seenFingerprints);
-        if (!claim) break;
+        const selected = await claimOneDue(db, table, namespace, config, seenFingerprints);
+        if (!selected) break;
         metrics.claimed += 1;
-        seenFingerprints.push(claim.intentFingerprint);
+        seenFingerprints.push(selected.intentFingerprint);
+        if (selected.kind === 'dead_letter') {
+          metrics.deadLettered += 1;
+          await reportRecoveryError(
+            recoveryOptions.onError,
+            new Error('Task settlement intent exhausted maxAttempts after its lease expired'),
+            selected,
+            'dead_letter'
+          );
+          continue;
+        }
+        const claim = selected;
         let intent: TaskSettlementIntent | undefined;
         try {
           const payload = await loadClaimPayload(db, table, namespace, claim);
@@ -440,17 +460,23 @@ export function canonicalizeTaskSettlementIntent(intent: TaskSettlementIntent): 
   const taskRef = requireDurableTaskRef(intent.taskRef);
   if (intent.action === 'complete') {
     if (intent.result === undefined) throw new TypeError('A complete task settlement intent requires a result');
-    const result = sanitizeTaskResultForWire(structuredClone(intent.result), taskRef);
+    const clonedResult = structuredClone(intent.result);
+    assertWellFormedUnicode(clonedResult, 'Task settlement intent');
+    const result = sanitizeTaskResultForWire(clonedResult, taskRef);
+    assertWellFormedUnicode(result, 'Task settlement intent');
     canonicalJsonSha256(result);
     return { taskRef, action: 'complete', result };
   }
   if (intent.action === 'fail') {
     const clonedError = structuredClone(intent.error);
+    assertWellFormedUnicode(clonedError, 'Task settlement intent');
     requireStructuredError(clonedError);
     const error = sanitizeStructuredAdcpError(clonedError);
     requireStructuredError(error);
-    const result =
-      intent.result === undefined ? undefined : sanitizeTaskResultForWire(structuredClone(intent.result), taskRef);
+    const clonedResult = intent.result === undefined ? undefined : structuredClone(intent.result);
+    assertWellFormedUnicode(clonedResult, 'Task settlement intent');
+    const result = clonedResult === undefined ? undefined : sanitizeTaskResultForWire(clonedResult, taskRef);
+    assertWellFormedUnicode({ error, ...(result !== undefined && { result }) }, 'Task settlement intent');
     canonicalJsonSha256({ error, result });
     return { taskRef, action: 'fail', error, ...(result !== undefined && { result }) };
   }
@@ -566,7 +592,7 @@ async function claimOneDue(
   namespace: string,
   config: ReturnType<typeof normalizeRecoveryOptions>,
   seenFingerprints: readonly string[]
-): Promise<ClaimedIntent | undefined> {
+): Promise<ClaimedIntent | ExhaustedIntent | undefined> {
   const claimId = randomUUID();
   const result = await queryDb(
     db,
@@ -584,11 +610,17 @@ async function claimOneDue(
           FOR UPDATE SKIP LOCKED
        )
        UPDATE ${table} AS intents
-          SET lease_owner = $2,
-              lease_claim_id = $3,
-              lease_version = intents.lease_version + 1,
-              lease_expires_at = clock_timestamp() + ($4::integer * INTERVAL '1 millisecond'),
-              attempt_count = intents.attempt_count + 1,
+          SET state = CASE WHEN intents.attempt_count >= $6 THEN 'dead_letter' ELSE intents.state END,
+              lease_owner = CASE WHEN intents.attempt_count >= $6 THEN NULL ELSE $2 END,
+              lease_claim_id = CASE WHEN intents.attempt_count >= $6 THEN NULL ELSE $3 END,
+              lease_version = CASE WHEN intents.attempt_count >= $6
+                THEN intents.lease_version ELSE intents.lease_version + 1 END,
+              lease_expires_at = CASE WHEN intents.attempt_count >= $6 THEN NULL
+                ELSE clock_timestamp() + ($4::integer * INTERVAL '1 millisecond') END,
+              attempt_count = CASE WHEN intents.attempt_count >= $6
+                THEN intents.attempt_count ELSE intents.attempt_count + 1 END,
+              last_error = CASE WHEN intents.attempt_count >= $6
+                THEN COALESCE(intents.last_error, 'Error') ELSE intents.last_error END,
               updated_at = clock_timestamp()
          FROM due
         WHERE intents.queue_namespace = due.queue_namespace
@@ -599,23 +631,29 @@ async function claimOneDue(
           AND intents.task_id = due.task_id
        RETURNING intents.registry_id, intents.account_id, intents.owner_scope,
                  intents.task_id, intents.scope_fingerprint, intents.action,
-                 intents.intent_fingerprint, intents.attempt_count,
+                 intents.intent_fingerprint, intents.attempt_count, intents.state,
                  intents.lease_claim_id, intents.lease_version::text`,
-    [namespace, config.workerId, claimId, config.leaseMs, seenFingerprints]
+    [namespace, config.workerId, claimId, config.leaseMs, seenFingerprints, config.maxAttempts]
   );
   const row = result.rows[0];
   if (!row) return undefined;
-  return {
-    taskRef: {
-      registryId: requireRowString(row.registry_id, 'registry_id'),
-      accountId: requireRowString(row.account_id, 'account_id'),
-      ownerScope: requireRowString(row.owner_scope, 'owner_scope'),
-      taskId: requireRowString(row.task_id, 'task_id'),
-    },
-    scopeFingerprint: requireFingerprint(row.scope_fingerprint, 'scope_fingerprint'),
+  const taskRef = {
+    registryId: requireRowString(row.registry_id, 'registry_id'),
+    accountId: requireRowString(row.account_id, 'account_id'),
+    ownerScope: requireRowString(row.owner_scope, 'owner_scope'),
+    taskId: requireRowString(row.task_id, 'task_id'),
+  };
+  const attempt = {
+    taskRef,
     action: row.action,
     intentFingerprint: requireRowString(row.intent_fingerprint, 'intent_fingerprint'),
     attemptCount: requireRowInteger(row.attempt_count, 'attempt_count'),
+  };
+  if (row.state === 'dead_letter') return { ...attempt, kind: 'dead_letter' };
+  return {
+    ...attempt,
+    kind: 'claimed',
+    scopeFingerprint: requireFingerprint(row.scope_fingerprint, 'scope_fingerprint'),
     leaseClaimId: requireRowString(row.lease_claim_id, 'lease_claim_id'),
     leaseVersion: requireRowString(row.lease_version, 'lease_version'),
   };
@@ -664,6 +702,7 @@ function intentFromClaim(claim: ClaimedIntent, storedPayload: unknown): TaskSett
   if (canonicalJsonSha256(storedIntent) !== claim.intentFingerprint) {
     throw new TypeError('Stored task settlement intent does not match its immutable fingerprint');
   }
+  assertWellFormedUnicode(storedIntent, 'Task settlement intent');
   if (storedIntent.action === 'complete') {
     return {
       ...storedIntent,
@@ -853,7 +892,7 @@ async function queryDb(
 async function reportRecoveryError(
   hook: RecoverTaskSettlementIntentsOptions['onError'],
   error: unknown,
-  claim: ClaimedIntent,
+  claim: IntentAttempt,
   disposition: TaskSettlementIntentRecoveryErrorContext['disposition']
 ): Promise<void> {
   if (!hook) return;

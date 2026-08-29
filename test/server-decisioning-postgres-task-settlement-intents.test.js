@@ -229,6 +229,28 @@ describe('task settlement intent queue contract', () => {
       queue.enqueue({ taskRef: ref('task_error'), action: 'fail', error: inheritedError }),
       /error\.code/
     );
+    const loneSurrogate = String.fromCharCode(0xd800);
+    await assert.rejects(
+      queue.enqueue({ taskRef: ref('task_error'), action: 'complete', result: { value: loneSurrogate } }),
+      /well-formed Unicode/
+    );
+    await assert.rejects(
+      queue.enqueue({ taskRef: ref('task_error'), action: 'complete', result: { [loneSurrogate]: 'value' } }),
+      /well-formed Unicode/
+    );
+    await assert.rejects(
+      queue.enqueue({
+        taskRef: ref('task_error'),
+        action: 'fail',
+        error: {
+          code: 'INVALID_STATE',
+          message: 'message',
+          recovery: 'terminal',
+          [loneSurrogate]: 'legacy extension',
+        },
+      }),
+      /well-formed Unicode/
+    );
     assert.strictEqual(queryCount, 0);
 
     const rawIntent = {
@@ -290,6 +312,32 @@ describe('task settlement intent queue contract', () => {
       taskRef: ref('task_bad_stored_error'),
       action: 'fail',
       error: { code: 'INVALID_STATE', message: '', recovery: 'correctable' },
+    };
+    const queue = createPostgresTaskSettlementIntentQueue({
+      db: singleClaimDb(intent),
+      namespace: NAMESPACE,
+      tableName: TABLE,
+    });
+    let called = false;
+    assert.deepStrictEqual(
+      await queue.recover({
+        maxAttempts: 1,
+        settle: async () => {
+          called = true;
+          return 'settled';
+        },
+      }),
+      { claimed: 1, settled: 0, retried: 0, deadLettered: 1, leaseLost: 0 }
+    );
+    assert.strictEqual(called, false);
+  });
+
+  test('recovery rejects stored payloads whose Unicode would collide after UTF-8 encoding', async () => {
+    const { createPostgresTaskSettlementIntentQueue } = require('../dist/lib/server/decisioning');
+    const intent = {
+      taskRef: ref('task_bad_stored_unicode'),
+      action: 'complete',
+      result: { value: String.fromCharCode(0xd800) },
     };
     const queue = createPostgresTaskSettlementIntentQueue({
       db: singleClaimDb(intent),
@@ -522,6 +570,7 @@ describe('Postgres task settlement intent queue', { skip: !DATABASE_URL && 'DATA
 
   test('a legacy failed intent normalizes after fingerprint verification and heals after a crash', async () => {
     const { canonicalJsonSha256 } = require('../dist/lib/utils/jcs');
+    const { canonicalizeTaskSettlementIntent } = require('../dist/lib/server/decisioning');
     const registry = createPostgresTaskRegistry({
       pool,
       namespace: NAMESPACE,
@@ -563,6 +612,19 @@ describe('Postgres task settlement intent queue', { skip: !DATABASE_URL && 'DATA
         scopeFingerprint,
       ]
     );
+    await pool.query(
+      `UPDATE ${TASK_TABLE}
+          SET status = 'failed', error = $1::jsonb, result = NULL, status_message = $2
+        WHERE task_id = $3 AND registry_namespace = $4 AND account_id = $5 AND owner_scope = $6`,
+      [
+        JSON.stringify(legacyError),
+        legacyError.message,
+        taskRef.taskId,
+        NAMESPACE,
+        taskRef.accountId,
+        taskRef.ownerScope,
+      ]
+    );
 
     let simulateCrash = true;
     const settle = async intent => {
@@ -572,13 +634,16 @@ describe('Postgres task settlement intent queue', { skip: !DATABASE_URL && 'DATA
         recovery: 'correctable',
       });
       const outcome = await registry.fail(intent.taskRef.taskId, intent.taskRef, intent.error);
-      if (outcome.outcome === 'already_terminal') {
-        const stored = await registry.getTask(intent.taskRef.taskId, intent.taskRef);
-        assert.strictEqual(stored.status, 'failed');
-        assert.deepStrictEqual(stored.error, intent.error);
-      } else {
-        assert.strictEqual(outcome.outcome, 'applied');
-      }
+      assert.strictEqual(outcome.outcome, 'already_terminal');
+      const stored = await registry.getTask(intent.taskRef.taskId, intent.taskRef);
+      assert.strictEqual(stored.status, 'failed');
+      const storedIntent = canonicalizeTaskSettlementIntent({
+        taskRef: intent.taskRef,
+        action: 'fail',
+        error: stored.error,
+        ...(Object.hasOwn(stored, 'result') && { result: stored.result }),
+      });
+      assert.deepStrictEqual(storedIntent, intent);
       if (simulateCrash) {
         simulateCrash = false;
         throw new Error('simulated death after legacy failure commit');
@@ -873,12 +938,13 @@ describe('Postgres task settlement intent queue', { skip: !DATABASE_URL && 'DATA
     assert.strictEqual(firstErrors[0].disposition, 'lease_lost');
   });
 
-  test('an expired worker cannot reschedule an intent after its lease boundary', async () => {
+  test('an expired max-attempt worker is dead-lettered before settlement can run again', async () => {
     await queue.enqueue({ taskRef: ref('task_expired_retry'), action: 'complete', result: { ok: true } });
     assert.deepStrictEqual(
       await queue.recover({
         leaseMs: 5,
         retryAfterMs: 0,
+        maxAttempts: 1,
         settle: async () => {
           await new Promise(resolve => setTimeout(resolve, 20));
           throw new Error('late failure');
@@ -886,13 +952,27 @@ describe('Postgres task settlement intent queue', { skip: !DATABASE_URL && 'DATA
       }),
       { claimed: 1, settled: 0, retried: 0, deadLettered: 0, leaseLost: 1 }
     );
-    assert.deepStrictEqual(await queue.recover({ settle: async () => 'settled' }), {
-      claimed: 1,
-      settled: 1,
-      retried: 0,
-      deadLettered: 0,
-      leaseLost: 0,
-    });
+    let called = false;
+    assert.deepStrictEqual(
+      await queue.recover({
+        maxAttempts: 1,
+        settle: async () => {
+          called = true;
+          return 'settled';
+        },
+      }),
+      {
+        claimed: 1,
+        settled: 0,
+        retried: 0,
+        deadLettered: 1,
+        leaseLost: 0,
+      }
+    );
+    assert.strictEqual(called, false);
+    assert.deepStrictEqual((await pool.query(`SELECT state, attempt_count, last_error FROM ${TABLE}`)).rows, [
+      { state: 'dead_letter', attempt_count: 1, last_error: 'Error' },
+    ]);
   });
 
   test('poison intents dead-letter at the configured attempt limit', async () => {

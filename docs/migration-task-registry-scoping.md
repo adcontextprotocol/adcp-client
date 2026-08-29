@@ -78,11 +78,22 @@ if (outcome.outcome === 'not_found_in_scope') {
   await approvals.retryOrDeadLetter(item, 'registry scope did not match');
 } else if (outcome.outcome === 'already_terminal') {
   const stored = await registry.getTask(taskRef.taskId, taskRef);
-  const exactArtifact = intent.action === 'complete'
-    ? stored?.status === 'completed' && isDeepStrictEqual(stored.result, intent.result)
-    : stored?.status === 'failed' &&
-      isDeepStrictEqual(stored.error, intent.error) &&
-      isDeepStrictEqual(stored.result, intent.result);
+  let storedIntent;
+  if (stored?.status === 'completed' && Object.hasOwn(stored, 'result')) {
+    storedIntent = canonicalizeTaskSettlementIntent({
+      taskRef,
+      action: 'complete',
+      result: stored.result,
+    });
+  } else if (stored?.status === 'failed' && stored.error) {
+    storedIntent = canonicalizeTaskSettlementIntent({
+      taskRef,
+      action: 'fail',
+      error: stored.error,
+      ...(Object.hasOwn(stored, 'result') && { result: stored.result }),
+    });
+  }
+  const exactArtifact = storedIntent !== undefined && isDeepStrictEqual(storedIntent, intent);
 
   if (exactArtifact) {
     await approvals.ack(item);

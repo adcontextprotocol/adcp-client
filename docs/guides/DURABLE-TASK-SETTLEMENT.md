@@ -119,6 +119,7 @@ current task registry after an upgrade.
 ```ts
 import { isDeepStrictEqual } from 'node:util';
 import {
+  canonicalizeTaskSettlementIntent,
   completeScopedTask,
   failScopedTask,
   type TaskRegistry,
@@ -152,15 +153,24 @@ export async function applyPollingSettlementIntent(
     throw new Error('Terminal task disappeared from its trusted scope');
   }
 
+  let storedIntent: TaskSettlementIntent | undefined;
+  if (stored.status === 'completed' && Object.hasOwn(stored, 'result')) {
+    storedIntent = canonicalizeTaskSettlementIntent({
+      taskRef: intent.taskRef,
+      action: 'complete',
+      result: stored.result,
+    });
+  } else if (stored.status === 'failed' && stored.error) {
+    storedIntent = canonicalizeTaskSettlementIntent({
+      taskRef: intent.taskRef,
+      action: 'fail',
+      error: stored.error,
+      ...(Object.hasOwn(stored, 'result') && { result: stored.result }),
+    });
+  }
+
   const sameArtifact =
-    intent.action === 'complete'
-      ? stored.status === 'completed' &&
-        isDeepStrictEqual(stored.result, intent.result)
-      : stored.status === 'failed' &&
-        isDeepStrictEqual(stored.error, intent.error) &&
-        (intent.result === undefined
-          ? stored.result === undefined
-          : isDeepStrictEqual(stored.result, intent.result));
+    storedIntent !== undefined && isDeepStrictEqual(storedIntent, intent);
 
   if (!sameArtifact) {
     throw new Error('Task is terminal with a conflicting settlement artifact');
