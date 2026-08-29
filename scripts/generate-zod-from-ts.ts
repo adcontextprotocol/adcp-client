@@ -100,6 +100,22 @@ const TS7056_SCHEMAS: Array<{
   { name: 'AudienceEvidenceSchema' },
   { name: 'AudienceEvidenceSelectionSchema' },
   { name: 'ProductSchema', tsType: 'Product', objectShape: true },
+  // Public creative asset schemas are loose objects at runtime, but their
+  // parse output must remain assignable to the corresponding generated
+  // protocol interfaces. Without explicit annotations, nested passthrough
+  // objects such as Provenance acquire incompatible string index signatures.
+  { name: 'ImageAssetSchema', tsType: 'ImageAsset', objectShape: true, typeSource: 'core' },
+  { name: 'VideoAssetSchema', tsType: 'VideoAsset', objectShape: true, typeSource: 'core' },
+  { name: 'AudioAssetSchema', tsType: 'AudioAsset', objectShape: true, typeSource: 'core' },
+  { name: 'TextAssetSchema', tsType: 'TextAsset', objectShape: true, typeSource: 'core' },
+  { name: 'URLAssetSchema', tsType: 'URLAsset', objectShape: true, typeSource: 'core' },
+  { name: 'HTMLAssetSchema', tsType: 'HTMLAsset', objectShape: true, typeSource: 'core' },
+  { name: 'JavaScriptAssetSchema', tsType: 'JavaScriptAsset', objectShape: true, typeSource: 'core' },
+  { name: 'ZipAssetSchema', tsType: 'ZipAsset', objectShape: true, typeSource: 'core' },
+  { name: 'WebhookAssetSchema', tsType: 'WebhookAsset', objectShape: true, typeSource: 'core' },
+  { name: 'CSSAssetSchema', tsType: 'CSSAsset', objectShape: true, typeSource: 'core' },
+  { name: 'MarkdownAssetSchema', tsType: 'MarkdownAsset', objectShape: true, typeSource: 'core' },
+  { name: 'CardAssetSchema', tsType: 'CardAsset', objectShape: true, typeSource: 'core' },
   {
     name: 'GetProductsRequestSchema',
     tsType: 'GetProductsRequest',
