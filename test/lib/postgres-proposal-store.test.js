@@ -199,6 +199,13 @@ describe('PostgresProposalStore', { skip: !DATABASE_URL && 'DATABASE_URL not set
       'access.token',
       'access/token',
       'access token',
+      'authToken',
+      'sessionToken',
+      'idToken',
+      'clientSecret',
+      'apiSecret',
+      'dbPassword',
+      'userPassword',
     ]) {
       await assert.rejects(
         () =>
