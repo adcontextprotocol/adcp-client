@@ -284,6 +284,7 @@ export type {
   VerifyAndParseWebhookOptions,
   WebhookHandlerAdapter,
   WebhookHandlerRequest,
+  WebhookRequestContext,
   WebhookParseErrorCode,
   WebhookParseFailure,
   WebhookParseResult,
@@ -297,6 +298,18 @@ export {
   type WebhookRegistration,
   type WebhookRegistrationStore,
 } from './core/webhook-registration';
+export {
+  pgWebhookRegistrationStore,
+  getWebhookRegistrationMigration,
+  WEBHOOK_REGISTRATION_MIGRATION,
+  cleanupExpiredWebhookRegistrations,
+  type PgWebhookRegistrationStoreOptions,
+  type CleanupExpiredWebhookRegistrationsOptions,
+} from './core/postgres-webhook-registration-store';
+export {
+  redisWebhookRegistrationStore,
+  type RedisWebhookRegistrationStoreOptions,
+} from './core/redis-webhook-registration-store';
 export type { DelegatedOperatorAuthorizationContext } from './signing/agent-resolver';
 export {
   AgentClient,

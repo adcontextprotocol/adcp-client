@@ -93,6 +93,66 @@ operation to create a versioned registration. A caller-supplied
 `webhookVerification.jwks` may support legacy rows only when it independently
 preserves their original trust boundary.
 
+### Durable webhook registration across replicas
+
+The process-local registration store cannot survive a restart or route a
+callback to another replica. SDK 14 includes first-party PostgreSQL and Redis
+stores with the same atomic create-or-identical contract:
+
+```ts
+import {
+  SingleAgentClient,
+  cleanupExpiredWebhookRegistrations,
+  getWebhookRegistrationMigration,
+  pgWebhookRegistrationStore,
+  redisWebhookRegistrationStore,
+} from '@adcp/sdk';
+import { PostgresReplayStore, getReplayStoreMigration } from '@adcp/sdk/signing/server';
+
+// PostgreSQL deployment bootstrap:
+await pool.query(getWebhookRegistrationMigration({
+  tableName: 'buyer_eu_webhook_registrations',
+}));
+const registrations = pgWebhookRegistrationStore(pool, {
+  tableName: 'buyer_eu_webhook_registrations',
+});
+await registrations.probe();
+await pool.query(getReplayStoreMigration('buyer_eu_webhook_replays'));
+const sharedReplayStore = new PostgresReplayStore(pool, {
+  tableName: 'buyer_eu_webhook_replays',
+});
+
+// Or Redis, using the same deployment-unique prefix on every replica:
+const redisRegistrations = redisWebhookRegistrationStore(redis, {
+  keyPrefix: 'buyer-eu:webhook-registration:v1:',
+});
+await redisRegistrations.probe();
+
+// Construct this identically in outbound workers and inbound HTTP replicas.
+const client = new SingleAgentClient(agentWithStableId, {
+  webhookRegistrationStore: registrations, // or redisRegistrations
+  webhookVerification: { replayStore: sharedReplayStore },
+});
+
+// Schedule for PostgreSQL; expiry checks do not depend on this cleanup.
+await cleanupExpiredWebhookRegistrations(pool, {
+  tableName: 'buyer_eu_webhook_registrations',
+  batchSize: 1_000,
+});
+```
+
+Run migrations and `probe()` before serving traffic. All replicas must use the
+same stable agent id and the same isolated table or key prefix. Redis reads
+must be primary-consistent and the deployment must support Lua. Retain records
+for at least the seller retry horizon; monitor Redis capacity because eviction
+causes fail-closed callback unavailability. RFC 9421 additionally requires a
+shared durable replay store so two replicas cannot accept the same signature.
+
+Existing custom-store rows are not imported automatically. They must preserve
+the complete `authorizationContextVersion` and
+`delegatedOperatorAuthorization` tuple. Drain or re-dispatch legacy/lossy rows
+rather than deriving their original authority from current configuration.
+
 The same options are accepted by `resolveAgent()`, `getAgentJwks()`,
 `createAgentJwksSet()`, and `ResolvedAgentJwksResolver`. A constrained list with
 no corresponding trusted option fails closed. Built-in JWKS caches now expire

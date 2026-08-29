@@ -7018,8 +7018,20 @@ describe('legacy products-only purchase continuations', () => {
       .createHmac('sha256', webhookSecret)
       .update(`${timestamp}.${rawBody}`)
       .digest('hex')}`;
+    const requestContext = {
+      requestMethod: 'POST',
+      requestUrl: `https://buyer.example/webhooks/create_media_buy/${operationId}`,
+    };
     const dispatch = () =>
-      agent.handleWebhook(payload, 'create_media_buy', operationId, signature, String(timestamp), rawBody);
+      agent.handleWebhook(
+        payload,
+        'create_media_buy',
+        operationId,
+        signature,
+        String(timestamp),
+        rawBody,
+        requestContext
+      );
 
     const firstDispatch = dispatch();
     await firstHandlerEntered;
@@ -7070,7 +7082,8 @@ describe('legacy products-only purchase continuations', () => {
         operationId,
         rotatedSignature,
         String(timestamp),
-        rotatedRawBody
+        rotatedRawBody,
+        requestContext
       ),
       true
     );
@@ -8099,7 +8112,18 @@ describe('legacy products-only purchase continuations', () => {
       .update(`${timestamp}.${rawBody}`)
       .digest('hex')}`;
     assert.equal(
-      await replicaAgent.handleWebhook(payload, 'create_media_buy', operationId, signature, String(timestamp), rawBody),
+      await replicaAgent.handleWebhook(
+        payload,
+        'create_media_buy',
+        operationId,
+        signature,
+        String(timestamp),
+        rawBody,
+        {
+          requestMethod: 'POST',
+          requestUrl: `https://buyer.example/webhooks/create_media_buy/${operationId}`,
+        }
+      ),
       true
     );
     const queued = await store.get(token);
@@ -8125,7 +8149,11 @@ describe('legacy products-only purchase continuations', () => {
         operationId,
         laterSignature,
         String(laterTimestamp),
-        laterRawBody
+        laterRawBody,
+        {
+          requestMethod: 'POST',
+          requestUrl: `https://buyer.example/webhooks/create_media_buy/${operationId}`,
+        }
       ),
       error => error.code === 'ambiguous' && /callback event identity does not match/.test(error.message)
     );

@@ -26,6 +26,7 @@ import {
   type VerifyAndParseWebhookOptions,
   type WebhookHandlerAdapter,
   type WebhookParseResult,
+  type WebhookRequestContext,
 } from './SingleAgentClient';
 import type { InputHandler, TaskOptions, TaskResult, TaskInfo, Message } from './ConversationTypes';
 import type {
@@ -701,7 +702,8 @@ export class AgentClient {
    * @param operationId - Operation id (e.g used for client app to track the operation) from the param or url part of the webhook delivery
    * @param signature - Optional signature for verification (X-ADCP-Signature)
    * @param timestamp - Optional timestamp for verification (X-ADCP-Timestamp)
-   * @param taskType - Task type from URL path (e.g., 'create_media_buy')
+   * @param rawBody - Raw request body bytes used for HMAC verification
+   * @param requestContext - Trusted method and public URL. Required for registered callbacks.
    * @returns Whether webhook was handled successfully
    */
   async handleWebhook(
@@ -710,9 +712,10 @@ export class AgentClient {
     operationId: string,
     signature?: WebhookHeaderValue,
     timestamp?: WebhookHeaderValue,
-    rawBody?: string | Buffer | Uint8Array
+    rawBody?: string | Buffer | Uint8Array,
+    requestContext?: WebhookRequestContext
   ): Promise<boolean> {
-    return this.client.handleWebhook(payload, taskType, operationId, signature, timestamp, rawBody);
+    return this.client.handleWebhook(payload, taskType, operationId, signature, timestamp, rawBody, requestContext);
   }
 
   /**
