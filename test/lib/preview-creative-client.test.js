@@ -322,7 +322,11 @@ describe('canonical previewCreative clients', () => {
           'op_immediate_legacy',
           auth.signature,
           auth.timestamp,
-          auth.rawBody
+          auth.rawBody,
+          {
+            requestMethod: 'POST',
+            requestUrl: 'https://buyer.example/webhook',
+          }
         );
         return completed();
       },
@@ -383,7 +387,11 @@ describe('canonical previewCreative clients', () => {
       'op_restart_canonical',
       auth.signature,
       auth.timestamp,
-      auth.rawBody
+      auth.rawBody,
+      {
+        requestMethod: 'POST',
+        requestUrl: 'https://buyer.example/webhook',
+      }
     );
 
     assert.strictEqual(restartedReceived.length, 1);

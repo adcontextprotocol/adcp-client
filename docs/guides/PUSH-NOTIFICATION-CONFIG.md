@@ -145,6 +145,51 @@ app.post(
 
 The default registration and replay stores are process-local. Production receivers that can restart or run multiple replicas must inject a shared durable `webhookRegistrationStore` and `webhookVerification.replayStore`; registration writes must be atomic create-or-identical, and replay insertion must be atomic across replicas. Retain registrations for at least the seller retry horizon (seven days by default).
 
+The SDK includes Redis and PostgreSQL registration stores. Configure the same
+backend and stable `agent.id` in every process that can dispatch a task or
+receive its callback:
+
+```ts
+import {
+  SingleAgentClient,
+  getWebhookRegistrationMigration,
+  pgWebhookRegistrationStore,
+  redisWebhookRegistrationStore,
+} from '@adcp/sdk';
+import { PostgresReplayStore, getReplayStoreMigration } from '@adcp/sdk/signing/server';
+
+// PostgreSQL: run the idempotent migration during deployment, not per request.
+await pool.query(getWebhookRegistrationMigration({ tableName: 'buyer_eu_webhook_registrations' }));
+const pgRegistrations = pgWebhookRegistrationStore(pool, {
+  tableName: 'buyer_eu_webhook_registrations',
+});
+await pgRegistrations.probe();
+await pool.query(getReplayStoreMigration('buyer_eu_webhook_replays'));
+const sharedReplayStore = new PostgresReplayStore(pool, {
+  tableName: 'buyer_eu_webhook_replays',
+});
+
+// Redis alternative: use a deployment-unique prefix and primary-consistent client.
+const redisRegistrations = redisWebhookRegistrationStore(redis, {
+  keyPrefix: 'buyer-eu:webhook-registration:v1:',
+});
+await redisRegistrations.probe();
+
+const client = new SingleAgentClient(agent, {
+  webhookRegistrationStore: pgRegistrations, // or redisRegistrations
+  webhookVerification: { replayStore: sharedReplayStore },
+});
+```
+
+PostgreSQL and Redis use their backend clocks for inclusive expiry
+(`expiresAt <= now` is unavailable). PostgreSQL needs scheduled
+`cleanupExpiredWebhookRegistrations()` maintenance; Redis expires keys itself.
+Registration correctness never depends on cleanup. Redis must provide
+read-your-writes on the primary and support Lua, `TIME`, `PXAT`, and `KEEPTTL`.
+Use TLS, authentication, capacity monitoring, and a non-evicting policy for
+security state. Early eviction fails callbacks closed but causes availability
+loss. For RFC 9421, the replay store must also be shared and atomic.
+
 Custom registration stores used by durability-protected mutation flows must also implement `markRequiresDurableSettlement(agentId, operationId)` as an atomic update of the live registration. The SDK calls this after registration but before claiming or dispatching the mutation. If the method is absent or the update fails, dispatch fails closed.
 
 For deterministic tests or infrastructure-managed keys, set `webhookVerification.jwks`. Otherwise seller key discovery is automatic and uses an unauthenticated official protocol client for the capabilities step, so credentials configured for one endpoint are never transplanted to the registered callback origin. Sellers whose capability discovery requires authentication should provide an origin-bound `webhookVerification.fetchCapabilities(agentUrl, protocol)` callback or inject `webhookVerification.jwks` directly.
@@ -203,7 +248,7 @@ When `webhookSecret` is configured, the legacy webhook authentication path uses 
 - `x-adcp-signature: sha256=<hex digest>`
 - `x-adcp-timestamp: <unix seconds>`
 
-HMAC registration provenance never stores the credential or a secret-derived fingerprint. The configured global `webhookSecret` remains the verification key. Recordless fallback is limited to an explicit set of read-only tasks; mutations, unknown extensions, and `get_products` (which has a state-changing legacy finalization variant) require a live trusted registration and fail closed when registration state is missing or unavailable. RFC 9421 always fails closed without seller-pinned provenance.
+HMAC registration provenance never stores the credential or a secret-derived fingerprint. The configured global `webhookSecret` remains the verification key. For a registered HMAC callback, the receiver must supply the trusted HTTP method and externally visible absolute request URL; the SDK requires POST and compares that URL with the persisted callback URL before accepting the body-only HMAC. Recordless fallback is limited to an explicit set of read-only tasks; mutations, unknown extensions, and `get_products` (which has a state-changing legacy finalization variant) require a live trusted registration and fail closed when registration state is missing or unavailable. RFC 9421 always fails closed without seller-pinned provenance.
 
 Capture the raw request body before JSON parsing and use the SDK's HTTP handler,
 which verifies the signature and preserves typed failure status codes:

@@ -162,6 +162,9 @@ import { verifyWebhookRequest, type WebhookHeaderValue, type WebhookHeadersLike 
 import {
   canonicalDelegatedOperatorAuthorization,
   InMemoryWebhookRegistrationStore,
+  parseWebhookRegistration,
+  sameWebhookRegistration,
+  WebhookRegistrationIntegrityError,
   type WebhookRegistration,
   type WebhookRegistrationStore,
   validateWebhookRegistrationAuthorization,
@@ -1143,14 +1146,22 @@ export interface VerifyAndParseWebhookOptions {
   taskType?: string;
   /** Operation id from trusted routing context. Used as an A2A fallback. */
   operationId?: string;
-  /** Actual HTTP method from trusted server context. Required for RFC 9421. */
+  /** Actual HTTP method from trusted server context. Required for every registered callback. */
   requestMethod?: string;
-  /** Externally visible absolute request URL from trusted server/proxy configuration. Required for RFC 9421. */
+  /** Externally visible absolute request URL from trusted server/proxy configuration. Required for every registered callback. */
   requestUrl?: string;
   /** Explicit legacy HMAC signature header value. */
   signature?: WebhookHeaderValue;
   /** Explicit legacy HMAC timestamp header value. */
   timestamp?: WebhookHeaderValue;
+}
+
+/** Trusted HTTP request context for direct registered-webhook dispatch. */
+export interface WebhookRequestContext {
+  /** Actual HTTP method from trusted server context. */
+  requestMethod: string;
+  /** Externally visible absolute request URL from trusted server/proxy configuration. */
+  requestUrl: string;
 }
 
 export interface WebhookHandlerRequest {
@@ -1855,9 +1866,11 @@ export class SingleAgentClient {
       const persisted = await this.webhookRegistrationStore.get(args.agent.id, args.operationId);
       if (
         !persisted ||
-        persisted.authorizationContextVersion !== 1 ||
-        canonicalDelegatedOperatorAuthorization(persisted.delegatedOperatorAuthorization) !==
-          canonicalDelegatedOperatorAuthorization(delegatedOperatorAuthorization)
+        !sameWebhookRegistration(
+          parseWebhookRegistration(persisted, { agentId: args.agent.id, operationId: args.operationId }),
+          registration
+        ) ||
+        persisted.authorizationContextVersion !== 1
       ) {
         throw new Error(
           'Webhook registration store did not preserve the versioned delegated-operator authorization context.'
@@ -1918,6 +1931,21 @@ export class SingleAgentClient {
       );
     }
     await mark.call(this.webhookRegistrationStore, this.agent.id, operationId);
+    try {
+      const persisted = await this.webhookRegistrationStore.get(this.agent.id, operationId);
+      if (
+        !persisted ||
+        parseWebhookRegistration(persisted, { agentId: this.agent.id, operationId }).requiresDurableSettlement !== true
+      ) {
+        throw new Error('Webhook registration durable-settlement marker is missing.');
+      }
+    } catch (cause) {
+      const error = new ConfigurationError(
+        'The webhook registration store did not preserve the durable-settlement requirement.'
+      );
+      Object.defineProperty(error, 'cause', { value: cause, configurable: true });
+      throw error;
+    }
   }
 
   private webhookJwksFor(registration: Readonly<WebhookRegistration>): JwksResolver {
@@ -3144,12 +3172,15 @@ export class SingleAgentClient {
    *
    * The method normalizes both formats so handlers receive the unwrapped
    * AdCP response data (AdCPAsyncResponseData), not the raw protocol structure.
+   * Registered callbacks require trusted HTTP method and public-URL context;
+   * use `createWebhookHandler()` or `verifyAndParseWebhook()` for those flows.
    *
    * @param payload - Protocol-specific webhook payload (MCPWebhookPayload | Task | TaskStatusUpdateEvent)
    * @param taskType - Task type (e.g create_media_buy) from url param or url part of the webhook delivery
    * @param operationId - Operation id (e.g used for client app to track the operation) from the param or url part of the webhook delivery
    * @param signature - X-ADCP-Signature header (format: "sha256=...")
    * @param timestamp - X-ADCP-Timestamp header (Unix timestamp)
+   * @param requestContext - Trusted method and public URL. Required for registered callbacks.
    * @returns Whether webhook was handled successfully
    *
    * @example
@@ -3174,7 +3205,8 @@ export class SingleAgentClient {
     operationId: string,
     signature?: WebhookHeaderValue,
     timestamp?: WebhookHeaderValue,
-    rawBody?: string | Buffer | Uint8Array
+    rawBody?: string | Buffer | Uint8Array,
+    requestContext?: WebhookRequestContext
   ): Promise<boolean> {
     const parsed = await this.verifyAndParseWebhook({
       payload,
@@ -3183,6 +3215,8 @@ export class SingleAgentClient {
       signature,
       timestamp,
       rawBody,
+      requestMethod: requestContext?.requestMethod,
+      requestUrl: requestContext?.requestUrl,
     });
     if (!parsed.ok) {
       throw new WebhookDispatchError(parsed.code, parsed.message, parsed.cause);
@@ -3201,6 +3235,8 @@ export class SingleAgentClient {
    * validates the transport envelope shape, and returns the canonicalized
    * AdCP result plus routing metadata. Legacy wire inspection is intentionally
    * confined to the transport adapter and is not returned by this primary API.
+   * Every registered callback must include its trusted HTTP method and externally
+   * visible absolute request URL so the persisted callback target is enforced.
    */
   async verifyAndParseWebhook(options: VerifyAndParseWebhookOptions): Promise<WebhookParseResult> {
     const rawBody = options.rawBody ?? rawBodyFromUnknown(options.body);
@@ -3209,9 +3245,18 @@ export class SingleAgentClient {
       options.operationId && options.operationId !== 'unknown' ? options.operationId : undefined;
     let registration: Readonly<WebhookRegistration> | undefined;
     if (trustedOperationId) {
+      let stored: Readonly<WebhookRegistration> | undefined;
       try {
-        registration = await this.webhookRegistrationStore.get(this.agent.id, trustedOperationId);
+        stored = await this.webhookRegistrationStore.get(this.agent.id, trustedOperationId);
       } catch (cause) {
+        if (cause instanceof WebhookRegistrationIntegrityError) {
+          return {
+            ok: false,
+            code: 'webhook_registration_store_unavailable',
+            message: 'Webhook registration state is invalid.',
+            cause,
+          };
+        }
         const routedTaskType = options.taskType && options.taskType !== 'unknown' ? options.taskType : undefined;
         if (
           !this.config.webhookSecret ||
@@ -3226,48 +3271,28 @@ export class SingleAgentClient {
           };
         }
       }
-    }
-    if (registration && (registration.agentId !== this.agent.id || registration.operationId !== trustedOperationId)) {
-      return {
-        ok: false,
-        code: 'webhook_registration_store_unavailable',
-        message: 'Webhook registration state is inconsistent with the trusted route.',
-      };
+      if (stored) {
+        try {
+          registration = parseWebhookRegistration(stored, {
+            agentId: this.agent.id,
+            operationId: trustedOperationId,
+          });
+        } catch (cause) {
+          // Corrupt or mismatched state is an authorization failure, not a
+          // transient read outage eligible for recordless HMAC fallback.
+          return {
+            ok: false,
+            code: 'webhook_registration_store_unavailable',
+            message: 'Webhook registration state is invalid.',
+            cause,
+          };
+        }
+      }
     }
     if (registration) {
       const nowMs = this.config.webhookVerification?.now
         ? Math.floor(this.config.webhookVerification.now() * 1000)
         : Date.now();
-      if (!Number.isFinite(registration.createdAt) || !Number.isFinite(registration.expiresAt)) {
-        return {
-          ok: false,
-          code: 'webhook_registration_store_unavailable',
-          message: 'Webhook registration state contains invalid timestamps.',
-        };
-      }
-      try {
-        validateWebhookRegistrationAuthorization(registration);
-      } catch (cause) {
-        return {
-          ok: false,
-          code: 'webhook_registration_store_unavailable',
-          message: 'Webhook registration state contains invalid authorization context.',
-          cause,
-        };
-      }
-      try {
-        const registeredAgentUrl = new URL(registration.agentUrl);
-        if (registeredAgentUrl.username || registeredAgentUrl.password) {
-          throw new TypeError('Webhook registration seller URL contains userinfo.');
-        }
-      } catch (cause) {
-        return {
-          ok: false,
-          code: 'webhook_registration_store_unavailable',
-          message: 'Webhook registration state contains an invalid seller URL.',
-          cause,
-        };
-      }
       if (registration.expiresAt <= nowMs) registration = undefined;
     }
 
@@ -3320,26 +3345,20 @@ export class SingleAgentClient {
       );
       return { ok: false, code: cause.code, message: cause.message, cause };
     }
-    if (registration?.mode === 'rfc9421') {
-      if (
-        rawBody === undefined ||
-        !options.headers ||
-        !trustedOperationId ||
-        !options.requestMethod ||
-        !options.requestUrl
-      ) {
+    if (registration) {
+      if (!options.requestMethod || !options.requestUrl) {
         return {
           ok: false,
           code: 'webhook_verification_context_missing',
           message:
-            'RFC 9421 verification requires raw body bytes, all headers, POST method, an absolute trusted public URL, and a trusted route operation id.',
+            'Registered webhook verification requires the POST method and externally visible absolute request URL from trusted server context.',
         };
       }
-      if (options.requestMethod.toUpperCase() !== 'POST') {
+      if (options.requestMethod.toUpperCase() !== registration.method) {
         return {
           ok: false,
           code: 'webhook_verification_context_missing',
-          message: 'Webhook request method must be POST.',
+          message: 'Webhook request method does not match the registered callback method.',
         };
       }
       try {
@@ -3359,14 +3378,26 @@ export class SingleAgentClient {
           cause,
         };
       }
+    }
+    if (registration?.mode === 'rfc9421') {
+      const requestMethod = options.requestMethod;
+      const requestUrl = options.requestUrl;
+      if (rawBody === undefined || !options.headers || !trustedOperationId || !requestMethod || !requestUrl) {
+        return {
+          ok: false,
+          code: 'webhook_verification_context_missing',
+          message:
+            'RFC 9421 verification requires raw body bytes, all headers, POST method, an absolute trusted public URL, and a trusted route operation id.',
+        };
+      }
       const normalizedHeaders = normalizeRfc9421WebhookHeaders(options.headers);
       if (!normalizedHeaders.ok) return normalizedHeaders.failure;
       try {
         const delegatedOperatorAuthorization = this.delegatedOperatorAuthorizationForRegistration(registration);
         await verifyRfc9421WebhookSignature(
           {
-            method: options.requestMethod,
-            url: options.requestUrl,
+            method: requestMethod,
+            url: requestUrl,
             headers: normalizedHeaders.headers,
             body: rawBody,
           },

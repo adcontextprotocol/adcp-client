@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 
 const {
   ADCPMultiAgentClient,
+  AgentClient,
   InMemoryWebhookRegistrationStore,
   SingleAgentClient,
   TaskExecutor,
@@ -319,7 +320,7 @@ describe('SingleAgentClient RFC 9421 webhook receiver', () => {
     assert.strictEqual(result.code, 'webhook_envelope_invalid');
   });
 
-  test('uses configured HMAC without persisting secret-derived material and rejects selector substitution', async () => {
+  test('binds registered HMAC callbacks to their trusted method and URL without persisting secret-derived material', async () => {
     const secret = 'legacy-secret';
     const store = new InMemoryWebhookRegistrationStore();
     const registration = {
@@ -343,22 +344,132 @@ describe('SingleAgentClient RFC 9421 webhook receiver', () => {
     });
     const rawBody = JSON.stringify(envelope());
     const headers = hmacHeaders(rawBody, secret);
+    const registeredContext = {
+      taskType: 'get_products',
+      operationId: 'op-rfc-1',
+      requestMethod: 'POST',
+      requestUrl: registration.callbackUrl,
+    };
     const verified = await client.verifyAndParseWebhook({
       rawBody,
       headers,
-      taskType: 'get_products',
-      operationId: 'op-rfc-1',
+      ...registeredContext,
     });
     assert.strictEqual(verified.ok, true);
+
+    const canonicalEquivalent = await client.verifyAndParseWebhook({
+      rawBody,
+      headers,
+      ...registeredContext,
+      requestUrl: 'https://BUYER.EXAMPLE:443/webhooks/get_products/op-rfc-1',
+    });
+    assert.strictEqual(canonicalEquivalent.ok, true);
+
+    for (const requestContext of [
+      { requestMethod: 'POST', requestUrl: 'https://other.example/webhooks/get_products/op-rfc-1' },
+      { requestMethod: 'POST', requestUrl: 'https://buyer.example/webhooks/get_products/other' },
+      { requestMethod: 'POST', requestUrl: 'https://buyer.example/webhooks/get_products/op-rfc-1?copy=1' },
+    ]) {
+      const wrongTarget = await client.verifyAndParseWebhook({
+        rawBody,
+        headers,
+        ...registeredContext,
+        ...requestContext,
+      });
+      assert.strictEqual(wrongTarget.ok, false);
+      assert.strictEqual(wrongTarget.code, 'webhook_signature_invalid');
+    }
+
+    for (const requestContext of [
+      { requestMethod: undefined, requestUrl: registration.callbackUrl },
+      { requestMethod: 'POST', requestUrl: undefined },
+      { requestMethod: 'GET', requestUrl: registration.callbackUrl },
+      { requestMethod: 'POST', requestUrl: '/webhooks/get_products/op-rfc-1' },
+    ]) {
+      const missingOrInvalidContext = await client.verifyAndParseWebhook({
+        rawBody,
+        headers,
+        ...registeredContext,
+        ...requestContext,
+      });
+      assert.strictEqual(missingOrInvalidContext.ok, false);
+      assert.strictEqual(missingOrInvalidContext.code, 'webhook_verification_context_missing');
+    }
 
     const substituted = await client.verifyAndParseWebhook({
       rawBody,
       headers: { ...headers, signature: 'sig1=:AAAA:' },
-      taskType: 'get_products',
-      operationId: 'op-rfc-1',
+      ...registeredContext,
     });
     assert.strictEqual(substituted.ok, false);
     assert.strictEqual(substituted.code, 'webhook_mode_mismatch');
+  });
+
+  test('forwards trusted registered-HMAC request context through public client wrappers', async () => {
+    const secret = 'wrapper-hmac-secret';
+    const store = new InMemoryWebhookRegistrationStore();
+    const operationId = 'op-wrapper-hmac';
+    const callbackUrl = `https://buyer.example/webhooks/get_products/${operationId}`;
+    await store.putIfAbsent({
+      agentId: agent.id,
+      agentUrl: agent.agent_uri,
+      protocol: agent.protocol,
+      operationId,
+      taskType: 'get_products',
+      callbackUrl,
+      method: 'POST',
+      mode: 'hmac-sha256',
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+    });
+    let handlerCalls = 0;
+    const config = {
+      webhookSecret: secret,
+      webhookRegistrationStore: store,
+      strictSchemaValidation: false,
+      validateFeatures: false,
+      handlers: {
+        onGetProductsStatusChange: () => {
+          handlerCalls += 1;
+        },
+      },
+    };
+    const requestContext = { requestMethod: 'POST', requestUrl: callbackUrl };
+
+    const directPayload = envelope({ operation_id: operationId });
+    const directRawBody = JSON.stringify(directPayload);
+    const directHeaders = hmacHeaders(directRawBody, secret);
+    const wrappedAgent = new AgentClient(agent, config);
+    assert.strictEqual(
+      await wrappedAgent.handleWebhook(
+        directPayload,
+        'get_products',
+        operationId,
+        directHeaders['x-adcp-signature'],
+        directHeaders['x-adcp-timestamp'],
+        directRawBody,
+        requestContext
+      ),
+      true
+    );
+
+    const multiPayload = envelope({ operation_id: operationId, agent_id: agent.id });
+    const multiRawBody = JSON.stringify(multiPayload);
+    const multiHeaders = hmacHeaders(multiRawBody, secret);
+    const multi = new ADCPMultiAgentClient([agent], config);
+    assert.strictEqual(
+      await multi.handleWebhook(
+        multiPayload,
+        'get_products',
+        operationId,
+        multiHeaders['x-adcp-signature'],
+        multiHeaders['x-adcp-timestamp'],
+        multiRawBody,
+        requestContext
+      ),
+      true
+    );
+    assert.strictEqual(handlerCalls, 2);
   });
 
   test('preserves recordless legacy HMAC compatibility only for explicitly read-only tasks', async () => {
@@ -697,6 +808,8 @@ describe('SingleAgentClient RFC 9421 webhook receiver', () => {
       headers,
       taskType: 'create_media_buy',
       operationId: 'op-a2a-hmac-a',
+      requestMethod: 'POST',
+      requestUrl: 'https://buyer.example/webhooks/create_media_buy/op-a2a-hmac-a',
     });
     assert.strictEqual(accepted.ok, true);
 
@@ -734,6 +847,8 @@ describe('SingleAgentClient RFC 9421 webhook receiver', () => {
       headers: statusHeaders,
       taskType: 'create_media_buy',
       operationId: 'op-a2a-hmac-a',
+      requestMethod: 'POST',
+      requestUrl: 'https://buyer.example/webhooks/create_media_buy/op-a2a-hmac-a',
     });
     assert.strictEqual(acceptedStatus.ok, true);
     assert.strictEqual(acceptedStatus.metadata.taskId, 'adcp-hmac-status-work-task');
@@ -743,6 +858,8 @@ describe('SingleAgentClient RFC 9421 webhook receiver', () => {
       headers,
       taskType: 'create_media_buy',
       operationId: 'op-a2a-hmac-b',
+      requestMethod: 'POST',
+      requestUrl: 'https://buyer.example/webhooks/create_media_buy/op-a2a-hmac-b',
     });
     assert.strictEqual(rejected.ok, false);
     assert.strictEqual(rejected.code, 'webhook_registration_mismatch');
@@ -752,6 +869,8 @@ describe('SingleAgentClient RFC 9421 webhook receiver', () => {
       headers: statusHeaders,
       taskType: 'create_media_buy',
       operationId: 'op-a2a-hmac-b',
+      requestMethod: 'POST',
+      requestUrl: 'https://buyer.example/webhooks/create_media_buy/op-a2a-hmac-b',
     });
     assert.strictEqual(rejectedStatus.ok, false);
     assert.strictEqual(rejectedStatus.code, 'webhook_registration_mismatch');
