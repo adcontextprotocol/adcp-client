@@ -30,7 +30,7 @@ const IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
 const NAMESPACE = /^[A-Za-z0-9_.:-]{1,255}$/;
 const CAPABILITY_OVERLAP_KEYS = ['pricingModels', 'targetingDimensions', 'deliveryTypes', 'signalTypes'] as const;
 const STORAGE_CREDENTIAL_PATTERNS = {
-  extend: [/^auth[._\s/-]?info$/i, /^ctx[._\s/-]?metadata$/i, /[a-z0-9](?:Token|Secret|Password)$/],
+  extend: [/^auth[._\s/-]?info$/i, /^ctx[._\s/-]?metadata$/i, /(?:^|[A-Za-z0-9])(?:token|secret|password)$/i],
 };
 
 function quoteTable(raw = DEFAULT_TABLE): string {
