@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-28T19:21:51.944Z
+// Generated at: 2026-08-29T05:27:32.340Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -8418,15 +8418,15 @@ export const AudienceEvidenceRequirementsSchema = z.object({}).passthrough().mer
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
 
-export const MacroBearingURL1Schema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]).and(z.string());
+export const MacroBearingURL1Schema = z.string();
 
-export const MacroBearingURL2Schema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]).and(z.string());
+export const MacroBearingURL2Schema = z.string();
 
-export const MacroBearingURL3Schema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]).and(z.string());
+export const MacroBearingURL3Schema = z.string();
 
-export const MacroBearingURL4Schema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]).and(z.string()).and(z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()])).and(z.string());
+export const MacroBearingURL4Schema = z.string().and(z.string());
 
-export const MacroBearingURL5Schema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]).and(z.string());
+export const MacroBearingURL5Schema = z.string();
 
 export const BriefAssetSchema = CreativeBriefSchema.merge(z.object({
     asset_type: z.literal("brief")
@@ -8436,11 +8436,11 @@ export const CatalogAssetSchema = CatalogSchema.merge(z.object({
     asset_type: z.literal("catalog")
 }).passthrough());
 
-export const MacroBearingURL6Schema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]).and(z.string());
+export const MacroBearingURL6Schema = z.string();
 
-export const MacroBearingURL7Schema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]).and(z.string());
+export const MacroBearingURL7Schema = z.string();
 
-export const MacroBearingURL8Schema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]).and(z.string());
+export const MacroBearingURL8Schema = z.string();
 
 export const TagURLSchema = z.object({
     asset_type: z.literal("display_tag"),
