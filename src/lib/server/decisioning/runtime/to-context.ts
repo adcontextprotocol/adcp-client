@@ -40,6 +40,40 @@ import {
 } from '../async-outcome';
 import type { CtxMetadataStore, ResourceKind, CtxMetadataRef } from '../../ctx-metadata';
 
+function cloneAndFreezeAuthValue<T>(value: T, seen = new WeakMap<object, unknown>()): T {
+  if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return value;
+  const object = value as unknown as object;
+  const prior = seen.get(object);
+  if (prior !== undefined) return prior as T;
+  if (value instanceof Date) return Object.freeze(new Date(value.getTime())) as T;
+  if (value instanceof Map) {
+    const clone = new Map();
+    seen.set(object, clone);
+    for (const [key, entry] of value)
+      clone.set(cloneAndFreezeAuthValue(key, seen), cloneAndFreezeAuthValue(entry, seen));
+    return Object.freeze(clone) as T;
+  }
+  if (value instanceof Set) {
+    const clone = new Set();
+    seen.set(object, clone);
+    for (const entry of value) clone.add(cloneAndFreezeAuthValue(entry, seen));
+    return Object.freeze(clone) as T;
+  }
+  const clone = Array.isArray(value) ? [] : Object.create(Object.getPrototypeOf(value));
+  seen.set(object, clone);
+  for (const key of Reflect.ownKeys(object)) {
+    const descriptor = Object.getOwnPropertyDescriptor(object, key);
+    if (!descriptor) continue;
+    if ('value' in descriptor) {
+      descriptor.value = cloneAndFreezeAuthValue(descriptor.value, seen);
+      descriptor.writable = false;
+    }
+    descriptor.configurable = false;
+    Object.defineProperty(clone, key, descriptor);
+  }
+  return Object.freeze(clone) as T;
+}
+
 /**
  * Build an account-scoped CtxMetadataAccessor for a single request.
  *
@@ -156,6 +190,7 @@ export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
 
   return {
     account,
+    ...(handlerCtx.authInfo != null && { authInfo: cloneAndFreezeAuthValue(handlerCtx.authInfo) }),
     ...(handlerCtx.agent != null && { agent: handlerCtx.agent }),
     ...(handlerCtx.callerMutationScope != null && {
       callerMutationScope: Object.freeze({ ...handlerCtx.callerMutationScope }),

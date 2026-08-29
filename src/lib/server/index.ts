@@ -367,6 +367,7 @@ export type {
   AdcpServerToolName,
   AdcpCapabilitiesConfig,
   AdcpCapabilitiesOverrides,
+  AdcpToolVersionRange,
   AdcpCustomToolConfig as LegacyAdcpCustomToolConfig,
   McpAppUiMeta,
   McpAppMeta,

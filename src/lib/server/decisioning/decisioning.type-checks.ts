@@ -72,6 +72,8 @@ import {
   defineAudiencePlatform,
   defineSignalsPlatform,
   definePlatformWithCompliance,
+  createAdcpServerFromPlatform,
+  createTenantRegistry,
 } from './index';
 import type { ComplyControllerConfig } from '../../testing/comply-controller';
 import type { CanonicalListCreativesResponse } from '../../v2/projection/creative-delivery';
@@ -213,6 +215,101 @@ function _account_typed_meta_rejects_wrong_field(account: Account<GAMAccountMeta
   // @ts-expect-error — `googleAdvertiserId` doesn't exist on GAMAccountMeta.
   return account.ctx_metadata.googleAdvertiserId;
 }
+
+const _mixed_generic_platform = {
+  capabilities: { specialisms: ['sales-non-guaranteed'] as const, config: {} },
+  accounts: {
+    resolve: async (): Promise<Account<GAMAccountMeta>> => ({
+      id: 'acct-typed',
+      name: 'Typed account',
+      status: 'active',
+      ctx_metadata: { networkId: 'network-1', advertiserId: 'advertiser-1' },
+    }),
+  },
+  sales: {
+    getProducts: async (_request, ctx) => {
+      const advertiserId: string = ctx.account.ctx_metadata.advertiserId;
+      void advertiserId;
+      return { products: [], cache_scope: 'account' as const };
+    },
+    createMediaBuy: async () => ({ media_buy_id: 'mb-typed', confirmed_at: null, revision: 1, packages: [] }),
+    updateMediaBuy: async () => ({ media_buy_id: 'mb-typed', revision: 2 }),
+    getMediaBuys: async () => ({ media_buys: [] }),
+    getMediaBuyDelivery: async () => ({
+      reporting_period: { start: '2026-01-01', end: '2026-01-02' },
+      currency: 'USD',
+      media_buy_deliveries: [],
+    }),
+  },
+} satisfies DecisioningPlatform<unknown, GAMAccountMeta>;
+
+// Gradual migration keeps the platform's resolved account type in raw
+// legacy handler groups as well as native platform methods.
+createAdcpServerFromPlatform(_mixed_generic_platform, {
+  name: 'typed-mixed-migration',
+  version: '1.0.0',
+  legacyHandlers: {
+    mediaBuy: {
+      getMediaBuys: async (_req, ctx) => {
+        const networkId: string = ctx.account!.ctx_metadata.networkId;
+        void networkId;
+        return { media_buys: [] };
+      },
+    },
+  },
+});
+
+const _legacy_only_generic_platform: DecisioningPlatform<unknown, GAMAccountMeta> = {
+  capabilities: { specialisms: [] as const, config: {} },
+  accounts: _mixed_generic_platform.accounts,
+  statusMappers: {},
+};
+
+createAdcpServerFromPlatform(_legacy_only_generic_platform, {
+  name: 'typed-legacy-only-migration',
+  version: '1.0.0',
+  legacyHandlers: {
+    mediaBuy: {
+      getMediaBuys: async (_req, ctx) => {
+        const advertiserId: string = ctx.account!.ctx_metadata.advertiserId;
+        void advertiserId;
+        return { media_buys: [] };
+      },
+    },
+  },
+});
+
+const _typed_tenant_registry = createTenantRegistry<Account<GAMAccountMeta>>({
+  defaultServerOptions: {
+    name: 'typed-tenant-registry',
+    version: '1.0.0',
+    legacyHandlers: {
+      mediaBuy: {
+        getMediaBuys: async (_req, ctx) => {
+          const networkId: string = ctx.account!.ctx_metadata.networkId;
+          void networkId;
+          return { media_buys: [] };
+        },
+      },
+    },
+  },
+});
+
+_typed_tenant_registry.register('typed-tenant', {
+  agentUrl: 'https://typed-tenant.example',
+  platform: _mixed_generic_platform,
+  serverOptions: {
+    legacyHandlers: {
+      signals: {
+        getSignals: async (_req, ctx) => {
+          const advertiserId: string = ctx.account!.ctx_metadata.advertiserId;
+          void advertiserId;
+          return { signals: [] };
+        },
+      },
+    },
+  },
+});
 
 // ── refreshToken hook receives Account<TCtxMeta> typed (#1168) ───────────
 
@@ -857,7 +954,9 @@ function _define_platform_with_compliance_rejects_missing_ct() {
 
 // Positive: RequiredOptsFor resolves to base options when P has no compliance_testing.
 type _opts_no_ct = RequiredOptsFor<_PlatformBase>;
-const _check_opts_no_ct: _opts_no_ct extends CreateAdcpServerFromPlatformOptions ? true : false = true;
+const _check_opts_no_ct: _opts_no_ct extends CreateAdcpServerFromPlatformOptions<Account<Record<string, unknown>>>
+  ? true
+  : false = true;
 
 const _explicit_legacy_handler_options: CreateAdcpServerFromPlatformOptions = {
   name: 'legacy-handler-fixture',

@@ -1938,13 +1938,18 @@ export interface DecisioningObservabilityHooks {
   onStatusChangePublish?(info: { accountId: string; resourceType: string; resourceId: string }): void;
 }
 
-export type LegacyDecisioningHandlerGroups = Pick<
-  AdcpServerConfig,
+/** Resolved account type carried by a DecisioningPlatform. @public */
+export type AccountOf<P extends DecisioningPlatform<any, any>> = NonNullable<
+  Awaited<ReturnType<P['accounts']['resolve']>>
+>;
+
+export type LegacyDecisioningHandlerGroups<TAccount = unknown> = Pick<
+  AdcpServerConfig<TAccount>,
   'mediaBuy' | 'creative' | 'governance' | 'brandRights' | 'signals'
 >;
 
-export interface CreateAdcpServerFromPlatformOptions extends Omit<
-  AdcpServerConfig,
+export interface CreateAdcpServerFromPlatformOptions<TAccount = unknown> extends Omit<
+  AdcpServerConfig<TAccount>,
   'resolveAccount' | 'capabilities' | 'name' | 'version' | 'mediaBuy' | 'creative' | 'governance' | 'brandRights'
 > {
   name: string;
@@ -1958,7 +1963,7 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * `activateSignal` implementation. Raw creative identity must never look like
    * a primary platform hook.
    */
-  legacyHandlers?: LegacyDecisioningHandlerGroups;
+  legacyHandlers?: LegacyDecisioningHandlerGroups<TAccount>;
   /**
    * Convert seller/creative-agent-specific legacy format refs before modern
    * platform handlers run. Known AAO formats are normalized automatically;
@@ -2354,8 +2359,8 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
 export type RequiredOptsFor<P extends DecisioningPlatform<any, any>> = P extends {
   capabilities: { compliance_testing: ComplianceTestingCapabilities };
 }
-  ? CreateAdcpServerFromPlatformOptions & { complyTest: ComplyControllerConfig }
-  : CreateAdcpServerFromPlatformOptions;
+  ? CreateAdcpServerFromPlatformOptions<AccountOf<P>> & { complyTest: ComplyControllerConfig }
+  : CreateAdcpServerFromPlatformOptions<AccountOf<P>>;
 
 /**
  * Adcp server returned by `createAdcpServerFromPlatform`. Adds task-state
@@ -2416,14 +2421,19 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // public type exposes these raw handler groups only under legacyHandlers;
   // retaining the hidden fallback avoids turning a type migration into an
   // abrupt wire-support break for untyped deployments.
-  const runtimeLegacyOptions = opts as typeof opts & Partial<LegacyDecisioningHandlerGroups>;
-  const legacyHandlers: LegacyDecisioningHandlerGroups = {
+  const runtimeLegacyOptions = opts as typeof opts & Partial<LegacyDecisioningHandlerGroups<AccountOf<P>>>;
+  const legacyHandlers: LegacyDecisioningHandlerGroups<AccountOf<P>> = {
     mediaBuy: opts.legacyHandlers?.mediaBuy ?? runtimeLegacyOptions.mediaBuy,
     creative: opts.legacyHandlers?.creative ?? runtimeLegacyOptions.creative,
     governance: opts.legacyHandlers?.governance ?? runtimeLegacyOptions.governance,
     brandRights: opts.legacyHandlers?.brandRights ?? runtimeLegacyOptions.brandRights,
     signals: opts.legacyHandlers?.signals ?? runtimeLegacyOptions.signals,
   };
+  // Runtime adapters normalize account values to `Account<any>`. Preserve
+  // the platform's exact account type on the public migration seam while
+  // keeping that historical internal boundary localized here.
+  const runtimeOpts = opts as unknown as CreateAdcpServerFromPlatformOptions<Account>;
+  const runtimeLegacyHandlers = legacyHandlers as unknown as LegacyDecisioningHandlerGroups<Account>;
   validatePlatform(platform, {
     creative: legacyHandlers.creative,
     campaignGovernance: legacyHandlers.governance,
@@ -2948,7 +2958,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // advertised when the framework wires them on the adopter's behalf.
 
   const config: AdcpServerConfig<Account> = {
-    ...opts,
+    ...runtimeOpts,
     requireCompactMutationAccountScope: true,
     taskRegistry,
     ...(autoSeedStore != null && { testController: makeAutoSeedBridge(autoSeedStore) }),
@@ -3072,7 +3082,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // See `CreateAdcpServerFromPlatformOptions` JSDoc for the migration-seam
     // contract.
     mediaBuy: mergeMediaBuyHandlers(
-      legacyHandlers.mediaBuy,
+      runtimeLegacyHandlers.mediaBuy,
       buildMediaBuyHandlers(
         platform,
         taskRegistry,
@@ -3112,7 +3122,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     ),
     proposalNegotiation: platformProposalNegotiation ?? opts.proposalNegotiation,
     creative: mergeHandlers(
-      legacyHandlers.creative,
+      runtimeLegacyHandlers.creative,
       buildCreativeHandlers(
         platform,
         taskRegistry,
@@ -3138,7 +3148,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       mergeOpts
     ),
     signals: mergeHandlers(
-      legacyHandlers.signals,
+      runtimeLegacyHandlers.signals,
       buildSignalsHandlers(
         platform,
         taskRegistry,
@@ -3162,14 +3172,14 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       mergeOpts
     ),
     governance: mergeHandlers(
-      legacyHandlers.governance,
+      runtimeLegacyHandlers.governance,
       buildGovernanceHandlers(platform, ctxFor),
       'governance',
       mergeOpts
     ),
     accounts: mergeHandlers(opts.accounts, buildAccountHandlers(platform, ctxFor), 'accounts', mergeOpts),
     brandRights: mergeHandlers(
-      legacyHandlers.brandRights,
+      runtimeLegacyHandlers.brandRights,
       buildBrandRightsHandlers(platform, ctxFor, effectiveCtxMetadata, fwLogger),
       'brandRights',
       mergeOpts
@@ -3183,7 +3193,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         taskRegistry,
         platform.agentRegistry,
         fwLogger,
-        opts.resolveSessionKey,
+        runtimeOpts.resolveSessionKey,
         opts.credentialPolicy
       );
       return {
@@ -3720,7 +3730,7 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
   taskRegistry: TaskRegistry,
   agentRegistry: BuyerAgentRegistry | undefined,
   logger: AdcpLogger,
-  resolveSessionKey: AdcpServerConfig['resolveSessionKey'] | undefined,
+  resolveSessionKey: AdcpServerConfig<Account>['resolveSessionKey'] | undefined,
   credentialPolicy: CredentialPolicy | undefined
 ) {
   const credentialPolicyPatterns =
@@ -4669,7 +4679,11 @@ async function routeIfHandoff<TInner, TWire>(
   taskRegistry: TaskRegistry,
   opts: DispatchHitlOpts,
   result: TInner | TaskHandoff<TInner>,
-  project: (inner: TInner) => TWire | Promise<TWire>
+  project: (inner: TInner) => TWire | Promise<TWire>,
+  lifecycle?: {
+    onHandoffSuccess?(inner: TInner): void | Promise<void>;
+    onHandoffFailure?(error: unknown): void | Promise<void>;
+  }
 ): Promise<TWire | SubmittedEnvelope> {
   const rejectResponseSummary = (value: unknown): void => {
     if (_extractResponseSummaryEntry(value)) {
@@ -4698,16 +4712,36 @@ async function routeIfHandoff<TInner, TWire>(
         'external'
       );
     }
-    return dispatchHitl(
-      taskRegistry,
-      opts,
-      async taskRef => {
-        const inner = await taskFn(buildHandoffContext(taskRegistry, taskRef));
-        rejectResponseSummary(inner);
-        return await project(inner);
-      },
-      options?.task_id
-    );
+    let handoffTaskStarted = false;
+    try {
+      return await dispatchHitl(
+        taskRegistry,
+        opts,
+        async taskRef => {
+          handoffTaskStarted = true;
+          let inner: TInner;
+          try {
+            inner = await taskFn(buildHandoffContext(taskRegistry, taskRef));
+          } catch (error) {
+            await lifecycle?.onHandoffFailure?.(error);
+            throw error;
+          }
+          // Once adopter work reports success, never release the reservation:
+          // a finalization/projection failure may follow a real media-buy side
+          // effect, and reopening the proposal would permit duplicate spend.
+          rejectResponseSummary(inner);
+          await lifecycle?.onHandoffSuccess?.(inner);
+          return await project(inner);
+        },
+        options?.task_id
+      );
+    } catch (error) {
+      // Allocation/registration failures happen before the background task
+      // callback starts. Release any proposal reservation so a retry is not
+      // permanently fenced by a task that was never created.
+      if (!handoffTaskStarted) await lifecycle?.onHandoffFailure?.(error);
+      throw error;
+    }
   }
   rejectHandRolledSubmitted(result);
   rejectResponseSummary(result);
@@ -6301,6 +6335,9 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           logger,
           legacyFormatConverter
         );
+        const push = extractPushConfig(params, logger, {
+          allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
+        });
         // v1.5 seam: when the request carries a proposal_id, reserve
         // the proposal (atomic CAS COMMITTED → CONSUMING), validate
         // expiry + capability overlap, hydrate ctx.recipes. The
@@ -6320,9 +6357,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         }
         return projectSync(
           async () => {
-            const push = extractPushConfig(params, logger, {
-              allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
-            });
             let result: Awaited<ReturnType<NonNullable<typeof sales.createMediaBuy>>>;
             try {
               result = await sales!.createMediaBuy!(params as unknown as CanonicalCreateMediaBuyRequest, reqCtx);
@@ -6358,11 +6392,9 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               );
             }
             // Inline-success path: promote CONSUMING → CONSUMED with the
-            // adapter's media_buy_id. HITL handoff: the proposal stays
-            // CONSUMING until the handoff completes — wiring the
-            // post-completion commit hook is a v1.6 follow-up; for now
-            // adopters using HITL accept the reservation lingers until
-            // eviction. Most adopters use inline create_media_buy.
+            // adapter's media_buy_id. Framework-settled handoffs finalize in
+            // routeIfHandoff's lifecycle hook after the task produces its
+            // terminal success value.
             if (reservation && proposalStore && !isTaskHandoff(result)) {
               const mediaBuyId = (result as { media_buy_id?: string }).media_buy_id;
               if (mediaBuyId) {
@@ -6372,6 +6404,23 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                   mediaBuyId,
                 });
               }
+            }
+            const handoffEntry = isTaskHandoff(result) ? _extractHandoffEntry(result) : undefined;
+            if (
+              reservation &&
+              proposalStore &&
+              handoffEntry?.options &&
+              'settlement' in handoffEntry.options &&
+              handoffEntry.options.settlement === 'external'
+            ) {
+              await releaseProposalReservation({ store: proposalStore, record: reservation, logger });
+              throw new AdcpError('INVALID_REQUEST', {
+                recovery: 'correctable',
+                field: 'proposal_id',
+                message:
+                  'Proposal-backed create_media_buy does not support external task settlement; ' +
+                  'use a framework-settled handoff so proposal consumption can be finalized atomically.',
+              });
             }
             return routeIfHandoff(
               taskRegistry,
@@ -6398,7 +6447,25 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                   canonicalFormatLegacyResolver,
                   responseWireMode
                 );
-              }
+              },
+              reservation && proposalStore
+                ? {
+                    onHandoffSuccess: async r => {
+                      const mediaBuyId = (r as { media_buy_id?: string }).media_buy_id;
+                      if (!mediaBuyId) {
+                        throw new Error('Proposal-backed create_media_buy handoff completed without media_buy_id.');
+                      }
+                      await finalizeProposalConsumption({
+                        store: proposalStore,
+                        record: reservation,
+                        mediaBuyId,
+                      });
+                    },
+                    onHandoffFailure: async () => {
+                      await releaseProposalReservation({ store: proposalStore, record: reservation, logger });
+                    },
+                  }
+                : undefined
             );
           },
           r => r
