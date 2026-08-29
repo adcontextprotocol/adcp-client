@@ -516,17 +516,24 @@ describe('storyboard runner AdCP version negotiation', () => {
       resolveStoryboardsForCapabilities,
     } = require('../../dist/lib/testing/storyboard/index.js');
 
+    const sellerSupportedVersions = ['3.0'];
     assert.throws(
       () =>
         resolveStoryboardsForCapabilities({
           supported_protocols: [],
-          supported_versions: ['3.0'],
+          supported_versions: sellerSupportedVersions,
         }),
-      err =>
-        err instanceof CapabilityResolutionError &&
-        err.code === 'unsupported_adcp_version' &&
-        /Compliance cache version/.test(err.message) &&
-        /supported_versions \[3\.0\]/.test(err.message)
+      err => {
+        assert.ok(err instanceof CapabilityResolutionError);
+        assert.strictEqual(err.code, 'unsupported_adcp_version');
+        assert.strictEqual(err.complianceVersion, ADCP_VERSION);
+        assert.deepStrictEqual(err.supportedVersions, ['3.0']);
+        assert.ok(Object.isFrozen(err.supportedVersions));
+        sellerSupportedVersions.push('9.9');
+        assert.deepStrictEqual(err.supportedVersions, ['3.0']);
+        assert.throws(() => err.supportedVersions.push('9.9'), TypeError);
+        return true;
+      }
     );
   });
 

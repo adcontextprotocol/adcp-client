@@ -57,7 +57,8 @@ export const ACCOUNT_DISCOVERY_GATE_STORYBOARD_ID = '__spec_conformance__/accoun
  * account discovery. Same for `signal-*`, `brand-rights`,
  * `signed-requests`.
  */
-function isAccountBearingSpecialism(specialism: string): boolean {
+/** @internal Used by bundle verdict aggregation to assign this synthetic gate. */
+export function isAccountBearingSpecialism(specialism: string): boolean {
   if (specialism.startsWith('sales-')) return true;
   if (specialism === 'audience-sync') return true;
   if (specialism.startsWith('governance-')) return true;

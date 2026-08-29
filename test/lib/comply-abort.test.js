@@ -103,9 +103,64 @@ phases:
   return dir;
 }
 
+function writeSpecialismDependencyComplianceCache(options = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-comply-bundle-'));
+  fs.mkdirSync(path.join(dir, 'universal'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'protocols', 'media-buy', 'scenarios'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'specialisms', 'sales-guaranteed'), { recursive: true });
+  if (options.dependencyInUnselectedSpecialism) {
+    fs.mkdirSync(path.join(dir, 'specialisms', 'governance-aware-seller'), { recursive: true });
+  }
+  fs.writeFileSync(
+    path.join(dir, 'index.json'),
+    JSON.stringify({
+      adcp_version: ADCP_VERSION,
+      generated_at: new Date().toISOString(),
+      universal: [],
+      protocols: [{ id: 'media-buy', title: 'Media buy', has_baseline: true, path: 'protocols/media-buy' }],
+      specialisms: [
+        {
+          id: 'sales-guaranteed',
+          protocol: 'media-buy',
+          title: 'Guaranteed sales',
+          status: 'stable',
+          path: 'specialisms/sales-guaranteed',
+        },
+        ...(options.dependencyInUnselectedSpecialism
+          ? [
+              {
+                id: 'governance-aware-seller',
+                protocol: 'media-buy',
+                title: 'Governance-aware seller',
+                status: 'stable',
+                path: 'specialisms/governance-aware-seller',
+              },
+            ]
+          : []),
+      ],
+    })
+  );
+  const dependencyYaml = `${timeoutStoryboardYaml('shared_dependency', 0)}${
+    options.dependencyIntroducedIn ? `introduced_in: ${options.dependencyIntroducedIn}\n` : ''
+  }`;
+  fs.writeFileSync(
+    options.dependencyInUnselectedSpecialism
+      ? path.join(dir, 'specialisms', 'governance-aware-seller', 'index.yaml')
+      : path.join(dir, 'protocols', 'media-buy', 'scenarios', 'shared.yaml'),
+    dependencyYaml
+  );
+  fs.writeFileSync(
+    path.join(dir, 'specialisms', 'sales-guaranteed', 'index.yaml'),
+    `${timeoutStoryboardYaml('guaranteed_root', 0)}${
+      options.rootIntroducedIn ? `introduced_in: ${options.rootIntroducedIn}\n` : ''
+    }requires_scenarios:\n  - shared_dependency\n`
+  );
+  return dir;
+}
+
 async function startTimeoutAgent(options = {}) {
   const requests = [];
-  const tools = ['__test_probe', 'get_adcp_capabilities'];
+  const tools = options.tools ?? ['__test_probe', 'get_adcp_capabilities'];
   const server = http.createServer(async (req, res) => {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
@@ -328,6 +383,7 @@ describe('comply() storyboard assertion aggregation', () => {
       assert.strictEqual(json.summary.steps_passed, 1);
       assert.strictEqual(json.summary.steps_failed, 0);
       assert.strictEqual(json.failures, undefined);
+      assert.strictEqual(json.bundle_results, undefined, 'targeted storyboard runs must not imply bundle coverage');
       for (const observation of [trackObservation, rootObservation, testedTrackObservation]) {
         assert.ok(observation, 'expected assertion failure observation at every aggregate projection');
         assert.strictEqual(observation.severity, 'error');
@@ -342,6 +398,177 @@ describe('comply() storyboard assertion aggregation', () => {
 });
 
 describe('comply() timeout_ms option', () => {
+  test('returns authoritative bundle verdicts for capability-driven runs', async () => {
+    const complianceDir = writeTimeoutComplianceCache();
+    const agent = await startTimeoutAgent({
+      capabilitiesResponse: {
+        adcp: {
+          major_versions: [3],
+          supported_versions: [ADCP_VERSION],
+          build_version: ADCP_VERSION,
+          idempotency: { supported: false },
+        },
+        supported_protocols: [],
+        specialisms: [],
+      },
+    });
+    try {
+      const result = await comply(agent.url, { allow_http: true, complianceDir });
+
+      assert.deepStrictEqual(result.storyboards_executed, ['slow_timeout_one', 'slow_timeout_two']);
+      assert.deepStrictEqual(result.bundle_results, [
+        {
+          kind: 'universal',
+          id: 'slow-timeout-one',
+          storyboard_ids: ['slow_timeout_one'],
+          status: 'partial',
+        },
+        {
+          kind: 'universal',
+          id: 'slow-timeout-two',
+          storyboard_ids: ['slow_timeout_two'],
+          status: 'partial',
+        },
+      ]);
+    } finally {
+      await closeServer(agent.server);
+      fs.rmSync(complianceDir, { recursive: true, force: true });
+    }
+  });
+
+  test('assigns injected dependencies and synthetic gates to their specialism bundle', async () => {
+    const complianceDir = writeSpecialismDependencyComplianceCache();
+    const agent = await startTimeoutAgent({
+      capabilitiesResponse: {
+        adcp: {
+          major_versions: [3],
+          supported_versions: [ADCP_VERSION],
+          build_version: ADCP_VERSION,
+          idempotency: { supported: false },
+        },
+        supported_protocols: ['media_buy'],
+        specialisms: ['sales-guaranteed'],
+      },
+    });
+    try {
+      const result = await comply(agent.url, { allow_http: true, complianceDir });
+      const specialism = result.bundle_results.find(bundleResult => bundleResult.kind === 'specialism');
+
+      assert.deepStrictEqual(specialism, {
+        kind: 'specialism',
+        id: 'sales-guaranteed',
+        storyboard_ids: ['shared_dependency', 'guaranteed_root'],
+        status: 'failing',
+      });
+      assert.ok(
+        result.failures.some(failure => failure.storyboard_id === '__spec_conformance__/account_discovery'),
+        'the account-discovery gate should own the specialism failure'
+      );
+    } finally {
+      await closeServer(agent.server);
+      fs.rmSync(complianceDir, { recursive: true, force: true });
+    }
+  });
+
+  test('does not inject dependencies from version-inapplicable bundle roots', async () => {
+    const complianceDir = writeSpecialismDependencyComplianceCache({ rootIntroducedIn: '4.0' });
+    const agent = await startTimeoutAgent({
+      tools: ['__test_probe', 'get_adcp_capabilities', 'list_accounts'],
+      capabilitiesResponse: {
+        adcp: {
+          major_versions: [3],
+          supported_versions: [ADCP_VERSION],
+          build_version: ADCP_VERSION,
+          idempotency: { supported: false },
+        },
+        supported_protocols: ['media_buy'],
+        specialisms: ['sales-guaranteed'],
+      },
+    });
+    try {
+      const result = await comply(agent.url, { allow_http: true, complianceDir });
+      const specialism = result.bundle_results.find(bundleResult => bundleResult.kind === 'specialism');
+
+      assert.deepStrictEqual(specialism, {
+        kind: 'specialism',
+        id: 'sales-guaranteed',
+        storyboard_ids: ['guaranteed_root'],
+        status: 'not_applicable',
+      });
+    } finally {
+      await closeServer(agent.server);
+      fs.rmSync(complianceDir, { recursive: true, force: true });
+    }
+  });
+
+  test('does not execute version-inapplicable dependencies of applicable roots', async () => {
+    const complianceDir = writeSpecialismDependencyComplianceCache({ dependencyIntroducedIn: '4.0' });
+    const agent = await startTimeoutAgent({
+      tools: ['__test_probe', 'get_adcp_capabilities', 'list_accounts'],
+      capabilitiesResponse: {
+        adcp: {
+          major_versions: [3],
+          supported_versions: [ADCP_VERSION],
+          build_version: ADCP_VERSION,
+          idempotency: { supported: false },
+        },
+        supported_protocols: ['media_buy'],
+        specialisms: ['sales-guaranteed'],
+      },
+    });
+    try {
+      const result = await comply(agent.url, { allow_http: true, complianceDir });
+      const specialism = result.bundle_results.find(bundleResult => bundleResult.kind === 'specialism');
+
+      assert.deepStrictEqual(result.storyboards_executed, ['guaranteed_root']);
+      assert.deepStrictEqual(specialism, {
+        kind: 'specialism',
+        id: 'sales-guaranteed',
+        storyboard_ids: ['shared_dependency', 'guaranteed_root'],
+        status: 'partial',
+      });
+    } finally {
+      await closeServer(agent.server);
+      fs.rmSync(complianceDir, { recursive: true, force: true });
+    }
+  });
+
+  test('version-gates injected dependencies from unselected bundles', async () => {
+    const complianceDir = writeSpecialismDependencyComplianceCache({
+      dependencyIntroducedIn: '4.0',
+      dependencyInUnselectedSpecialism: true,
+    });
+    const agent = await startTimeoutAgent({
+      tools: ['__test_probe', 'get_adcp_capabilities', 'list_accounts'],
+      capabilitiesResponse: {
+        adcp: {
+          major_versions: [3],
+          supported_versions: [ADCP_VERSION],
+          build_version: ADCP_VERSION,
+          idempotency: { supported: false },
+        },
+        supported_protocols: ['media_buy'],
+        specialisms: ['sales-guaranteed'],
+      },
+    });
+    try {
+      const result = await comply(agent.url, { allow_http: true, complianceDir });
+      const specialism = result.bundle_results.find(bundleResult => bundleResult.id === 'sales-guaranteed');
+
+      assert.deepStrictEqual(result.storyboards_executed, ['guaranteed_root']);
+      assert.deepStrictEqual(specialism, {
+        kind: 'specialism',
+        id: 'sales-guaranteed',
+        storyboard_ids: ['shared_dependency', 'guaranteed_root'],
+        status: 'partial',
+      });
+      assert.ok(result.storyboards_not_applicable.includes('shared_dependency'));
+    } finally {
+      await closeServer(agent.server);
+      fs.rmSync(complianceDir, { recursive: true, force: true });
+    }
+  });
+
   test('timeout_ms stops new storyboards without aborting the active storyboard', async () => {
     const complianceDir = writeTimeoutComplianceCache();
     const realDateNow = Date.now;
@@ -424,6 +651,23 @@ describe('comply() timeout_ms option', () => {
       assert.ok(result.tracks.some(t => t.track === 'core' && t.status === 'skip'));
       assert.ok(result.skipped_tracks.some(t => t.track === 'core'));
       assert.ok(result.observations.some(o => o.source?.code === 'timeout-budget-exceeded'));
+    } finally {
+      await closeServer(agent.server);
+      fs.rmSync(complianceDir, { recursive: true, force: true });
+    }
+  });
+
+  test('degraded auth discovery omits non-authoritative bundle results', async () => {
+    const complianceDir = writeTimeoutComplianceCache();
+    const agent = await startUnauthorizedAgent();
+    try {
+      const result = await comply(agent.url, {
+        allow_http: true,
+        complianceDir,
+        timeout_ms: 30000,
+      });
+
+      assert.strictEqual(result.bundle_results, undefined);
     } finally {
       await closeServer(agent.server);
       fs.rmSync(complianceDir, { recursive: true, force: true });
