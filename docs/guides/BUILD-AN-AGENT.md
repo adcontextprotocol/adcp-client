@@ -706,7 +706,8 @@ When a human approval or provider callback commits before the application can
 settle its SDK task, use the PostgreSQL settlement-intent queue to close that
 earlier crash window. See [Durable task settlement](./DURABLE-TASK-SETTLEMENT.md)
 for the domain transaction → task/webhook transaction → webhook recovery
-sequence.
+sequence, copyable polling and push settlement handlers, and scoped dead-letter
+operations.
 
 ### Portable MCP Apps for custom tools
 

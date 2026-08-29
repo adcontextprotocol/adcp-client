@@ -27,11 +27,17 @@ const DEFAULT_RECOVERY = {
   maxAttempts: 12,
 } as const;
 
-export type TaskSettlementIntent =
-  | { taskRef: ScopedTaskRef; action: 'complete'; result: unknown }
-  | { taskRef: ScopedTaskRef; action: 'fail'; error: AdcpStructuredError; result?: unknown };
+/** Complete, serializable task handle required by the durable intent queue. */
+export interface DurableTaskSettlementRef extends ScopedTaskRef {
+  registryId: string;
+  ownerScope: string;
+}
 
-export interface TaskSettlementIntentCheckpoint extends ScopedTaskRef {
+export type TaskSettlementIntent =
+  | { taskRef: DurableTaskSettlementRef; action: 'complete'; result: unknown }
+  | { taskRef: DurableTaskSettlementRef; action: 'fail'; error: AdcpStructuredError; result?: unknown };
+
+export interface TaskSettlementIntentCheckpoint extends DurableTaskSettlementRef {
   queueNamespace: string;
   intentFingerprint: string;
 }
@@ -52,7 +58,7 @@ export interface TaskSettlementIntentRecoveryMetrics {
 
 export interface TaskSettlementIntentRecoveryErrorContext {
   attemptCount: number;
-  taskRef: ScopedTaskRef;
+  taskRef: DurableTaskSettlementRef;
   action: TaskSettlementIntent['action'];
   disposition: 'retry' | 'dead_letter' | 'lease_lost';
 }
@@ -114,7 +120,8 @@ interface StoredPayload {
 }
 
 interface ClaimedIntent {
-  taskRef: ScopedTaskRef & { registryId: string };
+  taskRef: DurableTaskSettlementRef;
+  scopeFingerprint: string;
   action: unknown;
   intentFingerprint: string;
   attemptCount: number;
@@ -133,6 +140,7 @@ CREATE TABLE IF NOT EXISTS ${table} (
   account_id         TEXT NOT NULL,
   owner_scope        TEXT NOT NULL,
   task_id            TEXT NOT NULL,
+  scope_fingerprint  TEXT NOT NULL,
   action             TEXT NOT NULL,
   payload            JSONB NOT NULL,
   intent_fingerprint TEXT NOT NULL,
@@ -146,7 +154,9 @@ CREATE TABLE IF NOT EXISTS ${table} (
   last_error         TEXT,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-  PRIMARY KEY (queue_namespace, registry_id, account_id, owner_scope, task_id),
+  PRIMARY KEY (queue_namespace, scope_fingerprint),
+  CONSTRAINT ${table}_valid_scope_fingerprint
+    CHECK (scope_fingerprint ~ '^[a-f0-9]{64}$'),
   CONSTRAINT ${table}_valid_action CHECK (action IN ('complete', 'fail')),
   CONSTRAINT ${table}_valid_state CHECK (state IN ('pending', 'dead_letter')),
   CONSTRAINT ${table}_valid_payload CHECK (jsonb_typeof(payload) = 'object')
@@ -187,7 +197,9 @@ export function createPostgresTaskSettlementIntentQueue(
   if (!options?.db || typeof options.db.query !== 'function') {
     throw new TypeError('createPostgresTaskSettlementIntentQueue requires a PostgreSQL queryable');
   }
-  assertValidNamespace(options.namespace);
+  const db = options.db;
+  const namespace = options.namespace;
+  assertValidNamespace(namespace);
   const table = options.tableName ?? DEFAULT_TABLE;
   assertValidTableName(table);
 
@@ -200,21 +212,26 @@ export function createPostgresTaskSettlementIntentQueue(
       const payload = payloadForIntent(normalized);
       assertPayloadSize(payload);
       const ref = normalized.taskRef;
-      const db = writeOptions.db ?? options.db;
+      const scopeFingerprint = taskRefFingerprint(ref);
+      const writeDb = writeOptions.db ?? db;
       const result = await queryDb(
-        db,
+        writeDb,
         'enqueue',
         `INSERT INTO ${table} (
            queue_namespace, registry_id, account_id, owner_scope, task_id,
-           action, payload, intent_fingerprint
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
-         ON CONFLICT (queue_namespace, registry_id, account_id, owner_scope, task_id)
+           action, payload, intent_fingerprint, scope_fingerprint
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
+         ON CONFLICT (queue_namespace, scope_fingerprint)
          DO UPDATE SET updated_at = clock_timestamp()
-           WHERE ${table}.action = EXCLUDED.action
+           WHERE ${table}.registry_id = EXCLUDED.registry_id
+             AND ${table}.account_id = EXCLUDED.account_id
+             AND ${table}.owner_scope = EXCLUDED.owner_scope
+             AND ${table}.task_id = EXCLUDED.task_id
+             AND ${table}.action = EXCLUDED.action
              AND ${table}.intent_fingerprint = EXCLUDED.intent_fingerprint
          RETURNING task_id`,
         [
-          options.namespace,
+          namespace,
           ref.registryId,
           ref.accountId,
           ref.ownerScope,
@@ -222,6 +239,7 @@ export function createPostgresTaskSettlementIntentQueue(
           normalized.action,
           JSON.stringify(payload),
           fingerprint,
+          scopeFingerprint,
         ]
       );
       if (result.rowCount !== 1) {
@@ -229,18 +247,19 @@ export function createPostgresTaskSettlementIntentQueue(
           `Task ${ref.taskId} is already bound to a different settlement intent`
         );
       }
-      return checkpointFor(options.namespace, ref, fingerprint);
+      return checkpointFor(namespace, ref, fingerprint);
     },
 
     async acknowledge(checkpoint, writeOptions = {}) {
-      validateCheckpoint(checkpoint, options.namespace);
-      const db = writeOptions.db ?? options.db;
+      validateCheckpoint(checkpoint, namespace);
+      const writeDb = writeOptions.db ?? db;
       const result = await queryDb(
-        db,
+        writeDb,
         'acknowledge',
         `DELETE FROM ${table}
           WHERE queue_namespace = $1 AND registry_id = $2 AND account_id = $3
-            AND owner_scope = $4 AND task_id = $5 AND intent_fingerprint = $6`,
+            AND owner_scope = $4 AND task_id = $5 AND intent_fingerprint = $6
+            AND scope_fingerprint = $7`,
         checkpointValues(checkpoint)
       );
       return result.rowCount === 1;
@@ -248,27 +267,31 @@ export function createPostgresTaskSettlementIntentQueue(
 
     async recover(recoveryOptions) {
       const config = normalizeRecoveryOptions(recoveryOptions);
-      const claims = await claimDue(options.db, table, options.namespace, config);
       const metrics: TaskSettlementIntentRecoveryMetrics = {
-        claimed: claims.length,
+        claimed: 0,
         settled: 0,
         retried: 0,
         deadLettered: 0,
         leaseLost: 0,
       };
-      for (const claim of claims) {
+      const seenFingerprints: string[] = [];
+      while (metrics.claimed < config.batchSize) {
+        const claim = await claimOneDue(db, table, namespace, config, seenFingerprints);
+        if (!claim) break;
+        metrics.claimed += 1;
+        seenFingerprints.push(claim.intentFingerprint);
         let intent: TaskSettlementIntent | undefined;
         try {
-          const payload = await loadClaimPayload(options.db, table, options.namespace, claim);
+          const payload = await loadClaimPayload(db, table, namespace, claim);
           intent = intentFromClaim(claim, payload);
           const outcome = await recoveryOptions.settle(intent, {
             attemptCount: claim.attemptCount,
-            extendLease: () => extendClaimLease(options.db, table, options.namespace, claim, config.leaseMs),
+            extendLease: () => extendClaimLease(db, table, namespace, claim, config.leaseMs),
           });
           if (outcome !== 'settled') {
             throw new TypeError('Task settlement callback must resolve with the literal `settled`');
           }
-          if (await acknowledgeClaim(options.db, table, options.namespace, claim)) {
+          if (await acknowledgeClaim(db, table, namespace, claim)) {
             metrics.settled += 1;
           } else {
             metrics.leaseLost += 1;
@@ -280,7 +303,7 @@ export function createPostgresTaskSettlementIntentQueue(
             );
           }
         } catch (error) {
-          const disposition = await releaseClaim(options.db, table, options.namespace, claim, config, error);
+          const disposition = await releaseClaim(db, table, namespace, claim, config, error);
           if (disposition === 'retry') metrics.retried += 1;
           else if (disposition === 'dead_letter') metrics.deadLettered += 1;
           else metrics.leaseLost += 1;
@@ -292,16 +315,16 @@ export function createPostgresTaskSettlementIntentQueue(
 
     async probe() {
       await queryDb(
-        options.db,
+        db,
         'probe',
-        `SELECT queue_namespace, registry_id, account_id, owner_scope, task_id,
+        `SELECT queue_namespace, registry_id, account_id, owner_scope, task_id, scope_fingerprint,
                 action, payload, intent_fingerprint, state, attempt_count,
                 next_attempt_at, lease_owner, lease_claim_id, lease_version,
                 lease_expires_at, last_error, created_at, updated_at
            FROM ${table}
           WHERE queue_namespace = $1
           LIMIT 0`,
-        [options.namespace]
+        [namespace]
       );
     },
   };
@@ -309,7 +332,7 @@ export function createPostgresTaskSettlementIntentQueue(
 }
 
 function normalizeIntent(intent: TaskSettlementIntent): TaskSettlementIntent & {
-  taskRef: ScopedTaskRef & { registryId: string; ownerScope: string };
+  taskRef: DurableTaskSettlementRef;
 } {
   if (!intent || typeof intent !== 'object') throw new TypeError('Task settlement intent is required');
   const taskRef = requireDurableTaskRef(intent.taskRef);
@@ -320,7 +343,10 @@ function normalizeIntent(intent: TaskSettlementIntent): TaskSettlementIntent & {
     return { taskRef, action: 'complete', result };
   }
   if (intent.action === 'fail') {
-    const error = sanitizeStructuredAdcpError(intent.error);
+    const clonedError = structuredClone(intent.error);
+    requireStructuredError(clonedError);
+    const error = sanitizeStructuredAdcpError(clonedError);
+    requireStructuredError(error);
     const result =
       intent.result === undefined ? undefined : sanitizeTaskResultForWire(structuredClone(intent.result), taskRef);
     canonicalJsonSha256({ error, result });
@@ -335,7 +361,7 @@ function payloadForIntent(intent: TaskSettlementIntent): StoredPayload {
     : { error: intent.error, ...(intent.result !== undefined && { result: intent.result }) };
 }
 
-function requireDurableTaskRef(ref: ScopedTaskRef): ScopedTaskRef & { registryId: string; ownerScope: string } {
+function requireDurableTaskRef(ref: ScopedTaskRef): DurableTaskSettlementRef {
   if (!ref || typeof ref !== 'object') throw new TypeError('Task settlement intent requires a ScopedTaskRef');
   return {
     taskId: requireTaskRefPart(ref.taskId, 'taskId'),
@@ -346,15 +372,31 @@ function requireDurableTaskRef(ref: ScopedTaskRef): ScopedTaskRef & { registryId
 }
 
 function requireTaskRefPart(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.length === 0 || Buffer.byteLength(value, 'utf8') > 255) {
-    throw new TypeError(`Task settlement intent ${field} must be a non-empty string of at most 255 bytes`);
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new TypeError(`Task settlement intent ${field} must be a non-empty string`);
+  }
+  if (Buffer.from(value, 'utf8').toString('utf8') !== value) {
+    throw new TypeError(`Task settlement intent ${field} must contain well-formed Unicode`);
   }
   return value;
 }
 
+function requireStructuredError(value: unknown): AdcpStructuredError {
+  const error = plainObject(value, 'error');
+  for (const field of ['code', 'message'] as const) {
+    if (typeof error[field] !== 'string' || error[field].length === 0) {
+      throw new TypeError(`Task settlement intent error.${field} must be a non-empty string`);
+    }
+  }
+  if (error.recovery !== 'transient' && error.recovery !== 'correctable' && error.recovery !== 'terminal') {
+    throw new TypeError('Task settlement intent error.recovery must be `transient`, `correctable`, or `terminal`');
+  }
+  return value as AdcpStructuredError;
+}
+
 function checkpointFor(
   queueNamespace: string,
-  ref: ScopedTaskRef & { registryId: string; ownerScope: string },
+  ref: DurableTaskSettlementRef,
   intentFingerprint: string
 ): TaskSettlementIntentCheckpoint {
   return { ...ref, queueNamespace, intentFingerprint };
@@ -378,6 +420,7 @@ function checkpointValues(checkpoint: TaskSettlementIntentCheckpoint): unknown[]
     checkpoint.ownerScope,
     checkpoint.taskId,
     checkpoint.intentFingerprint,
+    taskRefFingerprint(checkpoint),
   ];
 }
 
@@ -415,58 +458,65 @@ function normalizeRecoveryOptions(options: RecoverTaskSettlementIntentsOptions) 
   return config;
 }
 
-async function claimDue(
+async function claimOneDue(
   db: PgQueryable,
   table: string,
   namespace: string,
-  config: ReturnType<typeof normalizeRecoveryOptions>
-): Promise<ClaimedIntent[]> {
+  config: ReturnType<typeof normalizeRecoveryOptions>,
+  seenFingerprints: readonly string[]
+): Promise<ClaimedIntent | undefined> {
   const claimId = randomUUID();
   const result = await queryDb(
     db,
     'claim',
     `WITH due AS (
-         SELECT queue_namespace, registry_id, account_id, owner_scope, task_id
-           FROM ${table}
-          WHERE queue_namespace = $1 AND state = 'pending'
+         SELECT candidate.queue_namespace, candidate.registry_id, candidate.account_id,
+                candidate.owner_scope, candidate.task_id, candidate.scope_fingerprint
+           FROM ${table} AS candidate
+          WHERE candidate.queue_namespace = $1 AND candidate.state = 'pending'
             AND next_attempt_at <= clock_timestamp()
             AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
+            AND candidate.intent_fingerprint <> ALL($5::text[])
           ORDER BY next_attempt_at, created_at
-          LIMIT $2
+          LIMIT 1
           FOR UPDATE SKIP LOCKED
        )
        UPDATE ${table} AS intents
-          SET lease_owner = $3,
-              lease_claim_id = $4,
+          SET lease_owner = $2,
+              lease_claim_id = $3,
               lease_version = intents.lease_version + 1,
-              lease_expires_at = clock_timestamp() + ($5::integer * INTERVAL '1 millisecond'),
+              lease_expires_at = clock_timestamp() + ($4::integer * INTERVAL '1 millisecond'),
               attempt_count = intents.attempt_count + 1,
               updated_at = clock_timestamp()
          FROM due
         WHERE intents.queue_namespace = due.queue_namespace
+          AND intents.scope_fingerprint = due.scope_fingerprint
           AND intents.registry_id = due.registry_id
           AND intents.account_id = due.account_id
           AND intents.owner_scope = due.owner_scope
           AND intents.task_id = due.task_id
        RETURNING intents.registry_id, intents.account_id, intents.owner_scope,
-                 intents.task_id, intents.action,
+                 intents.task_id, intents.scope_fingerprint, intents.action,
                  intents.intent_fingerprint, intents.attempt_count,
                  intents.lease_claim_id, intents.lease_version::text`,
-    [namespace, config.batchSize, config.workerId, claimId, config.leaseMs]
+    [namespace, config.workerId, claimId, config.leaseMs, seenFingerprints]
   );
-  return result.rows.map(row => ({
+  const row = result.rows[0];
+  if (!row) return undefined;
+  return {
     taskRef: {
       registryId: requireRowString(row.registry_id, 'registry_id'),
       accountId: requireRowString(row.account_id, 'account_id'),
       ownerScope: requireRowString(row.owner_scope, 'owner_scope'),
       taskId: requireRowString(row.task_id, 'task_id'),
     },
+    scopeFingerprint: requireFingerprint(row.scope_fingerprint, 'scope_fingerprint'),
     action: row.action,
     intentFingerprint: requireRowString(row.intent_fingerprint, 'intent_fingerprint'),
     attemptCount: requireRowInteger(row.attempt_count, 'attempt_count'),
     leaseClaimId: requireRowString(row.lease_claim_id, 'lease_claim_id'),
     leaseVersion: requireRowString(row.lease_version, 'lease_version'),
-  }));
+  };
 }
 
 async function loadClaimPayload(
@@ -482,7 +532,7 @@ async function loadClaimPayload(
       WHERE queue_namespace = $1 AND registry_id = $2 AND account_id = $3
         AND owner_scope = $4 AND task_id = $5 AND intent_fingerprint = $6
         AND state = 'pending' AND lease_claim_id = $7 AND lease_version = $8::bigint
-        AND lease_expires_at > clock_timestamp()`,
+        AND scope_fingerprint = $9 AND lease_expires_at > clock_timestamp()`,
     claimValues(namespace, claim)
   );
   if (result.rowCount !== 1) throw new Error('Task settlement intent lease was lost before payload read');
@@ -490,29 +540,43 @@ async function loadClaimPayload(
 }
 
 function intentFromClaim(claim: ClaimedIntent, storedPayload: unknown): TaskSettlementIntent {
+  if (taskRefFingerprint(claim.taskRef) !== claim.scopeFingerprint) {
+    throw new TypeError('Stored task settlement scope does not match its immutable fingerprint');
+  }
   const payload = plainObject(storedPayload, 'payload');
-  let intent: TaskSettlementIntent;
+  let storedIntent: TaskSettlementIntent;
   if (claim.action === 'complete') {
     if (!Object.hasOwn(payload, 'result')) throw new TypeError('Stored complete intent has no result');
-    intent = { taskRef: claim.taskRef, action: 'complete', result: payload.result };
+    storedIntent = { taskRef: { ...claim.taskRef }, action: 'complete', result: payload.result };
   } else if (claim.action === 'fail') {
     const error = payload.error;
-    if (!error || typeof error !== 'object' || Array.isArray(error)) {
-      throw new TypeError('Stored failed intent has no structured error');
-    }
-    intent = {
-      taskRef: claim.taskRef,
+    storedIntent = {
+      taskRef: { ...claim.taskRef },
       action: 'fail',
-      error: sanitizeStructuredAdcpError(error as AdcpStructuredError),
+      error: error as AdcpStructuredError,
       ...(Object.hasOwn(payload, 'result') && { result: payload.result }),
     };
   } else {
     throw new TypeError('Stored task settlement intent has an invalid action');
   }
-  if (canonicalJsonSha256(intent) !== claim.intentFingerprint) {
+  if (canonicalJsonSha256(storedIntent) !== claim.intentFingerprint) {
     throw new TypeError('Stored task settlement intent does not match its immutable fingerprint');
   }
-  return intent;
+  if (storedIntent.action === 'complete') {
+    return {
+      ...storedIntent,
+      result: sanitizeTaskResultForWire(structuredClone(storedIntent.result), storedIntent.taskRef),
+    };
+  }
+  const clonedError = structuredClone(storedIntent.error);
+  requireStructuredError(clonedError);
+  const error = sanitizeStructuredAdcpError(clonedError);
+  requireStructuredError(error);
+  const result =
+    storedIntent.result === undefined
+      ? undefined
+      : sanitizeTaskResultForWire(structuredClone(storedIntent.result), storedIntent.taskRef);
+  return { ...storedIntent, error, ...(result !== undefined ? { result } : {}) };
 }
 
 async function acknowledgeClaim(
@@ -528,7 +592,7 @@ async function acknowledgeClaim(
       WHERE queue_namespace = $1 AND registry_id = $2 AND account_id = $3
         AND owner_scope = $4 AND task_id = $5 AND intent_fingerprint = $6
         AND state = 'pending' AND lease_claim_id = $7 AND lease_version = $8::bigint
-        AND lease_expires_at > clock_timestamp()`,
+        AND scope_fingerprint = $9 AND lease_expires_at > clock_timestamp()`,
     claimValues(namespace, claim)
   );
   return result.rowCount === 1;
@@ -545,12 +609,12 @@ async function extendClaimLease(
     db,
     'extendLease',
     `UPDATE ${table}
-        SET lease_expires_at = clock_timestamp() + ($9::integer * INTERVAL '1 millisecond'),
+        SET lease_expires_at = clock_timestamp() + ($10::integer * INTERVAL '1 millisecond'),
             updated_at = clock_timestamp()
       WHERE queue_namespace = $1 AND registry_id = $2 AND account_id = $3
         AND owner_scope = $4 AND task_id = $5 AND intent_fingerprint = $6
         AND state = 'pending' AND lease_claim_id = $7 AND lease_version = $8::bigint
-        AND lease_expires_at > clock_timestamp()`,
+        AND scope_fingerprint = $9 AND lease_expires_at > clock_timestamp()`,
     [...claimValues(namespace, claim), leaseMs]
   );
   return result.rowCount === 1;
@@ -572,16 +636,16 @@ async function releaseClaim(
     db,
     'releaseClaim',
     `UPDATE ${table}
-        SET state = $9,
-            next_attempt_at = CASE WHEN $9 = 'pending'
-              THEN clock_timestamp() + ($10::integer * INTERVAL '1 millisecond')
+        SET state = $10,
+            next_attempt_at = CASE WHEN $10 = 'pending'
+              THEN clock_timestamp() + ($11::integer * INTERVAL '1 millisecond')
               ELSE next_attempt_at END,
             lease_owner = NULL, lease_claim_id = NULL, lease_expires_at = NULL,
-            last_error = $11, updated_at = clock_timestamp()
+            last_error = $12, updated_at = clock_timestamp()
       WHERE queue_namespace = $1 AND registry_id = $2 AND account_id = $3
         AND owner_scope = $4 AND task_id = $5 AND intent_fingerprint = $6
         AND state = 'pending' AND lease_claim_id = $7 AND lease_version = $8::bigint
-        AND lease_expires_at > clock_timestamp()`,
+        AND scope_fingerprint = $9 AND lease_expires_at > clock_timestamp()`,
     [...claimValues(namespace, claim), deadLetter ? 'dead_letter' : 'pending', retryAfterMs, errorName]
   );
   if (result.rowCount !== 1) return 'lease_lost';
@@ -589,14 +653,21 @@ async function releaseClaim(
 }
 
 function safeErrorName(error: unknown): string {
-  let name = 'Error';
   try {
-    if (error instanceof Error && typeof error.name === 'string') name = error.name;
+    // `Error#name` is mutable and can contain exception messages, credentials,
+    // or arbitrary adopter input. Persist only classifications proven by the
+    // built-in prototype chain; unknown and cross-realm values stay generic.
+    if (error instanceof EvalError) return 'EvalError';
+    if (error instanceof RangeError) return 'RangeError';
+    if (error instanceof ReferenceError) return 'ReferenceError';
+    if (error instanceof SyntaxError) return 'SyntaxError';
+    if (error instanceof TypeError) return 'TypeError';
+    if (error instanceof URIError) return 'URIError';
+    if (error instanceof AggregateError) return 'AggregateError';
   } catch {
-    // Treat hostile Error subclasses as an anonymous failure.
+    // Treat hostile proxies and Error subclasses as an anonymous failure.
   }
-  const sanitized = name.slice(0, 255).replace(/[^A-Za-z0-9_.:-]/g, '_');
-  return sanitized || 'Error';
+  return 'Error';
 }
 
 function claimValues(namespace: string, claim: ClaimedIntent): unknown[] {
@@ -609,7 +680,17 @@ function claimValues(namespace: string, claim: ClaimedIntent): unknown[] {
     claim.intentFingerprint,
     claim.leaseClaimId,
     claim.leaseVersion,
+    claim.scopeFingerprint,
   ];
+}
+
+function taskRefFingerprint(ref: DurableTaskSettlementRef): string {
+  return canonicalJsonSha256({
+    registryId: ref.registryId,
+    accountId: ref.accountId,
+    ownerScope: ref.ownerScope,
+    taskId: ref.taskId,
+  });
 }
 
 async function queryDb(
@@ -675,6 +756,13 @@ function plainObject(value: unknown, field: string): Record<string, unknown> {
 function requireRowString(value: unknown, field: string): string {
   if (typeof value !== 'string' || value.length === 0) {
     throw new TypeError(`Stored task settlement intent ${field} must be a non-empty string`);
+  }
+  return value;
+}
+
+function requireFingerprint(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) {
+    throw new TypeError(`Stored task settlement intent ${field} must be a SHA-256 fingerprint`);
   }
   return value;
 }

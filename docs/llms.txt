@@ -1890,9 +1890,11 @@ See docs/TYPE-SUMMARY.md for field-level detail. Key types at a glance:
 | `EstablishedProposalStore` | Durable 3.0/3.1 proposal snapshots, atomic mutation fences, seven-day completion proofs, pruning, and submitted-task reconciliation |
 | `WebhooksConfig.tenantScope` | Explicit trusted webhook namespace for a genuinely single-tenant server; multi-tenant servers derive scope per request |
 | `PostgresTaskSettlementCoordinator` | Atomically commits a push task terminal state and PostgreSQL recovery-outbox checkpoint for different-process workers |
+| `PostgresTaskSettlementIntentQueue` | Commits an exact terminal intent with application state, then recovers idempotent SDK task settlement after a crash |
 
 Production webhook publishers may construct an unbound emitter and call `forTenantScope(trustedTenant)` before every delivery. Direct unbound `emit()` fails before checkpointing or network access. `createAdcpServer` derives scope from trusted request context; configure `webhooks.tenantScope` only for a genuinely single-tenant factory.
 Push-enabled decisioning tasks settled by another process must return `ctx.handoffToTask(producer, { settlement: 'external' })`; the framework withholds `submitted` until the producer durably queues the complete scoped handle and encrypted route. Workers use `createPostgresTaskSettlementCoordinator()` with `completeScopedPushTask()` / `failScopedPushTask()`; the task mutation and encrypted recovery outbox checkpoint commit together. Acknowledge work only for `applied` or compatible `already_terminal`; retry or dead-letter scope misses and conflicts.
+When application state commits before SDK task settlement, call `createPostgresTaskSettlementIntentQueue().enqueue(intent, { db: tx })` in the same domain transaction. Recovery callbacks are at-least-once and must prove the exact terminal artifact before returning `settled`; polling tasks compare the scoped registry record, while push tasks use the PostgreSQL settlement coordinator. See `docs/guides/DURABLE-TASK-SETTLEMENT.md` for copyable handlers and scoped dead-letter operations.
 
 ## Task Statuses
 
@@ -1939,6 +1941,7 @@ These docs are available locally in the repo and hosted at https://adcontextprot
 | Validate your agent (5-command checklist) | docs/guides/VALIDATE-YOUR-AGENT.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/VALIDATE-YOUR-AGENT.md) |
 | Async patterns (polling, webhooks, deferred) | docs/guides/ASYNC-DEVELOPER-GUIDE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/ASYNC-DEVELOPER-GUIDE.md) |
 | Async API reference | docs/guides/ASYNC-API-REFERENCE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/ASYNC-API-REFERENCE.md) |
+| Durable task settlement intents | docs/guides/DURABLE-TASK-SETTLEMENT.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/DURABLE-TASK-SETTLEMENT.md) |
 | Input handler patterns | docs/guides/HANDLER-PATTERNS-GUIDE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/HANDLER-PATTERNS-GUIDE.md) |
 | Webhook configuration | docs/guides/PUSH-NOTIFICATION-CONFIG.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/PUSH-NOTIFICATION-CONFIG.md) |
 | Real-world code examples | docs/guides/REAL-WORLD-EXAMPLES.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/REAL-WORLD-EXAMPLES.md) |

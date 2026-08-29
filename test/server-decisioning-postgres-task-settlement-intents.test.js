@@ -9,6 +9,7 @@ process.env.NODE_ENV = 'test';
 
 const { test, describe, before, afterEach, after } = require('node:test');
 const assert = require('node:assert');
+const { randomBytes } = require('node:crypto');
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const TABLE = 'adcp_task_settlement_intents_test';
@@ -26,12 +27,67 @@ function ref(taskId = 'task_1', overrides = {}) {
   };
 }
 
+function singleClaimDb(intent) {
+  const { canonicalJsonSha256 } = require('../dist/lib/utils/jcs');
+  const scopeFingerprint = canonicalJsonSha256({
+    registryId: intent.taskRef.registryId,
+    accountId: intent.taskRef.accountId,
+    ownerScope: intent.taskRef.ownerScope,
+    taskId: intent.taskRef.taskId,
+  });
+  let claimed = false;
+  return {
+    async query(sql) {
+      if (sql.includes('WITH due AS')) {
+        if (claimed) return { rows: [], rowCount: 0 };
+        claimed = true;
+        return {
+          rows: [
+            {
+              registry_id: intent.taskRef.registryId,
+              account_id: intent.taskRef.accountId,
+              owner_scope: intent.taskRef.ownerScope,
+              task_id: intent.taskRef.taskId,
+              scope_fingerprint: scopeFingerprint,
+              action: intent.action,
+              intent_fingerprint: canonicalJsonSha256(intent),
+              attempt_count: 1,
+              lease_claim_id: 'claim-1',
+              lease_version: '1',
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes('SELECT payload FROM')) {
+        return {
+          rows: [
+            {
+              payload:
+                intent.action === 'complete'
+                  ? { result: intent.result }
+                  : {
+                      error: intent.error,
+                      ...(Object.hasOwn(intent, 'result') && { result: intent.result }),
+                    },
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes('DELETE FROM') || sql.includes('SET state =')) return { rows: [], rowCount: 1 };
+      throw new Error(`Unexpected SQL in singleClaimDb: ${sql}`);
+    },
+  };
+}
+
 describe('task settlement intent queue contract', () => {
   test('migration creates a namespaced, scoped, leased queue', () => {
     const { getTaskSettlementIntentMigration } = require('../dist/lib/server/decisioning');
     const sql = getTaskSettlementIntentMigration({ tableName: TABLE });
     assert.match(sql, new RegExp(`CREATE TABLE IF NOT EXISTS ${TABLE}`));
-    assert.match(sql, /PRIMARY KEY \(queue_namespace, registry_id, account_id, owner_scope, task_id\)/);
+    assert.match(sql, /PRIMARY KEY \(queue_namespace, scope_fingerprint\)/);
+    assert.match(sql, /scope_fingerprint ~ '\^\[a-f0-9\]\{64\}\$'/);
     assert.match(sql, /state IN \('pending', 'dead_letter'\)/);
     assert.match(sql, /WHERE state = 'pending'/);
     assert.throws(() => getTaskSettlementIntentMigration({ tableName: 'bad;drop' }), /tableName/);
@@ -90,10 +146,193 @@ describe('task settlement intent queue contract', () => {
       queue.enqueue({ taskRef: { ...ref(), registryId: undefined }, action: 'complete', result: {} }),
       /registryId/
     );
+    await assert.rejects(
+      queue.enqueue({ taskRef: ref(`task_${String.fromCharCode(0xd800)}`), action: 'complete', result: {} }),
+      /well-formed Unicode/
+    );
     await assert.rejects(queue.enqueue({ taskRef: ref(), action: 'complete', result: undefined }), /requires a result/);
     await assert.rejects(queue.recover({ settle: async () => 'settled', leaseMs: 0 }), /leaseMs/);
     await assert.rejects(queue.recover({ settle: async () => 'settled', batchSize: 1001 }), /batchSize/);
     await assert.rejects(queue.recover({ settle: async () => 'settled', workerId: 7 }), /workerId/);
+  });
+
+  test('configuration is snapshotted so caller mutation cannot redirect the queue', async () => {
+    const { createPostgresTaskSettlementIntentQueue } = require('../dist/lib/server/decisioning');
+    const calls = [];
+    const originalDb = {
+      async query(sql, values) {
+        calls.push({ sql, values });
+        if (sql.includes('INSERT INTO')) return { rows: [{ task_id: 'task_snapshot' }], rowCount: 1 };
+        return { rows: [], rowCount: 0 };
+      },
+    };
+    const options = { db: originalDb, namespace: NAMESPACE, tableName: TABLE };
+    const queue = createPostgresTaskSettlementIntentQueue(options);
+    options.db = { query: async () => assert.fail('mutated db must not be used') };
+    options.namespace = 'redirected';
+    options.tableName = 'redirected_table';
+
+    await queue.enqueue({ taskRef: ref('task_snapshot'), action: 'complete', result: { ok: true } });
+    await queue.probe();
+    await queue.recover({ settle: async () => 'settled' });
+
+    assert.strictEqual(calls.length, 3);
+    for (const { sql, values } of calls) {
+      assert.match(sql, new RegExp(TABLE));
+      assert.doesNotMatch(sql, /redirected_table/);
+      assert.strictEqual(values[0], NAMESPACE);
+    }
+  });
+
+  test('fail intents validate their structured error before persistence', async () => {
+    const { createPostgresTaskSettlementIntentQueue } = require('../dist/lib/server/decisioning');
+    let values;
+    let queryCount = 0;
+    const queue = createPostgresTaskSettlementIntentQueue({
+      db: {
+        async query(_sql, params) {
+          queryCount += 1;
+          values = params;
+          return { rows: [{ task_id: 'task_error' }], rowCount: 1 };
+        },
+      },
+      namespace: NAMESPACE,
+      tableName: TABLE,
+    });
+    for (const error of [
+      { code: '', message: 'message', recovery: 'terminal' },
+      { code: 'INVALID_STATE', message: '', recovery: 'terminal' },
+      { code: 'INVALID_STATE', message: 'message', recovery: 'sometimes' },
+    ]) {
+      await assert.rejects(queue.enqueue({ taskRef: ref('task_error'), action: 'fail', error }), /error\./);
+    }
+
+    const inheritedError = Object.create({
+      code: 'INVALID_STATE',
+      message: 'inherited values must not persist',
+      recovery: 'terminal',
+    });
+    await assert.rejects(
+      queue.enqueue({ taskRef: ref('task_error'), action: 'fail', error: inheritedError }),
+      /error\.code/
+    );
+    assert.strictEqual(queryCount, 0);
+
+    await queue.enqueue({
+      taskRef: ref('task_error'),
+      action: 'fail',
+      error: {
+        code: 'IDEMPOTENCY_CONFLICT',
+        message: 'conflict',
+        recovery: 'correctable',
+        field: 'legacy-private-field',
+      },
+    });
+    const storedError = JSON.parse(values[6]).error;
+    assert.strictEqual(storedError.code, 'IDEMPOTENCY_CONFLICT');
+    assert.strictEqual(storedError.message, 'conflict');
+    assert.strictEqual(Object.hasOwn(storedError, 'field'), false);
+  });
+
+  test('recovery fingerprints the exact stored error before normalizing it for current settlement', async () => {
+    const { createPostgresTaskSettlementIntentQueue } = require('../dist/lib/server/decisioning');
+    const intent = {
+      taskRef: ref('task_pre_upgrade'),
+      action: 'fail',
+      error: {
+        code: 'IDEMPOTENCY_CONFLICT',
+        message: 'legacy conflict',
+        recovery: 'terminal',
+        field: 'field-allowed-by-an-older-sdk',
+      },
+    };
+    const queue = createPostgresTaskSettlementIntentQueue({
+      db: singleClaimDb(intent),
+      namespace: NAMESPACE,
+      tableName: TABLE,
+    });
+    let observed;
+    assert.deepStrictEqual(
+      await queue.recover({
+        settle: async recovered => {
+          observed = recovered;
+          return 'settled';
+        },
+      }),
+      { claimed: 1, settled: 1, retried: 0, deadLettered: 0, leaseLost: 0 }
+    );
+    assert.deepStrictEqual(observed.error, {
+      code: 'IDEMPOTENCY_CONFLICT',
+      message: 'legacy conflict',
+      recovery: 'correctable',
+    });
+  });
+
+  test('recovery rejects malformed stored structured errors after fingerprint verification', async () => {
+    const { createPostgresTaskSettlementIntentQueue } = require('../dist/lib/server/decisioning');
+    const intent = {
+      taskRef: ref('task_bad_stored_error'),
+      action: 'fail',
+      error: { code: 'INVALID_STATE', message: '', recovery: 'correctable' },
+    };
+    const queue = createPostgresTaskSettlementIntentQueue({
+      db: singleClaimDb(intent),
+      namespace: NAMESPACE,
+      tableName: TABLE,
+    });
+    let called = false;
+    assert.deepStrictEqual(
+      await queue.recover({
+        maxAttempts: 1,
+        settle: async () => {
+          called = true;
+          return 'settled';
+        },
+      }),
+      { claimed: 1, settled: 0, retried: 0, deadLettered: 1, leaseLost: 0 }
+    );
+    assert.strictEqual(called, false);
+  });
+
+  test('accepts long opaque task-reference components supported by durable registries', async () => {
+    const { createPostgresTaskSettlementIntentQueue } = require('../dist/lib/server/decisioning');
+    const longPart = 'x'.repeat(2048);
+    const longRef = ref(longPart, {
+      accountId: `account:${longPart}`,
+      ownerScope: `owner:${longPart}`,
+      registryId: `custom:${longPart}`,
+    });
+    let values;
+    const queue = createPostgresTaskSettlementIntentQueue({
+      db: {
+        async query(_sql, params) {
+          values = params;
+          return { rows: [{ task_id: 'task_long_registry' }], rowCount: 1 };
+        },
+      },
+      namespace: NAMESPACE,
+      tableName: TABLE,
+    });
+    const checkpoint = await queue.enqueue({
+      taskRef: longRef,
+      action: 'complete',
+      result: { ok: true },
+    });
+    assert.deepStrictEqual(values.slice(1, 5), [
+      longRef.registryId,
+      longRef.accountId,
+      longRef.ownerScope,
+      longRef.taskId,
+    ]);
+    assert.deepStrictEqual(
+      {
+        taskId: checkpoint.taskId,
+        accountId: checkpoint.accountId,
+        ownerScope: checkpoint.ownerScope,
+        registryId: checkpoint.registryId,
+      },
+      longRef
+    );
   });
 
   test('probe verifies every column required by runtime writes and recovery', async () => {
@@ -204,7 +443,7 @@ describe('Postgres task settlement intent queue', { skip: !DATABASE_URL && 'DATA
     assert.strictEqual(observed[0].action, 'fail');
     assert.deepStrictEqual(observed[0].result, { media_buy_id: 'mb-retry' });
     const stored = await pool.query(`SELECT last_error, attempt_count FROM ${TABLE}`);
-    assert.deepStrictEqual(stored.rows, [{ last_error: 'TypeError_injected', attempt_count: 1 }]);
+    assert.deepStrictEqual(stored.rows, [{ last_error: 'TypeError', attempt_count: 1 }]);
 
     assert.deepStrictEqual(await queue.recover({ retryAfterMs: 0, settle: async () => 'settled' }), {
       claimed: 1,
@@ -264,6 +503,88 @@ describe('Postgres task settlement intent queue', { skip: !DATABASE_URL && 'DATA
     });
   });
 
+  test('a legacy failed intent normalizes after fingerprint verification and heals after a crash', async () => {
+    const { canonicalJsonSha256 } = require('../dist/lib/utils/jcs');
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'intent-registry',
+      tableName: TASK_TABLE,
+    });
+    const taskRef = await registry.create({
+      tool: 'update_media_buy',
+      accountId: 'account-1',
+      ownerScope: 'api_key:buyer-1',
+      overrideTaskId: 'task_legacy_fail_crash',
+    });
+    const legacyError = {
+      code: 'IDEMPOTENCY_CONFLICT',
+      message: 'legacy conflict',
+      recovery: 'terminal',
+      field: 'removed-by-current-sanitizer',
+    };
+    const storedIntent = { taskRef, action: 'fail', error: legacyError };
+    const scopeFingerprint = canonicalJsonSha256({
+      registryId: taskRef.registryId,
+      accountId: taskRef.accountId,
+      ownerScope: taskRef.ownerScope,
+      taskId: taskRef.taskId,
+    });
+    await pool.query(
+      `INSERT INTO ${TABLE} (
+         queue_namespace, registry_id, account_id, owner_scope, task_id,
+         action, payload, intent_fingerprint, scope_fingerprint
+       ) VALUES ($1, $2, $3, $4, $5, 'fail', $6::jsonb, $7, $8)`,
+      [
+        NAMESPACE,
+        taskRef.registryId,
+        taskRef.accountId,
+        taskRef.ownerScope,
+        taskRef.taskId,
+        JSON.stringify({ error: legacyError }),
+        canonicalJsonSha256(storedIntent),
+        scopeFingerprint,
+      ]
+    );
+
+    let simulateCrash = true;
+    const settle = async intent => {
+      assert.deepStrictEqual(intent.error, {
+        code: 'IDEMPOTENCY_CONFLICT',
+        message: 'legacy conflict',
+        recovery: 'correctable',
+      });
+      const outcome = await registry.fail(intent.taskRef.taskId, intent.taskRef, intent.error);
+      if (outcome.outcome === 'already_terminal') {
+        const stored = await registry.getTask(intent.taskRef.taskId, intent.taskRef);
+        assert.strictEqual(stored.status, 'failed');
+        assert.deepStrictEqual(stored.error, intent.error);
+      } else {
+        assert.strictEqual(outcome.outcome, 'applied');
+      }
+      if (simulateCrash) {
+        simulateCrash = false;
+        throw new Error('simulated death after legacy failure commit');
+      }
+      return 'settled';
+    };
+
+    assert.deepStrictEqual(await queue.recover({ retryAfterMs: 0, settle }), {
+      claimed: 1,
+      settled: 0,
+      retried: 1,
+      deadLettered: 0,
+      leaseLost: 0,
+    });
+    assert.deepStrictEqual(await queue.recover({ retryAfterMs: 0, settle }), {
+      claimed: 1,
+      settled: 1,
+      retried: 0,
+      deadLettered: 0,
+      leaseLost: 0,
+    });
+  });
+
   test('failed intents preserve an explicit null result through fingerprint verification', async () => {
     await queue.enqueue({
       taskRef: ref('task_null_result'),
@@ -304,6 +625,96 @@ describe('Postgres task settlement intent queue', { skip: !DATABASE_URL && 'DATA
     assert.deepStrictEqual(observed.taskRef, ref('task_extra_ref'));
   });
 
+  test('long incompressible opaque refs fit because only the scope fingerprint is indexed', async () => {
+    const opaque = prefix => `${prefix}:${randomBytes(1024).toString('hex')}`;
+    const longRef = {
+      taskId: opaque('task'),
+      accountId: opaque('account'),
+      ownerScope: opaque('owner'),
+      registryId: opaque('registry'),
+    };
+    const checkpoint = await queue.enqueue({
+      taskRef: longRef,
+      action: 'complete',
+      result: { ok: true },
+    });
+    const stored = await pool.query(
+      `SELECT scope_fingerprint, registry_id, account_id, owner_scope, task_id FROM ${TABLE}`
+    );
+    assert.match(stored.rows[0].scope_fingerprint, /^[a-f0-9]{64}$/);
+    assert.deepStrictEqual(
+      {
+        registryId: stored.rows[0].registry_id,
+        accountId: stored.rows[0].account_id,
+        ownerScope: stored.rows[0].owner_scope,
+        taskId: stored.rows[0].task_id,
+      },
+      longRef
+    );
+    assert.strictEqual(await queue.acknowledge(checkpoint), true);
+  });
+
+  test('settlement callback mutation cannot corrupt the internal fencing reference', async () => {
+    await queue.enqueue({ taskRef: ref('task_mutated_callback'), action: 'complete', result: { ok: true } });
+    assert.deepStrictEqual(
+      await queue.recover({
+        settle: async intent => {
+          intent.taskRef.taskId = 'attacker-mutated-task-id';
+          return 'settled';
+        },
+      }),
+      { claimed: 1, settled: 1, retried: 0, deadLettered: 0, leaseLost: 0 }
+    );
+    assert.strictEqual((await pool.query(`SELECT 1 FROM ${TABLE}`)).rowCount, 0);
+  });
+
+  test('one recovery call cannot reclaim a zero-delay retry it already saw', async () => {
+    await queue.enqueue({ taskRef: ref('task_zero_delay'), action: 'complete', result: { ok: true } });
+    let calls = 0;
+    assert.deepStrictEqual(
+      await queue.recover({
+        batchSize: 3,
+        retryAfterMs: 0,
+        settle: async () => {
+          calls += 1;
+          throw new Error('retry later');
+        },
+      }),
+      { claimed: 1, settled: 0, retried: 1, deadLettered: 0, leaseLost: 0 }
+    );
+    assert.strictEqual(calls, 1);
+    assert.strictEqual((await pool.query(`SELECT attempt_count FROM ${TABLE}`)).rows[0].attempt_count, 1);
+  });
+
+  test('a slow first item does not consume the short lease of the next batch item', async () => {
+    await queue.enqueue({ taskRef: ref('task_slow_first'), action: 'complete', result: { ok: true } });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    await queue.enqueue({ taskRef: ref('task_fast_second'), action: 'complete', result: { ok: true } });
+    const observed = [];
+    assert.deepStrictEqual(
+      await queue.recover({
+        batchSize: 2,
+        leaseMs: 250,
+        settle: async intent => {
+          observed.push(intent.taskRef.taskId);
+          if (intent.taskRef.taskId === 'task_slow_first') {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+          return 'settled';
+        },
+      }),
+      { claimed: 2, settled: 1, retried: 0, deadLettered: 0, leaseLost: 1 }
+    );
+    assert.deepStrictEqual(observed, ['task_slow_first', 'task_fast_second']);
+    assert.deepStrictEqual(await queue.recover({ settle: async () => 'settled' }), {
+      claimed: 1,
+      settled: 1,
+      retried: 0,
+      deadLettered: 0,
+      leaseLost: 0,
+    });
+  });
+
   test('concurrent workers claim a due intent once', async () => {
     await queue.enqueue({ taskRef: ref('task_concurrent'), action: 'complete', result: { ok: true } });
     let calls = 0;
@@ -319,6 +730,55 @@ describe('Postgres task settlement intent queue', { skip: !DATABASE_URL && 'DATA
     assert.strictEqual(calls, 1);
     assert.strictEqual(first.settled + second.settled, 1);
     assert.strictEqual(first.claimed + second.claimed, 1);
+  });
+
+  test('a concurrent worker can settle the second row while the first callback is blocked', async () => {
+    await queue.enqueue({ taskRef: ref('task_blocked_first'), action: 'complete', result: { ok: true } });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    await queue.enqueue({ taskRef: ref('task_healthy_second'), action: 'complete', result: { ok: true } });
+
+    let signalFirstStarted;
+    let releaseFirst;
+    const firstStarted = new Promise(resolve => {
+      signalFirstStarted = resolve;
+    });
+    const firstCanFinish = new Promise(resolve => {
+      releaseFirst = resolve;
+    });
+    const firstRecovery = queue.recover({
+      workerId: 'blocked-first-worker',
+      batchSize: 2,
+      settle: async intent => {
+        assert.strictEqual(intent.taskRef.taskId, 'task_blocked_first');
+        signalFirstStarted();
+        await firstCanFinish;
+        return 'settled';
+      },
+    });
+
+    await firstStarted;
+    const secondObserved = [];
+    assert.deepStrictEqual(
+      await queue.recover({
+        workerId: 'healthy-second-worker',
+        batchSize: 2,
+        settle: async intent => {
+          secondObserved.push(intent.taskRef.taskId);
+          return 'settled';
+        },
+      }),
+      { claimed: 1, settled: 1, retried: 0, deadLettered: 0, leaseLost: 0 }
+    );
+    assert.deepStrictEqual(secondObserved, ['task_healthy_second']);
+
+    releaseFirst();
+    assert.deepStrictEqual(await firstRecovery, {
+      claimed: 1,
+      settled: 1,
+      retried: 0,
+      deadLettered: 0,
+      leaseLost: 0,
+    });
   });
 
   test('a worker that loses its lease cannot report another worker acknowledgement as its own', async () => {

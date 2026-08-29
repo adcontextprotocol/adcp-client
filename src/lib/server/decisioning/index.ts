@@ -399,6 +399,7 @@ export {
   getTaskSettlementIntentMigration,
   TaskSettlementIntentConflictError,
   type CreatePostgresTaskSettlementIntentQueueOptions,
+  type DurableTaskSettlementRef,
   type PostgresTaskSettlementIntentQueue,
   type RecoverTaskSettlementIntentsOptions,
   type TaskSettlementIntent,
