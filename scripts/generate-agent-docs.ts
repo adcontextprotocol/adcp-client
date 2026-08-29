@@ -1165,12 +1165,18 @@ function generateLlmsTxt(
   ln(
     `| \`PostgresTaskSettlementCoordinator\` | Atomically commits a push task terminal state and PostgreSQL recovery-outbox checkpoint for different-process workers |`
   );
+  ln(
+    `| \`PostgresTaskSettlementIntentQueue\` | Commits an exact terminal intent with application state, then recovers idempotent SDK task settlement after a crash |`
+  );
   ln();
   ln(
     `Production webhook publishers may construct an unbound emitter and call \`forTenantScope(trustedTenant)\` before every delivery. Direct unbound \`emit()\` fails before checkpointing or network access. \`createAdcpServer\` derives scope from trusted request context; configure \`webhooks.tenantScope\` only for a genuinely single-tenant factory.`
   );
   ln(
     `Push-enabled decisioning tasks settled by another process must return \`ctx.handoffToTask(producer, { settlement: 'external' })\`; the framework withholds \`submitted\` until the producer durably queues the complete scoped handle and encrypted route. Workers use \`createPostgresTaskSettlementCoordinator()\` with \`completeScopedPushTask()\` / \`failScopedPushTask()\`; the task mutation and encrypted recovery outbox checkpoint commit together. Acknowledge work only for \`applied\` or compatible \`already_terminal\`; retry or dead-letter scope misses and conflicts.`
+  );
+  ln(
+    `When application state commits before SDK task settlement, call \`createPostgresTaskSettlementIntentQueue().enqueue(intent, { db: tx })\` in the same domain transaction. Acknowledgement discards the payload and retains an immutable fingerprint tombstone through the configured idempotency horizon; \`pruneAcknowledged()\` removes expired tombstones in bounded batches. Recovery callbacks are at-least-once and must prove the exact terminal artifact before returning \`settled\`; polling tasks compare the scoped registry record, while push tasks use the PostgreSQL settlement coordinator. See \`docs/guides/DURABLE-TASK-SETTLEMENT.md\` for copyable handlers and scoped dead-letter operations.`
   );
   ln();
 
@@ -1234,6 +1240,7 @@ function generateLlmsTxt(
     ['Validate your agent (5-command checklist)', 'guides/VALIDATE-YOUR-AGENT.md'],
     ['Async patterns (polling, webhooks, deferred)', 'guides/ASYNC-DEVELOPER-GUIDE.md'],
     ['Async API reference', 'guides/ASYNC-API-REFERENCE.md'],
+    ['Durable task settlement intents', 'guides/DURABLE-TASK-SETTLEMENT.md'],
     ['Input handler patterns', 'guides/HANDLER-PATTERNS-GUIDE.md'],
     ['Webhook configuration', 'guides/PUSH-NOTIFICATION-CONFIG.md'],
     ['Real-world code examples', 'guides/REAL-WORLD-EXAMPLES.md'],
@@ -1458,6 +1465,107 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln();
   ln(`// After restart: lifecycle.reconcileEstablishedProposalTask({ account, sellerTaskId })`);
   ln('```');
+  ln();
+
+  ln(`## Durable Task Settlement Intent Queue`);
+  ln();
+  ln('```typescript');
+  ln(`interface PgQueryable {`);
+  ln(
+    `  query(text: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }>;`
+  );
+  ln(`}`);
+  ln();
+  ln(`interface AdcpStructuredError {`);
+  ln(`  code: string;`);
+  ln(`  recovery: 'transient' | 'correctable' | 'terminal';`);
+  ln(`  message: string;`);
+  ln(`  field?: string;`);
+  ln(`  suggestion?: string;`);
+  ln(`  retry_after?: number;`);
+  ln(`  details?: Record<string, unknown>;`);
+  ln(`}`);
+  ln();
+  ln(`interface DurableTaskSettlementRef {`);
+  ln(`  taskId: string;`);
+  ln(`  accountId: string;`);
+  ln(`  registryId: string;`);
+  ln(`  ownerScope: string;`);
+  ln(`}`);
+  ln();
+  ln(`type TaskSettlementIntent =`);
+  ln(`  | { taskRef: DurableTaskSettlementRef; action: 'complete'; result: unknown }`);
+  ln(`  | { taskRef: DurableTaskSettlementRef; action: 'fail'; error: AdcpStructuredError; result?: unknown };`);
+  ln();
+  ln(`interface TaskSettlementIntentCheckpoint extends DurableTaskSettlementRef {`);
+  ln(`  queueNamespace: string;`);
+  ln(`  intentFingerprint: string;`);
+  ln(`}`);
+  ln();
+  ln(`function canonicalizeTaskSettlementIntent(intent: TaskSettlementIntent): TaskSettlementIntent;`);
+  ln();
+  ln(`interface TaskSettlementIntentRecoveryContext {`);
+  ln(`  attemptCount: number;`);
+  ln(`  extendLease(): Promise<boolean>;`);
+  ln(`}`);
+  ln();
+  ln(`interface TaskSettlementIntentRecoveryMetrics {`);
+  ln(`  claimed: number;`);
+  ln(`  settled: number;`);
+  ln(`  retried: number;`);
+  ln(`  deadLettered: number;`);
+  ln(`  leaseLost: number;`);
+  ln(`}`);
+  ln();
+  ln(`interface TaskSettlementIntentRecoveryErrorContext {`);
+  ln(`  attemptCount: number;`);
+  ln(`  taskRef: DurableTaskSettlementRef;`);
+  ln(`  action: 'complete' | 'fail';`);
+  ln(`  disposition: 'retry' | 'dead_letter' | 'lease_lost';`);
+  ln(`}`);
+  ln();
+  ln(`interface RecoverTaskSettlementIntentsOptions {`);
+  ln(`  settle(intent: TaskSettlementIntent, context: TaskSettlementIntentRecoveryContext): Promise<'settled'>;`);
+  ln(`  batchSize?: number;`);
+  ln(`  leaseMs?: number;`);
+  ln(`  retryAfterMs?: number;`);
+  ln(`  maxRetryAfterMs?: number;`);
+  ln(`  maxAttempts?: number;`);
+  ln(`  workerId?: string;`);
+  ln(`  onError?(error: unknown, context: TaskSettlementIntentRecoveryErrorContext): void | Promise<void>;`);
+  ln(`}`);
+  ln();
+  ln(`interface CreatePostgresTaskSettlementIntentQueueOptions {`);
+  ln(`  db: PgQueryable;`);
+  ln(`  namespace: string;`);
+  ln(`  tableName?: string;`);
+  ln(`  idempotencyHorizonMs?: number; // defaults to seven days`);
+  ln(`}`);
+  ln();
+  ln(`interface PostgresTaskSettlementIntentQueue {`);
+  ln(`  readonly durability: 'durable';`);
+  ln(
+    `  enqueue(intent: TaskSettlementIntent, options?: { db?: PgQueryable }): Promise<TaskSettlementIntentCheckpoint>;`
+  );
+  ln(`  acknowledge(checkpoint: TaskSettlementIntentCheckpoint, options?: { db?: PgQueryable }): Promise<boolean>;`);
+  ln(`  pruneAcknowledged(options?: { db?: PgQueryable; limit?: number }): Promise<number>;`);
+  ln(`  recover(options: RecoverTaskSettlementIntentsOptions): Promise<TaskSettlementIntentRecoveryMetrics>;`);
+  ln(`  probe(): Promise<void>;`);
+  ln(`}`);
+  ln();
+  ln(`const TASK_SETTLEMENT_INTENT_IDEMPOTENCY_HORIZON_MS: number; // seven days`);
+  ln();
+  ln(`const settlementIntents = createPostgresTaskSettlementIntentQueue({`);
+  ln(`  db: pool,`);
+  ln(`  namespace: 'seller-prod',`);
+  ln(`  tableName: 'seller_task_settlement_intents',`);
+  ln(`  idempotencyHorizonMs: TASK_SETTLEMENT_INTENT_IDEMPOTENCY_HORIZON_MS,`);
+  ln(`});`);
+  ln('```');
+  ln();
+  ln(
+    `The queue requires a complete \`DurableTaskSettlementRef\`, including non-empty \`registryId\`. Use \`canonicalizeTaskSettlementIntent()\` for the immediate path so it compares the same cloned, validated, wire-safe artifact that \`enqueue\` persists. Pass the active transaction client to \`enqueue(..., { db: tx })\` so the domain outcome and immutable intent commit together. Acknowledgement compacts the payload and retains the exact fingerprint for \`idempotencyHorizonMs\` (seven days by default), preventing a conflicting artifact from rebinding the scoped task during the replay window. Schedule bounded \`pruneAcknowledged()\` calls when recovery traffic can be idle. Recovery is at least once: return \`settled\` only after proving the exact terminal artifact. See \`docs/guides/DURABLE-TASK-SETTLEMENT.md\` for polling and push helpers plus scoped dead-letter SQL.`
+  );
   ln();
 
   ln(`## Crash-Safe Push Task Settlement`);

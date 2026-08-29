@@ -557,6 +557,7 @@ interface DbTaskRow {
   status: TaskStatus;
   status_message: string | null;
   result: unknown;
+  has_result: boolean;
   error: AdcpStructuredError | null;
   progress: TaskHandoffProgress | null;
   has_webhook: boolean;
@@ -579,7 +580,7 @@ function rowToRecord<TResult>(row: DbTaskRow): TaskRecord<TResult> {
     ...(row.owner_scope ? { ownerScope: row.owner_scope } : {}),
     status: row.status,
     ...(row.status_message !== null && { statusMessage: row.status_message }),
-    ...(row.result !== null && row.result !== undefined && { result: row.result as TResult }),
+    ...((row.has_result ?? (row.result !== null && row.result !== undefined)) && { result: row.result as TResult }),
     ...(row.error !== null && row.error !== undefined && { error: row.error }),
     ...(row.progress !== null && row.progress !== undefined && { progress: row.progress }),
     ...(row.has_webhook && { hasWebhook: true }),
@@ -678,7 +679,8 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
       if (scope.registryId !== undefined && scope.registryId !== registryId) return null;
       const { rows } = await query(
         'getTask',
-        `SELECT task_id, tool, account_id, owner_scope, status, status_message, result, error, progress, has_webhook, created_at, updated_at
+        `SELECT task_id, tool, account_id, owner_scope, status, status_message, result,
+                result IS NOT NULL AS has_result, error, progress, has_webhook, created_at, updated_at
          FROM ${table} WHERE task_id = $1 AND registry_namespace = $2 AND account_id = $3 AND owner_scope = $4`,
         [taskId, namespace, scope.accountId, scope.ownerScope]
       );
@@ -689,7 +691,8 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
     async list(listOpts: { accountId: string; ownerScope: string }): Promise<{ tasks: TaskRecord[] }> {
       const { rows } = await query(
         'list',
-        `SELECT task_id, tool, account_id, owner_scope, status, status_message, result, error, progress, has_webhook, created_at, updated_at
+        `SELECT task_id, tool, account_id, owner_scope, status, status_message, result,
+                result IS NOT NULL AS has_result, error, progress, has_webhook, created_at, updated_at
          FROM ${table}
          WHERE registry_namespace = $1 AND account_id = $2 AND owner_scope = $3
          ORDER BY created_at DESC, task_id DESC`,

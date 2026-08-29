@@ -486,6 +486,7 @@ jobs:
         run: >-
           node --test --test-timeout=120000
           test/server-decisioning-postgres-task-registry.test.js
+          test/server-decisioning-postgres-task-settlement-intents.test.js
           test/lib/postgres-proposal-store.test.js
 
   eslint-plugin-tests:

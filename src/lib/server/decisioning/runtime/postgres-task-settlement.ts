@@ -10,6 +10,7 @@
 import { createHash } from 'node:crypto';
 import { canonicalJsonSha256 } from '../../../utils/jcs';
 import { isAdcpVersionAtLeast, isValidAdcpVersion } from '../../../utils/adcp-version-config';
+import { assertWellFormedUnicode } from '../../../utils/well-formed-unicode';
 import type { AdcpStructuredError } from '../async-outcome';
 import { sanitizeStructuredAdcpError } from '../../errors';
 import type { WebhookAuthentication, WebhookRetryOptions } from '../../webhook-emitter';
@@ -124,18 +125,21 @@ export function createPostgresTaskSettlementCoordinator(
       'Crash-safe task settlement requires a pg Pool with connect(); a query-only adapter cannot own a transaction'
     );
   }
-  if (typeof options.registry.registryId !== 'string' || options.registry.registryId.length === 0) {
+  const registryId = options.registry.registryId;
+  if (typeof registryId !== 'string' || registryId.length === 0) {
     throw new TypeError('Crash-safe task settlement requires task registry storageId/registryId binding');
   }
   if (typeof options.publisherScope !== 'string' || options.publisherScope.length === 0) {
     throw new TypeError('publisherScope must be a non-empty string');
   }
+  assertWellFormedUnicode(registryId, 'Task settlement registryId');
+  assertWellFormedUnicode(options.publisherScope, 'Task settlement publisherScope');
 
   const outboxOptions = options.outbox ?? {};
   const outboxTable = quoteWebhookTable(outboxOptions.tableName ?? 'adcp_webhook_outbox');
   const claimScope = {
     publisherScope: options.publisherScope,
-    tenantScope: stableRegistryScope(options.registry.registryId, binding.namespace),
+    tenantScope: stableRegistryScope(registryId, binding.namespace),
   };
   const backend = pgWebhookDeliveryRecoveryBackend(binding.pool, { ...outboxOptions, claimScope });
   const recovery = createWebhookDeliveryRecovery({
@@ -149,12 +153,25 @@ export function createPostgresTaskSettlementCoordinator(
     durability: 'durable',
     recovery,
     async settle(ref, terminal, push): Promise<TaskPushSettlementOutcome> {
-      if (ref.registryId !== options.registry.registryId) {
+      const settlementRef = snapshotSettlementRef(ref);
+      if (settlementRef.registryId !== registryId) {
         return { outcome: 'not_found_in_scope', delivery: 'not_applicable' };
+      }
+      let clonedTerminal: TerminalSettlement;
+      let clonedPush: TaskPushSettlementConfig;
+      try {
+        clonedTerminal = structuredClone(terminal);
+        clonedPush = structuredClone(push);
+        assertWellFormedUnicode(clonedTerminal, 'Task terminal result/error');
+        assertWellFormedUnicode(clonedPush, 'Task push settlement config');
+      } catch (cause) {
+        throw new TaskPushSettlementConfigurationError('Task settlement inputs must contain serializable JSON', {
+          cause,
+        });
       }
       const deliveryKey = {
         ...claimScope,
-        deliveryId: stableScope('task-webhook', ref),
+        deliveryId: stableScope('task-webhook', settlementRef),
       };
       const transactionalPool = pool as PgTransactionalPool;
 
@@ -165,13 +182,13 @@ export function createPostgresTaskSettlementCoordinator(
       // task/outbox field before committing.
       let observed: LockedTaskRow | undefined;
       try {
-        observed = await readTaskRow(transactionalPool, binding.tableName, binding.namespace, ref, false);
+        observed = await readTaskRow(transactionalPool, binding.tableName, binding.namespace, settlementRef, false);
       } catch (cause) {
         throwSettlementFailure(cause);
       }
       if (!observed) return { outcome: 'not_found_in_scope', delivery: 'not_applicable' };
 
-      validatePush(push);
+      validatePush(clonedPush);
       if (observed.has_webhook !== true) {
         throw new TaskPushSettlementConfigurationError(
           'Crash-safe push settlement requires a task created with hasWebhook: true'
@@ -182,12 +199,13 @@ export function createPostgresTaskSettlementCoordinator(
       let error: AdcpStructuredError | undefined;
       try {
         result =
-          terminal.status === 'completed'
-            ? sanitizeTaskResultForWire(structuredClone(terminal.result), ref)
-            : terminal.result === undefined
-              ? { errors: [sanitizeStructuredAdcpError(terminal.error)] }
-              : sanitizeTaskResultForWire(structuredClone(terminal.result), ref);
-        error = terminal.status === 'failed' ? sanitizeStructuredAdcpError(terminal.error) : undefined;
+          clonedTerminal.status === 'completed'
+            ? sanitizeTaskResultForWire(clonedTerminal.result, settlementRef)
+            : clonedTerminal.result === undefined
+              ? { errors: [sanitizeStructuredAdcpError(clonedTerminal.error)] }
+              : sanitizeTaskResultForWire(clonedTerminal.result, settlementRef);
+        error = clonedTerminal.status === 'failed' ? sanitizeStructuredAdcpError(clonedTerminal.error) : undefined;
+        assertWellFormedUnicode({ result, error }, 'Task terminal result/error');
         // Validate the exact canonical domain used later for immutable
         // terminal and outbox fingerprints. JSON.stringify alone would
         // silently coerce NaN/Infinity and exotic objects.
@@ -200,7 +218,10 @@ export function createPostgresTaskSettlementCoordinator(
         });
       }
 
-      if (TERMINAL.has(observed.status) && !terminalMatches(observed, terminal.status, result, error)) {
+      if (
+        TERMINAL.has(observed.status) &&
+        !terminalMatches(observed, clonedTerminal.status, result, error, settlementRef)
+      ) {
         return {
           outcome: 'already_terminal',
           status: observed.status,
@@ -229,27 +250,27 @@ export function createPostgresTaskSettlementCoordinator(
         observedOutbox?.state === 'pending' ? observedOutbox.snapshot.payload.timestamp : undefined;
       const payload: Record<string, unknown> = {
         idempotency_key: `pending.${deliveryKey.deliveryId.slice(-48)}`,
-        operation_id: resolveOperationId(push, observed.tool, ref.taskId),
-        task_id: ref.taskId,
+        operation_id: resolveOperationId(clonedPush, observed.tool, settlementRef.taskId),
+        task_id: settlementRef.taskId,
         task_type: observed.tool,
-        status: terminal.status,
+        status: clonedTerminal.status,
         timestamp: typeof existingTimestamp === 'string' ? existingTimestamp : new Date().toISOString(),
         protocol: protocolForTool(observed.tool),
         result,
-        ...(push.token !== undefined && { token: push.token }),
-        ...(terminal.status === 'failed' && { message: error!.message }),
+        ...(clonedPush.token !== undefined && { token: clonedPush.token }),
+        ...(clonedTerminal.status === 'failed' && { message: error!.message }),
       };
       let prepared: PreparedWebhookDeliverySnapshot;
       try {
         prepared = await recovery.prepare(
           deliveryKey,
           {
-            url: push.url,
+            url: clonedPush.url,
             payload,
-            authentication: push.authentication ?? null,
+            authentication: clonedPush.authentication ?? null,
             retries,
           },
-          { protectPayloadToken: push.token !== undefined }
+          { protectPayloadToken: clonedPush.token !== undefined }
         );
       } catch (cause) {
         if (cause instanceof WebhookAuthenticationProtectionError) throwSettlementFailure(cause);
@@ -257,13 +278,13 @@ export function createPostgresTaskSettlementCoordinator(
           cause,
         });
       }
-      const intentFingerprint = taskPushIntentFingerprint(prepared.snapshot);
+      const intentFingerprint = taskPushIntentFingerprint(prepared.snapshot, settlementRef);
 
       let client: PgTransactionClient | undefined;
       try {
         client = await transactionalPool.connect();
         await client.query('BEGIN');
-        const row = await readTaskRow(client, binding.tableName, binding.namespace, ref, true);
+        const row = await readTaskRow(client, binding.tableName, binding.namespace, settlementRef, true);
         if (!row) {
           await client.query('ROLLBACK');
           return { outcome: 'not_found_in_scope', delivery: 'not_applicable' };
@@ -281,7 +302,7 @@ export function createPostgresTaskSettlementCoordinator(
             `Task type ${row.tool} cannot be emitted by the closed AdCP task-webhook schema`
           );
         }
-        const compatible = terminalMatches(row, terminal.status, result, error);
+        const compatible = terminalMatches(row, clonedTerminal.status, result, error, settlementRef);
         if (TERMINAL.has(row.status) && !compatible) {
           await client.query('COMMIT');
           return {
@@ -309,7 +330,11 @@ export function createPostgresTaskSettlementCoordinator(
           if (!TERMINAL.has(row.status)) {
             throw new Error('Settled webhook outbox row exists for a non-terminal task');
           }
-          if (existing.intent_fingerprint && existing.intent_fingerprint !== intentFingerprint) {
+          const matchesCurrentIntent = existing.intent_fingerprint === intentFingerprint;
+          const matchesLegacyArtifact =
+            existing.intent_fingerprint !== null &&
+            existing.intent_fingerprint === taskPushLegacyIntentFingerprint(prepared.snapshot, row.result);
+          if (existing.intent_fingerprint !== null && !matchesCurrentIntent && !matchesLegacyArtifact) {
             throw new TaskPushSettlementConfigurationError(
               'Terminal webhook delivery identity is already bound to a conflicting route or payload'
             );
@@ -323,7 +348,7 @@ export function createPostgresTaskSettlementCoordinator(
           };
         }
 
-        if (existing && !outboxMatchesPrepared(existing, prepared, intentFingerprint)) {
+        if (existing && !outboxMatchesPrepared(existing, intentFingerprint, settlementRef)) {
           throw new TaskPushSettlementConfigurationError(
             'Terminal webhook delivery identity is already bound to a conflicting route or payload'
           );
@@ -348,7 +373,7 @@ export function createPostgresTaskSettlementCoordinator(
           );
           if ((write.rowCount ?? 0) !== 1) {
             const raced = await readOutbox(client, outboxTable, deliveryKey, true);
-            if (!raced || !outboxMatchesPrepared(raced, prepared, intentFingerprint)) {
+            if (!raced || !outboxMatchesPrepared(raced, intentFingerprint, settlementRef)) {
               throw new TaskPushSettlementConfigurationError(
                 'Terminal webhook delivery identity is already bound to a conflicting route or payload'
               );
@@ -362,13 +387,19 @@ export function createPostgresTaskSettlementCoordinator(
 
         if (!TERMINAL.has(row.status)) {
           const update =
-            terminal.status === 'completed'
+            clonedTerminal.status === 'completed'
               ? await client.query(
                   `UPDATE ${binding.tableName}
                       SET status = 'completed', result = $5::jsonb, error = NULL,
                           status_message = NULL, updated_at = clock_timestamp()
                     WHERE task_id = $1 AND registry_namespace = $2 AND account_id = $3 AND owner_scope = $4`,
-                  [ref.taskId, binding.namespace, ref.accountId, ref.ownerScope, JSON.stringify(result)]
+                  [
+                    settlementRef.taskId,
+                    binding.namespace,
+                    settlementRef.accountId,
+                    settlementRef.ownerScope,
+                    JSON.stringify(result),
+                  ]
                 )
               : await client.query(
                   `UPDATE ${binding.tableName}
@@ -376,10 +407,10 @@ export function createPostgresTaskSettlementCoordinator(
                           status_message = $7, updated_at = clock_timestamp()
                     WHERE task_id = $1 AND registry_namespace = $2 AND account_id = $3 AND owner_scope = $4`,
                   [
-                    ref.taskId,
+                    settlementRef.taskId,
                     binding.namespace,
-                    ref.accountId,
-                    ref.ownerScope,
+                    settlementRef.accountId,
+                    settlementRef.ownerScope,
                     JSON.stringify(result),
                     JSON.stringify(error),
                     error!.message,
@@ -426,17 +457,45 @@ export async function failScopedPushTask(
   return coordinator.settle(ref, { status: 'failed', error, ...(result !== undefined && { result }) }, push);
 }
 
+function snapshotSettlementRef(ref: ScopedTaskRef): ScopedTaskRef & { registryId: string } {
+  const cloned = structuredClone(ref) as Partial<ScopedTaskRef>;
+  const snapshot = {
+    registryId: requireSettlementRefPart(cloned.registryId, 'registryId'),
+    accountId: requireSettlementRefPart(cloned.accountId, 'accountId'),
+    ownerScope: requireSettlementRefPart(cloned.ownerScope, 'ownerScope'),
+    taskId: requireSettlementRefPart(cloned.taskId, 'taskId'),
+  };
+  assertWellFormedUnicode(snapshot, 'Task settlement reference');
+  return snapshot;
+}
+
+function requireSettlementRefPart(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new TypeError(`Task settlement ${field} must be a non-empty string`);
+  }
+  return value;
+}
+
 function terminalMatches(
   row: LockedTaskRow,
   status: 'completed' | 'failed',
   result: unknown,
-  error: AdcpStructuredError | undefined
+  error: AdcpStructuredError | undefined,
+  ref: ScopedTaskRef
 ): boolean {
   if (row.status !== status) return false;
-  return (
-    canonicalJsonSha256(row.result) === canonicalJsonSha256(result) &&
-    (status === 'completed' || canonicalJsonSha256(row.error) === canonicalJsonSha256(error))
-  );
+  try {
+    assertWellFormedUnicode({ result: row.result, error: row.error }, 'Stored task terminal result/error');
+    const storedResult = sanitizeTaskResultForWire(structuredClone(row.result), ref);
+    const storedError =
+      status === 'failed' ? sanitizeStructuredAdcpError(structuredClone(row.error) as AdcpStructuredError) : undefined;
+    return (
+      canonicalJsonSha256(storedResult) === canonicalJsonSha256(result) &&
+      (status === 'completed' || canonicalJsonSha256(storedError) === canonicalJsonSha256(error))
+    );
+  } catch {
+    return false;
+  }
 }
 
 function stableScope(prefix: string, ref: ScopedTaskRef): string {
@@ -453,9 +512,27 @@ function stableRegistryScope(registryId: string, namespace: string): string {
   return `task-registry:${digest}`;
 }
 
-function taskPushIntentFingerprint(snapshot: StoredWebhookDeliverySnapshot): string {
-  const { timestamp: _generatedTimestamp, ...payload } = snapshot.payload;
-  return canonicalJsonSha256({
+function taskPushIntentFingerprint(snapshot: StoredWebhookDeliverySnapshot, ref: ScopedTaskRef): string {
+  const { timestamp: _generatedTimestamp, ...storedPayload } = snapshot.payload;
+  const payload = structuredClone(storedPayload);
+  if (Object.hasOwn(payload, 'result')) {
+    payload.result = sanitizeTaskResultForWire(payload.result, ref);
+  }
+  return taskPushIntentFingerprintForPayload(snapshot, payload);
+}
+
+function taskPushLegacyIntentFingerprint(snapshot: StoredWebhookDeliverySnapshot, storedResult: unknown): string {
+  const { timestamp: _generatedTimestamp, ...storedPayload } = snapshot.payload;
+  const payload = structuredClone(storedPayload);
+  payload.result = structuredClone(storedResult);
+  return taskPushIntentFingerprintForPayload(snapshot, payload);
+}
+
+function taskPushIntentFingerprintForPayload(
+  snapshot: StoredWebhookDeliverySnapshot,
+  payload: Record<string, unknown>
+): string {
+  const domain = {
     url: snapshot.url,
     payload,
     retries: snapshot.retries,
@@ -464,13 +541,16 @@ function taskPushIntentFingerprint(snapshot: StoredWebhookDeliverySnapshot): str
         ? { kind: 'none' }
         : { kind: 'protected', fingerprint: snapshot.authentication.fingerprint },
     ...(snapshot.payloadToken && { payloadToken: { fingerprint: snapshot.payloadToken.fingerprint } }),
-  });
+  };
+  assertWellFormedUnicode(domain, 'Task push settlement fingerprint');
+  return canonicalJsonSha256(domain);
 }
 
 function validatePush(push: TaskPushSettlementConfig): void {
   if (!push || typeof push !== 'object') {
     throw new TaskPushSettlementConfigurationError('push settlement config is required');
   }
+  assertWellFormedUnicode(push, 'Task push settlement config');
   const allowHttp =
     process.env.NODE_ENV === 'test' ||
     process.env.NODE_ENV === 'development' ||
@@ -607,14 +687,14 @@ async function readOutbox(
   return found.rows[0] as unknown as OutboxRow | undefined;
 }
 
-function outboxMatchesPrepared(
-  existing: OutboxRow,
-  prepared: PreparedWebhookDeliverySnapshot,
-  intentFingerprint: string
-): boolean {
-  return existing.intent_fingerprint !== null
-    ? existing.intent_fingerprint === intentFingerprint
-    : existing.snapshot_fingerprint === prepared.snapshotFingerprint;
+function outboxMatchesPrepared(existing: OutboxRow, intentFingerprint: string, ref: ScopedTaskRef): boolean {
+  if (existing.intent_fingerprint === intentFingerprint) return true;
+  if (existing.state === 'settled') return false;
+  try {
+    return taskPushIntentFingerprint(existing.snapshot, ref) === intentFingerprint;
+  } catch {
+    return false;
+  }
 }
 
 function throwSettlementFailure(cause: unknown): never {

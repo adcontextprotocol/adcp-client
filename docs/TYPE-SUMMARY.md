@@ -138,6 +138,100 @@ interface EstablishedProposalStore {
 // After restart: lifecycle.reconcileEstablishedProposalTask({ account, sellerTaskId })
 ```
 
+## Durable Task Settlement Intent Queue
+
+```typescript
+interface PgQueryable {
+  query(text: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }>;
+}
+
+interface AdcpStructuredError {
+  code: string;
+  recovery: 'transient' | 'correctable' | 'terminal';
+  message: string;
+  field?: string;
+  suggestion?: string;
+  retry_after?: number;
+  details?: Record<string, unknown>;
+}
+
+interface DurableTaskSettlementRef {
+  taskId: string;
+  accountId: string;
+  registryId: string;
+  ownerScope: string;
+}
+
+type TaskSettlementIntent =
+  | { taskRef: DurableTaskSettlementRef; action: 'complete'; result: unknown }
+  | { taskRef: DurableTaskSettlementRef; action: 'fail'; error: AdcpStructuredError; result?: unknown };
+
+interface TaskSettlementIntentCheckpoint extends DurableTaskSettlementRef {
+  queueNamespace: string;
+  intentFingerprint: string;
+}
+
+function canonicalizeTaskSettlementIntent(intent: TaskSettlementIntent): TaskSettlementIntent;
+
+interface TaskSettlementIntentRecoveryContext {
+  attemptCount: number;
+  extendLease(): Promise<boolean>;
+}
+
+interface TaskSettlementIntentRecoveryMetrics {
+  claimed: number;
+  settled: number;
+  retried: number;
+  deadLettered: number;
+  leaseLost: number;
+}
+
+interface TaskSettlementIntentRecoveryErrorContext {
+  attemptCount: number;
+  taskRef: DurableTaskSettlementRef;
+  action: 'complete' | 'fail';
+  disposition: 'retry' | 'dead_letter' | 'lease_lost';
+}
+
+interface RecoverTaskSettlementIntentsOptions {
+  settle(intent: TaskSettlementIntent, context: TaskSettlementIntentRecoveryContext): Promise<'settled'>;
+  batchSize?: number;
+  leaseMs?: number;
+  retryAfterMs?: number;
+  maxRetryAfterMs?: number;
+  maxAttempts?: number;
+  workerId?: string;
+  onError?(error: unknown, context: TaskSettlementIntentRecoveryErrorContext): void | Promise<void>;
+}
+
+interface CreatePostgresTaskSettlementIntentQueueOptions {
+  db: PgQueryable;
+  namespace: string;
+  tableName?: string;
+  idempotencyHorizonMs?: number; // defaults to seven days
+}
+
+interface PostgresTaskSettlementIntentQueue {
+  readonly durability: 'durable';
+  enqueue(intent: TaskSettlementIntent, options?: { db?: PgQueryable }): Promise<TaskSettlementIntentCheckpoint>;
+  acknowledge(checkpoint: TaskSettlementIntentCheckpoint, options?: { db?: PgQueryable }): Promise<boolean>;
+  pruneAcknowledged(options?: { db?: PgQueryable; limit?: number }): Promise<number>;
+  recover(options: RecoverTaskSettlementIntentsOptions): Promise<TaskSettlementIntentRecoveryMetrics>;
+  probe(): Promise<void>;
+}
+
+const TASK_SETTLEMENT_INTENT_IDEMPOTENCY_HORIZON_MS: number; // seven days
+
+const settlementIntents = createPostgresTaskSettlementIntentQueue({
+  db: pool,
+  namespace: 'seller-prod',
+  tableName: 'seller_task_settlement_intents',
+  idempotencyHorizonMs: TASK_SETTLEMENT_INTENT_IDEMPOTENCY_HORIZON_MS,
+});
+```
+
+The queue requires a complete `DurableTaskSettlementRef`, including non-empty `registryId`. Use `canonicalizeTaskSettlementIntent()` for the immediate path so it compares the same cloned, validated, wire-safe artifact that `enqueue` persists. Pass the active transaction client to `enqueue(..., { db: tx })` so the domain outcome and immutable intent commit together. Acknowledgement compacts the payload and retains the exact fingerprint for `idempotencyHorizonMs` (seven days by default), preventing a conflicting artifact from rebinding the scoped task during the replay window. Schedule bounded `pruneAcknowledged()` calls when recovery traffic can be idle. Recovery is at least once: return `settled` only after proving the exact terminal artifact. See `docs/guides/DURABLE-TASK-SETTLEMENT.md` for polling and push helpers plus scoped dead-letter SQL.
+
 ## Crash-Safe Push Task Settlement
 
 ```typescript
