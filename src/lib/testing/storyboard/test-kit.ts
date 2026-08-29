@@ -44,6 +44,7 @@ export const PROBE_TASK_ALLOWLIST: readonly string[] = Object.freeze([
   'list_property_lists',
   'list_collection_lists',
   'list_content_standards',
+  'list_accounts',
 ]);
 
 /**

@@ -20,6 +20,7 @@ const {
   validateTestKit,
   TestKitValidationError,
   PROBE_TASK_ALLOWLIST,
+  selectProbeTask,
 } = require('../../dist/lib/testing/storyboard/test-kit');
 const {
   resolveStoryboardsForCapabilities,
@@ -2407,19 +2408,26 @@ describe('validateTestKit', () => {
   });
 
   it('allowlist includes read-only auth-required tasks only', () => {
-    // Guard against accidental inclusion of write tasks — retesting the list
-    // here catches an allowlist edit that would make probes destructive.
-    assert.deepStrictEqual(
-      new Set(PROBE_TASK_ALLOWLIST),
-      new Set([
-        'list_creatives',
-        'get_media_buy_delivery',
-        'list_authorized_properties',
-        'get_signals',
-        'list_property_lists',
-        'list_collection_lists',
-        'list_content_standards',
-      ])
+    // Order is probe priority. Keep list_accounts last so existing domain-
+    // specific fallback selection remains unchanged when several are present.
+    assert.deepStrictEqual(PROBE_TASK_ALLOWLIST, [
+      'list_creatives',
+      'get_media_buy_delivery',
+      'list_authorized_properties',
+      'get_signals',
+      'list_property_lists',
+      'list_collection_lists',
+      'list_content_standards',
+      'list_accounts',
+    ]);
+  });
+
+  it('selects list_accounts only after every existing safe fallback', () => {
+    assert.strictEqual(selectProbeTask('list_creatives', ['list_accounts']), 'list_accounts');
+    assert.strictEqual(
+      selectProbeTask('list_creatives', ['list_accounts', 'get_signals']),
+      'get_signals',
+      'adding list_accounts must not change existing fallback priority'
     );
   });
 });

@@ -3889,10 +3889,13 @@ async function executeStoryboardPass(
   }
 
   // Overall pass requires (a) no required-phase failures, (b) either an
-  // executed pass or every required phase grading canonically not_applicable,
+  // executed pass, every required phase grading canonically not_applicable,
+  // or every required step being gated by an unavailable test-kit contract,
   // and (c) no assertion failures. Without (b), a storyboard where every phase
   // is optional or every required step is skipped for another reason (for
-  // example, missing_tool) would pass vacuously.
+  // example, missing_tool) would pass vacuously. Contract-gated storyboards
+  // are the deliberate exception: the runner has positively established that
+  // their opt-in adapter is out of scope, so the result is non-failing.
   // (c) makes assertions gating — a run with all validations green but a
   // cross-step invariant broken is not conformant.
   // When no phases had executable steps the storyboard result is a skip, not a
@@ -3918,6 +3921,17 @@ async function executeStoryboardPass(
         phaseResult.steps.every(step => step.skipped && step.skip?.reason === 'not_applicable')
       );
     });
+  const requiredPhasesContractGated =
+    requiredPhaseDefs.length > 0 &&
+    requiredPhaseDefs.every(phaseDef => {
+      const phaseResult = phaseResults.find(p => p.phase_id === phaseDef.id);
+      return (
+        !!phaseResult &&
+        phaseResult.passed &&
+        phaseResult.steps.length > 0 &&
+        phaseResult.steps.every(step => step.skipped && step.skip_reason === 'missing_test_kit_contract')
+      );
+    });
   const requiredPhasesCoveredByCapabilityGates =
     phaseCapabilitySkippedIds.size > 0 &&
     requiredPhaseDefs.length > 0 &&
@@ -3930,6 +3944,7 @@ async function executeStoryboardPass(
     !hasExecutableSteps ||
     requiredPhaseHasExecutedPass ||
     requiredPhasesNotApplicable ||
+    requiredPhasesContractGated ||
     (failedCount === 0 && requiredPhasesCoveredByCapabilityGates);
   const storyboardWideFixtureUnavailable =
     (seedingUnsupported || fixtureUnsatisfied || creativeAssetFixtureGap !== undefined) && failedCount === 0;
@@ -4646,6 +4661,30 @@ async function executeStep(
   // a seller tool call.
   if (step.task === REPLAY_WEBHOOK_VECTOR_TASK) {
     return executeReplayWebhookVectorStep(step, phaseId, context, allSteps, options, runState);
+  }
+
+  // Ordinary MCP/A2A steps honor the same opt-in contract boundary as the
+  // runner-native probe and replay paths above. Gate before resolving a
+  // dynamic task name, inspecting tool availability, building a request, or
+  // dispatching so an out-of-scope adapter is never invoked accidentally.
+  if (step.requires_contract && !new Set(options.contracts ?? []).has(step.requires_contract)) {
+    const detail = `Test-kit contract "${step.requires_contract}" is not configured on this runner.`;
+    const reason: RunnerDetailedSkipReason = 'missing_test_kit_contract';
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: true,
+      skipped: true,
+      skip_reason: reason,
+      skip: buildSkip(DETAILED_SKIP_TO_CANONICAL[reason], detail),
+      duration_ms: 0,
+      validations: [],
+      context,
+      next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
+      extraction: { path: 'none', note: 'test-kit contract not configured' },
+    };
   }
 
   // Resolve $test_kit.* task references before any downstream dispatch / skip checks.
