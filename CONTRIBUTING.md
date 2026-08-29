@@ -91,12 +91,28 @@ That `"."` entry is supported by **npm only** — pnpm rejects it, and Yarn beha
 # Run all tests
 npm test
 
-# Run specific test file
-npm test test/client.test.js
+# Run a specific test file
+npm run test:file -- test/client.test.js
+
+# Override the conservative local worker limit (default: 2; slow suite: 1)
+TEST_CONCURRENCY=4 npm test
 
 # Run tests with coverage
 npm run test:coverage
 ```
+
+The Node test runner otherwise derives concurrency from the machine CPU count. That is
+too aggressive on developer workstations because several test files launch their own
+TypeScript compiler or CLI subprocesses. The repository runner therefore caps local
+fast suites at two workers and runs the slow group serially. CI keeps its existing
+machine-derived concurrency and splits the fast suite into three shards.
+
+`npm test` and `npm run test:lib` build the library once before starting their test
+groups, then every test reads that completed `dist/` tree. Set `TEST_CONCURRENCY=1`
+for the lowest-impact local run. Run `npm run build:lib` before `npm run test:file`
+when library source has changed; focused tests intentionally skip the full pretest
+build for a faster edit-test loop. Do not rebuild `dist/` while another test process
+is reading it.
 
 #### Debugging a hung test
 
