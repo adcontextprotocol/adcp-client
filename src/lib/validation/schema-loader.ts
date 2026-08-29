@@ -863,6 +863,16 @@ export interface ResolvedToolSchemaDocument {
   schema: Readonly<Record<string, unknown>>;
 }
 
+export interface ResolvedSchemaDocument {
+  schemaRef: string;
+  requestedVersion: string;
+  /** Loader key used to select the installed schema bundle. */
+  bundleKey: string;
+  /** Exact protocol release recorded by the resolved bundle, when available. */
+  resolvedVersion: string;
+  schema: Readonly<Record<string, unknown>>;
+}
+
 /**
  * Return an unmodified tool JSON Schema from the same version-aware bundle
  * resolver used by runtime validation. Unlike `getValidator().schema`, response
@@ -893,6 +903,41 @@ export function getToolSchemaDocument(
     bundleKey: state.version,
     resolvedVersion,
     schema,
+  };
+}
+
+/**
+ * Return an unmodified JSON Schema fragment from the selected AdCP bundle.
+ *
+ * This is the document counterpart to {@link getSchemaValidatorByRef}. It is
+ * intended for SDK features whose behavior must be derived from protocol
+ * metadata rather than from a second, hand-maintained field list.
+ */
+export function getSchemaDocumentByRef(
+  schemaRef: string,
+  version: string = ADCP_VERSION
+): ResolvedSchemaDocument | undefined {
+  const state = ensureInit(version);
+  const normalized = normalizeSchemaRef(schemaRef);
+  if (!normalized) return undefined;
+  const file = path.join(state.root, normalized);
+  if (!existsSync(file)) return undefined;
+
+  let resolvedVersion = state.version;
+  try {
+    const index = loadJson(path.join(state.root, 'index.json')) as Record<string, unknown>;
+    if (typeof index.adcp_version === 'string') resolvedVersion = index.adcp_version;
+  } catch {
+    // Legacy/external bundles may omit index.json; the loader key remains an
+    // accurate identifier for the selected schema directory.
+  }
+
+  return {
+    schemaRef: normalized,
+    requestedVersion: version,
+    bundleKey: state.version,
+    resolvedVersion,
+    schema: loadJson(file),
   };
 }
 

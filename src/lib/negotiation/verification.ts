@@ -1,8 +1,12 @@
 import { createHash } from 'node:crypto';
+import { MAX_JSON_DEPTH } from '../utils/json-depth';
 import { canonicalize } from '../utils/jcs';
-import { getSchemaValidatorByRef } from '../validation/schema-loader';
+import { getSchemaDocumentByRef, getSchemaValidatorByRef } from '../validation/schema-loader';
+import { ADCP_VERSION } from '../version';
 import type {
   CanonicalProposal,
+  ProposalCommercialTermsMismatch,
+  ProposalCommercialTermsVerificationResult,
   ProposalConstraints,
   ProposalProductChanges,
   ProposalRefinement,
@@ -12,12 +16,17 @@ import type {
   RefineProposalsCompletedResponse,
   RefineProposalsRequest,
   RefineProposalsResponse,
+  VerifyProposalCommercialTermsOptions,
 } from './types';
 
 // Release-precision wire version: `3.2` or a non-empty, dot/hyphen-separated
 // prerelease whose segments are alphanumeric. Reject dangling separators such
 // as `3.2-.` and `3.2-rc.` even though they begin with the right release.
 const ADCP_32_RELEASE = /^3\.2(?:-[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)?$/;
+const MAX_COMMERCIAL_TERMS_BYTES = 256 * 1024;
+const MAX_COMMERCIAL_TERMS_NODES = 50_000;
+const MAX_COMMERCIAL_TERMS_MISMATCHES = 100;
+const MAX_COMMERCIAL_TERMS_DIAGNOSTIC_BYTES = 64 * 1024;
 
 export class ProposalResponseVerificationError extends Error {
   readonly issues: ProposalVerificationIssue[];
@@ -36,6 +45,251 @@ export function proposalTermsDigest(commercialTerms: unknown): string {
 
 export function verifyProposalTermsDigest(proposal: CanonicalProposal): boolean {
   return proposal.terms_digest === proposalTermsDigest(proposal.commercial_terms);
+}
+
+export class ProposalCommercialTermsVerificationError extends Error {
+  readonly mismatches: ProposalCommercialTermsMismatch[];
+  readonly truncated: boolean;
+
+  constructor(mismatches: ProposalCommercialTermsMismatch[], truncated = false) {
+    super(
+      `proposal commercial terms failed verification (${mismatches.length} mismatch${mismatches.length === 1 ? '' : 'es'}${truncated ? ', diagnostics truncated' : ''})`
+    );
+    this.name = 'ProposalCommercialTermsVerificationError';
+    this.mismatches = mismatches;
+    this.truncated = truncated;
+  }
+}
+
+/**
+ * Verify a proposal's binding commercial terms against the complete terms the
+ * buyer reviewed.
+ *
+ * The comparison surface is read at runtime from `media-buy/commercial-terms.json`
+ * in the selected AdCP schema bundle. This coupling is deliberate: callers
+ * should pass the seller-served release through `adcpVersion`, and must ship
+ * that matching bundle. A newly added optional commercial field is therefore
+ * compared automatically when present instead of being omitted by a stale SDK
+ * allowlist.
+ *
+ * The proposal's `terms_digest` is checked before schema validation or field
+ * comparison. A digest failure returns only `digest_mismatch`, preventing a
+ * tampered payload from being interpreted as a trustworthy field-level diff.
+ * Paths are RFC 6901 JSON Pointers rooted at `/commercial_terms`.
+ */
+export function verifyProposalCommercialTerms(
+  proposal: unknown,
+  expectedCommercialTerms: unknown,
+  options: VerifyProposalCommercialTermsOptions = {}
+): ProposalCommercialTermsVerificationResult {
+  const mismatches: ProposalCommercialTermsMismatch[] = [];
+  if (!isRecord(proposal)) {
+    return invalidTermsResult('proposal', '/commercial_terms', 'proposal must be an object');
+  }
+
+  let actualTerms: unknown;
+  let suppliedDigest: unknown;
+  let actualCanonical: string;
+  try {
+    const suppliedTerms = proposal.commercial_terms;
+    suppliedDigest = proposal.terms_digest;
+    const complexityError = commercialTermsComplexityError(suppliedTerms);
+    if (complexityError) return invalidTermsResult('proposal', '/commercial_terms', complexityError);
+    actualTerms = structuredClone(suppliedTerms);
+    actualCanonical = canonicalProposalTerms(actualTerms);
+    if (Buffer.byteLength(actualCanonical, 'utf8') > MAX_COMMERCIAL_TERMS_BYTES) {
+      return invalidTermsResult('proposal', '/commercial_terms', 'proposal commercial terms exceed 256 KiB');
+    }
+  } catch {
+    return invalidTermsResult('proposal', '/commercial_terms', 'proposal commercial terms cannot be canonicalized');
+  }
+
+  const actualDigest = digestCanonicalTerms(actualCanonical);
+  if (suppliedDigest !== actualDigest) {
+    return {
+      ok: false,
+      mismatches: [
+        {
+          kind: 'digest_mismatch',
+          path: '/terms_digest',
+          message: 'proposal terms_digest does not match commercial_terms',
+        },
+      ],
+    };
+  }
+
+  let adcpVersion: string;
+  try {
+    adcpVersion = options.adcpVersion ?? ADCP_VERSION;
+  } catch {
+    return schemaUnavailableResult();
+  }
+  let document: ReturnType<typeof getSchemaDocumentByRef>;
+  let validator: ReturnType<typeof getSchemaValidatorByRef>;
+  try {
+    document = getSchemaDocumentByRef('media-buy/commercial-terms.json', adcpVersion);
+    validator = getSchemaValidatorByRef('media-buy/commercial-terms.json', adcpVersion);
+  } catch {
+    return schemaUnavailableResult();
+  }
+  if (!document || !validator) {
+    return schemaUnavailableResult();
+  }
+
+  const schemaVersion = document.resolvedVersion;
+  const schemaProperties = isRecord(document.schema.properties) ? document.schema.properties : undefined;
+  if (!schemaProperties || document.schema.additionalProperties !== false) {
+    return {
+      ok: false,
+      schemaVersion,
+      mismatches: [
+        {
+          kind: 'unsupported_schema',
+          path: '/commercial_terms',
+          message: 'commercial-terms schema must declare a closed properties object for exhaustive comparison',
+        },
+      ],
+    };
+  }
+  let changeTermSchema: Readonly<Record<string, unknown>> | undefined;
+  if (Object.hasOwn(schemaProperties, 'change_terms')) {
+    try {
+      changeTermSchema = getSchemaDocumentByRef('media-buy/change-term.json', adcpVersion)?.schema;
+    } catch {
+      return schemaUnavailableResult();
+    }
+    if (!changeTermSchema) return schemaUnavailableResult();
+  }
+
+  let expectedCanonical: string;
+  try {
+    const complexityError = commercialTermsComplexityError(expectedCommercialTerms);
+    if (complexityError) return invalidTermsResult('expected', '/commercial_terms', complexityError, schemaVersion);
+    const expectedTerms = structuredClone(expectedCommercialTerms);
+    expectedCanonical = canonicalProposalTerms(expectedTerms);
+    if (Buffer.byteLength(expectedCanonical, 'utf8') > MAX_COMMERCIAL_TERMS_BYTES) {
+      return invalidTermsResult(
+        'expected',
+        '/commercial_terms',
+        'expected commercial terms exceed 256 KiB',
+        schemaVersion
+      );
+    }
+  } catch {
+    return invalidTermsResult(
+      'expected',
+      '/commercial_terms',
+      'expected commercial terms cannot be canonicalized',
+      schemaVersion
+    );
+  }
+
+  const actual = JSON.parse(actualCanonical) as unknown;
+  const expected = JSON.parse(expectedCanonical) as unknown;
+  if (!validator(actual)) {
+    const error = validator.errors?.[0];
+    return invalidTermsResult(
+      'proposal',
+      schemaValidationPointer(error),
+      `proposal commercial terms do not satisfy AdCP ${schemaVersion}${error?.message ? `: ${error.message}` : ''}`,
+      schemaVersion,
+      error?.keyword
+    );
+  }
+  if (!validator(expected)) {
+    const error = validator.errors?.[0];
+    return invalidTermsResult(
+      'expected',
+      schemaValidationPointer(error),
+      `expected commercial terms do not satisfy AdCP ${schemaVersion}${error?.message ? `: ${error.message}` : ''}`,
+      schemaVersion,
+      error?.keyword
+    );
+  }
+
+  if (!isRecord(actual) || !isRecord(expected)) {
+    return invalidTermsResult('proposal', '/commercial_terms', 'commercial terms must be objects', schemaVersion);
+  }
+
+  const semanticSupportError = commercialTermsSemanticSupportError(document.schema, changeTermSchema);
+  if (semanticSupportError) {
+    return {
+      ok: false,
+      schemaVersion,
+      mismatches: [
+        {
+          kind: 'unsupported_schema',
+          path: '/commercial_terms',
+          message: semanticSupportError,
+        },
+      ],
+    };
+  }
+  const actualSemanticIssues = validateCommercialTermsSemantics(actual, document.schema, changeTermSchema);
+  if (actualSemanticIssues.length > 0) {
+    const truncated = actualSemanticIssues.length > MAX_COMMERCIAL_TERMS_MISMATCHES;
+    return {
+      ok: false,
+      schemaVersion,
+      ...(truncated && { truncated: true }),
+      mismatches: actualSemanticIssues.slice(0, MAX_COMMERCIAL_TERMS_MISMATCHES).map(issue => ({
+        kind: 'invalid_terms',
+        subject: 'proposal',
+        keyword: 'x-adcp-validation',
+        ...issue,
+      })),
+    };
+  }
+  const expectedSemanticIssues = validateCommercialTermsSemantics(expected, document.schema, changeTermSchema);
+  if (expectedSemanticIssues.length > 0) {
+    const truncated = expectedSemanticIssues.length > MAX_COMMERCIAL_TERMS_MISMATCHES;
+    return {
+      ok: false,
+      schemaVersion,
+      ...(truncated && { truncated: true }),
+      mismatches: expectedSemanticIssues.slice(0, MAX_COMMERCIAL_TERMS_MISMATCHES).map(issue => ({
+        kind: 'invalid_terms',
+        subject: 'expected',
+        keyword: 'x-adcp-validation',
+        ...issue,
+      })),
+    };
+  }
+
+  // Derive the exhaustive top-level comparison allowlist from the selected
+  // schema. Nested values are recursively compared in full after AJV has
+  // proved that both trees satisfy the same schema bundle.
+  const comparisonFields = new Set([...Object.keys(actual), ...Object.keys(expected)]);
+  const mismatchState = { truncated: false, diagnosticBytes: 0 };
+  for (const field of [...comparisonFields].sort()) {
+    const actualHas = Object.hasOwn(actual, field);
+    const expectedHas = Object.hasOwn(expected, field);
+    diffCommercialTerm(
+      actual[field],
+      expected[field],
+      `/commercial_terms/${escapeJsonPointer(field)}`,
+      mismatches,
+      mismatchState,
+      { actualHas, expectedHas }
+    );
+    if (mismatchState.truncated) break;
+  }
+
+  return {
+    ok: mismatches.length === 0 && !mismatchState.truncated,
+    schemaVersion,
+    ...(mismatchState.truncated && { truncated: true }),
+    mismatches,
+  };
+}
+
+export function assertProposalCommercialTerms(
+  proposal: unknown,
+  expectedCommercialTerms: unknown,
+  options: VerifyProposalCommercialTermsOptions = {}
+): void {
+  const result = verifyProposalCommercialTerms(proposal, expectedCommercialTerms, options);
+  if (!result.ok) throw new ProposalCommercialTermsVerificationError(result.mismatches, result.truncated);
 }
 
 /** Strict RFC 3339 date-time accepted by the AdCP `format: date-time` contract. */
@@ -999,6 +1253,429 @@ function allowedKeys(
     if (!allowed.has(key)) valid = shape(issues, `${path}.${key}`, `${key} is not allowed`);
   }
   return valid;
+}
+
+function invalidTermsResult(
+  subject: 'proposal' | 'expected',
+  path: string,
+  message: string,
+  schemaVersion?: string,
+  keyword?: string
+): ProposalCommercialTermsVerificationResult {
+  if (Buffer.byteLength(path, 'utf8') + Buffer.byteLength(message, 'utf8') > MAX_COMMERCIAL_TERMS_DIAGNOSTIC_BYTES) {
+    return {
+      ok: false,
+      ...(schemaVersion && { schemaVersion }),
+      truncated: true,
+      mismatches: [],
+    };
+  }
+  return {
+    ok: false,
+    ...(schemaVersion && { schemaVersion }),
+    mismatches: [
+      {
+        kind: 'invalid_terms',
+        subject,
+        path,
+        ...(keyword && { keyword }),
+        message,
+      },
+    ],
+  };
+}
+
+function schemaUnavailableResult(): ProposalCommercialTermsVerificationResult {
+  return {
+    ok: false,
+    mismatches: [
+      {
+        kind: 'schema_unavailable',
+        path: '/commercial_terms',
+        message: 'the selected AdCP commercial-terms schema is unavailable',
+      },
+    ],
+  };
+}
+
+function commercialTermsComplexityError(value: unknown): string | undefined {
+  const stack: Array<{ value: unknown; depth: number; leaving?: boolean }> = [{ value, depth: 0 }];
+  const activeAncestors = new WeakSet<object>();
+  let nodes = 0;
+  let arraySlots = 0;
+  let stringBytes = 0;
+
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current.leaving) {
+      if (current.value !== null && typeof current.value === 'object') activeAncestors.delete(current.value);
+      continue;
+    }
+    nodes++;
+    if (nodes > MAX_COMMERCIAL_TERMS_NODES) return 'commercial terms exceed the 50,000-node complexity limit';
+    if (current.depth > MAX_JSON_DEPTH) {
+      return `commercial terms exceed the maximum JSON depth of ${MAX_JSON_DEPTH}`;
+    }
+    const valueType = typeof current.value;
+    if (
+      valueType === 'undefined' ||
+      valueType === 'function' ||
+      valueType === 'symbol' ||
+      valueType === 'bigint' ||
+      (valueType === 'number' && !Number.isFinite(current.value))
+    ) {
+      return 'commercial terms must contain JSON values only';
+    }
+    if (typeof current.value === 'string') {
+      stringBytes += Buffer.byteLength(current.value, 'utf8');
+      if (stringBytes > MAX_COMMERCIAL_TERMS_BYTES) return 'commercial terms exceed 256 KiB';
+      continue;
+    }
+    if (current.value === null || typeof current.value !== 'object') continue;
+    const prototype = Object.getPrototypeOf(current.value);
+    if (!Array.isArray(current.value) && prototype !== null && prototype !== Object.prototype) {
+      return 'commercial terms must contain JSON values only';
+    }
+    if (activeAncestors.has(current.value)) return 'commercial terms must not contain cyclic references';
+    activeAncestors.add(current.value);
+    stack.push({ value: current.value, depth: current.depth, leaving: true });
+    if (Array.isArray(current.value)) {
+      arraySlots += current.value.length;
+      if (arraySlots > MAX_COMMERCIAL_TERMS_NODES) {
+        return 'commercial terms exceed the 50,000-node complexity limit';
+      }
+    }
+
+    const descriptors = Object.getOwnPropertyDescriptors(current.value);
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      if (!descriptor.enumerable) continue;
+      if (!('value' in descriptor)) return 'commercial terms must contain data properties only';
+      stringBytes += Buffer.byteLength(key, 'utf8');
+      if (stringBytes > MAX_COMMERCIAL_TERMS_BYTES) return 'commercial terms exceed 256 KiB';
+      stack.push({ value: descriptor.value, depth: current.depth + 1 });
+    }
+  }
+  return undefined;
+}
+
+const PRICING_INTEGRITY_CONSTRAINTS = {
+  pricing_option_ids: 'each_purchase.pricing_option_id_equals_pricing.pricing_option_id',
+  purchase_currencies: 'all_purchase.pricing.currency_equal',
+  total_budget_currency: 'when_total_budget_present_equals_purchase_pricing_currency',
+  monetary_fields: 'purchase_budget_min_spend_and_bidding_use_purchase_pricing_currency',
+  on_violation: 'reject_proposal_or_commitment',
+} as const;
+
+function commercialTermsSemanticSupportError(
+  schema: Readonly<Record<string, unknown>>,
+  changeTermSchema: Readonly<Record<string, unknown>> | undefined
+): string | undefined {
+  const validation = schema['x-adcp-validation'];
+  if (validation !== undefined) {
+    if (!isRecord(validation)) return 'commercial-terms x-adcp-validation metadata must be an object';
+    const constraints = validation.verifier_constraints;
+    if (constraints !== undefined) {
+      if (!isRecord(constraints)) return 'commercial-terms verifier_constraints metadata must be an object';
+      const constraintKeys = Object.keys(constraints);
+      if (constraintKeys.some(key => key !== 'pricing_integrity')) {
+        return 'commercial-terms schema declares verifier constraints this SDK does not understand';
+      }
+      if (constraints.pricing_integrity !== undefined) {
+        if (!isRecord(constraints.pricing_integrity)) {
+          return 'commercial-terms pricing_integrity metadata must be an object';
+        }
+        const actual = constraints.pricing_integrity;
+        const expectedKeys = Object.keys(PRICING_INTEGRITY_CONSTRAINTS);
+        if (
+          Object.keys(actual).length !== expectedKeys.length ||
+          expectedKeys.some(
+            key => actual[key] !== PRICING_INTEGRITY_CONSTRAINTS[key as keyof typeof PRICING_INTEGRITY_CONSTRAINTS]
+          )
+        ) {
+          return 'commercial-terms schema declares unsupported pricing_integrity constraints';
+        }
+      }
+    }
+  }
+
+  const properties = schema.properties;
+  if (!isRecord(properties)) return undefined;
+  const changeTermsProperty = properties.change_terms;
+  if (!isRecord(changeTermsProperty)) return undefined;
+  const changeTermsValidation = changeTermsProperty['x-adcp-validation'];
+  if (changeTermsValidation !== undefined) {
+    if (
+      !isRecord(changeTermsValidation) ||
+      Object.keys(changeTermsValidation).length !== 1 ||
+      changeTermsValidation.unique_by !== 'action'
+    ) {
+      return 'commercial-terms schema declares unsupported change_terms validation metadata';
+    }
+  }
+  if (!changeTermSchema) return 'commercial-terms schema is missing its change-term schema';
+  return changeTermSemanticSupportError(changeTermSchema);
+}
+
+function validateCommercialTermsSemantics(
+  terms: Record<string, unknown>,
+  schema: Readonly<Record<string, unknown>>,
+  changeTermSchema: Readonly<Record<string, unknown>> | undefined
+): Array<{ path: string; message: string }> {
+  const validation = schema['x-adcp-validation'];
+  const pricingIntegrityEnabled =
+    isRecord(validation) &&
+    isRecord(validation.verifier_constraints) &&
+    isRecord(validation.verifier_constraints.pricing_integrity);
+
+  const issues: Array<{ path: string; message: string }> = [];
+  if (!Array.isArray(terms.purchases)) return issues;
+  let purchaseCurrency: string | undefined;
+  for (const [index, purchase] of terms.purchases.entries()) {
+    if (!isRecord(purchase) || !isRecord(purchase.pricing)) continue;
+    const pricing = purchase.pricing;
+    if (pricingIntegrityEnabled && purchase.pricing_option_id !== pricing.pricing_option_id) {
+      issues.push({
+        path: `/commercial_terms/purchases/${index}/pricing/pricing_option_id`,
+        message: 'pricing pricing_option_id must match the purchase pricing_option_id',
+      });
+      if (issues.length > MAX_COMMERCIAL_TERMS_MISMATCHES) return issues;
+    }
+    const currency = pricing.currency as string;
+    purchaseCurrency ??= currency;
+    if (pricingIntegrityEnabled && currency !== purchaseCurrency) {
+      issues.push({
+        path: `/commercial_terms/purchases/${index}/pricing/currency`,
+        message: 'every purchase pricing currency must be identical',
+      });
+      if (issues.length > MAX_COMMERCIAL_TERMS_MISMATCHES) return issues;
+    }
+  }
+  if (
+    pricingIntegrityEnabled &&
+    purchaseCurrency !== undefined &&
+    isRecord(terms.total_budget) &&
+    terms.total_budget.currency !== purchaseCurrency
+  ) {
+    issues.push({
+      path: '/commercial_terms/total_budget/currency',
+      message: 'total budget currency must equal purchase currency',
+    });
+  }
+  if (changeTermSchema && Array.isArray(terms.change_terms)) {
+    validateChangeTermSemantics(terms.change_terms, purchaseCurrency, issues);
+  }
+  return issues;
+}
+
+function changeTermSemanticSupportError(schema: Readonly<Record<string, unknown>>): string | undefined {
+  const validation = schema['x-adcp-validation'];
+  if (!isRecord(validation) || !isRecord(validation.verifier_constraints)) {
+    return 'change-term schema is missing verifier constraint metadata';
+  }
+  const constraints = validation.verifier_constraints;
+  const expectedKeys = new Set([
+    'allowed_statuses',
+    'constraint_action_compatibility',
+    'constraint_currency',
+    'constraint_consistency',
+  ]);
+  if (
+    Object.keys(constraints).length !== expectedKeys.size ||
+    Object.keys(constraints).some(key => !expectedKeys.has(key))
+  ) {
+    return 'change-term schema declares verifier constraints this SDK does not understand';
+  }
+  if (
+    constraints.allowed_statuses !==
+      'Every value is a non-terminal MediaBuy status. The current buy projection omits the action outside these statuses without extinguishing the negotiated right.' ||
+    constraints.constraint_currency !==
+      'Every monetary constraint currency equals the commercial terms purchase currency.' ||
+    constraints.constraint_consistency !==
+      'Minimum result does not exceed maximum result; earliest timestamp does not exceed latest timestamp.'
+  ) {
+    return 'change-term schema declares unsupported verifier constraint semantics';
+  }
+  const compatibility = constraints.constraint_action_compatibility;
+  if (!isRecord(compatibility) || compatibility.on_violation !== 'reject_proposal') {
+    return 'change-term schema declares unsupported action compatibility metadata';
+  }
+  for (const [kind, actions] of Object.entries(CHANGE_TERM_ACTIONS_BY_CONSTRAINT)) {
+    const declared = compatibility[kind];
+    if (
+      !Array.isArray(declared) ||
+      declared.length !== actions.size ||
+      declared.some(action => typeof action !== 'string' || !actions.has(action))
+    ) {
+      return 'change-term schema declares unsupported action compatibility metadata';
+    }
+  }
+  if (Object.keys(compatibility).some(key => key !== 'on_violation' && !(key in CHANGE_TERM_ACTIONS_BY_CONSTRAINT))) {
+    return 'change-term schema declares unsupported action compatibility metadata';
+  }
+  return undefined;
+}
+
+function validateChangeTermSemantics(
+  terms: unknown[],
+  purchaseCurrency: string | undefined,
+  issues: Array<{ path: string; message: string }>
+): void {
+  const actions = new Set<string>();
+  for (const [index, value] of terms.entries()) {
+    if (!isRecord(value)) continue;
+    const path = `/commercial_terms/change_terms/${index}`;
+    const action = value.action;
+    if (typeof action === 'string') {
+      if (actions.has(action)) {
+        issues.push({ path: `${path}/action`, message: 'change term actions must be unique' });
+      }
+      actions.add(action);
+    }
+    if (!isRecord(value.constraints)) continue;
+    const constraints = value.constraints;
+    const kind = constraints.kind as keyof typeof CHANGE_TERM_ACTIONS_BY_CONSTRAINT;
+    if (typeof action === 'string' && !CHANGE_TERM_ACTIONS_BY_CONSTRAINT[kind]?.has(action)) {
+      issues.push({
+        path: `${path}/constraints/kind`,
+        message: `${String(kind)} constraints are not compatible with action ${action}`,
+      });
+    }
+    for (const key of ['max_delta_amount', 'min_result_amount', 'max_result_amount'] as const) {
+      const money = constraints[key];
+      if (purchaseCurrency !== undefined && isRecord(money) && money.currency !== purchaseCurrency) {
+        issues.push({
+          path: `${path}/constraints/${key}/currency`,
+          message: `constraint currency must equal ${purchaseCurrency}`,
+        });
+      }
+    }
+    const minimum = constraints.min_result_amount;
+    const maximum = constraints.max_result_amount;
+    if (isRecord(minimum) && isRecord(maximum) && minimum.amount > maximum.amount) {
+      issues.push({
+        path: `${path}/constraints`,
+        message: 'minimum result amount must not exceed maximum result amount',
+      });
+    }
+    for (const [earliestKey, latestKey] of [
+      ['earliest_result', 'latest_result'],
+      ['earliest_effective_at', 'latest_effective_at'],
+    ] as const) {
+      if (
+        typeof constraints[earliestKey] === 'string' &&
+        typeof constraints[latestKey] === 'string' &&
+        Date.parse(constraints[earliestKey]) > Date.parse(constraints[latestKey])
+      ) {
+        issues.push({
+          path: `${path}/constraints`,
+          message: `${earliestKey} must not be later than ${latestKey}`,
+        });
+      }
+    }
+    if (issues.length > MAX_COMMERCIAL_TERMS_MISMATCHES) return;
+  }
+}
+
+function diffCommercialTerm(
+  actual: unknown,
+  expected: unknown,
+  path: string,
+  mismatches: ProposalCommercialTermsMismatch[],
+  state: { truncated: boolean; diagnosticBytes: number },
+  presence: { actualHas: boolean; expectedHas: boolean } = { actualHas: true, expectedHas: true }
+): void {
+  if (state.truncated) return;
+  if (!presence.actualHas) {
+    pushCommercialTermsMismatch(mismatches, state, {
+      kind: 'missing',
+      path,
+      message: 'proposal is missing a reviewed commercial term',
+    });
+    return;
+  }
+  if (!presence.expectedHas) {
+    pushCommercialTermsMismatch(mismatches, state, {
+      kind: 'unexpected',
+      path,
+      message: 'proposal contains an unreviewed commercial term',
+    });
+    return;
+  }
+  if (Object.is(actual, expected)) return;
+
+  if (Array.isArray(actual) && Array.isArray(expected)) {
+    const length = Math.max(actual.length, expected.length);
+    for (let index = 0; index < length; index++) {
+      diffCommercialTerm(actual[index], expected[index], `${path}/${index}`, mismatches, state, {
+        actualHas: index < actual.length,
+        expectedHas: index < expected.length,
+      });
+    }
+    return;
+  }
+
+  if (isRecord(actual) && isRecord(expected)) {
+    const keys = new Set([...Object.keys(actual), ...Object.keys(expected)]);
+    for (const key of [...keys].sort()) {
+      diffCommercialTerm(actual[key], expected[key], `${path}/${escapeJsonPointer(key)}`, mismatches, state, {
+        actualHas: Object.hasOwn(actual, key),
+        expectedHas: Object.hasOwn(expected, key),
+      });
+    }
+    return;
+  }
+
+  pushCommercialTermsMismatch(mismatches, state, {
+    kind: 'changed',
+    path,
+    message: 'proposal changed a reviewed commercial term',
+  });
+}
+
+function pushCommercialTermsMismatch(
+  mismatches: ProposalCommercialTermsMismatch[],
+  state: { truncated: boolean; diagnosticBytes: number },
+  mismatch: ProposalCommercialTermsMismatch
+): void {
+  const diagnosticBytes = Buffer.byteLength(mismatch.path, 'utf8') + Buffer.byteLength(mismatch.message, 'utf8');
+  if (
+    mismatches.length >= MAX_COMMERCIAL_TERMS_MISMATCHES ||
+    state.diagnosticBytes + diagnosticBytes > MAX_COMMERCIAL_TERMS_DIAGNOSTIC_BYTES
+  ) {
+    state.truncated = true;
+    return;
+  }
+  state.diagnosticBytes += diagnosticBytes;
+  mismatches.push(mismatch);
+}
+
+function schemaValidationPointer(
+  error:
+    | {
+        instancePath?: string;
+        keyword?: string;
+        params?: Record<string, unknown>;
+      }
+    | null
+    | undefined
+): string {
+  let pointer = `/commercial_terms${error?.instancePath ?? ''}`;
+  const field =
+    error?.keyword === 'required'
+      ? error.params?.missingProperty
+      : error?.keyword === 'additionalProperties'
+        ? error.params?.additionalProperty
+        : undefined;
+  if (typeof field === 'string') pointer += `/${escapeJsonPointer(field)}`;
+  return pointer;
+}
+
+function escapeJsonPointer(value: string): string {
+  return value.replaceAll('~', '~0').replaceAll('/', '~1');
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** Canonicalize once so validation and hashing observe the exact same bytes, including accessor-backed input. */

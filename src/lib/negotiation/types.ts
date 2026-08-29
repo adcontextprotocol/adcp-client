@@ -297,3 +297,44 @@ export interface ProposalVerificationResult {
   ok: boolean;
   issues: ProposalVerificationIssue[];
 }
+
+export type ProposalCommercialTermsMismatch =
+  | {
+      kind: 'digest_mismatch';
+      path: '/terms_digest';
+      message: string;
+    }
+  | {
+      kind: 'invalid_terms';
+      subject: 'proposal' | 'expected';
+      path: string;
+      keyword?: string;
+      message: string;
+    }
+  | {
+      kind: 'missing' | 'unexpected' | 'changed';
+      path: string;
+      message: string;
+    }
+  | {
+      kind: 'schema_unavailable' | 'unsupported_schema';
+      path: '/commercial_terms';
+      message: string;
+    };
+
+export interface ProposalCommercialTermsVerificationResult {
+  ok: boolean;
+  /** Exact release declared by the selected bundle, when it could be loaded. */
+  schemaVersion?: string;
+  /** True when diagnostics reached the bounded mismatch-reporting limit. */
+  truncated?: boolean;
+  mismatches: ProposalCommercialTermsMismatch[];
+}
+
+export interface VerifyProposalCommercialTermsOptions {
+  /**
+   * Schema bundle used to define binding commercial-term fields. Defaults to
+   * the SDK pin. Pass the seller-served release when verifying another line.
+   */
+  adcpVersion?: string;
+}
