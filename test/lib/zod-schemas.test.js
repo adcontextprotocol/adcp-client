@@ -1269,6 +1269,31 @@ describe('Zod Schema Validation', () => {
     );
   });
 
+  test('macro-bearing URL aliases preserve their primitive string runtime shape', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const url = 'https://tracker.example/pixel?cb=%%CACHEBUSTER%%';
+    const aliases = Object.entries(schemas).filter(([name]) => /^MacroBearingURL\d+Schema$/.test(name));
+    assert.ok(aliases.length > 0, 'expected generated macro-bearing URL aliases');
+
+    for (const [name, schema] of aliases) {
+      assert.strictEqual(schema.safeParse(url).success, true, `${name} must accept macro-bearing URL strings`);
+      assert.strictEqual(schema.safeParse({}).success, false, `${name} must remain a primitive string schema`);
+    }
+
+    assert.strictEqual(
+      schemas.DAASTAssetSchema.safeParse({
+        asset_type: 'daast',
+        delivery_type: 'url',
+        url,
+      }).success,
+      true,
+      'URL-delivered DAAST assets must accept macro-bearing URL strings'
+    );
+  });
+
   test('CreativeAssetSchema enforces exclusive identity and a valid legacy agent URL', async () => {
     const schemas = await import('../../dist/lib/types/schemas.generated.mjs');
     const base = { creative_id: 'creative_1', name: 'Creative', assets: {} };

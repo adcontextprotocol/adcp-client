@@ -724,7 +724,24 @@ function postProcessRecordIntersections(content: string): string {
  * projection must preserve the primitive runtime shape.
  */
 function postProcessPrimitiveIntersections(content: string): string {
-  return content.replace(/z\.object\(\{\}\)(?:\.passthrough\(\))?\.and\(z\.(string|number|boolean)\(\)\)/g, 'z.$1()');
+  const emptyObject = String.raw`z\.object\(\{\}\)(?:\.passthrough\(\))?`;
+  const emptyObjectUnion = String.raw`z\.union\(\[\s*${emptyObject}(?:\s*,\s*${emptyObject})+\s*\]\)`;
+  const emptyObjectThenPrimitive = new RegExp(
+    String.raw`(?:${emptyObject}|${emptyObjectUnion})\.and\(z\.(string|number|boolean)\(\)\)`,
+    'g'
+  );
+  const primitiveThenEmptyObject = new RegExp(
+    String.raw`z\.(string|number|boolean)\(\)\.and\((?:${emptyObject}|${emptyObjectUnion})\)`,
+    'g'
+  );
+
+  let result = content;
+  let previous: string;
+  do {
+    previous = result;
+    result = result.replace(emptyObjectThenPrimitive, 'z.$1()').replace(primitiveThenEmptyObject, 'z.$1()');
+  } while (result !== previous);
+  return result;
 }
 
 /**
