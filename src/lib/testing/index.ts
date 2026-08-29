@@ -99,6 +99,7 @@ export {
 // Compliance assessment
 export {
   comply,
+  buildComplianceBundleResults,
   formatComplianceResults,
   formatComplianceResultsJSON,
   buildComplianceSummary,
@@ -108,10 +109,13 @@ export {
   getBriefsByVertical,
   // Types
   type ComplyOptions,
+  type ComplianceBundleAssessmentOptions,
   type ComplianceTrack,
   type TrackResult,
   type TestedTrackEntry,
   type TrackStatus,
+  type ComplianceBundleResult,
+  type ComplianceBundleStatus,
   type ComplianceResult,
   type ComplianceSummary,
   type ComplianceSummaryArtifact,

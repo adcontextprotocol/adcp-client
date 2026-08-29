@@ -1651,7 +1651,7 @@ describe('security_baseline: unconditional PRM enforcement (#677)', () => {
   //     can bake the live port into the PRM `resource` field
   //   - a plain object — served as HTTP 200 with JSON body
   //   - a `{ status, body }` tuple — explicit status with JSON body
-  function createAuthTestAgent({ prm, authServer, validApiKey = 'sk_test' } = {}) {
+  function createAuthTestAgent({ prm, authServer, validApiKey = 'sk_test', advertisedTool = 'list_creatives' } = {}) {
     let agentUrl = null;
     const resolveConfig = conf => (typeof conf === 'function' ? conf(agentUrl) : conf);
     const writeMetadata = (res, cfg) => {
@@ -1715,7 +1715,7 @@ describe('security_baseline: unconditional PRM enforcement (#677)', () => {
               result: {
                 tools: [
                   {
-                    name: 'list_creatives',
+                    name: advertisedTool,
                     inputSchema: {
                       type: 'object',
                       additionalProperties: true,
@@ -1728,7 +1728,10 @@ describe('security_baseline: unconditional PRM enforcement (#677)', () => {
           return reply(200, {
             jsonrpc: '2.0',
             id: body.id,
-            result: { structuredContent: { creatives: [], context } },
+            result: {
+              structuredContent:
+                advertisedTool === 'list_accounts' ? { accounts: [], context } : { creatives: [], context },
+            },
           });
         }
         return reply(
@@ -1754,17 +1757,17 @@ describe('security_baseline: unconditional PRM enforcement (#677)', () => {
     };
   }
 
-  function runOpts(testKit) {
+  function runOpts(testKit, advertisedTool = 'list_creatives') {
     return {
       protocol: 'mcp',
       allow_http: true,
       // These fixtures intentionally exercise auth-routing behavior with a
       // minimal list_creatives envelope, not response-schema conformance.
       strictResponseSchemaValidation: false,
-      agentTools: ['list_creatives'],
-      _profile: { name: 'T', tools: ['list_creatives'] },
+      agentTools: [advertisedTool],
+      _profile: { name: 'T', tools: [advertisedTool] },
       _client: {
-        getAgentInfo: async () => ({ name: 'T', tools: [{ name: 'list_creatives' }] }),
+        getAgentInfo: async () => ({ name: 'T', tools: [{ name: advertisedTool }] }),
       },
       test_kit: testKit,
     };
@@ -1801,6 +1804,29 @@ describe('security_baseline: unconditional PRM enforcement (#677)', () => {
         assert.strictEqual(s.skip_reason, 'oauth_not_advertised');
         assert.strictEqual(s.skip.reason, 'not_applicable');
       }
+    } finally {
+      await agent.close();
+    }
+  });
+
+  it('runs valid and invalid credential probes through list_accounts when it is the available safe read', async () => {
+    const agent = createAuthTestAgent({ prm: 404, advertisedTool: 'list_accounts' });
+    const agentUrl = await agent.listen();
+    try {
+      const result = await runStoryboard(agentUrl, loadSecurityBaseline(), runOpts(API_KEY_KIT, 'list_accounts'));
+      const authProbeSteps = result.phases
+        .flatMap(phase => phase.steps)
+        .filter(step => ['probe_unauth', 'probe_api_key', 'probe_invalid_api_key'].includes(step.step_id));
+
+      assert.strictEqual(result.overall_passed, true);
+      assert.deepStrictEqual(
+        authProbeSteps.map(step => step.request.operation),
+        ['list_accounts', 'list_accounts', 'list_accounts']
+      );
+      assert.ok(
+        authProbeSteps.every(step => step.passed),
+        JSON.stringify(authProbeSteps, null, 2)
+      );
     } finally {
       await agent.close();
     }

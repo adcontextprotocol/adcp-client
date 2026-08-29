@@ -4,6 +4,7 @@
 
 import type { AgentProfile, TestResult, TestScenario } from '../types';
 import type { AdcpErrorInfo } from '../../core/ConversationTypes';
+import type { BundleKind } from '../storyboard/compliance';
 import type { RunnerNotice, RunnerSelectionReason, RunnerSkipReason } from '../storyboard/types';
 
 // ============================================================
@@ -157,6 +158,12 @@ export interface ComplianceResult {
   failures?: ComplianceFailure[];
   /** Storyboard IDs that were resolved and executed */
   storyboards_executed?: string[];
+  /**
+   * Authoritative verdicts for the exact universal, protocol, and specialism
+   * bundles selected from the compliance cache. Omitted for explicit targeted
+   * storyboard runs, which do not establish complete bundle coverage.
+   */
+  bundle_results?: ComplianceBundleResult[];
   /** Storyboard IDs graded not-applicable because the agent's declared major version predates the storyboard */
   storyboards_not_applicable?: string[];
   /**
@@ -189,6 +196,16 @@ export interface ComplianceResult {
    * Spec: adcp-client#1704.
    */
   notices: RunnerNotice[];
+}
+
+export type ComplianceBundleStatus = 'passing' | 'failing' | 'partial' | 'untested' | 'not_applicable';
+
+export interface ComplianceBundleResult {
+  kind: BundleKind;
+  id: string;
+  /** Storyboards assessed for this bundle, including injected required scenarios, in assessment order. */
+  storyboard_ids: string[];
+  status: ComplianceBundleStatus;
 }
 
 export interface ComplianceSummary {

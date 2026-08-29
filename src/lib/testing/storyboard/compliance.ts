@@ -41,6 +41,8 @@ export class CapabilityResolutionError extends ADCPError {
   readonly specialism?: string;
   readonly parentProtocol?: string;
   readonly protocol?: string;
+  readonly complianceVersion?: string;
+  readonly supportedVersions?: readonly string[];
 
   constructor(params: {
     code: CapabilityResolutionCode;
@@ -48,12 +50,18 @@ export class CapabilityResolutionError extends ADCPError {
     specialism?: string;
     parentProtocol?: string;
     protocol?: string;
+    complianceVersion?: string;
+    supportedVersions?: readonly string[];
   }) {
     super(params.message);
     this.code = params.code;
     if (params.specialism !== undefined) this.specialism = params.specialism;
     if (params.parentProtocol !== undefined) this.parentProtocol = params.parentProtocol;
     if (params.protocol !== undefined) this.protocol = params.protocol;
+    if (params.complianceVersion !== undefined) this.complianceVersion = params.complianceVersion;
+    if (params.supportedVersions !== undefined) {
+      this.supportedVersions = Object.freeze([...params.supportedVersions]);
+    }
   }
 }
 
@@ -813,7 +821,7 @@ export function resolveStoryboardsForCapabilities(
     for (const sb of sbs) {
       if (seenStoryboards.has(sb.id)) continue;
       seenStoryboards.add(sb.id);
-      const gate = checkVersionGate(sb, caps.major_versions);
+      const gate = getStoryboardVersionGateReason(sb, caps.major_versions);
       if (gate) {
         notApplicable.push({
           storyboard_id: sb.id,
@@ -936,6 +944,8 @@ function assertSupportedComplianceVersion(
   if (isComplianceVersionSupported(cacheVersion, supportedVersions, options)) return;
   throw new CapabilityResolutionError({
     code: 'unsupported_adcp_version',
+    complianceVersion: cacheVersion,
+    supportedVersions,
     message:
       `Compliance cache version ${cacheVersion} is not supported by this seller. ` +
       `Seller advertises adcp.supported_versions [${supportedVersions.join(', ')}]. ` +
@@ -979,7 +989,8 @@ function isPrereleaseVersion(version: string): boolean {
  * `major_versions` (v2 synthetic profiles, discovery failures) run every
  * storyboard, and storyboards without `introduced_in` always apply.
  */
-function checkVersionGate(sb: Storyboard, agentMajors: number[] | undefined): string | undefined {
+/** @internal Shared with capability-driven dependency expansion. */
+export function getStoryboardVersionGateReason(sb: Storyboard, agentMajors: number[] | undefined): string | undefined {
   if (!sb.introduced_in || !agentMajors || agentMajors.length === 0) return undefined;
   const parsed = parseIntroducedIn(sb.introduced_in);
   if (parsed === undefined) return undefined; // unparseable → don't block
