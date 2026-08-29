@@ -1,5 +1,22 @@
 # Changelog
 
+## 14.0.0-beta.16
+
+### Minor Changes
+
+- 47e7958: Return authoritative compliance bundle verdicts and expose structured versions on unsupported compliance-cache errors.
+- 381920d: Add a schema-bundle-derived buyer verifier for proposal commercial terms. It checks the proposal digest before recursively comparing every binding field, returns typed JSON Pointer mismatches, and fails closed for unavailable or unsupported schema bundles.
+- 796ca0e: Fix public Zod schema portability and restore protocol-authored integer, numeric-bound, string-length, pattern, and date-time validation on canonical shared schemas.
+- fd9958b: Add first-party Redis and PostgreSQL webhook registration stores for restart-safe, multi-replica callback verification, with atomic provenance binding, backend-clock expiry, durable settlement markers, migration/probe helpers, cleanup, deployment-isolation safeguards, and method/URL binding for registered legacy HMAC callbacks.
+- e3342af: Expose framework-resolved account, agent, authentication, and task scope to comply-controller adapters, and keep webhook secret protection outside PostgreSQL settlement transactions.
+
+### Patch Changes
+
+- 5ee3ecf: Allow `list_accounts` as the lowest-priority security-baseline authentication probe, and skip ordinary storyboard tool calls whose required test-kit contract is not configured.
+- 00f6ba6: Adopt the signed AdCP 3.2.0-beta.9 bundle and package the corrected sales-guaranteed and sales-non-guaranteed compliance tracks.
+- d70b652: Preserve primitive string validation for generated macro-bearing URL aliases used by creative asset schemas.
+- cc267d2: Keep framework-resolved account authority stable across async storyboard operations, controller directives, and task reconciliation while preserving authored natural operators.
+
 ## 14.0.0-beta.15
 
 ### Minor Changes
