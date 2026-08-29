@@ -56,6 +56,10 @@ export interface RequestContext<TAccount = Account> {
    * `ctx_metadata`, account objects, task results, logs, or durable HITL
    * state. Background workers must re-resolve credentials; if durable work
    * only needs identity, snapshot a stable non-secret principal identifier.
+   * A native `AbortSignal` stored as a data property at
+   * `authInfo.extra.signal` retains its identity so later host cancellation
+   * remains observable. Other auth values retain the framework's existing
+   * clone-and-freeze behavior.
    */
   authInfo?: Readonly<ResolvedAuthInfo>;
 
