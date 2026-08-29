@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.2.0-beta.9
-// Generated at: 2026-08-29T04:43:08.184Z
+// Generated at: 2026-08-29T07:14:31.608Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -1482,7 +1482,7 @@ export type CreativeMotionLevel = 'static' | 'limited_motion' | 'full_motion';
 
 // NOTIFICATIONTYPE CANONICAL ENUM
 /**
- * Type of push notification fired by a seller agent. Media-buy-anchored notifications (`scheduled`, `final`, `delayed`, `adjusted`, `window_update`, `impairment`) fire against a media buy's `push_notification_config`. Account-anchored notifications (`creative.status_changed`, `creative.assignment_changed`, `indicators.changed`, `creative.purged`, `account.status_changed`, `account.change_recorded`, `product.*`, `signal.*`, `wholesale_feed.bulk_change`) fire against an account's `notification_configs[]` entries whose `event_types` include the value — these outlive any single media buy and anchor at the account. `account.change_recorded` is the generic wake-up for the durable `list_account_changes` feed; specialized account notifications remain valid and may overlap it. `indicators.changed` and `creative.assignment_changed` are invalidations repaired completely through `get_media_buys`; `list_creatives` may provide a bounded reverse projection. Agent-anchored notifications (`capabilities.changed`) fire against the agent-level subscriber set managed by `sync_agent_notification_configs`; they are valid before a buyer has any account. Account status changes use `account.status_changed` as an invalidation signal; receivers repair by re-reading `list_accounts`. Wholesale feed notifications carry the actual change payload in `/schemas/core/wholesale-feed-webhook.json`; product mirrors repair through `list_products` using `if_feed_version` and signal mirrors through `get_signals` using `if_wholesale_feed_version` (`get_products` remains the deprecated 3.x product fallback). Capability-change notifications carry only an invalidation payload in `/schemas/core/capabilities-changed-webhook.json`; receivers repair by re-reading `get_adcp_capabilities`. New notification types added to this enum MUST declare their anchor (media-buy, account, or agent), logical `notification_id` semantics, and repair key in the enumDescription. Sellers MUST reject `notification_configs[]` entries whose `event_types` include any media-buy-anchored or agent-anchored type, MUST reject `sync_agent_notification_configs` entries whose `event_types` include any media-buy-anchored or account-anchored type, and MUST reject `push_notification_config` registrations for persistent account-anchored or agent-anchored types.
+ * Type of push notification fired by a seller agent. Media-buy-anchored notifications (`scheduled`, `final`, `delayed`, `adjusted`, `window_update`, `impairment`) fire against a media buy's `push_notification_config`. Account-anchored notifications (`creative.status_changed`, `creative.assignment_changed`, `indicators.changed`, `creative.purged`, `account.status_changed`, `account.change_recorded`, `product.*`, `signal.*`, `wholesale_feed.bulk_change`, `reporting.delivery_ready`) fire against an account's `notification_configs[]` entries whose `event_types` include the value — these outlive any single media buy and anchor at the account. `account.change_recorded` is the generic wake-up for the durable `list_account_changes` feed; specialized account notifications remain valid and may overlap it. `reporting.delivery_ready` is a compact doorbell repaired through `get_reporting_status`. `indicators.changed` and `creative.assignment_changed` are invalidations repaired completely through `get_media_buys`; `list_creatives` may provide a bounded reverse projection. Agent-anchored notifications (`capabilities.changed`) fire against the caller-scoped subscriber set managed by `sync_agent_configuration` or the specialized `sync_agent_notification_configs` compatibility task; they are valid before a buyer has any account. Account status changes use `account.status_changed` as an invalidation signal; receivers repair by re-reading `list_accounts`. Wholesale feed notifications carry the actual change payload in `/schemas/core/wholesale-feed-webhook.json`; product mirrors repair through `list_products` using `if_feed_version` and signal mirrors through `get_signals` using `if_wholesale_feed_version` (`get_products` remains the deprecated 3.x product fallback). Capability-change notifications carry only an invalidation payload in `/schemas/core/capabilities-changed-webhook.json`; receivers repair by re-reading `get_adcp_capabilities`. New notification types added to this enum MUST declare their anchor (media-buy, account, or agent), logical `notification_id` semantics, and repair key in the enumDescription. Sellers MUST reject account-level `notification_configs[]` entries whose `event_types` include any media-buy-anchored or agent-anchored type, MUST reject agent-level entries from either sync task whose `event_types` include any media-buy-anchored or account-anchored type, and MUST reject `push_notification_config` registrations for persistent account-anchored or agent-anchored types.
  */
 export type NotificationType =
   | 'scheduled'
@@ -1506,7 +1506,8 @@ export type NotificationType =
   | 'signal.priced'
   | 'signal.removed'
   | 'wholesale_feed.bulk_change'
-  | 'capabilities.changed';
+  | 'capabilities.changed'
+  | 'reporting.delivery_ready';
 
 // OFFERINGAVAILABILITYSTATUS CANONICAL ENUM
 /**
@@ -1714,11 +1715,23 @@ export type PurchaseType = 'media_buy' | 'rights_license' | 'signal_activation' 
  */
 export type ReachUnit = 'individuals' | 'households' | 'devices' | 'accounts' | 'cookies' | 'custom';
 
+// REPORTINGFINALITY CANONICAL ENUM
+/**
+ * Finality of a reporting revision, aligned with the delivery-revision vocabulary proposed in #6122. Finality is independent of immutable revision identity: both snapshot and official revisions may be superseded by later revisions.
+ */
+export type ReportingFinality = 'snapshot' | 'official';
+
 // REPORTINGFREQUENCY CANONICAL ENUM
 /**
  * Available frequencies for delivery reports and metrics updates. Weekly and quarterly match audience-currency publication cycles in measured channels (e.g. weekly OOH/radio increments, quarterly circulation updates); post_campaign is a single report after the flight ends. Buy-side agents MUST treat a product's declared frequencies as an optimization-eligibility gate: a buyer MUST NOT make mid-flight optimization decisions against metrics whose declared cadence is quarterly or post_campaign — such data describes a period that has closed, and optimizing on it means acting on a model of the channel that is false at decision time.
  */
 export type ReportingFrequency = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'post_campaign';
+
+// REPORTINGHEALTH CANONICAL ENUM
+/**
+ * Operational health for an explicitly echoed reporting scope. Aggregate precedence is action_required, delayed, then healthy. waiting applies only when no active obligation is due. complete applies only when the queried scope is closed, retained coverage is complete, and every obligation has its configured required finality plus a verified readable materialization.
+ */
+export type ReportingHealth = 'healthy' | 'waiting' | 'delayed' | 'action_required' | 'complete';
 
 // REPRESENTATIONSELECTIONSTRATEGY CANONICAL ENUM
 /**
@@ -1991,7 +2004,9 @@ export type TaskType =
   | 'get_rights'
   | 'acquire_rights'
   | 'update_rights'
-  | 'sync_agent_notification_configs';
+  | 'sync_agent_notification_configs'
+  | 'sync_agent_configuration'
+  | 'sync_reporting_receipts';
 
 // TRACKEREXECUTIONACTOR CANONICAL ENUM
 /**
@@ -27480,6 +27495,256 @@ export type AccountWithAuthorization = Account & {
   authorization?: AccountAuthorization;
 };
 
+// core/agent-configuration-state.json
+/**
+ * Credential-free desired configuration currently associated with this destination reference.
+ */
+export type AgentReportingDestination = {
+  pattern: 'file_transfer' | 'warehouse_materialization' | 'dataset_share';
+  /**
+   * Caller-selected stable key, unique within this seller relationship. Reusing it replaces desired configuration.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  destination_id: string;
+  /**
+   * Whether new account-level delivery configurations may use this destination. False does not delete caller-owned data.
+   */
+  active: boolean;
+  provider: DeliveryProvider;
+  /**
+   * Open provider transport name, such as s3, bigquery, delta_sharing, or snowflake_secure_sharing.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z][a-z0-9_.-]*$
+   */
+  transport: string;
+  /**
+   * Provider-native bucket/prefix, project/dataset, database/schema, catalog/schema, or equivalent locator. Never a credential or signed URL.
+   * @minLength 1
+   * @maxLength 2048
+   * @pattern ^(?![A-Za-z][A-Za-z0-9+.-]*:\/\/[^\/\s]*@)(?!.*\?)[^\r\n]+$
+   */
+  location?: string;
+  /**
+   * Physical formats accepted by a file-transfer destination.
+   */
+  accepted_formats?: ('jsonl' | 'csv' | 'parquet' | 'avro' | 'orc')[];
+  /**
+   * Dataset-share access family, such as databricks_to_databricks, open_sharing, or secure_data_sharing.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z][a-z0-9_.-]*$
+   */
+  access_mode?: string;
+  recipient?: DeliveryRecipient;
+  accepted_verification_profiles: ReportingVerificationProfileSet;
+} & (FileTransferDestination | WarehouseMaterializationDestination | DatasetShareRecipient);
+/**
+ * Verification profiles the destination can accept. native_commit requires provider-native transaction/version evidence plus counts and control totals; manifest_checksums requires a committed file manifest with cryptographic checksums; canonical_digest requires recomputation of the canonical logical-content digest. A reporting feed selects one profile from this allowed set according to the seller offering and the feed's strictness requirements.
+ */
+export type ReportingVerificationProfileSet = ('native_commit' | 'manifest_checksums' | 'canonical_digest')[];
+
+/**
+ * Complete caller-scoped connection configuration visible after sync. Secrets are never returned. The seller keys this state by its own agent identity and the stable authenticated caller principal.
+ */
+export interface AgentConfigurationState {
+  /**
+   * Current agent-level webhook subscribers. authentication.credentials is always omitted because it is write-only.
+   */
+  notification_configs: AgentNotificationConfigState[];
+  /**
+   * Current reusable reporting destination bindings and setup states. destination_id and destination_ref values MUST each be unique within this caller-scoped array.
+   */
+  reporting_destinations: AgentReportingDestinationState[];
+}
+/**
+ * Credential-free readback of one caller-scoped agent-level webhook subscription. The optional legacy authentication selector identifies the scheme only; write-only credentials can never appear.
+ */
+export interface AgentNotificationConfigState {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  subscriber_id: string;
+  url: string;
+  event_types: 'capabilities.changed'[];
+  /**
+   * @deprecated
+   */
+  authentication?: {
+    schemes: AuthenticationScheme[];
+  };
+  active?: boolean;
+  ext?: ExtensionObject;
+}
+/**
+ * Seller readback for one caller-scoped reusable reporting destination. destination_ref is an opaque routing reference, not a credential or authorization grant. Account-level reporting configuration may use it only while the same authenticated principal remains authorized for that account.
+ */
+export interface AgentReportingDestinationState {
+  /**
+   * Caller-selected key echoed from the desired configuration.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  destination_id: string;
+  /**
+   * Seller-issued opaque reference bound to the stable authenticated principal and destination_id. Possession does not authorize access, and sellers MUST NOT resolve it across callers.
+   * @minLength 1
+   * @maxLength 255
+   */
+  destination_ref: string;
+  /**
+   * Validation and setup state. Only ready destinations may be selected by a new account-level delivery configuration.
+   */
+  state: 'validating' | 'ready' | 'action_required' | 'inactive' | 'rejected';
+  configuration: AgentReportingDestination;
+  /**
+   * Closed, non-secret setup instruction. Human-readable messages are deliberately excluded; agents dispatch only the typed action and treat setup_url as an untrusted navigation target.
+   */
+  setup?: {
+    action: 'grant_access' | 'accept_share' | 'prove_control' | 'contact_support';
+    /**
+     * HTTPS page for completing provider-native setup. It MUST NOT carry a credential or signed query string and MUST be rendered as an untrusted link, never executed as agent instructions.
+     * @pattern ^https:\/\/(?![^\/\s]*@)(?!.*\?)[^\r\n]+$
+     */
+    setup_url?: string;
+    /**
+     * Optional expiry of this setup action. A new sync obtains a fresh action after expiry.
+     * @format date-time
+     */
+    expires_at?: string;
+  };
+  /**
+   * Structured validation or setup issues. Messages and details are untrusted display data and MUST NOT be executed as instructions.
+   */
+  issues?: Error[];
+}
+/**
+ * Provider namespace for an external delivery or data-sharing service. This identifies a platform; it is not a credential, trust root, or authorization statement.
+ */
+export interface DeliveryProvider {
+  /**
+   * Lowercase dotted provider domain, such as a provider's operating domain. Single-label and localhost-style names are invalid.
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$
+   */
+  domain: string;
+}
+/**
+ * Provider-interpreted recipient identity for a seller-hosted share. Examples include a sharing identifier or organization/account pair. The value is an identifier, never a credential.
+ */
+export interface DeliveryRecipient {
+  /**
+   * @minLength 1
+   * @maxLength 512
+   */
+  identity: string;
+  cloud?: 'aws' | 'azure' | 'gcp';
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  region?: string;
+}
+export interface FileTransferDestination {
+  pattern: 'file_transfer';
+  /**
+   * Caller-selected stable key, unique within this seller relationship. Reusing it replaces desired configuration.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  destination_id: string;
+  /**
+   * Whether new account-level delivery configurations may use this destination. False does not delete caller-owned data.
+   */
+  active: boolean;
+  provider: DeliveryProvider;
+  /**
+   * Open provider transport name, such as s3, bigquery, delta_sharing, or snowflake_secure_sharing.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z][a-z0-9_.-]*$
+   */
+  transport: string;
+  /**
+   * Provider-native bucket/prefix, project/dataset, database/schema, catalog/schema, or equivalent locator. Never a credential or signed URL.
+   * @minLength 1
+   * @maxLength 2048
+   * @pattern ^(?![A-Za-z][A-Za-z0-9+.-]*:\/\/[^\/\s]*@)(?!.*\?)[^\r\n]+$
+   */
+  location: string;
+  /**
+   * Physical formats accepted by a file-transfer destination.
+   */
+  accepted_formats: ('jsonl' | 'csv' | 'parquet' | 'avro' | 'orc')[];
+  accepted_verification_profiles: ReportingVerificationProfileSet;
+}
+export interface WarehouseMaterializationDestination {
+  pattern: 'warehouse_materialization';
+  /**
+   * Caller-selected stable key, unique within this seller relationship. Reusing it replaces desired configuration.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  destination_id: string;
+  /**
+   * Whether new account-level delivery configurations may use this destination. False does not delete caller-owned data.
+   */
+  active: boolean;
+  provider: DeliveryProvider;
+  /**
+   * Open provider transport name, such as s3, bigquery, delta_sharing, or snowflake_secure_sharing.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z][a-z0-9_.-]*$
+   */
+  transport: string;
+  /**
+   * Provider-native bucket/prefix, project/dataset, database/schema, catalog/schema, or equivalent locator. Never a credential or signed URL.
+   * @minLength 1
+   * @maxLength 2048
+   * @pattern ^(?![A-Za-z][A-Za-z0-9+.-]*:\/\/[^\/\s]*@)(?!.*\?)[^\r\n]+$
+   */
+  location: string;
+  accepted_verification_profiles: ReportingVerificationProfileSet;
+}
+export interface DatasetShareRecipient {
+  pattern: 'dataset_share';
+  /**
+   * Caller-selected stable key, unique within this seller relationship. Reusing it replaces desired configuration.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  destination_id: string;
+  /**
+   * Whether new account-level delivery configurations may use this destination. False does not delete caller-owned data.
+   */
+  active: boolean;
+  provider: DeliveryProvider;
+  /**
+   * Open provider transport name, such as s3, bigquery, delta_sharing, or snowflake_secure_sharing.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z][a-z0-9_.-]*$
+   */
+  transport: string;
+  /**
+   * Dataset-share access family, such as databricks_to_databricks, open_sharing, or secure_data_sharing.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z][a-z0-9_.-]*$
+   */
+  access_mode: string;
+  recipient: DeliveryRecipient;
+  accepted_verification_profiles: ReportingVerificationProfileSet;
+}
+
 // core/agent-encryption-key.json
 /**
  * X25519 public key for HPKE encryption. Used for TMPX exposure token encryption with HPKE mode_base.
@@ -27511,7 +27776,7 @@ export interface AgentEncryptionKey {
 
 // core/agent-notification-config.json
 /**
- * Caller-scoped agent-level webhook subscription for notifications whose lifecycle belongs to the seller agent itself rather than to one account, media buy, creative, or other account-scoped resource. The initial agent-level event type is `capabilities.changed`, registered through `sync_agent_notification_configs` when the seller declares `adcp.capability_changes.notifications.supported: true` in `get_adcp_capabilities`. This surface is intentionally separate from account-level `notification_configs[]`: a registry or buyer can subscribe before it has an account, and one fire invalidates the agent-wide `get_adcp_capabilities` cache. The persisted set is scoped to the authenticated caller or registry identity, so one caller's declarative replacement cannot clear another caller's subscribers. As with other AdCP webhooks, the default signing scheme is the RFC 9421 webhook profile against the seller's brand.json `agents[]` JWKS; the optional `authentication` block opts into the deprecated Bearer / HMAC-SHA256 fallback for compatibility. Credentials and shared secrets in `authentication.credentials` are write-only and MUST NOT be echoed on reads. Sellers MUST verify endpoint control before activating a new or changed active agent-level notification config; delivery-time SSRF validation still applies to every fire.
+ * Caller-scoped agent-level webhook subscription for notifications whose lifecycle belongs to the seller agent itself rather than to one account, media buy, creative, or other account-scoped resource. The initial agent-level event type is capabilities.changed, registered through the task declared by get_adcp_capabilities.adcp.capability_changes.notifications.registration_task: sync_agent_configuration when the broader connection surface is supported, or the specialized sync_agent_notification_configs compatibility task. Both tasks operate on one underlying caller-scoped subscriber set. This surface is intentionally separate from account-level notification_configs[]: a registry or buyer can subscribe before it has an account, and one fire invalidates the agent-wide get_adcp_capabilities cache. The persisted set is scoped to the authenticated caller or registry identity, so one caller's declarative replacement cannot clear another caller's subscribers. As with other AdCP webhooks, the default signing scheme is the RFC 9421 webhook profile against the seller's brand.json agents[] JWKS; the optional authentication block opts into the deprecated Bearer / HMAC-SHA256 fallback for compatibility. Credentials and shared secrets in authentication.credentials are write-only and MUST NOT be echoed on reads. Sellers MUST verify endpoint control before activating a new or changed active agent-level notification config; delivery-time SSRF validation still applies to every fire.
  */
 export interface AgentNotificationConfig {
   /**
@@ -27599,7 +27864,7 @@ export interface AgentSigningKey {
 
 // core/agent-webhook-challenge.json
 /**
- * Proof-of-control challenge payload sent by a seller to an agent-level sync_agent_notification_configs.notification_configs[] URL before activating a new or changed active subscriber. Agent-level challenges are valid before any seller account exists, so they bind the seller agent URL, subscriber ID, requested agent-level event types, delivery auth mode, and challenge nonce instead of an account_id. The seller sends this payload as an HTTPS POST after URL normalization and SSRF validation, and before treating the subscriber as active. The challenge POST itself MUST be signed with the seller's RFC 9421 webhook profile key even when the candidate config selects legacy delivery auth; new signers use `adcp_use: "request-signing"` and deprecated `webhook-signing` keys remain accepted during the compatibility window. `delivery_auth` describes the future webhook delivery mode, not the challenge's own signing mode.
+ * Proof-of-control challenge payload sent by a seller to an agent-level notification_configs[] URL registered through sync_agent_configuration or sync_agent_notification_configs before activating a new or changed active subscriber. Agent-level challenges are valid before any seller account exists, so they bind the seller agent URL, subscriber ID, requested agent-level event types, delivery auth mode, and challenge nonce instead of an account_id. The seller sends this payload as an HTTPS POST after URL normalization and SSRF validation, and before treating the subscriber as active. The challenge POST itself MUST be signed with the seller's RFC 9421 webhook profile key even when the candidate config selects legacy delivery auth; new signers use adcp_use request-signing and deprecated webhook-signing keys remain accepted during the compatibility window. delivery_auth describes the future webhook delivery mode, not the challenge's own signing mode.
  */
 export interface AgentWebhookChallenge {
   /**
@@ -27618,7 +27883,7 @@ export interface AgentWebhookChallenge {
    */
   challenge: string;
   /**
-   * Buyer-supplied subscriber identifier from the sync_agent_notification_configs.notification_configs[] entry being challenged.
+   * Buyer-supplied subscriber identifier from the caller-scoped notification_configs[] entry being challenged.
    * @minLength 1
    * @maxLength 64
    * @pattern ^[A-Za-z0-9_.:-]{1,64}$
@@ -28362,7 +28627,7 @@ export interface CanonicalProjectionSlotOverride {
 
 // core/capabilities-changed-webhook.json
 /**
- * Agent-level webhook payload fired when the seller's advertised `get_adcp_capabilities` document materially changes. Registered through `sync_agent_notification_configs` using `event_types: ["capabilities.changed"]`. The payload is an invalidation signal, not a replacement capability document: receivers SHOULD re-run `get_adcp_capabilities`, compare the returned `adcp.capability_changes.capabilities_version`, and update their cache from the fresh response. Sellers MUST publish the new capability snapshot before firing so the webhook's `capabilities_version` is observable on read. Sellers SHOULD coalesce bursts of configuration changes and fire once for the post-change revision.
+ * Agent-level webhook payload fired when the seller's advertised get_adcp_capabilities document materially changes. Registered through sync_agent_configuration or the specialized sync_agent_notification_configs task using event_types: [capabilities.changed]. The payload is an invalidation signal, not a replacement capability document: receivers SHOULD re-run get_adcp_capabilities, compare the returned adcp.capability_changes.capabilities_version, and update their cache from the fresh response. Sellers MUST publish the new capability snapshot before firing so the webhook's capabilities_version is observable on read. Sellers SHOULD coalesce bursts of configuration changes and fire once for the post-change revision.
  */
 export interface CapabilitiesChangedWebhook {
   /**
@@ -28389,7 +28654,7 @@ export interface CapabilitiesChangedWebhook {
    */
   fired_at: string;
   /**
-   * Identifies which `sync_agent_notification_configs.notification_configs[]` entry is receiving this fire. Echoed verbatim from the entry's `subscriber_id`.
+   * Identifies which caller-scoped notification_configs[] entry is receiving this fire. Echoed verbatim from the entry's subscriber_id.
    * @minLength 1
    * @maxLength 64
    * @pattern ^[A-Za-z0-9_.:-]{1,64}$
@@ -33469,6 +33734,1508 @@ export interface RegistryFeedResponse {
   };
 }
 
+// core/reporting-canonical-content-digest.json
+/**
+ * Cryptographic digest of logical reporting rows under an immutable canonicalization contract.
+ */
+export interface ReportingCanonicalContentDigest {
+  algorithm: 'sha256';
+  /**
+   * @pattern ^[A-Fa-f0-9]{64}$
+   */
+  value: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  canonicalization_id: string;
+  /**
+   * Location of the exact immutable canonicalization contract. Consumers verify canonicalization_sha256 before applying it.
+   * @pattern ^https:\/\/(?![^\/]*@)(?!localhost(?:[:\/]|$))(?!\[)(?!\d+(?:\.\d+){3}(?::|\/|$))(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:\/|$)
+   */
+  canonicalization_uri: string;
+  /**
+   * @pattern ^[A-Fa-f0-9]{64}$
+   */
+  canonicalization_sha256: string;
+}
+
+
+// core/reporting-canonicalization-contract.json
+/**
+ * Executable, immutable contract for producing the canonical logical-report bytes hashed by reporting-canonical-content-digest.json. The fetched document uses application/vnd.adcp.reporting-canonicalization+json and is verified by SHA-256 before parsing.
+ */
+export interface ReportingCanonicalizationContract {
+  contract_version: '1.0';
+  media_type: 'application/vnd.adcp.reporting-canonicalization+json';
+  algorithm: 'adcp_jcs_rows_v1';
+  /**
+   * Digest of the exact row schema to which this contract applies.
+   * @pattern ^[A-Fa-f0-9]{64}$
+   */
+  schema_sha256: string;
+  /**
+   * Ordered scalar fields used to sort rows and reject duplicate logical rows. This MUST equal the offering's primary_keys.
+   */
+  primary_keys: string[];
+  /**
+   * Cross-language conformance vectors. They MUST include an empty report and an ordering/encoding case.
+   */
+  golden_vectors: {
+    /**
+     * @minLength 1
+     * @maxLength 128
+     * @pattern ^[A-Za-z0-9_.:-]{1,128}$
+     */
+    name: string;
+    input_rows: {}[];
+    /**
+     * Base64 of the exact expected canonical UTF-8 bytes.
+     * @minLength 1
+     */
+    canonical_utf8_base64: string;
+    /**
+     * @pattern ^[A-Fa-f0-9]{64}$
+     */
+    sha256: string;
+  }[];
+}
+
+
+// core/reporting-control-total.json
+/**
+ * One profile-defined aggregate used to reconcile a reporting revision without rereading every row. Names and units are defined by the immutable report definition. Values use canonical strings so currency and large integer comparisons are exact across SDKs.
+ */
+export interface ReportingControlTotal {
+  /**
+   * @minLength 1
+   * @maxLength 128
+   * @pattern ^[A-Za-z][A-Za-z0-9_.:-]{0,127}$
+   */
+  name: string;
+  /**
+   * Canonical base-10 value with no exponent, grouping separator, or insignificant leading zeroes.
+   * @pattern ^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$
+   */
+  value: string;
+  value_type: 'integer' | 'decimal';
+  /**
+   * Profile-defined unit such as impressions or an ISO 4217 currency code.
+   * @minLength 1
+   * @maxLength 32
+   */
+  unit?: string;
+}
+
+
+// core/reporting-coverage.json
+/**
+ * Exact reporting-support denominator for one offering at one evaluation boundary. Coverage is independent of freshness, finality, and delivery health. It prevents a covered subset from being represented as a complete media-buy or campaign total.
+ */
+export interface ReportingCoverage {
+  status: 'full' | 'partial' | 'none' | 'unknown';
+  /**
+   * @format date-time
+   */
+  evaluated_at: string;
+  /**
+   * Exact media-buy denominator, including unsupported and unknown buys. An empty array is an explicitly evaluated zero-buy scope.
+   */
+  media_buy_ids: string[];
+  fully_covered_media_buy_ids: string[];
+  partially_covered_media_buy_ids: string[];
+  unsupported_media_buy_ids: string[];
+  unknown_media_buy_ids: string[];
+  /**
+   * Exact package denominator for the evaluated media buys.
+   */
+  package_ids: string[];
+  covered_package_ids: string[];
+  unsupported_package_ids: string[];
+  unknown_package_ids: string[];
+  /**
+   * Stable reasons that some requested scope is not covered by the exact selected offering. These are capability facts, not delivery failures.
+   */
+  limitations: {
+    reason:
+      | 'offering_unsupported'
+      | 'account_entitlement_unavailable'
+      | 'credential_scope_insufficient'
+      | 'provider_limitation'
+      | 'capability_unknown';
+    /**
+     * @minLength 1
+     */
+    media_buy_id: string;
+    package_ids?: string[];
+  }[];
+}
+
+
+// core/reporting-dataset-share-destination.json
+/**
+ * Recipient configuration for a producer-hosted reporting share. The caller either references an existing seller-issued immutable recipient/destination generation or asks the seller to provision one for the named recipient. A destination_ref is owned by the stable authenticated principal's relationship with this seller and may be reused across accounts; each account delivery configuration separately authorizes disclosure of its feed and scope. Changing proof-bound recipient coordinates or the accepted delivery contract produces a new destination_ref. No bearer profile, token, private key, password, or other credential may appear here.
+ */
+export type ReportingDatasetShareDestination = ExistingBinding | ProvisionRecipient;
+
+export interface ExistingBinding {
+  mode: 'existing';
+  /**
+   * Seller-issued immutable recipient/destination-generation reference returned by sync_agent_configuration, an earlier sync, or bilateral setup.
+   * @minLength 1
+   * @maxLength 255
+   */
+  destination_ref: string;
+}
+export interface ProvisionRecipient {
+  mode: 'provision';
+  /**
+   * Data-sharing platform, such as databricks.com or snowflake.com.
+   */
+  provider: {
+    /**
+     * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+     */
+    domain: string;
+  };
+  /**
+   * Provider access family, such as databricks_to_databricks, open_sharing, or secure_data_sharing.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z][a-z0-9_.-]*$
+   */
+  access_mode: string;
+  /**
+   * Intended buyer principal. The identity is interpreted by the provider and access mode; for example, a Databricks sharing identifier, Snowflake organization/account pair, or Open Sharing recipient email. It is an identifier, never a credential.
+   */
+  recipient: {
+    /**
+     * @minLength 1
+     * @maxLength 512
+     */
+    identity: string;
+    cloud?: 'aws' | 'azure' | 'gcp';
+    /**
+     * @minLength 1
+     * @maxLength 128
+     */
+    region?: string;
+  };
+}
+
+
+// core/reporting-delivery-capabilities.json
+/**
+ * Receipt contract included in this atomic offering. Billing offerings MUST require consumer_receipt.
+ */
+export type ReportingReconciliationMode = 'delivery_only' | 'consumer_receipt';
+
+/**
+ * Managed reporting status and durable delivery support. Each offerings entry is an atomic supported combination; buyers MUST NOT construct an unsupported cross-product. Presence requires media_buy.reporting_delivery in experimental_features and an RFC 9421 webhook-signing capability. Polling get_media_buy_delivery remains the compatibility baseline when this block is absent.
+ */
+export interface ReportingDeliveryCapabilities {
+  supported: true;
+  configuration_task: 'sync_accounts';
+  status_task: 'get_reporting_status';
+  receipt_task: 'sync_reporting_receipts';
+  readiness_notification: 'reporting.delivery_ready';
+  /**
+   * Atomic supported feed/profile/schedule/finality/method combinations. offering_id values MUST be unique.
+   */
+  offerings: ReportingDeliveryOffering[];
+  /**
+   * Maximum late interval during which a due obligation may remain delayed while automated recovery continues before action_required.
+   * @minimum 0
+   * @format int
+   */
+  automated_recovery_window_seconds: number;
+  /**
+   * Minimum period for which obligation, revision, and materialization metadata remain queryable.
+   * @minimum 1
+   * @format int
+   */
+  status_retention_days: number;
+  /**
+   * Minimum period after publication for which at least one verified exact materialization remains readable to every still-authorized intended consumer.
+   * @minimum 1
+   * @format int
+   */
+  resource_retention_days: number;
+  supports_webhook_activity?: boolean;
+  /**
+   * Maximum delay after caller/account authorization ends before seller-controlled transport access, provider grants, and write credentials are revoked. It cannot revoke a buyer's access to data already written into a buyer-owned destination.
+   * @minimum 0
+   * @format int
+   */
+  authorization_revocation_seconds: number;
+}
+/**
+ * One atomic combination a seller can honor. Buyers MUST NOT form a cross-product from separate capability arrays; each installed configuration selects one offering_id and values within that offering.
+ */
+export interface ReportingDeliveryOffering {
+  /**
+   * @minLength 1
+   * @maxLength 128
+   * @pattern ^[A-Za-z0-9_.:-]{1,128}$
+   */
+  offering_id: string;
+  /**
+   * Operational use of this independently scheduled offering. pacing commonly selects short-period snapshot revisions; billing requires official revisions and consumer reconciliation.
+   */
+  feed_purpose: 'pacing' | 'analytics' | 'billing';
+  /**
+   * Immutable semantic definition for metric, grain, attribution, action-report-time, timezone/calendar, source/API mapping, and restatement/finality policy. Configurations and revisions MUST echo this exact value.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  report_definition_id: string;
+  /**
+   * Retrievable immutable reporting-report-definition.json document on the authenticated seller/provider or AdCP-registry origin.
+   * @pattern ^https:\/\/(?![^\/]*@)(?!localhost(?:[:\/]|$))(?!\[)(?!\d+(?:\.\d+){3}(?::|\/|$))(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:\/|$)
+   */
+  report_definition_uri: string;
+  /**
+   * Digest of the exact report-definition bytes. SDKs verify this before parsing and cache by digest.
+   * @pattern ^[A-Fa-f0-9]{64}$
+   */
+  report_definition_sha256: string;
+  /**
+   * Machine-readable semantic and validation contract for delivered rows.
+   */
+  reporting_profile: {
+    /**
+     * @minLength 1
+     * @maxLength 128
+     * @pattern ^[A-Za-z0-9_.:-]{1,128}$
+     */
+    id: string;
+    /**
+     * @minLength 1
+     * @maxLength 64
+     */
+    version: string;
+    /**
+     * Authenticated seller/provider or AdCP-registry HTTPS origin only; never an IP literal, userinfo URL, redirect target, or mutable validation authority.
+     * @pattern ^https:\/\/(?![^\/]*@)(?!localhost(?:[:\/]|$))(?!\[)(?!\d+(?:\.\d+){3}(?::|\/|$))(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:\/|$)
+     */
+    schema_uri: string;
+    /**
+     * Digest of the exact schema bytes. SDKs verify this before parsing and cache by digest.
+     * @pattern ^[A-Fa-f0-9]{64}$
+     */
+    schema_sha256: string;
+    /**
+     * Closed SDK-bundled dialect. The SDK never resolves a metaschema over the network, and the fetched document's $schema MUST equal this value.
+     */
+    schema_dialect: 'https://json-schema.org/draft/2020-12/schema';
+    /**
+     * The fetched schema is a self-contained bundle. Every $ref is a local # fragment; remote and relative-document dependencies are forbidden.
+     */
+    schema_ref_policy: 'local_fragment_only';
+    /**
+     * Stable description of what one logical row represents.
+     * @minLength 1
+     * @maxLength 128
+     */
+    grain: string;
+    primary_keys: string[];
+    /**
+     * Rules for stable logical row ordering, value encoding, nulls, and schema used by canonical_content_digest.
+     * @minLength 1
+     * @maxLength 128
+     */
+    canonicalization_id: string;
+    canonicalization_contract_version: '1.0';
+    canonicalization_media_type: 'application/vnd.adcp.reporting-canonicalization+json';
+    /**
+     * Retrievable exact canonicalization contract on the authenticated seller/provider or AdCP-registry origin. SDKs apply the same bounded, redirect-free SSRF controls as schema_uri and verify canonicalization_sha256 before use.
+     * @pattern ^https:\/\/(?![^\/]*@)(?!localhost(?:[:\/]|$))(?!\[)(?!\d+(?:\.\d+){3}(?::|\/|$))(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:\/|$)
+     */
+    canonicalization_uri: string;
+    /**
+     * Digest of the exact canonicalization contract identified by canonicalization_id.
+     * @pattern ^[A-Fa-f0-9]{64}$
+     */
+    canonicalization_sha256: string;
+  };
+  schedule: ReportingScheduleOffering;
+  /**
+   * Finality classes available under this exact report definition, schedule, and delivery method. snapshot is an explicit provisional capability, not inferred from poll frequency. Use separate atomic offerings when snapshot and official schedules or methods differ.
+   */
+  supported_finality: ReportingFinality[];
+  reconciliation_mode: ReportingReconciliationMode;
+  method: {
+    pattern: 'file_transfer' | 'dataset_share' | 'warehouse_materialization';
+    /**
+     * @minLength 1
+     * @maxLength 64
+     * @pattern ^[a-z][a-z0-9_.-]*$
+     */
+    transport: string;
+    orchestration: 'producer_managed' | 'consumer_managed';
+    destination_modes: ('provision' | 'existing')[];
+    provider?: {
+      /**
+       * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+       */
+      domain: string;
+    };
+    format?: 'jsonl' | 'csv' | 'parquet' | 'avro' | 'orc';
+    /**
+     * @minLength 1
+     * @maxLength 64
+     * @pattern ^[a-z][a-z0-9_.-]*$
+     */
+    access_mode?: string;
+    /**
+     * Seller principal a buyer grants access to for this exact buyer-hosted destination offering.
+     */
+    producer_identity?: {
+      provider: {
+        /**
+         * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+         */
+        domain: string;
+      };
+      /**
+       * @minLength 1
+       * @maxLength 512
+       */
+      identity: string;
+      cloud?: 'aws' | 'azure' | 'gcp';
+      /**
+       * @minLength 1
+       * @maxLength 128
+       */
+      region?: string;
+    };
+    reader_compatibility?: string[];
+  };
+}
+/**
+ * Period and availability SLA this offering can honor. For example, PT1H with snapshot finality explicitly advertises hourly provisional snapshots; a separate P1D official offering advertises daily finalized reporting.
+ */
+export interface ReportingScheduleOffering {
+  /**
+   * @pattern ^P(?=.*[1-9])(?=\d|T)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$
+   */
+  period_duration: string;
+  alignment: 'utc' | 'account_timezone' | 'billing_cycle';
+  /**
+   * For billing_cycle only. fixed requires the advertised anchor and timezone; configurable lets each authorized account configuration select them.
+   */
+  period_anchor_policy?: 'fixed' | 'configurable';
+  /**
+   * @format date-time
+   */
+  period_anchor?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  period_timezone?: string;
+  /**
+   * @pattern ^P(?=\d|T)(?=.*\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$
+   */
+  delivery_sla: string;
+}
+
+
+// core/reporting-delivery-config-state.json
+/**
+ * Provider-neutral durable reporting delivery method. The caller may request protocol-managed provisioning or reuse an existing seller-issued binding. Transport names are open so new platforms do not require an AdCP enum change. Credentials, bearer profiles, and private keys MUST NOT appear. Sellers implementing this schema MUST advertise media_buy.reporting_delivery in experimental_features.
+ */
+export type ReportingDeliveryMethod = FileTransfer | DatasetShare | WarehouseMaterialization;
+/**
+ * Storage or warehouse destination for durable reporting. The caller either references an existing seller-issued immutable destination generation or asks the seller to validate and bind a provider-native location. A destination_ref is owned by the stable authenticated principal's relationship with this seller and may be reused across accounts; each account delivery configuration separately authorizes its feed and scope. Changing proof-bound coordinates or the accepted delivery contract produces a new destination_ref. Access grants name advertised producer identities; credentials never transit AdCP.
+ */
+export type ReportingWriteDestination = ExistingBinding | ProvisionBinding;
+/**
+ * Seller-resolved state for one caller/account-owned immutable reporting delivery configuration generation. It echoes the secret-free desired configuration and adds the durable binding and setup result. The seller MUST verify that the authenticated caller may disclose the selected feeds and media-buy scope to the recipient before readiness. A setup URL is an authenticated UI/API entry point, not a bearer credential: agents MUST NOT auto-fetch it, preview it, or treat its content as instructions; it MUST use HTTPS, have no userinfo, token, or signed credential, and use an origin controlled by the seller or named provider.
+ */
+export interface ReportingDeliveryConfigurationState {
+  configuration: ReportingDeliveryConfiguration;
+  state: 'pending_validation' | 'pending_setup' | 'ready' | 'action_required' | 'inactive';
+  /**
+   * Seller-issued immutable destination-generation reference. It is caller-scoped and reusable across separately authorized account configurations; it is not itself account authority or a bearer grant.
+   * @minLength 1
+   * @maxLength 255
+   */
+  destination_ref?: string;
+  /**
+   * @format date-time
+   */
+  validated_at?: string;
+  /**
+   * @format date-time
+   */
+  activated_at?: string;
+  /**
+   * @format date-time
+   */
+  deactivated_at?: string;
+  /**
+   * Applied schedule boundary at or after deactivation. No obligation whose period starts at or after this cutoff is created; earlier obligations remain owed through their SLA and recovery lifecycle.
+   * @format date-time
+   */
+  publication_stopped_at?: string;
+  /**
+   * End of historical access to a producer-hosted share/resource for a still-authorized principal after voluntary deactivation. Inapplicable to data already written into a buyer-owned destination.
+   * @format date-time
+   */
+  seller_managed_access_ends_at?: string;
+  current_coverage?: ReportingCoverage;
+  /**
+   * Secret-free next step when provider-side authorization or recipient activation cannot be completed automatically.
+   */
+  setup?: {
+    action: 'grant_access' | 'activate_recipient' | 'authorize_provider' | 'repair_access';
+    /**
+     * Untrusted display text only. SDKs and agents dispatch only on the closed action value and never execute embedded links or instructions.
+     * @minLength 1
+     * @maxLength 2000
+     */
+    message: string;
+    /**
+     * @pattern ^https:\/\/
+     */
+    url?: string;
+    /**
+     * @format date-time
+     */
+    expires_at?: string;
+  };
+  issues?: ReportingStatusIssue[];
+}
+/**
+ * Desired durable reporting delivery for one account. Entries are owned by (authenticated caller, account) and keyed by (delivery_config_id, delivery_config_version). The generation's feed, report definition, profile, scope, coverage requirement, finality, schedule, method, and immutable destination generation are fixed; only lifecycle intent (`active` and `revocation_effective_at`) may change without a new generation. Sellers reject a reused version with different immutable content. sync_accounts replacement semantics apply only to the calling principal's set. Omission leaves that set unchanged; [] deactivates that caller's set and stops new publication without affecting another caller. Sellers implementing this schema MUST advertise media_buy.reporting_delivery in experimental_features.
+ */
+export interface ReportingDeliveryConfiguration {
+  /**
+   * Caller-selected stable identifier, unique within the authenticated caller and account.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  delivery_config_id: string;
+  /**
+   * Caller-selected immutable semantic generation. Increment when feed/profile/scope/finality/schedule/method/destination changes; lifecycle fields may change in place.
+   * @minimum 1
+   * @format int
+   */
+  delivery_config_version: number;
+  /**
+   * Atomic reporting offering advertised by the seller that binds feed, profile, schedule, finality, and delivery support.
+   * @minLength 1
+   * @maxLength 128
+   * @pattern ^[A-Za-z0-9_.:-]{1,128}$
+   */
+  offering_id: string;
+  /**
+   * Whether new reporting obligations should use this configuration. Inactive configurations remain visible for historical resolution.
+   */
+  active: boolean;
+  /**
+   * Operational use of this independently reconciled feed. pacing is the fast snapshot path; billing is invoice-authoritative. Event-level exposure is intentionally deferred until a privacy and authorization contract exists.
+   */
+  feed_purpose: 'pacing' | 'analytics' | 'billing';
+  /**
+   * Exact immutable semantic definition selected from the offering. This makes the expected obligation identity independently derivable and prevents attribution, timezone, source-mapping, or restatement-policy drift behind a profile label.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  report_definition_id: string;
+  /**
+   * Versioned semantic profile for the aggregate report, such as media_buy_delivery_v1. It MUST match the selected offering.
+   * @minLength 1
+   * @maxLength 128
+   * @pattern ^[A-Za-z0-9_.:-]{1,128}$
+   */
+  reporting_profile: string;
+  /**
+   * Media buys covered by this configuration.
+   */
+  scope: {
+    all_media_buys?: true;
+    media_buy_ids?: string[];
+  };
+  /**
+   * Whether every package in the resolved media-buy scope must support the exact selected offering. full fails closed when any package is unsupported or unknown. allow_partial permits publication only for the explicitly covered package denominator; every revision and status response still exposes partial coverage and MUST NOT present covered-subset totals as whole-buy totals.
+   */
+  coverage_requirement: 'full' | 'allow_partial';
+  required_finality: ReportingFinality;
+  reconciliation_mode: ReportingReconciliationMode;
+  schedule: ReportingSchedule;
+  method: ReportingDeliveryMethod;
+  /**
+   * Optional requested cutoff for deactivation. No new publication may begin after the applied cutoff; historical access is limited to the contracted recovery window.
+   * @format date-time
+   */
+  revocation_effective_at?: string;
+}
+/**
+ * The period and deadline contract from which reporting obligations are created. Every elapsed period produces an obligation even when it has zero rows or production fails, so a consumer can distinguish empty from missing.
+ */
+export interface ReportingSchedule {
+  /**
+   * Strictly positive ISO 8601 duration of each reporting period, such as PT15M, P1D, or P1M.
+   * @pattern ^P(?=.*[1-9])(?=\d|T)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$
+   */
+  period_duration: string;
+  /**
+   * Calendar used to establish exact period boundaries. The obligation echoes resolved timestamps and source timezone.
+   */
+  alignment: 'utc' | 'account_timezone' | 'billing_cycle';
+  /**
+   * Required for billing_cycle alignment. This immutable instant anchors the recurring half-open billing periods so producer and consumer derive the same month, quarter, or other contractual cycle.
+   * @format date-time
+   */
+  period_anchor?: string;
+  /**
+   * Required IANA timezone for billing_cycle calendar arithmetic. A numeric UTC offset is not sufficient because it does not define DST transitions.
+   * @minLength 1
+   * @maxLength 255
+   */
+  period_timezone?: string;
+  /**
+   * Non-negative maximum time after period end before the required revision is due. PT0S means due at period close; expected_at equals the resolved period end plus this duration.
+   * @pattern ^P(?=\d|T)(?=.*\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$
+   */
+  delivery_sla: string;
+}
+export interface ProvisionBinding {
+  mode: 'provision';
+  /**
+   * Platform hosting the destination.
+   */
+  provider: {
+    /**
+     * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+     */
+    domain: string;
+  };
+  /**
+   * Provider-native bucket, prefix, project/dataset, catalog/schema, or equivalent locator. It MUST NOT contain an embedded credential or signed URL.
+   * @minLength 1
+   * @maxLength 2048
+   */
+  location: string;
+  /**
+   * Optional provider access family used for capability matching.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z][a-z0-9_.-]*$
+   */
+  access_mode?: string;
+}
+export interface DatasetShare {
+  /**
+   * Producer-hosted relation or share read through the intended recipient's access path.
+   */
+  pattern: 'dataset_share';
+  /**
+   * Sharing transport such as delta_sharing, snowflake_secure_sharing, or bigquery_authorized_view.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z][a-z0-9_.-]*$
+   */
+  transport: string;
+  /**
+   * Party responsible for configuring and monitoring the share.
+   */
+  orchestration: 'producer_managed' | 'consumer_managed';
+  destination: ReportingDatasetShareDestination;
+}
+export interface WarehouseMaterialization {
+  /**
+   * Exact-revision publication into a warehouse relation or partition.
+   */
+  pattern: 'warehouse_materialization';
+  /**
+   * Warehouse or transfer transport such as bigquery, snowflake, databricks_sql, or gam_bigquery_transfer.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z][a-z0-9_.-]*$
+   */
+  transport: string;
+  /**
+   * Party responsible for starting and monitoring materialization. consumer_managed covers platform transfer services that physically write consumer-owned tables.
+   */
+  orchestration: 'producer_managed' | 'consumer_managed';
+  destination: ReportingWriteDestination;
+}
+/**
+ * Structured reporting condition that explains delayed or action_required health without exposing credentials, provider response bodies, or internal stack traces.
+ */
+export interface ReportingStatusIssue {
+  code:
+    | 'REPORT_OVERDUE'
+    | 'PRODUCTION_FAILED'
+    | 'DELIVERY_FAILED'
+    | 'ACCESS_REQUIRED'
+    | 'CONFIGURATION_REQUIRED'
+    | 'REPORTING_COVERAGE_INCOMPLETE'
+    | 'RESOURCE_EXPIRED'
+    | 'READER_INCOMPATIBLE'
+    | 'HISTORY_UNAVAILABLE';
+  severity: 'delayed' | 'action_required';
+  responsible_party: 'buyer' | 'seller' | 'provider';
+  recommended_action:
+    | 'wait_for_retry'
+    | 'contact_buyer'
+    | 'contact_seller'
+    | 'contact_provider'
+    | 'repair_access'
+    | 'update_configuration'
+    | 'change_reporting_scope'
+    | 'use_supported_reader';
+  /**
+   * Untrusted display text only. SDKs and agents dispatch exclusively on closed code/recommended_action values and never execute embedded links or instructions.
+   * @maxLength 500
+   */
+  message?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  reporting_obligation_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  delivery_config_id?: string;
+  /**
+   * @minimum 1
+   * @format int
+   */
+  delivery_config_version?: number;
+  feed_purpose?: 'pacing' | 'analytics' | 'billing';
+  media_buy_ids?: string[];
+  package_ids?: string[];
+  /**
+   * @format date-time
+   */
+  period_start?: string;
+  /**
+   * @format date-time
+   */
+  period_end?: string;
+  /**
+   * @format date-time
+   */
+  expected_at?: string;
+}
+
+
+// core/reporting-delivery-ready-webhook.json
+/**
+ * Compact account-anchored readiness doorbell registered through sync_accounts notification_configs using reporting.delivery_ready. The named revision/materialization MUST already be observable through the intended consumer path. Transport retries are deduplicated by (authenticated sender, idempotency_key); downstream ingestion is deduplicated independently by reporting_revision_id and reporting_materialization_id. Ordering is unconstrained and receivers repair through authenticated get_reporting_status. The event MUST be signed using the advertised AdCP webhook-signing profile and MUST NOT contain rows, object lists, signed URLs, activation URLs, credentials, or access tokens.
+ */
+export interface ReportingDeliveryReadyWebhook {
+  /**
+   * Stable across transport retries of this fire; new for a later re-emission.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
+   */
+  idempotency_key: string;
+  /**
+   * Stable for this logical materialization-ready event across re-emissions.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  notification_id: string;
+  notification_type: 'reporting.delivery_ready';
+  /**
+   * @format date-time
+   */
+  fired_at: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  subscriber_id: string;
+  /**
+   * @minLength 1
+   */
+  account_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  delivery_config_id: string;
+  /**
+   * @minimum 1
+   * @format int
+   */
+  delivery_config_version: number;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  reporting_revision_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  reporting_materialization_id: string;
+  readiness: 'available' | 'delivered';
+  finality: ReportingFinality;
+  /**
+   * @format date-time
+   */
+  data_through: string | null;
+  feed_purpose: 'pacing' | 'analytics' | 'billing';
+}
+
+
+// core/reporting-file-compression.json
+/**
+ * Physical compression applied to each data object listed by a reporting file manifest.
+ */
+export type ReportingFileCompression = 'none' | 'gzip' | 'zstd' | 'snappy';
+
+
+// core/reporting-file-entry.json
+/**
+ * One immutable data object committed by a reporting file manifest.
+ */
+export interface ReportingFileEntry {
+  /**
+   * Credential-free object identifier resolved through the configured destination.
+   * @minLength 1
+   * @maxLength 1024
+   */
+  object_ref: string;
+  /**
+   * @minimum 0
+   * @format int
+   */
+  size_bytes: number;
+  /**
+   * @pattern ^[A-Fa-f0-9]{64}$
+   */
+  sha256: string;
+  /**
+   * @minimum 0
+   * @format int
+   */
+  row_count: number;
+  partition?: {
+    /**
+     * @maxLength 512
+     */
+    [k: string]: string | undefined;
+  };
+}
+
+
+// core/reporting-file-manifest.json
+/**
+ * Normative manifest for one completed file-transfer materialization. Producers write every data object first and publish this manifest last. Its appearance is the commit point: consumers MUST ignore unlisted objects and MUST NOT process the materialization before a digest-valid complete manifest is visible.
+ */
+export interface ReportingFileManifest {
+  manifest_version: '1.0';
+  complete: true;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  reporting_revision_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  reporting_obligation_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  reporting_materialization_id: string;
+  period: {
+    /**
+     * @format date-time
+     */
+    start: string;
+    /**
+     * @format date-time
+     */
+    end: string;
+    /**
+     * @minLength 1
+     */
+    source_timezone: string;
+  };
+  format: 'jsonl' | 'csv' | 'parquet' | 'avro' | 'orc';
+  compression: ReportingFileCompression;
+  files: ReportingFileEntry[];
+  /**
+   * @minimum 0
+   * @format int
+   */
+  total_size_bytes: number;
+  /**
+   * @minimum 0
+   * @format int
+   */
+  row_count: number;
+  control_totals: ReportingControlTotal[];
+  /**
+   * @format date-time
+   */
+  created_at: string;
+}
+
+// core/reporting-materialization.json
+/**
+ * Assurance evidence used for one reporting materialization or receipt.
+ */
+export type ReportingVerificationProfile = 'native_commit' | 'manifest_checksums' | 'canonical_digest';
+
+/**
+ * One attempt to expose an immutable reporting revision through a configured durable delivery method. Automated retry creates a new materialization and attempt number while preserving reporting_revision_id. available is a verified producer-hosted pull/share claim; delivered is a verified recipient/destination claim. Existing per-buy inline reporting remains on its existing data API and is outside this v1 managed ledger.
+ */
+export interface ReportingMaterialization {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  reporting_materialization_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  reporting_revision_id: string;
+  /**
+   * Destination-specific obligation this materialization attempts to satisfy.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  reporting_obligation_id: string;
+  /**
+   * Durable configuration that requested this materialization.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  delivery_config_id: string;
+  /**
+   * @minimum 1
+   * @format int
+   */
+  delivery_config_version: number;
+  /**
+   * Immutable caller-owned destination generation selected by the account-authorized obligation. It may be reused by the same caller across other independently authorized accounts.
+   * @minLength 1
+   * @maxLength 255
+   */
+  destination_ref: string;
+  feed_purpose: 'pacing' | 'analytics' | 'billing';
+  method: 'file_transfer' | 'dataset_share' | 'warehouse_materialization';
+  /**
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z][a-z0-9_.-]*$
+   */
+  transport?: string;
+  /**
+   * @minimum 1
+   * @format int
+   */
+  attempt: number;
+  /**
+   * Lifecycle of this attempt. pending may transition once to available, delivered, or failed; terminal evidence is immutable. Staleness is evaluated in get_reporting_status health, not stored as a materialization state.
+   */
+  status: 'pending' | 'available' | 'delivered' | 'failed';
+  /**
+   * When consumer-path or destination verification completed.
+   * @format date-time
+   */
+  ready_at?: string;
+  /**
+   * @format date-time
+   */
+  failed_at?: string;
+  /**
+   * Stable safe failure classification. MUST NOT include credentials or provider response bodies.
+   * @minLength 1
+   * @maxLength 128
+   * @pattern ^[A-Z][A-Z0-9_]*$
+   */
+  failure_code?: string;
+  resource?: ReportingResource;
+  verification?: ReportingVerification;
+  /**
+   * @format date-time
+   */
+  created_at: string;
+}
+/**
+ * Secret-free authenticated descriptor for an exact reporting materialization. The descriptor MUST select immutable bytes or a provider-native immutable snapshot/version so an exact older revision never resolves to mutable latest state. Callers resolve access through the previously validated caller/account-bound destination/share binding, never from credentials embedded here. No field, including future extensions, may contain credentials, signed URLs, bearer material, or private keys.
+ */
+export interface ReportingResource {
+  /**
+   * Seller-issued opaque reference to this exact authenticated resource descriptor.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  resource_ref: string;
+  /**
+   * Shape through which the durable revision is consumed.
+   */
+  kind: 'manifest' | 'dataset' | 'warehouse_relation';
+  /**
+   * Non-secret provider-native object, relation, or share identifier. MUST NOT contain an activation URL, signed URL, bearer token, password, private key, or embedded credential.
+   * @minLength 1
+   * @maxLength 2048
+   */
+  location: string;
+  /**
+   * Optional immutable provider-native table version, transaction, snapshot, manifest generation, job, or run reference. It supplements but never replaces reporting_revision_id.
+   * @minLength 1
+   * @maxLength 512
+   */
+  native_version_ref?: string;
+  /**
+   * Version of reporting-file-manifest.json used by a manifest resource.
+   */
+  manifest_version?: '1.0';
+  /**
+   * SHA-256 over the exact manifest bytes. Consumers verify this before parsing the manifest.
+   * @pattern ^[A-Fa-f0-9]{64}$
+   */
+  manifest_sha256?: string;
+  /**
+   * How this descriptor selects the exact immutable materialization.
+   */
+  immutability: 'immutable_location' | 'native_version';
+  /**
+   * Mandatory finite lower-bound endpoint through which this exact resource remains resolvable; it cannot be earlier than the advertised retention contract.
+   * @format date-time
+   */
+  expires_at: string;
+  /**
+   * Reader features or format constraints required to consume this resource. Readiness verification MUST use a representative supported reader.
+   */
+  reader_compatibility?: string[];
+}
+/**
+ * Producer evidence for one materialization, with an explicit assurance profile. Native commit and manifest profiles prove a committed destination plus row counts and control totals without claiming full logical-content equality. canonical_digest adds exact logical equality and is required for billing. A separate authenticated consumer receipt records what the consumer actually reconciled.
+ */
+export interface ReportingVerification {
+  /**
+   * When the producer completed verification through the claimed consumer/destination path.
+   * @format date-time
+   */
+  verified_at: string;
+  /**
+   * Path on which verification succeeded. dataset_share readiness requires representative_consumer; delivered warehouse state requires destination.
+   */
+  verification_path: 'producer' | 'representative_consumer' | 'destination';
+  verification_profile: ReportingVerificationProfile;
+  /**
+   * Verified row count. Zero explicitly distinguishes an empty committed revision from a missing revision.
+   * @minimum 0
+   * @format int
+   */
+  row_count: number;
+  /**
+   * Profile-defined totals recomputed through verification_path. Names MUST be unique.
+   */
+  control_totals: ReportingControlTotal[];
+  canonical_content_digest?: ReportingCanonicalContentDigest;
+  /**
+   * Method-specific byte/object checksums. Different encodings of the same logical revision normally have different values.
+   */
+  physical_checksums?: {
+    /**
+     * @minLength 1
+     * @maxLength 1024
+     */
+    object_ref: string;
+    algorithm: 'sha256' | 'sha512';
+    /**
+     * @pattern ^(?:[A-Fa-f0-9]{64}|[A-Fa-f0-9]{128})$
+     */
+    value: string;
+  }[];
+  /**
+   * Provider-native immutable version evidence observed through the named consumer or destination path.
+   */
+  native_commit_evidence?: {
+    /**
+     * @minLength 1
+     * @maxLength 512
+     */
+    native_version_ref: string;
+    observed_through: 'representative_consumer' | 'destination';
+  };
+}
+
+// core/reporting-obligation.json
+/**
+ * Period-level status joining what reporting was expected to any produced immutable revisions and delivery materializations. An obligation exists before its first revision or webhook, making missing-first-report detection possible. All nested revisions and materializations MUST match this obligation's authenticated caller/account, configuration generation, report definition, feed, period, and scope.
+ */
+export interface ReportingObligation {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  reporting_obligation_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  delivery_config_id: string;
+  /**
+   * @minimum 1
+   * @format int
+   */
+  delivery_config_version: number;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  report_definition_id: string;
+  feed_purpose: 'pacing' | 'analytics' | 'billing';
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  reporting_profile: string;
+  /**
+   * @minLength 1
+   */
+  account_id: string;
+  /**
+   * Exact frozen media-buy denominator resolved for this period, including buys with zero rows. An empty array is the definitive zero-buy set; omission is never used to mean all, empty, or unknown.
+   */
+  media_buy_ids: string[];
+  /**
+   * Instant at which the configured scope was resolved and frozen for this obligation. For all_media_buys, include every caller-authorized account media buy whose effective flight overlaps the half-open period and was known by this cutoff. Later-created or backdated buys do not rewrite this obligation.
+   * @format date-time
+   */
+  scope_resolved_at: string;
+  coverage: ReportingCoverage;
+  period: {
+    /**
+     * @format date-time
+     */
+    start: string;
+    /**
+     * @format date-time
+     */
+    end: string;
+    /**
+     * @minLength 1
+     */
+    source_timezone: string;
+  };
+  /**
+   * @format date-time
+   */
+  expected_at: string;
+  schedule: ReportingSchedule;
+  /**
+   * Immutable caller-owned destination generation selected by this account-authorized obligation. The account/configuration join—not possession of this reusable reference—authorizes disclosure.
+   * @minLength 1
+   * @maxLength 255
+   */
+  destination_ref: string;
+  required_finality: ReportingFinality;
+  reconciliation_mode: ReportingReconciliationMode;
+  /**
+   * Consumer agreement state for the current required revision. A later superseding revision returns a receipt-required obligation to pending until that revision is accepted.
+   */
+  reconciliation_status: 'not_required' | 'pending' | 'accepted' | 'rejected';
+  health: ReportingHealth;
+  /**
+   * Whether any revision has been produced for this obligation. published includes zero-row revisions.
+   */
+  production_status: 'not_due' | 'pending' | 'published' | 'failed';
+  /**
+   * Number of revision records for this obligation in the consistent ledger snapshot.
+   * @minimum 0
+   * @format int
+   */
+  revision_count: number;
+  /**
+   * Number of materialization records for this obligation's revisions in the consistent ledger snapshot.
+   * @minimum 0
+   * @format int
+   */
+  materialization_count: number;
+  /**
+   * Number of available/delivered verified materializations in the consistent ledger snapshot.
+   * @minimum 0
+   * @format int
+   */
+  successful_materialization_count: number;
+  /**
+   * Complete number of authenticated receipts associated with this obligation in the ledger snapshot.
+   * @minimum 0
+   * @format int
+   */
+  receipt_count: number;
+  /**
+   * Number of accepted receipts. At most one current accepted receipt per consumer and revision contributes to reconciliation_status.
+   * @minimum 0
+   * @format int
+   */
+  accepted_receipt_count: number;
+  issues: ReportingStatusIssue[];
+  /**
+   * Minimum time through which at least one verified materialization for a completed obligation remains readable.
+   * @format date-time
+   */
+  resource_retained_until?: string;
+}
+
+// core/reporting-receipt.json
+/**
+ * Authenticated consumer evidence for one materialization. A receipt closes the knowledge gap between producer availability and consumer reconciliation. Buyer and governance consumers submit independently; neither consumer's receipt implies acceptance by another principal.
+ */
+export interface ReportingReceipt {
+  /**
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
+   */
+  reporting_receipt_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  reporting_obligation_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  reporting_revision_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  reporting_materialization_id: string;
+  status: 'accepted' | 'rejected';
+  verification_profile: ReportingVerificationProfile;
+  /**
+   * @minimum 0
+   * @format int
+   */
+  observed_row_count: number;
+  observed_control_totals: ReportingControlTotal[];
+  observed_canonical_content_digest?: ReportingCanonicalContentDigest;
+  /**
+   * @pattern ^[A-Fa-f0-9]{64}$
+   */
+  observed_manifest_sha256?: string;
+  /**
+   * Immutable provider-native version observed by the consumer for native_commit verification.
+   * @minLength 1
+   * @maxLength 512
+   */
+  observed_native_version_ref?: string;
+  /**
+   * Optional non-secret consumer checkpoint, transaction, or load identifier. It is evidence for operations, not authorization or a credential.
+   * @minLength 1
+   * @maxLength 512
+   */
+  consumer_commit_ref?: string;
+  rejection_codes?: string[];
+  /**
+   * @format date-time
+   */
+  observed_at: string;
+  /**
+   * @format date-time
+   */
+  received_at?: string;
+}
+
+// core/reporting-report-definition.json
+/**
+ * Immutable, inspectable semantic contract for how a reporting feed is produced and finalized. Its exact bytes are pinned by report_definition_sha256.
+ */
+export interface ReportingReportDefinition {
+  contract_version: '1.0';
+  media_type: 'application/vnd.adcp.reporting-definition+json';
+  /**
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  report_definition_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  reporting_profile: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  grain: string;
+  source: {
+    provider: {
+      /**
+       * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+       */
+      domain: string;
+    };
+    /**
+     * @minLength 1
+     * @maxLength 128
+     */
+    system: string;
+    /**
+     * @minLength 1
+     * @maxLength 128
+     */
+    api_version: string;
+    /**
+     * Canonical JSON object containing every source option that can change the numbers, including attribution settings, action-report-time, filters, and mapping version.
+     */
+    query_semantics: {};
+  };
+  calendar: {
+    timezone_basis: 'utc' | 'account_timezone' | 'configured_timezone';
+    /**
+     * @minLength 1
+     * @maxLength 255
+     */
+    timezone?: string;
+  };
+  metrics: {
+    /**
+     * @minLength 1
+     * @maxLength 128
+     */
+    name: string;
+    /**
+     * @minLength 1
+     * @maxLength 2048
+     */
+    source_expression: string;
+    aggregation: 'sum' | 'count' | 'min' | 'max' | 'average' | 'ratio' | 'last' | 'custom';
+    /**
+     * @minLength 1
+     * @maxLength 64
+     */
+    unit?: string;
+  }[];
+  dimensions: string[];
+  restatement_policy: {
+    /**
+     * @pattern ^P(?=\d|T)(?=.*\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$
+     */
+    source_requery_duration: string;
+    emit_only_on_content_change: true;
+  };
+  finality_policies: (
+    | {
+        /**
+         * @minLength 1
+         * @maxLength 255
+         * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+         */
+        finality_policy_id: string;
+        basis: 'source_final';
+        /**
+         * @minLength 1
+         * @maxLength 512
+         */
+        source_signal: string;
+      }
+    | {
+        /**
+         * @minLength 1
+         * @maxLength 255
+         * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+         */
+        finality_policy_id: string;
+        basis: 'contractual_cutoff';
+        /**
+         * @pattern ^P(?=\d|T)(?=.*\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$
+         */
+        duration_after_period_end: string;
+      }
+    | {
+        /**
+         * @minLength 1
+         * @maxLength 255
+         * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+         */
+        finality_policy_id: string;
+        basis: 'stabilized';
+        /**
+         * @pattern ^P(?=\d|T)(?=.*\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$
+         */
+        minimum_age: string;
+        /**
+         * @pattern ^P(?=\d|T)(?=.*\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$
+         */
+        unchanged_for: string;
+      }
+  )[];
+}
+
+
+// core/reporting-revision.json
+/**
+ * One immutable emitted version of logical reporting content. The revision is destination-independent: one canonical revision may fan out through many caller/account-bound obligations and materializations, including file, warehouse, and dataset-share destinations. The report_definition_id plus period and scope identify the logical slice; restatements create a new revision and preserve the superseded revision for the advertised retention window.
+ */
+export interface ReportingRevision {
+  /**
+   * Portable AdCP identity for this immutable report publication. Distinct from package delivery_revision_id and provider-native versions.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  reporting_revision_id: string;
+  /**
+   * Identity or canonical fingerprint of immutable metric, grain, attribution, breakdown, action-definition, profile, and calendar/timezone semantics.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  report_definition_id: string;
+  /**
+   * @pattern ^https:\/\/(?![^\/]*@)(?!localhost(?:[:\/]|$))(?!\[)(?!\d+(?:\.\d+){3}(?::|\/|$))(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:\/|$)
+   */
+  report_definition_uri: string;
+  /**
+   * @pattern ^[A-Fa-f0-9]{64}$
+   */
+  report_definition_sha256: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  reporting_profile: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  schema_version: string;
+  /**
+   * Machine-readable schema on the authenticated seller/provider or AdCP-registry origin.
+   * @pattern ^https:\/\/(?![^\/]*@)(?!localhost(?:[:\/]|$))(?!\[)(?!\d+(?:\.\d+){3}(?::|\/|$))(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:\/|$)
+   */
+  schema_uri: string;
+  /**
+   * Digest of the exact schema bytes used to validate this immutable revision.
+   * @pattern ^[A-Fa-f0-9]{64}$
+   */
+  schema_sha256: string;
+  /**
+   * Closed SDK-bundled dialect; the metaschema is never network-fetched.
+   */
+  schema_dialect: 'https://json-schema.org/draft/2020-12/schema';
+  /**
+   * The fetched schema is self-contained and every $ref is a local # fragment.
+   */
+  schema_ref_policy: 'local_fragment_only';
+  /**
+   * @minLength 1
+   */
+  account_id: string;
+  /**
+   * Exact frozen media-buy denominator inherited from the obligation, including buys with zero rows. An empty array proves a zero-buy period rather than an unknown denominator.
+   */
+  media_buy_ids: string[];
+  coverage: ReportingCoverage;
+  /**
+   * Half-open reporting interval with its source calendar boundary.
+   */
+  period: {
+    /**
+     * @format date-time
+     */
+    start: string;
+    /**
+     * @format date-time
+     */
+    end: string;
+    /**
+     * @minLength 1
+     */
+    source_timezone: string;
+  };
+  finality: ReportingFinality;
+  /**
+   * Why an official revision is considered final: an authoritative source signal, a versioned contractual cutoff, or a versioned stabilization rule.
+   */
+  finality_basis?: 'source_final' | 'contractual_cutoff' | 'stabilized';
+  /**
+   * Immutable policy/version reference that defines the selected finality basis. It MUST be bound by report_definition_id.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  finality_policy_id?: string;
+  /**
+   * When the producer applied the declared finality basis to this official revision.
+   * @format date-time
+   */
+  finalized_at?: string;
+  /**
+   * When the seller obtained or committed this source observation.
+   * @format date-time
+   */
+  observed_at: string;
+  /**
+   * Latest event time conservatively included, or null when precision is unknown.
+   * @format date-time
+   */
+  data_through: string | null;
+  data_through_precision: 'exact' | 'lower_bound' | 'unknown';
+  /**
+   * Immediately superseded revision of the same logical slice. Both snapshot and official revisions may be superseded.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  supersedes_reporting_revision_id?: string;
+  /**
+   * Logical row count, including zero for a successfully evaluated empty report.
+   * @minimum 0
+   * @format int
+   */
+  row_count: number;
+  /**
+   * Profile-defined totals computed from the canonical logical revision. Names MUST be unique.
+   */
+  control_totals: ReportingControlTotal[];
+  canonical_content_digest?: ReportingCanonicalContentDigest;
+  /**
+   * @format date-time
+   */
+  created_at: string;
+}
+
 // core/reporting-webhook.json
 /**
  * Webhook configuration for automated reporting delivery. Configures where and how campaign performance reports are sent.
@@ -34843,6 +36610,18 @@ export interface TasksGetResponse {
 
 // core/tasks-list-request.json
 /**
+ * Re-export of `TaskType` under the legacy codegen artifact name.
+ *
+ * `TaskType1` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `TaskType` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `TaskType`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `TaskType` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type TaskType1 = TaskType;
+/**
  * Request parameters for listing and filtering async tasks across all AdCP protocols with state reconciliation capabilities
  */
 export interface TasksListRequest {
@@ -34874,7 +36653,7 @@ export interface TasksListRequest {
     /**
      * Filter by multiple task types
      */
-    task_types?: TaskType[];
+    task_types?: TaskType1[];
     /**
      * Filter tasks created after this date (ISO 8601)
      * @format date-time
@@ -35887,6 +37666,15 @@ export type XEntityTypes =
   | 'si_session'
   | 'offering'
   | 'vendor_metric'
+  | 'reporting_destination'
+  | 'reporting_offering'
+  | 'reporting_delivery_config'
+  | 'reporting_definition'
+  | 'reporting_obligation'
+  | 'reporting_revision'
+  | 'reporting_materialization'
+  | 'reporting_receipt'
+  | 'reporting_resource'
   | 'identity_relying_party';
 
 

@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-29T06:09:27.041Z
+// Generated at: 2026-08-29T07:16:19.504Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -293,7 +293,7 @@ export const MoovAtomPositionSchema = z.union([z.literal("start"), z.literal("en
 
 export const CreativeMotionLevelSchema = z.union([z.literal("static"), z.literal("limited_motion"), z.literal("full_motion")]);
 
-export const NotificationTypeSchema = z.union([z.literal("scheduled"), z.literal("final"), z.literal("delayed"), z.literal("adjusted"), z.literal("window_update"), z.literal("impairment"), z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("capabilities.changed")]);
+export const NotificationTypeSchema = z.union([z.literal("scheduled"), z.literal("final"), z.literal("delayed"), z.literal("adjusted"), z.literal("window_update"), z.literal("impairment"), z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("capabilities.changed"), z.literal("reporting.delivery_ready")]);
 
 export const OfferingAvailabilityStatusSchema = z.union([z.literal("available"), z.literal("limited"), z.literal("sold_out"), z.literal("expired"), z.literal("region_restricted"), z.literal("inactive")]);
 
@@ -337,7 +337,11 @@ export const PurchaseTypeSchema = z.union([z.literal("media_buy"), z.literal("ri
 
 export const ReachUnitSchema = z.union([z.literal("individuals"), z.literal("households"), z.literal("devices"), z.literal("accounts"), z.literal("cookies"), z.literal("custom")]);
 
+export const ReportingFinalitySchema = z.union([z.literal("snapshot"), z.literal("official")]);
+
 export const ReportingFrequencySchema = z.union([z.literal("hourly"), z.literal("daily"), z.literal("weekly"), z.literal("monthly"), z.literal("quarterly"), z.literal("post_campaign")]);
+
+export const ReportingHealthSchema = z.union([z.literal("healthy"), z.literal("waiting"), z.literal("delayed"), z.literal("action_required"), z.literal("complete")]);
 
 export const RepresentationSelectionStrategySchema = z.union([z.literal("representation_order"), z.literal("highest_compatible_vast")]);
 
@@ -379,7 +383,7 @@ export const TalentRoleSchema = z.union([z.literal("host"), z.literal("guest"), 
 
 export const TaskStatusSchema = z.union([z.literal("submitted"), z.literal("working"), z.literal("input-required"), z.literal("completed"), z.literal("canceled"), z.literal("failed"), z.literal("rejected"), z.literal("auth-required"), z.literal("unknown")]);
 
-export const TaskTypeSchema = z.union([z.literal("create_media_buy"), z.literal("update_media_buy"), z.literal("buy_products"), z.literal("accept_proposal"), z.literal("control_media_buy"), z.literal("media_buy_delivery"), z.literal("sync_creatives"), z.literal("build_creative"), z.literal("preview_creative"), z.literal("activate_signal"), z.literal("get_products"), z.literal("request_proposals"), z.literal("refine_proposals"), z.literal("decline_proposals"), z.literal("get_signals"), z.literal("create_property_list"), z.literal("update_property_list"), z.literal("get_property_list"), z.literal("list_property_lists"), z.literal("delete_property_list"), z.literal("sync_accounts"), z.literal("get_account_financials"), z.literal("get_creative_delivery"), z.literal("sync_event_sources"), z.literal("sync_audiences"), z.literal("sync_catalogs"), z.literal("log_event"), z.literal("get_brand_identity"), z.literal("search_brands"), z.literal("get_rights"), z.literal("acquire_rights"), z.literal("update_rights"), z.literal("sync_agent_notification_configs")]);
+export const TaskTypeSchema = z.union([z.literal("create_media_buy"), z.literal("update_media_buy"), z.literal("buy_products"), z.literal("accept_proposal"), z.literal("control_media_buy"), z.literal("media_buy_delivery"), z.literal("sync_creatives"), z.literal("build_creative"), z.literal("preview_creative"), z.literal("activate_signal"), z.literal("get_products"), z.literal("request_proposals"), z.literal("refine_proposals"), z.literal("decline_proposals"), z.literal("get_signals"), z.literal("create_property_list"), z.literal("update_property_list"), z.literal("get_property_list"), z.literal("list_property_lists"), z.literal("delete_property_list"), z.literal("sync_accounts"), z.literal("get_account_financials"), z.literal("get_creative_delivery"), z.literal("sync_event_sources"), z.literal("sync_audiences"), z.literal("sync_catalogs"), z.literal("log_event"), z.literal("get_brand_identity"), z.literal("search_brands"), z.literal("get_rights"), z.literal("acquire_rights"), z.literal("update_rights"), z.literal("sync_agent_notification_configs"), z.literal("sync_agent_configuration"), z.literal("sync_reporting_receipts")]);
 
 export const TrackerExecutionActorSchema = z.union([z.literal("seller"), z.literal("request_executor")]);
 
@@ -5203,284 +5207,14 @@ export const AccountChangeSchema = z.object({
 export const ImpactSchema = z.object({
     area: z.union([z.literal("account_id"), z.literal("media_buys"), z.literal("reporting"), z.literal("approval"), z.literal("billing"), z.literal("grants"), z.literal("other")]),
     effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant"), z.literal("blocked")]),
-    reason: z.string().optional()
+    reason: z.string().min(1).max(1000).optional()
 }).passthrough();
 
-export const BlockedImpactsSchema = z.union([z.tuple([ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema]), z.tuple([ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema, ImpactSchema])]);
+export const BlockedImpactsSchema = z.array(ImpactSchema);
 
-export const NonblockingImpactsSchema = z.union([z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())]), z.tuple([ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough()), ImpactSchema.and(z.object({
-            effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
-        }).passthrough())])]);
+export const NonblockingImpactsSchema = z.array(ImpactSchema.and(z.object({
+    effect: z.union([z.literal("preserved"), z.literal("revalidation_required"), z.literal("revoke_and_regrant")]).optional()
+}).passthrough()));
 
 export const AccountIdentityChangeWouldRequireApprovalSchema = z.object({
     outcome: z.literal("would_require_approval"),
@@ -5514,12 +5248,80 @@ export const AccountStatusChangedWebhookSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const AccountTimezoneCapabilitySchema = z.object({}).passthrough().merge(z.object({
+export const AccountTimezoneCapabilitySchema = z.object({
     mode: z.union([z.literal("seller_fixed"), z.literal("account_fixed")]),
     fixed_timezone: z.string().min(1).optional(),
     account_selection: z.union([z.literal("seller_assigned"), z.literal("buyer_selected")]).optional(),
     supported_timezones: z.array(z.string()).optional()
-}).passthrough());
+}).passthrough();
+
+export const DeliveryProviderSchema = z.object({
+    domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/)
+}).passthrough();
+
+export const DeliveryRecipientSchema = z.object({
+    identity: z.string().min(1).max(512),
+    cloud: z.union([z.literal("aws"), z.literal("azure"), z.literal("gcp")]).optional(),
+    region: z.string().min(1).max(128).optional()
+}).passthrough();
+
+export const ReportingVerificationProfileSetSchema = z.array(z.union([z.literal("native_commit"), z.literal("manifest_checksums"), z.literal("canonical_digest")]));
+
+export const FileTransferDestinationSchema = z.object({
+    pattern: z.literal("file_transfer"),
+    destination_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]{1,64}$/),
+    active: z.boolean(),
+    provider: DeliveryProviderSchema,
+    transport: z.string().min(1).max(64).regex(/^[a-z][a-z0-9_.-]*$/),
+    location: z.string().min(1).max(2048).regex(/^(?![A-Za-z][A-Za-z0-9+.-]*:\/\/[^\/\s]*@)(?!.*\?)[^\r\n]+$/),
+    accepted_formats: z.array(z.union([z.literal("jsonl"), z.literal("csv"), z.literal("parquet"), z.literal("avro"), z.literal("orc")])),
+    accepted_verification_profiles: ReportingVerificationProfileSetSchema
+}).passthrough();
+
+export const WarehouseMaterializationDestinationSchema = z.object({
+    pattern: z.literal("warehouse_materialization"),
+    destination_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]{1,64}$/),
+    active: z.boolean(),
+    provider: DeliveryProviderSchema,
+    transport: z.string().min(1).max(64).regex(/^[a-z][a-z0-9_.-]*$/),
+    location: z.string().min(1).max(2048).regex(/^(?![A-Za-z][A-Za-z0-9+.-]*:\/\/[^\/\s]*@)(?!.*\?)[^\r\n]+$/),
+    accepted_verification_profiles: ReportingVerificationProfileSetSchema
+}).passthrough();
+
+export const DatasetShareRecipientSchema = z.object({
+    pattern: z.literal("dataset_share"),
+    destination_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]{1,64}$/),
+    active: z.boolean(),
+    provider: DeliveryProviderSchema,
+    transport: z.string().min(1).max(64).regex(/^[a-z][a-z0-9_.-]*$/),
+    access_mode: z.string().min(1).max(64).regex(/^[a-z][a-z0-9_.-]*$/),
+    recipient: DeliveryRecipientSchema,
+    accepted_verification_profiles: ReportingVerificationProfileSetSchema
+}).passthrough();
+
+export const AgentNotificationConfigStateSchema = z.object({
+    subscriber_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]{1,64}$/),
+    url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+    event_types: z.array(z.literal("capabilities.changed")),
+    authentication: z.object({
+        schemes: z.array(AuthenticationSchemeSchema)
+    }).passthrough().optional(),
+    active: z.boolean().optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const AgentReportingDestinationSchema = z.object({
+    pattern: z.union([z.literal("file_transfer"), z.literal("warehouse_materialization"), z.literal("dataset_share")]),
+    destination_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]{1,64}$/),
+    active: z.boolean(),
+    provider: DeliveryProviderSchema,
+    transport: z.string().min(1).max(64).regex(/^[a-z][a-z0-9_.-]*$/),
+    location: z.string().min(1).max(2048).regex(/^(?![A-Za-z][A-Za-z0-9+.-]*:\/\/[^\/\s]*@)(?!.*\?)[^\r\n]+$/).optional(),
+    accepted_formats: z.array(z.union([z.literal("jsonl"), z.literal("csv"), z.literal("parquet"), z.literal("avro"), z.literal("orc")])).optional(),
+    access_mode: z.string().min(1).max(64).regex(/^[a-z][a-z0-9_.-]*$/).optional(),
+    recipient: DeliveryRecipientSchema.optional(),
+    accepted_verification_profiles: ReportingVerificationProfileSetSchema
+}).passthrough().and(z.union([FileTransferDestinationSchema, WarehouseMaterializationDestinationSchema, DatasetShareRecipientSchema]));
 
 export const AgentEncryptionKeySchema = z.object({
     kid: z.string().max(8),
@@ -5854,11 +5656,11 @@ export const CreativeItemSchema = z.union([z.object({
 
 export const CreativeOperationFormatDeclarationSchema = z.object({}).passthrough().merge(z.object({
     format_option_id: z.string().optional(),
-    publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).optional(),
+    publisher_domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/).optional(),
     macro_resolution_capabilities: z.array(MacroProcessingCapabilitySchema).optional(),
     technical_requirements_complete: z.boolean().optional(),
     display_name: z.string().optional(),
-    sample_render_url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+    sample_render_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(/^https:\/\//).optional(),
     applies_to_channels: z.array(MediaChannelSchema).optional(),
     seller_preference: z.union([z.literal("preferred"), z.literal("accepted"), z.literal("discouraged")]).optional(),
     locale_policy: CreativeLocalePolicySchema.optional(),
@@ -6606,6 +6408,327 @@ export const CompliancePayloadSchema = z.object({
 
 export const Property1Schema = PropertySchema;
 
+export const ReportingCanonicalContentDigestSchema = z.object({
+    algorithm: z.literal("sha256"),
+    value: z.string().regex(/^[A-Fa-f0-9]{64}$/),
+    canonicalization_id: z.string().min(1).max(128),
+    canonicalization_uri: z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(/^https:\/\/(?![^\/]*@)(?!localhost(?:[:\/]|$))(?!\[)(?!\d+(?:\.\d+){3}(?::|\/|$))(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:\/|$)/),
+    canonicalization_sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/)
+}).passthrough();
+
+export const ReportingCanonicalizationContractSchema = z.object({
+    contract_version: z.literal("1.0"),
+    media_type: z.literal("application/vnd.adcp.reporting-canonicalization+json"),
+    algorithm: z.literal("adcp_jcs_rows_v1"),
+    schema_sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/),
+    primary_keys: z.array(z.string()),
+    golden_vectors: z.array(z.object({
+        name: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]{1,128}$/),
+        input_rows: z.array(z.object({}).passthrough()),
+        canonical_utf8_base64: z.string().min(1),
+        sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/)
+    }).passthrough())
+}).passthrough();
+
+export const ReportingControlTotalSchema = z.object({
+    name: z.string().min(1).max(128).regex(/^[A-Za-z][A-Za-z0-9_.:-]{0,127}$/),
+    value: z.string().regex(/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/),
+    value_type: z.union([z.literal("integer"), z.literal("decimal")]),
+    unit: z.string().min(1).max(32).optional()
+}).passthrough();
+
+export const ReportingCoverageSchema = z.object({
+    status: z.union([z.literal("full"), z.literal("partial"), z.literal("none"), z.literal("unknown")]),
+    evaluated_at: z.iso.datetime(),
+    media_buy_ids: z.array(z.string()),
+    fully_covered_media_buy_ids: z.array(z.string()),
+    partially_covered_media_buy_ids: z.array(z.string()),
+    unsupported_media_buy_ids: z.array(z.string()),
+    unknown_media_buy_ids: z.array(z.string()),
+    package_ids: z.array(z.string()),
+    covered_package_ids: z.array(z.string()),
+    unsupported_package_ids: z.array(z.string()),
+    unknown_package_ids: z.array(z.string()),
+    limitations: z.array(z.object({
+        reason: z.union([z.literal("offering_unsupported"), z.literal("account_entitlement_unavailable"), z.literal("credential_scope_insufficient"), z.literal("provider_limitation"), z.literal("capability_unknown")]),
+        media_buy_id: z.string().min(1),
+        package_ids: z.array(z.string()).optional()
+    }).passthrough())
+}).passthrough();
+
+export const ExistingBindingSchema = z.object({
+    mode: z.literal("existing"),
+    destination_ref: z.string().min(1).max(255)
+}).passthrough();
+
+export const ProvisionRecipientSchema = z.object({
+    mode: z.literal("provision"),
+    provider: z.object({
+        domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/)
+    }).passthrough(),
+    access_mode: z.string().min(1).max(64).regex(/^[a-z][a-z0-9_.-]*$/),
+    recipient: z.object({
+        identity: z.string().min(1).max(512),
+        cloud: z.union([z.literal("aws"), z.literal("azure"), z.literal("gcp")]).optional(),
+        region: z.string().min(1).max(128).optional()
+    }).passthrough()
+}).passthrough();
+
+export const ReportingReconciliationModeSchema = z.union([z.literal("delivery_only"), z.literal("consumer_receipt")]);
+
+export const ReportingScheduleOfferingSchema = z.object({
+    period_duration: z.string().regex(/^P(?=.*[1-9])(?=\d|T)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$/),
+    alignment: z.union([z.literal("utc"), z.literal("account_timezone"), z.literal("billing_cycle")]),
+    period_anchor_policy: z.union([z.literal("fixed"), z.literal("configurable")]).optional(),
+    period_anchor: z.iso.datetime().optional(),
+    period_timezone: z.string().min(1).max(255).optional(),
+    delivery_sla: z.string().regex(/^P(?=\d|T)(?=.*\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$/)
+}).passthrough();
+
+export const ProvisionBindingSchema = z.object({
+    mode: z.literal("provision"),
+    provider: z.object({
+        domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/)
+    }).passthrough(),
+    location: z.string().min(1).max(2048),
+    access_mode: z.string().min(1).max(64).regex(/^[a-z][a-z0-9_.-]*$/).optional()
+}).passthrough();
+
+export const ReportingStatusIssueSchema = z.object({
+    code: z.union([z.literal("REPORT_OVERDUE"), z.literal("PRODUCTION_FAILED"), z.literal("DELIVERY_FAILED"), z.literal("ACCESS_REQUIRED"), z.literal("CONFIGURATION_REQUIRED"), z.literal("REPORTING_COVERAGE_INCOMPLETE"), z.literal("RESOURCE_EXPIRED"), z.literal("READER_INCOMPATIBLE"), z.literal("HISTORY_UNAVAILABLE")]),
+    severity: z.union([z.literal("delayed"), z.literal("action_required")]),
+    responsible_party: z.union([z.literal("buyer"), z.literal("seller"), z.literal("provider")]),
+    recommended_action: z.union([z.literal("wait_for_retry"), z.literal("contact_buyer"), z.literal("contact_seller"), z.literal("contact_provider"), z.literal("repair_access"), z.literal("update_configuration"), z.literal("change_reporting_scope"), z.literal("use_supported_reader")]),
+    message: z.string().max(500).optional(),
+    reporting_obligation_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/).optional(),
+    delivery_config_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]{1,64}$/).optional(),
+    delivery_config_version: z.int().min(1).optional(),
+    feed_purpose: z.union([z.literal("pacing"), z.literal("analytics"), z.literal("billing")]).optional(),
+    media_buy_ids: z.array(z.string()).optional(),
+    package_ids: z.array(z.string()).optional(),
+    period_start: z.iso.datetime().optional(),
+    period_end: z.iso.datetime().optional(),
+    expected_at: z.iso.datetime().optional()
+}).passthrough();
+
+export const ReportingScheduleSchema = z.object({
+    period_duration: z.string().regex(/^P(?=.*[1-9])(?=\d|T)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$/),
+    alignment: z.union([z.literal("utc"), z.literal("account_timezone"), z.literal("billing_cycle")]),
+    period_anchor: z.iso.datetime().optional(),
+    period_timezone: z.string().min(1).max(255).optional(),
+    delivery_sla: z.string().regex(/^P(?=\d|T)(?=.*\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$/)
+}).passthrough();
+
+export const ReportingWriteDestinationSchema = z.union([ExistingBindingSchema, ProvisionBindingSchema]);
+
+export const ReportingDeliveryReadyWebhookSchema = z.object({
+    idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
+    notification_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    notification_type: z.literal("reporting.delivery_ready"),
+    fired_at: z.iso.datetime(),
+    subscriber_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]{1,64}$/),
+    account_id: z.string().min(1),
+    delivery_config_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]{1,64}$/),
+    delivery_config_version: z.int().min(1),
+    reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    reporting_materialization_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    readiness: z.union([z.literal("available"), z.literal("delivered")]),
+    finality: ReportingFinalitySchema,
+    data_through: z.iso.datetime().nullable(),
+    feed_purpose: z.union([z.literal("pacing"), z.literal("analytics"), z.literal("billing")])
+}).passthrough();
+
+export const ReportingFileCompressionSchema = z.union([z.literal("none"), z.literal("gzip"), z.literal("zstd"), z.literal("snappy")]);
+
+export const ReportingFileEntrySchema = z.object({
+    object_ref: z.string().min(1).max(1024),
+    size_bytes: z.int().min(0),
+    sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/),
+    row_count: z.int().min(0),
+    partition: z.record(z.string(), z.string()).optional()
+}).passthrough();
+
+export const ReportingFileManifestSchema = z.object({
+    manifest_version: z.literal("1.0"),
+    complete: z.literal(true),
+    reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    reporting_obligation_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    reporting_materialization_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    period: z.object({
+        start: z.iso.datetime(),
+        end: z.iso.datetime(),
+        source_timezone: z.string().min(1)
+    }).passthrough(),
+    format: z.union([z.literal("jsonl"), z.literal("csv"), z.literal("parquet"), z.literal("avro"), z.literal("orc")]),
+    compression: ReportingFileCompressionSchema,
+    files: z.array(ReportingFileEntrySchema),
+    total_size_bytes: z.int().min(0),
+    row_count: z.int().min(0),
+    control_totals: z.array(ReportingControlTotalSchema),
+    created_at: z.iso.datetime()
+}).passthrough();
+
+export const ReportingVerificationProfileSchema = z.union([z.literal("native_commit"), z.literal("manifest_checksums"), z.literal("canonical_digest")]);
+
+export const ReportingResourceSchema = z.object({
+    resource_ref: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    kind: z.union([z.literal("manifest"), z.literal("dataset"), z.literal("warehouse_relation")]),
+    location: z.string().min(1).max(2048),
+    native_version_ref: z.string().min(1).max(512).optional(),
+    manifest_version: z.literal("1.0").optional(),
+    manifest_sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/).optional(),
+    immutability: z.union([z.literal("immutable_location"), z.literal("native_version")]),
+    expires_at: z.iso.datetime(),
+    reader_compatibility: z.array(z.string()).optional()
+}).passthrough();
+
+export const ReportingVerificationSchema = z.object({
+    verified_at: z.iso.datetime(),
+    verification_path: z.union([z.literal("producer"), z.literal("representative_consumer"), z.literal("destination")]),
+    verification_profile: ReportingVerificationProfileSchema,
+    row_count: z.int().min(0),
+    control_totals: z.array(ReportingControlTotalSchema),
+    canonical_content_digest: ReportingCanonicalContentDigestSchema.optional(),
+    physical_checksums: z.array(z.object({
+        object_ref: z.string().min(1).max(1024),
+        algorithm: z.union([z.literal("sha256"), z.literal("sha512")]),
+        value: z.string().regex(/^(?:[A-Fa-f0-9]{64}|[A-Fa-f0-9]{128})$/)
+    }).passthrough()).optional(),
+    native_commit_evidence: z.object({
+        native_version_ref: z.string().min(1).max(512),
+        observed_through: z.union([z.literal("representative_consumer"), z.literal("destination")])
+    }).passthrough().optional()
+}).passthrough();
+
+export const ReportingObligationSchema = z.object({
+    reporting_obligation_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    delivery_config_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]{1,64}$/),
+    delivery_config_version: z.int().min(1),
+    report_definition_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    feed_purpose: z.union([z.literal("pacing"), z.literal("analytics"), z.literal("billing")]),
+    reporting_profile: z.string().min(1).max(128),
+    account_id: z.string().min(1),
+    media_buy_ids: z.array(z.string()),
+    scope_resolved_at: z.iso.datetime(),
+    coverage: ReportingCoverageSchema,
+    period: z.object({
+        start: z.iso.datetime(),
+        end: z.iso.datetime(),
+        source_timezone: z.string().min(1)
+    }).passthrough(),
+    expected_at: z.iso.datetime(),
+    schedule: ReportingScheduleSchema,
+    destination_ref: z.string().min(1).max(255),
+    required_finality: ReportingFinalitySchema,
+    reconciliation_mode: ReportingReconciliationModeSchema,
+    reconciliation_status: z.union([z.literal("not_required"), z.literal("pending"), z.literal("accepted"), z.literal("rejected")]),
+    health: ReportingHealthSchema,
+    production_status: z.union([z.literal("not_due"), z.literal("pending"), z.literal("published"), z.literal("failed")]),
+    revision_count: z.int().min(0),
+    materialization_count: z.int().min(0),
+    successful_materialization_count: z.int().min(0),
+    receipt_count: z.int().min(0),
+    accepted_receipt_count: z.int().min(0),
+    issues: z.array(ReportingStatusIssueSchema),
+    resource_retained_until: z.iso.datetime().optional()
+}).passthrough();
+
+export const ReportingReceiptSchema = z.object({
+    reporting_receipt_id: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
+    reporting_obligation_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    reporting_materialization_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    status: z.union([z.literal("accepted"), z.literal("rejected")]),
+    verification_profile: ReportingVerificationProfileSchema,
+    observed_row_count: z.int().min(0),
+    observed_control_totals: z.array(ReportingControlTotalSchema),
+    observed_canonical_content_digest: ReportingCanonicalContentDigestSchema.optional(),
+    observed_manifest_sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/).optional(),
+    observed_native_version_ref: z.string().min(1).max(512).optional(),
+    consumer_commit_ref: z.string().min(1).max(512).optional(),
+    rejection_codes: z.array(z.string()).optional(),
+    observed_at: z.iso.datetime(),
+    received_at: z.iso.datetime().optional()
+}).passthrough();
+
+export const ReportingReportDefinitionSchema = z.object({
+    contract_version: z.literal("1.0"),
+    media_type: z.literal("application/vnd.adcp.reporting-definition+json"),
+    report_definition_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    reporting_profile: z.string().min(1).max(128),
+    grain: z.string().min(1).max(128),
+    source: z.object({
+        provider: z.object({
+            domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/)
+        }).passthrough(),
+        system: z.string().min(1).max(128),
+        api_version: z.string().min(1).max(128),
+        query_semantics: z.object({}).passthrough()
+    }).passthrough(),
+    calendar: z.object({
+        timezone_basis: z.union([z.literal("utc"), z.literal("account_timezone"), z.literal("configured_timezone")]),
+        timezone: z.string().min(1).max(255).optional()
+    }).passthrough(),
+    metrics: z.array(z.object({
+        name: z.string().min(1).max(128),
+        source_expression: z.string().min(1).max(2048),
+        aggregation: z.union([z.literal("sum"), z.literal("count"), z.literal("min"), z.literal("max"), z.literal("average"), z.literal("ratio"), z.literal("last"), z.literal("custom")]),
+        unit: z.string().min(1).max(64).optional()
+    }).passthrough()),
+    dimensions: z.array(z.string()),
+    restatement_policy: z.object({
+        source_requery_duration: z.string().regex(/^P(?=\d|T)(?=.*\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$/),
+        emit_only_on_content_change: z.literal(true)
+    }).passthrough(),
+    finality_policies: z.array(z.union([z.object({
+            finality_policy_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+            basis: z.literal("source_final"),
+            source_signal: z.string().min(1).max(512)
+        }).passthrough(), z.object({
+            finality_policy_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+            basis: z.literal("contractual_cutoff"),
+            duration_after_period_end: z.string().regex(/^P(?=\d|T)(?=.*\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$/)
+        }).passthrough(), z.object({
+            finality_policy_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+            basis: z.literal("stabilized"),
+            minimum_age: z.string().regex(/^P(?=\d|T)(?=.*\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$/),
+            unchanged_for: z.string().regex(/^P(?=\d|T)(?=.*\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$/)
+        }).passthrough()]))
+}).passthrough();
+
+export const ReportingRevisionSchema = z.object({
+    reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    report_definition_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    report_definition_uri: z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(/^https:\/\/(?![^\/]*@)(?!localhost(?:[:\/]|$))(?!\[)(?!\d+(?:\.\d+){3}(?::|\/|$))(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:\/|$)/),
+    report_definition_sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/),
+    reporting_profile: z.string().min(1).max(128),
+    schema_version: z.string().min(1).max(64),
+    schema_uri: z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(/^https:\/\/(?![^\/]*@)(?!localhost(?:[:\/]|$))(?!\[)(?!\d+(?:\.\d+){3}(?::|\/|$))(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:\/|$)/),
+    schema_sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/),
+    schema_dialect: z.literal("https://json-schema.org/draft/2020-12/schema"),
+    schema_ref_policy: z.literal("local_fragment_only"),
+    account_id: z.string().min(1),
+    media_buy_ids: z.array(z.string()),
+    coverage: ReportingCoverageSchema,
+    period: z.object({
+        start: z.iso.datetime(),
+        end: z.iso.datetime(),
+        source_timezone: z.string().min(1)
+    }).passthrough(),
+    finality: ReportingFinalitySchema,
+    finality_basis: z.union([z.literal("source_final"), z.literal("contractual_cutoff"), z.literal("stabilized")]).optional(),
+    finality_policy_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/).optional(),
+    finalized_at: z.iso.datetime().optional(),
+    observed_at: z.iso.datetime(),
+    data_through: z.iso.datetime().nullable(),
+    data_through_precision: z.union([z.literal("exact"), z.literal("lower_bound"), z.literal("unknown")]),
+    supersedes_reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/).optional(),
+    row_count: z.int().min(0),
+    control_totals: z.array(ReportingControlTotalSchema),
+    canonical_content_digest: ReportingCanonicalContentDigestSchema.optional(),
+    created_at: z.iso.datetime()
+}).passthrough();
+
 export const ReportingWebhookSchema = z.object({
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
     token: z.string().min(16).optional(),
@@ -6833,6 +6956,8 @@ export const TasksGetResponseSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const TaskType1Schema = TaskTypeSchema;
+
 export const TasksListRequestSchema = z.object({
     adcp_version: z.string().optional(),
     adcp_major_version: z.number().optional(),
@@ -6843,7 +6968,7 @@ export const TasksListRequestSchema = z.object({
         status: TaskStatusSchema.optional(),
         statuses: z.array(TaskStatusSchema).optional(),
         task_type: TaskTypeSchema.optional(),
-        task_types: z.array(TaskTypeSchema).optional(),
+        task_types: z.array(TaskType1Schema).optional(),
         created_after: z.iso.datetime().optional(),
         created_before: z.iso.datetime().optional(),
         updated_after: z.iso.datetime().optional(),
@@ -6971,7 +7096,7 @@ export const CacheLayerScopeSchema = z.union([z.object({
 
 export const RemovalReasonSchema = z.union([z.literal("withdrawn"), z.literal("cancellation"), z.literal("expired"), z.literal("depublication"), z.literal("policy_takedown")]);
 
-export const XEntityTypesSchema = z.union([z.literal("advertiser_brand"), z.literal("rights_holder_brand"), z.literal("rights_grant"), z.literal("account"), z.literal("operator"), z.literal("operator_unit"), z.literal("media_buy"), z.literal("package"), z.literal("product"), z.literal("proposal"), z.literal("opportunity"), z.literal("placement"), z.literal("product_pricing_option"), z.literal("vendor_pricing_option"), z.literal("creative"), z.literal("creative_revision"), z.literal("creative_representation"), z.literal("macro_declaration"), z.literal("tracker_execution_selector"), z.literal("creative_locale_variant"), z.literal("creative_format"), z.literal("transformer"), z.literal("evaluator"), z.literal("build_variant"), z.literal("served_variant"), z.literal("audience"), z.literal("audience_evidence"), z.literal("audience_evidence_snapshot"), z.literal("signal"), z.literal("signal_activation_id"), z.literal("demographic_interval_id"), z.literal("spot_airing"), z.literal("event_source"), z.literal("impairment"), z.literal("collection"), z.literal("installment"), z.literal("collection_list"), z.literal("property_list"), z.literal("catalog"), z.literal("catalog_generation"), z.literal("catalog_item"), z.literal("property"), z.literal("media_plan"), z.literal("governance_plan"), z.literal("governance_registry_policy"), z.literal("governance_policy_category"), z.literal("governance_policy_category_facet"), z.literal("acceptance_policy_profile"), z.literal("acceptance_policy_rule"), z.literal("media_buy_change_term"), z.literal("governance_inline_policy"), z.literal("governance_check"), z.literal("governance_delivery_statement"), z.literal("governance_delivery_observation"), z.literal("governance_outcome"), z.literal("governance_adjustment"), z.literal("governance_adjustment_evidence"), z.literal("seller_adjustment"), z.literal("content_standards"), z.literal("task"), z.literal("attestation_credential"), z.literal("si_session"), z.literal("offering"), z.literal("vendor_metric"), z.literal("identity_relying_party")]);
+export const XEntityTypesSchema = z.union([z.literal("advertiser_brand"), z.literal("rights_holder_brand"), z.literal("rights_grant"), z.literal("account"), z.literal("operator"), z.literal("operator_unit"), z.literal("media_buy"), z.literal("package"), z.literal("product"), z.literal("proposal"), z.literal("opportunity"), z.literal("placement"), z.literal("product_pricing_option"), z.literal("vendor_pricing_option"), z.literal("creative"), z.literal("creative_revision"), z.literal("creative_representation"), z.literal("macro_declaration"), z.literal("tracker_execution_selector"), z.literal("creative_locale_variant"), z.literal("creative_format"), z.literal("transformer"), z.literal("evaluator"), z.literal("build_variant"), z.literal("served_variant"), z.literal("audience"), z.literal("audience_evidence"), z.literal("audience_evidence_snapshot"), z.literal("signal"), z.literal("signal_activation_id"), z.literal("demographic_interval_id"), z.literal("spot_airing"), z.literal("event_source"), z.literal("impairment"), z.literal("collection"), z.literal("installment"), z.literal("collection_list"), z.literal("property_list"), z.literal("catalog"), z.literal("catalog_generation"), z.literal("catalog_item"), z.literal("property"), z.literal("media_plan"), z.literal("governance_plan"), z.literal("governance_registry_policy"), z.literal("governance_policy_category"), z.literal("governance_policy_category_facet"), z.literal("acceptance_policy_profile"), z.literal("acceptance_policy_rule"), z.literal("media_buy_change_term"), z.literal("governance_inline_policy"), z.literal("governance_check"), z.literal("governance_delivery_statement"), z.literal("governance_delivery_observation"), z.literal("governance_outcome"), z.literal("governance_adjustment"), z.literal("governance_adjustment_evidence"), z.literal("seller_adjustment"), z.literal("content_standards"), z.literal("task"), z.literal("attestation_credential"), z.literal("si_session"), z.literal("offering"), z.literal("vendor_metric"), z.literal("reporting_destination"), z.literal("reporting_offering"), z.literal("reporting_delivery_config"), z.literal("reporting_definition"), z.literal("reporting_obligation"), z.literal("reporting_revision"), z.literal("reporting_materialization"), z.literal("reporting_receipt"), z.literal("reporting_resource"), z.literal("identity_relying_party")]);
 
 export const CreativeAuditObservationSchema = z.object({
     code: z.literal("OVERSIGHT_DISCLOSURE_CARVEOUT_CLAIMED"),
@@ -7168,26 +7293,16 @@ export const CreativeRevisionContentMismatchDetailsSchema = z.object({
 }).passthrough();
 
 export const AcceptedGovernanceAgentsSchema = z.object({
-    any_of: z.tuple([z.union([z.object({
-                kind: z.literal("agent_url"),
-                agent_url: z.string()
-            }).passthrough(), z.object({
-                kind: z.literal("verification"),
-                registry: z.string(),
-                role: z.string(),
-                adcp_version: z.string(),
-                verification_modes: z.tuple([z.union([z.literal("spec"), z.literal("live")])]).rest(z.union([z.literal("spec"), z.literal("live")])),
-                max_age_seconds: z.number()
-            }).passthrough()])]).rest(z.union([z.object({
+    any_of: z.array(z.union([z.object({
             kind: z.literal("agent_url"),
-            agent_url: z.string()
+            agent_url: z.string().max(2048).regex(/^https:\/\/[^\/?#@]+(?:\/[^?#]*)?$/)
         }).passthrough(), z.object({
             kind: z.literal("verification"),
-            registry: z.string(),
-            role: z.string(),
-            adcp_version: z.string(),
-            verification_modes: z.tuple([z.union([z.literal("spec"), z.literal("live")])]).rest(z.union([z.literal("spec"), z.literal("live")])),
-            max_age_seconds: z.number()
+            registry: z.string().max(2048).regex(/^https:\/\/[^\/?#@]+(?:\/[^?#]*)?$/),
+            role: z.string().regex(/^[a-z][a-z0-9_-]*$/),
+            adcp_version: z.string().regex(/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/),
+            verification_modes: z.array(z.union([z.literal("spec"), z.literal("live")])),
+            max_age_seconds: z.int().min(0)
         }).passthrough()]))
 }).passthrough();
 
@@ -8731,6 +8846,125 @@ export const VendorMetricValueSchema = z.object({
     measurable_impressions: z.number().gte(0).optional(),
     qualifier: CanonicalMetricQualifierSchema.optional(),
     breakdown: z.object({}).passthrough().optional()
+}).passthrough();
+
+export const GetReportingStatusRequestSchema = z.object({
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
+    account: CanonicalAccountReferenceSchema,
+    view: z.union([z.literal("summary"), z.literal("periods"), z.literal("revision")]),
+    media_buy_ids: z.array(z.string()).optional(),
+    delivery_config_ids: z.array(z.string()).optional(),
+    feed_purposes: z.array(z.union([z.literal("pacing"), z.literal("analytics"), z.literal("billing")])).optional(),
+    period: z.object({
+        start: z.iso.datetime(),
+        end: z.iso.datetime()
+    }).passthrough().optional(),
+    health: z.array(ReportingHealthSchema).optional(),
+    finality: z.array(ReportingFinalitySchema).optional(),
+    reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/).optional(),
+    pagination: PaginationRequestSchema.optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const ReportingMaterializationSchema = z.object({
+    reporting_materialization_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    reporting_obligation_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    delivery_config_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]{1,64}$/),
+    delivery_config_version: z.int().min(1),
+    destination_ref: z.string().min(1).max(255),
+    feed_purpose: z.union([z.literal("pacing"), z.literal("analytics"), z.literal("billing")]),
+    method: z.union([z.literal("file_transfer"), z.literal("dataset_share"), z.literal("warehouse_materialization")]),
+    transport: z.string().min(1).max(64).regex(/^[a-z][a-z0-9_.-]*$/).optional(),
+    attempt: z.int().min(1),
+    status: z.union([z.literal("pending"), z.literal("available"), z.literal("delivered"), z.literal("failed")]),
+    ready_at: z.iso.datetime().optional(),
+    failed_at: z.iso.datetime().optional(),
+    failure_code: z.string().min(1).max(128).regex(/^[A-Z][A-Z0-9_]*$/).optional(),
+    resource: ReportingResourceSchema.optional(),
+    verification: ReportingVerificationSchema.optional(),
+    created_at: z.iso.datetime()
+}).passthrough();
+
+export const SummaryViewSchema = z.object({
+    status: z.literal("completed"),
+    view: z.literal("summary")
+}).passthrough();
+
+export const PeriodsViewSchema = z.object({
+    status: z.literal("completed"),
+    view: z.literal("periods"),
+    pagination: z.object({}).passthrough()
+}).passthrough();
+
+export const RevisionViewSchema = z.object({
+    status: z.literal("completed"),
+    view: z.literal("revision"),
+    pagination: z.object({}).passthrough()
+}).passthrough();
+
+export const UnavailableLookupSchema = z.object({
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.int().optional(),
+    status: z.literal("failed"),
+    view: z.union([z.literal("summary"), z.literal("periods"), z.literal("revision")]),
+    failure_kind: z.literal("lookup_unavailable"),
+    context_id: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    message: z.literal("Reporting status resource is unavailable.").optional(),
+    timestamp: z.iso.datetime().optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: z.object({
+        code: z.literal("NOT_FOUND"),
+        message: z.literal("Reporting status resource is unavailable.")
+    }).passthrough().optional(),
+    errors: z.array(z.object({
+        code: z.literal("NOT_FOUND"),
+        message: z.literal("Reporting status resource is unavailable.")
+    }).passthrough())
+}).passthrough();
+
+export const OperationalFailureSchema = z.object({
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.int().optional(),
+    status: z.literal("failed"),
+    view: z.union([z.literal("summary"), z.literal("periods"), z.literal("revision")]),
+    failure_kind: z.literal("operational"),
+    context_id: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    message: z.string().optional(),
+    timestamp: z.iso.datetime().optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: ErrorSchema.optional(),
+    errors: z.array(ErrorSchema)
+}).passthrough();
+
+export const SyncReportingReceiptsRequestSchema = z.object({
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
+    account: CanonicalAccountReferenceSchema,
+    idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
+    receipts: z.array(ReportingReceiptSchema),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const RecordedReportingReceiptSchema = z.object({
+    result: z.literal("recorded"),
+    receipt: ReportingReceiptSchema.merge(z.object({}).passthrough())
+}).passthrough();
+
+export const UnchangedReportingReceiptSchema = z.object({
+    result: z.literal("unchanged"),
+    receipt: ReportingReceiptSchema.merge(z.object({}).passthrough())
+}).passthrough();
+
+export const FailedReportingReceiptSchema = z.object({
+    result: z.literal("failed"),
+    reporting_receipt_id: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
+    errors: z.array(ErrorSchema)
 }).passthrough();
 
 export const ProvidePerformanceFeedbackRequestSchema = z.object({
@@ -11121,56 +11355,6 @@ export const GetAdCPCapabilitiesRequestSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const AttestationCapabilitiesSchema = z.object({}).passthrough().merge(z.object({
-    accepted_claim_types: z.array(z.string()),
-    accepted_proof_formats: z.array(z.string()),
-    supported_delivery_methods: z.tuple([z.union([z.literal("credential_uri"), z.literal("issuer_credential_id"), z.literal("embedded")])]).rest(z.union([z.literal("credential_uri"), z.literal("issuer_credential_id"), z.literal("embedded")])),
-    accepted_issuers: z.tuple([z.object({
-            issuer: AttestationIssuerSchema,
-            claim_types: z.array(z.string()).optional(),
-            proof_formats: z.array(z.string()).optional(),
-            credential_origins: z.array(z.string()).optional(),
-            resolvers: z.tuple([z.object({
-                    resolver_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9._:-]+$")),
-                    url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI"),
-                    authentication: z.union([z.literal("none"), z.literal("evaluator_managed")])
-                }).passthrough()]).rest(z.object({
-                resolver_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9._:-]+$")),
-                url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI"),
-                authentication: z.union([z.literal("none"), z.literal("evaluator_managed")])
-            }).passthrough()).optional(),
-            ext: ExtensionObjectSchema.optional()
-        }).passthrough()]).rest(z.object({
-        issuer: AttestationIssuerSchema,
-        claim_types: z.array(z.string()).optional(),
-        proof_formats: z.array(z.string()).optional(),
-        credential_origins: z.array(z.string()).optional(),
-        resolvers: z.tuple([z.object({
-                resolver_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9._:-]+$")),
-                url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI"),
-                authentication: z.union([z.literal("none"), z.literal("evaluator_managed")])
-            }).passthrough()]).rest(z.object({
-            resolver_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9._:-]+$")),
-            url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI"),
-            authentication: z.union([z.literal("none"), z.literal("evaluator_managed")])
-        }).passthrough()).optional(),
-        ext: ExtensionObjectSchema.optional()
-    }).passthrough()),
-    accepted_verifiers: z.tuple([z.object({
-            agent_url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI"),
-            claim_types: z.array(z.string()).optional(),
-            proof_formats: z.array(z.string()).optional(),
-            ext: ExtensionObjectSchema.optional()
-        }).passthrough()]).rest(z.object({
-        agent_url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI"),
-        claim_types: z.array(z.string()).optional(),
-        proof_formats: z.array(z.string()).optional(),
-        ext: ExtensionObjectSchema.optional()
-    }).passthrough()).optional(),
-    max_embedded_credential_bytes: z.number().int().gte(1024).lte(1048576).optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough());
-
 export const IdempotencySupportedSchema = z.object({
     supported: z.literal(true),
     replay_ttl_seconds: z.int().min(3600).max(604800),
@@ -11184,13 +11368,39 @@ export const IdempotencyUnsupportedSchema = z.object({
 
 export const CapabilityChangeNotificationsSupportedSchema = z.object({
     supported: z.literal(true),
-    registration_task: z.literal("sync_agent_notification_configs"),
+    registration_task: z.union([z.literal("sync_agent_notification_configs"), z.literal("sync_agent_configuration")]),
     event_types: z.array(z.literal("capabilities.changed")),
     coalescence_window_seconds: z.int().min(0).max(86400).optional()
 }).passthrough();
 
 export const CapabilityChangeNotificationsUnsupportedSchema = z.object({
     supported: z.literal(false)
+}).passthrough();
+
+export const AttestationCapabilitiesSchema = z.object({
+    accepted_claim_types: z.array(z.string()),
+    accepted_proof_formats: z.array(z.string()),
+    supported_delivery_methods: z.array(z.union([z.literal("credential_uri"), z.literal("issuer_credential_id"), z.literal("embedded")])),
+    accepted_issuers: z.array(z.object({
+        issuer: AttestationIssuerSchema,
+        claim_types: z.array(z.string()).optional(),
+        proof_formats: z.array(z.string()).optional(),
+        credential_origins: z.array(z.string()).optional(),
+        resolvers: z.array(z.object({
+            resolver_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9._:-]+$/),
+            url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(/^https:\/\/[^\/?#@]+(?:\/[^?#]*)?(?:\?[^#]*)?$/),
+            authentication: z.union([z.literal("none"), z.literal("evaluator_managed")])
+        }).passthrough()).optional(),
+        ext: ExtensionObjectSchema.optional()
+    }).passthrough()),
+    accepted_verifiers: z.array(z.object({
+        agent_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(/^https:\/\/[^\/?#@]+(?:\/[^?#]*)?(?:\?[^#]*)?$/),
+        claim_types: z.array(z.string()).optional(),
+        proof_formats: z.array(z.string()).optional(),
+        ext: ExtensionObjectSchema.optional()
+    }).passthrough()).optional(),
+    max_embedded_credential_bytes: z.int().min(1024).max(1048576).optional(),
+    ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const AccountNotificationsSupportedSchema = z.object({
@@ -11240,6 +11450,52 @@ export const MediaBuyFeaturesSchema = z.object({
 export const GeographicPlaceSystemSupportSchema = z.object({
     countries: z.record(z.string(), z.array(GeographicPlaceTypeSchema)),
     catalog: GeographicPlaceCatalogCapabilitySchema
+}).passthrough();
+
+export const ReportingDeliveryOfferingSchema = z.object({
+    offering_id: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]{1,128}$/),
+    feed_purpose: z.union([z.literal("pacing"), z.literal("analytics"), z.literal("billing")]),
+    report_definition_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    report_definition_uri: z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(/^https:\/\/(?![^\/]*@)(?!localhost(?:[:\/]|$))(?!\[)(?!\d+(?:\.\d+){3}(?::|\/|$))(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:\/|$)/),
+    report_definition_sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/),
+    reporting_profile: z.object({
+        id: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]{1,128}$/),
+        version: z.string().min(1).max(64),
+        schema_uri: z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(/^https:\/\/(?![^\/]*@)(?!localhost(?:[:\/]|$))(?!\[)(?!\d+(?:\.\d+){3}(?::|\/|$))(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:\/|$)/),
+        schema_sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/),
+        schema_dialect: z.literal("https://json-schema.org/draft/2020-12/schema"),
+        schema_ref_policy: z.literal("local_fragment_only"),
+        grain: z.string().min(1).max(128),
+        primary_keys: z.array(z.string()),
+        canonicalization_id: z.string().min(1).max(128),
+        canonicalization_contract_version: z.literal("1.0"),
+        canonicalization_media_type: z.literal("application/vnd.adcp.reporting-canonicalization+json"),
+        canonicalization_uri: z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(/^https:\/\/(?![^\/]*@)(?!localhost(?:[:\/]|$))(?!\[)(?!\d+(?:\.\d+){3}(?::|\/|$))(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:\/|$)/),
+        canonicalization_sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/)
+    }).passthrough(),
+    schedule: ReportingScheduleOfferingSchema,
+    supported_finality: z.array(ReportingFinalitySchema),
+    reconciliation_mode: ReportingReconciliationModeSchema,
+    method: z.object({
+        pattern: z.union([z.literal("file_transfer"), z.literal("dataset_share"), z.literal("warehouse_materialization")]),
+        transport: z.string().min(1).max(64).regex(/^[a-z][a-z0-9_.-]*$/),
+        orchestration: z.union([z.literal("producer_managed"), z.literal("consumer_managed")]),
+        destination_modes: z.array(z.union([z.literal("provision"), z.literal("existing")])),
+        provider: z.object({
+            domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/)
+        }).passthrough().optional(),
+        format: z.union([z.literal("jsonl"), z.literal("csv"), z.literal("parquet"), z.literal("avro"), z.literal("orc")]).optional(),
+        access_mode: z.string().min(1).max(64).regex(/^[a-z][a-z0-9_.-]*$/).optional(),
+        producer_identity: z.object({
+            provider: z.object({
+                domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/)
+            }).passthrough(),
+            identity: z.string().min(1).max(512),
+            cloud: z.union([z.literal("aws"), z.literal("azure"), z.literal("gcp")]).optional(),
+            region: z.string().min(1).max(128).optional()
+        }).passthrough().optional(),
+        reader_compatibility: z.array(z.string()).optional()
+    }).passthrough()
 }).passthrough();
 
 export const GetTaskStatusRequestSchema = z.object({
@@ -11400,6 +11656,45 @@ export const SyncAgentNotificationConfigsResponseSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const SyncAgentConfigurationRequestSchema = z.object({
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
+    idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
+    expected_configuration_version: z.string().min(1).max(255).optional(),
+    configuration: z.object({
+        notification_configs: z.array(AgentNotificationConfigSchema).optional(),
+        reporting_destinations: z.array(AgentReportingDestinationSchema).optional()
+    }).passthrough(),
+    dry_run: z.boolean().optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const ValidatedAgentConfigurationDryRunSchema = z.object({
+    kind: z.literal("validated"),
+    action: z.union([z.literal("would_update"), z.literal("would_be_unchanged"), z.literal("would_clear")]),
+    dry_run: z.literal(true),
+    warnings: z.array(ErrorSchema).optional()
+}).passthrough();
+
+export const FailedAgentConfigurationSchema = z.object({
+    kind: z.literal("failed"),
+    errors: z.array(ErrorSchema)
+}).passthrough();
+
+export const AgentReportingDestinationStateSchema = z.object({
+    destination_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]{1,64}$/),
+    destination_ref: z.string().min(1).max(255),
+    state: z.union([z.literal("validating"), z.literal("ready"), z.literal("action_required"), z.literal("inactive"), z.literal("rejected")]),
+    configuration: AgentReportingDestinationSchema,
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("accept_share"), z.literal("prove_control"), z.literal("contact_support")]),
+        setup_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(/^https:\/\/(?![^\/\s]*@)(?!.*\?)[^\r\n]+$/).optional(),
+        expires_at: z.iso.datetime().optional()
+    }).passthrough().optional(),
+    issues: z.array(ErrorSchema).optional()
+}).passthrough();
+
 export const ListAccountChangesRequestSchema = z.object({
     adcp_version: z.string().regex(/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$/).optional(),
     adcp_major_version: z.int().min(1).max(99).optional(),
@@ -11522,31 +11817,19 @@ export const ListAccountsResponseSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const ProvisioningModeSchema = z.object({
-    brand: BrandReferenceSchema,
-    operator: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/),
-    operator_unit: OperatorUnitSchema.optional(),
-    currency: z.string().regex(/^[A-Z]{3}$/).optional(),
-    timezone: z.string().min(1).optional(),
-    billing: BillingPartySchema,
-    billing_entity: BusinessEntitySchema.optional(),
-    payment_terms: PaymentTermsSchema.optional(),
-    sandbox: z.boolean().optional(),
-    preferred_reporting_protocol: CloudStorageProtocolSchema.optional(),
-    notification_configs: z.array(NotificationConfigSchema).optional()
+export const WarehouseMaterializationSchema = z.object({
+    pattern: z.literal("warehouse_materialization"),
+    transport: z.string().min(1).max(64).regex(/^[a-z][a-z0-9_.-]*$/),
+    orchestration: z.union([z.literal("producer_managed"), z.literal("consumer_managed")]),
+    destination: ReportingWriteDestinationSchema
 }).passthrough();
 
-export const SettingsUpdateModeSchema = z.object({
-    account: AccountReferenceSchema,
-    revision: z.int().min(1).optional(),
-    operator_identity: OperatorIdentitySchema.optional(),
-    destination_billing_entity: BusinessEntitySchema.optional(),
-    billing_entity: BusinessEntitySchema.optional(),
-    payment_terms: PaymentTermsSchema.optional(),
-    sandbox: z.boolean().optional(),
-    preferred_reporting_protocol: CloudStorageProtocolSchema.optional(),
-    notification_configs: z.array(NotificationConfigSchema).optional()
+export const ExistingBinding1Schema = z.object({
+    mode: z.literal("existing"),
+    destination_ref: z.string().min(1).max(255)
 }).passthrough();
+
+export const ReportingDatasetShareDestinationSchema = z.union([ExistingBinding1Schema, ProvisionRecipientSchema]);
 
 export const SyncAccountsErrorSchema = z.object({
     errors: z.array(ErrorSchema),
@@ -14158,6 +14441,11 @@ export const ContentStandardsSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const AgentConfigurationStateSchema = z.object({
+    notification_configs: z.array(AgentNotificationConfigStateSchema),
+    reporting_destinations: z.array(AgentReportingDestinationStateSchema)
+}).passthrough();
+
 export const OfferingAssetGroupSchema = z.object({
     asset_group_id: z.string(),
     asset_type: AssetContentTypeSchema,
@@ -14917,6 +15205,29 @@ export const RegistryEventSchema = z.object({
         entity_type: z.literal("authorization").optional(),
         payload: AuthorizationPayloadSchema.optional()
     }).passthrough()]));
+
+export const ReportingDeliveryCapabilitiesSchema = z.object({
+    supported: z.literal(true),
+    configuration_task: z.literal("sync_accounts"),
+    status_task: z.literal("get_reporting_status"),
+    receipt_task: z.literal("sync_reporting_receipts"),
+    readiness_notification: z.literal("reporting.delivery_ready"),
+    offerings: z.array(ReportingDeliveryOfferingSchema),
+    automated_recovery_window_seconds: z.int().min(0),
+    status_retention_days: z.int().min(1),
+    resource_retention_days: z.int().min(1),
+    supports_webhook_activity: z.boolean().optional(),
+    authorization_revocation_seconds: z.int().min(0)
+}).passthrough();
+
+export const DatasetShareSchema = z.object({
+    pattern: z.literal("dataset_share"),
+    transport: z.string().min(1).max(64).regex(/^[a-z][a-z0-9_.-]*$/),
+    orchestration: z.union([z.literal("producer_managed"), z.literal("consumer_managed")]),
+    destination: ReportingDatasetShareDestinationSchema
+}).passthrough();
+
+export const ReportingDeliveryMethodSchema = z.union([FileTransferSchema, DatasetShareSchema, WarehouseMaterializationSchema]);
 
 export const RepresentationDestinationSchema = z.object({
     product_id: z.string().min(1),
@@ -16165,6 +16476,28 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const SuccessfulLookupSchema = z.union([SummaryViewSchema, PeriodsViewSchema, RevisionViewSchema]);
+
+export const FailedLookupSchema = z.union([UnavailableLookupSchema, OperationalFailureSchema]);
+
+export const SyncReportingReceiptsResponseSchema = z.object({
+    context_id: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    task_id: z.string().optional(),
+    status: TaskStatusSchema,
+    message: z.string().optional(),
+    timestamp: z.string().optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: ErrorSchema.optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    governance_context: z.string().optional(),
+    payload: z.object({}).passthrough().optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
+    results: z.array(z.union([RecordedReportingReceiptSchema, UnchangedReportingReceiptSchema, FailedReportingReceiptSchema])),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 export const ProvidePerformanceFeedbackResponseSchema = z.object({
     context_id: z.string().optional(),
     context: ContextObjectSchema.optional(),
@@ -16792,6 +17125,13 @@ export const GetAdCPCapabilitiesResponseSchema: z.ZodObject<{ [K in keyof GetAdC
         supported_versions: z.array(z.string()).optional(),
         build_version: z.string().regex(/^\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$/).optional(),
         idempotency: z.union([IdempotencySupportedSchema, IdempotencyUnsupportedSchema]),
+        agent_configuration: z.object({
+            supported: z.literal(true),
+            sync_task: z.literal("sync_agent_configuration"),
+            supported_sections: z.array(z.union([z.literal("notification_configs"), z.literal("reporting_destinations")])),
+            max_reporting_destinations: z.int().min(1).max(64).optional(),
+            optimistic_concurrency: z.boolean()
+        }).passthrough().optional(),
         capability_changes: z.object({
             capabilities_version: z.string().min(1).max(255).optional(),
             last_modified: z.iso.datetime().optional(),
@@ -16865,6 +17205,7 @@ export const GetAdCPCapabilitiesResponseSchema: z.ZodObject<{ [K in keyof GetAdC
             reports_application_status: z.boolean().optional()
         }).passthrough().optional(),
         offline_delivery_protocols: z.array(CloudStorageProtocolSchema).optional(),
+        reporting_delivery: ReportingDeliveryCapabilitiesSchema.optional(),
         supports_proposals: z.boolean().optional(),
         outcome_target: z.boolean().optional(),
         governance_aware: z.boolean().optional(),
@@ -17171,56 +17512,66 @@ export const GetAdCPCapabilitiesResponseSchema: z.ZodObject<{ [K in keyof GetAdC
     }).passthrough().optional()
 }).passthrough();
 
-export const SyncAccountsRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
-    idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
-    accounts: z.array(z.union([ProvisioningModeSchema, SettingsUpdateModeSchema])),
-    delete_missing: z.boolean().optional(),
-    dry_run: z.boolean().optional(),
-    push_notification_config: PushNotificationConfigSchema.optional(),
-    context: ContextObjectSchema.optional(),
-    ext: ExtensionObjectSchema.optional()
+export const AppliedAgentConfigurationSchema = z.object({
+    kind: z.literal("applied"),
+    action: z.union([z.literal("updated"), z.literal("unchanged"), z.literal("cleared")]),
+    dry_run: z.literal(false),
+    connection_id: z.string().min(1).max(255),
+    configuration_version: z.string().min(1).max(255),
+    configuration: AgentConfigurationStateSchema,
+    warnings: z.array(ErrorSchema).optional()
 }).passthrough();
 
-export const SyncAccountsSuccessSchema = z.object({
-    dry_run: z.boolean().optional(),
-    accounts: z.array(z.object({
-        account_id: z.string().optional(),
-        brand: BrandReferenceSchema,
-        operator: z.string(),
-        operator_unit: OperatorUnitSchema.optional(),
-        revision: z.int().min(1).optional(),
-        identity_change: AccountIdentityChangeSchema.optional(),
-        identity_change_preview: AccountIdentityChangePreviewSchema.optional(),
-        currency: z.string().regex(/^[A-Z]{3}$/).optional(),
-        timezone: z.string().min(1).optional(),
-        name: z.string().optional(),
-        action: z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("failed")]),
-        status: z.union([z.literal("active"), z.literal("pending_approval"), z.literal("rejected"), z.literal("payment_required"), z.literal("suspended"), z.literal("closed")]),
-        billing: BillingPartySchema.optional(),
-        billing_entity: BusinessEntitySchema.optional(),
-        destination_billing_entity: z.object({}).passthrough().optional(),
-        account_scope: AccountScopeSchema.optional(),
-        setup: z.object({
-            url: z.string().optional(),
-            message: z.string(),
-            expires_at: z.iso.datetime().optional()
-        }).passthrough().optional(),
-        rate_card: z.string().optional(),
-        payment_terms: PaymentTermsSchema.optional(),
-        credit_limit: z.object({
-            amount: z.number().min(0),
-            currency: z.string().regex(/^[A-Z]{3}$/)
-        }).passthrough().optional(),
-        errors: z.array(ErrorSchema).optional(),
-        warnings: z.array(z.string()).optional(),
-        sandbox: z.boolean().optional(),
-        notification_configs: z.array(NotificationConfigSchema).optional(),
-        authorization: AccountAuthorizationSchema.optional()
-    }).passthrough()),
-    context: ContextObjectSchema.optional(),
-    ext: ExtensionObjectSchema.optional()
+export const ReportingDeliveryConfigurationSchema = z.object({
+    delivery_config_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]{1,64}$/),
+    delivery_config_version: z.int().min(1),
+    offering_id: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]{1,128}$/),
+    active: z.boolean(),
+    feed_purpose: z.union([z.literal("pacing"), z.literal("analytics"), z.literal("billing")]),
+    report_definition_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    reporting_profile: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]{1,128}$/),
+    scope: z.object({
+        all_media_buys: z.literal(true).optional(),
+        media_buy_ids: z.array(z.string()).optional()
+    }).passthrough(),
+    coverage_requirement: z.union([z.literal("full"), z.literal("allow_partial")]),
+    required_finality: ReportingFinalitySchema,
+    reconciliation_mode: ReportingReconciliationModeSchema,
+    schedule: ReportingScheduleSchema,
+    method: ReportingDeliveryMethodSchema,
+    revocation_effective_at: z.iso.datetime().optional()
+}).passthrough();
+
+export const SettingsUpdateModeSchema = z.object({
+    account: AccountReferenceSchema,
+    revision: z.int().min(1).optional(),
+    operator_identity: OperatorIdentitySchema.optional(),
+    destination_billing_entity: BusinessEntitySchema.optional(),
+    billing_entity: BusinessEntitySchema.optional(),
+    payment_terms: PaymentTermsSchema.optional(),
+    sandbox: z.boolean().optional(),
+    preferred_reporting_protocol: CloudStorageProtocolSchema.optional(),
+    reporting_delivery_configs: z.array(ReportingDeliveryConfigurationSchema).optional(),
+    notification_configs: z.array(NotificationConfigSchema).optional()
+}).passthrough();
+
+export const ReportingDeliveryConfigurationStateSchema = z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: z.union([z.literal("pending_validation"), z.literal("pending_setup"), z.literal("ready"), z.literal("action_required"), z.literal("inactive")]),
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.iso.datetime().optional(),
+    activated_at: z.iso.datetime().optional(),
+    deactivated_at: z.iso.datetime().optional(),
+    publication_stopped_at: z.iso.datetime().optional(),
+    seller_managed_access_ends_at: z.iso.datetime().optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(/^https:\/\//).optional(),
+        expires_at: z.iso.datetime().optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
 }).passthrough();
 
 export const SyncGovernanceResponseSchema = z.object({
@@ -19253,6 +19604,63 @@ export const GetMediaBuysResponseMediaBuySchema: z.ZodType = z.object({
     }).passthrough()).optional()
 }).passthrough();
 
+export const GetReportingStatusResponseSchema = z.object({
+    context_id: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    task_id: z.string().optional(),
+    status: TaskStatusSchema,
+    message: z.string().optional(),
+    timestamp: z.string().optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: ErrorSchema.optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    governance_context: z.string().optional(),
+    payload: z.object({}).passthrough().optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
+    view: z.union([z.literal("summary"), z.literal("periods"), z.literal("revision")]).optional(),
+    ledger_snapshot_id: z.string().min(1).max(255).optional(),
+    ledger_as_of: z.iso.datetime().optional(),
+    account_id: z.string().min(1).optional(),
+    scope: z.object({
+        period_start: z.iso.datetime(),
+        period_end: z.iso.datetime(),
+        scope_closed: z.boolean(),
+        media_buy_ids: z.array(z.string()).optional(),
+        all_accessible_media_buys: z.boolean(),
+        delivery_config_generations: z.array(z.object({
+            delivery_config_id: z.string().min(1).max(64),
+            delivery_config_version: z.int().min(1),
+            feed_purpose: z.union([z.literal("pacing"), z.literal("analytics"), z.literal("billing")])
+        }).passthrough()),
+        feed_purposes: z.array(z.union([z.literal("pacing"), z.literal("analytics"), z.literal("billing")])),
+        finality: z.array(ReportingFinalitySchema),
+        ledger_retained_from: z.iso.datetime(),
+        coverage_complete: z.boolean()
+    }).passthrough().optional(),
+    health: ReportingHealthSchema.optional(),
+    coverage: ReportingCoverageSchema.optional(),
+    data_through: z.iso.datetime().optional().nullable(),
+    next_expected_at: z.iso.datetime().optional(),
+    obligation_counts: z.object({
+        total: z.int().min(0),
+        waiting: z.int().min(0),
+        healthy: z.int().min(0),
+        delayed: z.int().min(0),
+        action_required: z.int().min(0),
+        complete: z.int().min(0)
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional(),
+    periods: z.array(ReportingObligationSchema).optional(),
+    revisions: z.array(ReportingRevisionSchema).optional(),
+    pagination: PaginationResponseSchema.optional(),
+    revision: ReportingRevisionSchema.optional(),
+    materializations: z.array(ReportingMaterializationSchema).optional(),
+    receipts: z.array(ReportingReceiptSchema).optional(),
+    errors: z.array(ErrorSchema).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough().and(z.union([SuccessfulLookupSchema, FailedLookupSchema]));
+
 export const ListedCreativeNamedFormatReferenceSchema: z.ZodType = z.object({
     creative_id: z.string(),
     revision_id: CreativeRevisionIDSchema.optional(),
@@ -19433,21 +19841,79 @@ export const CheckGovernanceRequestSchema = z.object({}).passthrough().merge(z.o
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
 
-export const SyncAccountsResponseSchema = z.object({
+export const SyncAgentConfigurationResponseSchema = z.object({
     context_id: z.string().optional(),
     context: ContextObjectSchema.optional(),
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
-}).passthrough().and(z.union([SyncAccountsSuccessSchema, SyncAccountsErrorSchema]));
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
+    result: z.union([AppliedAgentConfigurationSchema, ValidatedAgentConfigurationDryRunSchema, FailedAgentConfigurationSchema]),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const ProvisioningModeSchema = z.object({
+    brand: BrandReferenceSchema,
+    operator: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/),
+    operator_unit: OperatorUnitSchema.optional(),
+    currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+    timezone: z.string().min(1).optional(),
+    billing: BillingPartySchema,
+    billing_entity: BusinessEntitySchema.optional(),
+    payment_terms: PaymentTermsSchema.optional(),
+    sandbox: z.boolean().optional(),
+    preferred_reporting_protocol: CloudStorageProtocolSchema.optional(),
+    reporting_delivery_configs: z.array(ReportingDeliveryConfigurationSchema).optional(),
+    notification_configs: z.array(NotificationConfigSchema).optional()
+}).passthrough();
+
+export const SyncAccountsSuccessSchema = z.object({
+    dry_run: z.boolean().optional(),
+    accounts: z.array(z.object({
+        account_id: z.string().optional(),
+        brand: BrandReferenceSchema,
+        operator: z.string(),
+        operator_unit: OperatorUnitSchema.optional(),
+        revision: z.int().min(1).optional(),
+        identity_change: AccountIdentityChangeSchema.optional(),
+        identity_change_preview: AccountIdentityChangePreviewSchema.optional(),
+        currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+        timezone: z.string().min(1).optional(),
+        name: z.string().optional(),
+        action: z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("failed")]),
+        status: z.union([z.literal("active"), z.literal("pending_approval"), z.literal("rejected"), z.literal("payment_required"), z.literal("suspended"), z.literal("closed")]),
+        billing: BillingPartySchema.optional(),
+        billing_entity: BusinessEntitySchema.optional(),
+        destination_billing_entity: z.object({}).passthrough().optional(),
+        account_scope: AccountScopeSchema.optional(),
+        setup: z.object({
+            url: z.string().optional(),
+            message: z.string(),
+            expires_at: z.iso.datetime().optional()
+        }).passthrough().optional(),
+        rate_card: z.string().optional(),
+        payment_terms: PaymentTermsSchema.optional(),
+        credit_limit: z.object({
+            amount: z.number().min(0),
+            currency: z.string().regex(/^[A-Z]{3}$/)
+        }).passthrough().optional(),
+        errors: z.array(ErrorSchema).optional(),
+        warnings: z.array(z.string()).optional(),
+        sandbox: z.boolean().optional(),
+        notification_configs: z.array(NotificationConfigSchema).optional(),
+        reporting_delivery_configs: z.array(ReportingDeliveryConfigurationStateSchema).optional(),
+        authorization: AccountAuthorizationSchema.optional()
+    }).passthrough()),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
 
 export const ComplyTestControllerRequestSchema: z.ZodObject<Record<string, z.ZodType>, any> = z.object({
     adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
@@ -19686,3 +20152,31 @@ export const ListCreativesResponseSchema: z.ZodType = z.object({
     sandbox: z.boolean().optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
+
+export const SyncAccountsRequestSchema = z.object({
+    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
+    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
+    accounts: z.array(z.union([ProvisioningModeSchema, SettingsUpdateModeSchema])),
+    delete_missing: z.boolean().optional(),
+    dry_run: z.boolean().optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const SyncAccountsResponseSchema = z.object({
+    context_id: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    task_id: z.string().optional(),
+    status: TaskStatusSchema,
+    message: z.string().optional(),
+    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: ErrorSchema.optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    payload: z.object({}).passthrough().optional(),
+    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
+    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+}).passthrough().and(z.union([SyncAccountsSuccessSchema, SyncAccountsErrorSchema]));

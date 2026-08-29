@@ -17894,6 +17894,7 @@ export type GetReportingStatusResponse = {
       delivery_config_id: string;
       /**
        * @minimum 1
+       * @format int
        */
       delivery_config_version: number;
       feed_purpose: 'pacing' | 'analytics' | 'billing';
@@ -17925,26 +17926,32 @@ export type GetReportingStatusResponse = {
   obligation_counts?: {
     /**
      * @minimum 0
+     * @format int
      */
     total: number;
     /**
      * @minimum 0
+     * @format int
      */
     waiting: number;
     /**
      * @minimum 0
+     * @format int
      */
     healthy: number;
     /**
      * @minimum 0
+     * @format int
      */
     delayed: number;
     /**
      * @minimum 0
+     * @format int
      */
     action_required: number;
     /**
      * @minimum 0
+     * @format int
      */
     complete: number;
   };
@@ -18060,6 +18067,7 @@ export interface ReportingStatusIssue {
   delivery_config_id?: string;
   /**
    * @minimum 1
+   * @format int
    */
   delivery_config_version?: number;
   feed_purpose?: 'pacing' | 'analytics' | 'billing';
@@ -18096,6 +18104,7 @@ export interface ReportingObligation {
   delivery_config_id: string;
   /**
    * @minimum 1
+   * @format int
    */
   delivery_config_version: number;
   /**
@@ -18163,26 +18172,31 @@ export interface ReportingObligation {
   /**
    * Number of revision records for this obligation in the consistent ledger snapshot.
    * @minimum 0
+   * @format int
    */
   revision_count: number;
   /**
    * Number of materialization records for this obligation's revisions in the consistent ledger snapshot.
    * @minimum 0
+   * @format int
    */
   materialization_count: number;
   /**
    * Number of available/delivered verified materializations in the consistent ledger snapshot.
    * @minimum 0
+   * @format int
    */
   successful_materialization_count: number;
   /**
    * Complete number of authenticated receipts associated with this obligation in the ledger snapshot.
    * @minimum 0
+   * @format int
    */
   receipt_count: number;
   /**
    * Number of accepted receipts. At most one current accepted receipt per consumer and revision contributes to reconciliation_status.
    * @minimum 0
+   * @format int
    */
   accepted_receipt_count: number;
   issues: ReportingStatusIssue[];
@@ -18340,6 +18354,7 @@ export interface ReportingRevision {
   /**
    * Logical row count, including zero for a successfully evaluated empty report.
    * @minimum 0
+   * @format int
    */
   row_count: number;
   /**
@@ -18431,6 +18446,7 @@ export interface ReportingMaterialization {
   delivery_config_id: string;
   /**
    * @minimum 1
+   * @format int
    */
   delivery_config_version: number;
   /**
@@ -18449,6 +18465,7 @@ export interface ReportingMaterialization {
   transport?: string;
   /**
    * @minimum 1
+   * @format int
    */
   attempt: number;
   /**
@@ -18545,6 +18562,7 @@ export interface ReportingVerification {
   /**
    * Verified row count. Zero explicitly distinguishes an empty committed revision from a missing revision.
    * @minimum 0
+   * @format int
    */
   row_count: number;
   /**
@@ -18611,6 +18629,7 @@ export interface ReportingReceipt {
   verification_profile: ReportingVerificationProfile;
   /**
    * @minimum 0
+   * @format int
    */
   observed_row_count: number;
   observed_control_totals: ReportingControlTotal[];
@@ -18659,6 +18678,9 @@ export interface RevisionView {
 }
 export interface UnavailableLookup {
   adcp_version?: string;
+  /**
+   * @format int
+   */
   adcp_major_version?: number;
   status: 'failed';
   view: 'summary' | 'periods' | 'revision';
@@ -18682,6 +18704,9 @@ export interface UnavailableLookup {
 }
 export interface OperationalFailure {
   adcp_version?: string;
+  /**
+   * @format int
+   */
   adcp_major_version?: number;
   status: 'failed';
   view: 'summary' | 'periods' | 'revision';
@@ -31399,6 +31424,7 @@ export interface GetAdCPCapabilitiesResponse {
        * Maximum caller-scoped destination bindings when reporting_destinations is supported. The task schema has a portable maximum of 64; sellers may advertise a lower operational limit.
        * @minimum 1
        * @maximum 64
+       * @format int
        */
       max_reporting_destinations?: number;
       /**
@@ -32810,6 +32836,7 @@ export interface AcceptedGovernanceAgents {
         /**
          * Maximum age of the registry evidence at binding time. Zero requires a fresh result. Evidence is pinned to the accepted binding; later registry drift does not silently revoke an existing binding.
          * @minimum 0
+         * @format int
          */
         max_age_seconds: number;
       }
@@ -32886,6 +32913,7 @@ export interface AttestationCapabilities {
    * Maximum UTF-8 byte size accepted for one embedded credential. Evaluators MUST enforce this limit before parsing the credential. The protocol ceiling is 1 MiB.
    * @minimum 1024
    * @maximum 1048576
+   * @format int
    */
   max_embedded_credential_bytes?: number;
   ext?: ExtensionObject;
@@ -32991,22 +33019,26 @@ export interface ReportingDeliveryCapabilities {
   /**
    * Maximum late interval during which a due obligation may remain delayed while automated recovery continues before action_required.
    * @minimum 0
+   * @format int
    */
   automated_recovery_window_seconds: number;
   /**
    * Minimum period for which obligation, revision, and materialization metadata remain queryable.
    * @minimum 1
+   * @format int
    */
   status_retention_days: number;
   /**
    * Minimum period after publication for which at least one verified exact materialization remains readable to every still-authorized intended consumer.
    * @minimum 1
+   * @format int
    */
   resource_retention_days: number;
   supports_webhook_activity?: boolean;
   /**
    * Maximum delay after caller/account authorization ends before seller-controlled transport access, provider grants, and write credentials are revoked. It cannot revoke a buyer's access to data already written into a buyer-owned destination.
    * @minimum 0
+   * @format int
    */
   authorization_revocation_seconds: number;
 }
@@ -34829,6 +34861,7 @@ export interface ReportingDeliveryConfiguration {
   /**
    * Caller-selected immutable semantic generation. Increment when feed/profile/scope/finality/schedule/method/destination changes; lifecycle fields may change in place.
    * @minimum 1
+   * @format int
    */
   delivery_config_version: number;
   /**
