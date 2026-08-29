@@ -27,6 +27,7 @@ import { pgWebhookDeliveryRecoveryBackend, type PgWebhookDeliveryRecoveryOptions
 import { protocolForTool, SPEC_WEBHOOK_TASK_TYPES } from './protocol-for-tool';
 import {
   _postgresTaskRegistryBinding,
+  type PgQueryable,
   type PgTransactionClient,
   type PgTransactionalPool,
 } from './postgres-task-registry';
@@ -151,48 +152,134 @@ export function createPostgresTaskSettlementCoordinator(
       if (ref.registryId !== options.registry.registryId) {
         return { outcome: 'not_found_in_scope', delivery: 'not_applicable' };
       }
+      const deliveryKey = {
+        ...claimScope,
+        deliveryId: stableScope('task-webhook', ref),
+      };
+      const transactionalPool = pool as PgTransactionalPool;
+
+      // Read the immutable inputs needed by protection without retaining a
+      // transaction client. KMS/secret-manager adapters may be slow or hung;
+      // they must never run while a task/outbox row lock or pooled connection
+      // is held. The transaction below re-reads and validates every relevant
+      // task/outbox field before committing.
+      let observed: LockedTaskRow | undefined;
+      try {
+        observed = await readTaskRow(transactionalPool, binding.tableName, binding.namespace, ref, false);
+      } catch (cause) {
+        throwSettlementFailure(cause);
+      }
+      if (!observed) return { outcome: 'not_found_in_scope', delivery: 'not_applicable' };
+
+      validatePush(push);
+      if (observed.has_webhook !== true) {
+        throw new TaskPushSettlementConfigurationError(
+          'Crash-safe push settlement requires a task created with hasWebhook: true'
+        );
+      }
+
+      let result: unknown;
+      let error: AdcpStructuredError | undefined;
+      try {
+        result =
+          terminal.status === 'completed'
+            ? sanitizeTaskResultForWire(structuredClone(terminal.result), ref)
+            : terminal.result === undefined
+              ? { errors: [sanitizeStructuredAdcpError(terminal.error)] }
+              : sanitizeTaskResultForWire(structuredClone(terminal.result), ref);
+        error = terminal.status === 'failed' ? sanitizeStructuredAdcpError(terminal.error) : undefined;
+        // Validate the exact canonical domain used later for immutable
+        // terminal and outbox fingerprints. JSON.stringify alone would
+        // silently coerce NaN/Infinity and exotic objects.
+        canonicalJsonSha256({ result, error });
+        assertPayloadSize(result, error);
+      } catch (cause) {
+        if (cause instanceof TaskPushSettlementConfigurationError) throw cause;
+        throw new TaskPushSettlementConfigurationError('Task terminal result/error must be serializable JSON', {
+          cause,
+        });
+      }
+
+      if (TERMINAL.has(observed.status) && !terminalMatches(observed, terminal.status, result, error)) {
+        return {
+          outcome: 'already_terminal',
+          status: observed.status,
+          compatibility: 'conflicting',
+          delivery: 'not_applicable',
+        };
+      }
+      if (!SPEC_WEBHOOK_TASK_TYPES.has(observed.tool)) {
+        throw new TaskPushSettlementConfigurationError(
+          `Task type ${observed.tool} cannot be emitted by the closed AdCP task-webhook schema`
+        );
+      }
+
+      let observedOutbox: OutboxRow | undefined;
+      try {
+        observedOutbox = await readOutbox(transactionalPool, outboxTable, deliveryKey, false);
+      } catch (cause) {
+        throwSettlementFailure(cause);
+      }
+      if (TERMINAL.has(observed.status) && !observedOutbox) {
+        throw new TaskPushSettlementConfigurationError(
+          'Terminal task has no atomic webhook delivery checkpoint; refusing to create a duplicate notification'
+        );
+      }
+      const existingTimestamp =
+        observedOutbox?.state === 'pending' ? observedOutbox.snapshot.payload.timestamp : undefined;
+      const payload: Record<string, unknown> = {
+        idempotency_key: `pending.${deliveryKey.deliveryId.slice(-48)}`,
+        operation_id: resolveOperationId(push, observed.tool, ref.taskId),
+        task_id: ref.taskId,
+        task_type: observed.tool,
+        status: terminal.status,
+        timestamp: typeof existingTimestamp === 'string' ? existingTimestamp : new Date().toISOString(),
+        protocol: protocolForTool(observed.tool),
+        result,
+        ...(push.token !== undefined && { token: push.token }),
+        ...(terminal.status === 'failed' && { message: error!.message }),
+      };
+      let prepared: PreparedWebhookDeliverySnapshot;
+      try {
+        prepared = await recovery.prepare(
+          deliveryKey,
+          {
+            url: push.url,
+            payload,
+            authentication: push.authentication ?? null,
+            retries,
+          },
+          { protectPayloadToken: push.token !== undefined }
+        );
+      } catch (cause) {
+        if (cause instanceof WebhookAuthenticationProtectionError) throwSettlementFailure(cause);
+        throw new TaskPushSettlementConfigurationError('Terminal webhook delivery configuration is invalid', {
+          cause,
+        });
+      }
+      const intentFingerprint = taskPushIntentFingerprint(prepared.snapshot);
+
       let client: PgTransactionClient | undefined;
       try {
-        client = await (pool as PgTransactionalPool).connect();
+        client = await transactionalPool.connect();
         await client.query('BEGIN');
-        const locked = await client.query(
-          `SELECT tool, status, result, error, has_webhook
-             FROM ${binding.tableName}
-            WHERE task_id = $1 AND registry_namespace = $2 AND account_id = $3 AND owner_scope = $4
-            FOR UPDATE`,
-          [ref.taskId, binding.namespace, ref.accountId, ref.ownerScope]
-        );
-        if (locked.rows.length === 0) {
+        const row = await readTaskRow(client, binding.tableName, binding.namespace, ref, true);
+        if (!row) {
           await client.query('ROLLBACK');
           return { outcome: 'not_found_in_scope', delivery: 'not_applicable' };
         }
-        const row = locked.rows[0] as unknown as LockedTaskRow;
-        validatePush(push);
         if (row.has_webhook !== true) {
           throw new TaskPushSettlementConfigurationError(
             'Crash-safe push settlement requires a task created with hasWebhook: true'
           );
         }
-        let result: unknown;
-        let error: AdcpStructuredError | undefined;
-        try {
-          result =
-            terminal.status === 'completed'
-              ? sanitizeTaskResultForWire(structuredClone(terminal.result), ref)
-              : terminal.result === undefined
-                ? { errors: [sanitizeStructuredAdcpError(terminal.error)] }
-                : sanitizeTaskResultForWire(structuredClone(terminal.result), ref);
-          error = terminal.status === 'failed' ? sanitizeStructuredAdcpError(terminal.error) : undefined;
-          // Validate the exact canonical domain used later for immutable
-          // terminal and outbox fingerprints. JSON.stringify alone would
-          // silently coerce NaN/Infinity and exotic objects.
-          canonicalJsonSha256({ result, error });
-          assertPayloadSize(result, error);
-        } catch (cause) {
-          if (cause instanceof TaskPushSettlementConfigurationError) throw cause;
-          throw new TaskPushSettlementConfigurationError('Task terminal result/error must be serializable JSON', {
-            cause,
-          });
+        if (row.tool !== observed.tool) {
+          throw new TaskPushSettlementConfigurationError('Task type changed during settlement protection');
+        }
+        if (!SPEC_WEBHOOK_TASK_TYPES.has(row.tool)) {
+          throw new TaskPushSettlementConfigurationError(
+            `Task type ${row.tool} cannot be emitted by the closed AdCP task-webhook schema`
+          );
         }
         const compatible = terminalMatches(row, terminal.status, result, error);
         if (TERMINAL.has(row.status) && !compatible) {
@@ -205,11 +292,7 @@ export function createPostgresTaskSettlementCoordinator(
           };
         }
 
-        const deliveryKey = {
-          ...claimScope,
-          deliveryId: stableScope('task-webhook', ref),
-        };
-        const existing = await readOutbox(client, outboxTable, deliveryKey);
+        const existing = await readOutbox(client, outboxTable, deliveryKey, true);
         if (TERMINAL.has(row.status) && !existing) {
           throw new TaskPushSettlementConfigurationError(
             'Terminal task has no atomic webhook delivery checkpoint; refusing to create a duplicate notification'
@@ -217,44 +300,6 @@ export function createPostgresTaskSettlementCoordinator(
         }
         let inserted = false;
         let delivery = existing ? deliveryState(existing) : undefined;
-
-        if (!SPEC_WEBHOOK_TASK_TYPES.has(row.tool)) {
-          throw new TaskPushSettlementConfigurationError(
-            `Task type ${row.tool} cannot be emitted by the closed AdCP task-webhook schema`
-          );
-        }
-        const existingTimestamp = existing?.state === 'pending' ? existing.snapshot.payload.timestamp : undefined;
-        const payload: Record<string, unknown> = {
-          idempotency_key: `pending.${deliveryKey.deliveryId.slice(-48)}`,
-          operation_id: resolveOperationId(push, row.tool, ref.taskId),
-          task_id: ref.taskId,
-          task_type: row.tool,
-          status: terminal.status,
-          timestamp: typeof existingTimestamp === 'string' ? existingTimestamp : new Date().toISOString(),
-          protocol: protocolForTool(row.tool),
-          result,
-          ...(push.token !== undefined && { token: push.token }),
-          ...(terminal.status === 'failed' && { message: error!.message }),
-        };
-        let prepared: PreparedWebhookDeliverySnapshot;
-        try {
-          prepared = await recovery.prepare(
-            deliveryKey,
-            {
-              url: push.url,
-              payload,
-              authentication: push.authentication ?? null,
-              retries,
-            },
-            { protectPayloadToken: push.token !== undefined }
-          );
-        } catch (cause) {
-          if (cause instanceof WebhookAuthenticationProtectionError) throw cause;
-          throw new TaskPushSettlementConfigurationError('Terminal webhook delivery configuration is invalid', {
-            cause,
-          });
-        }
-        const intentFingerprint = taskPushIntentFingerprint(prepared.snapshot);
 
         // Settled records redact their snapshots but retain a non-secret
         // fingerprint of every immutable route/payload field except the
@@ -278,7 +323,7 @@ export function createPostgresTaskSettlementCoordinator(
           };
         }
 
-        if (existing && existing.snapshot_fingerprint !== prepared.snapshotFingerprint) {
+        if (existing && !outboxMatchesPrepared(existing, prepared, intentFingerprint)) {
           throw new TaskPushSettlementConfigurationError(
             'Terminal webhook delivery identity is already bound to a conflicting route or payload'
           );
@@ -302,8 +347,8 @@ export function createPostgresTaskSettlementCoordinator(
             ]
           );
           if ((write.rowCount ?? 0) !== 1) {
-            const raced = await readOutbox(client, outboxTable, deliveryKey);
-            if (!raced || raced.snapshot_fingerprint !== prepared.snapshotFingerprint) {
+            const raced = await readOutbox(client, outboxTable, deliveryKey, true);
+            if (!raced || !outboxMatchesPrepared(raced, prepared, intentFingerprint)) {
               throw new TaskPushSettlementConfigurationError(
                 'Terminal webhook delivery identity is already bound to a conflicting route or payload'
               );
@@ -354,8 +399,7 @@ export function createPostgresTaskSettlementCoordinator(
         };
       } catch (cause) {
         if (client) await rollbackQuietly(client);
-        if (cause instanceof TaskPushSettlementConfigurationError) throw cause;
-        throw new Error('PostgresTaskSettlementCoordinator.settle: transaction failed', { cause });
+        throwSettlementFailure(cause);
       } finally {
         client?.release();
       }
@@ -532,19 +576,50 @@ interface OutboxRow {
   disposition: string | null;
 }
 
-async function readOutbox(
-  client: PgTransactionClient,
+async function readTaskRow(
+  db: PgQueryable,
   table: string,
-  key: { publisherScope: string; tenantScope: string; deliveryId: string }
+  namespace: string,
+  ref: ScopedTaskRef,
+  lock: boolean
+): Promise<LockedTaskRow | undefined> {
+  const found = await db.query(
+    `SELECT tool, status, result, error, has_webhook
+       FROM ${table}
+      WHERE task_id = $1 AND registry_namespace = $2 AND account_id = $3 AND owner_scope = $4${lock ? '\n      FOR UPDATE' : ''}`,
+    [ref.taskId, namespace, ref.accountId, ref.ownerScope]
+  );
+  return found.rows[0] as unknown as LockedTaskRow | undefined;
+}
+
+async function readOutbox(
+  db: PgQueryable,
+  table: string,
+  key: { publisherScope: string; tenantScope: string; deliveryId: string },
+  lock: boolean
 ): Promise<OutboxRow | undefined> {
-  const found = await client.query(
+  const found = await db.query(
     `SELECT snapshot, snapshot_fingerprint, intent_fingerprint, state, disposition
        FROM ${table}
-      WHERE publisher_scope = $1 AND tenant_scope = $2 AND delivery_id = $3
-      FOR UPDATE`,
+      WHERE publisher_scope = $1 AND tenant_scope = $2 AND delivery_id = $3${lock ? '\n      FOR UPDATE' : ''}`,
     [key.publisherScope, key.tenantScope, key.deliveryId]
   );
   return found.rows[0] as unknown as OutboxRow | undefined;
+}
+
+function outboxMatchesPrepared(
+  existing: OutboxRow,
+  prepared: PreparedWebhookDeliverySnapshot,
+  intentFingerprint: string
+): boolean {
+  return existing.intent_fingerprint !== null
+    ? existing.intent_fingerprint === intentFingerprint
+    : existing.snapshot_fingerprint === prepared.snapshotFingerprint;
+}
+
+function throwSettlementFailure(cause: unknown): never {
+  if (cause instanceof TaskPushSettlementConfigurationError) throw cause;
+  throw new Error('PostgresTaskSettlementCoordinator.settle: transaction failed', { cause });
 }
 
 function deliveryState(row: OutboxRow): TaskPushDeliveryState {

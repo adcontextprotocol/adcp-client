@@ -52,7 +52,8 @@ function buildServer(resolveAccount, overrides = {}) {
     name: 'gate-host',
     version: '0.0.1',
     validation: { requests: 'off', responses: 'off' },
-    complyTest: {
+    ...(overrides.resolveSessionKey !== undefined && { resolveSessionKey: overrides.resolveSessionKey }),
+    complyTest: overrides.complyTest ?? {
       force: {
         creative_status: async params => ({
           success: true,
@@ -125,6 +126,18 @@ function assertPermissionDenied(result) {
 }
 
 async function callMcpToolsCallHandler(server, args = {}, extra = {}) {
+  return callMcpControllerHandler(
+    server,
+    {
+      scenario: 'force_creative_status',
+      params: { creative_id: 'cr_1', status: 'approved' },
+      ...args,
+    },
+    extra
+  );
+}
+
+async function callMcpControllerHandler(server, input, extra = {}) {
   const sdk = getSdkServer(server);
   const handler = sdk?.server?._requestHandlers?.get('tools/call');
   if (!handler) throw new Error('tools/call request handler not found');
@@ -133,11 +146,7 @@ async function callMcpToolsCallHandler(server, args = {}, extra = {}) {
       method: 'tools/call',
       params: {
         name: 'comply_test_controller',
-        arguments: {
-          scenario: 'force_creative_status',
-          params: { creative_id: 'cr_1', status: 'approved' },
-          ...args,
-        },
+        arguments: input,
       },
     },
     { signal: new AbortController().signal, ...extra }
@@ -403,6 +412,210 @@ describe('createAdcpServerFromPlatform — sandbox-authority gate (resolver path
     assert.ok(seenCredentials.every(call => call.credential?.key_id === 'sandbox-key'));
     assert.ok(seenCredentials.every(call => call.extra?.tenant === 'tenant_1'));
     assert.ok(seenCredentials.some(call => call.input?.scenario === 'force_creative_status'));
+  });
+
+  it('passes the exact resolved target account and transport authority to adapters', async () => {
+    const authInfo = {
+      clientId: 'buyer-client',
+      credential: { kind: 'api_key', key_id: 'sandbox-key' },
+      extra: { tenant: 'tenant-a' },
+    };
+    const targetAccount = {
+      id: 'internal:tenant-a:account-1',
+      mode: 'sandbox',
+      ctx_metadata: { upstream_account: 'account-1' },
+    };
+    let captured;
+    const server = buildServer(
+      async ref =>
+        ref?.account_id === 'public-account-1'
+          ? targetAccount
+          : { id: 'principal-account', mode: 'sandbox', ctx_metadata: {} },
+      {
+        complyTest: {
+          force: {
+            creative_status: async (params, ctx) => {
+              captured = ctx;
+              return {
+                success: true,
+                transition: 'forced',
+                resource_type: 'creative',
+                resource_id: params.creative_id,
+                previous_state: 'pending_review',
+                current_state: params.status,
+              };
+            },
+          },
+        },
+      }
+    );
+
+    const result = await callMcpToolsCallHandler(
+      server,
+      {
+        account: { account_id: 'public-account-1' },
+        ext: { account: { id: 'attacker-controlled' }, authInfo: { clientId: 'attacker' } },
+      },
+      { authInfo }
+    );
+
+    assert.notStrictEqual(result.isError, true);
+    assert.strictEqual(captured.account, targetAccount);
+    assert.strictEqual(captured.authInfo, authInfo);
+    assert.strictEqual(captured.agent, undefined);
+    assert.strictEqual(captured.taskScope.accountId, targetAccount.id);
+    assert.strictEqual(captured.taskScope.ownerScope, 'api_key:sandbox-key');
+    assert.strictEqual(Object.getOwnPropertyDescriptor(captured, 'account').writable, false);
+    assert.strictEqual(Object.getOwnPropertyDescriptor(captured, 'authInfo').writable, false);
+    captured.input = { retained: 'legacy mutable context behavior' };
+    assert.deepStrictEqual(captured.input, { retained: 'legacy mutable context behavior' });
+  });
+
+  it('uses an auth-derived account when the request omits an explicit account', async () => {
+    const authDerived = { id: 'auth-derived-account', mode: 'sandbox', ctx_metadata: {} };
+    let captured;
+    const server = buildServer(async () => authDerived, {
+      complyTest: {
+        force: {
+          creative_status: async (params, ctx) => {
+            captured = ctx;
+            return {
+              success: true,
+              transition: 'forced',
+              resource_type: 'creative',
+              resource_id: params.creative_id,
+              previous_state: 'pending_review',
+              current_state: params.status,
+            };
+          },
+        },
+      },
+    });
+
+    const result = await callMcpToolsCallHandler(server);
+
+    assert.notStrictEqual(result.isError, true);
+    assert.strictEqual(captured.account, authDerived);
+    assert.strictEqual(captured.taskScope.accountId, authDerived.id);
+    assert.strictEqual(captured.taskScope.ownerScope, `account:${authDerived.id}`);
+  });
+
+  it('issues agent-scoped task authority for task-oriented adapters', async () => {
+    const registryAgent = {
+      agent_url: 'https://buyer.example/agent',
+      display_name: 'Buyer',
+      status: 'active',
+      billing_capabilities: new Set(['operator']),
+    };
+    let captured;
+    const server = buildServer(
+      async ref => ({ id: ref?.account_id ?? 'principal-account', mode: 'sandbox', ctx_metadata: {} }),
+      {
+        agentRegistry: { resolve: async () => registryAgent },
+        complyTest: {
+          force: {
+            task_completion: async (params, ctx) => {
+              captured = ctx;
+              return {
+                success: true,
+                transition: 'forced',
+                resource_type: 'task',
+                resource_id: params.task_id,
+                previous_state: 'working',
+                current_state: 'completed',
+              };
+            },
+          },
+        },
+      }
+    );
+
+    const result = await callMcpControllerHandler(server, {
+      scenario: 'force_task_completion',
+      account: { account_id: 'account-1' },
+      params: { task_id: 'task-42', result: { ok: true } },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(captured.agent, registryAgent);
+    assert.deepStrictEqual(captured.taskScope, {
+      accountId: 'account-1',
+      ownerScope: `agent:${registryAgent.agent_url}`,
+      ...(captured.taskScope.registryId !== undefined && { registryId: captured.taskScope.registryId }),
+    });
+    assert.ok(Object.isFrozen(captured.taskScope));
+  });
+
+  it('prefers trusted session scope for task-oriented adapters', async () => {
+    let captured;
+    const server = buildServer(
+      async ref => ({ id: ref?.account_id ?? 'principal-account', mode: 'sandbox', ctx_metadata: {} }),
+      {
+        resolveSessionKey: async ({ toolName, params, account }) => {
+          assert.strictEqual(toolName, 'tasks_get');
+          assert.deepStrictEqual(params, { task_id: 'task-session' });
+          return `approval:${account.id}`;
+        },
+        complyTest: {
+          force: {
+            task_completion: async (params, ctx) => {
+              captured = ctx;
+              return {
+                success: true,
+                transition: 'forced',
+                resource_type: 'task',
+                resource_id: params.task_id,
+                previous_state: 'working',
+                current_state: 'completed',
+              };
+            },
+          },
+        },
+      }
+    );
+
+    const result = await callMcpControllerHandler(
+      server,
+      {
+        scenario: 'force_task_completion',
+        account: { account_id: 'account-1' },
+        params: { task_id: 'task-session', result: { ok: true } },
+      },
+      { authInfo: { credential: { kind: 'api_key', key_id: 'key-that-must-not-win' } } }
+    );
+
+    assert.notStrictEqual(result.isError, true);
+    assert.strictEqual(captured.taskScope.ownerScope, 'session:approval:account-1');
+  });
+
+  it('leaves account and task authority absent when the sandbox deployment has no resolved account', async () => {
+    process.env.ADCP_SANDBOX = '1';
+    let captured;
+    const authInfo = { clientId: 'sandbox-client' };
+    const server = buildServer(async () => null, {
+      complyTest: {
+        force: {
+          creative_status: async (params, ctx) => {
+            captured = ctx;
+            return {
+              success: true,
+              transition: 'forced',
+              resource_type: 'creative',
+              resource_id: params.creative_id,
+              previous_state: 'pending_review',
+              current_state: params.status,
+            };
+          },
+        },
+      },
+    });
+
+    const result = await callMcpToolsCallHandler(server, {}, { authInfo });
+
+    assert.notStrictEqual(result.isError, true);
+    assert.strictEqual(captured.account, undefined);
+    assert.strictEqual(captured.taskScope, undefined);
+    assert.strictEqual(captured.authInfo, authInfo);
   });
 });
 

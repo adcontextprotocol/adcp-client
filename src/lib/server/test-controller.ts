@@ -1094,7 +1094,7 @@ async function dispatchSeed(
 async function handleTestControllerRequestImpl(
   storeOrFactory: TestControllerStoreOrFactory,
   input: Record<string, unknown>,
-  options?: { seedCache?: SeedFixtureCache }
+  options?: { seedCache?: SeedFixtureCache; seedScopePrefix?: string }
 ): Promise<ComplyTestControllerResponse> {
   const scenario = input.scenario as string | undefined;
   if (!scenario) {
@@ -1387,11 +1387,17 @@ async function handleTestControllerRequestImpl(
         // sessions, or storyboard correlation buckets on one server can each
         // seed the same fixture id with divergent fixtures; without a scope
         // prefix the cache treats divergent replays as INVALID_PARAMS even when
-        // each scoped fixture is internally self-consistent. No resolver call here — test-controller is a
-        // generic helper that doesn't know about platform.accounts.resolve,
-        // and read-time misalignment is fine because the cache only governs
-        // idempotency, not user-visible state.
-        const scope = makeSeedCacheScope(input);
+        // each scoped fixture is internally self-consistent. This generic
+        // helper never resolves caller-provided account references itself; a
+        // framework wrapper can supply a trusted seedScopePrefix after its
+        // normal account/tenant authorization path.
+        const inputScope = makeSeedCacheScope(input);
+        const scope =
+          options?.seedScopePrefix === undefined
+            ? inputScope
+            : inputScope === undefined
+              ? options.seedScopePrefix
+              : `${options.seedScopePrefix}\u0000${inputScope}`;
         return await dispatchSeed(store, scenario as SeedScenario, params, options?.seedCache, scope);
       }
 
@@ -1516,7 +1522,7 @@ async function handleTestControllerRequestImpl(
 export async function handleTestControllerRequest(
   storeOrFactory: TestControllerStoreOrFactory,
   input: Record<string, unknown>,
-  options?: { seedCache?: SeedFixtureCache }
+  options?: { seedCache?: SeedFixtureCache; seedScopePrefix?: string }
 ): Promise<ComplyTestControllerResponse> {
   const ctx = input.context;
   const result = await handleTestControllerRequestImpl(storeOrFactory, input, options);
@@ -1632,7 +1638,7 @@ export const TOOL_INPUT_SHAPE = {
 export function registerTestController(
   server: AdcpServer | McpServer,
   storeOrFactory: TestControllerStoreOrFactory,
-  options?: { seedCache?: SeedFixtureCache }
+  options?: { seedCache?: SeedFixtureCache; seedScopePrefix?: string }
 ): void {
   const mcp = getSdkServer(server as AdcpServer) ?? (server as McpServer);
   // Per-registration cache so seed idempotency holds across all requests on
@@ -1670,6 +1676,7 @@ export function registerTestController(
     (async (input: Record<string, unknown>) => {
       const response = await handleTestControllerRequest(storeOrFactory, input, {
         seedCache,
+        ...(options?.seedScopePrefix !== undefined && { seedScopePrefix: options.seedScopePrefix }),
       });
       return toMcpResponse(response);
     }) as Parameters<typeof mcp.registerTool>[2]

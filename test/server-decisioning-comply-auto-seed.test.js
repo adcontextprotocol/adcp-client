@@ -68,18 +68,24 @@ const BASE_OPTS = {
   validation: { requests: 'off', responses: 'off' },
 };
 
-async function callComply(server, args) {
-  return server.dispatchTestRequest({
-    method: 'tools/call',
-    params: { name: 'comply_test_controller', arguments: args },
-  });
+async function callComply(server, args, extras) {
+  return server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: { name: 'comply_test_controller', arguments: args },
+    },
+    extras
+  );
 }
 
-async function callGetProducts(server, args) {
-  return server.dispatchTestRequest({
-    method: 'tools/call',
-    params: { name: 'get_products', arguments: args },
-  });
+async function callGetProducts(server, args, extras) {
+  return server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: { name: 'get_products', arguments: args },
+    },
+    extras
+  );
 }
 
 describe('createAdcpServerFromPlatform — catalog-backed auto-seed (issue #1091)', () => {
@@ -333,37 +339,23 @@ describe('createAdcpServerFromPlatform — catalog-backed auto-seed (issue #1091
     );
   });
 
-  it('security: caller spoofing account.account_id only writes to its own claimed namespace (no resolver call)', async () => {
-    // Pin: the auto-seed adapter MUST NOT call platform.accounts.resolve
-    // with attacker-supplied account_id and no authInfo. If it did, a
-    // caller could spoof account.account_id: 'victim' and a non-validating
-    // resolver would map it to the victim's resolved namespace.
-    //
-    // This test pins the contract: even when the resolver maps
-    // 'attacker' → 'tenant_victim' (simulating a misconfigured resolver
-    // that returns based on raw id alone), the adapter writes ONLY under
-    // the raw 'attacker' namespace. The victim's bridge (reading
-    // ctx.account.id = 'tenant_victim_real') never sees the attacker's
-    // fixtures.
+  it('security: resolved account namespace does not leak fixtures to a different resolved tenant', async () => {
+    // The framework resolves the target with the authenticated request
+    // context before the adapter runs. The adapter and catalog bridge both
+    // use that resolved internal id; a different resolved tenant must not see
+    // the fixture even when the public references look related.
     const platform = basePlatform();
-    platform.accounts.resolve = async ref => {
-      // Deliberately bad resolver: maps any account_id to a "victim"
-      // namespace (simulating a resolver that doesn't validate authInfo).
-      if (ref?.account_id === 'tenant_victim') {
-        return {
-          id: 'tenant_victim_real',
-          operator: 'test.example.com',
-          ctx_metadata: {},
-          authInfo: { kind: 'api_key' },
-          ...(ref?.sandbox === true && { sandbox: true }),
-        };
-      }
+    platform.accounts.resolve = async (ref, ctx) => {
+      const principal = ctx.authInfo?.clientId;
+      if (principal !== 'attacker' && principal !== 'victim') return null;
       return {
-        id: ref?.account_id ?? 'unknown',
+        // The same public alias is authorization-aware and resolves into a
+        // different internal tenant namespace for each authenticated caller.
+        id: `${principal}:${ref?.account_id ?? 'principal'}`,
         operator: 'test.example.com',
         ctx_metadata: {},
         authInfo: { kind: 'api_key' },
-        ...(ref?.sandbox === true && { sandbox: true }),
+        sandbox: true,
       };
     };
 
@@ -372,42 +364,61 @@ describe('createAdcpServerFromPlatform — catalog-backed auto-seed (issue #1091
       complyTest: { sandboxGate: SANDBOX_GATE },
     });
 
-    // Attacker spoofs account_id: 'tenant_victim' on a seed.
-    await callComply(server, {
-      scenario: 'seed_product',
-      account: { account_id: 'tenant_victim', sandbox: true },
-      params: {
-        product_id: 'attacker_product',
-        fixture: { delivery_type: 'guaranteed' },
+    // Both principals use the same caller-visible alias. Authority-aware
+    // resolution must keep their auto-seed namespaces distinct.
+    await callComply(
+      server,
+      {
+        scenario: 'seed_product',
+        account: { account_id: 'shared-alias', sandbox: true },
+        params: {
+          product_id: 'shared_product',
+          fixture: { delivery_type: 'guaranteed' },
+        },
       },
-    });
-
-    // Victim's get_products (resolves to tenant_victim_real) must NOT see
-    // the attacker's fixture.
-    const victimResult = await callGetProducts(server, {
-      account: { account_id: 'tenant_victim_alias', sandbox: true },
-    });
-    const victimProducts = victimResult.structuredContent.products ?? [];
-    assert.ok(
-      !victimProducts.some(p => p.product_id === 'attacker_product'),
-      "victim's get_products MUST NOT see attacker's spoofed fixture (cross-tenant write vector)"
+      { authInfo: { clientId: 'attacker' } }
     );
+
+    const victimSeed = await callComply(
+      server,
+      {
+        scenario: 'seed_product',
+        account: { account_id: 'shared-alias', sandbox: true },
+        params: {
+          product_id: 'shared_product',
+          fixture: { delivery_type: 'non_guaranteed' },
+        },
+      },
+      { authInfo: { clientId: 'victim' } }
+    );
+    assert.notStrictEqual(victimSeed.isError, true, JSON.stringify(victimSeed.structuredContent));
+
+    // The victim resolves the same alias under different trusted authority.
+    const victimResult = await callGetProducts(
+      server,
+      {
+        account: { account_id: 'shared-alias', sandbox: true },
+      },
+      { authInfo: { clientId: 'victim' } }
+    );
+    const victimProducts = victimResult.structuredContent.products ?? [];
+    const victimProduct = victimProducts.find(p => p.product_id === 'shared_product');
+    assert.strictEqual(victimProduct?.delivery_type, 'non_guaranteed');
+
+    const attackerResult = await callGetProducts(
+      server,
+      {
+        account: { account_id: 'shared-alias', sandbox: true },
+      },
+      { authInfo: { clientId: 'attacker' } }
+    );
+    const attackerProduct = (attackerResult.structuredContent.products ?? []).find(
+      p => p.product_id === 'shared_product'
+    );
+    assert.strictEqual(attackerProduct?.delivery_type, 'guaranteed');
   });
 
-  it('mapping resolver: adapter writes under raw account_id (security-correct asymmetry, issue #1216)', async () => {
-    // Adopters whose resolver maps `account_id` to a distinct internal `id`
-    // (e.g., `acc_42` → `mapped:acc_42`) hit a documented limitation: the
-    // adapter writes under the RAW account_id, but the bridge reads under
-    // the framework-resolved id. Asymmetric — fixtures don't appear in
-    // get_products. That's the security-correct trade-off:
-    //
-    // The alternative — having the adapter call platform.accounts.resolve
-    // — would let a caller spoof account.account_id and have a non-validating
-    // resolver write seeds into another tenant's namespace (the adapter has
-    // no authInfo to pass to resolve). Architectural fix tracked at #1216:
-    // widen ComplyControllerContext so the adapter sees the framework-resolved
-    // account. Until then, mapping-resolver adopters wire explicit seed
-    // adapters or use identity resolvers.
+  it('mapping resolver: adapter and bridge use the same resolved account namespace (issue #2723)', async () => {
     const platform = basePlatform();
     platform.accounts.resolve = async ref => ({
       id: ref?.account_id ? `mapped:${ref.account_id}` : 'mapped:unknown',
@@ -435,11 +446,10 @@ describe('createAdcpServerFromPlatform — catalog-backed auto-seed (issue #1091
       account: { account_id: 'acc_42', sandbox: true },
     });
 
-    // Adapter wrote to namespace 'acc_42'; bridge reads from resolved id
-    // 'mapped:acc_42' — no match. Documented limitation.
     const products = result.structuredContent.products ?? [];
     const seeded = products.find(p => p.product_id === 'mapped_product');
-    assert.equal(seeded, undefined, 'mapping-resolver fixtures do NOT appear in get_products (documented limitation)');
+    assert.ok(seeded, 'mapping-resolver fixtures should appear in the resolved account namespace');
+    assert.equal(seeded.product_id, 'mapped_product');
   });
 
   it('warn-on-drop: seed_product with no account.account_id logs and drops, no fixture leaks (issue #1216)', async () => {
@@ -450,6 +460,8 @@ describe('createAdcpServerFromPlatform — catalog-backed auto-seed (issue #1091
     // emit a warn-level log so the misconfiguration is diagnosable.
     const warnings = [];
     const platform = basePlatform();
+    const normalResolve = platform.accounts.resolve;
+    platform.accounts.resolve = async () => null;
     const server = createAdcpServerFromPlatform(platform, {
       ...BASE_OPTS,
       logger: {
@@ -484,6 +496,7 @@ describe('createAdcpServerFromPlatform — catalog-backed auto-seed (issue #1091
 
     // Confirm no fixture leaked into a shared namespace: a sandbox account's
     // get_products must NOT see the orphan.
+    platform.accounts.resolve = normalResolve;
     const gpResult = await callGetProducts(server, {
       account: { account_id: 'any_acc', sandbox: true },
     });

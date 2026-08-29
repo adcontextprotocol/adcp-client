@@ -99,7 +99,13 @@ describe('decisioning task registry schema management', () => {
     } = require('../dist/lib/server/decisioning');
     const databaseError = new Error('private database host unavailable');
     const pool = {
-      async query() {
+      async query(sql) {
+        if (sql.includes('SELECT tool, status, result, error, has_webhook')) {
+          return {
+            rows: [{ tool: 'create_media_buy', status: 'submitted', result: null, error: null, has_webhook: true }],
+            rowCount: 1,
+          };
+        }
         return { rows: [], rowCount: 0 };
       },
       async connect() {
@@ -127,6 +133,203 @@ describe('decisioning task registry schema management', () => {
         error.message === 'PostgresTaskSettlementCoordinator.settle: transaction failed' &&
         error.cause === databaseError
     );
+  });
+
+  test('push settlement finishes secret protection before acquiring a transaction client', async () => {
+    const {
+      createPostgresTaskRegistry,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    const databaseError = new Error('stop after the protection-order assertion');
+    let connectCalls = 0;
+    let releaseProtection;
+    const protectionReleased = new Promise(resolve => {
+      releaseProtection = resolve;
+    });
+    let markProtectionStarted;
+    const protectionStarted = new Promise(resolve => {
+      markProtectionStarted = resolve;
+    });
+    const pool = {
+      async query(sql) {
+        if (sql.includes('SELECT tool, status, result, error, has_webhook')) {
+          return {
+            rows: [{ tool: 'create_media_buy', status: 'submitted', result: null, error: null, has_webhook: true }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+      async connect() {
+        connectCalls++;
+        throw databaseError;
+      },
+    };
+    const registry = createPostgresTaskRegistry({ namespace: NAMESPACE, storageId: 'protect-before-connect', pool });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+      authenticationAdapter: {
+        async protect(authentication) {
+          markProtectionStarted();
+          await protectionReleased;
+          return {
+            protectedValue: { ciphertext: 'opaque-test-value' },
+            fingerprint: require('node:crypto').createHash('sha256').update(authentication.token).digest('hex'),
+          };
+        },
+        resolve() {
+          return { type: 'bearer', token: 'buyer-validation-secret' };
+        },
+      },
+    });
+    const settlement = coordinator.settle(
+      {
+        taskId: 'task_protection_order',
+        accountId: 'acc_1',
+        ownerScope: 'account:acc_1',
+        registryId: registry.registryId,
+      },
+      { status: 'completed', result: { ok: true } },
+      {
+        url: 'https://buyer.example/webhooks/task',
+        operationId: 'protection-order-operation',
+        token: 'buyer-validation-secret',
+      }
+    );
+
+    await protectionStarted;
+    assert.strictEqual(connectCalls, 0, 'KMS work must finish before the transaction client is acquired');
+    releaseProtection();
+    await assert.rejects(
+      settlement,
+      error =>
+        error.message === 'PostgresTaskSettlementCoordinator.settle: transaction failed' &&
+        error.cause === databaseError
+    );
+    assert.strictEqual(connectCalls, 1);
+  });
+
+  test('out-of-scope settlement refs return not_found before validation or secret protection', async () => {
+    const {
+      createPostgresTaskRegistry,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    let protectionCalls = 0;
+    let connectCalls = 0;
+    const pool = {
+      async query() {
+        return { rows: [], rowCount: 0 };
+      },
+      async connect() {
+        connectCalls++;
+        throw new Error('must not acquire a transaction for a scoped miss');
+      },
+    };
+    const registry = createPostgresTaskRegistry({ namespace: NAMESPACE, storageId: 'scoped-miss', pool });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+      authenticationAdapter: {
+        protect() {
+          protectionCalls++;
+          throw new Error('must not protect a scoped miss');
+        },
+        resolve() {
+          return { type: 'bearer', token: 'unused-validation-secret' };
+        },
+      },
+    });
+
+    assert.deepStrictEqual(
+      await coordinator.settle(
+        {
+          taskId: 'missing_task',
+          accountId: 'wrong_account',
+          ownerScope: 'account:wrong_account',
+          registryId: registry.registryId,
+        },
+        { status: 'completed', result: { not_json: Number.POSITIVE_INFINITY } },
+        { url: 'not-a-url', token: 'short' }
+      ),
+      { outcome: 'not_found_in_scope', delivery: 'not_applicable' }
+    );
+    assert.strictEqual(protectionCalls, 0);
+    assert.strictEqual(connectCalls, 0);
+  });
+
+  test('an observed conflicting terminal task returns before secret protection', async () => {
+    const {
+      createPostgresTaskRegistry,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    let protectionCalls = 0;
+    let connectCalls = 0;
+    const pool = {
+      async query(sql) {
+        if (sql.includes('SELECT tool, status, result, error, has_webhook')) {
+          return {
+            rows: [
+              {
+                tool: 'create_media_buy',
+                status: 'completed',
+                result: { media_buy_id: 'winner' },
+                error: null,
+                has_webhook: true,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      },
+      async connect() {
+        connectCalls++;
+        throw new Error('must not acquire a transaction for a known conflict');
+      },
+    };
+    const registry = createPostgresTaskRegistry({ namespace: NAMESPACE, storageId: 'known-terminal-conflict', pool });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+      authenticationAdapter: {
+        protect() {
+          protectionCalls++;
+          throw new Error('must not protect a known conflict');
+        },
+        resolve() {
+          return { type: 'bearer', token: 'buyer-validation-secret' };
+        },
+      },
+    });
+
+    assert.deepStrictEqual(
+      await coordinator.settle(
+        {
+          taskId: 'terminal_task',
+          accountId: 'acc_1',
+          ownerScope: 'account:acc_1',
+          registryId: registry.registryId,
+        },
+        { status: 'completed', result: { media_buy_id: 'loser' } },
+        {
+          url: 'https://buyer.example/webhooks/task',
+          operationId: 'known-terminal-conflict',
+          token: 'buyer-validation-secret',
+        }
+      ),
+      {
+        outcome: 'already_terminal',
+        status: 'completed',
+        compatibility: 'conflicting',
+        delivery: 'not_applicable',
+      }
+    );
+    assert.strictEqual(protectionCalls, 0);
+    assert.strictEqual(connectCalls, 0);
   });
 
   test('bootstrap DDL creates the scoped schema without legacy upgrade writes', () => {
@@ -991,6 +1194,246 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
     const outbox = await pool.query(`SELECT snapshot FROM ${SETTLEMENT_OUTBOX}`);
     assert.strictEqual(outbox.rowCount, 1);
     assert.deepStrictEqual(outbox.rows[0].snapshot.payload.result, task.result);
+  });
+
+  test('paused authentication protection holds neither a transaction connection nor the task row lock', async () => {
+    const {
+      completeScopedPushTask,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    let connectCalls = 0;
+    let activeConnections = 0;
+    const trackingPool = {
+      query: (sql, values) => pool.query(sql, values),
+      async connect() {
+        connectCalls++;
+        activeConnections++;
+        const client = await pool.connect();
+        return {
+          query: (sql, values) => client.query(sql, values),
+          release() {
+            activeConnections--;
+            client.release();
+          },
+        };
+      },
+    };
+    const registry = createPostgresTaskRegistry({
+      pool: trackingPool,
+      namespace: NAMESPACE,
+      storageId: 'store:paused-protection',
+    });
+    let releaseProtection;
+    const protectionReleased = new Promise(resolve => {
+      releaseProtection = resolve;
+    });
+    let markProtectionStarted;
+    const protectionStarted = new Promise(resolve => {
+      markProtectionStarted = resolve;
+    });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+      authenticationAdapter: {
+        async protect(authentication) {
+          markProtectionStarted();
+          await protectionReleased;
+          return {
+            protectedValue: { ciphertext: 'opaque-paused-protection' },
+            fingerprint: require('node:crypto').createHash('sha256').update(authentication.token).digest('hex'),
+          };
+        },
+        resolve() {
+          return { type: 'bearer', token: 'buyer-validation-secret' };
+        },
+      },
+    });
+    const ref = await registry.create({ tool: 'create_media_buy', accountId: 'acc_1', hasWebhook: true });
+    const settlement = completeScopedPushTask(
+      coordinator,
+      ref,
+      {
+        url: 'https://buyer.example/webhooks/task',
+        operationId: 'paused-protection-operation',
+        token: 'buyer-validation-secret',
+      },
+      { media_buy_id: 'paused-protection-buy' }
+    );
+
+    await protectionStarted;
+    assert.strictEqual(connectCalls, 0, 'settlement must not acquire a transaction client before protection finishes');
+    assert.strictEqual(activeConnections, 0);
+
+    const probe = await pool.connect();
+    try {
+      await probe.query('BEGIN');
+      await probe.query(
+        `SELECT task_id FROM ${TABLE}
+          WHERE task_id = $1 AND registry_namespace = $2 AND account_id = $3 AND owner_scope = $4
+          FOR UPDATE NOWAIT`,
+        [ref.taskId, NAMESPACE, ref.accountId, ref.ownerScope]
+      );
+      await probe.query('ROLLBACK');
+    } finally {
+      probe.release();
+    }
+
+    releaseProtection();
+    assert.deepStrictEqual(await settlement, { outcome: 'applied', delivery: 'durably_bound' });
+    assert.strictEqual(connectCalls, 1);
+    assert.strictEqual(activeConnections, 0);
+  });
+
+  test('task transitions that race paused protection are revalidated under the settlement lock', async () => {
+    const {
+      completeScopedPushTask,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:task-transition-during-protection',
+    });
+    let releaseProtection;
+    const protectionReleased = new Promise(resolve => {
+      releaseProtection = resolve;
+    });
+    let markProtectionStarted;
+    const protectionStarted = new Promise(resolve => {
+      markProtectionStarted = resolve;
+    });
+    const pausedCoordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+      authenticationAdapter: {
+        async protect(authentication) {
+          markProtectionStarted();
+          await protectionReleased;
+          return {
+            protectedValue: { ciphertext: 'opaque-task-race-secret' },
+            fingerprint: require('node:crypto').createHash('sha256').update(authentication.token).digest('hex'),
+          };
+        },
+        resolve() {
+          return { type: 'bearer', token: 'buyer-validation-secret' };
+        },
+      },
+    });
+    const winnerCoordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+    });
+    const ref = await registry.create({ tool: 'create_media_buy', accountId: 'acc_1', hasWebhook: true });
+    const paused = completeScopedPushTask(
+      pausedCoordinator,
+      ref,
+      {
+        url: 'https://buyer.example/webhooks/task',
+        operationId: 'task-transition-race',
+        token: 'buyer-validation-secret',
+      },
+      { media_buy_id: 'paused-candidate' }
+    );
+
+    await protectionStarted;
+    assert.deepStrictEqual(
+      await completeScopedPushTask(
+        winnerCoordinator,
+        ref,
+        {
+          url: 'https://buyer.example/webhooks/task',
+          operationId: 'task-transition-race',
+        },
+        { media_buy_id: 'winning-candidate' }
+      ),
+      { outcome: 'applied', delivery: 'durably_bound' }
+    );
+    releaseProtection();
+
+    assert.deepStrictEqual(await paused, {
+      outcome: 'already_terminal',
+      status: 'completed',
+      compatibility: 'conflicting',
+      delivery: 'not_applicable',
+    });
+    assert.deepStrictEqual((await registry.getTask(ref.taskId, ref)).result, {
+      media_buy_id: 'winning-candidate',
+    });
+    assert.strictEqual((await pool.query(`SELECT count(*)::int AS count FROM ${SETTLEMENT_OUTBOX}`)).rows[0].count, 1);
+  });
+
+  test('an outbox race during protection accepts one intent and rejects the conflicting route', async () => {
+    const {
+      completeScopedPushTask,
+      createPostgresTaskSettlementCoordinator,
+      TaskPushSettlementConfigurationError,
+    } = require('../dist/lib/server/decisioning');
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:protection-race',
+    });
+    let releaseProtection;
+    const protectionReleased = new Promise(resolve => {
+      releaseProtection = resolve;
+    });
+    let protectionCalls = 0;
+    let markBothStarted;
+    const bothStarted = new Promise(resolve => {
+      markBothStarted = resolve;
+    });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+      authenticationAdapter: {
+        async protect(authentication) {
+          protectionCalls++;
+          if (protectionCalls === 2) markBothStarted();
+          await protectionReleased;
+          return {
+            protectedValue: { ciphertext: `opaque-protection-race-${protectionCalls}` },
+            fingerprint: require('node:crypto').createHash('sha256').update(authentication.token).digest('hex'),
+          };
+        },
+        resolve() {
+          return { type: 'bearer', token: 'buyer-validation-secret' };
+        },
+      },
+    });
+    const ref = await registry.create({ tool: 'create_media_buy', accountId: 'acc_1', hasWebhook: true });
+    const basePush = {
+      operationId: 'protection-race-operation',
+      token: 'buyer-validation-secret',
+    };
+    const first = completeScopedPushTask(
+      coordinator,
+      ref,
+      { ...basePush, url: 'https://buyer.example/webhooks/first' },
+      { media_buy_id: 'protection-race-buy' }
+    );
+    const second = completeScopedPushTask(
+      coordinator,
+      ref,
+      { ...basePush, url: 'https://buyer.example/webhooks/second' },
+      { media_buy_id: 'protection-race-buy' }
+    );
+
+    await bothStarted;
+    releaseProtection();
+    const outcomes = await Promise.allSettled([first, second]);
+    assert.strictEqual(
+      outcomes.filter(outcome => outcome.status === 'fulfilled' && outcome.value.outcome === 'applied').length,
+      1
+    );
+    const rejected = outcomes.find(outcome => outcome.status === 'rejected');
+    assert.ok(rejected);
+    assert.ok(rejected.reason instanceof TaskPushSettlementConfigurationError);
+    assert.match(rejected.reason.message, /already bound to a conflicting route or payload/);
+    assert.strictEqual((await pool.query(`SELECT count(*)::int AS count FROM ${SETTLEMENT_OUTBOX}`)).rows[0].count, 1);
   });
 
   test('a transient authentication-protection outage leaves settlement retryable', async () => {
