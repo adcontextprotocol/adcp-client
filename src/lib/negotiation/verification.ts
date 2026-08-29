@@ -1674,10 +1674,6 @@ function escapeJsonPointer(value: string): string {
   return value.replaceAll('~', '~0').replaceAll('/', '~1');
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 /** Canonicalize once so validation and hashing observe the exact same bytes, including accessor-backed input. */
 function canonicalProposalTerms(value: unknown): string {
   const canonical = canonicalize(value);
