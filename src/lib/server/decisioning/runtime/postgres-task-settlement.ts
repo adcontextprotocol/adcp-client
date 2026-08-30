@@ -88,6 +88,16 @@ export interface PostgresTaskSettlementCoordinator {
   readonly durability: 'durable';
   /** Wire this into the normal webhook recovery poller/emitter. */
   readonly recovery: DurableWebhookDeliveryRecovery;
+  /**
+   * Prove that a scoped terminal task has its deterministic durable webhook
+   * checkpoint. This does not compare the task's result/error with a caller's
+   * intended artifact and does not prove delivery; verify terminal artifact
+   * compatibility separately before acknowledging an intent. Reconstructed
+   * coordinators must use the same registry, publisher scope, and outbox, and
+   * the checkpoint must be retained for the full intent replay horizon. The
+   * proof does not require the now-redacted push config.
+   */
+  hasTerminalCheckpoint(ref: ScopedTaskRef): Promise<boolean>;
   settle(
     ref: ScopedTaskRef,
     terminal: TerminalSettlement,
@@ -152,6 +162,27 @@ export function createPostgresTaskSettlementCoordinator(
   return {
     durability: 'durable',
     recovery,
+    async hasTerminalCheckpoint(ref): Promise<boolean> {
+      const settlementRef = snapshotSettlementRef(ref);
+      if (settlementRef.registryId !== registryId) return false;
+      const deliveryKey = {
+        ...claimScope,
+        deliveryId: stableScope('task-webhook', settlementRef),
+      };
+      try {
+        const task = await readTaskRow(
+          pool as PgTransactionalPool,
+          binding.tableName,
+          binding.namespace,
+          settlementRef,
+          false
+        );
+        if (!task || !TERMINAL.has(task.status) || task.has_webhook !== true) return false;
+        return Boolean(await readOutbox(pool as PgTransactionalPool, outboxTable, deliveryKey, false));
+      } catch (cause) {
+        throw new Error('PostgresTaskSettlementCoordinator.hasTerminalCheckpoint: query failed', { cause });
+      }
+    },
     async settle(ref, terminal, push): Promise<TaskPushSettlementOutcome> {
       const settlementRef = snapshotSettlementRef(ref);
       if (settlementRef.registryId !== registryId) {
