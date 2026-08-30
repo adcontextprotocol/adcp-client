@@ -135,6 +135,39 @@ describe('decisioning task registry schema management', () => {
     );
   });
 
+  test('terminal checkpoint proof attributes database failures to its read-only operation', async () => {
+    const {
+      createPostgresTaskRegistry,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    const databaseError = new Error('private database host unavailable');
+    const pool = {
+      async query() {
+        throw databaseError;
+      },
+      async connect() {
+        throw new Error('checkpoint proof must not acquire a transaction client');
+      },
+    };
+    const registry = createPostgresTaskRegistry({ namespace: NAMESPACE, storageId: 'proof-error', pool });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+    });
+    await assert.rejects(
+      coordinator.hasTerminalCheckpoint({
+        taskId: 'task_proof_error',
+        accountId: 'acc_1',
+        ownerScope: 'account:acc_1',
+        registryId: registry.registryId,
+      }),
+      error =>
+        error.message === 'PostgresTaskSettlementCoordinator.hasTerminalCheckpoint: query failed' &&
+        error.cause === databaseError
+    );
+  });
+
   test('push settlement finishes secret protection before acquiring a transaction client', async () => {
     const {
       createPostgresTaskRegistry,
@@ -1186,6 +1219,7 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
     });
     const ref = await registry.create({ tool: 'create_media_buy', accountId: 'acc_1', hasWebhook: true });
     const result = { media_buy_id: 'mb_preterminal' };
+    assert.strictEqual(await coordinator.hasTerminalCheckpoint(ref), false);
     assert.deepStrictEqual(await registry.complete(ref.taskId, ref, result), { outcome: 'applied' });
 
     await assert.rejects(
@@ -1200,6 +1234,37 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
         /no atomic webhook delivery checkpoint/.test(error.message)
     );
     assert.strictEqual((await pool.query(`SELECT count(*)::int AS count FROM ${SETTLEMENT_OUTBOX}`)).rows[0].count, 0);
+    assert.strictEqual(await coordinator.hasTerminalCheckpoint(ref), false);
+  });
+
+  test('push settlement proves a terminal checkpoint without retaining push configuration', async () => {
+    const {
+      completeScopedPushTask,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:terminal-checkpoint-proof',
+    });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller-terminal-checkpoint-proof',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+    });
+    const ref = await registry.create({ tool: 'create_media_buy', accountId: 'acc_1', hasWebhook: true });
+    assert.strictEqual(await coordinator.hasTerminalCheckpoint(ref), false);
+    assert.deepStrictEqual(
+      await completeScopedPushTask(
+        coordinator,
+        ref,
+        { url: 'https://buyer.example/terminal-checkpoint-proof', operationId: 'checkpoint-proof-operation' },
+        { media_buy_id: 'mb_checkpoint_proof' }
+      ),
+      { outcome: 'applied', delivery: 'durably_bound' }
+    );
+    assert.strictEqual(await coordinator.hasTerminalCheckpoint(ref), true);
+    assert.strictEqual(await coordinator.hasTerminalCheckpoint({ ...ref, ownerScope: 'account:wrong-owner' }), false);
   });
 
   test('a separate Node process reconstructs the registry and atomically settles a push task', async () => {
@@ -1857,6 +1922,7 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
         WHERE publisher_scope = $1`,
       ['test-seller-upgrade']
     );
+    assert.strictEqual(await coordinator.hasTerminalCheckpoint(ref), true);
     assert.deepStrictEqual(await failScopedPushTask(coordinator, ref, push, legacyError), {
       outcome: 'already_terminal',
       status: 'failed',
