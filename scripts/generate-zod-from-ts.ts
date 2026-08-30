@@ -1952,7 +1952,10 @@ function postProcessCanonicalPrimitiveConstraints(content: string): string {
 
   for (const schemaFile of schemaFiles.sort()) {
     const schema = JSON.parse(readFileSync(schemaFile, 'utf8')) as Record<string, unknown>;
-    const schemaName = typeof schema.title === 'string' ? schema.title.replace(/[^A-Za-z0-9]/g, '') : '';
+    const rawSchemaName = typeof schema.title === 'string' ? schema.title.replace(/[^A-Za-z0-9]/g, '') : '';
+    const schemaName = [rawSchemaName, rawSchemaName && rawSchemaName[0].toUpperCase() + rawSchemaName.slice(1)].find(
+      candidate => candidate && content.includes(`export const ${candidate}Schema`)
+    );
     if (!schemaName) continue;
     const exportStart = content.indexOf(`export const ${schemaName}Schema`);
     if (exportStart < 0) continue;
@@ -2002,6 +2005,109 @@ function postProcessCanonicalPrimitiveConstraints(content: string): string {
 
     content = content.slice(0, exportStart) + block + content.slice(exportEnd);
   }
+  return content;
+}
+
+/**
+ * Preserve constraints that live inside pricing union branches or a titled
+ * nested definition. Those locations are not visible to the generic
+ * property reconciliation above, so guard the exact canonical constraints
+ * before applying the corresponding generated Zod refinements.
+ */
+function postProcessPricingOptionConstraints(content: string): string {
+  const readCanonical = (fileName: string): Record<string, unknown> =>
+    JSON.parse(
+      readFileSync(path.join(__dirname, `../schemas/cache/latest/pricing-options/${fileName}`), 'utf8')
+    ) as Record<string, unknown>;
+  const requireRecord = (value: unknown, label: string): Record<string, unknown> => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`postProcessPricingOptionConstraints: canonical ${label} is missing.`);
+    }
+    return value as Record<string, unknown>;
+  };
+  const requireConstraint = (
+    schema: Record<string, unknown>,
+    label: string,
+    expected: Record<string, string | number>
+  ): void => {
+    for (const [key, value] of Object.entries(expected)) {
+      if (schema[key] !== value) {
+        throw new Error(
+          `postProcessPricingOptionConstraints: canonical ${label}.${key} changed; expected ${JSON.stringify(value)}.`
+        );
+      }
+    }
+  };
+  const replaceInSchema = (schemaName: string, before: string, after: string): void => {
+    const start = content.indexOf(`export const ${schemaName}Schema = `);
+    if (start < 0) throw new Error(`postProcessPricingOptionConstraints: ${schemaName}Schema not found.`);
+    const endCandidate = content.indexOf('\n\nexport const ', start + 1);
+    const end = endCandidate < 0 ? content.length : endCandidate;
+    const block = content.slice(start, end);
+    const first = block.indexOf(before);
+    if (first < 0 || block.indexOf(before, first + before.length) >= 0) {
+      throw new Error(
+        `postProcessPricingOptionConstraints: expected exactly one ${JSON.stringify(before)} in ${schemaName}Schema.`
+      );
+    }
+    content = content.slice(0, start) + block.replace(before, after) + content.slice(end);
+  };
+
+  const cpv = readCanonical('cpv-option.json');
+  const cpvProperties = requireRecord(cpv.properties, 'CPV properties');
+  const parameters = requireRecord(cpvProperties.parameters, 'CPV parameters');
+  const parameterProperties = requireRecord(parameters.properties, 'CPV parameter properties');
+  const viewThreshold = requireRecord(parameterProperties.view_threshold, 'CPV view_threshold');
+  const thresholdBranches = viewThreshold.oneOf;
+  if (!Array.isArray(thresholdBranches) || thresholdBranches.length !== 2) {
+    throw new Error('postProcessPricingOptionConstraints: canonical CPV view_threshold branches changed.');
+  }
+  const numericThreshold = requireRecord(thresholdBranches[0], 'CPV numeric view_threshold');
+  requireConstraint(numericThreshold, 'CPV numeric view_threshold', { type: 'number', minimum: 0, maximum: 1 });
+  const durationBranch = requireRecord(thresholdBranches[1], 'CPV duration view_threshold');
+  const durationProperties = requireRecord(durationBranch.properties, 'CPV duration properties');
+  const durationSeconds = requireRecord(durationProperties.duration_seconds, 'CPV duration_seconds');
+  requireConstraint(durationSeconds, 'CPV duration_seconds', { type: 'integer', minimum: 1 });
+  replaceInSchema(
+    'CPVPricingOption',
+    'view_threshold: z.union([z.number(),',
+    'view_threshold: z.union([z.number().gte(0).lte(1),'
+  );
+  replaceInSchema('CPVPricingOption', 'duration_seconds: z.number()', 'duration_seconds: z.number().int().gte(1)');
+
+  const flatRate = readCanonical('flat-rate-option.json');
+  let doohParameters: Record<string, unknown> | undefined;
+  const findDoohParameters = (value: unknown): void => {
+    if (doohParameters || !value || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      value.forEach(findDoohParameters);
+      return;
+    }
+    const node = value as Record<string, unknown>;
+    if (node.title === 'DoohParameters') {
+      doohParameters = node;
+      return;
+    }
+    Object.values(node).forEach(findDoohParameters);
+  };
+  findDoohParameters(flatRate);
+  const doohProperties = requireRecord(requireRecord(doohParameters, 'DoohParameters').properties, 'DOOH properties');
+  const doohConstraints: Array<[string, Record<string, string | number>, string]> = [
+    ['sov_percentage', { type: 'number', minimum: 0, maximum: 100 }, '.gte(0).lte(100)'],
+    ['loop_duration_seconds', { type: 'integer', minimum: 1 }, '.int().gte(1)'],
+    ['min_plays_per_hour', { type: 'integer', minimum: 1 }, '.int().gte(1)'],
+    ['duration_hours', { type: 'number', minimum: 0 }, '.gte(0)'],
+    ['estimated_impressions', { type: 'integer', minimum: 0 }, '.int().gte(0)'],
+  ];
+  for (const [propertyName, expected, suffix] of doohConstraints) {
+    requireConstraint(
+      requireRecord(doohProperties[propertyName], `DOOH ${propertyName}`),
+      `DOOH ${propertyName}`,
+      expected
+    );
+    replaceInSchema('DoohParameters', `${propertyName}: z.number()`, `${propertyName}: z.number()${suffix}`);
+  }
+
   return content;
 }
 
@@ -4178,6 +4284,7 @@ async function generateZodSchemas() {
     // Reconcile canonical primitive constraints last, after structural and
     // exact-schema rewrites that may replace earlier generated blocks.
     zodSchemas = postProcessCanonicalPrimitiveConstraints(zodSchemas);
+    zodSchemas = postProcessPricingOptionConstraints(zodSchemas);
     zodSchemas = postProcessJsonSchemaUriFormats(zodSchemas);
 
     // Compatibility aliases can make jsts emit repeated format/placement

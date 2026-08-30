@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-30T07:26:00.288Z
+// Generated at: 2026-08-30T17:54:53.168Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -3244,12 +3244,12 @@ export const PriceGuidanceSchema = z.object({
 export const VCPMPricingOptionSchema = z.object({
     pricing_option_id: z.string(),
     pricing_model: z.literal("vcpm"),
-    currency: z.string(),
-    fixed_price: z.number().optional(),
-    floor_price: z.number().optional(),
+    currency: z.string().regex(new RegExp("^[A-Z]{3}$")),
+    fixed_price: z.number().gte(0).optional(),
+    floor_price: z.number().gte(0).optional(),
     max_bid: z.boolean().optional(),
     price_guidance: PriceGuidanceSchema.optional(),
-    min_spend_per_package: z.number().optional(),
+    min_spend_per_package: z.number().gte(0).optional(),
     price_breakdown: PriceBreakdownSchema.optional(),
     eligible_adjustments: z.array(PriceAdjustmentKindSchema).optional()
 }).passthrough();
@@ -3289,8 +3289,8 @@ export const CPVPricingOptionSchema = z.object({
     max_bid: z.boolean().optional(),
     price_guidance: PriceGuidanceSchema.optional(),
     parameters: z.object({
-        view_threshold: z.union([z.number(), z.object({
-                duration_seconds: z.number()
+        view_threshold: z.union([z.number().gte(0).lte(1), z.object({
+                duration_seconds: z.number().int().gte(1)
             }).passthrough()])
     }).passthrough(),
     min_spend_per_package: z.number().gte(0).optional(),
@@ -3317,13 +3317,13 @@ export const CPPPricingOptionSchema = z.object({
 
 export const DoohParametersSchema = z.object({
     type: z.literal("dooh"),
-    sov_percentage: z.number().optional(),
-    loop_duration_seconds: z.number().optional(),
-    min_plays_per_hour: z.number().optional(),
+    sov_percentage: z.number().gte(0).lte(100).optional(),
+    loop_duration_seconds: z.number().int().gte(1).optional(),
+    min_plays_per_hour: z.number().int().gte(1).optional(),
     venue_package: z.string().optional(),
-    duration_hours: z.number().optional(),
+    duration_hours: z.number().gte(0).optional(),
     daypart: z.string().optional(),
-    estimated_impressions: z.number().optional()
+    estimated_impressions: z.number().int().gte(0).optional()
 }).passthrough();
 
 export const TimeBasedPricingOptionSchema = z.object({
