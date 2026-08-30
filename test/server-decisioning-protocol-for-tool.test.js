@@ -15,6 +15,7 @@ describe('protocolForTool — webhook + tasks_get protocol routing', () => {
     assert.strictEqual(protocolForTool('create_media_buy'), 'media-buy');
     assert.strictEqual(protocolForTool('update_media_buy'), 'media-buy');
     assert.strictEqual(protocolForTool('get_products'), 'media-buy');
+    assert.strictEqual(protocolForTool('sync_creatives'), 'media-buy');
   });
 
   it('maps signals tools to signals', () => {
@@ -25,7 +26,6 @@ describe('protocolForTool — webhook + tasks_get protocol routing', () => {
   it('maps creative tools to creative', () => {
     assert.strictEqual(protocolForTool('build_creative'), 'creative');
     assert.strictEqual(protocolForTool('preview_creative'), 'creative');
-    assert.strictEqual(protocolForTool('sync_creatives'), 'creative');
     assert.strictEqual(protocolForTool('list_creative_formats'), 'creative');
   });
 
