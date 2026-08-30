@@ -77,6 +77,7 @@
     "quiet-ledgers-retain",
     "quiet-signals-migrate",
     "quiet-versioned-schema-advisories",
+    "safe-settlement-upgrades",
     "secure-operators-structure-errors",
     "secure-postgres-boundaries",
     "sharp-pumas-refine-version",
