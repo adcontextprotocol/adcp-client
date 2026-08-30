@@ -1,5 +1,11 @@
 # Changelog
 
+## 14.0.0-beta.24
+
+### Patch Changes
+
+- 3826420: Preserve canonical currency, price, CPV threshold, and DOOH bounds in generated runtime schemas.
+
 ## 14.0.0-beta.23
 
 ### Patch Changes
