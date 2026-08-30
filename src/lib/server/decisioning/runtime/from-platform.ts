@@ -216,7 +216,7 @@ import type {
   CanonicalListCreativesRequest,
   CanonicalUpdateMediaBuyRequest,
 } from '../../../v2/projection/creative-delivery';
-import { toCanonicalOnlyResponse } from '../../../v2/projection/augment-response';
+import { projectionDiagnosticToError, toCanonicalOnlyResponse } from '../../../v2/projection/augment-response';
 import {
   CanonicalFormatLegacyResolutionError,
   projectV2ProductToV1,
@@ -1738,20 +1738,24 @@ function asProductResponseForWire<T extends { products?: unknown[] }>(
     );
   }
   if (!Array.isArray(canonicalResponse.products)) return canonicalResponse;
-  const products = canonicalResponse.products.map(product => {
+  const products: V1Product[] = [];
+  const diagnostics: ProjectionDiagnostic[] = [];
+  for (const product of canonicalResponse.products) {
     const projected = projectV2ProductToV1(product as V2Product, { canonicalFormatLegacyResolver });
-    if (projected.diagnostics.length > 0) {
-      const first = projected.diagnostics[0]!;
-      throw new AdcpError('INVALID_REQUEST', {
-        message: 'get_products returned a canonical format that cannot be represented on the configured legacy wire.',
-        field: first.field,
-        suggestion:
-          'Add an explicit legacy format mapping to the canonical declaration, or configure this server for AdCP 3.1 or newer.',
-      });
-    }
-    return projected.v1;
-  });
-  return { ...canonicalResponse, products } as T;
+    diagnostics.push(...projected.diagnostics);
+    if (projected.v1.format_ids.length > 0) products.push(projected.v1);
+  }
+  const responseErrors = (canonicalResponse as T & { errors?: unknown }).errors;
+  const errors = Array.isArray(responseErrors)
+    ? [...responseErrors, ...diagnostics.map(projectionDiagnosticToError)]
+    : responseErrors === undefined
+      ? diagnostics.map(projectionDiagnosticToError)
+      : responseErrors;
+  return {
+    ...canonicalResponse,
+    products,
+    ...(Array.isArray(errors) && errors.length > 0 ? { errors } : {}),
+  } as T;
 }
 
 /**

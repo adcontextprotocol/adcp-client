@@ -2344,19 +2344,62 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     }
   });
 
-  it('errors cleanly when a canonical-only product cannot be represented on a 3.0 server wire', async () => {
+  it('omits a canonical-only product from a 3.0 wire without poisoning representable products', async () => {
     const platform = buildPlatform();
     const getProducts = platform.sales.getProducts;
     platform.sales.getProducts = async (...args) => {
       const response = await getProducts(...args);
       return {
         ...response,
-        products: response.products.map(product => ({
-          ...product,
-          // Inherently canonical-only: unlike the newly mapped 300x250 image,
-          // responsive asset-pool composition has no legacy named-format form.
-          format_options: [{ format_kind: 'responsive_creative', params: {} }],
-        })),
+        errors: [{ code: 'UPSTREAM_WARNING', message: 'A producer warning is preserved.' }],
+        products: [
+          {
+            ...response.products[0],
+            channels: ['display'],
+            publisher_properties: [{ publisher_domain: 'seller.example', selection_type: 'all' }],
+            pricing_options: [
+              {
+                pricing_option_id: 'p1-cpm',
+                pricing_model: 'cpm',
+                fixed_price: 5,
+                currency: 'USD',
+              },
+            ],
+            reporting_capabilities: {
+              available_reporting_frequencies: ['daily'],
+              expected_delay_minutes: 60,
+              timezone: 'UTC',
+              supports_webhooks: false,
+              available_metrics: ['impressions', 'spend'],
+              date_range_support: 'date_range',
+            },
+          },
+          {
+            product_id: 'canonical-only-responsive',
+            name: 'Canonical-only responsive product',
+            description: 'Responsive asset-pool composition has no legacy named-format form.',
+            format_options: [{ format_kind: 'responsive_creative', params: {} }],
+            channels: ['display'],
+            delivery_type: 'non_guaranteed',
+            publisher_properties: [{ publisher_domain: 'seller.example', selection_type: 'all' }],
+            pricing_options: [
+              {
+                pricing_option_id: 'canonical-only-responsive-cpm',
+                pricing_model: 'cpm',
+                fixed_price: 5,
+                currency: 'USD',
+              },
+            ],
+            reporting_capabilities: {
+              available_reporting_frequencies: ['daily'],
+              expected_delay_minutes: 60,
+              timezone: 'UTC',
+              supports_webhooks: false,
+              available_metrics: ['impressions', 'spend'],
+              date_range_support: 'date_range',
+            },
+          },
+        ],
       };
     };
 
@@ -2364,7 +2407,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       name: 'legacy-wire-unrepresentable-product',
       version: '1.0.0',
       adcpVersion: '3.0.0',
-      validation: { requests: 'off', responses: 'off' },
+      validation: { requests: 'off', responses: 'strict' },
     });
 
     const result = await server.dispatchTestRequest({
@@ -2375,9 +2418,24 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       },
     });
 
-    assert.strictEqual(result.isError, true);
-    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
-    assert.match(result.structuredContent.adcp_error.message, /cannot be represented on the configured legacy wire/);
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.deepStrictEqual(
+      result.structuredContent.products.map(product => product.product_id),
+      ['p1']
+    );
+    assert.deepStrictEqual(result.structuredContent.products[0].format_ids, [
+      { agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_image' },
+    ]);
+    assert.deepStrictEqual(result.structuredContent.errors[0], {
+      code: 'UPSTREAM_WARNING',
+      message: 'A producer warning is preserved.',
+    });
+    assert.ok(
+      result.structuredContent.errors.some(
+        error =>
+          error.code === 'CANONICAL_NOT_V1_TRANSLATABLE' && error.details?.product_id === 'canonical-only-responsive'
+      )
+    );
   });
 
   it('normalizes legacy creative refs before modern platform handlers run', async () => {
