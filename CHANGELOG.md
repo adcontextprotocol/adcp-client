@@ -1,5 +1,11 @@
 # Changelog
 
+## 14.0.0-beta.21
+
+### Patch Changes
+
+- f654876: Fix generated `SignalTargetingExpression` types and validators so categorical values remain non-empty, numeric bounds remain required and ordered, and unrelated objects cannot satisfy the union.
+
 ## 14.0.0-beta.20
 
 ### Minor Changes
