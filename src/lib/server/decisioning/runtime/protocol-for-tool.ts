@@ -65,7 +65,6 @@ export const TOOL_PROTOCOL_MAP: Readonly<Record<string, AdcpProtocol>> = {
   get_creative_delivery: 'creative',
   list_creative_formats: 'creative',
   list_creatives: 'creative',
-  sync_creatives: 'creative',
 
   // brand
   get_brand_identity: 'brand',
@@ -86,6 +85,10 @@ export const TOOL_PROTOCOL_MAP: Readonly<Record<string, AdcpProtocol>> = {
   sync_agent_notification_configs: 'media-buy',
   create_media_buy: 'media-buy',
   update_media_buy: 'media-buy',
+  // The task-type schemas through AdCP 3.2 classify this dual-domain tool as
+  // media-buy. Keep lifecycle routing compatible even when a creative agent
+  // also implements the operation.
+  sync_creatives: 'media-buy',
   media_buy_delivery: 'media-buy',
   get_media_buy_delivery: 'media-buy',
   sync_event_sources: 'media-buy',
