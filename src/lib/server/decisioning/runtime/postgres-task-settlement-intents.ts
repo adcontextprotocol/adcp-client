@@ -191,6 +191,23 @@ CREATE TABLE IF NOT EXISTS ${table} (
   CONSTRAINT ${table}_valid_payload CHECK (jsonb_typeof(payload) = 'object')
 );
 
+-- Upgrade queues provisioned by an earlier SDK beta before creating indexes
+-- or writing the acknowledged state. These operations are deliberately
+-- idempotent so operators can rerun the generated migration safely.
+ALTER TABLE ${table}
+  ADD COLUMN IF NOT EXISTS retain_until TIMESTAMPTZ;
+
+ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${table}_valid_state;
+ALTER TABLE ${table}
+  ADD CONSTRAINT ${table}_valid_state CHECK (state IN ('pending', 'dead_letter', 'acknowledged'));
+
+ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${table}_valid_retention;
+ALTER TABLE ${table}
+  ADD CONSTRAINT ${table}_valid_retention CHECK (
+    (state = 'acknowledged' AND retain_until IS NOT NULL) OR
+    (state <> 'acknowledged' AND retain_until IS NULL)
+  );
+
 CREATE INDEX IF NOT EXISTS idx_${table}_due
   ON ${table}(queue_namespace, next_attempt_at, lease_expires_at)
   WHERE state = 'pending';
@@ -266,57 +283,57 @@ export function createPostgresTaskSettlementIntentQueue(
            task_id = EXCLUDED.task_id,
            action = EXCLUDED.action,
            payload = CASE
-             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= statement_timestamp()
                THEN EXCLUDED.payload
              ELSE ${table}.payload
            END,
            intent_fingerprint = EXCLUDED.intent_fingerprint,
            state = CASE
-             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= statement_timestamp()
                THEN 'pending'
              ELSE ${table}.state
            END,
            attempt_count = CASE
-             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= statement_timestamp()
                THEN 0
              ELSE ${table}.attempt_count
            END,
            next_attempt_at = CASE
-             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
-               THEN clock_timestamp()
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= statement_timestamp()
+               THEN statement_timestamp()
              ELSE ${table}.next_attempt_at
            END,
            lease_owner = CASE
-             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= statement_timestamp()
                THEN NULL
              ELSE ${table}.lease_owner
            END,
            lease_claim_id = CASE
-             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= statement_timestamp()
                THEN NULL
              ELSE ${table}.lease_claim_id
            END,
            lease_expires_at = CASE
-             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= statement_timestamp()
                THEN NULL
              ELSE ${table}.lease_expires_at
            END,
            last_error = CASE
-             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= statement_timestamp()
                THEN NULL
              ELSE ${table}.last_error
            END,
            retain_until = CASE
-             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= statement_timestamp()
                THEN NULL
              ELSE ${table}.retain_until
            END,
            created_at = CASE
-             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= clock_timestamp()
-               THEN clock_timestamp()
+             WHEN ${table}.state = 'acknowledged' AND ${table}.retain_until <= statement_timestamp()
+               THEN statement_timestamp()
              ELSE ${table}.created_at
            END,
-           updated_at = clock_timestamp()
+           updated_at = statement_timestamp()
            WHERE (
              ${table}.registry_id = EXCLUDED.registry_id
              AND ${table}.account_id = EXCLUDED.account_id
@@ -326,7 +343,7 @@ export function createPostgresTaskSettlementIntentQueue(
              AND ${table}.intent_fingerprint = EXCLUDED.intent_fingerprint
            ) OR (
              ${table}.state = 'acknowledged'
-             AND ${table}.retain_until <= clock_timestamp()
+             AND ${table}.retain_until <= statement_timestamp()
            )
          RETURNING task_id`,
         [
@@ -342,9 +359,7 @@ export function createPostgresTaskSettlementIntentQueue(
         ]
       );
       if (result.rowCount !== 1) {
-        throw new TaskSettlementIntentConflictError(
-          `Task ${ref.taskId} is already bound to a different settlement intent`
-        );
+        throw new TaskSettlementIntentConflictError('Task is already bound to a different settlement intent');
       }
       return checkpointFor(namespace, ref, fingerprint);
     },
