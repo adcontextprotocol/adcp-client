@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-29T20:19:54.191Z
+// Generated at: 2026-08-30T07:26:00.288Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -537,6 +537,46 @@ export const SignalRefSchema = z.union([z.object({
         signal_id: z.string().regex(/^[a-zA-Z0-9_-]+$/)
     }).passthrough()]);
 
+export const SignalTargetingExpressionSchema = z.union([z.object({
+        signal_ref: SignalRefSchema,
+        value_type: z.literal("binary"),
+        value: z.literal(true)
+    }).passthrough(), z.object({
+        signal_ref: SignalRefSchema,
+        value_type: z.literal("categorical"),
+        values: z.array(z.string())
+    }).passthrough(), z.object({
+        signal_ref: SignalRefSchema,
+        value_type: z.literal("numeric"),
+        min_value: z.number(),
+        max_value: z.number().optional()
+    }).passthrough(), z.object({
+        signal_ref: SignalRefSchema,
+        value_type: z.literal("numeric"),
+        min_value: z.number().optional(),
+        max_value: z.number()
+    }).passthrough()]).superRefine((value, ctx) => {
+    if (value.value_type === "categorical" && value.values.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["values"],
+        message: "categorical signal values must contain at least one entry",
+      });
+    }
+    if (
+      value.value_type === "numeric" &&
+      value.min_value !== undefined &&
+      value.max_value !== undefined &&
+      value.min_value > value.max_value
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["min_value"],
+        message: "min_value must be less than or equal to max_value",
+      });
+    }
+  });
+
 export const PaginationRequestSchema = z.object({
     max_results: z.number().int().min(1).max(100).optional(),
     cursor: z.string().optional()
@@ -961,16 +1001,6 @@ export const PostalCountryAreaSchema = PostalCountrySystemSchema.and(z.object({
 }).passthrough());
 
 export const GeographicPlaceIdentifierSystemSchema = z.union([z.union([z.literal("geonames"), z.literal("google_ads"), z.literal("microsoft_ads")]), z.string()]);
-
-export const SignalTargetingExpressionSchema = z.union([z.object({
-        signal_ref: SignalRefSchema,
-        value_type: z.literal("binary"),
-        value: z.literal(true)
-    }).passthrough(), z.object({
-        signal_ref: SignalRefSchema,
-        value_type: z.literal("categorical"),
-        values: z.array(z.string())
-    }).passthrough(), z.union([z.object({}).passthrough(), z.object({}).passthrough()])]);
 
 export const ActivationKeySchema = z.union([z.object({
         type: z.literal("segment_id"),

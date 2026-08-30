@@ -126,6 +126,11 @@ const PRIORITY_CANONICAL_SCHEMAS = [
   'core/business-entity.json',
   'core/property-id.json',
   'core/signal-ref.json',
+  // The numeric branch carries an `anyOf` minimum/maximum constraint. When
+  // first reached through the aggregate targeting schema, jsts can claim the
+  // union as two open empty objects and make every object validate. Compile
+  // the authoritative discriminator before aggregate roots.
+  'core/signal-targeting-expression.json',
   'core/pagination-request.json',
   'core/forecast-point.json',
   'core/delivery-forecast.json',
@@ -1051,6 +1056,7 @@ export function enforceStrictSchema(schema: any): any {
     return schema;
   }
 
+  schema = normalizeSignalTargetingForCodegen(schema);
   schema = normalizePostalAreaForCodegen(schema);
   schema = nameVendorMetricValueQualifierForCodegen(schema);
   schema = normalizeCanonicalFormatOptionKindsForCodegen(schema);
@@ -1419,6 +1425,49 @@ export function enforceStrictSchema(schema: any): any {
   }
 
   return flattenMutualExclusiveOneOf(strictSchema);
+}
+
+/**
+ * Preserve signal-expression cardinality that the general compatibility pass
+ * intentionally relaxes for less strict schema families.
+ *
+ * The categorical branch cannot be meaningful with zero values. In the
+ * numeric branch, jsts treats the branch-local required-only `anyOf` as the
+ * whole object and emits two open `{}` arms. Give that branch an exact
+ * TypeScript union so TypeScript and Zod retain the presence guard.
+ */
+function normalizeSignalTargetingForCodegen(schema: any): any {
+  if (schema?.title !== 'Signal Targeting Expression' || !Array.isArray(schema.oneOf)) {
+    return schema;
+  }
+
+  return {
+    ...schema,
+    oneOf: schema.oneOf.map((branch: any) => {
+      const valueType = branch?.properties?.value_type;
+      if (valueType?.const === 'categorical' && branch.properties?.values) {
+        return {
+          ...branch,
+          properties: {
+            ...branch.properties,
+            values: {
+              ...branch.properties.values,
+              tsType: '[string, ...string[]]',
+            },
+          },
+        };
+      }
+      if (valueType?.const !== 'numeric' || !Array.isArray(branch.anyOf)) return branch;
+
+      if (!branch.anyOf.every(isRequirednessOnlySchema)) return branch;
+      return {
+        description: branch.description,
+        tsType:
+          "{ signal_ref: SignalRef; value_type: 'numeric'; min_value: number; max_value?: number } | " +
+          "{ signal_ref: SignalRef; value_type: 'numeric'; min_value?: number; max_value: number }",
+      };
+    }),
+  };
 }
 
 function canonicalCodegenJson(value: unknown, keyHint?: string): string {

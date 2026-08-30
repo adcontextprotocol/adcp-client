@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.2.0-beta.9
-// Generated at: 2026-08-29T04:43:08.184Z
+// Generated at: 2026-08-30T07:23:28.359Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -2959,7 +2959,35 @@ export type SignalRef =
       signal_id: string;
     };
 
-// PAGINATIONREQUEST PRIORITY CANONICAL SCHEMA
+// SIGNALTARGETINGEXPRESSION PRIORITY CANONICAL SCHEMA
+/**
+ * Predicate over a named signal definition. Signals are typed dimensions, similar to feature values: binary signals match true, categorical signals match one of a set of values, and numeric signals match a range. In package signal targeting groups, include/exclude semantics are controlled by the parent group operator, not by negating the expression.
+ */
+export type SignalTargetingExpression =
+  | {
+      signal_ref: SignalRef;
+      /**
+       * Discriminator for binary signals.
+       */
+      value_type: 'binary';
+      /**
+       * Binary package signal entries match users for whom the signal is true. Use the parent group operator for include/exclude.
+       */
+      value: true;
+    }
+  | {
+      signal_ref: SignalRef;
+      /**
+       * Discriminator for categorical signals.
+       */
+      value_type: 'categorical';
+      /**
+       * Values to target. Users with any of these values match the expression.
+       */
+      values: [string, ...string[]];
+    }
+  | {signal_ref: SignalRef; value_type: 'numeric'; min_value: number; max_value?: number}
+  | {signal_ref: SignalRef; value_type: 'numeric'; min_value?: number; max_value: number};
 /**
  * Standard cursor-based pagination parameters for list operations
  */
@@ -5653,40 +5681,6 @@ export type PackageSignalTargeting = SignalTargetingExpression & {
   signal_agent_segment_id?: string;
   activation_key?: ActivationKey;
 };
-/**
- * Predicate over a named signal definition. Signals are typed dimensions, similar to feature values: binary signals match true, categorical signals match one of a set of values, and numeric signals match a range. In package signal targeting groups, include/exclude semantics are controlled by the parent group operator, not by negating the expression.
- */
-export type SignalTargetingExpression =
-  | {
-      signal_ref: SignalRef;
-      /**
-       * Discriminator for binary signals.
-       */
-      value_type: 'binary';
-      /**
-       * Binary package signal entries match users for whom the signal is true. Use the parent group operator for include/exclude.
-       */
-      value: true;
-    }
-  | {
-      signal_ref: SignalRef;
-      /**
-       * Discriminator for categorical signals.
-       */
-      value_type: 'categorical';
-      /**
-       * Values to target. Users with any of these values match the expression.
-       *
-       * @minItems 1
-       */
-      values: [string, ...string[]];
-    }
-  | (
-      | {
-        }
-      | {
-        }
-    );
 /**
  * Destination-specific activation key returned by get_signals or activate_signal. Usually omitted for seller-offered signals selected directly through the same seller; include only when the selected signal was separately activated and the seller requires the activation key to correlate the package selection.
  */

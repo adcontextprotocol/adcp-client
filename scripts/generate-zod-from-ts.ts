@@ -1249,6 +1249,37 @@ function postProcessExactSchema(content: string, schemaName: string, exactSchema
   return content.slice(0, target.expressionStart) + exactSchemaExpression + content.slice(target.expressionEnd);
 }
 
+/** Restore canonical cardinality constraints for signal expressions. */
+function postProcessSignalTargetingExpressionConstraints(content: string): string {
+  const target = findSchemaExportExpressions(content).find(entry => entry.name === 'SignalTargetingExpressionSchema');
+  if (!target) {
+    throw new Error('postProcessSignalTargetingExpressionConstraints: unable to locate schema.');
+  }
+  const expression = content.slice(target.expressionStart, target.expressionEnd);
+  const refined = `${expression}.superRefine((value, ctx) => {
+    if (value.value_type === "categorical" && value.values.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["values"],
+        message: "categorical signal values must contain at least one entry",
+      });
+    }
+    if (
+      value.value_type === "numeric" &&
+      value.min_value !== undefined &&
+      value.max_value !== undefined &&
+      value.min_value > value.max_value
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["min_value"],
+        message: "min_value must be less than or equal to max_value",
+      });
+    }
+  })`;
+  return content.slice(0, target.expressionStart) + refined + content.slice(target.expressionEnd);
+}
+
 /** Add a refinement to one property schema inside a generated z.object expression. */
 function refineGeneratedObjectProperty(expression: string, propertyName: string, refinement: string): string {
   const marker = `"${propertyName}": `;
@@ -3785,6 +3816,7 @@ async function generateZodSchemas() {
     zodSchemas = postProcessPriceBreakdownConstraints(zodSchemas);
     zodSchemas = postProcessBeta4OfferAndOutcomeConstraints(zodSchemas);
     zodSchemas = postProcessCanonicalSharedConstraints(zodSchemas);
+    zodSchemas = postProcessSignalTargetingExpressionConstraints(zodSchemas);
     zodSchemas = postProcessPreviewCreativeRequestConstraints(zodSchemas);
 
     // Placement presentation is a closed, non-executable document boundary.
