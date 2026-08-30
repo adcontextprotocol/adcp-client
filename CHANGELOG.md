@@ -1,5 +1,11 @@
 # Changelog
 
+## 14.0.0-beta.19
+
+### Patch Changes
+
+- 73bddbb: Make task-settlement intent migrations upgrade queues created by earlier SDK betas, use a statement-stable tombstone expiry boundary, and keep task identifiers out of conflict errors.
+
 ## 14.0.0-beta.18
 
 ### Minor Changes
