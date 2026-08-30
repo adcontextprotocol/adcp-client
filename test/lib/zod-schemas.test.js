@@ -2085,6 +2085,90 @@ describe('Zod Schema Validation', () => {
     assert.ok(result.success, `Categorical signal selector should validate: ${JSON.stringify(result.error?.issues)}`);
   });
 
+  test('SignalTargetingExpressionSchema preserves every discriminated branch', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    assert.equal(
+      schemas.SignalTargetingExpressionSchema.safeParse({
+        signal_ref: { scope: 'product', signal_id: 'intent' },
+        value_type: 'binary',
+        value: true,
+      }).success,
+      true,
+      'binary true must satisfy the binary branch'
+    );
+    assert.equal(
+      schemas.SignalTargetingExpressionSchema.safeParse({
+        signal_ref: { scope: 'product', signal_id: 'intent' },
+        value_type: 'binary',
+        value: false,
+      }).success,
+      false,
+      'binary false must not fall through an open-object codegen branch'
+    );
+    assert.equal(
+      schemas.SignalTargetingExpressionSchema.safeParse({
+        signal_ref: { scope: 'product', signal_id: 'segment' },
+        value_type: 'categorical',
+        values: ['sports'],
+      }).success,
+      true,
+      'a non-empty categorical selector must satisfy the categorical branch'
+    );
+    assert.equal(
+      schemas.SignalTargetingExpressionSchema.safeParse({
+        signal_ref: { scope: 'product', signal_id: 'segment' },
+        value_type: 'categorical',
+        values: [],
+      }).success,
+      false,
+      'categorical selectors require at least one value'
+    );
+    assert.equal(
+      schemas.SignalTargetingExpressionSchema.safeParse({
+        signal_ref: { scope: 'product', signal_id: 'age' },
+        value_type: 'numeric',
+        min_value: 25,
+      }).success,
+      true,
+      'a lower-bounded numeric branch must remain available after code generation'
+    );
+    assert.equal(
+      schemas.SignalTargetingExpressionSchema.safeParse({
+        signal_ref: { scope: 'product', signal_id: 'age' },
+        value_type: 'numeric',
+        max_value: 54,
+      }).success,
+      true,
+      'an upper-bounded numeric branch must remain available after code generation'
+    );
+    assert.equal(
+      schemas.SignalTargetingExpressionSchema.safeParse({
+        signal_ref: { scope: 'product', signal_id: 'age' },
+        value_type: 'numeric',
+      }).success,
+      false,
+      'a numeric expression must declare at least one bound'
+    );
+    assert.equal(
+      schemas.SignalTargetingExpressionSchema.safeParse({
+        signal_ref: { scope: 'product', signal_id: 'age' },
+        value_type: 'numeric',
+        min_value: 55,
+        max_value: 54,
+      }).success,
+      false,
+      'numeric bounds must be ordered'
+    );
+    assert.equal(
+      schemas.SignalTargetingExpressionSchema.safeParse({ arbitrary: true }).success,
+      false,
+      'unrelated objects must not satisfy the targeting expression union'
+    );
+  });
+
   test('AudienceConstraintsSchema validates include/exclude arrays', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');
