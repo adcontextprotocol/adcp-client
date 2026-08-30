@@ -1873,6 +1873,12 @@ export interface StoryboardRunOptions extends TestOptions {
      * validate reachability.
      */
     public_url?: string;
+    /** TLS material for direct HTTPS serving; omit behind a TLS-terminating proxy. */
+    tls?: {
+      cert: string | Buffer;
+      key: string | Buffer;
+      passphrase?: string;
+    };
   };
   /**
    * Target receiver for `replay_webhook_vector` storyboards. This is separate

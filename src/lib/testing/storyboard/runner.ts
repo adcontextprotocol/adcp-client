@@ -2750,6 +2750,8 @@ async function executeStoryboardPass(
         ...(options.webhook_receiver.host !== undefined && { host: options.webhook_receiver.host }),
         ...(options.webhook_receiver.port !== undefined && { port: options.webhook_receiver.port }),
         ...(options.webhook_receiver.public_url !== undefined && { public_url: options.webhook_receiver.public_url }),
+        allowHttp: options.allow_http === true,
+        ...(options.webhook_receiver.tls !== undefined && { tls: options.webhook_receiver.tls }),
       })
     : undefined;
   const runnerVars = createRunnerVariables({
@@ -4492,6 +4494,8 @@ async function runStoryboardStepBody(
           ...(options.webhook_receiver.public_url !== undefined && {
             public_url: options.webhook_receiver.public_url,
           }),
+          allowHttp: options.allow_http === true,
+          ...(options.webhook_receiver.tls !== undefined && { tls: options.webhook_receiver.tls }),
         })
       : undefined);
   const ownsWebhookReceiver = !injectedReceiver && !!webhookReceiver;
