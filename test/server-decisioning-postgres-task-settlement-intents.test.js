@@ -13,6 +13,7 @@ const { randomBytes } = require('node:crypto');
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const TABLE = 'adcp_task_settlement_intents_test';
+const UPGRADE_TABLE = 'adcp_task_intent_upgrade_test';
 const TASK_TABLE = 'adcp_decisioning_tasks_intent_test';
 const DOMAIN_TABLE = 'adcp_task_settlement_domain_test';
 const NAMESPACE = 'intent-test';
@@ -90,6 +91,8 @@ describe('task settlement intent queue contract', () => {
     assert.match(sql, /scope_fingerprint ~ '\^\[a-f0-9\]\{64\}\$'/);
     assert.match(sql, /state IN \('pending', 'dead_letter', 'acknowledged'\)/);
     assert.match(sql, /retain_until/);
+    assert.match(sql, new RegExp('ALTER TABLE ' + TABLE));
+    assert.match(sql, new RegExp('DROP CONSTRAINT IF EXISTS ' + TABLE + '_valid_state'));
     assert.match(sql, /WHERE state = 'acknowledged'/);
     assert.match(sql, /WHERE state = 'pending'/);
     assert.throws(() => getTaskSettlementIntentMigration({ tableName: 'bad;drop' }), /tableName/);
@@ -137,6 +140,27 @@ describe('task settlement intent queue contract', () => {
     assert.deepStrictEqual(JSON.parse(values[6]), {
       result: { media_buy_id: 'mb-1', products: [{ product_id: 'product-1' }] },
     });
+  });
+
+  test('tombstone replacement uses one statement-stable expiry instant', async () => {
+    const { createPostgresTaskSettlementIntentQueue } = require('../dist/lib/server/decisioning');
+    let statement = '';
+    const queue = createPostgresTaskSettlementIntentQueue({
+      db: {
+        async query(sql) {
+          statement = sql;
+          return { rows: [{ task_id: 'task_stable_expiry' }], rowCount: 1 };
+        },
+      },
+      namespace: NAMESPACE,
+      tableName: TABLE,
+    });
+
+    await queue.enqueue({ taskRef: ref('task_stable_expiry'), action: 'complete', result: { ok: true } });
+
+    const expiryClocks = [...statement.matchAll(/retain_until\s*(?:<=|>)\s*([a-z_]+\(\))/g)].map(match => match[1]);
+    assert.ok(expiryClocks.length > 1);
+    assert.deepStrictEqual([...new Set(expiryClocks)], ['statement_timestamp()']);
   });
 
   test('configuration rejects unsafe namespaces, incomplete refs, and invalid recovery limits', async () => {
@@ -449,6 +473,64 @@ describe('Postgres task settlement intent queue', { skip: !DATABASE_URL && 'DATA
     if (pool) await pool.end();
   });
 
+  test('migration upgrades and reruns over the queue schema emitted by the prior beta', async () => {
+    const { getTaskSettlementIntentMigration } = require('../dist/lib/server/decisioning');
+    await pool.query(`DROP TABLE IF EXISTS ${UPGRADE_TABLE}`);
+    try {
+      await pool.query(`
+        CREATE TABLE ${UPGRADE_TABLE} (
+          queue_namespace TEXT NOT NULL,
+          registry_id TEXT NOT NULL,
+          account_id TEXT NOT NULL,
+          owner_scope TEXT NOT NULL,
+          task_id TEXT NOT NULL,
+          scope_fingerprint TEXT NOT NULL,
+          action TEXT NOT NULL,
+          payload JSONB NOT NULL,
+          intent_fingerprint TEXT NOT NULL,
+          state TEXT NOT NULL DEFAULT 'pending',
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+          lease_owner TEXT,
+          lease_claim_id TEXT,
+          lease_version BIGINT NOT NULL DEFAULT 0,
+          lease_expires_at TIMESTAMPTZ,
+          last_error TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+          PRIMARY KEY (queue_namespace, scope_fingerprint),
+          CONSTRAINT ${UPGRADE_TABLE}_valid_scope_fingerprint
+            CHECK (scope_fingerprint ~ '^[a-f0-9]{64}$'),
+          CONSTRAINT ${UPGRADE_TABLE}_valid_action CHECK (action IN ('complete', 'fail')),
+          CONSTRAINT ${UPGRADE_TABLE}_valid_state CHECK (state IN ('pending', 'dead_letter')),
+          CONSTRAINT ${UPGRADE_TABLE}_valid_payload CHECK (jsonb_typeof(payload) = 'object')
+        )
+      `);
+      await pool.query(
+        `INSERT INTO ${UPGRADE_TABLE} (
+           queue_namespace, registry_id, account_id, owner_scope, task_id,
+           scope_fingerprint, action, payload, intent_fingerprint
+         ) VALUES ('upgrade', 'registry', 'account', 'owner', 'task', $1, 'complete', '{}', $2)`,
+        ['a'.repeat(64), 'b'.repeat(64)]
+      );
+
+      const migration = getTaskSettlementIntentMigration({ tableName: UPGRADE_TABLE });
+      await pool.query(migration);
+      await pool.query(migration);
+      await pool.query(
+        `UPDATE ${UPGRADE_TABLE}
+            SET state = 'acknowledged', retain_until = clock_timestamp() + INTERVAL '1 day'`
+      );
+
+      assert.deepStrictEqual(
+        (await pool.query(`SELECT state, retain_until IS NOT NULL AS retained FROM ${UPGRADE_TABLE}`)).rows,
+        [{ state: 'acknowledged', retained: true }]
+      );
+    } finally {
+      await pool.query(`DROP TABLE IF EXISTS ${UPGRADE_TABLE}`);
+    }
+  });
+
   test('domain state and intent can commit or roll back in one caller-owned transaction', async () => {
     const client = await pool.connect();
     try {
@@ -479,7 +561,7 @@ describe('Postgres task settlement intent queue', { skip: !DATABASE_URL && 'DATA
     assert.deepStrictEqual(second, first);
     await assert.rejects(
       queue.enqueue({ ...intent, result: { revision: 2 } }),
-      error => error.name === 'TaskSettlementIntentConflictError'
+      error => error.name === 'TaskSettlementIntentConflictError' && !error.message.includes(intent.taskRef.taskId)
     );
     assert.strictEqual((await pool.query(`SELECT 1 FROM ${TABLE}`)).rowCount, 1);
   });
