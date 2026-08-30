@@ -2630,7 +2630,7 @@ describe('createAdcpServer', () => {
       assert.strictEqual(status.task_id, owned.taskId);
       assert.strictEqual(status.status, 'completed');
       assert.strictEqual(status.task_type, 'sync_creatives');
-      assert.strictEqual(status.protocol, 'creative');
+      assert.strictEqual(status.protocol, 'media-buy');
       assert.strictEqual(status.has_webhook, true);
       assert.strictEqual(status.adcp_version, '3.2-beta.9');
       assert.deepStrictEqual(status.result, { creatives: [{ creative_id: 'cr_1' }] });
@@ -2669,7 +2669,7 @@ describe('createAdcpServer', () => {
         server,
         'list_tasks',
         {
-          filters: { protocols: ['creative'], statuses: ['completed'], context_contains: 'cr_1', has_webhook: true },
+          filters: { protocols: ['media-buy'], statuses: ['completed'], context_contains: 'cr_1', has_webhook: true },
           pagination: { max_results: 1 },
         },
         buyerOne
