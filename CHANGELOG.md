@@ -1,5 +1,11 @@
 # Changelog
 
+## 14.0.0-beta.23
+
+### Patch Changes
+
+- da2e818: Route `sync_creatives` task lifecycle records through the spec-defined media-buy protocol domain.
+
 ## 14.0.0-beta.22
 
 ### Patch Changes
