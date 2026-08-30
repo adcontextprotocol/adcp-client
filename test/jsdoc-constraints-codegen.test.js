@@ -261,6 +261,9 @@ describe('generated Zod schemas — constraint pinning', () => {
   let PropertyTagSchema;
   let VendorMetricIDSchema;
   let LanguageTagSchema;
+  let VCPMPricingOptionSchema;
+  let CPVPricingOptionSchema;
+  let DoohParametersSchema;
 
   try {
     ({
@@ -282,11 +285,65 @@ describe('generated Zod schemas — constraint pinning', () => {
       PropertyTagSchema,
       VendorMetricIDSchema,
       LanguageTagSchema,
+      VCPMPricingOptionSchema,
+      CPVPricingOptionSchema,
+      DoohParametersSchema,
     } = require('../dist/lib/types/schemas.generated'));
   } catch (e) {
     // Build hasn't run yet — skip the pinning slice rather than fail the unit slice.
     console.warn(`⏭️  Skipping pinning tests — dist not built: ${e.message}`);
   }
+
+  it('preserves canonical vCPM, CPV, and DOOH pricing constraints', { skip: !VCPMPricingOptionSchema }, () => {
+    const vcpm = value =>
+      VCPMPricingOptionSchema.safeParse({
+        pricing_option_id: 'vcpm-1',
+        pricing_model: 'vcpm',
+        currency: 'USD',
+        ...value,
+      }).success;
+    assert.equal(vcpm({ fixed_price: 0, floor_price: 0, min_spend_per_package: 0 }), true);
+    assert.equal(vcpm({ currency: 'usd' }), false);
+    for (const field of ['fixed_price', 'floor_price', 'min_spend_per_package']) {
+      assert.equal(vcpm({ [field]: -0.01 }), false, `${field} must be non-negative`);
+    }
+
+    const cpv = viewThreshold =>
+      CPVPricingOptionSchema.safeParse({
+        pricing_option_id: 'cpv-1',
+        pricing_model: 'cpv',
+        currency: 'USD',
+        parameters: { view_threshold: viewThreshold },
+      }).success;
+    assert.equal(cpv(0), true);
+    assert.equal(cpv(1), true);
+    assert.equal(cpv(-0.01), false);
+    assert.equal(cpv(1.01), false);
+    assert.equal(cpv({ duration_seconds: 1 }), true);
+    assert.equal(cpv({ duration_seconds: 0 }), false);
+    assert.equal(cpv({ duration_seconds: 1.5 }), false);
+
+    const dooh = value => DoohParametersSchema.safeParse({ type: 'dooh', ...value }).success;
+    assert.equal(
+      dooh({
+        sov_percentage: 0,
+        loop_duration_seconds: 1,
+        min_plays_per_hour: 1,
+        duration_hours: 0,
+        estimated_impressions: 0,
+      }),
+      true
+    );
+    assert.equal(dooh({ sov_percentage: -1 }), false);
+    assert.equal(dooh({ sov_percentage: 101 }), false);
+    assert.equal(dooh({ loop_duration_seconds: 0 }), false);
+    assert.equal(dooh({ loop_duration_seconds: 1.5 }), false);
+    assert.equal(dooh({ min_plays_per_hour: 0 }), false);
+    assert.equal(dooh({ min_plays_per_hour: 1.5 }), false);
+    assert.equal(dooh({ duration_hours: -1 }), false);
+    assert.equal(dooh({ estimated_impressions: -1 }), false);
+    assert.equal(dooh({ estimated_impressions: 1.5 }), false);
+  });
 
   it('MediaBuySchema.revision rejects 0 (minimum: 1)', { skip: !MediaBuySchema }, () => {
     const r = MediaBuySchema.shape.revision.safeParse(0);
