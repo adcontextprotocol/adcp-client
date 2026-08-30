@@ -101,9 +101,12 @@ const DEFAULT_RETRY_HTTP_STATUS = 503;
 const DEFAULT_MIN_DELIVERIES = 2;
 
 function webhookTimeoutDetail(receiver: WebhookReceiver, base: string): string {
-  return receiver.mode === 'loopback_mock' && receiver.all().length === 0 && receiver.challenges().length === 0
-    ? `${base} No request reached the loopback receiver; an out-of-process agent must use webhook_receiver.mode="proxy_url".`
-    : base;
+  if (receiver.all().length > 0 || receiver.challenges().length > 0) return base;
+  const bindHost = receiver.bind_host ?? 'the configured local address';
+  if (receiver.mode === 'loopback_mock') {
+    return `${base} No request reached the receiver bound to ${bindHost}; an out-of-process agent must use webhook_receiver.mode="proxy_url".`;
+  }
+  return `${base} No request reached the receiver bound to ${bindHost}; verify that the advertised callback URL routes to this container and bind address.`;
 }
 const DEFAULT_WEBHOOK_SIGNING_TAG = 'adcp/webhook-signing/v1';
 

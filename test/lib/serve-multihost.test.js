@@ -172,6 +172,72 @@ describe('serve() multi-host', () => {
     loopback.close();
   });
 
+  test('allows exact development HTTP hosts with allowHttpHosts', () => {
+    const factory = () => new McpServer({ name: 'Test', version: '1.0.0' });
+    const server = serve(factory, {
+      port: 0,
+      publicUrl: 'http://Seller:3007/mcp',
+      allowHttpHosts: ['seller'],
+      onListening: () => {},
+    });
+    server.close();
+
+    assert.throws(
+      () => serve(factory, { publicUrl: 'http://other:3007/mcp', allowHttpHosts: ['seller'] }),
+      /must use https/
+    );
+  });
+
+  test('rejects malformed allowHttpHosts entries at construction', () => {
+    const factory = () => new McpServer({ name: 'Test', version: '1.0.0' });
+    for (const entry of ['*', 'sell?er', 'seller:3007', ' seller', 'seller/path']) {
+      assert.throws(
+        () => serve(factory, { publicUrl: 'https://seller/mcp', allowHttpHosts: [entry] }),
+        /invalid allowHttpHosts entry/
+      );
+    }
+  });
+
+  test('applies allowHttpHosts to function-form publicUrl resolution', async () => {
+    const server = serve(() => new McpServer({ name: 'Test', version: '1.0.0' }), {
+      port: 0,
+      allowedHosts: ['seller'],
+      publicUrl: host => `http://${host}/mcp`,
+      allowHttpHosts: ['SELLER'],
+      onListening: () => {},
+    });
+    await waitForListening(server);
+    try {
+      const response = await request(server.address().port, { host: 'seller' });
+      assert.notStrictEqual(response.status, 500);
+    } finally {
+      server.close();
+    }
+  });
+
+  test('warns when allowHttpHosts is enabled in production', () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousWarn = console.warn;
+    const warnings = [];
+    process.env.NODE_ENV = 'production';
+    console.warn = message => warnings.push(String(message));
+    let server;
+    try {
+      server = serve(() => new McpServer({ name: 'Test', version: '1.0.0' }), {
+        port: 0,
+        publicUrl: 'http://seller/mcp',
+        allowHttpHosts: ['seller'],
+        onListening: () => {},
+      });
+      assert.ok(warnings.some(message => message.includes('allowHttpHosts')));
+    } finally {
+      server?.close();
+      console.warn = previousWarn;
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
+
   test('stamps a canonical idempotency scope despite Host port variants', async () => {
     const scopes = [];
     const server = serve(

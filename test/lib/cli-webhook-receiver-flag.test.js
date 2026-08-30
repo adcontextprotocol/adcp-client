@@ -233,6 +233,139 @@ describe('storyboard run --webhook-receiver', () => {
     assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
   });
 
+  test('--webhook-receiver-host survives positional parsing', () => {
+    const result = runCli([
+      'storyboard',
+      'run',
+      'test-mcp',
+      '--file',
+      scenarioPath,
+      '--webhook-receiver',
+      'proxy',
+      '--webhook-receiver-host',
+      '0.0.0.0',
+      '--webhook-receiver-public-url',
+      'http://tests:9999',
+      '--allow-http',
+      '--dry-run',
+    ]);
+    assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  });
+
+  test('HTTP proxy public URL requires --allow-http', () => {
+    const result = runCli([
+      'storyboard',
+      'run',
+      'test-mcp',
+      '--file',
+      scenarioPath,
+      '--webhook-receiver',
+      'proxy',
+      '--webhook-receiver-public-url',
+      'http://tests:9999',
+      '--dry-run',
+    ]);
+    assert.strictEqual(result.status, 2);
+    assert.match(result.stderr, /requires --allow-http/);
+  });
+
+  test('invalid proxy public URL forms fail during dry-run validation', () => {
+    for (const [url, pattern] of [
+      ['file:///etc/passwd', /must use http or https/],
+      ['https://user:password@example.com', /must not include userinfo/],
+      ['https://example.com/hooks?tenant=1', /query string or fragment/],
+    ]) {
+      const result = runCli([
+        'storyboard',
+        'run',
+        'test-mcp',
+        '--file',
+        scenarioPath,
+        '--webhook-receiver',
+        'proxy',
+        '--webhook-receiver-public-url',
+        url,
+        '--dry-run',
+      ]);
+      assert.strictEqual(result.status, 2, `${url}: ${result.stderr}`);
+      assert.match(result.stderr, pattern);
+    }
+  });
+
+  test('TLS certificate and key flags must be paired', () => {
+    const result = runCli([
+      'storyboard',
+      'run',
+      'test-mcp',
+      '--file',
+      scenarioPath,
+      '--webhook-receiver',
+      '--webhook-receiver-tls-cert',
+      scenarioPath,
+      '--dry-run',
+    ]);
+    assert.strictEqual(result.status, 2);
+    assert.match(result.stderr, /tls-cert and --webhook-receiver-tls-key must be provided together/);
+  });
+
+  test('direct TLS rejects an HTTP public URL during dry-run', () => {
+    const result = runCli([
+      'storyboard',
+      'run',
+      'test-mcp',
+      '--file',
+      scenarioPath,
+      '--webhook-receiver',
+      'proxy',
+      '--webhook-receiver-public-url',
+      'http://tests:9999',
+      '--allow-http',
+      '--webhook-receiver-tls-cert',
+      scenarioPath,
+      '--webhook-receiver-tls-key',
+      scenarioPath,
+      '--dry-run',
+    ]);
+    assert.strictEqual(result.status, 2);
+    assert.match(result.stderr, /direct webhook receiver TLS requires an https:\/\//);
+  });
+
+  test('TLS material must come from regular files', () => {
+    const result = runCli([
+      'storyboard',
+      'run',
+      'test-mcp',
+      '--file',
+      scenarioPath,
+      '--webhook-receiver',
+      '--webhook-receiver-tls-cert',
+      tmpDir,
+      '--webhook-receiver-tls-key',
+      tmpDir,
+      '--dry-run',
+    ]);
+    assert.strictEqual(result.status, 2);
+    assert.match(result.stderr, /must be a regular file/);
+  });
+
+  test('TLS files are read eagerly with an actionable error', () => {
+    const result = runCli([
+      'storyboard',
+      'run',
+      'test-mcp',
+      '--file',
+      scenarioPath,
+      '--webhook-receiver',
+      '--webhook-receiver-tls-cert',
+      path.join(tmpDir, 'missing-cert.pem'),
+      '--webhook-receiver-tls-key',
+      path.join(tmpDir, 'missing-key.pem'),
+      '--dry-run',
+    ]);
+    assert.strictEqual(result.status, 2);
+    assert.match(result.stderr, /unable to read webhook receiver TLS files/);
+  });
+
   test('--webhook-receiver followed by a storyboard ID does not consume the ID as mode', () => {
     // Footgun check: `--webhook-receiver` takes an OPTIONAL value. An operator
     // writing `... --webhook-receiver webhook-emission` (expecting webhook-emission
