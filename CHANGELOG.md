@@ -1,5 +1,11 @@
 # Changelog
 
+## 14.0.0-beta.25
+
+### Patch Changes
+
+- b50aff2: Mirror final MCP `structuredContent` into a serialized text block so text-only clients retain complete AdCP results.
+
 ## 14.0.0-beta.24
 
 ### Patch Changes
