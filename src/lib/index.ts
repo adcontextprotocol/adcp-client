@@ -1293,6 +1293,7 @@ export {
   createA2AAdapter,
   A2AInvocationError,
   MCP_APP_RESOURCE_MIME_TYPE,
+  ADCP_MIRRORED_STRUCTURED_CONTENT_META_KEY,
 } from './server';
 export type {
   AdcpErrorOptions,
@@ -1352,6 +1353,10 @@ export type {
   AdcpTestRequest,
   AdcpTestToolsCallRequest,
   AdcpTestResponse,
+  AdcpInvokeOptions,
+  StructuredContentFallbackTransport,
+  StructuredContentTextFallback,
+  StructuredContentTextFallbackContext,
   CheckGovernanceOptions,
   GovernanceCallResult,
   GovernanceApproved,

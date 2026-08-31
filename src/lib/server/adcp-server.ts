@@ -32,6 +32,11 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { McpToolResponse } from './responses';
 import type { AdcpMcpResourceDefinition } from './mcp-app';
 import { ADCP_VERSION } from '../version';
+import {
+  applyStructuredContentTextFallback,
+  type StructuredContentTextFallback,
+  type StructuredContentTextFallbackContext,
+} from './structured-content-fallback';
 
 /**
  * Structural shape of an MCP transport the server can connect to.
@@ -114,6 +119,8 @@ export interface AdcpTestRequestExtras {
   authInfo?: AdcpAuthInfo;
   sessionId?: string;
   signal?: AbortSignal;
+  /** Override client/transport facts used by response-decoration tests. */
+  responseContext?: StructuredContentTextFallbackContext;
 }
 
 /**
@@ -144,6 +151,12 @@ export interface AdcpInvokeOptions {
    * so failures retain the structured AdCP error envelope.
    */
   enforceRequestSchema?: true;
+  /**
+   * Transport/session facts used only after the canonical response has been
+   * finalized and cached. Omit for direct embedding; the fail-safe direct path
+   * mirrors structured content for compatibility.
+   */
+  responseContext?: StructuredContentTextFallbackContext;
 }
 
 /**
@@ -709,10 +722,12 @@ export function wrapSdkRequestHandler(
 export function wrapMcpServer(
   inner: McpServer | AdcpServerInternal,
   compliance?: AdcpServerComplianceApi,
-  adcpVersion: string = ADCP_VERSION
+  adcpVersion: string = ADCP_VERSION,
+  options: { structuredContentTextFallback?: StructuredContentTextFallback } = {}
 ): AdcpServerInternal {
   if (isAdcpServer(inner)) return inner;
   const mcp = inner as McpServer;
+  const structuredContentTextFallback = options.structuredContentTextFallback ?? 'always';
   const resolvedCompliance: AdcpServerComplianceApi = compliance ?? {
     async reset() {
       throw new Error(
@@ -737,7 +752,12 @@ export function wrapMcpServer(
       if (!tool) {
         throw new Error(`dispatchTestRequest: tool "${params.name}" is not registered`);
       }
-      return tool.handler(params.arguments ?? {}, extra);
+      const result = await tool.handler(params.arguments ?? {}, extra);
+      return applyStructuredContentTextFallback(
+        result,
+        structuredContentTextFallback,
+        extras?.responseContext ?? { transport: 'mcp' }
+      );
     }
 
     const handler = getRequestHandler(mcp, request.method);
@@ -756,7 +776,12 @@ export function wrapMcpServer(
     };
     if (options.authInfo) extra.authInfo = options.authInfo;
     if (options.enforceRequestSchema === true) extra.enforceRequestSchema = true;
-    return (await tool.handler(options.args, extra)) as McpToolResponse;
+    const response = (await tool.handler(options.args, extra)) as McpToolResponse;
+    return applyStructuredContentTextFallback(
+      response,
+      structuredContentTextFallback,
+      options.responseContext ?? { transport: 'direct' }
+    );
   };
   const wrapper: AdcpServerInternal = {
     [ADCP_SDK_SERVER]: mcp,

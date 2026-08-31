@@ -217,7 +217,26 @@ describe('idempotency: disabled — A2A wire roundtrip', () => {
 
   it('A2A: create_media_buy succeeds without idempotency_key under strict validation', async () => {
     const calls = [];
-    const adcp = makeFactory({ calls })();
+    const fallbackContexts = [];
+    const adcp = _createAdcpServer({
+      name: 'Disabled E2E',
+      version: '1.0.0',
+      adcpVersion: '3.1.18',
+      idempotency: 'disabled',
+      stateStore: new InMemoryStateStore(),
+      resolveSessionKey: () => 'tenant_e2e',
+      validation: { requests: 'strict', responses: 'off' },
+      structuredContentTextFallback: context => {
+        fallbackContexts.push(context);
+        return true;
+      },
+      mediaBuy: {
+        createMediaBuy: async params => {
+          calls.push(params);
+          return { media_buy_id: `mb_${calls.length}`, packages: [] };
+        },
+      },
+    });
     const a2a = createA2AAdapter({
       server: adcp,
       agentCard: {
@@ -249,5 +268,7 @@ describe('idempotency: disabled — A2A wire roundtrip', () => {
       `A2A roundtrip should accept missing idempotency_key in disabled mode, got: ${JSON.stringify(payload.adcp_error)}`
     );
     assert.equal(calls.length, 1);
+    assert.equal(fallbackContexts.at(-1).transport, 'a2a');
+    assert.equal(payload.content, undefined, 'A2A artifact must contain only the typed DataPart payload');
   });
 });

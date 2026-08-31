@@ -11,6 +11,9 @@ const { InMemoryTaskStore } = require('../dist/lib/server/tasks');
 const { createInMemoryTaskRegistry } = require('../dist/lib/server/decisioning/runtime/task-registry');
 const { adcpError } = require('../dist/lib/server/errors');
 const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/idempotency');
+const { ADCP_MIRRORED_STRUCTURED_CONTENT_META_KEY } = require('../dist/lib/server/structured-content-fallback');
+const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
 
 // These tests exercise envelope wrapping, state-store propagation, and
 // idempotency middleware using deliberately sparse handler fixtures
@@ -63,6 +66,12 @@ function registeredTool(server, toolName) {
   const sdk = getSdkServer(server);
   if (!sdk) throw new Error('registeredTool: value is not an AdcpServer');
   return sdk._registeredTools[toolName];
+}
+
+function mirroredBlocks(result) {
+  return result.content.filter(
+    block => block.type === 'text' && block._meta?.[ADCP_MIRRORED_STRUCTURED_CONTENT_META_KEY] === true
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +206,18 @@ describe('createAdcpServer', () => {
           mediaBuy: { getProducts: async () => ({ products: [] }) },
         }),
       /get_products range.*does not overlap.*3\.1\.18/
+    );
+  });
+
+  it('rejects an invalid structured-content fallback policy at construction', () => {
+    assert.throws(
+      () =>
+        createAdcpServer({
+          name: 'Bad fallback',
+          version: '1.0.0',
+          structuredContentTextFallback: 'sometimes',
+        }),
+      /structuredContentTextFallback must be/
     );
   });
 
@@ -397,10 +418,9 @@ describe('createAdcpServer', () => {
     assert.deepStrictEqual(sawParams, { brief: 'premium' });
     assert.ok(result.content, 'CallToolResult should carry content');
     assert.ok(result.structuredContent, 'CallToolResult should carry structuredContent');
-    assert.ok(
-      result.content.some(block => block.type === 'text' && block.text === JSON.stringify(result.structuredContent)),
-      'CallToolResult should serialize structuredContent for text-only MCP clients'
-    );
+    assert.strictEqual(result.content[0].text, 'Found 0 products');
+    assert.strictEqual(mirroredBlocks(result).length, 1);
+    assert.strictEqual(mirroredBlocks(result)[0].text, JSON.stringify(result.structuredContent));
   });
 
   it('preserves the human summary and appends one final structured-content fallback', async () => {
@@ -429,8 +449,128 @@ describe('createAdcpServer', () => {
 
     assert.strictEqual(result.content[0].text, 'Found 1 products');
     assert.strictEqual(result.content.filter(block => block.text === serialized).length, 1);
+    assert.strictEqual(mirroredBlocks(result).length, 1);
     assert.strictEqual(JSON.parse(result.content.at(-1).text).products[0].name, 'CTV package');
     assert.strictEqual(JSON.parse(result.content.at(-1).text).enhanced, true);
+  });
+
+  it('supports deployment and per-client opt-out without changing the canonical summary', async () => {
+    const contexts = [];
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      adcpVersion: '3.1.18',
+      structuredContentTextFallback: context => {
+        contexts.push(context);
+        return context.clientInfo?.name !== 'capable-host';
+      },
+      mediaBuy: { getProducts: async () => ({ products: [], cache_scope: 'public' }) },
+    });
+
+    const capable = await callToolRaw(
+      server,
+      'get_products',
+      {},
+      {
+        responseContext: {
+          transport: 'mcp',
+          clientInfo: { name: 'capable-host', version: '1.0.0' },
+          clientCapabilities: { experimental: { structuredResults: true } },
+        },
+      }
+    );
+    const unknown = await callToolRaw(server, 'get_products', {});
+    const direct = await server.invoke({ toolName: 'get_products', args: {} });
+
+    assert.strictEqual(capable.content[0].text, 'Found 0 products');
+    assert.strictEqual(mirroredBlocks(capable).length, 0);
+    assert.strictEqual(mirroredBlocks(unknown).length, 1, 'unknown client should follow the fail-safe predicate path');
+    assert.strictEqual(mirroredBlocks(direct).length, 1, 'direct embedding without client facts should fail safe');
+    assert.deepStrictEqual(contexts[0], {
+      transport: 'mcp',
+      clientInfo: { name: 'capable-host', version: '1.0.0' },
+      clientCapabilities: { experimental: { structuredResults: true } },
+    });
+    assert.strictEqual(contexts.length, 1, 'unknown clients should mirror without invoking the deployment predicate');
+
+    const never = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      adcpVersion: '3.1.18',
+      structuredContentTextFallback: 'never',
+      mediaBuy: { getProducts: async () => ({ products: [], cache_scope: 'public' }) },
+    });
+    assert.strictEqual(mirroredBlocks(await callToolRaw(never, 'get_products', {})).length, 0);
+  });
+
+  it('deduplicates an adopter-authored exact JSON fallback and fails safe when a predicate throws', async () => {
+    const exact = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      adcpVersion: '3.1.18',
+      responseEnhancer: response => {
+        response.content.push({ type: 'text', text: JSON.stringify(response.structuredContent) });
+      },
+      mediaBuy: { getProducts: async () => ({ products: [], cache_scope: 'public' }) },
+    });
+    const exactResult = await callToolRaw(exact, 'get_products', {});
+    const serialized = JSON.stringify(exactResult.structuredContent);
+    assert.strictEqual(exactResult.content.filter(block => block.text === serialized).length, 1);
+    assert.strictEqual(mirroredBlocks(exactResult).length, 0, 'adopter-authored blocks must not be relabeled');
+
+    const throwing = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      adcpVersion: '3.1.18',
+      structuredContentTextFallback: () => {
+        throw new Error('bad deployment predicate');
+      },
+      mediaBuy: { getProducts: async () => ({ products: [], cache_scope: 'public' }) },
+    });
+    const throwingResult = await callToolRaw(
+      throwing,
+      'get_products',
+      {},
+      {
+        responseContext: {
+          transport: 'mcp',
+          clientInfo: { name: 'known-host', version: '1.0.0' },
+        },
+      }
+    );
+    assert.strictEqual(mirroredBlocks(throwingResult).length, 1);
+  });
+
+  it('passes negotiated legacy MCP client facts to the transport-edge predicate', async () => {
+    const contexts = [];
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      adcpVersion: '3.1.18',
+      structuredContentTextFallback: context => {
+        contexts.push(context);
+        return false;
+      },
+      mediaBuy: { getProducts: async () => ({ products: [], cache_scope: 'public' }) },
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client(
+      { name: 'legacy-capable-host', version: '2.3.4' },
+      { capabilities: { experimental: { structuredResults: {} } } }
+    );
+    await client.connect(clientTransport);
+    try {
+      const result = await client.callTool({ name: 'get_products', arguments: {} });
+      assert.strictEqual(mirroredBlocks(result).length, 0);
+      assert.strictEqual(contexts.at(-1).transport, 'mcp');
+      assert.strictEqual(contexts.at(-1).clientInfo.name, 'legacy-capable-host');
+      assert.strictEqual(contexts.at(-1).clientInfo.version, '2.3.4');
+      assert.deepStrictEqual(contexts.at(-1).clientCapabilities.experimental, { structuredResults: {} });
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 
   it('dispatchTestRequest throws for unknown tools and methods', async () => {
