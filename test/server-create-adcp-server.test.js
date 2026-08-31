@@ -397,6 +397,40 @@ describe('createAdcpServer', () => {
     assert.deepStrictEqual(sawParams, { brief: 'premium' });
     assert.ok(result.content, 'CallToolResult should carry content');
     assert.ok(result.structuredContent, 'CallToolResult should carry structuredContent');
+    assert.ok(
+      result.content.some(block => block.type === 'text' && block.text === JSON.stringify(result.structuredContent)),
+      'CallToolResult should serialize structuredContent for text-only MCP clients'
+    );
+  });
+
+  it('preserves the human summary and appends one final structured-content fallback', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      responseEnhancer: response => {
+        response.structuredContent.enhanced = true;
+      },
+      mediaBuy: {
+        getProducts: async () => ({
+          products: [
+            {
+              product_id: 'p1',
+              name: 'CTV package',
+              pricing_options: [{ pricing_model: 'cpm', rate: 12, currency: 'USD' }],
+            },
+          ],
+          cache_scope: 'public',
+        }),
+      },
+    });
+
+    const result = await callToolRaw(server, 'get_products', {});
+    const serialized = JSON.stringify(result.structuredContent);
+
+    assert.strictEqual(result.content[0].text, 'Found 1 products');
+    assert.strictEqual(result.content.filter(block => block.text === serialized).length, 1);
+    assert.strictEqual(JSON.parse(result.content.at(-1).text).products[0].name, 'CTV package');
+    assert.strictEqual(JSON.parse(result.content.at(-1).text).enhanced, true);
   });
 
   it('dispatchTestRequest throws for unknown tools and methods', async () => {
