@@ -5201,6 +5201,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
   const applyResponseEnhancer = (response: McpToolResponse): McpToolResponse => {
     responseEnhancer?.(response);
+    const structuredContent = response.structuredContent;
+    if (structuredContent !== undefined) {
+      const serialized = JSON.stringify(structuredContent);
+      const hasSerializedFallback = response.content.some(block => block.type === 'text' && block.text === serialized);
+      if (!hasSerializedFallback) {
+        // MCP recommends mirroring structuredContent into a TextContent block
+        // for clients that do not expose the structured channel to the model.
+        // Preserve any adopter-authored summary as the first block and append
+        // the exact final wire object after every framework/enhancer rewrite.
+        response.content.push({ type: 'text', text: serialized });
+      }
+    }
     return response;
   };
 
