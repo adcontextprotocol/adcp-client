@@ -42,10 +42,6 @@ function postProcessObjectIntersections(input) {
   return runPostProcess('postProcessObjectIntersections', input, '.zod-object-intersections-');
 }
 
-function postProcessForNullish(input) {
-  return runPostProcess('postProcessForNullish', input, '.zod-nullish-');
-}
-
 function postProcessRecordIntersections(input) {
   return runPostProcess('postProcessRecordIntersections', input, '.zod-record-intersections-');
 }
@@ -73,18 +69,6 @@ function postProcessRepeatedProductIntersections(input) {
 function postProcessObjectUnionIntersections(input) {
   return runPostProcess('postProcessObjectUnionIntersections', input, '.zod-object-union-');
 }
-
-test('postProcessForNullish keeps never optional constraints strict', () => {
-  const output = postProcessForNullish(`
-export const ExampleSchema = z.object({
-  forbidden: z.never().optional(),
-  allowed: z.string().optional()
-}).passthrough();
-`);
-
-  assert.match(output, /forbidden: z\.never\(\)\.optional\(\)/);
-  assert.match(output, /allowed: z\.string\(\)\.nullish\(\)/);
-});
 
 test('postProcessMarkerUnionObjectIntersections collapses opaque marker unions', () => {
   const output = postProcessMarkerUnionObjectIntersections(`

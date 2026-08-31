@@ -21,6 +21,9 @@
  *   - {@link customToolFor}: sugar for registering a single custom tool
  *     with type-safe `handler` params derived from the schema's shape.
  *   - {@link customToolForSchema}: same sugar for full Zod schemas.
+ *   - {@link treatOptionalNullsAsAbsent}: reads a seller's explicit `null` as
+ *     an omitted field wherever the schema declares it optional and
+ *     non-nullable, so one unreported hint doesn't discard a whole response.
  *
  * ```ts
  * import { createAdcpServer } from '@adcp/sdk/server/legacy/v5';
@@ -54,6 +57,7 @@ import {
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
 
 export * from '../types/schemas.generated';
+export { treatOptionalNullsAsAbsent } from './optional-nulls';
 
 type LooseObjectShapeFor<T extends object> = {
   [K in keyof T]-?: undefined extends T[K]

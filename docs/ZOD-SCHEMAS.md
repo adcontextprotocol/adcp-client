@@ -95,6 +95,61 @@ app.post('/api/products', async (req, res) => {
 });
 ```
 
+## Tolerating `null` on Optional Fields
+
+Optional fields in the generated schemas are `.optional()`, which accepts
+`undefined` and rejects `null`. That keeps the schemas an exact mirror of the
+TypeScript types, but plenty of agents serialize from Pydantic, Jackson, or
+`encoding/json` and emit `null` for a field they have nothing to report for.
+Because Zod validates the whole payload before you read any field, one `null`
+on an optional hint discards everything alongside it — a `null`
+`next_expected_at` (a scheduling hint carrying no figures) takes every
+`media_buy_deliveries` spend and impression count with it.
+
+`treatOptionalNullsAsAbsent` reinterprets those `null`s, and only those:
+
+```typescript
+import {
+  GetMediaBuyDeliveryResponseSchema,
+  treatOptionalNullsAsAbsent,
+} from '@adcp/sdk/schemas';
+
+const tolerated = treatOptionalNullsAsAbsent(GetMediaBuyDeliveryResponseSchema, response);
+const result = GetMediaBuyDeliveryResponseSchema.safeParse(tolerated);
+```
+
+A `null` is dropped only where the schema says it carries no information the
+omission wouldn't — the field may be skipped, and `null` is not among the
+values it accepts. Everything else keeps its `null`, and its verdict:
+
+| Schema declares | Payload sends | Result |
+| --- | --- | --- |
+| `.optional()` | `null` | key dropped; parse succeeds |
+| `.optional().nullable()` | `null` | `null` kept — the spec assigns it a meaning (`completion_rate: null` means "not applicable to these buys") |
+| required | `null` | `null` kept; parse still fails |
+| `z.never().optional()` | `null` | `null` kept; parse still fails (the field must not be provided) |
+| not declared (`passthrough`) | `null` | passed through untouched |
+
+The walk is schema-driven and recurses through nested objects and arrays, so a
+`null` deep inside `media_buy_deliveries[].by_package[]` is resolved against
+that entry's own field declaration. Schemas projected from a JSON Schema
+`allOf` are Zod intersections; both sides are consulted, and a `null` is only
+dropped where every side that declares the field agrees it means absent.
+
+Subtrees reached through a `union`, `pipe`, `lazy`, or `record` are left alone:
+the schema doesn't name a single shape to resolve the field against, and
+guessing one risks dropping a `null` that one arm of the union treats as a
+value.
+
+The input is never mutated. Nodes containing a reinterpreted `null` are
+copied; every other node is shared with the original, so a caller keeping an
+audit trail of what the agent actually sent can hold onto the payload it
+passed in.
+
+This is the Zod-surface counterpart to the null tolerance the SDK's own
+response validator applies to v2.x envelope fields (`errors`, `context`,
+`ext`) before Ajv.
+
 ## Advanced Usage
 
 ### Partial Schemas

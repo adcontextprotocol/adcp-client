@@ -21,22 +21,6 @@ const TOOLS_SOURCE_FILE = path.join(__dirname, '../src/lib/types/tools.generated
 const OUTPUT_FILE = path.join(__dirname, '../src/lib/types/schemas.generated.ts');
 
 /**
- * Post-process generated Zod schemas to convert .optional() to .nullish() globally.
- * This is needed because real-world API responses often send explicit null values for optional
- * fields, but ts-to-zod generates .optional() which only accepts undefined.
- * Using .nullish() accepts both undefined and null.
- *
- * Many JSON serializers (Python, Java, etc.) default to sending null for absent optional fields,
- * so treating "optional" as "can be undefined OR null" is the pragmatic approach.
- */
-function postProcessForNullish(content: string): string {
-  // Replace .optional() with .nullish() globally, except when preceded by .never()
-  // z.never().optional() must stay as-is: it means "this field must not be provided",
-  // and converting to .nullish() would allow null values through, weakening that constraint.
-  return content.replace(/(?<!\.never\(\))\.optional\(\)/g, '.nullish()');
-}
-
-/**
  * Post-process generated Zod schemas to fix imports from "undefined".
  *
  * ts-to-zod generates `import { type X } from "undefined"` for recursive types
@@ -3873,13 +3857,14 @@ async function generateZodSchemas() {
     // Get the generated Zod schemas
     let zodSchemas = result.getZodSchemasFile();
 
-    // Post-process: Convert .optional() to .nullish() for PackageSchema fields
-    // This is needed because real-world API responses (e.g., Yahoo webhook) send explicit
-    // null values for optional fields, but ts-to-zod generates .optional() which only
-    // accepts undefined, not null. Using .nullish() accepts both undefined and null.
-    // Note: we intentionally keep .optional() (NOT .nullish()) so Zod schemas match
-    // TypeScript types. Callers that need to accept null from external APIs should use
-    // .nullish() at the call site, not globally in every schema.
+    // Optional fields stay `.optional()` (NOT `.nullish()`) so the Zod schemas match the
+    // TypeScript types and the inferred types stay exact. Real-world responses do send
+    // explicit null for fields they have nothing to report for (e.g. the Yahoo webhook,
+    // any Pydantic- or Jackson-serialized seller). Callers that need to tolerate those
+    // pass the payload through `treatOptionalNullsAsAbsent` from `@adcp/sdk/schemas`
+    // (src/lib/schemas/optional-nulls.ts), which drops a null only where the schema
+    // declares the field optional and non-nullable — nullable and required fields keep
+    // their null and their verdict.
 
     // Post-process: Fix broken imports from "undefined" (recursive types with z.lazy())
     zodSchemas = postProcessUndefinedImports(zodSchemas);
@@ -4346,7 +4331,6 @@ if (require.main === module) {
 export const __test__ = {
   postProcessTupleRestArrays,
   relaxArrayCardinalityTypes,
-  postProcessForNullish,
   postProcessRecordIntersections,
   postProcessMarkerUnionObjectIntersections,
   postProcessRepeatedProductIntersections,
